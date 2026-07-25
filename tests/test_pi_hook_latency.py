@@ -268,7 +268,7 @@ console.log(JSON.stringify({
 
 
 @pytest.mark.skipif(_bun_executable() is None, reason="Bun is required to execute Pi cleanup helpers")
-def test_pi_exited_windows_parent_latches_without_taskkill(tmp_path: Path) -> None:
+def test_pi_exited_windows_parent_does_not_latch_without_taskkill(tmp_path: Path) -> None:
     from codex_plugin_scanner.guard.adapters.pi_extension_cli_runtime_source import CLI_RUNTIME_HELPERS_SOURCE
 
     bun = _bun_executable()
@@ -280,6 +280,8 @@ def test_pi_exited_windows_parent_latches_without_taskkill(tmp_path: Path) -> No
 const guardPlatform = "win32";
 const GUARD_TASKKILL_PATH: string | null = "taskkill.exe";
 const GUARD_TEXT_LIMIT_CHARS = 1_000;
+const GUARD_DAEMON_RECOVERY_COMMAND = "guard";
+const GUARD_DAEMON_RECOVERY_ARGS: string[] = [];
 let spawnCalls = 0;
 const child = {
   pid: 123,
@@ -318,9 +320,9 @@ console.log(JSON.stringify({
     payload = _decode_json_object(completed.stdout)
 
     assert payload == {
-        "code": "ECONTAINMENT",
+        "code": "ETIMEDOUT",
         "recoveryAllowed": False,
-        "spawnCalls": 1,
+        "spawnCalls": 2,
     }
 
 

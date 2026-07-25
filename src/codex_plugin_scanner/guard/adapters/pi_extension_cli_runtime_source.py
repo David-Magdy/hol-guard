@@ -39,9 +39,7 @@ async function signalGuardCliChild(
   signal: NodeJS.Signals,
 ): Promise<boolean> {
   try {
-    if (process.platform === 'win32' && (child.exitCode !== null || child.signalCode !== null)) {
-      return false;
-    }
+    if (child.exitCode !== null || child.signalCode !== null) return true;
     if (process.platform === 'win32' && typeof child.pid === 'number') {
       if (GUARD_TASKKILL_PATH !== null) {
         const treeKilled = await new Promise<boolean>((resolve) => {

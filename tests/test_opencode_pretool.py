@@ -377,7 +377,7 @@ console.log(JSON.stringify({{ first, second, elapsedMs: performance.now() - star
     assert float(payload["elapsedMs"]) < 1_000
 
 
-def test_pretool_plugin_exited_windows_parent_latches_without_taskkill(tmp_path: Path) -> None:
+def test_pretool_plugin_exited_windows_parent_does_not_latch_without_taskkill(tmp_path: Path) -> None:
     bun = _bun_executable()
     if bun is None:
         pytest.skip("bun not installed")
@@ -449,9 +449,9 @@ console.log(JSON.stringify({{
     )
     payload = json.loads(completed.stdout)
 
-    assert payload["first"] == "HOL Guard fallback containment could not be confirmed"
-    assert payload["second"] == "HOL Guard fallback containment previously failed"
-    assert payload["spawnCalls"] == 1
+    assert payload["first"] == "HOL Guard fallback review timed out"
+    assert payload["second"] == "HOL Guard fallback review timed out"
+    assert payload["spawnCalls"] == 2
     assert float(payload["elapsedMs"]) < 1_000
 
 

@@ -144,9 +144,7 @@ function waitForGuardProcessExit(
 async function terminateGuardProcessGroup(proc: ReturnType<typeof nodeSpawn>): Promise<boolean> {
   try {
     const processGroupId = proc.pid;
-    if (process.platform === "win32" && (proc.exitCode !== null || proc.signalCode !== null)) {
-      return false;
-    }
+    if (proc.exitCode !== null || proc.signalCode !== null) return true;
     if (process.platform === "win32" && typeof processGroupId === "number") {
       if (GUARD_TASKKILL_PATH !== null) {
         const treeKilled = await new Promise<boolean>((resolve) => {
