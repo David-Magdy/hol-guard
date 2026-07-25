@@ -135,6 +135,166 @@ def test_malformed_process_command_only_blocks_proven_daemon_launchers() -> None
     assert daemon_manager_module._malformed_command_may_launch_guard(daemon_command)
 
 
+def test_schedule_guard_daemon_ensure_is_reserved_and_nonblocking(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    spawned: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _home: None)
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_claim_guard_daemon_wake_reservation",
+        lambda _home: "wake-token",
+    )
+    monkeypatch.setattr(
+        daemon_manager_module.subprocess,
+        "Popen",
+        lambda command, **kwargs: spawned.append((list(command), dict(kwargs))) or SimpleNamespace(pid=123),
+    )
+
+    url = daemon_manager_module.schedule_guard_daemon_ensure(
+        guard_home,
+        home_dir=tmp_path,
+    )
+
+    assert url == daemon_manager_module.guard_daemon_url_for_home(guard_home)
+    assert len(spawned) == 1
+    command, kwargs = spawned[0]
+    assert command[-9:] == [
+        "guard",
+        "daemon",
+        "ensure",
+        "--guard-home",
+        str(guard_home),
+        "--home",
+        str(tmp_path),
+        "--wake-token",
+        "wake-token",
+    ]
+    assert kwargs["stdin"] == daemon_manager_module.subprocess.DEVNULL
+    assert kwargs["stdout"] == daemon_manager_module.subprocess.DEVNULL
+    assert kwargs["stderr"] == daemon_manager_module.subprocess.DEVNULL
+    assert kwargs.get("start_new_session") is (os.name != "nt")
+
+
+def test_schedule_guard_daemon_ensure_suppresses_duplicate_reservation(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _home: None)
+    monkeypatch.setattr(daemon_manager_module, "_claim_guard_daemon_wake_reservation", lambda _home: None)
+    monkeypatch.setattr(
+        daemon_manager_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("reserved wake must not spawn another helper"),
+    )
+
+    assert daemon_manager_module.schedule_guard_daemon_ensure(guard_home) == (
+        daemon_manager_module.guard_daemon_url_for_home(guard_home)
+    )
+
+
+def test_schedule_guard_daemon_ensure_clears_reservation_after_spawn_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    cleared: list[tuple[Path, str]] = []
+    monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _home: None)
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_claim_guard_daemon_wake_reservation",
+        lambda _home: "wake-token",
+    )
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "clear_guard_daemon_wake_reservation",
+        lambda home, *, token: cleared.append((home, token)) or True,
+    )
+    monkeypatch.setattr(
+        daemon_manager_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("spawn failed")),
+    )
+
+    daemon_manager_module.schedule_guard_daemon_ensure(guard_home)
+
+    assert cleared == [(guard_home, "wake-token")]
+
+
+def test_schedule_guard_daemon_ensure_contains_reservation_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _home: None)
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_claim_guard_daemon_wake_reservation",
+        lambda _home: (_ for _ in ()).throw(OSError("state unavailable")),
+    )
+
+    assert daemon_manager_module.schedule_guard_daemon_ensure(guard_home) == (
+        daemon_manager_module.guard_daemon_url_for_home(guard_home)
+    )
+
+
+def test_schedule_guard_daemon_ensure_contains_spawn_and_cleanup_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _home: None)
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_claim_guard_daemon_wake_reservation",
+        lambda _home: "wake-token",
+    )
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "clear_guard_daemon_wake_reservation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("state unavailable")),
+    )
+    monkeypatch.setattr(
+        daemon_manager_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("spawn failed")),
+    )
+
+    assert daemon_manager_module.schedule_guard_daemon_ensure(
+        guard_home,
+        home_dir=tmp_path,
+    ) == daemon_manager_module.guard_daemon_url_for_home(guard_home)
+
+
+def test_schedule_guard_daemon_ensure_contains_home_validation_failure(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    missing_home = tmp_path / "missing-home"
+    cleared: list[tuple[Path, str]] = []
+    monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _home: None)
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_claim_guard_daemon_wake_reservation",
+        lambda _home: "wake-token",
+    )
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "clear_guard_daemon_wake_reservation",
+        lambda home, *, token: cleared.append((home, token)) or True,
+    )
+
+    assert daemon_manager_module.schedule_guard_daemon_ensure(
+        guard_home,
+        home_dir=missing_home,
+    ) == daemon_manager_module.guard_daemon_url_for_home(guard_home)
+    assert cleared == [(guard_home, "wake-token")]
+
+
 @pytest.mark.parametrize(
     ("scheduler_name", "state_name", "state_value"),
     [

@@ -8392,6 +8392,44 @@ url = http://127.0.0.1:8787/guard-canary
         assert output["reason"] == "opened"
         assert "notification_setup_started" not in output
 
+    def test_guard_daemon_ensure_releases_wake_reservation_after_failure(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        home_dir = tmp_path / "home"
+        guard_home = tmp_path / "guard-home"
+        cleared: list[tuple[Path, str]] = []
+
+        def fail_startup(_guard_home: Path, *, home_dir: Path | None = None) -> str:
+            assert _guard_home == guard_home
+            assert home_dir == tmp_path / "home"
+            raise RuntimeError("startup failed")
+
+        monkeypatch.setattr(guard_commands_module, "ensure_guard_daemon", fail_startup)
+        monkeypatch.setattr(
+            guard_commands_module,
+            "clear_guard_daemon_wake_reservation",
+            lambda home, *, token: cleared.append((home, token)) or True,
+        )
+
+        exit_code = main(
+            [
+                "guard",
+                "daemon",
+                "ensure",
+                "--home",
+                str(home_dir),
+                "--guard-home",
+                str(guard_home),
+                "--wake-token",
+                "wake-token",
+            ]
+        )
+
+        assert exit_code == 1
+        assert cleared == [(guard_home, "wake-token")]
+
     def test_guard_init_requires_progressive_approval_before_side_effects(self, tmp_path, capsys, monkeypatch):
         home_dir = tmp_path / "home"
         guard_home = tmp_path / "guard-home"

@@ -174,7 +174,10 @@ def _headless_approval_resolver(
             return payload
         managed_install = _managed_install_for(store, args.harness)
         approval_flow = approval_prompt_flow(args.harness, managed_install=managed_install)
-        approval_center_url = ensure_guard_daemon(context.guard_home)
+        approval_center_url = schedule_guard_daemon_ensure(
+            context.guard_home,
+            home_dir=context.home_dir,
+        )
         try:
             daemon_client = load_guard_surface_daemon_client(context.guard_home)
         except RuntimeError:

@@ -59,10 +59,13 @@ _GUARD_DAEMON_PRIVATE_FILE_MODE = 0o600
 _GUARD_DAEMON_PRIVATE_DIR_MODE = 0o700
 _APPROVAL_CENTER_LOCATOR_FILE = "approval-center-locator.json"
 _GUARD_DAEMON_PENDING_LAUNCH_FILE = "daemon-launch-pending.json"
+_GUARD_DAEMON_WAKE_RESERVATION_FILE = "daemon-wake-reservation.json"
 _GUARD_DAEMON_OWNER_LOCK_FILE = "daemon-owner.lock"
 _GUARD_DAEMON_RECOVERY_LOCK_FILE = "daemon-recovery.lock"
 _GUARD_DAEMON_STATE_MAX_BYTES = 64 * 1024
 _GUARD_DAEMON_PENDING_LAUNCH_MAX_BYTES = 4096
+_GUARD_DAEMON_WAKE_RESERVATION_MAX_BYTES = 4096
+_GUARD_DAEMON_WAKE_RESERVATION_SECONDS = 30.0
 _GUARD_DAEMON_PROCESS_QUERY_TIMEOUT_SECONDS = 5.0
 _GUARD_DAEMON_PROCESS_QUERY_OUTPUT_LIMIT_BYTES = 1024 * 1024
 _GUARD_DAEMON_PROCESS_QUERY_MONITOR_INTERVAL_SECONDS = 0.01
@@ -663,6 +666,113 @@ def guard_daemon_retirement_is_complete(guard_home: Path) -> bool:
 
 def guard_daemon_url_for_home(guard_home: Path) -> str:
     return f"http://127.0.0.1:{_configured_port(guard_home)}"
+
+
+def _guard_daemon_wake_reservation_path(guard_home: Path) -> Path:
+    return guard_home / _GUARD_DAEMON_WAKE_RESERVATION_FILE
+
+
+def _load_guard_daemon_wake_reservation(guard_home: Path) -> dict[str, object] | None:
+    path = _guard_daemon_wake_reservation_path(guard_home)
+    if not _private_daemon_file_is_valid(path):
+        return None
+    try:
+        if path.stat(follow_symlinks=False).st_size > _GUARD_DAEMON_WAKE_RESERVATION_MAX_BYTES:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _claim_guard_daemon_wake_reservation(guard_home: Path) -> str | None:
+    token = secrets.token_hex(16)
+    now = time.time()
+    _ensure_private_directory(guard_home)
+    with _guard_daemon_state_write_lock(guard_home):
+        existing = _load_guard_daemon_wake_reservation(guard_home)
+        created_at = existing.get("created_at") if isinstance(existing, dict) else None
+        if (
+            isinstance(created_at, (int, float))
+            and 0.0 <= now - float(created_at) < _GUARD_DAEMON_WAKE_RESERVATION_SECONDS
+        ):
+            return None
+        _write_private_atomic_text(
+            _guard_daemon_wake_reservation_path(guard_home),
+            json.dumps({"created_at": now, "token": token}, sort_keys=True),
+        )
+    return token
+
+
+def clear_guard_daemon_wake_reservation(guard_home: Path, *, token: str) -> bool:
+    with _guard_daemon_state_write_lock(guard_home):
+        reservation = _load_guard_daemon_wake_reservation(guard_home)
+        if not isinstance(reservation, dict) or not secrets.compare_digest(
+            str(reservation.get("token", "")),
+            token,
+        ):
+            return False
+        _write_private_atomic_text(_guard_daemon_wake_reservation_path(guard_home), "{}")
+    return True
+
+
+def schedule_guard_daemon_ensure(
+    guard_home: Path,
+    *,
+    home_dir: Path | None = None,
+) -> str:
+    """Reserve one detached daemon ensure without delaying a hook response."""
+
+    existing_url = load_guard_daemon_url(guard_home)
+    if existing_url is not None:
+        return existing_url
+    fallback_url = guard_daemon_url_for_home(guard_home)
+    try:
+        wake_token = _claim_guard_daemon_wake_reservation(guard_home)
+    except (OSError, RuntimeError, ValueError):
+        return fallback_url
+    if wake_token is None:
+        return fallback_url
+    try:
+        trusted_home = _trusted_daemon_home(home_dir)
+        command = _isolated_python_module_command(
+            "codex_plugin_scanner.cli",
+            _trusted_daemon_import_paths(),
+            [
+                "guard",
+                "daemon",
+                "ensure",
+                "--guard-home",
+                str(guard_home),
+                "--home",
+                str(trusted_home),
+                "--wake-token",
+                wake_token,
+            ],
+        )
+        launcher_env = _daemon_launcher_env(home_dir=trusted_home, guard_home=guard_home)
+        if os.name == "nt":
+            subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=launcher_env,
+                creationflags=_windows_daemon_creation_flags(allow_job_breakaway=False),
+            )
+        else:
+            subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=launcher_env,
+                start_new_session=True,
+            )
+    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError):
+        with suppress(OSError, RuntimeError, ValueError):
+            clear_guard_daemon_wake_reservation(guard_home, token=wake_token)
+    return fallback_url
 
 
 def load_guard_daemon_url(guard_home: Path) -> str | None:

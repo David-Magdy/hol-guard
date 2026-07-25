@@ -132,7 +132,10 @@ def _queue_observed_copilot_approval(
     store: GuardStore,
 ) -> list[dict[str, object]]:
     observed_policy_action = resolve_tool_call_policy_action(decision)
-    approval_center_url = ensure_guard_daemon(guard_home)
+    approval_center_url = schedule_guard_daemon_ensure(
+        guard_home,
+        home_dir=context.home_dir,
+    )
     runtime_detection = _runtime_detection(args.harness, artifact)
     evaluation_payload: dict[str, object] = {
         "artifacts": [
@@ -575,7 +578,10 @@ def _run_hook_copilot_permission_request(
             return 0
         _emit("hook", response_payload, getattr(args, "json", False))
         return 1
-    approval_center_url = ensure_guard_daemon(guard_home)
+    approval_center_url = schedule_guard_daemon_ensure(
+        guard_home,
+        home_dir=context.home_dir,
+    )
     approval_flow = get_adapter(args.harness).approval_flow(managed_install=managed_install)
     try:
         daemon_client = load_guard_surface_daemon_client(guard_home)
