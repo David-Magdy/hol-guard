@@ -209,7 +209,8 @@ async function terminateGuardProcessGroup(proc: ReturnType<typeof nodeSpawn>): P
           try {
             proc.kill("SIGKILL");
           } catch {}
-          return waitForGuardProcessExit(proc, 200);
+          await waitForGuardProcessExit(proc, 200);
+          return false;
         }
         return waitForGuardProcessExit(proc, 200);
       }

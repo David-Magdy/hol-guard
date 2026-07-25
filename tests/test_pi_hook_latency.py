@@ -326,10 +326,19 @@ console.log(JSON.stringify({
     }
 
 
-def test_pi_taskkill_pid_race_uses_bounded_child_exit_result() -> None:
+def test_pi_taskkill_failure_remains_fail_closed_after_bounded_wait() -> None:
     from codex_plugin_scanner.guard.adapters.pi_extension_cli_runtime_source import CLI_RUNTIME_HELPERS_SOURCE
 
-    assert "return waitForGuardCliChildExit(child, 200);" in CLI_RUNTIME_HELPERS_SOURCE
+    assert (
+        """if (!treeKilled) {
+          try {
+            child.kill('SIGKILL');
+          } catch {}
+          await waitForGuardCliChildExit(child, 200);
+          return false;
+        }"""
+        in CLI_RUNTIME_HELPERS_SOURCE
+    )
 
 
 @pytest.mark.skipif(
