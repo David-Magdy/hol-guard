@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import signal
 import subprocess
 import threading
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import ClassVar, Protocol, TextIO, cast, final
 
@@ -569,11 +572,13 @@ def test_blocked_worker_spawn_does_not_block_supervisor_shutdown(
     runner.close()
 
 
-def test_crashed_worker_is_replaced_and_reviews_resume(tmp_path: Path) -> None:
+def test_crashed_guardian_fails_closed_without_stale_group_cleanup(tmp_path: Path) -> None:
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=0.5)
     runner.start()
+    slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+    process_group_id = slot.process.pid
+    assert process_group_id is not None
     try:
-        slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
         slot.process.kill()
         slot.process.join(timeout=1)
         runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
@@ -589,7 +594,7 @@ def test_crashed_worker_is_replaced_and_reviews_resume(tmp_path: Path) -> None:
         deadline = time.monotonic() + 2
         while runner.stats()["ready"] != 1 and time.monotonic() < deadline:
             time.sleep(0.02)
-        recovered = runner.review(
+        retry = runner.review(
             payload={"hook_event_name": "SessionStart"},
             harness="pi",
             home_dir=tmp_path,
@@ -598,11 +603,15 @@ def test_crashed_worker_is_replaced_and_reviews_resume(tmp_path: Path) -> None:
             hook_env={},
         )
     finally:
+        with suppress(OSError, ProcessLookupError):
+            os.killpg(process_group_id, getattr(signal, "SIGKILL", 9))
+        slot.isolation_ready = False
+        slot.pre_isolation_contained = True
         runner.close()
 
     assert failed.payload is None
-    assert runner.stats()["restarts"] == 1
-    assert recovered.payload is not None
+    assert runner.stats()["restarts"] == 0
+    assert retry.reason_code == "daemon_hook_process_closed"
 
 
 def test_review_waits_briefly_for_prepared_worker_capacity(tmp_path: Path) -> None:
@@ -630,10 +639,12 @@ def test_review_waits_briefly_for_prepared_worker_capacity(tmp_path: Path) -> No
     assert result.payload is not None
 
 
-def test_close_joins_in_flight_worker_recovery(tmp_path: Path) -> None:
+def test_close_retains_worker_when_guardian_identity_is_lost(tmp_path: Path) -> None:
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=0.5)
     runner.start()
     slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+    process_group_id = slot.process.pid
+    assert process_group_id is not None
     slot.process.kill()
     slot.process.join(timeout=1)
     runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
@@ -647,10 +658,16 @@ def test_close_joins_in_flight_worker_recovery(tmp_path: Path) -> None:
         hook_env={},
     )
     supervisor = runner._supervisor_thread  # pyright: ignore[reportPrivateUsage]
-    runner.close()
+    contained = runner.close_contained()
 
-    assert runner.stats()["workers"] == 0
+    assert not contained
+    assert runner.stats()["workers"] == 1
     assert supervisor is None or not supervisor.is_alive()
+    with suppress(OSError, ProcessLookupError):
+        os.killpg(process_group_id, getattr(signal, "SIGKILL", 9))
+    slot.isolation_ready = False
+    slot.pre_isolation_contained = True
+    assert runner.close_contained()
 
 
 def test_close_retains_uncontained_worker_for_retry(
@@ -671,7 +688,7 @@ def test_close_retains_uncontained_worker_for_retry(
     with monkeypatch.context() as containment_failure:
         containment_failure.setattr(slot.process, "is_alive", lambda: True)
         containment_failure.setattr(slot.process, "join", ignore_join)
-        containment_failure.setattr(hook_worker_module, "terminate_worker_tree", ignore_terminate)
+        containment_failure.setattr(hook_worker_module, "terminate_owned_process_group", ignore_terminate)
 
         assert not runner.close_contained()
         assert runner.stats()["workers"] == 1
