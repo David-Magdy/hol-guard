@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
+from ..codex_hook_windows_job import windows_system_executable_path
 from .base import HarnessContext
 from .hook_python import (
     HookPythonExecutableIdentity,
@@ -27,9 +29,11 @@ const GUARD_PYTHON = __GUARD_PYTHON__;
 const GUARD_HOOK_LAUNCHER = __GUARD_HOOK_LAUNCHER__;
 const GUARD_HOOK_ENV = __GUARD_HOOK_ENV__;
 const GUARD_INHERIT_ENV_KEYS = __GUARD_INHERIT_ENV_KEYS__;
+const GUARD_TASKKILL_PATH = __GUARD_TASKKILL_PATH__;
 const INTERCEPT_TOOLS = new Set(__INTERCEPT_TOOLS__);
 const GUARD_HOOK_TIMEOUT_MS = 30_000;
 let fallbackInFlight = false;
+let fallbackContainmentFailed = false;
 
 type GuardFileMetadata = {
   device: string;
@@ -138,68 +142,84 @@ function waitForGuardProcessExit(
 }
 
 async function terminateGuardProcessGroup(proc: ReturnType<typeof nodeSpawn>): Promise<boolean> {
-  const processGroupId = proc.pid;
-  if (process.platform === "win32" && (proc.exitCode !== null || proc.signalCode !== null)) {
-    return false;
-  }
-  if (process.platform === "win32" && typeof processGroupId === "number") {
-    const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
-    if (systemRoot) {
-      const treeKilled = await new Promise<boolean>((resolve) => {
-        const taskkill = nodeSpawn(
-          `${systemRoot}\\System32\\taskkill.exe`,
-          ["/PID", String(processGroupId), "/T", "/F"],
-          { stdio: "ignore", windowsHide: true },
-        );
-        const watchdog = setTimeout(() => {
-          taskkill.kill("SIGKILL");
-          resolve(false);
-        }, 200);
-        taskkill.once("error", () => {
-          clearTimeout(watchdog);
-          resolve(false);
+  try {
+    const processGroupId = proc.pid;
+    if (process.platform === "win32" && (proc.exitCode !== null || proc.signalCode !== null)) {
+      return false;
+    }
+    if (process.platform === "win32" && typeof processGroupId === "number") {
+      if (GUARD_TASKKILL_PATH !== null) {
+        const treeKilled = await new Promise<boolean>((resolve) => {
+          let taskkill: ReturnType<typeof nodeSpawn>;
+          try {
+            taskkill = nodeSpawn(
+              GUARD_TASKKILL_PATH,
+              ["/PID", String(processGroupId), "/T", "/F"],
+              { stdio: "ignore", windowsHide: true },
+            );
+          } catch {
+            resolve(false);
+            return;
+          }
+          let settled = false;
+          const finish = (killed: boolean) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(watchdog);
+            resolve(killed);
+          };
+          const watchdog = setTimeout(() => {
+            try {
+              taskkill.kill("SIGKILL");
+            } catch {}
+            finish(false);
+          }, 200);
+          taskkill.once("error", () => finish(false));
+          taskkill.once("close", (status) => finish(status === 0));
         });
-        taskkill.once("close", (status) => {
-          clearTimeout(watchdog);
-          resolve(status === 0);
-        });
-      });
-      if (!treeKilled) {
-        proc.kill("SIGKILL");
-        await waitForGuardProcessExit(proc, 200);
-        return false;
+        if (!treeKilled) {
+          try {
+            proc.kill("SIGKILL");
+          } catch {}
+          await waitForGuardProcessExit(proc, 200);
+          return false;
+        }
+        return waitForGuardProcessExit(proc, 200);
       }
-      return waitForGuardProcessExit(proc, 200);
+      try {
+        proc.kill("SIGKILL");
+      } catch {}
+      await waitForGuardProcessExit(proc, 200);
+      return false;
     }
-    proc.kill("SIGKILL");
-    await waitForGuardProcessExit(proc, 200);
+    let groupSignaled = false;
+    try {
+      if (process.platform === "win32") {
+        proc.kill("SIGTERM");
+      } else if (typeof processGroupId === "number") {
+        process.kill(-processGroupId, "SIGTERM");
+        groupSignaled = true;
+      }
+    } catch {}
+    await waitForGuardProcessExit(proc, 100);
+    try {
+      if (process.platform === "win32") {
+        proc.kill("SIGKILL");
+      } else if (typeof processGroupId === "number") {
+        // The direct parent may have exited while descendants still hold hook pipes.
+        process.kill(-processGroupId, "SIGKILL");
+        groupSignaled = true;
+      }
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") {
+        groupSignaled = false;
+      }
+    }
+    const parentExited = await waitForGuardProcessExit(proc, 200);
+    return parentExited && (process.platform === "win32" || groupSignaled);
+  } catch {
     return false;
   }
-  let groupSignaled = false;
-  try {
-    if (process.platform === "win32") {
-      proc.kill("SIGTERM");
-    } else if (typeof processGroupId === "number") {
-      process.kill(-processGroupId, "SIGTERM");
-      groupSignaled = true;
-    }
-  } catch {}
-  await waitForGuardProcessExit(proc, 100);
-  try {
-    if (process.platform === "win32") {
-      proc.kill("SIGKILL");
-    } else if (typeof processGroupId === "number") {
-      // The direct parent may have exited while descendants still hold hook pipes.
-      process.kill(-processGroupId, "SIGKILL");
-      groupSignaled = true;
-    }
-  } catch (error) {
-    if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") {
-      groupSignaled = false;
-    }
-  }
-  const parentExited = await waitForGuardProcessExit(proc, 200);
-  return parentExited && (process.platform === "win32" || groupSignaled);
 }
 
 export async function spawnGuardProcess(options: {
@@ -210,6 +230,10 @@ export async function spawnGuardProcess(options: {
   stdin: string;
 }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
+    if (fallbackContainmentFailed) {
+      reject(new Error("HOL Guard fallback containment previously failed"));
+      return;
+    }
     if (fallbackInFlight) {
       reject(new Error("HOL Guard fallback review is already in progress"));
       return;
@@ -280,16 +304,23 @@ export async function spawnGuardProcess(options: {
     });
     timer = setTimeout(() => {
       timedOut = true;
-      void terminateGuardProcessGroup(proc).then((terminated) => {
-        if (!terminated) {
-          if (settled) return;
-          settled = true;
-          if (timer !== undefined) clearTimeout(timer);
-          reject(new Error("HOL Guard fallback containment could not be confirmed"));
-          return;
-        }
-        finish({ kind: "reject", error: new Error("HOL Guard fallback review timed out") });
-      });
+      const containmentFailure = () => {
+        fallbackContainmentFailed = true;
+        finish({
+          kind: "reject",
+          error: new Error("HOL Guard fallback containment could not be confirmed"),
+        });
+      };
+      void terminateGuardProcessGroup(proc).then(
+        (terminated) => {
+          if (!terminated) {
+            containmentFailure();
+            return;
+          }
+          finish({ kind: "reject", error: new Error("HOL Guard fallback review timed out") });
+        },
+        containmentFailure,
+      );
     }, remainingMs);
     timer.unref();
     proc.stdin?.on("error", () => {});
@@ -540,6 +571,10 @@ def _python_identity_payload(identity: HookPythonExecutableIdentity) -> dict[str
 def pretool_plugin_source(context: HarnessContext) -> str:
     attestation = attest_guard_hook_python(context)
     import_roots = tuple(str(root) for root in attestation.import_roots)
+    try:
+        taskkill_path = windows_system_executable_path("taskkill.exe") if os.name == "nt" else None
+    except (OSError, ValueError):
+        taskkill_path = None
     template = _PLUGIN_TEMPLATE.replace("__HOOK_ARGV_ENV__", _HOOK_ARGV_ENV)
     return (
         template.replace("__GUARD_HOME__", json.dumps(str(context.guard_home.resolve())))
@@ -547,6 +582,7 @@ def pretool_plugin_source(context: HarnessContext) -> str:
         .replace("__GUARD_HOOK_LAUNCHER__", json.dumps(_pretool_hook_launcher_code(import_roots=import_roots)))
         .replace("__GUARD_HOOK_ENV__", json.dumps(_pretool_hook_env()))
         .replace("__GUARD_INHERIT_ENV_KEYS__", json.dumps(list(_INHERIT_ENV_KEYS)))
+        .replace("__GUARD_TASKKILL_PATH__", json.dumps(taskkill_path))
         .replace("__INTERCEPT_TOOLS__", json.dumps(list(_INTERCEPT_TOOLS)))
     )
 

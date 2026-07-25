@@ -262,11 +262,15 @@ def test_pretool_plugin_source_bounds_and_serializes_fallback(tmp_path: Path) ->
     assert 'detached: process.platform !== "win32"' in source
     assert 'process.kill(-processGroupId, "SIGTERM")' in source
     assert 'process.kill(-processGroupId, "SIGKILL")' in source
-    assert 'taskkill.once("close", (status) => {' in source
-    assert "resolve(status === 0)" in source
+    assert "const GUARD_TASKKILL_PATH =" in source
+    assert "process.env.SystemRoot" not in source
+    assert "process.env.SYSTEMROOT" not in source
+    assert 'taskkill.once("close", (status) => finish(status === 0))' in source
     assert 'taskkill.kill("SIGKILL")' in source
-    assert "void terminateGuardProcessGroup(proc).then((terminated) => {" in source
+    assert "void terminateGuardProcessGroup(proc).then(" in source
     assert "if (!terminated)" in source
+    assert "fallbackContainmentFailed = true" in source
+    assert "containmentFailure," in source
     assert "fallback containment could not be confirmed" in source
     assert 'process.kill(-processGroupId, "SIGKILL")' in source
     assert "return false;" in source
@@ -297,6 +301,158 @@ console.log(overlap);
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "HOL Guard fallback review is already in progress"
+
+
+def test_pretool_plugin_cleanup_failure_settles_and_latches(tmp_path: Path) -> None:
+    bun = _bun_executable()
+    if bun is None:
+        pytest.skip("bun not installed")
+    source = pretool_plugin_source(_ctx(tmp_path))
+    source = source.replace(
+        'import { spawn as nodeSpawn } from "node:child_process";',
+        """
+const guardProcess = {
+  pid: 123,
+  exitCode: null,
+  signalCode: null,
+  stdout: undefined,
+  stderr: undefined,
+  stdin: { on: () => {}, end: () => {} },
+  on: () => {},
+  once: () => {},
+  kill: () => { throw new Error("kill refused"); },
+};
+const nodeSpawn = () => guardProcess;
+const guardPlatform = "win32";
+""",
+    )
+    source = source.replace("process.platform", "guardPlatform")
+    source = source.replace("verifyGuardPythonIdentity();", "")
+    plugin_path = tmp_path / "guard-cleanup-failure.ts"
+    _ = plugin_path.write_text(source, encoding="utf-8")
+    runner_path = tmp_path / "guard-cleanup-failure-runner.ts"
+    _ = runner_path.write_text(
+        f"""
+import {{ spawnGuardProcess }} from {json.dumps(str(plugin_path))};
+const startedAt = performance.now();
+let first = "";
+let second = "";
+try {{
+    await spawnGuardProcess({{
+      args: [],
+      cwd: ".",
+      deadlineMs: Date.now() + 100,
+      env: {{}},
+      stdin: "",
+  }});
+}} catch (error) {{
+  first = error instanceof Error ? error.message : String(error);
+}}
+try {{
+  await spawnGuardProcess({{
+    args: [],
+    cwd: ".",
+    deadlineMs: Date.now() + 10_000,
+    env: {{}},
+    stdin: "",
+  }});
+}} catch (error) {{
+  second = error instanceof Error ? error.message : String(error);
+}}
+console.log(JSON.stringify({{ first, second, elapsedMs: performance.now() - startedAt }}));
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [bun, str(runner_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    payload = json.loads(completed.stdout)
+
+    assert payload["first"] == "HOL Guard fallback containment could not be confirmed"
+    assert payload["second"] == "HOL Guard fallback containment previously failed"
+    assert float(payload["elapsedMs"]) < 1_000
+
+
+def test_pretool_plugin_exited_windows_parent_latches_without_taskkill(tmp_path: Path) -> None:
+    bun = _bun_executable()
+    if bun is None:
+        pytest.skip("bun not installed")
+    source = pretool_plugin_source(_ctx(tmp_path))
+    source = source.replace(
+        'import { spawn as nodeSpawn } from "node:child_process";',
+        """
+let spawnCalls = 0;
+const guardProcess = {
+  pid: 123,
+  exitCode: 0,
+  signalCode: null,
+  stdout: undefined,
+  stderr: undefined,
+  stdin: { on: () => {}, end: () => {} },
+  on: () => {},
+  once: () => {},
+  kill: () => true,
+};
+const nodeSpawn = () => {
+  spawnCalls += 1;
+  return guardProcess;
+};
+const guardPlatform = "win32";
+""",
+    )
+    source = source.replace("process.platform", "guardPlatform")
+    source = source.replace("const GUARD_TASKKILL_PATH = null;", 'const GUARD_TASKKILL_PATH = "taskkill.exe";')
+    source = source.replace("verifyGuardPythonIdentity();", "")
+    source += "\nexport const getSpawnCalls = () => spawnCalls;\n"
+    plugin_path = tmp_path / "guard-exited-parent.ts"
+    _ = plugin_path.write_text(source, encoding="utf-8")
+    runner_path = tmp_path / "guard-exited-parent-runner.ts"
+    _ = runner_path.write_text(
+        f"""
+import {{ getSpawnCalls, spawnGuardProcess }} from {json.dumps(str(plugin_path))};
+const startedAt = performance.now();
+const invoke = async () => {{
+  try {{
+    await spawnGuardProcess({{
+      args: [],
+      cwd: ".",
+      deadlineMs: Date.now() + 100,
+      env: {{}},
+      stdin: "",
+    }});
+    return "";
+  }} catch (error) {{
+    return error instanceof Error ? error.message : String(error);
+  }}
+}};
+const first = await invoke();
+const second = await invoke();
+console.log(JSON.stringify({{
+  first,
+  second,
+  spawnCalls: getSpawnCalls(),
+  elapsedMs: performance.now() - startedAt,
+}}));
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [bun, str(runner_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    payload = json.loads(completed.stdout)
+
+    assert payload["first"] == "HOL Guard fallback containment could not be confirmed"
+    assert payload["second"] == "HOL Guard fallback containment previously failed"
+    assert payload["spawnCalls"] == 1
+    assert float(payload["elapsedMs"]) < 1_000
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process-group descendant assertion requires POSIX")

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import os
 import subprocess
 from ctypes import wintypes
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from typing import Protocol, cast
 
 _CREATE_SUSPENDED = 0x00000004
 _JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800
@@ -17,6 +19,35 @@ _TH32CS_SNAPTHREAD = 0x00000004
 _THREAD_SUSPEND_RESUME = 0x0002
 _RESUME_THREAD_FAILED = 0xFFFFFFFF
 _ERROR_NO_MORE_FILES = 18
+
+
+class _WindowsDirectoryFunction(Protocol):
+    argtypes: list[object]
+    restype: object
+
+    def __call__(self, buffer: object, size: int) -> int: ...
+
+
+class _WindowsDirectoryKernel32(Protocol):
+    GetSystemWindowsDirectoryW: _WindowsDirectoryFunction
+
+
+def windows_system_executable_path(filename: str) -> str:
+    """Resolve a system executable without trusting PATH or environment variables."""
+
+    if os.name != "nt":
+        raise OSError("Windows system APIs are unavailable")
+    if PureWindowsPath(filename).name != filename or filename in {"", ".", ".."}:
+        raise ValueError("Windows system executable must be a filename")
+    buffer = ctypes.create_unicode_buffer(32768)
+    kernel32 = cast(_WindowsDirectoryKernel32, _kernel32())
+    get_system_windows_directory = kernel32.GetSystemWindowsDirectoryW
+    get_system_windows_directory.argtypes = [wintypes.LPWSTR, wintypes.DWORD]
+    get_system_windows_directory.restype = wintypes.DWORD
+    length = get_system_windows_directory(buffer, len(buffer))
+    if length == 0 or length >= len(buffer):
+        raise OSError(ctypes.get_last_error(), "GetSystemWindowsDirectoryW failed")
+    return str(PureWindowsPath(buffer.value, "System32", filename))
 
 
 class _BasicLimitInformation(ctypes.Structure):

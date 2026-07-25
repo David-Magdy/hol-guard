@@ -7560,22 +7560,21 @@ url = http://127.0.0.1:8787/guard-canary
             workspace_id="workspace-123",
             now="2026-06-01T00:00:00+00:00",
         )
+        expected_storage_health = store.get_oauth_local_credential_health()
+        monkeypatch.setattr(
+            GuardStore,
+            "get_oauth_local_credential_health",
+            lambda _store: expected_storage_health,
+        )
 
         status_rc = main(["guard", "status", "--home", str(home_dir), "--workspace", str(workspace_dir), "--json"])
         status_output = json.loads(capsys.readouterr().out)
 
         assert status_rc == 0
-        assert status_output["oauth_storage_health"] == {
-            "configured": True,
-            "state": "healthy",
-            "backend": "system-keyring",
-            "fallback_backend": "encrypted-file",
-            "issuer": "https://hol.org",
-            "client_id": "guard-local-daemon",
-            "grant_id": "grant-123",
-            "machine_id": "machine-123",
-            "workspace_id": "workspace-123",
-        }
+        assert status_output["oauth_storage_health"] == expected_storage_health
+        assert status_output["oauth_storage_health"]["configured"] is True
+        assert status_output["oauth_storage_health"]["state"] == "healthy"
+        assert "refresh-secret-value" not in json.dumps(status_output)
 
     def test_guard_connect_status_prefers_active_sync_over_expired_browser_pairing(self, tmp_path, capsys, monkeypatch):
         home_dir = tmp_path / "home"

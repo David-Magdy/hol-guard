@@ -389,14 +389,14 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     hook_process_runner: HookProcessRunner
     runtime_heartbeat: RuntimeHeartbeatWriter
 
-    def handle_error(self, request: socket.socket, client_address: tuple[str, int]) -> None:
+    def handle_error(self, request: object, client_address: tuple[str, int]) -> None:
         """Suppress expected peer disconnects without hiding server defects."""
 
         import sys
 
         if isinstance(sys.exc_info()[1], _PEER_DISCONNECT_ERRORS):
             return
-        super().handle_error(request, client_address)
+        super().handle_error(cast(socket.socket, request), client_address)
 
     def __init__(
         self,
@@ -480,7 +480,8 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
             opener=webbrowser.open,
         )
 
-    def process_request(self, request: socket.socket, client_address: tuple[str, int]) -> None:
+    def process_request(self, request: object, client_address: tuple[str, int]) -> None:
+        request_socket = cast(socket.socket, request)
         admitted = self.connection_capacity.acquire(blocking=False)
         if not admitted:
             self._evict_oldest_unclassified_connection()
@@ -491,24 +492,25 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         if not admitted:
             with self.request_capacity_lock:
                 self.rejected_requests += 1
-            self.shutdown_request(request)
+            self.shutdown_request(request_socket)
             return
         with suppress(OSError):
-            request.settimeout(_DAEMON_REQUEST_READ_TIMEOUT_SECONDS)
-        self._register_unclassified_connection(request)
+            request_socket.settimeout(_DAEMON_REQUEST_READ_TIMEOUT_SECONDS)
+        self._register_unclassified_connection(request_socket)
         with self.request_capacity_lock:
             self.active_requests += 1
         try:
-            super().process_request(request, client_address)
+            super().process_request(request_socket, client_address)
         except BaseException:
-            self._release_request_capacity(request)
+            self._release_request_capacity(request_socket)
             raise
 
-    def process_request_thread(self, request: socket.socket, client_address: tuple[str, int]) -> None:
+    def process_request_thread(self, request: object, client_address: tuple[str, int]) -> None:
+        request_socket = cast(socket.socket, request)
         try:
-            super().process_request_thread(request, client_address)
+            super().process_request_thread(request_socket, client_address)
         finally:
-            self._release_request_capacity(request)
+            self._release_request_capacity(request_socket)
 
     def _release_request_capacity(self, request: socket.socket) -> None:
         self.classify_connection(request)

@@ -358,29 +358,7 @@ def _hook_worker_main(connection: Connection, configured_guard_home: str | None)
         "codex_plugin_scanner.guard.config",
     ):
         _ = importlib.import_module(module_name)
-    from ..store import GuardStore
-
     stores: dict[str, GuardStore] = {}
-    if configured_guard_home is not None:
-        with suppress(Exception):
-            stores[configured_guard_home] = GuardStore(Path(configured_guard_home))
-        with suppress(Exception):
-            _ = _run_resident_hook_request(
-                {
-                    "payload": {
-                        "hook_event_name": "PreToolUse",
-                        "tool_name": "Bash",
-                        "tool_input": {"command": "true"},
-                    },
-                    "hook_env": {},
-                    "harness": "pi",
-                    "home_dir": str(Path.home()),
-                    "guard_home": configured_guard_home,
-                    "workspace": None,
-                },
-                stores=stores,
-                configured_guard_home=configured_guard_home,
-            )
     connection.send(("ready", None))
     while True:
         try:

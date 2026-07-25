@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import os
+import hashlib
 import subprocess
 import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from types import SimpleNamespace
-from typing import TextIO, final
+from typing import Protocol, TextIO, cast, final
 
 import pytest
 
+from codex_plugin_scanner.guard import codex_hook_windows_job as windows_job_module
 from codex_plugin_scanner.guard.codex_hook_launch_runtime import (
     BoundedHookProcessResult,
     isolated_daemon_start_command,
@@ -27,7 +27,37 @@ from codex_plugin_scanner.guard.daemon import hook_process_worker as hook_worker
 from codex_plugin_scanner.guard.daemon.hook_process_protocol import capture_hook_command
 from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessRunner
 from codex_plugin_scanner.guard.daemon.hook_process_worker import HookWorkerSlot
+from codex_plugin_scanner.guard.models import GuardApprovalRequest
 from codex_plugin_scanner.guard.store import GuardStore
+
+
+class _MutableUnicodeBuffer(Protocol):
+    value: str
+
+
+def test_windows_taskkill_path_uses_system_directory_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeGetSystemWindowsDirectory:
+        def __init__(self) -> None:
+            self.argtypes: list[object] = []
+            self.restype: object = None
+
+        def __call__(self, buffer: object, size: int) -> int:
+            assert size == 32768
+            cast(_MutableUnicodeBuffer, buffer).value = r"D:\Windows"
+            return len(r"D:\Windows")
+
+    class FakeKernel32:
+        def __init__(self) -> None:
+            self.GetSystemWindowsDirectoryW = FakeGetSystemWindowsDirectory()
+
+    monkeypatch.setattr(windows_job_module.os, "name", "nt")
+    monkeypatch.setattr(windows_job_module, "_kernel32", lambda: FakeKernel32())
+
+    assert windows_job_module.windows_system_executable_path("taskkill.exe") == (r"D:\Windows\System32\taskkill.exe")
+    with pytest.raises(ValueError, match="must be a filename"):
+        windows_job_module.windows_system_executable_path(r"..\taskkill.exe")
 
 
 def test_windows_worker_timeout_terminates_entire_process_tree(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -49,14 +79,11 @@ def test_windows_worker_timeout_terminates_entire_process_tree(monkeypatch: pyte
         def kill(self) -> None:
             pytest.fail("taskkill must terminate the Windows worker tree")
 
+    monkeypatch.setattr(hook_worker_module.os, "name", "nt")
     monkeypatch.setattr(
         hook_worker_module,
-        "os",
-        SimpleNamespace(
-            name="nt",
-            environ={"SYSTEMROOT": r"C:\Windows"},
-            path=os.path,
-        ),
+        "windows_system_executable_path",
+        lambda _filename: r"C:\Windows\System32\taskkill.exe",
     )
 
     def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -67,7 +94,7 @@ def test_windows_worker_timeout_terminates_entire_process_tree(monkeypatch: pyte
 
     hook_worker_module.terminate_worker_tree(FakeProcess(), 15)
 
-    assert commands == [[r"C:\Windows/System32/taskkill.exe", "/PID", "4321", "/T", "/F"]]
+    assert commands == [[r"C:\Windows\System32\taskkill.exe", "/PID", "4321", "/T", "/F"]]
 
 
 def test_windows_hook_job_breakaway_is_recovery_only() -> None:
@@ -99,14 +126,11 @@ def test_windows_worker_taskkill_failure_falls_back_to_direct_termination(
         def kill(self) -> None:
             pytest.fail("SIGTERM fallback should terminate the direct worker")
 
+    monkeypatch.setattr(hook_worker_module.os, "name", "nt")
     monkeypatch.setattr(
         hook_worker_module,
-        "os",
-        SimpleNamespace(
-            name="nt",
-            environ={"SYSTEMROOT": r"C:\Windows"},
-            path=os.path,
-        ),
+        "windows_system_executable_path",
+        lambda _filename: r"C:\Windows\System32\taskkill.exe",
     )
 
     def failed_taskkill(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -127,6 +151,61 @@ def test_worker_request_returns_parsed_hook_json() -> None:
     result = capture_hook_command(run)
 
     assert result == {"payload": {"decision": "deny"}, "reason_code": None}
+
+
+def test_worker_readiness_does_not_touch_guard_state(tmp_path: Path) -> None:
+    guard_home = tmp_path / "guard-home"
+    store = GuardStore(guard_home)
+    store.upsert_runtime_state(
+        session_id="sentinel-session",
+        daemon_host="127.0.0.1",
+        daemon_port=9876,
+        started_at="2026-07-25T00:00:00+00:00",
+        last_heartbeat_at="2026-07-25T00:00:01+00:00",
+    )
+    store.add_approval_request(
+        GuardApprovalRequest(
+            request_id="sentinel-request",
+            harness="pi",
+            artifact_id="pi:sentinel",
+            artifact_name="Sentinel",
+            artifact_hash="sentinel-hash",
+            policy_action="require-reapproval",
+            recommended_scope="artifact",
+            changed_fields=("command",),
+            source_scope="project",
+            config_path="/sentinel/config",
+            review_command="hol-guard review sentinel-request",
+            approval_url="http://127.0.0.1/approve/sentinel-request",
+        ),
+        "2026-07-25T00:00:02+00:00",
+    )
+    runtime_state = store.get_runtime_state()
+    receipts = store.list_receipts()
+    approval_requests = store.list_approval_requests(status=None)
+
+    def state_digests() -> dict[str, str]:
+        return {
+            path.relative_to(guard_home).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in guard_home.rglob("*")
+            if path.is_file()
+        }
+
+    before = state_digests()
+    runner = HookProcessRunner(
+        guard_home=guard_home,
+        process_limit=2,
+        timeout_seconds=1,
+    )
+    try:
+        runner.start()
+        assert runner.stats()["ready"] == 2
+        assert state_digests() == before
+        assert store.get_runtime_state() == runtime_state
+        assert store.list_receipts() == receipts
+        assert store.list_approval_requests(status=None) == approval_requests
+    finally:
+        runner.close()
 
 
 def test_worker_request_fails_safe_on_invalid_json() -> None:

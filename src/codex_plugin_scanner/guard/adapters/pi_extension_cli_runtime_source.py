@@ -38,40 +38,70 @@ async function signalGuardCliChild(
   child: ReturnType<typeof spawn>,
   signal: NodeJS.Signals,
 ): Promise<boolean> {
-  if (process.platform === 'win32' && typeof child.pid === 'number') {
-    const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
-    if (systemRoot) {
-      const treeKilled = await new Promise<boolean>((resolve) => {
-        const taskkill = spawn(
-          `${systemRoot}\\System32\\taskkill.exe`,
-          ['/PID', String(child.pid), '/T', '/F'],
-          { stdio: 'ignore', windowsHide: true },
-        );
-        const watchdog = setTimeout(() => {
-          taskkill.kill('SIGKILL');
-          resolve(false);
-        }, 200);
-        taskkill.once('error', () => {
-          clearTimeout(watchdog);
-          resolve(false);
-        });
-        taskkill.once('close', (status) => {
-          clearTimeout(watchdog);
-          resolve(status === 0);
-        });
-      });
-      if (!treeKilled) child.kill('SIGKILL');
-      return waitForGuardCliChildExit(child, 200);
+  try {
+    if (process.platform === 'win32' && (child.exitCode !== null || child.signalCode !== null)) {
+      return false;
     }
-  }
-  if (process.platform !== 'win32' && typeof child.pid === 'number') {
+    if (process.platform === 'win32' && typeof child.pid === 'number') {
+      if (GUARD_TASKKILL_PATH !== null) {
+        const treeKilled = await new Promise<boolean>((resolve) => {
+          let taskkill: ReturnType<typeof spawn>;
+          try {
+            taskkill = spawn(
+              GUARD_TASKKILL_PATH,
+              ['/PID', String(child.pid), '/T', '/F'],
+              { stdio: 'ignore', windowsHide: true },
+            );
+          } catch {
+            resolve(false);
+            return;
+          }
+          let settled = false;
+          const finish = (killed: boolean) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(watchdog);
+            resolve(killed);
+          };
+          const watchdog = setTimeout(() => {
+            try {
+              taskkill.kill('SIGKILL');
+            } catch {}
+            finish(false);
+          }, 200);
+          taskkill.once('error', () => finish(false));
+          taskkill.once('close', (status) => finish(status === 0));
+        });
+        if (!treeKilled) {
+          try {
+            child.kill('SIGKILL');
+          } catch {}
+          await waitForGuardCliChildExit(child, 200);
+          return false;
+        }
+        return waitForGuardCliChildExit(child, 200);
+      }
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+      await waitForGuardCliChildExit(child, 200);
+      return false;
+    }
+    if (process.platform !== 'win32' && typeof child.pid === 'number') {
+      try {
+        process.kill(-child.pid, signal);
+        return waitForGuardCliChildExit(child, 200);
+      } catch {}
+    }
     try {
-      process.kill(-child.pid, signal);
-      return waitForGuardCliChildExit(child, 200);
-    } catch {}
+      child.kill(signal);
+    } catch {
+      return false;
+    }
+    return waitForGuardCliChildExit(child, 200);
+  } catch {
+    return false;
   }
-  child.kill(signal);
-  return waitForGuardCliChildExit(child, 200);
 }
 
 function runGuardCliCommand(
@@ -111,29 +141,38 @@ function runGuardCliCommand(
     }
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
-      void signalGuardCliChild(child, 'SIGTERM').then(() => {
-        escalationHandle = setTimeout(() => {
-          void signalGuardCliChild(child, 'SIGKILL').then((killed) => {
-            if (!killed) {
-              guardCliContainmentFailed = true;
-              settle({
-                status: null,
-                stdout,
-                stderr,
-                error: Object.assign(
-                  new Error('Guard child process containment could not be confirmed.'),
-                  { code: 'ECONTAINMENT' },
-                ),
-              });
-              return;
-            }
-            forcedSettleHandle = setTimeout(
-              () => settle({ status: null, stdout, stderr, error: timeoutError() }),
-              100,
+      const containmentFailure = () => {
+        guardCliContainmentFailed = true;
+        settle({
+          status: null,
+          stdout,
+          stderr,
+          error: Object.assign(
+            new Error('Guard child process containment could not be confirmed.'),
+            { code: 'ECONTAINMENT' },
+          ),
+        });
+      };
+      void signalGuardCliChild(child, 'SIGTERM').then(
+        () => {
+          escalationHandle = setTimeout(() => {
+            void signalGuardCliChild(child, 'SIGKILL').then(
+              (killed) => {
+                if (!killed) {
+                  containmentFailure();
+                  return;
+                }
+                forcedSettleHandle = setTimeout(
+                  () => settle({ status: null, stdout, stderr, error: timeoutError() }),
+                  100,
+                );
+              },
+              containmentFailure,
             );
-          });
-        }, 100);
-      });
+          }, 100);
+        },
+        containmentFailure,
+      );
     }, timeoutMs);
     child.stdout?.setEncoding('utf8');
     child.stderr?.setEncoding('utf8');

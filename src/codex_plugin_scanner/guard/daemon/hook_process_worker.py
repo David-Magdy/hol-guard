@@ -10,6 +10,8 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from ..codex_hook_windows_job import windows_system_executable_path
+
 
 class WorkerProcess(Protocol):
     @property
@@ -48,11 +50,9 @@ def terminate_worker_tree(process: WorkerProcess, signal_number: int) -> None:
     """Signal one isolated worker and its descendants."""
 
     if os.name == "nt" and process.pid is not None:
-        system_root = os.environ.get("SYSTEMROOT")
-        taskkill = os.path.join(system_root, "System32", "taskkill.exe") if system_root else "taskkill.exe"
         try:
             result = subprocess.run(
-                [taskkill, "/PID", str(process.pid), "/T", "/F"],
+                [windows_system_executable_path("taskkill.exe"), "/PID", str(process.pid), "/T", "/F"],
                 check=False,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,

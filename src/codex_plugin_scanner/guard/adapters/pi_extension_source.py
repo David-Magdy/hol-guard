@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
+from ..codex_hook_windows_job import windows_system_executable_path
 from ..daemon.manager import GUARD_DAEMON_COMPATIBILITY_VERSION
 from .pi_extension_approval_source import APPROVAL_RESUME_HELPERS_SOURCE
 from .pi_extension_cli_runtime_source import CLI_RUNTIME_HELPERS_SOURCE
@@ -61,6 +63,11 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
     )
     recovery_command_json = json.dumps(str(Path(sys.executable).expanduser().absolute()))
     recovery_args_json = json.dumps(["-I", "-c", recovery_bootstrap])
+    try:
+        taskkill_path = windows_system_executable_path("taskkill.exe") if os.name == "nt" else None
+    except (OSError, ValueError):
+        taskkill_path = None
+    taskkill_path_json = json.dumps(taskkill_path)
     return (
         'import { spawn } from "node:child_process";\n'
         + 'import { createCipheriv, createHash, randomBytes } from "node:crypto";\n'  # pyright: ignore[reportImplicitStringConcatenation]
@@ -73,6 +80,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         f"const GUARD_CLI_WRAPPER_ARGS = {cli_wrapper_args_json};\n"
         f"const GUARD_DAEMON_RECOVERY_COMMAND = {recovery_command_json};\n"
         f"const GUARD_DAEMON_RECOVERY_ARGS = {recovery_args_json};\n"
+        f"const GUARD_TASKKILL_PATH = {taskkill_path_json};\n"
         f"const GUARD_ARGS = {guard_args_json};\n"
         f"const GUARD_HOME = {guard_home_json};\n"
         f"const GUARD_HOME_DIR = {home_dir_json};\n"

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
+from codex_plugin_scanner.guard import codex_hook_launch_runtime as launch_runtime
 from codex_plugin_scanner.guard.adapters import codex as codex_adapter
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.adapters.codex import CodexHarnessAdapter
@@ -312,6 +315,64 @@ def test_isolated_process_closes_descendant_held_pipes_after_parent_exit(tmp_pat
     assert result.returncode == 0
     assert elapsed < 1
     assert not marker.exists()
+
+
+def test_isolated_process_returns_when_tree_termination_cannot_be_confirmed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubbornProcess:
+        pid = 987_654
+        stdin = io.BytesIO()
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise subprocess.TimeoutExpired(["stubborn"], timeout if timeout is not None else 0.0)
+
+        def kill(self) -> None:
+            raise OSError("kill refused")
+
+    spawns = 0
+
+    def stubborn_popen(*_args: object, **_kwargs: object) -> StubbornProcess:
+        nonlocal spawns
+        spawns += 1
+        return StubbornProcess()
+
+    def refuse_killpg(*_args: object) -> None:
+        raise OSError("kill refused")
+
+    monkeypatch.setattr(launch_runtime, "_HOOK_PROCESS_CONTAINMENT_FAILED", threading.Event())
+    monkeypatch.setattr(launch_runtime.subprocess, "Popen", stubborn_popen)
+    monkeypatch.setattr(launch_runtime.os, "killpg", refuse_killpg)
+
+    started_at = time.monotonic()
+    result = run_isolated_hook_process(
+        ["stubborn"],
+        input_text="",
+        cwd=tmp_path,
+        environment={},
+        timeout_seconds=0,
+    )
+    elapsed = time.monotonic() - started_at
+    latched = run_isolated_hook_process(
+        ["must-not-spawn"],
+        input_text="",
+        cwd=tmp_path,
+        environment={},
+        timeout_seconds=10,
+    )
+
+    assert elapsed < 2
+    assert result.returncode is None
+    assert result.timed_out is True
+    assert result.containment_failed is True
+    assert latched.containment_failed is True
+    assert spawns == 1
 
 
 @pytest.fixture(autouse=True)
