@@ -352,7 +352,7 @@ def test_deferred_runner_serves_first_worker_before_backfilling(tmp_path: Path) 
     assert runner.stats()["workers"] == 0
 
 
-def test_deferred_runner_does_not_backfill_during_active_review(
+def test_deferred_runner_bounds_backfill_deferral_during_active_reviews(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -366,22 +366,19 @@ def test_deferred_runner_does_not_backfill_during_active_review(
         return original_start(generation=generation)
 
     monkeypatch.setattr(runner, "_start_slot", counted_start)
+    monkeypatch.setattr(hook_runner_module, "_HOOK_PROCESS_BACKFILL_MAX_DEFERRAL_SECONDS", 0.2)
     try:
         runner.start(defer_backfill=True)
         with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
-            runner._active_reviews = 1  # pyright: ignore[reportPrivateUsage]
+            generation = runner._generation  # pyright: ignore[reportPrivateUsage]
+            runner._active_reviews[generation] = 1  # pyright: ignore[reportPrivateUsage]
         runner.enable_full_capacity(delay_seconds=0)
         time.sleep(0.1)
         assert attempts == 1
-
-        with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
-            runner._active_reviews = 0  # pyright: ignore[reportPrivateUsage]
-        runner._recovery_event.set()  # pyright: ignore[reportPrivateUsage]
-        deadline = time.monotonic() + 3
-        while runner.stats()["ready"] != 2 and time.monotonic() < deadline:
-            time.sleep(0.02)
-        assert runner.stats()["ready"] == 2
+        assert runner.wait_for_capacity(minimum_workers=2, timeout_seconds=5)
     finally:
+        with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
+            runner._active_reviews.clear()  # pyright: ignore[reportPrivateUsage]
         runner.close()
 
 
@@ -449,9 +446,7 @@ def test_transient_initial_worker_failure_replenishes_capacity(
     review_payload: dict[str, object] | None = None
     try:
         runner.start()
-        deadline = time.monotonic() + 3
-        while runner.stats()["ready"] != 1 and time.monotonic() < deadline:
-            time.sleep(0.02)
+        assert runner.wait_for_capacity(minimum_workers=1, timeout_seconds=10)
         ready_workers = runner.stats()["ready"]
         review_payload = runner.review(
             payload={"hook_event_name": "SessionStart"},
@@ -551,7 +546,7 @@ def test_blocked_worker_spawn_does_not_block_supervisor_shutdown(
     runner.start()
     assert spawn_started.wait(timeout=1)
     supervisor = runner._supervisor_thread  # pyright: ignore[reportPrivateUsage]
-    spawn_thread = runner._spawn_thread  # pyright: ignore[reportPrivateUsage]
+    spawn_thread = next(iter(runner._spawn_threads))  # pyright: ignore[reportPrivateUsage]
 
     started = time.monotonic()
     runner.close()
@@ -560,18 +555,16 @@ def test_blocked_worker_spawn_does_not_block_supervisor_shutdown(
     assert supervisor is not None and not supervisor.is_alive()
     assert spawn_thread is not None and spawn_thread.is_alive()
     assert elapsed < 0.5
-    monkeypatch.setattr(hook_runner_module, "_HOOK_PROCESS_READY_TIMEOUT_SECONDS", 5.0)
-    runner.start()
-    deadline = time.monotonic() + 3
-    while runner.stats()["ready"] != 1 and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert runner.stats()["ready"] == 1
+    with pytest.raises(RuntimeError, match="previous hook worker generation is not contained"):
+        runner.start()
     release_spawn.set()
     spawn_thread.join(timeout=2)
-    deadline = time.monotonic() + 1
-    while runner.stats()["workers"] != 1 and time.monotonic() < deadline:
-        time.sleep(0.02)
     assert not spawn_thread.is_alive()
+    assert runner.close_contained()
+
+    monkeypatch.setattr(hook_runner_module, "_HOOK_PROCESS_READY_TIMEOUT_SECONDS", 5.0)
+    runner.start()
+    assert runner.wait_for_capacity(minimum_workers=1, timeout_seconds=10)
     assert runner.stats()["workers"] == 1
     runner.close()
 
