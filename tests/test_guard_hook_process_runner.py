@@ -480,6 +480,33 @@ def test_close_joins_in_flight_worker_recovery(tmp_path: Path) -> None:
     assert supervisor is None or not supervisor.is_alive()
 
 
+def test_close_retains_uncontained_worker_for_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=0.5)
+    runner.start()
+    slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+    runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
+
+    def ignore_join(timeout: float | None = None) -> None:
+        del timeout
+
+    def ignore_terminate(_process: object, _signal: int) -> None:
+        return
+
+    with monkeypatch.context() as containment_failure:
+        containment_failure.setattr(slot.process, "is_alive", lambda: True)
+        containment_failure.setattr(slot.process, "join", ignore_join)
+        containment_failure.setattr(hook_runner_module, "terminate_worker_tree", ignore_terminate)
+
+        assert not runner.close_contained()
+        assert runner.stats()["workers"] == 1
+
+    assert runner.close_contained()
+    assert runner.stats()["workers"] == 0
+
+
 def test_runner_rejects_invalid_limits() -> None:
     with pytest.raises(ValueError, match="process_limit"):
         _ = HookProcessRunner(process_limit=0)

@@ -1,5 +1,3 @@
-"""Prewarmed, killable process isolation for daemon hook evaluation."""
-
 from __future__ import annotations
 
 import argparse
@@ -49,8 +47,6 @@ _KILL_SIGNAL = getattr(signal, "SIGKILL", 9)
 
 @final
 class HookProcessRunner:
-    """Run hook policy in prewarmed workers outside the HTTP supervisor."""
-
     def __init__(
         self,
         *,
@@ -188,21 +184,20 @@ class HookProcessRunner:
             }
 
     def close(self) -> None:
-        """Stop every worker without waiting on hook code."""
+        _ = self.close_contained()
 
+    def close_contained(self) -> bool:
         with self._state_lock:
-            if self._closed:
-                return
             self._closed = True
             self._started = False
             self._generation += 1
             slots = list(self._all_slots.values())
-            self._all_slots.clear()
             supervisor = self._supervisor_thread
             spawn_thread = self._spawn_thread
             self._recovery_event.set()
+        contained = True
         for slot in slots:
-            self._retire_slot(slot, graceful=True)
+            contained = self._retire_slot(slot, graceful=True) and contained
         if supervisor is not None:
             supervisor.join(timeout=1.0)
         if spawn_thread is not None:
@@ -212,6 +207,10 @@ class HookProcessRunner:
                 self._supervisor_thread = None
             if spawn_thread is not None and not spawn_thread.is_alive():
                 self._spawn_thread = None
+            contained = (
+                contained and not self._all_slots and self._supervisor_thread is None and self._spawn_thread is None
+            )
+        return contained
 
     def _start_slot(self, *, generation: int) -> HookWorkerSlot:
         context = multiprocessing.get_context("spawn")
@@ -232,10 +231,9 @@ class HookProcessRunner:
         slot = HookWorkerSlot(process=process, connection=parent_connection)
         with self._state_lock:
             stale = self._closed or generation != self._generation
-            if not stale:
-                self._all_slots[process.pid or id(slot)] = slot
+            self._all_slots[process.pid or id(slot)] = slot
         if stale:
-            self._retire_slot(slot)
+            _ = self._retire_slot(slot)
         return slot
 
     @staticmethod
@@ -274,14 +272,18 @@ class HookProcessRunner:
                 continue
             if not self._slot_became_ready(replacement, _HOOK_PROCESS_READY_TIMEOUT_SECONDS):
                 self._increment_metric("failures")
-                self._retire_slot(replacement)
+                if not self._retire_slot(replacement):
+                    self._mark_containment_failed()
+                    return
                 _ = self._recovery_event.wait(timeout=retry_delay)
                 retry_delay = min(retry_delay * 2, _HOOK_PROCESS_RETRY_MAX_SECONDS)
                 continue
             try:
                 self._slots.put_nowait(replacement)
             except queue.Full:
-                self._retire_slot(replacement)
+                if not self._retire_slot(replacement):
+                    self._mark_containment_failed()
+                    return
             retry_delay = 0.05
 
     def _start_slot_interruptibly(self, generation: int) -> HookWorkerSlot | None:
@@ -315,9 +317,20 @@ class HookProcessRunner:
         return outcome
 
     def _replace_slot_async(self, slot: HookWorkerSlot) -> None:
-        self._retire_slot(slot)
+        contained = self._retire_slot(slot)
+        if not contained:
+            self._mark_containment_failed()
+            return
         self._increment_metric("restarts")
         self._recovery_event.set()
+
+    def _mark_containment_failed(self) -> None:
+        with self._state_lock:
+            self._closed = True
+            self._started = False
+            self._generation += 1
+        self._recovery_event.set()
+        self._increment_metric("failures")
 
     def _increment_metric(self, metric: str) -> None:
         with self._metrics_lock:
@@ -328,13 +341,11 @@ class HookProcessRunner:
             elif metric == "restarts":
                 self._restarts += 1
 
-    def _retire_slot(self, slot: HookWorkerSlot, *, graceful: bool = False) -> None:
+    def _retire_slot(self, slot: HookWorkerSlot, *, graceful: bool = False) -> bool:
         with slot.retire_lock:
             if slot.retired:
-                return
+                return not slot.process.is_alive()
             slot.retired = True
-        with self._state_lock:
-            _ = self._all_slots.pop(slot.process.pid or id(slot), None)
         if graceful and slot.process.is_alive():
             with suppress(BrokenPipeError, OSError):
                 slot.connection.send(("stop", None))
@@ -345,7 +356,16 @@ class HookProcessRunner:
         if slot.process.is_alive():
             terminate_worker_tree(slot.process, _KILL_SIGNAL)
             slot.process.join(timeout=0.5)
-        slot.connection.close()
+        contained = not slot.process.is_alive()
+        if contained:
+            with self._state_lock:
+                _ = self._all_slots.pop(slot.process.pid or id(slot), None)
+            with suppress(OSError):
+                slot.connection.close()
+        else:
+            with slot.retire_lock:
+                slot.retired = False
+        return contained
 
 
 def _hook_worker_main(connection: Connection, configured_guard_home: str | None) -> None:

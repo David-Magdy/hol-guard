@@ -259,7 +259,6 @@ _SUPPLY_CHAIN_CONNECT_WAIT_TIMEOUT_SECONDS = 180
 _LOCAL_DASHBOARD_SESSION_REFRESH_GRACE_SECONDS = 7 * 24 * 60 * 60
 _DEFAULT_HEADLESS_CLOUD_SYNC_INTERVAL_SECONDS = 30.0
 _DEFAULT_HEADLESS_CLOUD_SYNC_BACKOFF_SECONDS = 10.0
-_AIBOM_REFRESH_STOP_JOIN_TIMEOUT_SECONDS = 5.0
 
 
 class _HookPathValidationError(ValueError):
@@ -556,12 +555,14 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         )
         self.unclassified_watchdog_thread.start()
 
-    def stop_unclassified_watchdog(self) -> None:
+    def stop_unclassified_watchdog(self) -> bool:
         self.unclassified_watchdog_stop.set()
         thread = self.unclassified_watchdog_thread
         if thread is not None:
             thread.join(timeout=1.0)
-        self.unclassified_watchdog_thread = None
+        if thread is None or not thread.is_alive():
+            self.unclassified_watchdog_thread = None
+        return self.unclassified_watchdog_thread is None
 
     def _watch_unclassified_connections(self) -> None:
         while not self.unclassified_watchdog_stop.wait(_DAEMON_UNCLASSIFIED_WATCHDOG_POLL_SECONDS):
@@ -6768,37 +6769,21 @@ class GuardDaemonServer:
         self._shutdown_started.set()
         self._server.shutdown()
         self._server.server_close()
-        self._finish_service()
+        _ = self._finish_service()
         if self._thread is not None:
             self._thread.join(timeout=5)
-            self._thread = None
-        if self._watchdog_thread is not None:
-            self._watchdog_thread.join(timeout=5)
-            self._watchdog_thread = None
-        if self._bundle_refresh_thread is not None:
-            self._bundle_refresh_thread.join(timeout=5)
-            self._bundle_refresh_thread = None
-        if self._aibom_refresh_thread is not None:
-            self._aibom_refresh_thread.join(timeout=_AIBOM_REFRESH_STOP_JOIN_TIMEOUT_SECONDS)
-            if not self._aibom_refresh_thread.is_alive():
-                self._aibom_refresh_thread = None
-        if self._headless_cloud_sync_thread is not None:
-            self._headless_cloud_sync_thread.join(timeout=5)
-            self._headless_cloud_sync_thread = None
-        self._join_command_activity_maintenance()
-        self._command_queue_worker = stop_command_queue_worker(self._command_queue_worker)
-        self._live_request_sync_worker = stop_cloud_sync_sync_worker(self._live_request_sync_worker)
+            if not self._thread.is_alive():
+                self._thread = None
 
     def _begin_service(self) -> None:
         self._owner_lock = acquire_guard_daemon_owner_lock(self._server.store.guard_home)
         try:
             self._begin_owned_service()
-        except BaseException:
-            try:
-                self._finish_service()
-            except BaseException:
-                release_guard_daemon_owner_lock(self._owner_lock)
-                self._owner_lock = None
+        except BaseException as error:
+            if not self._finish_service():
+                add_note = getattr(error, "add_note", None)
+                if callable(add_note):
+                    add_note("Guard retained daemon ownership because partial-start containment was unconfirmed.")
             raise
 
     def _begin_owned_service(self) -> None:
@@ -6908,42 +6893,111 @@ class GuardDaemonServer:
             self._server.serve_forever()
         finally:
             self._server.server_close()
-            self._finish_service()
+            _ = self._finish_service()
 
-    def _finish_service(self) -> None:
+    def _finish_service(self) -> bool:
+        self._shutdown_started.set()
+        contained = True
+        stop_unclassified_watchdog = getattr(self._server, "stop_unclassified_watchdog", None)
+        if callable(stop_unclassified_watchdog):
+            try:
+                contained = stop_unclassified_watchdog() is not False and contained
+            except Exception:
+                contained = False
+        approval_attention = getattr(self._server, "approval_attention", None)
+        if approval_attention is not None:
+            try:
+                contained = approval_attention.stop() is not False and contained
+            except Exception:
+                contained = False
         try:
-            self._shutdown_started.set()
-            stop_unclassified_watchdog = getattr(self._server, "stop_unclassified_watchdog", None)
-            if callable(stop_unclassified_watchdog):
-                with suppress(Exception):
-                    stop_unclassified_watchdog()
-            approval_attention = getattr(self._server, "approval_attention", None)
-            if approval_attention is not None:
-                with suppress(Exception):
-                    approval_attention.stop()
-            with suppress(Exception):
-                self._command_queue_worker = stop_command_queue_worker(self._command_queue_worker)
-            with suppress(Exception):
-                self._live_request_sync_worker = stop_cloud_sync_sync_worker(self._live_request_sync_worker)
-            runtime_heartbeat = getattr(self._server, "runtime_heartbeat", None)
-            if runtime_heartbeat is not None:
-                with suppress(Exception):
-                    runtime_heartbeat.stop(timeout_seconds=1.0)
-            hook_process_runner = getattr(self._server, "hook_process_runner", None)
-            if hook_process_runner is not None:
-                with suppress(Exception):
-                    hook_process_runner.close()
-            with suppress(Exception):
-                clear_guard_daemon_state_if_current(
-                    self._server.store.guard_home,
-                    pid=os.getpid(),
-                    port=self.port,
-                )
-            with suppress(Exception):
-                self._server.store.clear_runtime_state(session_id=self._server.runtime_session_id)
-        finally:
-            release_guard_daemon_owner_lock(getattr(self, "_owner_lock", None))
-            self._owner_lock = None
+            self._command_queue_worker = stop_command_queue_worker(self._command_queue_worker)
+            contained = self._command_queue_worker is None and contained
+        except Exception:
+            contained = False
+        try:
+            self._live_request_sync_worker = stop_cloud_sync_sync_worker(self._live_request_sync_worker)
+            contained = self._live_request_sync_worker is None and contained
+        except Exception:
+            contained = False
+        runtime_heartbeat = getattr(self._server, "runtime_heartbeat", None)
+        if runtime_heartbeat is not None:
+            try:
+                contained = runtime_heartbeat.stop(timeout_seconds=1.0) is not False and contained
+            except Exception:
+                contained = False
+        hook_process_runner = getattr(self._server, "hook_process_runner", None)
+        if hook_process_runner is not None:
+            try:
+                close_contained = getattr(hook_process_runner, "close_contained", None)
+                if callable(close_contained):
+                    contained = close_contained() is not False and contained
+                else:
+                    contained = hook_process_runner.close() is not False and contained
+            except Exception:
+                contained = False
+        contained = self._join_service_background_threads() and contained
+        with suppress(Exception):
+            clear_guard_daemon_state_if_current(
+                self._server.store.guard_home,
+                pid=os.getpid(),
+                port=self.port,
+            )
+        with suppress(Exception):
+            self._server.store.clear_runtime_state(session_id=self._server.runtime_session_id)
+        if contained:
+            try:
+                release_guard_daemon_owner_lock(getattr(self, "_owner_lock", None))
+            except Exception:
+                contained = False
+            else:
+                self._owner_lock = None
+        return contained
+
+    @staticmethod
+    def _join_service_thread(
+        thread: threading.Thread | None,
+        *,
+        deadline: float,
+    ) -> threading.Thread | None:
+        if thread is None:
+            return None
+        if thread is not threading.current_thread():
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        return thread if thread.is_alive() else None
+
+    def _join_service_background_threads(self) -> bool:
+        deadline = time.monotonic() + 5.0
+        self._watchdog_thread = self._join_service_thread(
+            getattr(self, "_watchdog_thread", None),
+            deadline=deadline,
+        )
+        self._bundle_refresh_thread = self._join_service_thread(
+            getattr(self, "_bundle_refresh_thread", None),
+            deadline=deadline,
+        )
+        self._aibom_refresh_thread = self._join_service_thread(
+            getattr(self, "_aibom_refresh_thread", None),
+            deadline=deadline,
+        )
+        self._headless_cloud_sync_thread = self._join_service_thread(
+            getattr(self, "_headless_cloud_sync_thread", None),
+            deadline=deadline,
+        )
+        self._command_activity_maintenance_thread = self._join_service_thread(
+            getattr(self, "_command_activity_maintenance_thread", None),
+            deadline=deadline,
+        )
+        return all(
+            thread is None
+            for thread in (
+                self._watchdog_thread,
+                self._bundle_refresh_thread,
+                self._aibom_refresh_thread,
+                self._headless_cloud_sync_thread,
+                self._command_activity_maintenance_thread,
+            )
+        )
 
     def _start_watchdog(self) -> None:
         if self._watchdog_thread is not None and self._watchdog_thread.is_alive():
