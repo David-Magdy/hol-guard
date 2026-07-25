@@ -267,6 +267,7 @@ def test_pretool_plugin_source_bounds_and_serializes_fallback(tmp_path: Path) ->
     assert "process.env.SYSTEMROOT" not in source
     assert 'taskkill.once("close", (status) => finish(status === 0))' in source
     assert 'taskkill.kill("SIGKILL")' in source
+    assert "return waitForGuardProcessExit(proc, 200);" in source
     assert "void terminateGuardProcessGroup(proc).then(" in source
     assert "if (!terminated)" in source
     assert "fallbackContainmentFailed = true" in source

@@ -104,8 +104,7 @@ async function signalGuardCliChild(
           try {
             child.kill('SIGKILL');
           } catch {}
-          await waitForGuardCliChildExit(child, 200);
-          return false;
+          return waitForGuardCliChildExit(child, 200);
         }
         return waitForGuardCliChildExit(child, 200);
       }

@@ -326,6 +326,12 @@ console.log(JSON.stringify({
     }
 
 
+def test_pi_taskkill_pid_race_uses_bounded_child_exit_result() -> None:
+    from codex_plugin_scanner.guard.adapters.pi_extension_cli_runtime_source import CLI_RUNTIME_HELPERS_SOURCE
+
+    assert "return waitForGuardCliChildExit(child, 200);" in CLI_RUNTIME_HELPERS_SOURCE
+
+
 @pytest.mark.skipif(
     _bun_executable() is None or os.name != "posix",
     reason="Bun and POSIX process groups are required for fallback termination testing",
