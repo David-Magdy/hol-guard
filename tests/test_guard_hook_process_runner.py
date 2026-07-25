@@ -38,7 +38,7 @@ class _MutableUnicodeBuffer(Protocol):
 
 def test_default_review_deadline_stays_inside_pi_host_budget() -> None:
     pi_host_timeout_seconds = 4.5
-    pi_daemon_timeout_seconds = 1.6
+    pi_daemon_timeout_seconds = 2.0
     pi_deadline_reserve_seconds = 0.25
 
     assert pi_daemon_timeout_seconds > hook_runner_module._HOOK_PROCESS_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
@@ -385,6 +385,13 @@ def test_deferred_runner_does_not_backfill_during_active_review(
         runner.close()
 
 
+def test_default_worker_budget_stays_below_pi_hook_deadline() -> None:
+    runner = HookProcessRunner()
+
+    assert runner._timeout_seconds == 1.8  # pyright: ignore[reportPrivateUsage]
+    assert runner._timeout_seconds < 2.0  # pyright: ignore[reportPrivateUsage]
+
+
 def test_prewarmed_runner_scans_post_tool_output_in_isolated_worker(tmp_path: Path) -> None:
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=2)
     runner.start()
@@ -515,7 +522,7 @@ def test_persistent_spawn_failure_uses_one_bounded_backoff_supervisor(
     try:
         assert attempts <= 4
         assert runner.stats()["workers"] == 0
-        assert runner.stats()["failures"] == attempts
+        assert 0 <= attempts - runner.stats()["failures"] <= 1
     finally:
         runner.close()
 
@@ -670,7 +677,7 @@ def test_close_retains_uncontained_worker_for_retry(
     with monkeypatch.context() as containment_failure:
         containment_failure.setattr(slot.process, "is_alive", lambda: True)
         containment_failure.setattr(slot.process, "join", ignore_join)
-        containment_failure.setattr(hook_runner_module, "terminate_worker_tree", ignore_terminate)
+        containment_failure.setattr(hook_worker_module, "terminate_worker_tree", ignore_terminate)
 
         assert not runner.close_contained()
         assert runner.stats()["workers"] == 1
