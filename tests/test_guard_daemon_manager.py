@@ -124,6 +124,17 @@ def test_duplicate_retirement_is_nonblocking_and_single_flight(tmp_path, monkeyp
     assert finished.wait(timeout=1.0)
 
 
+def test_malformed_process_command_only_blocks_proven_daemon_launchers() -> None:
+    pytest_command = "python -m pytest 'tests/test_guard_cli.py::test_guard_daemon --serve["
+    daemon_command = (
+        "python -I -c 'import runpy; runpy.run_module("
+        " codex_plugin_scanner.cli guard daemon --serve --guard-home guard-home"
+    )
+
+    assert not daemon_manager_module._malformed_command_may_launch_guard(pytest_command)
+    assert daemon_manager_module._malformed_command_may_launch_guard(daemon_command)
+
+
 @pytest.mark.parametrize(
     ("scheduler_name", "state_name", "state_value"),
     [
@@ -1310,7 +1321,11 @@ def test_ensure_guard_daemon_reaps_stale_ephemeral_daemon_states(tmp_path, monke
         "_runtime_state_age_seconds",
         lambda guard_home: 60.0 if guard_home == stale_guard_home else None,
     )
-    monkeypatch.setattr(daemon_manager_module, "_running_ephemeral_guard_daemon_processes", lambda: [])
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_running_ephemeral_guard_daemon_processes",
+        lambda: [(11111, stale_guard_home, 60.0)],
+    )
     pid_running = {"value": True}
 
     def fake_pid_is_running(_pid):
@@ -1642,8 +1657,8 @@ def test_ensure_guard_daemon_clears_stale_state_when_pid_no_longer_matches_guard
     url = daemon_manager_module.ensure_guard_daemon(guard_home)
 
     assert url == "http://127.0.0.1:5417"
-    # Stale daemon-state.json is cleared when the pid belongs to a different command
-    assert json.loads(stale_state_path.read_text(encoding="utf-8")) == {}
+    # A live PID absent from the proven daemon inventory is left untouched.
+    assert json.loads(stale_state_path.read_text(encoding="utf-8")) == stale_payload
 
 
 @pytest.mark.skipif(

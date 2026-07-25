@@ -1614,8 +1614,13 @@ def _reap_stale_ephemeral_guard_daemons(
             continue
         if not isinstance(payload, dict) or not _looks_like_guard_daemon_state(payload, guard_home=guard_home):
             continue
-        payload = {**payload, "guard_home": str(guard_home)}
-        if _retire_guard_daemon_process(payload):
+        pid = payload.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            continue
+        # Live daemons are handled by the single bounded process inventory below.
+        # Probing every stale state independently creates an unbounded process
+        # query fan-out when a temp root contains many prior test runs.
+        if not _guard_daemon_pid_is_running(pid):
             clear_guard_daemon_state(guard_home)
     for pid, guard_home, elapsed_seconds in _running_ephemeral_guard_daemon_processes():
         if elapsed_seconds < _EPHEMERAL_GUARD_DAEMON_STALE_SECONDS:
@@ -2180,14 +2185,23 @@ def _guard_daemon_process_inventory_for_guard_home(guard_home: Path) -> list[tup
 def _malformed_command_may_launch_guard(command_line: str) -> bool:
     first_token = command_line.lstrip().split(maxsplit=1)[0].strip("\"'")
     launcher = ntpath.basename(first_token).lower()
-    return launcher.startswith("python") or launcher in {
-        "env",
+    lowered = command_line.lower()
+    daemon_invocation = re.search(r"(?:^|\s)(?:guard\s+)?daemon\s+--serve(?:\s|$)", lowered)
+    if daemon_invocation is None:
+        return False
+    if launcher.startswith("python"):
+        module_launch = (
+            "runpy.run_module" in lowered
+            or re.search(r"(?:^|\s)-m\s+codex_plugin_scanner\.cli(?:\s|$)", lowered) is not None
+        )
+        return "codex_plugin_scanner.cli" in lowered and module_launch
+    if launcher in {"env", "uv", "uv.exe"}:
+        return re.search(r"(?:^|\s)(?:hol-guard|plugin-guard)(?:\.exe)?(?:\s|$)", lowered) is not None
+    return launcher in {
         "hol-guard",
         "hol-guard.exe",
         "plugin-guard",
         "plugin-guard.exe",
-        "uv",
-        "uv.exe",
     }
 
 
