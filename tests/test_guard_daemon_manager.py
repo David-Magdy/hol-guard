@@ -61,7 +61,7 @@ def test_hook_failure_restarts_an_older_unresponsive_daemon(tmp_path, monkeypatc
     guard_home = tmp_path / "guard-home"
     old_state = {"started_at": "2020-01-01T00:00:00+00:00"}
     retired: list[Path] = []
-    monkeypatch.setattr(daemon_manager_module, "_guard_daemon_start_lock", lambda _home: nullcontext())
+    monkeypatch.setattr(daemon_manager_module, "_guard_daemon_start_lock", lambda _home, **_kwargs: nullcontext())
     monkeypatch.setattr(daemon_manager_module, "load_authenticated_daemon_state", lambda _home: old_state)
     monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _home: "http://127.0.0.1:5474")
     monkeypatch.setattr(
@@ -85,7 +85,7 @@ def test_hook_failure_restarts_an_older_unresponsive_daemon(tmp_path, monkeypatc
 def test_hook_failure_preserves_a_concurrently_started_replacement(tmp_path, monkeypatch) -> None:
     guard_home = tmp_path / "guard-home"
     recent_state = {"started_at": datetime.now(timezone.utc).isoformat()}
-    monkeypatch.setattr(daemon_manager_module, "_guard_daemon_start_lock", lambda _home: nullcontext())
+    monkeypatch.setattr(daemon_manager_module, "_guard_daemon_start_lock", lambda _home, **_kwargs: nullcontext())
     monkeypatch.setattr(daemon_manager_module, "load_authenticated_daemon_state", lambda _home: recent_state)
     monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _home: "http://127.0.0.1:5475")
     monkeypatch.setattr(
@@ -853,6 +853,58 @@ def test_ensure_guard_daemon_advances_ports_after_early_process_exit(tmp_path, m
 
     assert url == "http://127.0.0.1:5411"
     assert [command[-1] for command in launched_commands] == ["5410", "5411"]
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="its fake Popen omits the native Windows process identity required by daemon launch",
+)
+def test_ensure_guard_daemon_uses_one_start_deadline_across_candidate_ports(tmp_path, monkeypatch):
+    guard_home = tmp_path / "guard-home"
+    launched_ports: list[str] = []
+    clock = {"value": 100.0}
+
+    class FakeProcess:
+        pid = 54_210
+
+        def poll(self) -> None:
+            return None
+
+    def fake_wait(
+        _guard_home: Path,
+        *,
+        timeout: float,
+        process: FakeProcess | None = None,
+    ) -> None:
+        del process
+        clock["value"] += timeout
+        return None
+
+    def fake_popen(command, **_kwargs):
+        launched_ports.append(command[-1])
+        return FakeProcess()
+
+    _disable_daemon_adoption(monkeypatch)
+    _disable_duplicate_retire(monkeypatch)
+    monkeypatch.setattr(daemon_manager_module, "_reap_stale_ephemeral_guard_daemons", lambda **_kwargs: None)
+    monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _guard_home: None)
+    monkeypatch.setattr(daemon_manager_module, "_load_state", lambda _guard_home, **_kwargs: None)
+    monkeypatch.setattr(daemon_manager_module, "_candidate_ports", lambda _guard_home, **_kwargs: [5410, 5411, 5412])
+    monkeypatch.setattr(daemon_manager_module, "_wait_for_guard_daemon_url", fake_wait)
+    monkeypatch.setattr(daemon_manager_module, "_record_guard_daemon_pending_launch", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_clear_spawned_guard_daemon_pending_launch",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(daemon_manager_module, "_terminate_spawned_guard_daemon", lambda _process: True)
+    monkeypatch.setattr(daemon_manager_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(daemon_manager_module.time, "monotonic", lambda: clock["value"])
+
+    with pytest.raises(RuntimeError, match="approval center did not start"):
+        daemon_manager_module.ensure_guard_daemon(guard_home, start_timeout=5.0)
+
+    assert launched_ports == ["5410"]
 
 
 @pytest.mark.skipif(
@@ -1929,7 +1981,11 @@ def _configure_isolated_windows_daemon_start(monkeypatch, *, port: int = 5410) -
     monkeypatch.setattr(daemon_manager_module, "os", _WindowsOSProxy())
     monkeypatch.setattr(daemon_manager_module, "_reap_stale_ephemeral_guard_daemons", lambda **_kwargs: None)
     monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _guard_home: None)
-    monkeypatch.setattr(daemon_manager_module, "_guard_daemon_start_lock", lambda _guard_home: nullcontext())
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_guard_daemon_start_lock",
+        lambda _guard_home, **_kwargs: nullcontext(),
+    )
     monkeypatch.setattr(daemon_manager_module, "_load_state", lambda _guard_home: None)
     monkeypatch.setattr(daemon_manager_module, "_load_authenticated_daemon_identity", lambda _guard_home: None)
     monkeypatch.setattr(

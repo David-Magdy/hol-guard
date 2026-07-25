@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -347,6 +348,7 @@ def test_isolated_process_returns_when_tree_termination_cannot_be_confirmed(
         raise OSError("kill refused")
 
     monkeypatch.setattr(launch_runtime, "_HOOK_PROCESS_CONTAINMENT_FAILED", threading.Event())
+    monkeypatch.setattr(launch_runtime, "_HOOK_PROCESS_QUARANTINE", [])
     monkeypatch.setattr(launch_runtime.subprocess, "Popen", stubborn_popen)
     monkeypatch.setattr(launch_runtime.os, "killpg", refuse_killpg)
 
@@ -379,6 +381,7 @@ def test_isolated_process_latches_when_input_writer_cannot_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    real_popen = launch_runtime.subprocess.Popen
     release_writer = threading.Event()
 
     class BlockingInput:
@@ -407,6 +410,7 @@ def test_isolated_process_latches_when_input_writer_cannot_stop(
             return 0
 
     monkeypatch.setattr(launch_runtime, "_HOOK_PROCESS_CONTAINMENT_FAILED", threading.Event())
+    monkeypatch.setattr(launch_runtime, "_HOOK_PROCESS_QUARANTINE", [])
     monkeypatch.setattr(launch_runtime.subprocess, "Popen", lambda *_args, **_kwargs: ExitedProcess())
     monkeypatch.setattr(launch_runtime.os, "killpg", lambda *_args: None)
 
@@ -421,10 +425,98 @@ def test_isolated_process_latches_when_input_writer_cannot_stop(
     elapsed = time.monotonic() - started_at
     release_writer.set()
 
-    assert elapsed < 1
+    assert elapsed < 1.5
     assert result.returncode is None
     assert result.containment_failed is True
     assert launch_runtime._HOOK_PROCESS_CONTAINMENT_FAILED.is_set()
+
+    monkeypatch.setattr(launch_runtime.subprocess, "Popen", real_popen)
+    recovered = run_isolated_hook_process(
+        [sys.executable, "-I", "-c", "print('recovered')"],
+        input_text="",
+        cwd=tmp_path,
+        environment=isolated_hook_environment(),
+        timeout_seconds=2,
+    )
+
+    assert recovered.returncode == 0
+    assert recovered.stdout.strip() == "recovered"
+    assert launch_runtime._HOOK_PROCESS_CONTAINMENT_FAILED.is_set() is False
+
+
+def test_quarantine_retry_uses_one_deadline_for_all_processes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubbornProcess:
+        pid = 987_654
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            if timeout:
+                time.sleep(timeout)
+            raise subprocess.TimeoutExpired(["stubborn"], timeout if timeout is not None else 0.0)
+
+        def kill(self) -> None:
+            raise OSError("kill refused")
+
+    monkeypatch.setattr(launch_runtime, "_HOOK_PROCESS_CONTAINMENT_FAILED", threading.Event())
+    quarantined = [
+        launch_runtime._QuarantinedHookProcess(cast("subprocess.Popen[bytes]", StubbornProcess()), None, ())
+        for _ in range(20)
+    ]
+
+    def refuse_killpg(*_args: object) -> None:
+        raise OSError("kill refused")
+
+    monkeypatch.setattr(
+        launch_runtime,
+        "_HOOK_PROCESS_QUARANTINE",
+        quarantined,
+    )
+    monkeypatch.setattr(launch_runtime.os, "killpg", refuse_killpg)
+
+    started_at = time.monotonic()
+    recovered = launch_runtime._retry_quarantined_hook_processes()
+    elapsed = time.monotonic() - started_at
+
+    assert recovered is False
+    assert elapsed < 1.5
+    assert len(launch_runtime._HOOK_PROCESS_QUARANTINE) == 20
+
+
+def test_quarantine_retry_releases_windows_job_handle_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ExitedProcess:
+        pid = 987_654
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return 0
+
+    closed_jobs: list[object] = []
+    job = object()
+    quarantined = launch_runtime._QuarantinedHookProcess(
+        cast("subprocess.Popen[bytes]", ExitedProcess()),
+        cast("launch_runtime.WindowsHookJob", job),
+        (),
+    )
+    containment_latch = threading.Event()
+    containment_latch.set()
+    monkeypatch.setattr(launch_runtime, "_HOOK_PROCESS_CONTAINMENT_FAILED", containment_latch)
+    monkeypatch.setattr(launch_runtime, "_HOOK_PROCESS_QUARANTINE", [quarantined])
+    monkeypatch.setattr(launch_runtime, "_kill_hook_process", lambda *_args: True)
+    monkeypatch.setattr(launch_runtime, "close_windows_hook_job", closed_jobs.append)
+
+    assert launch_runtime._retry_quarantined_hook_processes() is True
+    assert closed_jobs == [job]
+    assert quarantined.windows_job is None
+    assert launch_runtime._HOOK_PROCESS_CONTAINMENT_FAILED.is_set() is False
 
 
 @pytest.fixture(autouse=True)

@@ -173,6 +173,19 @@ class _LocalVaultTrustBackend:
 
 
 @dataclass(frozen=True)
+class _PassiveTrustStatusProbe:
+    backend_name: str
+    guard_home: Path
+
+    def __call__(self) -> TrustStatus:
+        daemon_state = load_authenticated_daemon_state(self.guard_home)
+        daemon_trust_status = daemon_state.get("trust_status") if isinstance(daemon_state, dict) else None
+        if isinstance(daemon_trust_status, dict):
+            return TrustStatus.from_policy_integrity_state(daemon_trust_status)
+        return _backend_by_name(None, self.backend_name, guard_home=self.guard_home).status()
+
+
+@dataclass(frozen=True)
 class ResolvedTrustState:
     mode: LocalTrustMode
     backend_requested: str
@@ -236,8 +249,12 @@ def resolve_passive_trust_state(
         reason=POLICY_INTEGRITY_REASON_BACKEND_TIMEOUT,
         setup_available=bool(selected.name == "macos-native" and selected.supported and selected.passive_no_ui_safe),
     )
+    if isinstance(selected, (_LocalVaultTrustBackend, _MacOSNativeTrustBackend)) and selected._guard_home is not None:
+        passive_probe = _PassiveTrustStatusProbe(selected.name, selected._guard_home)
+    else:
+        passive_probe = selected.status
     trust_status = run_trust_backend_check(
-        selected.status,
+        passive_probe,
         timeout_seconds=timeout_seconds,
         timeout_result=timeout_result,
         on_error=lambda error: _degraded_safe_status(

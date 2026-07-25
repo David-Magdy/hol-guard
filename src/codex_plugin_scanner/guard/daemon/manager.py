@@ -301,6 +301,7 @@ def ensure_guard_daemon(
     allow_windows_job_breakaway: bool = False,
 ) -> str:
     timeout = GUARD_DAEMON_START_TIMEOUT_SECONDS if start_timeout is None else start_timeout
+    start_deadline = time.monotonic() + max(0.0, timeout)
     _reap_stale_ephemeral_guard_daemons(exclude_guard_home=guard_home)
     state_path = _state_path(guard_home)
     existing_url = load_guard_daemon_url(guard_home)
@@ -309,7 +310,7 @@ def ensure_guard_daemon(
         if preferred_port is None or existing_port == preferred_port:
             _retire_duplicate_guard_daemons(guard_home, keep_port=existing_port)
             return existing_url
-    with _guard_daemon_start_lock(guard_home):
+    with _guard_daemon_start_lock(guard_home, deadline=start_deadline):
         existing_url = load_guard_daemon_url(guard_home)
         if existing_url is not None:
             existing_port = _guard_daemon_url_port(existing_url)
@@ -343,7 +344,10 @@ def ensure_guard_daemon(
             ):
                 raise RuntimeError("Stale Guard daemon could not be retired safely.")
         if _guard_daemon_start_in_progress(guard_home):
-            inflight_url = _wait_for_guard_daemon_url(guard_home, timeout=timeout)
+            inflight_url = _wait_for_guard_daemon_url(
+                guard_home,
+                timeout=max(0.0, start_deadline - time.monotonic()),
+            )
             if inflight_url is not None:
                 _retire_duplicate_guard_daemons(
                     guard_home,
@@ -363,6 +367,9 @@ def ensure_guard_daemon(
                 raise RuntimeError("A previous Guard daemon launch could not be retired safely.")
         clear_guard_daemon_state(guard_home)
         for candidate_port in _candidate_ports(guard_home, preferred_port=preferred_port):
+            remaining_start_time = start_deadline - time.monotonic()
+            if remaining_start_time <= 0:
+                break
             command = _guard_daemon_launch_command(
                 guard_home,
                 candidate_port,
@@ -399,7 +406,7 @@ def ensure_guard_daemon(
                 _release_guard_daemon_launch_gate(process)
                 url = _wait_for_guard_daemon_url(
                     guard_home,
-                    timeout=timeout,
+                    timeout=remaining_start_time,
                     process=process,
                 )
                 if url is not None:
@@ -2351,19 +2358,38 @@ def _wait_for_guard_daemon_url(
 
 
 @contextmanager
-def _guard_daemon_start_lock(guard_home: Path):
+def _guard_daemon_start_lock(guard_home: Path, *, deadline: float | None = None):
     lock_key = str(guard_home.resolve())
     with _START_LOCKS_GUARD:
         thread_lock = _START_LOCKS.setdefault(lock_key, threading.Lock())
-    with thread_lock:
+    if deadline is None:
+        thread_lock.acquire()
+    else:
+        acquired = thread_lock.acquire(timeout=max(0.0, deadline - time.monotonic()))
+        if not acquired:
+            raise RuntimeError("Timed out waiting to start the Guard daemon.")
+    try:
         lock_path = guard_home / "daemon-start.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("a+b") as handle:
-            _lock_daemon_start_file(handle)
+            if deadline is None:
+                _lock_daemon_start_file(handle)
+            else:
+                while not _try_lock_daemon_file(handle):
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Timed out waiting to start the Guard daemon.")
+                    time.sleep(
+                        min(
+                            GUARD_DAEMON_POLL_INTERVAL_SECONDS,
+                            max(0.0, deadline - time.monotonic()),
+                        )
+                    )
             try:
                 yield
             finally:
                 _unlock_daemon_start_file(handle)
+    finally:
+        thread_lock.release()
 
 
 @contextmanager

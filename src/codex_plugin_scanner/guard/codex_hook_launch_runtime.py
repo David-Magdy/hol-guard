@@ -24,7 +24,7 @@ _HOOK_SUBPROCESS_OUTPUT_LIMIT = 1_000_000
 _HOOK_PROCESS_REAP_TIMEOUT_SECONDS = 0.2
 _HOOK_PROCESS_FINAL_REAP_TIMEOUT_SECONDS = 0.1
 _HOOK_PROCESS_IO_THREAD_JOIN_TIMEOUT_SECONDS = 0.05
-_HOOK_PROCESS_FINAL_IO_JOIN_TIMEOUT_SECONDS = 0.2
+_HOOK_PROCESS_FINAL_IO_JOIN_TIMEOUT_SECONDS = 1.0
 _HOOK_ENVIRONMENT_KEYS = frozenset(
     {
         "CODEX_HOME",
@@ -55,7 +55,70 @@ class BoundedHookProcessResult:
     containment_failed: bool = False
 
 
+@dataclass(slots=True)
+class _QuarantinedHookProcess:
+    process: subprocess.Popen[bytes]
+    windows_job: WindowsHookJob | None
+    io_threads: tuple[threading.Thread, ...]
+
+
 _HOOK_PROCESS_CONTAINMENT_FAILED = threading.Event()
+_HOOK_PROCESS_QUARANTINE_LOCK = threading.Lock()
+_HOOK_PROCESS_QUARANTINE: list[_QuarantinedHookProcess] = []
+
+
+def _retry_quarantined_hook_processes() -> bool:
+    with _HOOK_PROCESS_QUARANTINE_LOCK:
+        retry_deadline = time.monotonic() + _HOOK_PROCESS_FINAL_IO_JOIN_TIMEOUT_SECONDS
+        survivors: list[_QuarantinedHookProcess] = []
+        for quarantined in _HOOK_PROCESS_QUARANTINE:
+            contained = _kill_hook_process(quarantined.process, quarantined.windows_job)
+            remaining = max(0.0, retry_deadline - time.monotonic())
+            try:
+                _ = quarantined.process.wait(timeout=min(_HOOK_PROCESS_FINAL_REAP_TIMEOUT_SECONDS, remaining))
+            except subprocess.TimeoutExpired:
+                contained = False
+            if quarantined.windows_job is not None:
+                try:
+                    close_windows_hook_job(quarantined.windows_job)
+                except OSError:
+                    contained = False
+                else:
+                    quarantined.windows_job = None
+            for thread in quarantined.io_threads:
+                _ = thread.join(timeout=max(0.0, retry_deadline - time.monotonic()))
+            contained = (
+                contained
+                and quarantined.process.poll() is not None
+                and all(not thread.is_alive() for thread in quarantined.io_threads)
+            )
+            if not contained:
+                survivors.append(quarantined)
+        _HOOK_PROCESS_QUARANTINE[:] = survivors
+        if survivors:
+            _HOOK_PROCESS_CONTAINMENT_FAILED.set()
+            return False
+        _HOOK_PROCESS_CONTAINMENT_FAILED.clear()
+        return True
+
+
+def _quarantine_hook_process(
+    process: subprocess.Popen[bytes],
+    windows_job: WindowsHookJob | None,
+    io_threads: Sequence[threading.Thread],
+) -> None:
+    with _HOOK_PROCESS_QUARANTINE_LOCK:
+        if any(quarantined.process is process for quarantined in _HOOK_PROCESS_QUARANTINE):
+            _HOOK_PROCESS_CONTAINMENT_FAILED.set()
+            return
+        _HOOK_PROCESS_QUARANTINE.append(
+            _QuarantinedHookProcess(
+                process=process,
+                windows_job=windows_job,
+                io_threads=tuple(io_threads),
+            )
+        )
+        _HOOK_PROCESS_CONTAINMENT_FAILED.set()
 
 
 def isolated_guard_cli_command(
@@ -149,7 +212,7 @@ def run_isolated_hook_process(
 ) -> BoundedHookProcessResult:
     """Run one child with bounded input lifetime and combined output bytes."""
 
-    if _HOOK_PROCESS_CONTAINMENT_FAILED.is_set():
+    if _HOOK_PROCESS_CONTAINMENT_FAILED.is_set() and not _retry_quarantined_hook_processes():
         return BoundedHookProcessResult(None, "", False, False, containment_failed=True)
     windows_job: WindowsHookJob | None = None
     try:
@@ -239,6 +302,8 @@ def run_isolated_hook_process(
             job_cleanup_failed = True
             containment_confirmed = False
             _ = _kill_hook_process(process, windows_job)
+        else:
+            windows_job = None
     io_threads = [writer, *readers]
     io_join_deadline = time.monotonic() + _HOOK_PROCESS_IO_THREAD_JOIN_TIMEOUT_SECONDS
     for thread in io_threads:
@@ -251,7 +316,7 @@ def run_isolated_hook_process(
         if any(thread.is_alive() for thread in io_threads):
             containment_confirmed = False
     if not containment_confirmed:
-        _HOOK_PROCESS_CONTAINMENT_FAILED.set()
+        _quarantine_hook_process(process, windows_job, io_threads)
     with output_lock:
         stdout_decoded = stdout_bytes.decode("utf-8", errors="replace")
     return BoundedHookProcessResult(
