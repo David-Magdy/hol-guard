@@ -16,19 +16,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast, final
 
 from .hook_process_protocol import (
-    HOOK_ENV_ALLOWLIST as _HOOK_ENV_ALLOWLIST,
-)
-from .hook_process_protocol import (
-    applied_hook_environment as _applied_hook_environment,
-)
-from .hook_process_protocol import (
-    as_string_object_dict as _as_string_object_dict,
-)
-from .hook_process_protocol import (
-    capture_hook_command as _capture_hook_command,
-)
-from .hook_process_protocol import (
-    is_pair as _is_pair,
+    HOOK_ENV_ALLOWLIST,
+    applied_hook_environment,
+    as_string_object_dict,
+    capture_hook_command,
+    is_pair,
 )
 from .hook_process_worker import HookProcessReview, HookWorkerSlot, terminate_worker_tree
 
@@ -126,7 +118,7 @@ class HookProcessRunner:
             "home_dir": str(home_dir),
             "guard_home": str(guard_home),
             "workspace": str(workspace) if workspace is not None else None,
-            "hook_env": {key: value for key, value in hook_env.items() if key in _HOOK_ENV_ALLOWLIST},
+            "hook_env": {key: value for key, value in hook_env.items() if key in HOOK_ENV_ALLOWLIST},
         }
         try:
             slot.connection.send(("review", request))
@@ -140,7 +132,7 @@ class HookProcessRunner:
             self._replace_slot_async(slot)
             return HookProcessReview(None, "daemon_hook_process_failed")
 
-        if not _is_pair(raw_message):
+        if not is_pair(raw_message):
             self._increment_metric("failures")
             self._replace_slot_async(slot)
             return HookProcessReview(None, "daemon_hook_process_invalid_json")
@@ -153,7 +145,7 @@ class HookProcessRunner:
             self._slots.put_nowait(slot)
         else:
             self._replace_slot_async(slot)
-        typed_result = _as_string_object_dict(result)
+        typed_result = as_string_object_dict(result)
         if typed_result is None:
             return HookProcessReview(None, "daemon_hook_process_invalid_json")
         reason_code = typed_result.get("reason_code")
@@ -163,7 +155,7 @@ class HookProcessRunner:
                 None,
                 reason_code if isinstance(reason_code, str) else "daemon_hook_process_failed",
             )
-        typed_response = _as_string_object_dict(response)
+        typed_response = as_string_object_dict(response)
         if typed_response is None:
             return HookProcessReview(None, "daemon_hook_process_invalid_json")
         return HookProcessReview(typed_response, None)
@@ -387,13 +379,13 @@ def _hook_worker_main(connection: Connection, configured_guard_home: str | None)
             raw_message = cast(object, connection.recv())
         except EOFError:
             return
-        if not _is_pair(raw_message):
+        if not is_pair(raw_message):
             connection.send(("result", {"payload": None, "reason_code": "daemon_hook_process_invalid_request"}))
             continue
         message_type, raw_request = raw_message
         if message_type == "stop":
             return
-        typed_request = _as_string_object_dict(raw_request)
+        typed_request = as_string_object_dict(raw_request)
         if message_type != "review" or typed_request is None:
             connection.send(("result", {"payload": None, "reason_code": "daemon_hook_process_invalid_request"}))
             continue
@@ -472,7 +464,7 @@ def _run_resident_hook_request(
             pass
         else:
             return {"payload": worker_payload, "reason_code": None}
-    with _applied_hook_environment(request):
+    with applied_hook_environment(request):
         config = overlay_synced_guard_policy(
             load_guard_config(guard_home, workspace=workspace),
             _synced_policy_payload(store),
@@ -490,7 +482,7 @@ def _run_resident_hook_request(
             event_file=None,
             json=True,
         )
-        return _capture_hook_command(
+        return capture_hook_command(
             lambda output: _run_guard_hook_command(
                 args,
                 guard_home=guard_home,
