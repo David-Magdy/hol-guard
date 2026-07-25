@@ -174,27 +174,10 @@ def _trust_backend_check_worker(operation_path: str, ready_path: str, result_pat
 
 
 def _terminate_trust_backend_process_tree(process: _ProcessHandle) -> None:
-    terminate_worker_tree(process, signal.SIGTERM)
+    if not process.is_alive():
+        return
+    terminate_worker_tree(process, signal.SIGKILL)
     process.join(timeout=0.2)
-    if _trust_backend_process_tree_is_alive(process):
-        terminate_worker_tree(process, signal.SIGKILL)
-        process.join(timeout=0.2)
-
-
-def _trust_backend_process_tree_is_alive(process: _ProcessHandle) -> bool:
-    if process.is_alive():
-        return True
-    if os.name == "nt" or process.pid is None:
-        return False
-    try:
-        os.killpg(process.pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
 
 
 def _trust_backend_process_failed_error(process: _ProcessHandle) -> TrustBackendProcessFailedError:

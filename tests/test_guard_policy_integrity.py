@@ -418,7 +418,7 @@ def test_completed_windows_trust_worker_job_kills_delayed_descendant(tmp_path: P
     assert not marker_path.exists()
 
 
-def test_trust_backend_timeout_falls_back_when_process_group_missing(
+def test_trust_backend_cleanup_does_not_signal_an_exited_process_group(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -438,20 +438,14 @@ def test_trust_backend_timeout_falls_back_when_process_group_missing(
         def kill(self) -> None:
             calls.append("kill")
 
-    def fake_killpg(pid: int, sig: int) -> None:
-        calls.append(f"killpg:{pid}:{sig}")
-        raise ProcessLookupError("process group not ready")
+    def unexpected_killpg(pid: int, sig: int) -> None:
+        raise AssertionError(f"exited process group must not be signaled: {pid}:{sig}")
 
-    monkeypatch.setattr(local_trust_contract_module.os, "killpg", fake_killpg)
+    monkeypatch.setattr(local_trust_contract_module.os, "killpg", unexpected_killpg)
 
     local_trust_contract_module._terminate_trust_backend_process_tree(FakeProcess())
 
-    assert calls == [
-        "killpg:12345:15",
-        "terminate",
-        "join:0.2",
-        "killpg:12345:0",
-    ]
+    assert calls == []
 
 
 def test_trust_backend_check_handles_corrupt_result_file(
