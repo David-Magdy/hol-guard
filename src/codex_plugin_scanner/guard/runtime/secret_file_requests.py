@@ -1881,12 +1881,26 @@ def _destructive_shell_tool_action_request(
                 ),
             )
     bounded_source_edit_context = (
-        _bounded_verified_source_edit_execution_context(detection_command_text, home_dir=home_dir)
+        (
+            _bounded_verified_source_edit_execution_context(detection_command_text, home_dir=home_dir)
+            or _bounded_current_workspace_source_edit_execution_context(
+                detection_command_text,
+                cwd=cwd,
+                home_dir=home_dir,
+            )
+        )
         if home_dir is not None
         else None
     )
     raw_bounded_source_edit_context = (
-        _bounded_verified_source_edit_execution_context(raw_command_text, home_dir=home_dir)
+        (
+            _bounded_verified_source_edit_execution_context(raw_command_text, home_dir=home_dir)
+            or _bounded_current_workspace_source_edit_execution_context(
+                raw_command_text,
+                cwd=cwd,
+                home_dir=home_dir,
+            )
+        )
         if home_dir is not None and raw_command_text is not None and raw_command_text != detection_command_text
         else bounded_source_edit_context
     )
@@ -2181,22 +2195,26 @@ def _bounded_in_place_sed_target(
     cwd: Path,
     workspace_root: Path,
 ) -> str | None:
-    if len(args) < 5 or args[:2] != ["-i", ""]:
+    if len(args) < 4 or args[:2] != ["-i", ""]:
         return None
     scripts: list[str] = []
     index = 2
-    while index < len(args) and args[index] == "-e":
-        if index + 1 >= len(args):
-            return None
-        scripts.append(args[index + 1])
-        index += 2
+    if args[index] == "-e":
+        while index < len(args) and args[index] == "-e":
+            if index + 1 >= len(args):
+                return None
+            scripts.append(args[index + 1])
+            index += 2
+    else:
+        scripts.append(args[index])
+        index += 1
     targets = args[index:]
     if not 1 <= len(scripts) <= 16 or len(targets) != 1:
         return None
-    if any(not _literal_sed_substitution_is_safe(script) for script in scripts):
+    if any(not _literal_sed_script_is_safe(script) for script in scripts):
         return None
     target = targets[0]
-    if not _read_only_lookup_target_is_safe(target, allow_dirs=False, home_dir=cwd):
+    if target.startswith("-") or not _read_only_lookup_target_is_safe(target, allow_dirs=False, home_dir=cwd):
         return None
     try:
         resolved = (cwd / target).resolve(strict=True)
@@ -2204,6 +2222,110 @@ def _bounded_in_place_sed_target(
     except (OSError, RuntimeError, ValueError):
         return None
     return target if resolved.is_file() else None
+
+
+def _bounded_current_workspace_source_edit_execution_context(
+    command_text: str,
+    *,
+    cwd: Path | None,
+    home_dir: Path,
+) -> ShellExecutionContext | None:
+    """Recognize a literal in-place substitution in the active workspace."""
+
+    if cwd is None or any(marker in command_text for marker in ("$(", "`", "<(", ">(")):
+        return None
+    try:
+        workspace_root = cwd.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if workspace_root == home_dir.resolve() or not _bounded_edit_workspace_is_safe(
+        workspace_root,
+        home_dir=home_dir,
+    ):
+        return None
+    modeled_command = command_text.replace("\\\r\n", " ").replace("\\\n", " ")
+    context = model_shell_execution_context(
+        modeled_command,
+        cwd=workspace_root,
+        workspace_root=workspace_root,
+        home_dir=home_dir,
+    )
+    if _shell_execution_context_validation_reason(context) is not None:
+        return None
+    if context.directory_change_present or len(context.segments) not in {1, 2}:
+        return None
+
+    edit = context.segments[0]
+    edit_name, edit_index = _shell_segment_primary_command(list(edit.tokens))
+    if edit_name != "sed" or edit_index is None or edit.control_before:
+        return None
+    edit_args = _without_safe_inspection_redirections(list(edit.tokens[edit_index + 1 :]))
+    if edit_args is None:
+        return None
+    if (
+        _bounded_in_place_sed_target(
+            edit_args,
+            cwd=workspace_root,
+            workspace_root=workspace_root,
+        )
+        is None
+    ):
+        return None
+    if len(context.segments) == 1:
+        return replace(context, command_text=command_text)
+
+    label = context.segments[1]
+    label_name, label_index = _shell_segment_primary_command(list(label.tokens))
+    if label_name != "echo" or label_index is None or label.control_before != ("&&",):
+        return None
+    label_args = _without_safe_inspection_redirections(list(label.tokens[label_index + 1 :]))
+    if label_args is None or not _static_shell_segment_is_safe(label_args):
+        return None
+    return replace(context, command_text=command_text)
+
+
+def _literal_sed_script_is_safe(script: str) -> bool:
+    commands = _split_literal_sed_commands(script)
+    return 1 <= len(commands) <= 16 and all(_literal_sed_substitution_is_safe(command) for command in commands)
+
+
+def _split_literal_sed_commands(script: str) -> tuple[str, ...]:
+    commands: list[str] = []
+    index = 0
+    while index < len(script):
+        while index < len(script) and script[index].isspace():
+            index += 1
+        start = index
+        if index + 1 >= len(script) or script[index] != "s":
+            return ()
+        delimiter = script[index + 1]
+        if delimiter.isalnum() or delimiter.isspace() or delimiter == "\\":
+            return ()
+        index += 2
+        terminated_fields = 0
+        escaped = False
+        while index < len(script) and terminated_fields < 2:
+            character = script[index]
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == delimiter:
+                terminated_fields += 1
+            index += 1
+        if escaped or terminated_fields != 2:
+            return ()
+        while index < len(script) and script[index] != ";":
+            index += 1
+        command = script[start:index].strip()
+        if not command:
+            return ()
+        commands.append(command)
+        if len(commands) > 16:
+            return ()
+        if index < len(script):
+            index += 1
+    return tuple(commands)
 
 
 def _bounded_edit_workspace_is_safe(workspace_root: Path, *, home_dir: Path) -> bool:
@@ -2220,7 +2342,7 @@ def _bounded_edit_workspace_is_safe(workspace_root: Path, *, home_dir: Path) -> 
 
 
 def _literal_sed_substitution_is_safe(script: str) -> bool:
-    if len(script) > 4096 or len(script) < 5 or script[0] != "s" or "$" in script:
+    if len(script) > 4096 or len(script) < 5 or script[0] != "s":
         return False
     delimiter = script[1]
     if delimiter.isalnum() or delimiter.isspace() or delimiter == "\\":
@@ -2252,7 +2374,7 @@ def _literal_sed_substitution_is_safe(script: str) -> bool:
 
 
 def _sed_pattern_is_literal(pattern: str, *, delimiter: str) -> bool:
-    regex_metacharacters = frozenset(".^$*+?{}[]()|")
+    regex_metacharacters = frozenset(".^$*+?[]()|")
     escaped = False
     for character in pattern:
         if escaped:
@@ -2270,12 +2392,12 @@ def _sed_replacement_is_literal(replacement: str, *, delimiter: str) -> bool:
     escaped = False
     for character in replacement:
         if escaped:
-            if character not in {delimiter, "\\", "&"}:
+            if character not in {delimiter, "\\", "&", "$"}:
                 return False
             escaped = False
         elif character == "\\":
             escaped = True
-        elif character == "&" or character == "\n":
+        elif character in {"&", "\n", "$"}:
             return False
     return not escaped
 

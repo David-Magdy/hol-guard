@@ -94,6 +94,132 @@ grep -n "previewLabel\\|Value" src/emails/notice.tsx"""
     assert match is None
 
 
+def test_literal_current_workspace_bounded_sed_edit_does_not_require_review(tmp_path: Path) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "projects" / "analytics"
+    _source_file(workspace, "src/lib/guard/analytics/report.ts")
+    target = workspace / "src/lib/guard/analytics/report.ts"
+    (workspace / ".git").mkdir()
+    target.write_text(
+        "const query = `${fromDate}:${toDate}`;\n",
+        encoding="utf-8",
+    )
+    command = (
+        "sed -i '' 's/\\${fromDate}/\\${fromIso}/g; s/\\${toDate}/\\${toIso}/g' "
+        'src/lib/guard/analytics/report.ts 2>&1 && echo "done"'
+    )
+
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": command},
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+    assert match is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        r"sed -i '' 's/\${fromDate}/$HOME/g' src/safe.ts",
+        r"sed -i '' 's/.*/new/g' src/safe.ts",
+        r"sed -i '' 's/old/prefix-&/g' src/safe.ts",
+        r"sed -i '' 's/old/new/e' src/safe.ts",
+        r"sed -i '' 's/old\{1,2\}/new/g' src/safe.ts",
+        r"sed -i '' 's/old/new/w leaked.txt' src/safe.ts",
+        r"sed -i '' 's/old/new/g; e cat .env' src/safe.ts",
+        r"sed -i '' 's/old/new/g' src/safe.ts src/other.ts",
+        r"sed -E -i '' 's/old/new/g' src/safe.ts",
+        r"sed -i '' 's/old/new/g' ../outside.ts",
+        r"sed -i '' 's/old/new/g' .env",
+        r"sed -i '' 's/old/new/g' src/safe.ts && git add src/safe.ts",
+        r"sed -i '' 's/old/new/g' src/safe.ts && echo $(cat .env)",
+    ),
+)
+def test_literal_current_workspace_bounded_sed_edit_rejects_unsafe_variants(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "projects" / "project"
+    workspace.mkdir(parents=True)
+    _source_file(workspace, "src/safe.ts")
+    _source_file(workspace, "src/other.ts")
+    (workspace / ".git").mkdir()
+    (workspace / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+    (workspace.parent / "outside.ts").write_text("old\n", encoding="utf-8")
+
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": command},
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+    assert match is not None
+
+
+def test_literal_current_workspace_bounded_sed_edit_rejects_unmarked_workspace(tmp_path: Path) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "projects" / "unmarked"
+    _source_file(workspace, "src/safe.ts")
+
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": "sed -i '' 's/old/new/g' src/safe.ts"},
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+    assert match is not None
+
+
+def test_literal_current_workspace_bounded_sed_edit_rejects_symlink_escape(tmp_path: Path) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "projects" / "project"
+    workspace.mkdir(parents=True)
+    (workspace / ".git").mkdir()
+    outside = home_dir / "outside.ts"
+    outside.write_text("old\n", encoding="utf-8")
+    target = workspace / "src" / "linked.ts"
+    target.parent.mkdir()
+    target.symlink_to(outside)
+
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": "sed -i '' 's/old/new/g' src/linked.ts"},
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+    assert match is not None
+
+
+@pytest.mark.parametrize(
+    "target",
+    ("-e e id #.ts", "--expression=e id #.ts", "-fscript.ts"),
+)
+def test_literal_current_workspace_bounded_sed_edit_rejects_option_like_target(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "projects" / "project"
+    workspace.mkdir(parents=True)
+    (workspace / ".git").mkdir()
+    (workspace / target).write_text("old\n", encoding="utf-8")
+
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": f"""sed -i '' 's/old/new/g' '{target}'"""},
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+    assert match is not None
+
+
 @pytest.mark.parametrize(
     "edit,verification",
     (
