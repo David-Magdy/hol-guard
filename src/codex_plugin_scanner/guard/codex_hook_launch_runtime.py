@@ -21,9 +21,10 @@ from .codex_hook_windows_job import (
 )
 
 _HOOK_SUBPROCESS_OUTPUT_LIMIT = 1_000_000
-_HOOK_PROCESS_REAP_TIMEOUT_SECONDS = 0.2
-_HOOK_PROCESS_FINAL_REAP_TIMEOUT_SECONDS = 0.1
-_HOOK_PROCESS_IO_THREAD_JOIN_TIMEOUT_SECONDS = 0.05
+_HOOK_PROCESS_REAP_TIMEOUT_SECONDS = 0.05
+_HOOK_PROCESS_FINAL_REAP_TIMEOUT_SECONDS = 0.05
+_HOOK_PROCESS_IO_THREAD_JOIN_TIMEOUT_SECONDS = 0.02
+_HOOK_PROCESS_FINAL_IO_JOIN_TIMEOUT_SECONDS = 0.05
 _HOOK_ENVIRONMENT_KEYS = frozenset(
     {
         "CODEX_HOME",
@@ -244,7 +245,7 @@ def run_isolated_hook_process(
         thread.join(timeout=max(0.0, io_join_deadline - time.monotonic()))
     if any(thread.is_alive() for thread in io_threads):
         containment_confirmed = _kill_hook_process(process, windows_job) and containment_confirmed
-        final_io_join_deadline = time.monotonic() + 0.2
+        final_io_join_deadline = time.monotonic() + _HOOK_PROCESS_FINAL_IO_JOIN_TIMEOUT_SECONDS
         for thread in io_threads:
             thread.join(timeout=max(0.0, final_io_join_deadline - time.monotonic()))
         if any(thread.is_alive() for thread in io_threads):

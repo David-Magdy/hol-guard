@@ -6948,7 +6948,14 @@ class GuardDaemonServer:
             _ = self._finish_service()
 
     def _finish_service(self) -> bool:
-        with self._finish_service_lock:
+        finish_lock = getattr(self, "_finish_service_lock", None)
+        if finish_lock is None:
+            with type(self)._quarantine_lock:
+                finish_lock = getattr(self, "_finish_service_lock", None)
+                if finish_lock is None:
+                    finish_lock = threading.Lock()
+                    self._finish_service_lock = finish_lock
+        with finish_lock:
             return self._finish_service_locked()
 
     def _finish_service_locked(self) -> bool:
