@@ -118,6 +118,10 @@ _RECOVERY_LOCKS: dict[str, threading.Lock] = {}
 _RECOVERY_LOCKS_GUARD = threading.Lock()
 _STATE_WRITE_LOCKS: dict[str, threading.Lock] = {}
 _STATE_WRITE_LOCKS_GUARD = threading.Lock()
+_EPHEMERAL_REAP_SCHEDULE_LOCK = threading.Lock()
+_EPHEMERAL_REAP_IN_FLIGHT = False
+_DUPLICATE_RETIRE_SCHEDULE_LOCK = threading.Lock()
+_DUPLICATE_RETIRE_IN_FLIGHT: set[str] = set()
 _LAST_EPHEMERAL_REAP_AT = 0.0
 _runtime_fingerprint_cache: str | None = None
 
@@ -302,20 +306,20 @@ def ensure_guard_daemon(
 ) -> str:
     timeout = GUARD_DAEMON_START_TIMEOUT_SECONDS if start_timeout is None else start_timeout
     start_deadline = time.monotonic() + max(0.0, timeout)
-    _reap_stale_ephemeral_guard_daemons(exclude_guard_home=guard_home)
+    _schedule_stale_ephemeral_guard_daemon_reap(exclude_guard_home=guard_home)
     state_path = _state_path(guard_home)
     existing_url = load_guard_daemon_url(guard_home)
     if existing_url is not None:
         existing_port = _guard_daemon_url_port(existing_url)
         if preferred_port is None or existing_port == preferred_port:
-            _retire_duplicate_guard_daemons(guard_home, keep_port=existing_port)
+            _schedule_duplicate_guard_daemon_retirement(guard_home, keep_port=existing_port)
             return existing_url
     with _guard_daemon_start_lock(guard_home, deadline=start_deadline):
         existing_url = load_guard_daemon_url(guard_home)
         if existing_url is not None:
             existing_port = _guard_daemon_url_port(existing_url)
             if preferred_port is None or existing_port == preferred_port:
-                _retire_duplicate_guard_daemons(guard_home, keep_port=existing_port, start_lock_held=True)
+                _schedule_duplicate_guard_daemon_retirement(guard_home, keep_port=existing_port)
                 return existing_url
             retire_all_guard_daemons_for_home(guard_home)
             if not guard_daemon_retirement_is_complete(guard_home):
@@ -328,10 +332,9 @@ def ensure_guard_daemon(
             _remove_invalid_daemon_discovery_key(guard_home)
         adopted_url = _adopt_existing_guard_daemon(guard_home, preferred_port=preferred_port)
         if adopted_url is not None:
-            _retire_duplicate_guard_daemons(
+            _schedule_duplicate_guard_daemon_retirement(
                 guard_home,
                 keep_port=_guard_daemon_url_port(adopted_url),
-                start_lock_held=True,
             )
             return adopted_url
         stale_state = _load_state(guard_home)
@@ -349,10 +352,9 @@ def ensure_guard_daemon(
                 timeout=max(0.0, start_deadline - time.monotonic()),
             )
             if inflight_url is not None:
-                _retire_duplicate_guard_daemons(
+                _schedule_duplicate_guard_daemon_retirement(
                     guard_home,
                     keep_port=_guard_daemon_url_port(inflight_url),
-                    start_lock_held=True,
                 )
                 return inflight_url
             retire_all_guard_daemons_for_home(guard_home)
@@ -404,6 +406,7 @@ def ensure_guard_daemon(
                     port=candidate_port,
                 )
                 _release_guard_daemon_launch_gate(process)
+                remaining_start_time = max(0.0, start_deadline - time.monotonic())
                 url = _wait_for_guard_daemon_url(
                     guard_home,
                     timeout=remaining_start_time,
@@ -414,10 +417,9 @@ def ensure_guard_daemon(
                         guard_home, process=process, creation_time=pending_creation_time
                     ):
                         raise RuntimeError("Guard daemon pending launch state could not be cleared safely.")
-                    _retire_duplicate_guard_daemons(
+                    _schedule_duplicate_guard_daemon_retirement(
                         guard_home,
                         keep_port=_guard_daemon_url_port(url),
-                        start_lock_held=True,
                     )
                     return url
                 if not _terminate_spawned_guard_daemon(process):
@@ -849,6 +851,41 @@ def _retire_duplicate_guard_daemons(
         return
     with _guard_daemon_start_lock(guard_home):
         _retire_duplicate_guard_daemons_unlocked(guard_home, keep_port=keep_port)
+
+
+def _schedule_duplicate_guard_daemon_retirement(
+    guard_home: Path,
+    *,
+    keep_port: int | None,
+) -> None:
+    if keep_port is None:
+        return
+    lock_key = str(guard_home.resolve())
+    with _DUPLICATE_RETIRE_SCHEDULE_LOCK:
+        if lock_key in _DUPLICATE_RETIRE_IN_FLIGHT:
+            return
+        _DUPLICATE_RETIRE_IN_FLIGHT.add(lock_key)
+    retirement = _retire_duplicate_guard_daemons
+
+    def retire() -> None:
+        try:
+            retirement(guard_home, keep_port=keep_port)
+        except Exception:
+            pass
+        finally:
+            with _DUPLICATE_RETIRE_SCHEDULE_LOCK:
+                _DUPLICATE_RETIRE_IN_FLIGHT.discard(lock_key)
+
+    worker = threading.Thread(
+        target=retire,
+        name="guard-daemon-duplicate-retirement",
+        daemon=True,
+    )
+    try:
+        worker.start()
+    except RuntimeError:
+        with _DUPLICATE_RETIRE_SCHEDULE_LOCK:
+            _DUPLICATE_RETIRE_IN_FLIGHT.discard(lock_key)
 
 
 def _retire_duplicate_guard_daemons_unlocked(guard_home: Path, *, keep_port: int) -> None:
@@ -1500,14 +1537,58 @@ def _set_private_mode(path: Path, mode: int) -> None:
         return
 
 
-def _reap_stale_ephemeral_guard_daemons(*, exclude_guard_home: Path | None = None) -> None:
+def _schedule_stale_ephemeral_guard_daemon_reap(*, exclude_guard_home: Path | None = None) -> None:
+    with _EPHEMERAL_REAP_SCHEDULE_LOCK:
+        if globals().get("_EPHEMERAL_REAP_IN_FLIGHT") is True:
+            return
+        now = time.monotonic()
+        last_reap_at = globals().get("_LAST_EPHEMERAL_REAP_AT", 0.0)
+        if not isinstance(last_reap_at, (int, float)):
+            last_reap_at = 0.0
+        if now - float(last_reap_at) < _EPHEMERAL_GUARD_DAEMON_REAP_INTERVAL_SECONDS:
+            return
+        globals()["_EPHEMERAL_REAP_IN_FLIGHT"] = True
+        globals()["_LAST_EPHEMERAL_REAP_AT"] = now
+
+    reaper = _reap_stale_ephemeral_guard_daemons
+
+    def reap() -> None:
+        try:
+            reaper(
+                exclude_guard_home=exclude_guard_home,
+                force=True,
+            )
+        except Exception:
+            pass
+        finally:
+            with _EPHEMERAL_REAP_SCHEDULE_LOCK:
+                globals()["_EPHEMERAL_REAP_IN_FLIGHT"] = False
+
+    worker = threading.Thread(
+        target=reap,
+        name="guard-daemon-stale-reaper",
+        daemon=True,
+    )
+    try:
+        worker.start()
+    except RuntimeError:
+        with _EPHEMERAL_REAP_SCHEDULE_LOCK:
+            globals()["_EPHEMERAL_REAP_IN_FLIGHT"] = False
+
+
+def _reap_stale_ephemeral_guard_daemons(
+    *,
+    exclude_guard_home: Path | None = None,
+    force: bool = False,
+) -> None:
     now = time.monotonic()
     last_reap_at = globals().get("_LAST_EPHEMERAL_REAP_AT", 0.0)
     if not isinstance(last_reap_at, (int, float)):
         last_reap_at = 0.0
-    if now - float(last_reap_at) < _EPHEMERAL_GUARD_DAEMON_REAP_INTERVAL_SECONDS:
+    if not force and now - float(last_reap_at) < _EPHEMERAL_GUARD_DAEMON_REAP_INTERVAL_SECONDS:
         return
-    globals()["_LAST_EPHEMERAL_REAP_AT"] = now
+    if not force:
+        globals()["_LAST_EPHEMERAL_REAP_AT"] = now
     temp_root = Path(tempfile.gettempdir())
     candidate_paths = list(_ephemeral_guard_daemon_state_paths(temp_root))
     exclude_resolved = exclude_guard_home.resolve() if exclude_guard_home is not None else None

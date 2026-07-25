@@ -34,12 +34,42 @@ function waitForGuardCliChildExit(
   });
 }
 
+function guardCliProcessErrorCode(error: unknown): string | null {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+  ) ? error.code : null;
+}
+
+function guardCliProcessGroupExited(processGroupId: number): boolean {
+  try {
+    process.kill(-processGroupId, 0);
+    return false;
+  } catch (error) {
+    return guardCliProcessErrorCode(error) === 'ESRCH';
+  }
+}
+
+async function waitForGuardCliProcessGroupExit(
+  processGroupId: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (guardCliProcessGroupExited(processGroupId)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return guardCliProcessGroupExited(processGroupId);
+}
+
 async function signalGuardCliChild(
   child: ReturnType<typeof spawn>,
   signal: NodeJS.Signals,
 ): Promise<boolean> {
   try {
-    if (child.exitCode !== null || child.signalCode !== null) return true;
+    if (process.platform === 'win32' && (child.exitCode !== null || child.signalCode !== null)) return true;
     if (process.platform === 'win32' && typeof child.pid === 'number') {
       if (GUARD_TASKKILL_PATH !== null) {
         const treeKilled = await new Promise<boolean>((resolve) => {
@@ -88,8 +118,11 @@ async function signalGuardCliChild(
     if (process.platform !== 'win32' && typeof child.pid === 'number') {
       try {
         process.kill(-child.pid, signal);
-        return waitForGuardCliChildExit(child, 200);
-      } catch {}
+      } catch (error) {
+        return guardCliProcessErrorCode(error) === 'ESRCH' || guardCliProcessGroupExited(child.pid);
+      }
+      await waitForGuardCliChildExit(child, 200);
+      return waitForGuardCliProcessGroupExit(child.pid, 200);
     }
     try {
       child.kill(signal);

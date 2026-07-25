@@ -485,6 +485,36 @@ console.log(message);
     assert not marker.exists()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="process-group descendant assertion requires POSIX")
+def test_pretool_plugin_kills_descendants_after_direct_parent_exits(tmp_path: Path) -> None:
+    marker = tmp_path / "opencode-exited-parent-descendant-ran"
+    descendant = f"import time;time.sleep(0.6);open({str(marker)!r},'w',encoding='utf-8').write('ran')"
+    parent = f"import subprocess,sys;subprocess.Popen([sys.executable,'-c',{descendant!r}])"
+    completed = _run_generated_spawn_script(
+        tmp_path,
+        f"""
+let message = "";
+try {{
+  await spawnGuardProcess({{
+    args: ["-c", {json.dumps(parent)}],
+    ...{{ ["c" + "wd"]: process["c" + "wd"]() }},
+    deadlineMs: Date.now() + 100,
+    env: {{}},
+    stdin: "",
+  }});
+}} catch (error) {{
+  message = error instanceof Error ? error.message : String(error);
+}}
+await new Promise((resolve) => setTimeout(resolve, 800));
+console.log(message);
+""",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "HOL Guard fallback review timed out"
+    assert not marker.exists()
+
+
 def test_pretool_plugin_source_has_no_bun_identifier(tmp_path: Path) -> None:
     source = pretool_plugin_source(_ctx(tmp_path))
     assert "Bun" not in source

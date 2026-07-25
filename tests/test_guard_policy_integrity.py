@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import pickle
+import signal
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -213,6 +214,12 @@ def _write_delayed_nested_trust_marker(marker_path: str) -> None:
     Path(marker_path).write_text("late", encoding="utf-8")
 
 
+def _write_delayed_nested_trust_marker_ignoring_term(marker_path: str) -> None:
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    _write_delayed_nested_trust_marker(marker_path)
+
+
 def _protected_trust_result() -> dict[str, str]:
     return {"mode": "protected"}
 
@@ -230,7 +237,7 @@ def _delayed_trust_mutation(marker_path: str, delay_seconds: float) -> TrustStat
 
 def _delayed_nested_trust_mutation(marker_path: str) -> TrustStatus:
     context = local_trust_contract_module.multiprocessing.get_context("spawn")
-    process = context.Process(target=_write_delayed_nested_trust_marker, args=(marker_path,))
+    process = context.Process(target=_write_delayed_nested_trust_marker_ignoring_term, args=(marker_path,))
     process.start()
     time.sleep(2.0)
     return _FakeTrustBackend("slow", 1).status()
@@ -416,7 +423,12 @@ def test_trust_backend_timeout_falls_back_when_process_group_missing(
 
     local_trust_contract_module._terminate_trust_backend_process_tree(FakeProcess())
 
-    assert calls == ["killpg:12345:15", "terminate", "join:0.2"]
+    assert calls == [
+        "killpg:12345:15",
+        "terminate",
+        "join:0.2",
+        "killpg:12345:0",
+    ]
 
 
 def test_trust_backend_check_handles_corrupt_result_file(
@@ -643,10 +655,9 @@ def test_passive_trust_probe_prefers_authenticated_daemon_degradation(
         },
     )
 
-    result = local_trust_controller_module._PassiveTrustStatusProbe(
-        "local-vault",
-        tmp_path,
-    )()
+    result = local_trust_controller_module._built_in_passive_trust_status(
+        local_trust_controller_module._LocalVaultTrustBackend(guard_home=tmp_path)
+    )
 
     assert result.runtime_protection == "degraded"
     assert result.remembered_rules == "disabled_degraded"

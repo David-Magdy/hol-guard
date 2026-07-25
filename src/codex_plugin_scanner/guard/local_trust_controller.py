@@ -172,17 +172,16 @@ class _LocalVaultTrustBackend:
         raise TrustBackendUnavailableError("local_vault_reset_is_managed_by_guard_store")
 
 
-@dataclass(frozen=True)
-class _PassiveTrustStatusProbe:
-    backend_name: str
-    guard_home: Path
-
-    def __call__(self) -> TrustStatus:
-        daemon_state = load_authenticated_daemon_state(self.guard_home)
+def _built_in_passive_trust_status(
+    selected: _LocalVaultTrustBackend | _MacOSNativeTrustBackend,
+) -> TrustStatus:
+    if selected._guard_home is not None:
+        daemon_state = load_authenticated_daemon_state(selected._guard_home)
         daemon_trust_status = daemon_state.get("trust_status") if isinstance(daemon_state, dict) else None
         if isinstance(daemon_trust_status, dict):
             return TrustStatus.from_policy_integrity_state(daemon_trust_status)
-        return _backend_by_name(None, self.backend_name, guard_home=self.guard_home).status()
+        return _backend_by_name(None, selected.name, guard_home=selected._guard_home).status()
+    return selected.status()
 
 
 @dataclass(frozen=True)
@@ -249,22 +248,30 @@ def resolve_passive_trust_state(
         reason=POLICY_INTEGRITY_REASON_BACKEND_TIMEOUT,
         setup_available=bool(selected.name == "macos-native" and selected.supported and selected.passive_no_ui_safe),
     )
-    if isinstance(selected, (_LocalVaultTrustBackend, _MacOSNativeTrustBackend)) and selected._guard_home is not None:
-        passive_probe = _PassiveTrustStatusProbe(selected.name, selected._guard_home)
+    if isinstance(selected, (_LocalVaultTrustBackend, _MacOSNativeTrustBackend)):
+        try:
+            trust_status = _built_in_passive_trust_status(selected)
+        except Exception as error:
+            trust_status = _degraded_safe_status(
+                backend=selected.name,
+                reason=degraded_reason_for_backend_error(error),
+                setup_available=bool(
+                    selected.name == "macos-native" and selected.supported and selected.passive_no_ui_safe
+                ),
+            )
     else:
-        passive_probe = selected.status
-    trust_status = run_trust_backend_check(
-        passive_probe,
-        timeout_seconds=timeout_seconds,
-        timeout_result=timeout_result,
-        on_error=lambda error: _degraded_safe_status(
-            backend=selected.name,
-            reason=degraded_reason_for_backend_error(error),
-            setup_available=bool(
-                selected.name == "macos-native" and selected.supported and selected.passive_no_ui_safe
+        trust_status = run_trust_backend_check(
+            selected.status,
+            timeout_seconds=timeout_seconds,
+            timeout_result=timeout_result,
+            on_error=lambda error: _degraded_safe_status(
+                backend=selected.name,
+                reason=degraded_reason_for_backend_error(error),
+                setup_available=bool(
+                    selected.name == "macos-native" and selected.supported and selected.passive_no_ui_safe
+                ),
             ),
-        ),
-    )
+        )
     return ResolvedTrustState(
         mode=_trust_mode_for_backend(
             trust_status,

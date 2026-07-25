@@ -326,6 +326,53 @@ console.log(JSON.stringify({
     }
 
 
+@pytest.mark.skipif(
+    _bun_executable() is None or os.name != "posix",
+    reason="Bun and POSIX process groups are required for fallback termination testing",
+)
+def test_pi_cleanup_kills_descendants_after_direct_parent_exits(tmp_path: Path) -> None:
+    from codex_plugin_scanner.guard.adapters.pi_extension_cli_runtime_source import CLI_RUNTIME_HELPERS_SOURCE
+
+    bun = _bun_executable()
+    assert bun is not None
+    marker = tmp_path / "pi-exited-parent-descendant-ran"
+    descendant = f"import time;time.sleep(0.6);open({str(marker)!r},'w',encoding='utf-8').write('ran')"
+    parent = f"import subprocess,sys;subprocess.Popen([sys.executable,'-c',{descendant!r}])"
+    script_path = tmp_path / "pi-exited-parent-posix.ts"
+    _ = script_path.write_text(
+        """
+import { spawn } from "node:child_process";
+const GUARD_TASKKILL_PATH: string | null = null;
+const GUARD_TEXT_LIMIT_CHARS = 1_000;
+const GUARD_DAEMON_RECOVERY_COMMAND = "guard";
+const GUARD_DAEMON_RECOVERY_ARGS: string[] = [];
+"""
+        + CLI_RUNTIME_HELPERS_SOURCE
+        + f"""
+const result = await runGuardCliCommand(
+  {json.dumps(str(Path(sys.executable).absolute()))},
+  ["-c", {json.dumps(parent)}],
+  "",
+  100,
+);
+await new Promise((resolve) => setTimeout(resolve, 800));
+console.log(JSON.stringify({{ code: result.error?.code }}));
+""",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [bun, str(script_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert _decode_json_object(completed.stdout) == {"code": "ETIMEDOUT"}
+    assert not marker.exists()
+
+
 @pytest.mark.skipif(_bun_executable() is None, reason="Bun is required to execute the managed Pi extension")
 def test_pi_extension_treats_authenticated_daemon_overload_as_terminal(tmp_path: Path) -> None:
     from codex_plugin_scanner.guard.adapters.pi_extension_source import managed_extension_source

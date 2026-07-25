@@ -141,10 +141,40 @@ function waitForGuardProcessExit(
   });
 }
 
+function guardProcessErrorCode(error: unknown): string | null {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) ? error.code : null;
+}
+
+function guardProcessGroupExited(processGroupId: number): boolean {
+  try {
+    process.kill(-processGroupId, 0);
+    return false;
+  } catch (error) {
+    return guardProcessErrorCode(error) === "ESRCH";
+  }
+}
+
+async function waitForGuardProcessGroupExit(
+  processGroupId: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (guardProcessGroupExited(processGroupId)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return guardProcessGroupExited(processGroupId);
+}
+
 async function terminateGuardProcessGroup(proc: ReturnType<typeof nodeSpawn>): Promise<boolean> {
   try {
     const processGroupId = proc.pid;
-    if (proc.exitCode !== null || proc.signalCode !== null) return true;
+    if (process.platform === "win32" && (proc.exitCode !== null || proc.signalCode !== null)) return true;
     if (process.platform === "win32" && typeof processGroupId === "number") {
       if (GUARD_TASKKILL_PATH !== null) {
         const treeKilled = await new Promise<boolean>((resolve) => {
@@ -190,13 +220,11 @@ async function terminateGuardProcessGroup(proc: ReturnType<typeof nodeSpawn>): P
       await waitForGuardProcessExit(proc, 200);
       return false;
     }
-    let groupSignaled = false;
     try {
       if (process.platform === "win32") {
         proc.kill("SIGTERM");
       } else if (typeof processGroupId === "number") {
         process.kill(-processGroupId, "SIGTERM");
-        groupSignaled = true;
       }
     } catch {}
     await waitForGuardProcessExit(proc, 100);
@@ -206,15 +234,13 @@ async function terminateGuardProcessGroup(proc: ReturnType<typeof nodeSpawn>): P
       } else if (typeof processGroupId === "number") {
         // The direct parent may have exited while descendants still hold hook pipes.
         process.kill(-processGroupId, "SIGKILL");
-        groupSignaled = true;
       }
-    } catch (error) {
-      if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") {
-        groupSignaled = false;
-      }
-    }
+    } catch {}
     const parentExited = await waitForGuardProcessExit(proc, 200);
-    return parentExited && (process.platform === "win32" || groupSignaled);
+    const groupExited =
+      process.platform === "win32" ||
+      (typeof processGroupId === "number" && await waitForGuardProcessGroupExit(processGroupId, 200));
+    return parentExited && groupExited;
   } catch {
     return false;
   }

@@ -52,9 +52,111 @@ def _disable_daemon_adoption(monkeypatch) -> None:
 def _disable_duplicate_retire(monkeypatch) -> None:
     monkeypatch.setattr(
         daemon_manager_module,
-        "_retire_duplicate_guard_daemons",
-        lambda _guard_home, *, keep_port, start_lock_held=False: None,
+        "_schedule_duplicate_guard_daemon_retirement",
+        lambda _guard_home, *, keep_port: None,
     )
+
+
+def _run_ephemeral_reap_synchronously(monkeypatch) -> None:
+    def schedule(*, exclude_guard_home=None) -> None:
+        daemon_manager_module._reap_stale_ephemeral_guard_daemons(
+            exclude_guard_home=exclude_guard_home,
+            force=True,
+        )
+
+    monkeypatch.setattr(daemon_manager_module, "_schedule_stale_ephemeral_guard_daemon_reap", schedule)
+
+
+def test_stale_ephemeral_reap_is_nonblocking_and_single_flight(tmp_path, monkeypatch) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    calls: list[Path | None] = []
+
+    def blocking_reap(*, exclude_guard_home=None, force=False) -> None:
+        assert force
+        calls.append(exclude_guard_home)
+        entered.set()
+        release.wait(timeout=2.0)
+        finished.set()
+
+    monkeypatch.setattr(daemon_manager_module, "_reap_stale_ephemeral_guard_daemons", blocking_reap)
+    monkeypatch.setattr(daemon_manager_module, "_LAST_EPHEMERAL_REAP_AT", 0.0)
+    monkeypatch.setattr(daemon_manager_module, "_EPHEMERAL_REAP_IN_FLIGHT", False)
+    guard_home = tmp_path / "guard-home"
+
+    started = time.monotonic()
+    daemon_manager_module._schedule_stale_ephemeral_guard_daemon_reap(exclude_guard_home=guard_home)
+    daemon_manager_module._schedule_stale_ephemeral_guard_daemon_reap(exclude_guard_home=guard_home)
+
+    assert time.monotonic() - started < 0.1
+    assert entered.wait(timeout=1.0)
+    assert calls == [guard_home]
+    release.set()
+    assert finished.wait(timeout=1.0)
+
+
+def test_duplicate_retirement_is_nonblocking_and_single_flight(tmp_path, monkeypatch) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    calls: list[tuple[Path, int]] = []
+
+    def blocking_retirement(guard_home: Path, *, keep_port: int, start_lock_held=False) -> None:
+        del start_lock_held
+        calls.append((guard_home, keep_port))
+        entered.set()
+        release.wait(timeout=2.0)
+        finished.set()
+
+    monkeypatch.setattr(daemon_manager_module, "_retire_duplicate_guard_daemons", blocking_retirement)
+    monkeypatch.setattr(daemon_manager_module, "_DUPLICATE_RETIRE_IN_FLIGHT", set())
+    guard_home = tmp_path / "guard-home"
+
+    started = time.monotonic()
+    daemon_manager_module._schedule_duplicate_guard_daemon_retirement(guard_home, keep_port=5474)
+    daemon_manager_module._schedule_duplicate_guard_daemon_retirement(guard_home, keep_port=5474)
+
+    assert time.monotonic() - started < 0.1
+    assert entered.wait(timeout=1.0)
+    assert calls == [(guard_home, 5474)]
+    release.set()
+    assert finished.wait(timeout=1.0)
+
+
+@pytest.mark.parametrize(
+    ("scheduler_name", "state_name", "state_value"),
+    [
+        ("_schedule_stale_ephemeral_guard_daemon_reap", "_EPHEMERAL_REAP_IN_FLIGHT", False),
+        ("_schedule_duplicate_guard_daemon_retirement", "_DUPLICATE_RETIRE_IN_FLIGHT", set()),
+    ],
+)
+def test_daemon_maintenance_scheduler_contains_thread_start_failure(
+    tmp_path,
+    monkeypatch,
+    scheduler_name,
+    state_name,
+    state_value,
+) -> None:
+    class UnstartableThread:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def start(self) -> None:
+            raise RuntimeError("thread capacity exhausted")
+
+    monkeypatch.setattr(daemon_manager_module.threading, "Thread", UnstartableThread)
+    monkeypatch.setattr(daemon_manager_module, state_name, state_value)
+    monkeypatch.setattr(daemon_manager_module, "_LAST_EPHEMERAL_REAP_AT", 0.0)
+    scheduler = getattr(daemon_manager_module, scheduler_name)
+    guard_home = tmp_path / "guard-home"
+
+    if scheduler_name == "_schedule_duplicate_guard_daemon_retirement":
+        scheduler(guard_home, keep_port=5474)
+        assert not daemon_manager_module._DUPLICATE_RETIRE_IN_FLIGHT
+    else:
+        scheduler(exclude_guard_home=guard_home)
+        assert daemon_manager_module._EPHEMERAL_REAP_IN_FLIGHT is False
 
 
 def test_hook_failure_restarts_an_older_unresponsive_daemon(tmp_path, monkeypatch) -> None:
@@ -725,6 +827,7 @@ def test_adopt_existing_guard_daemon_skips_scan_on_windows(tmp_path, monkeypatch
 def test_ensure_guard_daemon_retires_duplicate_ports_for_same_guard_home(tmp_path, monkeypatch):
     guard_home = tmp_path / "guard-home"
     killed: list[int] = []
+    retired = threading.Event()
 
     monkeypatch.setattr(daemon_manager_module, "_reap_stale_ephemeral_guard_daemons", lambda **_kwargs: None)
     monkeypatch.setattr(
@@ -735,15 +838,19 @@ def test_ensure_guard_daemon_retires_duplicate_ports_for_same_guard_home(tmp_pat
         "_running_guard_daemon_processes_for_guard_home",
         lambda _guard_home, **kwargs: [(111, 5474), (222, 5475)],
     )
-    monkeypatch.setattr(
-        daemon_manager_module,
-        "_retire_guard_daemon_pid",
-        lambda pid, *, expected_guard_home=None: killed.append(pid) or True,
-    )
+
+    def retire(pid: int, *, expected_guard_home=None) -> bool:
+        del expected_guard_home
+        killed.append(pid)
+        retired.set()
+        return True
+
+    monkeypatch.setattr(daemon_manager_module, "_retire_guard_daemon_pid", retire)
 
     url = daemon_manager_module.ensure_guard_daemon(guard_home)
 
     assert url == "http://127.0.0.1:5474"
+    assert retired.wait(timeout=1.0)
     assert killed == [222]
 
 
@@ -1147,6 +1254,7 @@ def test_guard_daemon_process_query_ignores_hostile_path_and_loader_environment(
 def test_ensure_guard_daemon_reaps_stale_ephemeral_daemon_states(tmp_path, monkeypatch):
     _disable_daemon_adoption(monkeypatch)
     _disable_duplicate_retire(monkeypatch)
+    _run_ephemeral_reap_synchronously(monkeypatch)
     guard_home = tmp_path / "guard-home"
     stale_guard_home = tmp_path / "pytest-of-user" / "pytest-1" / "test-stale" / "home"
     stale_guard_home.mkdir(parents=True)
@@ -1225,7 +1333,6 @@ def test_ensure_guard_daemon_reaps_stale_ephemeral_daemon_states(tmp_path, monke
         "Popen",
         lambda command, **_kwargs: launched_commands.append(list(command)) or SimpleNamespace(),
     )
-
     url = daemon_manager_module.ensure_guard_daemon(guard_home)
 
     assert url == "http://127.0.0.1:5413"
@@ -1241,6 +1348,7 @@ def test_ensure_guard_daemon_reaps_stale_ephemeral_daemon_states(tmp_path, monke
 def test_ensure_guard_daemon_skips_runtime_probe_for_dead_ephemeral_state_pid(tmp_path, monkeypatch):
     _disable_daemon_adoption(monkeypatch)
     _disable_duplicate_retire(monkeypatch)
+    _run_ephemeral_reap_synchronously(monkeypatch)
     guard_home = tmp_path / "guard-home"
     stale_guard_home = tmp_path / "pytest-of-user" / "pytest-11" / "test-stale" / "home"
     stale_guard_home.mkdir(parents=True)
@@ -1302,6 +1410,7 @@ def test_ensure_guard_daemon_skips_runtime_probe_for_dead_ephemeral_state_pid(tm
 def test_ensure_guard_daemon_skips_runtime_probe_for_ephemeral_state_without_pid(tmp_path, monkeypatch):
     _disable_daemon_adoption(monkeypatch)
     _disable_duplicate_retire(monkeypatch)
+    _run_ephemeral_reap_synchronously(monkeypatch)
     guard_home = tmp_path / "guard-home"
     stale_guard_home = tmp_path / "pytest-of-user" / "pytest-12" / "test-stale" / "home"
     stale_guard_home.mkdir(parents=True)
@@ -1347,6 +1456,7 @@ def test_ensure_guard_daemon_skips_runtime_probe_for_ephemeral_state_without_pid
 def test_ensure_guard_daemon_keeps_ephemeral_state_with_recent_runtime_heartbeat(tmp_path, monkeypatch):
     _disable_daemon_adoption(monkeypatch)
     _disable_duplicate_retire(monkeypatch)
+    _run_ephemeral_reap_synchronously(monkeypatch)
     guard_home = tmp_path / "guard-home"
     active_guard_home = tmp_path / "pytest-of-user" / "pytest-3" / "test-active" / "home"
     active_guard_home.mkdir(parents=True)
@@ -1450,6 +1560,7 @@ def test_ephemeral_runtime_probe_skips_policy_integrity_priming_and_preserves_he
 def test_ensure_guard_daemon_does_not_clobber_unowned_ephemeral_state_files(tmp_path, monkeypatch):
     _disable_daemon_adoption(monkeypatch)
     _disable_duplicate_retire(monkeypatch)
+    _run_ephemeral_reap_synchronously(monkeypatch)
     guard_home = tmp_path / "guard-home"
     foreign_guard_home = tmp_path / "pytest-of-user" / "pytest-7" / "test-foreign" / "home"
     foreign_guard_home.mkdir(parents=True)
@@ -1489,6 +1600,7 @@ def test_ensure_guard_daemon_does_not_clobber_unowned_ephemeral_state_files(tmp_
 def test_ensure_guard_daemon_clears_stale_state_when_pid_no_longer_matches_guard_home(tmp_path, monkeypatch):
     _disable_daemon_adoption(monkeypatch)
     _disable_duplicate_retire(monkeypatch)
+    _run_ephemeral_reap_synchronously(monkeypatch)
     guard_home = tmp_path / "guard-home"
     stale_guard_home = tmp_path / "pytest-of-user" / "pytest-8" / "test-reused-pid" / "home"
     stale_guard_home.mkdir(parents=True)
@@ -1527,7 +1639,6 @@ def test_ensure_guard_daemon_clears_stale_state_when_pid_no_longer_matches_guard
         "Popen",
         lambda command, **_kwargs: launched_commands.append(list(command)) or SimpleNamespace(),
     )
-
     url = daemon_manager_module.ensure_guard_daemon(guard_home)
 
     assert url == "http://127.0.0.1:5417"
@@ -1542,6 +1653,7 @@ def test_ensure_guard_daemon_clears_stale_state_when_pid_no_longer_matches_guard
 def test_ensure_guard_daemon_reaps_stale_ephemeral_processes_without_state_file(tmp_path, monkeypatch):
     _disable_daemon_adoption(monkeypatch)
     _disable_duplicate_retire(monkeypatch)
+    _run_ephemeral_reap_synchronously(monkeypatch)
     guard_home = tmp_path / "guard-home"
     stale_guard_home = tmp_path / "pytest-of-user" / "pytest-9" / "test-stale" / "home"
     stale_guard_home.mkdir(parents=True)
