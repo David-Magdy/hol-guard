@@ -441,7 +441,8 @@ def test_transient_initial_worker_failure_replenishes_capacity(
     def transient_ready(slot: HookWorkerSlot, timeout: float) -> bool:
         nonlocal attempts
         attempts += 1
-        return attempts > 1 and original_ready(slot, timeout)
+        ready = original_ready(slot, timeout)
+        return attempts > 1 and ready
 
     monkeypatch.setattr(runner, "_slot_became_ready", transient_ready)
     ready_workers = 0

@@ -37,6 +37,7 @@ class HookWorkerSlot:
     retire_lock: threading.Lock = field(default_factory=threading.Lock)
     retired: bool = False
     windows_job_contained: bool = False
+    isolation_ready: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +71,7 @@ def terminate_worker_tree(process: WorkerProcess, signal_number: int) -> bool:
             os.killpg(process.pid, signal_number)
             return True
         except ProcessLookupError:
-            return True
+            pass
         except OSError:
             pass
     if signal_number == getattr(signal, "SIGKILL", 9):
@@ -93,14 +94,13 @@ def retire_worker_slot(slot: HookWorkerSlot, *, graceful: bool = False) -> bool:
         with suppress(BrokenPipeError, OSError):
             slot.connection.send(("stop", None))
         slot.process.join(timeout=0.2)
-    tree_contained = False
-    if slot.process.is_alive():
-        tree_contained = terminate_worker_tree(slot.process, getattr(signal, "SIGTERM", 15))
-        slot.process.join(timeout=0.5)
-    if os.name != "nt" or not tree_contained:
-        tree_contained = terminate_worker_tree(slot.process, getattr(signal, "SIGKILL", 9))
-        slot.process.join(timeout=0.5)
-    contained = (tree_contained or slot.windows_job_contained) and not slot.process.is_alive()
+    if not slot.process.is_alive():
+        return True
+    tree_contained = terminate_worker_tree(slot.process, getattr(signal, "SIGKILL", 9))
+    slot.process.join(timeout=0.5)
+    contained = (
+        tree_contained or slot.windows_job_contained or not slot.isolation_ready
+    ) and not slot.process.is_alive()
     if not contained:
         with slot.retire_lock:
             slot.retired = False

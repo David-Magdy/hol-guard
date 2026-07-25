@@ -183,6 +183,21 @@ def test_windows_taskkill_failure_requires_job_containment_proof(
     assert retire_worker_slot(job_contained)
 
 
+def test_retirement_does_not_signal_an_exited_process_group(monkeypatch) -> None:
+    process = _FakeProcess(12345)
+    process.kill()
+    slot = HookWorkerSlot(
+        process=process,
+        connection=_SlowConnection(entered=[0], entered_lock=threading.Lock(), all_entered=threading.Event()),
+    )
+    monkeypatch.setattr(
+        hook_worker_module,
+        "terminate_worker_tree",
+        lambda *_args: pytest.fail("an exited process group must not be signaled"),
+    )
+    assert retire_worker_slot(slot)
+
+
 def test_slow_pi_reviews_release_every_slot_within_client_daemon_budget(
     tmp_path,
     monkeypatch,

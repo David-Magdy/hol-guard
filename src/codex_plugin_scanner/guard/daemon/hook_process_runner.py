@@ -238,7 +238,11 @@ class HookProcessRunner:
             child_connection.close()
             raise
         child_connection.close()
-        slot = HookWorkerSlot(process=process, connection=parent_connection)
+        slot = HookWorkerSlot(
+            process=process,
+            connection=parent_connection,
+            isolation_ready=False,
+        )
         with self._state_lock:
             stale = self._closed or generation != self._generation
             self._all_slots[process.pid or id(slot)] = slot
@@ -252,8 +256,10 @@ class HookProcessRunner:
             return False
         try:
             ready = slot.connection.poll(timeout) and slot.connection.recv() == ("ready", None)
-            if ready and os.name == "nt":
-                slot.windows_job_contained = True
+            if ready:
+                slot.isolation_ready = True
+                if os.name == "nt":
+                    slot.windows_job_contained = True
             return ready
         except (EOFError, OSError):
             return False
