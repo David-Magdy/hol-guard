@@ -35,6 +35,17 @@ class _MutableUnicodeBuffer(Protocol):
     value: str
 
 
+def test_default_review_deadline_stays_inside_pi_host_budget() -> None:
+    pi_host_timeout_seconds = 4.5
+    pi_deadline_reserve_seconds = 0.25
+
+    assert (
+        pi_host_timeout_seconds - pi_deadline_reserve_seconds
+        > hook_runner_module._HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
+        + hook_runner_module._HOOK_PROCESS_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
+    )
+
+
 def test_windows_taskkill_path_uses_system_directory_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
