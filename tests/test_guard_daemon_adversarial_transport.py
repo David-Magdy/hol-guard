@@ -371,3 +371,74 @@ def test_unknown_harnesses_share_one_bounded_capacity_bucket(tmp_path: Path) -> 
 
     assert len(capacities) == 1
     assert set(daemon._server.hook_harness_capacity) == {"other"}
+
+
+def test_partial_start_failure_rolls_back_workers_state_and_owner_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        daemon_manager,
+        "_guard_daemon_process_inventory_for_guard_home",
+        lambda _guard_home: [],
+    )
+    store = GuardStore(tmp_path / "guard-home")
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0, idle_timeout_seconds=0)
+    original_start_watchdog = daemon._start_watchdog
+
+    def fail_after_isolated_workers_start() -> None:
+        raise RuntimeError("injected partial startup failure")
+
+    monkeypatch.setattr(daemon, "_start_watchdog", fail_after_isolated_workers_start)
+    with pytest.raises(RuntimeError, match="injected partial startup failure"):
+        daemon.start()
+
+    assert daemon._owner_lock is None
+    assert daemon._server.hook_process_runner.stats()["workers"] == 0
+    assert daemon._server.runtime_heartbeat._thread is None
+    assert daemon._server.unclassified_watchdog_thread is None
+    assert store.get_runtime_state() is None
+
+    owner_lock = daemon_manager.acquire_guard_daemon_owner_lock(store.guard_home)
+    daemon_manager.release_guard_daemon_owner_lock(owner_lock)
+
+    monkeypatch.setattr(daemon, "_start_watchdog", original_start_watchdog)
+    try:
+        daemon.start()
+        assert daemon._thread is not None
+        assert daemon._thread.is_alive()
+    finally:
+        daemon.stop()
+
+
+def test_partial_start_rollback_continues_after_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        daemon_manager,
+        "_guard_daemon_process_inventory_for_guard_home",
+        lambda _guard_home: [],
+    )
+    store = GuardStore(tmp_path / "guard-home")
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0, idle_timeout_seconds=0)
+    monkeypatch.setattr(daemon._server, "start_unclassified_watchdog", lambda: None)
+
+    def fail_cleanup() -> None:
+        raise RuntimeError("injected cleanup failure")
+
+    def fail_startup() -> None:
+        raise RuntimeError("injected partial startup failure")
+
+    monkeypatch.setattr(daemon._server, "stop_unclassified_watchdog", fail_cleanup)
+    monkeypatch.setattr(daemon, "_start_watchdog", fail_startup)
+    try:
+        with pytest.raises(RuntimeError, match="injected partial startup failure"):
+            daemon.start()
+
+        assert daemon._owner_lock is None
+        assert daemon._server.hook_process_runner.stats()["workers"] == 0
+        assert daemon._server.runtime_heartbeat._thread is None
+        assert store.get_runtime_state() is None
+    finally:
+        daemon._server.server_close()

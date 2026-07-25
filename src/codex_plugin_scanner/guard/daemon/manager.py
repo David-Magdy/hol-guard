@@ -1705,6 +1705,39 @@ def _trusted_posix_ps_path() -> str | None:
     return None
 
 
+def _linux_proc_process_entries(proc_root: Path = Path("/proc")) -> list[tuple[int, str]] | None:
+    """Read a bounded process inventory from Linux procfs without requiring procps."""
+
+    entries: list[tuple[int, str]] = []
+    remaining_bytes = _GUARD_DAEMON_PROCESS_QUERY_OUTPUT_LIMIT_BYTES
+    try:
+        process_dirs = proc_root.iterdir()
+        for process_dir in process_dirs:
+            if not process_dir.name.isdigit():
+                continue
+            pid = int(process_dir.name)
+            if pid <= 0:
+                continue
+            try:
+                with (process_dir / "cmdline").open("rb") as stream:
+                    raw_command = stream.read(remaining_bytes + 1)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return None
+            if len(raw_command) > remaining_bytes:
+                return None
+            remaining_bytes -= len(raw_command)
+            if not raw_command:
+                continue
+            command = raw_command.rstrip(b"\0").replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
+            if command:
+                entries.append((pid, command))
+    except OSError:
+        return None
+    return entries
+
+
 def _trusted_windows_powershell_path() -> str | None:
     """Resolve Windows PowerShell from the kernel-reported system directory."""
 
@@ -2011,6 +2044,11 @@ def _guard_daemon_process_inventory_for_guard_home(guard_home: Path) -> list[tup
                 continue
             if isinstance(command_line, str) and command_line.strip():
                 entries.append((pid, command_line.strip()))
+    elif sys.platform.startswith("linux"):
+        proc_entries = _linux_proc_process_entries()
+        if proc_entries is None:
+            return None
+        entries = proc_entries
     else:
         ps_path = _trusted_posix_ps_path()
         if ps_path is None:
