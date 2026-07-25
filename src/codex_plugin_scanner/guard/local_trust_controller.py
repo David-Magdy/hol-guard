@@ -172,7 +172,7 @@ class _LocalVaultTrustBackend:
         raise TrustBackendUnavailableError("local_vault_reset_is_managed_by_guard_store")
 
 
-def _built_in_passive_trust_status(
+def _built_in_cached_trust_status(
     selected: _LocalVaultTrustBackend | _MacOSNativeTrustBackend,
 ) -> TrustStatus:
     if selected._guard_home is not None:
@@ -180,8 +180,11 @@ def _built_in_passive_trust_status(
         daemon_trust_status = daemon_state.get("trust_status") if isinstance(daemon_state, dict) else None
         if isinstance(daemon_trust_status, dict):
             return TrustStatus.from_policy_integrity_state(daemon_trust_status)
-        return _backend_by_name(None, selected.name, guard_home=selected._guard_home).status()
-    return selected.status()
+    return _degraded_safe_status(
+        backend=selected.name,
+        reason=POLICY_INTEGRITY_REASON_KEY_UNAVAILABLE,
+        setup_available=bool(selected.name == "macos-native" and selected.supported),
+    )
 
 
 @dataclass(frozen=True)
@@ -250,7 +253,7 @@ def resolve_passive_trust_state(
     )
     if isinstance(selected, (_LocalVaultTrustBackend, _MacOSNativeTrustBackend)):
         try:
-            trust_status = _built_in_passive_trust_status(selected)
+            trust_status = _built_in_cached_trust_status(selected)
         except Exception as error:
             trust_status = _degraded_safe_status(
                 backend=selected.name,

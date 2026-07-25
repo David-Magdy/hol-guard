@@ -12,6 +12,7 @@ type GuardCliResult = {
 let guardCliEvaluationInFlight = false;
 let guardCliContainmentFailed = false;
 let guardDaemonRecoveryInFlight: Promise<boolean> | null = null;
+const GUARD_WINDOWS_JOB_MARKER = 'HOL_GUARD_WINDOWS_JOB_CONTAINED\n';
 
 function waitForGuardCliChildExit(
   child: ReturnType<typeof spawn>,
@@ -67,9 +68,14 @@ async function waitForGuardCliProcessGroupExit(
 async function signalGuardCliChild(
   child: ReturnType<typeof spawn>,
   signal: NodeJS.Signals,
+  windowsJobContained: boolean,
 ): Promise<boolean> {
   try {
-    if (process.platform === 'win32' && (child.exitCode !== null || child.signalCode !== null)) return true;
+    if (
+      process.platform === 'win32' &&
+      windowsJobContained &&
+      (child.exitCode !== null || child.signalCode !== null)
+    ) return true;
     if (process.platform === 'win32' && typeof child.pid === 'number') {
       if (GUARD_TASKKILL_PATH !== null) {
         const treeKilled = await new Promise<boolean>((resolve) => {
@@ -104,8 +110,8 @@ async function signalGuardCliChild(
           try {
             child.kill('SIGKILL');
           } catch {}
-          await waitForGuardCliChildExit(child, 200);
-          return false;
+          const parentExited = await waitForGuardCliChildExit(child, 200);
+          return windowsJobContained && parentExited;
         }
         return waitForGuardCliChildExit(child, 200);
       }
@@ -146,6 +152,7 @@ function runGuardCliCommand(
     let timedOut = false;
     let stdout = '';
     let stderr = '';
+    let windowsJobContained = false;
     let escalationHandle: ReturnType<typeof setTimeout> | undefined;
     let forcedSettleHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutError = () => Object.assign(
@@ -184,10 +191,10 @@ function runGuardCliCommand(
           ),
         });
       };
-      void signalGuardCliChild(child, 'SIGTERM').then(
+      void signalGuardCliChild(child, 'SIGTERM', windowsJobContained).then(
         () => {
           escalationHandle = setTimeout(() => {
-            void signalGuardCliChild(child, 'SIGKILL').then(
+            void signalGuardCliChild(child, 'SIGKILL', windowsJobContained).then(
               (killed) => {
                 if (!killed) {
                   containmentFailure();
@@ -211,6 +218,10 @@ function runGuardCliCommand(
       stdout = (stdout + chunk).slice(-GUARD_TEXT_LIMIT_CHARS);
     });
     child.stderr?.on('data', (chunk: string) => {
+      if (chunk.includes(GUARD_WINDOWS_JOB_MARKER)) {
+        windowsJobContained = true;
+        chunk = chunk.replaceAll(GUARD_WINDOWS_JOB_MARKER, '');
+      }
       stderr = (stderr + chunk).slice(-GUARD_TEXT_LIMIT_CHARS);
     });
     child.once('error', (error) => {

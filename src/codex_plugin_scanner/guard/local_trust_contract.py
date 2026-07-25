@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Protocol, TypeVar, cast
 
+from .codex_hook_windows_job import assign_current_process_to_windows_hook_job
 from .daemon.hook_process_worker import terminate_worker_tree
 
 LocalTrustMode = Literal[
@@ -158,9 +159,10 @@ def _load_trust_backend_operation(operation_path: str) -> Callable[[], object]:
 def _trust_backend_check_worker(operation_path: str, ready_path: str, result_path: str) -> None:
     if hasattr(os, "setsid"):
         os.setsid()
-    Path(ready_path).touch(mode=0o600)
+    windows_job = assign_current_process_to_windows_hook_job() if os.name == "nt" else None
     try:
         operation = _load_trust_backend_operation(operation_path)
+        Path(ready_path).touch(mode=0o600)
         payload = (True, operation())
     except Exception as error:
         payload = (False, error)
@@ -168,6 +170,7 @@ def _trust_backend_check_worker(operation_path: str, ready_path: str, result_pat
     with Path(temp_result_path).open("wb") as handle:
         pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
     os.replace(temp_result_path, result_path)
+    _ = windows_job
 
 
 def _terminate_trust_backend_process_tree(process: _ProcessHandle) -> None:
