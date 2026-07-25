@@ -133,7 +133,6 @@ class _ProcessHandle(Protocol):
 
 
 _TrustResult = TypeVar("_TrustResult")
-_TRUST_BACKEND_SPAWN_TIMEOUT_SECONDS = 3.0
 
 
 class TrustBackendUnavailableError(RuntimeError):
@@ -273,8 +272,8 @@ def run_trust_backend_check(
             if on_error is None:
                 return timeout_result
             return on_error(error)
-        spawn_deadline = time.monotonic() + _TRUST_BACKEND_SPAWN_TIMEOUT_SECONDS
-        while not Path(ready_path).exists() and process.is_alive() and time.monotonic() < spawn_deadline:
+        deadline = time.monotonic() + timeout_seconds
+        while not Path(ready_path).exists() and process.is_alive() and time.monotonic() < deadline:
             time.sleep(0.005)
         if not Path(ready_path).exists():
             if process.is_alive():
@@ -282,7 +281,7 @@ def run_trust_backend_check(
                 return timeout_result
             process.join(timeout=0)
         else:
-            process.join(timeout=timeout_seconds)
+            process.join(timeout=max(0.0, deadline - time.monotonic()))
         if process.is_alive():
             _terminate_trust_backend_process_tree(process)
             return timeout_result

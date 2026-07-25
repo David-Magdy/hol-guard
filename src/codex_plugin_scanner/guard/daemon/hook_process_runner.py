@@ -29,9 +29,10 @@ if TYPE_CHECKING:
     from .hook_worker import HookWorker
 
 _HOOK_PROCESS_LIMIT = 4
-_HOOK_PROCESS_TIMEOUT_SECONDS = 3.25
+_HOOK_PROCESS_TIMEOUT_SECONDS = 1.45
 _HOOK_PROCESS_READY_TIMEOUT_SECONDS = 5.0
 _HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS = 0.2
+_HOOK_PROCESS_BACKFILL_DELAY_SECONDS = 2.0
 _HOOK_PROCESS_RETRY_MAX_SECONDS = 5.0
 _HOOK_SQLITE_TIMEOUT_ENV = "HOL_GUARD_INTERNAL_HOOK_SQLITE_TIMEOUT_MS"
 _TERMINATE_SIGNAL = getattr(signal, "SIGTERM", 15)
@@ -62,13 +63,16 @@ class HookProcessRunner:
         self._state_lock: threading.Lock = threading.Lock()
         self._metrics_lock: threading.Lock = threading.Lock()
         self._generation: int = 0
+        self._capacity_target: int = process_limit
+        self._backfill_not_before: float = 0.0
+        self._active_reviews: int = 0
         self._closed: bool = False
         self._started: bool = False
         self._timeouts: int = 0
         self._failures: int = 0
         self._restarts: int = 0
 
-    def start(self) -> None:
+    def start(self, *, defer_backfill: bool = False) -> None:
         with self._state_lock:
             if self._started and not self._closed:
                 return
@@ -77,6 +81,9 @@ class HookProcessRunner:
             self._recovery_event.clear()
             self._generation += 1
             generation = self._generation
+            self._capacity_target = 1 if defer_backfill else self._process_limit
+            self._backfill_not_before = 0.0
+            self._active_reviews = 0
             self._closed = False
             self._started = True
             supervisor = threading.Thread(
@@ -87,8 +94,16 @@ class HookProcessRunner:
             self._supervisor_thread = supervisor
         supervisor.start()
         deadline = time.monotonic() + _HOOK_PROCESS_READY_TIMEOUT_SECONDS
-        while self._slots.qsize() < self._process_limit and time.monotonic() < deadline:
+        while self._slots.qsize() < self._capacity_target and time.monotonic() < deadline:
             _ = self._recovery_event.wait(timeout=min(0.02, max(0.0, deadline - time.monotonic())))
+
+    def enable_full_capacity(self, *, delay_seconds: float = _HOOK_PROCESS_BACKFILL_DELAY_SECONDS) -> None:
+        with self._state_lock:
+            if self._closed or not self._started:
+                return
+            self._capacity_target = self._process_limit
+            self._backfill_not_before = time.monotonic() + max(0.0, delay_seconds)
+        self._recovery_event.set()
 
     def review(
         self,
@@ -104,32 +119,38 @@ class HookProcessRunner:
             return HookProcessReview(None, "daemon_hook_process_closed")
         if not self._started:
             return HookProcessReview(None, "daemon_hook_process_not_ready")
+        with self._state_lock:
+            self._active_reviews += 1
         started_at = time.monotonic()
         try:
-            slot = self._slots.get(timeout=min(_HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS, self._timeout_seconds))
-        except queue.Empty:
-            return HookProcessReview(None, "daemon_hook_process_overloaded")
-
-        request = {
-            "payload": dict(payload),
-            "harness": harness,
-            "home_dir": str(home_dir),
-            "guard_home": str(guard_home),
-            "workspace": str(workspace) if workspace is not None else None,
-            "hook_env": {key: value for key, value in hook_env.items() if key in HOOK_ENV_ALLOWLIST},
-        }
-        try:
-            slot.connection.send(("review", request))
-            remaining_seconds = max(0.0, self._timeout_seconds - (time.monotonic() - started_at))
-            if not slot.connection.poll(remaining_seconds):
-                self._increment_metric("timeouts")
+            try:
+                slot = self._slots.get(timeout=min(_HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS, self._timeout_seconds))
+            except queue.Empty:
+                return HookProcessReview(None, "daemon_hook_process_overloaded")
+            try:
+                request = {
+                    "payload": dict(payload),
+                    "harness": harness,
+                    "home_dir": str(home_dir),
+                    "guard_home": str(guard_home),
+                    "workspace": str(workspace) if workspace is not None else None,
+                    "hook_env": {key: value for key, value in hook_env.items() if key in HOOK_ENV_ALLOWLIST},
+                }
+                slot.connection.send(("review", request))
+                remaining_seconds = max(0.0, self._timeout_seconds - (time.monotonic() - started_at))
+                if not slot.connection.poll(remaining_seconds):
+                    self._increment_metric("timeouts")
+                    self._replace_slot_async(slot)
+                    return HookProcessReview(None, "daemon_hook_process_timeout")
+                raw_message = slot.connection.recv()
+            except (BrokenPipeError, EOFError, OSError):
+                self._increment_metric("failures")
                 self._replace_slot_async(slot)
-                return HookProcessReview(None, "daemon_hook_process_timeout")
-            raw_message = slot.connection.recv()
-        except (BrokenPipeError, EOFError, OSError):
-            self._increment_metric("failures")
-            self._replace_slot_async(slot)
-            return HookProcessReview(None, "daemon_hook_process_failed")
+                return HookProcessReview(None, "daemon_hook_process_failed")
+        finally:
+            with self._state_lock:
+                self._active_reviews = max(0, self._active_reviews - 1)
+            self._recovery_event.set()
 
         if not is_pair(raw_message):
             self._increment_metric("failures")
@@ -239,11 +260,15 @@ class HookProcessRunner:
         while True:
             with self._state_lock:
                 closed = self._closed or generation != self._generation
-                should_wait = len(self._all_slots) >= self._process_limit
+                should_wait = len(self._all_slots) >= self._capacity_target
+                active_reviews = self._active_reviews
+                backfill_not_before = self._backfill_not_before
             if closed:
                 return
-            if should_wait:
-                _ = self._recovery_event.wait()
+            backfill_delay = max(0.0, backfill_not_before - time.monotonic())
+            if should_wait or active_reviews > 0 or backfill_delay > 0:
+                timeout = min(0.05, backfill_delay) if backfill_delay > 0 else None
+                _ = self._recovery_event.wait(timeout=timeout)
                 self._recovery_event.clear()
                 retry_delay = 0.05
                 continue

@@ -37,8 +37,10 @@ class _MutableUnicodeBuffer(Protocol):
 
 def test_default_review_deadline_stays_inside_pi_host_budget() -> None:
     pi_host_timeout_seconds = 4.5
+    pi_daemon_timeout_seconds = 1.6
     pi_deadline_reserve_seconds = 0.25
 
+    assert pi_daemon_timeout_seconds > hook_runner_module._HOOK_PROCESS_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
     assert (
         pi_host_timeout_seconds - pi_deadline_reserve_seconds
         > hook_runner_module._HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
@@ -321,6 +323,58 @@ def test_prewarmed_runner_handles_real_hook_and_closes(tmp_path: Path) -> None:
 
     assert result.reason_code is None
     assert result.payload is not None
+
+
+def test_deferred_runner_serves_first_worker_before_backfilling(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=2, timeout_seconds=2)
+    ready_workers = 0
+    try:
+        runner.start(defer_backfill=True)
+        assert runner.stats()["ready"] == 1
+
+        runner.enable_full_capacity(delay_seconds=0)
+        deadline = time.monotonic() + 3
+        while runner.stats()["ready"] != 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        ready_workers = runner.stats()["ready"]
+    finally:
+        runner.close()
+
+    assert ready_workers == 2
+    assert runner.stats()["workers"] == 0
+
+
+def test_deferred_runner_does_not_backfill_during_active_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=2)
+    original_start = runner._start_slot  # pyright: ignore[reportPrivateUsage]
+    attempts = 0
+
+    def counted_start(*, generation: int) -> HookWorkerSlot:
+        nonlocal attempts
+        attempts += 1
+        return original_start(generation=generation)
+
+    monkeypatch.setattr(runner, "_start_slot", counted_start)
+    try:
+        runner.start(defer_backfill=True)
+        with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
+            runner._active_reviews = 1  # pyright: ignore[reportPrivateUsage]
+        runner.enable_full_capacity(delay_seconds=0)
+        time.sleep(0.1)
+        assert attempts == 1
+
+        with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
+            runner._active_reviews = 0  # pyright: ignore[reportPrivateUsage]
+        runner._recovery_event.set()  # pyright: ignore[reportPrivateUsage]
+        deadline = time.monotonic() + 3
+        while runner.stats()["ready"] != 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert runner.stats()["ready"] == 2
+    finally:
+        runner.close()
 
 
 def test_prewarmed_runner_scans_post_tool_output_in_isolated_worker(tmp_path: Path) -> None:

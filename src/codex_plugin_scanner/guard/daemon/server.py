@@ -6800,6 +6800,7 @@ class GuardDaemonServer:
         try:
             self._thread = threading.Thread(target=self._serve_forever, daemon=True)
             self._thread.start()
+            self._server.hook_process_runner.enable_full_capacity()
         except BaseException as error:
             self._thread = None
             if not self._finish_service():
@@ -6810,6 +6811,7 @@ class GuardDaemonServer:
 
     def serve(self) -> None:
         self._begin_service()
+        self._server.hook_process_runner.enable_full_capacity()
         self._serve_forever()
 
     def stop(self) -> None:
@@ -6845,7 +6847,7 @@ class GuardDaemonServer:
             self._aibom_refresh_thread = None
         self._require_command_activity_maintenance_stopped()
         self._shutdown_started.clear()
-        self._server.hook_process_runner.start()
+        self._server.hook_process_runner.start(defer_backfill=True)
         self._maintain_command_activity_best_effort()
         self._persist_aibom_inventory_context()
         self._server.last_activity_monotonic = time.monotonic()
