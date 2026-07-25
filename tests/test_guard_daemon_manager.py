@@ -115,7 +115,7 @@ def test_duplicate_retirement_is_nonblocking_and_single_flight(tmp_path, monkeyp
 
     started = time.monotonic()
     daemon_manager_module._schedule_duplicate_guard_daemon_retirement(guard_home, keep_port=5474)
-    daemon_manager_module._schedule_duplicate_guard_daemon_retirement(guard_home, keep_port=5474)
+    daemon_manager_module._schedule_duplicate_guard_daemon_retirement(tmp_path / "other-home", keep_port=5475)
 
     assert time.monotonic() - started < 0.1
     assert entered.wait(timeout=1.0)
