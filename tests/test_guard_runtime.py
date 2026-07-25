@@ -12616,6 +12616,16 @@ def test_headless_approval_resolver_skips_browser_for_hook_first_harnesses(tmp_p
     monkeypatch.setattr(
         guard_commands_module, "schedule_guard_daemon_ensure", lambda _guard_home, **_kwargs: "http://127.0.0.1:4455"
     )
+
+    class FailingDaemonClient:
+        def start_session(self, **_kwargs):
+            raise RuntimeError("Guard daemon request failed: timed out")
+
+    monkeypatch.setattr(
+        guard_commands_module,
+        "load_guard_surface_daemon_client",
+        lambda _guard_home: FailingDaemonClient(),
+    )
     monkeypatch.setattr(guard_commands_module.webbrowser, "open", lambda url: opened_urls.append(url) or True)
 
     blocked_resolver = guard_commands_module._headless_approval_resolver(
@@ -15401,6 +15411,65 @@ def test_guard_hook_codex_emits_native_deny_for_sensitive_bash_command(tmp_path,
     assert "Open HOL Guard to approve or keep this blocked" in reason
     assert "http://127.0.0.1:4455/requests/" in reason
     assert "Approve it in HOL Guard, then retry." not in reason
+
+
+@pytest.mark.parametrize("failure_phase", ["start_session", "queue_blocked_operation"])
+def test_guard_hook_codex_falls_back_to_native_deny_after_daemon_request_failure(
+    tmp_path,
+    capsys,
+    monkeypatch,
+    failure_phase,
+):
+    home_dir = tmp_path / "home"
+    workspace_dir = tmp_path / "workspace"
+    _build_guard_fixture(home_dir, workspace_dir)
+    _write_text(home_dir / "config.toml", "approval_wait_timeout_seconds = 0\n")
+    monkeypatch.setattr(
+        guard_commands_module,
+        "schedule_guard_daemon_ensure",
+        lambda _guard_home, **_kwargs: "http://127.0.0.1:4455",
+    )
+
+    class FailingDaemonClient:
+        def start_session(self, **_kwargs):
+            if failure_phase == "start_session":
+                raise RuntimeError("Guard daemon request failed: timed out")
+            return {"session_id": "session-1"}
+
+        def queue_blocked_operation(self, **_kwargs):
+            raise RuntimeError("Guard daemon request failed: timed out")
+
+    monkeypatch.setattr(
+        guard_commands_module,
+        "load_guard_surface_daemon_client",
+        lambda _guard_home: FailingDaemonClient(),
+    )
+    event = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo MALICIOUS > dangerous-marker.json"},
+        "policy_action": "require-reapproval",
+        "cwd": str(workspace_dir),
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+
+    rc = main(
+        [
+            "guard",
+            "hook",
+            "--home",
+            str(home_dir),
+            "--workspace",
+            str(workspace_dir),
+            "--harness",
+            "codex",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert len(GuardStore(home_dir).list_approval_requests(limit=10)) == 1
 
 
 def test_guard_hook_codex_emits_no_native_output_for_safe_requests(tmp_path, capsys, monkeypatch):

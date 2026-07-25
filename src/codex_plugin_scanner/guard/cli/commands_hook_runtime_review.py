@@ -185,16 +185,6 @@ def _review_runtime_artifact_hook(
                 browser_approval_daemon_client = None
                 try:
                     browser_approval_daemon_client = load_guard_surface_daemon_client(guard_home)
-                except RuntimeError:
-                    queued = queue_blocked_approvals(
-                        detection=runtime_detection,
-                        evaluation=evaluation_payload,
-                        store=store,
-                        approval_center_url=approval_center_url,
-                        now=_now(),
-                        redaction_level=config.receipt_redaction_level,
-                    )
-                else:
                     session = browser_approval_daemon_client.start_session(
                         harness=args.harness,
                         surface="harness-adapter",
@@ -238,6 +228,16 @@ def _review_runtime_artifact_hook(
                         open_key=artifact_id,
                         redaction_level=config.receipt_redaction_level,
                     )
+                except RuntimeError:
+                    queued = queue_blocked_approvals(
+                        detection=runtime_detection,
+                        evaluation=evaluation_payload,
+                        store=store,
+                        approval_center_url=approval_center_url,
+                        now=_now(),
+                        redaction_level=config.receipt_redaction_level,
+                    )
+                else:
                     operation = blocked_operation.get("operation")
                     if not isinstance(operation, dict):
                         operation = {}
@@ -392,16 +392,6 @@ def _review_runtime_artifact_hook(
             browser_approval_daemon_client = None
             try:
                 browser_approval_daemon_client = load_guard_surface_daemon_client(guard_home)
-            except RuntimeError:
-                queued = queue_blocked_approvals(
-                    redaction_level=config.receipt_redaction_level,
-                    detection=runtime_detection,
-                    evaluation=evaluation_payload,
-                    store=store,
-                    approval_center_url=approval_center_url,
-                    now=_now(),
-                )
-            else:
                 session = browser_approval_daemon_client.start_session(
                     harness=args.harness,
                     surface="harness-adapter",
@@ -445,6 +435,16 @@ def _review_runtime_artifact_hook(
                     open_key=artifact_id,
                     redaction_level=config.receipt_redaction_level,
                 )
+            except RuntimeError:
+                queued = queue_blocked_approvals(
+                    redaction_level=config.receipt_redaction_level,
+                    detection=runtime_detection,
+                    evaluation=evaluation_payload,
+                    store=store,
+                    approval_center_url=approval_center_url,
+                    now=_now(),
+                )
+            else:
                 operation = blocked_operation.get("operation")
                 if not isinstance(operation, dict):
                     operation = {}

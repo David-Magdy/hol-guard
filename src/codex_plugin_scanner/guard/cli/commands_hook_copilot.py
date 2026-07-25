@@ -159,16 +159,6 @@ def _queue_observed_copilot_approval(
     approval_flow = get_adapter(args.harness).approval_flow(managed_install=managed_install)
     try:
         daemon_client = load_guard_surface_daemon_client(guard_home)
-    except RuntimeError:
-        queued = queue_blocked_approvals(
-            redaction_level=config.receipt_redaction_level,
-            detection=runtime_detection,
-            evaluation=evaluation_payload,
-            store=store,
-            approval_center_url=approval_center_url,
-            now=_now(),
-        )
-    else:
         session = daemon_client.start_session(
             harness=args.harness,
             surface="harness-adapter",
@@ -206,6 +196,16 @@ def _queue_observed_copilot_approval(
             open_key=artifact.artifact_id,
             redaction_level=config.receipt_redaction_level,
         )
+    except RuntimeError:
+        queued = queue_blocked_approvals(
+            redaction_level=config.receipt_redaction_level,
+            detection=runtime_detection,
+            evaluation=evaluation_payload,
+            store=store,
+            approval_center_url=approval_center_url,
+            now=_now(),
+        )
+    else:
         queued = blocked_operation.get("approval_requests")
         if not isinstance(queued, list):
             queued = []
@@ -585,16 +585,6 @@ def _run_hook_copilot_permission_request(
     approval_flow = get_adapter(args.harness).approval_flow(managed_install=managed_install)
     try:
         daemon_client = load_guard_surface_daemon_client(guard_home)
-    except RuntimeError:
-        queued = queue_blocked_approvals(
-            redaction_level=config.receipt_redaction_level,
-            detection=runtime_detection,
-            evaluation=evaluation_payload,
-            store=store,
-            approval_center_url=approval_center_url,
-            now=now,
-        )
-    else:
         session = daemon_client.start_session(
             harness=args.harness,
             surface="harness-adapter",
@@ -632,6 +622,16 @@ def _run_hook_copilot_permission_request(
             open_key=artifact_id,
             redaction_level=config.receipt_redaction_level,
         )
+    except RuntimeError:
+        queued = queue_blocked_approvals(
+            redaction_level=config.receipt_redaction_level,
+            detection=runtime_detection,
+            evaluation=evaluation_payload,
+            store=store,
+            approval_center_url=approval_center_url,
+            now=now,
+        )
+    else:
         operation = blocked_operation.get("operation")
         if not isinstance(operation, dict):
             operation = {}
