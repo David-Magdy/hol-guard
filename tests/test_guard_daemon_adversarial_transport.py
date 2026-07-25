@@ -166,6 +166,7 @@ def test_disconnected_slow_clients_do_not_emit_handler_exception_storm(
 ) -> None:
     monkeypatch.setattr(daemon_server, "_DAEMON_REQUEST_READ_TIMEOUT_SECONDS", 0.05)
     with _running_daemon(tmp_path, monkeypatch) as daemon:
+        assert daemon._server.request_queue_size == daemon._server.connection_capacity_limit
         handler_errors: list[object] = []
         monkeypatch.setattr(
             daemon._server,

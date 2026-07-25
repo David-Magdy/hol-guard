@@ -238,6 +238,33 @@ def test_prewarmed_runner_handles_real_hook_and_closes(tmp_path: Path) -> None:
     assert result.payload is not None
 
 
+def test_prewarmed_runner_scans_post_tool_output_in_isolated_worker(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=2)
+    runner.start()
+    try:
+        result = runner.review(
+            payload={
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo hello"},
+                "tool_response": [{"type": "text", "text": "hello\n"}],
+            },
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+        )
+    finally:
+        runner.close()
+
+    assert result.reason_code is None
+    assert result.payload is not None
+    assert result.payload["decision"] == "allow"
+    assert result.payload["reason_code"] == "output_scan_allow"
+    assert runner.stats()["workers"] == 0
+
+
 def test_worker_prewarm_does_not_create_approval_request(tmp_path: Path) -> None:
     store = GuardStore(tmp_path)
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1)

@@ -36,6 +36,7 @@ from .hook_process_worker import HookProcessReview, HookWorkerSlot, terminate_wo
 
 if TYPE_CHECKING:
     from ..store import GuardStore
+    from .hook_worker import HookWorker
 
 _HOOK_PROCESS_LIMIT = 4
 _HOOK_PROCESS_TIMEOUT_SECONDS = 1.45
@@ -359,6 +360,7 @@ def _hook_worker_main(connection: Connection, configured_guard_home: str | None)
     ):
         _ = importlib.import_module(module_name)
     stores: dict[str, GuardStore] = {}
+    hook_workers: dict[str, HookWorker] = {}
     connection.send(("ready", None))
     while True:
         try:
@@ -379,6 +381,7 @@ def _hook_worker_main(connection: Connection, configured_guard_home: str | None)
             response = _run_resident_hook_request(
                 typed_request,
                 stores=stores,
+                hook_workers=hook_workers,
                 configured_guard_home=configured_guard_home,
             )
         except BaseException:
@@ -390,6 +393,7 @@ def _run_resident_hook_request(
     request: dict[str, object],
     *,
     stores: dict[str, GuardStore],
+    hook_workers: dict[str, HookWorker],
     configured_guard_home: str | None,
 ) -> dict[str, object]:
     from ..adapters.base import HarnessContext
@@ -397,6 +401,7 @@ def _run_resident_hook_request(
     from ..cli.commands_support_connect import _synced_policy_payload
     from ..config import load_guard_config, overlay_synced_guard_policy
     from ..store import GuardStore
+    from .hook_worker import HookWorker, HookWorkerUnsupported
 
     payload = request.get("payload")
     harness = request.get("harness")
@@ -428,6 +433,25 @@ def _run_resident_hook_request(
         home_override_explicit=True,
         workspace_override_explicit=workspace is not None,
     )
+    event_name = payload.get("hook_event_name", payload.get("event"))
+    if event_name == "PostToolUse":
+        worker = hook_workers.get(store_key)
+        if worker is None:
+            worker = HookWorker(store=store)
+            hook_workers[store_key] = worker
+        try:
+            worker_payload = worker.review_http_payload(
+                payload=payload,
+                params={"runtime-harness": [harness]},
+                default_harness=harness,
+                home_dir=home_dir,
+                guard_home=guard_home,
+                workspace=workspace,
+            )
+        except HookWorkerUnsupported:
+            pass
+        else:
+            return {"payload": worker_payload, "reason_code": None}
     with _applied_hook_environment(request):
         config = overlay_synced_guard_policy(
             load_guard_config(guard_home, workspace=workspace),

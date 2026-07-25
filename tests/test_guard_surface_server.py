@@ -3595,12 +3595,15 @@ class TestGuardDaemonFastHookPath:
         daemon.start()
 
         try:
-            from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessReview
+            from codex_plugin_scanner.guard.daemon.hook_process_runner import (
+                HookProcessReview,
+                HookProcessRunner,
+            )
 
             monkeypatch.setattr(
-                daemon._server.hook_process_runner,
+                HookProcessRunner,
                 "review",
-                lambda **_kwargs: HookProcessReview(None, "daemon_worker_exception"),
+                lambda _self, **_kwargs: HookProcessReview(None, "daemon_worker_exception"),
             )
             payload = {
                 "hook_event_name": "PostToolUse",

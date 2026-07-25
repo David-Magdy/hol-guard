@@ -21,6 +21,8 @@ from .codex_hook_windows_job import (
 )
 
 _HOOK_SUBPROCESS_OUTPUT_LIMIT = 1_000_000
+_HOOK_PROCESS_REAP_TIMEOUT_SECONDS = 0.2
+_HOOK_PROCESS_FINAL_REAP_TIMEOUT_SECONDS = 0.1
 _HOOK_ENVIRONMENT_KEYS = frozenset(
     {
         "CODEX_HOME",
@@ -219,11 +221,11 @@ def run_isolated_hook_process(
             break
         time.sleep(0.01)
     try:
-        returncode = process.wait(timeout=1)
+        returncode = process.wait(timeout=_HOOK_PROCESS_REAP_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         containment_confirmed = _kill_hook_process(process, windows_job) and containment_confirmed
         try:
-            returncode = process.wait(timeout=0.2)
+            returncode = process.wait(timeout=_HOOK_PROCESS_FINAL_REAP_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             containment_confirmed = False
             returncode = None

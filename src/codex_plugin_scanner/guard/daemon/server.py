@@ -334,6 +334,8 @@ _PEER_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbor
 
 
 class _GuardDaemonHttpServer(ThreadingHTTPServer):
+    request_queue_size = _MAX_CONCURRENT_DAEMON_CONNECTIONS
+
     store: GuardStore
     runtime: GuardSurfaceRuntime
     auth_token: str
@@ -6908,14 +6910,20 @@ class GuardDaemonServer:
     def _finish_service(self) -> None:
         try:
             self._shutdown_started.set()
-            self._server.stop_unclassified_watchdog()
+            stop_unclassified_watchdog = getattr(self._server, "stop_unclassified_watchdog", None)
+            if callable(stop_unclassified_watchdog):
+                stop_unclassified_watchdog()
             approval_attention = getattr(self._server, "approval_attention", None)
             if approval_attention is not None:
                 approval_attention.stop()
             self._command_queue_worker = stop_command_queue_worker(self._command_queue_worker)
             self._live_request_sync_worker = stop_cloud_sync_sync_worker(self._live_request_sync_worker)
-            self._server.runtime_heartbeat.stop(timeout_seconds=1.0)
-            self._server.hook_process_runner.close()
+            runtime_heartbeat = getattr(self._server, "runtime_heartbeat", None)
+            if runtime_heartbeat is not None:
+                runtime_heartbeat.stop(timeout_seconds=1.0)
+            hook_process_runner = getattr(self._server, "hook_process_runner", None)
+            if hook_process_runner is not None:
+                hook_process_runner.close()
             clear_guard_daemon_state_if_current(self._server.store.guard_home, pid=os.getpid(), port=self.port)
             self._server.store.clear_runtime_state(session_id=self._server.runtime_session_id)
         finally:
