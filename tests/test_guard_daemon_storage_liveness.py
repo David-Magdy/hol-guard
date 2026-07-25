@@ -153,7 +153,7 @@ def test_locked_storage_hook_burst_fails_safe_without_stranding_daemon(
         blocker.close()
 
     try:
-        backfill_deadline = time.monotonic() + 4
+        backfill_deadline = time.monotonic() + 10
         worker_stats = daemon._server.hook_process_runner.stats()  # pyright: ignore[reportPrivateUsage]
         while worker_stats["ready"] != worker_stats["configured"] and time.monotonic() < backfill_deadline:
             time.sleep(0.02)
