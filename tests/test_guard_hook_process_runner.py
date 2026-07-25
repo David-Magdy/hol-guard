@@ -560,12 +560,21 @@ def test_blocked_worker_spawn_does_not_block_supervisor_shutdown(
     assert elapsed < 0.5
     with pytest.raises(RuntimeError, match="previous hook worker generation is not contained"):
         runner.start()
-    release_spawn.set()
-    spawn_thread.join(timeout=2)
-    assert not spawn_thread.is_alive()
+    monkeypatch.setattr(hook_runner_module, "_HOOK_PROCESS_READY_TIMEOUT_SECONDS", 5.0)
+    with monkeypatch.context() as failed_stale_retirement:
+        failed_stale_retirement.setattr(
+            runner,
+            "_retire_slot",
+            lambda _slot, *, graceful=False: False,
+        )
+        release_spawn.set()
+        spawn_thread.join(timeout=2)
+        assert not spawn_thread.is_alive()
+        assert runner.stats()["workers"] == 1
+        assert not runner.close_contained()
+
     assert runner.close_contained()
 
-    monkeypatch.setattr(hook_runner_module, "_HOOK_PROCESS_READY_TIMEOUT_SECONDS", 5.0)
     runner.start()
     assert runner.wait_for_capacity(minimum_workers=1, timeout_seconds=10)
     assert runner.stats()["workers"] == 1

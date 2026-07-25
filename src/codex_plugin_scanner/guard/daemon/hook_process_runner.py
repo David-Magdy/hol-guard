@@ -277,37 +277,52 @@ class HookProcessRunner:
             if not stale:
                 self._all_slots[process.pid or id(slot)] = slot
         if stale:
-            _ = self._retire_slot(slot)
+            _ = self._slot_became_isolated(slot, _HOOK_PROCESS_READY_TIMEOUT_SECONDS)
+            if not self._retire_slot(slot):
+                with self._state_lock:
+                    self._all_slots[process.pid or id(slot)] = slot
+                self._mark_containment_failed()
         return slot
 
     @staticmethod
-    def _slot_became_ready(slot: HookWorkerSlot, timeout: float) -> bool:
+    def _slot_became_isolated(slot: HookWorkerSlot, timeout: float) -> bool:
+        if timeout <= 0:
+            return False
+        try:
+            if not slot.connection.poll(timeout):
+                return False
+            message = slot.connection.recv()
+            if message == ("isolation_failed", None):
+                slot.pre_isolation_contained = True
+                return False
+            if not is_pair(message) or message[0] != "isolated":
+                return False
+            proof = as_string_object_dict(message[1])
+            if proof is None:
+                return False
+            if os.name == "nt":
+                if proof.get("windows_job_contained") is not True:
+                    return False
+                slot.windows_job_contained = True
+            elif proof.get("process_group_id") != slot.process.pid:
+                return False
+            slot.isolation_ready = True
+            return True
+        except (EOFError, OSError):
+            return False
+
+    @classmethod
+    def _slot_became_ready(cls, slot: HookWorkerSlot, timeout: float) -> bool:
         if timeout <= 0:
             return False
         deadline = time.monotonic() + timeout
+        if not slot.isolation_ready and not cls._slot_became_isolated(slot, timeout):
+            return False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
         try:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0 or not slot.connection.poll(remaining):
-                    return False
-                message = slot.connection.recv()
-                if message == ("ready", None):
-                    return slot.isolation_ready
-                if message == ("isolation_failed", None):
-                    slot.pre_isolation_contained = True
-                    return False
-                if not is_pair(message) or message[0] != "isolated":
-                    return False
-                proof = as_string_object_dict(message[1])
-                if proof is None:
-                    return False
-                if os.name == "nt":
-                    if proof.get("windows_job_contained") is not True:
-                        return False
-                    slot.windows_job_contained = True
-                elif proof.get("process_group_id") != slot.process.pid:
-                    return False
-                slot.isolation_ready = True
+            return slot.connection.poll(remaining) and slot.connection.recv() == ("ready", None)
         except (EOFError, OSError):
             return False
 
