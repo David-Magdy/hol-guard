@@ -239,12 +239,14 @@ def run_isolated_hook_process(
             containment_confirmed = False
             _ = _kill_hook_process(process, windows_job)
     io_threads = [writer, *readers]
+    io_join_deadline = time.monotonic() + _HOOK_PROCESS_IO_THREAD_JOIN_TIMEOUT_SECONDS
     for thread in io_threads:
-        thread.join(timeout=_HOOK_PROCESS_IO_THREAD_JOIN_TIMEOUT_SECONDS)
+        thread.join(timeout=max(0.0, io_join_deadline - time.monotonic()))
     if any(thread.is_alive() for thread in io_threads):
         containment_confirmed = _kill_hook_process(process, windows_job) and containment_confirmed
+        final_io_join_deadline = time.monotonic() + 0.2
         for thread in io_threads:
-            thread.join(timeout=0.2)
+            thread.join(timeout=max(0.0, final_io_join_deadline - time.monotonic()))
         if any(thread.is_alive() for thread in io_threads):
             containment_confirmed = False
     if not containment_confirmed:
