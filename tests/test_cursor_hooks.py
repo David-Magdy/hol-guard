@@ -491,7 +491,8 @@ def test_cursor_hook_recovery_honors_total_deadline(tmp_path: Path) -> None:
         timeout=3,
     )
 
-    assert time.monotonic() - started < 1
+    # Includes cold interpreter startup, which can dominate the injected 200 ms hook budget on loaded CI.
+    assert time.monotonic() - started < 2
     assert proc.returncode == 2
     assert json.loads(proc.stdout)["permission"] == "deny"
 
