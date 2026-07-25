@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import pickle
 import signal
 import sqlite3
@@ -251,8 +252,15 @@ def _nested_trust_result(marker_path: str) -> dict[str, str]:
     context = local_trust_contract_module.multiprocessing.get_context("spawn")
     process = context.Process(target=_write_nested_trust_marker, args=(marker_path,))
     process.start()
-    process.join(timeout=1.0)
+    process.join(timeout=3.0)
     return {"mode": "protected", "nested": str(Path(marker_path).exists())}
+
+
+def _trust_result_with_delayed_descendant(marker_path: str) -> dict[str, str]:
+    context = local_trust_contract_module.multiprocessing.get_context("spawn")
+    process = context.Process(target=_write_delayed_nested_trust_marker, args=(marker_path,))
+    process.start()
+    return {"mode": "protected"}
 
 
 def _write_corrupt_trust_result(operation_path: str, ready_path: str, result_path: str) -> None:
@@ -392,6 +400,21 @@ def test_trust_backend_timeout_kills_nested_helper_process(tmp_path: Path) -> No
     time.sleep(0.6)
 
     assert result == timeout_result
+    assert not marker_path.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows Job Object inheritance")
+def test_completed_windows_trust_worker_job_kills_delayed_descendant(tmp_path: Path) -> None:
+    marker_path = tmp_path / "windows-trust-descendant"
+
+    result = run_trust_backend_check(
+        partial(_trust_result_with_delayed_descendant, str(marker_path)),
+        timeout_seconds=2.0,
+        timeout_result={"mode": "degraded"},
+    )
+    time.sleep(0.8)
+
+    assert result == {"mode": "protected"}
     assert not marker_path.exists()
 
 
@@ -580,7 +603,8 @@ def test_trust_backend_check_allows_spawned_helper_child_process(tmp_path: Path)
 
     result = run_trust_backend_check(
         partial(_nested_trust_result, str(marker_path)),
-        timeout_seconds=1.0,
+        # This verifies nested containment, while concurrent spawn runners need startup headroom.
+        timeout_seconds=4.0,
         timeout_result={"mode": "degraded", "nested": "False"},
     )
 
@@ -655,7 +679,7 @@ def test_passive_trust_probe_prefers_authenticated_daemon_degradation(
         },
     )
 
-    result = local_trust_controller_module._built_in_passive_trust_status(
+    result = local_trust_controller_module._built_in_cached_trust_status(
         local_trust_controller_module._LocalVaultTrustBackend(guard_home=tmp_path)
     )
 

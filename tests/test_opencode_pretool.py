@@ -120,6 +120,8 @@ def test_pretool_plugin_source_embeds_guard_paths(tmp_path: Path) -> None:
     assert "hookProcessEnv" in source
     assert "GUARD_INHERIT_ENV_KEYS" in source
     assert "HOL_GUARD_HOOK_ARGV" in source
+    assert "assign_current_process_to_windows_hook_job" in source
+    assert "HOL_GUARD_WINDOWS_JOB_CONTAINED" in source
     assert "cwd: GUARD_HOME" in source
     run_block = source.split("async function runGuardHook", 1)[1].split("function parseGuardPayload", 1)[0]
     assert "cwd: workspace" not in run_block
@@ -267,17 +269,7 @@ def test_pretool_plugin_source_bounds_and_serializes_fallback(tmp_path: Path) ->
     assert "process.env.SYSTEMROOT" not in source
     assert 'taskkill.once("close", (status) => finish(status === 0))' in source
     assert 'taskkill.kill("SIGKILL")' in source
-    assert (
-        """if (!treeKilled) {
-          try {
-            proc.kill("SIGKILL");
-          } catch {}
-          await waitForGuardProcessExit(proc, 200);
-          return false;
-        }"""
-        in source
-    )
-    assert "void terminateGuardProcessGroup(proc).then(" in source
+    assert "void terminateGuardProcessGroup(proc, windowsJobContained).then(" in source
     assert "if (!terminated)" in source
     assert "fallbackContainmentFailed = true" in source
     assert "containmentFailure," in source
@@ -387,7 +379,7 @@ console.log(JSON.stringify({{ first, second, elapsedMs: performance.now() - star
     assert float(payload["elapsedMs"]) < 1_000
 
 
-def test_pretool_plugin_exited_windows_parent_does_not_latch_without_taskkill(tmp_path: Path) -> None:
+def test_pretool_plugin_exited_windows_parent_without_job_proof_latches(tmp_path: Path) -> None:
     bun = _bun_executable()
     if bun is None:
         pytest.skip("bun not installed")
@@ -459,8 +451,8 @@ console.log(JSON.stringify({{
     )
     payload = json.loads(completed.stdout)
 
-    assert payload["first"] == "HOL Guard fallback review timed out"
-    assert payload["second"] == "HOL Guard fallback review timed out"
+    assert payload["first"] == "HOL Guard fallback containment could not be confirmed"
+    assert payload["second"] == "HOL Guard fallback containment previously failed"
     assert payload["spawnCalls"] == 2
     assert float(payload["elapsedMs"]) < 1_000
 
@@ -507,7 +499,7 @@ let message = "";
 try {{
   await spawnGuardProcess({{
     args: ["-c", {json.dumps(parent)}],
-    ...{{ ["c" + "wd"]: process["c" + "wd"]() }},
+    cwd: process.cwd(),
     deadlineMs: Date.now() + 100,
     env: {{}},
     stdin: "",

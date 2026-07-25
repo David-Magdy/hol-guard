@@ -32,6 +32,7 @@ const GUARD_INHERIT_ENV_KEYS = __GUARD_INHERIT_ENV_KEYS__;
 const GUARD_TASKKILL_PATH = __GUARD_TASKKILL_PATH__;
 const INTERCEPT_TOOLS = new Set(__INTERCEPT_TOOLS__);
 const GUARD_HOOK_TIMEOUT_MS = 30_000;
+const GUARD_WINDOWS_JOB_MARKER = "HOL_GUARD_WINDOWS_JOB_CONTAINED\\n";
 let fallbackInFlight = false;
 let fallbackContainmentFailed = false;
 
@@ -171,10 +172,17 @@ async function waitForGuardProcessGroupExit(
   return guardProcessGroupExited(processGroupId);
 }
 
-async function terminateGuardProcessGroup(proc: ReturnType<typeof nodeSpawn>): Promise<boolean> {
+async function terminateGuardProcessGroup(
+  proc: ReturnType<typeof nodeSpawn>,
+  windowsJobContained: boolean,
+): Promise<boolean> {
   try {
     const processGroupId = proc.pid;
-    if (process.platform === "win32" && (proc.exitCode !== null || proc.signalCode !== null)) return true;
+    if (
+      process.platform === "win32" &&
+      windowsJobContained &&
+      (proc.exitCode !== null || proc.signalCode !== null)
+    ) return true;
     if (process.platform === "win32" && typeof processGroupId === "number") {
       if (GUARD_TASKKILL_PATH !== null) {
         const treeKilled = await new Promise<boolean>((resolve) => {
@@ -209,8 +217,8 @@ async function terminateGuardProcessGroup(proc: ReturnType<typeof nodeSpawn>): P
           try {
             proc.kill("SIGKILL");
           } catch {}
-          await waitForGuardProcessExit(proc, 200);
-          return false;
+          const parentExited = await waitForGuardProcessExit(proc, 200);
+          return windowsJobContained && parentExited;
         }
         return waitForGuardProcessExit(proc, 200);
       }
@@ -310,12 +318,17 @@ export async function spawnGuardProcess(options: {
     }
     let stdout = "";
     let stderr = "";
+    let windowsJobContained = false;
     proc.stdout?.setEncoding("utf8");
     proc.stderr?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk: string) => {
       stdout += chunk;
     });
     proc.stderr?.on("data", (chunk: string) => {
+      if (chunk.includes(GUARD_WINDOWS_JOB_MARKER)) {
+        windowsJobContained = true;
+        chunk = chunk.replaceAll(GUARD_WINDOWS_JOB_MARKER, "");
+      }
       stderr += chunk;
     });
     proc.on("error", (error) => {
@@ -335,7 +348,7 @@ export async function spawnGuardProcess(options: {
           error: new Error("HOL Guard fallback containment could not be confirmed"),
         });
       };
-      void terminateGuardProcessGroup(proc).then(
+      void terminateGuardProcessGroup(proc, windowsJobContained).then(
         (terminated) => {
           if (!terminated) {
             containmentFailure();
@@ -539,6 +552,11 @@ def _pretool_hook_launcher_code(
         "import json,os,sys;"
         f"trusted={json.dumps(trusted_entries)};"
         "sys.path[:0]=trusted;"
+        "from codex_plugin_scanner.guard.codex_hook_windows_job import "
+        "assign_current_process_to_windows_hook_job;"
+        "_windows_job=assign_current_process_to_windows_hook_job() if os.name=='nt' else None;"
+        "sys.stderr.write('HOL_GUARD_WINDOWS_JOB_CONTAINED\\n') if _windows_job is not None else None;"
+        "sys.stderr.flush() if _windows_job is not None else None;"
         "from pathlib import Path;"
         "import codex_plugin_scanner;"
         "from codex_plugin_scanner.guard.adapters.bounded_cli_hook_bridge import run_bounded_cli_hook;"

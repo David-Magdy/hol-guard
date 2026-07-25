@@ -40,8 +40,13 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
     compatibility_version_json = json.dumps(GUARD_DAEMON_COMPATIBILITY_VERSION)
     package_root = Path(__file__).resolve().parents[3]
     cli_wrapper_bootstrap = (
-        "import json,sys;"
+        "import json,os,sys;"
         f"sys.path.insert(0,{str(package_root)!r});"
+        "from codex_plugin_scanner.guard.codex_hook_windows_job import "
+        "assign_current_process_to_windows_hook_job;"
+        "_windows_job=assign_current_process_to_windows_hook_job() if os.name=='nt' else None;"
+        "sys.stderr.write('HOL_GUARD_WINDOWS_JOB_CONTAINED\\n') if _windows_job is not None else None;"
+        "sys.stderr.flush() if _windows_job is not None else None;"
         "from pathlib import Path;"
         "from codex_plugin_scanner.guard.adapters.bounded_cli_hook_bridge import run_bounded_cli_hook;"
         "argv=json.loads(sys.argv[1]);"
@@ -54,8 +59,13 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
     cli_wrapper_command_json = json.dumps(str(Path(sys.executable).expanduser().absolute()))
     cli_wrapper_args_json = json.dumps(["-I", "-c", cli_wrapper_bootstrap])
     recovery_bootstrap = (
-        "import sys;"
+        "import os,sys;"
         f"sys.path.insert(0,{str(package_root)!r});"
+        "from codex_plugin_scanner.guard.codex_hook_windows_job import "
+        "assign_current_process_to_windows_hook_job;"
+        "_windows_job=assign_current_process_to_windows_hook_job(allow_breakaway=True) if os.name=='nt' else None;"
+        "sys.stderr.write('HOL_GUARD_WINDOWS_JOB_CONTAINED\\n') if _windows_job is not None else None;"
+        "sys.stderr.flush() if _windows_job is not None else None;"
         "from pathlib import Path;"
         "from codex_plugin_scanner.guard.daemon.manager import recover_guard_daemon_after_hook_failure;"
         f"recover_guard_daemon_after_hook_failure(Path({str(guard_home)!r}),"

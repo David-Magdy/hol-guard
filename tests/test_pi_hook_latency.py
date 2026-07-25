@@ -178,6 +178,10 @@ def test_pi_extension_keeps_fallbacks_inside_outer_hook_deadline(tmp_path: Path)
     assert 'recoveryKind: "authenticated-control-plane-failure"' in source
     assert "failure_kind=sys.argv[1]" in source
     assert "recover_guard_daemon_after_hook_failure" in source
+    assert source.count("assign_current_process_to_windows_hook_job") == 4
+    assert "_windows_job=assign_current_process_to_windows_hook_job()" in source
+    assert "allow_breakaway=True" in source
+    assert "HOL_GUARD_WINDOWS_JOB_CONTAINED" in source
     assert "if (!response.ok) {" in source
     assert "reason_code: reasonCode" in source
     assert "const deadlineAt = Date.now() + GUARD_TIMEOUT_MS - GUARD_DEADLINE_RESERVE_MS" in source
@@ -268,7 +272,7 @@ console.log(JSON.stringify({
 
 
 @pytest.mark.skipif(_bun_executable() is None, reason="Bun is required to execute Pi cleanup helpers")
-def test_pi_exited_windows_parent_does_not_latch_without_taskkill(tmp_path: Path) -> None:
+def test_pi_exited_windows_parent_without_job_proof_latches(tmp_path: Path) -> None:
     from codex_plugin_scanner.guard.adapters.pi_extension_cli_runtime_source import CLI_RUNTIME_HELPERS_SOURCE
 
     bun = _bun_executable()
@@ -320,25 +324,10 @@ console.log(JSON.stringify({
     payload = _decode_json_object(completed.stdout)
 
     assert payload == {
-        "code": "ETIMEDOUT",
+        "code": "ECONTAINMENT",
         "recoveryAllowed": False,
-        "spawnCalls": 2,
+        "spawnCalls": 3,
     }
-
-
-def test_pi_taskkill_failure_remains_fail_closed_after_bounded_wait() -> None:
-    from codex_plugin_scanner.guard.adapters.pi_extension_cli_runtime_source import CLI_RUNTIME_HELPERS_SOURCE
-
-    assert (
-        """if (!treeKilled) {
-          try {
-            child.kill('SIGKILL');
-          } catch {}
-          await waitForGuardCliChildExit(child, 200);
-          return false;
-        }"""
-        in CLI_RUNTIME_HELPERS_SOURCE
-    )
 
 
 @pytest.mark.skipif(

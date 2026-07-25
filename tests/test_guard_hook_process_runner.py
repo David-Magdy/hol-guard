@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Protocol, TextIO, cast, final
+from typing import ClassVar, Protocol, TextIO, cast, final
 
 import pytest
 
@@ -102,6 +102,80 @@ def test_windows_hook_job_breakaway_is_recovery_only() -> None:
     assert _job_limit_flags(allow_breakaway=True) == (
         _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | _JOB_OBJECT_LIMIT_BREAKAWAY_OK
     )
+
+
+def test_current_windows_process_is_assigned_to_kill_on_close_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, ...]] = []
+    job = windows_job_module.WindowsHookJob(handle=77)
+
+    class FakeFunction:
+        def __init__(self, callback) -> None:
+            self.callback = callback
+            self.argtypes: list[object] = []
+            self.restype: object | None = None
+
+        def __call__(self, *args: object) -> object:
+            return self.callback(*args)
+
+    kernel32 = type(
+        "FakeKernel32",
+        (),
+        {
+            "GetCurrentProcess": FakeFunction(lambda: 321),
+            "AssignProcessToJobObject": FakeFunction(
+                lambda job_handle, process_handle: calls.append((job_handle, process_handle)) or True
+            ),
+            "IsProcessInJob": FakeFunction(
+                lambda _process_handle, _job_handle, assigned: setattr(assigned._obj, "value", True) or True
+            ),
+        },
+    )()
+    created: list[bool] = []
+    monkeypatch.setattr(windows_job_module.os, "name", "nt")
+    monkeypatch.setattr(
+        windows_job_module,
+        "_create_job",
+        lambda *, allow_breakaway=False: created.append(allow_breakaway) or job,
+    )
+    monkeypatch.setattr(windows_job_module, "_kernel32", lambda: kernel32)
+
+    assigned = windows_job_module.assign_current_process_to_windows_hook_job()
+
+    assert assigned is job
+    assert created == [False]
+    assert len(calls) == 1
+
+
+def test_current_windows_process_assignment_failure_closes_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = windows_job_module.WindowsHookJob(handle=77)
+    closed: list[windows_job_module.WindowsHookJob] = []
+
+    class FakeGetCurrentProcess:
+        argtypes: ClassVar[list[object]] = []
+        restype: object | None = None
+
+        def __call__(self) -> int:
+            return 321
+
+    kernel32 = type("FakeKernel32", (), {"GetCurrentProcess": FakeGetCurrentProcess()})()
+    monkeypatch.setattr(windows_job_module.os, "name", "nt")
+    monkeypatch.setattr(windows_job_module, "_create_job", lambda **_kwargs: job)
+    monkeypatch.setattr(windows_job_module, "_kernel32", lambda: kernel32)
+    monkeypatch.setattr(
+        windows_job_module,
+        "_assign_process_handle_to_job",
+        lambda *_args: (_ for _ in ()).throw(OSError("assignment refused")),
+    )
+    monkeypatch.setattr(windows_job_module, "close_windows_hook_job", closed.append)
+
+    with pytest.raises(OSError, match="assignment refused"):
+        windows_job_module.assign_current_process_to_windows_hook_job()
+
+    assert closed == [job]
 
 
 def test_windows_worker_taskkill_failure_falls_back_to_direct_termination(
