@@ -953,7 +953,10 @@ class TestGuardSurfaceServer:
             daemon.stop()
 
         assert hook_payload["decision"] == "deny"
-        assert "Kubernetes secret read command" in str(hook_payload["reason"])
+        assert "Kubernetes secret read command" in str(hook_payload["reason"]), {
+            "hook_payload": hook_payload,
+            "worker_stats": daemon._server.hook_process_runner.stats(),
+        }
 
     def test_guard_daemon_cursor_hook_endpoint_applies_hook_env_overlay(self, tmp_path, monkeypatch) -> None:
         store = GuardStore(tmp_path / "guard-home")

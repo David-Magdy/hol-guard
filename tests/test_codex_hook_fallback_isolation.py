@@ -375,6 +375,58 @@ def test_isolated_process_returns_when_tree_termination_cannot_be_confirmed(
     assert spawns == 1
 
 
+def test_isolated_process_latches_when_input_writer_cannot_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release_writer = threading.Event()
+
+    class BlockingInput:
+        def write(self, data: bytes) -> int:
+            if not release_writer.wait(timeout=2):
+                return 0
+            return len(data)
+
+        def flush(self) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    class ExitedProcess:
+        pid = 987_654
+        stdin = BlockingInput()
+        stdout = io.BytesIO()
+        stderr = io.BytesIO()
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return 0
+
+    monkeypatch.setattr(launch_runtime, "_HOOK_PROCESS_CONTAINMENT_FAILED", threading.Event())
+    monkeypatch.setattr(launch_runtime.subprocess, "Popen", lambda *_args, **_kwargs: ExitedProcess())
+    monkeypatch.setattr(launch_runtime.os, "killpg", lambda *_args: None)
+
+    started_at = time.monotonic()
+    result = run_isolated_hook_process(
+        ["exited-with-stuck-writer"],
+        input_text="blocked",
+        cwd=tmp_path,
+        environment={},
+        timeout_seconds=1,
+    )
+    elapsed = time.monotonic() - started_at
+    release_writer.set()
+
+    assert elapsed < 1
+    assert result.returncode is None
+    assert result.containment_failed is True
+    assert launch_runtime._HOOK_PROCESS_CONTAINMENT_FAILED.is_set()
+
+
 @pytest.fixture(autouse=True)
 def _restore_current_directory() -> Iterator[None]:
     original = Path.cwd()

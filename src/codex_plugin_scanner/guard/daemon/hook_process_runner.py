@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 _HOOK_PROCESS_LIMIT = 4
 _HOOK_PROCESS_TIMEOUT_SECONDS = 1.45
 _HOOK_PROCESS_READY_TIMEOUT_SECONDS = 5.0
+_HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS = 0.2
 _HOOK_PROCESS_RETRY_MAX_SECONDS = 5.0
 _HOOK_SQLITE_TIMEOUT_ENV = "HOL_GUARD_INTERNAL_HOOK_SQLITE_TIMEOUT_MS"
 _TERMINATE_SIGNAL = getattr(signal, "SIGTERM", 15)
@@ -68,8 +69,6 @@ class HookProcessRunner:
         self._restarts: int = 0
 
     def start(self) -> None:
-        """Prewarm the fixed worker set before the daemon accepts hooks."""
-
         with self._state_lock:
             if self._started and not self._closed:
                 return
@@ -101,14 +100,13 @@ class HookProcessRunner:
         workspace: Path | None,
         hook_env: Mapping[str, str],
     ) -> HookProcessReview:
-        """Return parsed hook JSON or a stable fail-safe reason."""
-
         if self._closed:
             return HookProcessReview(None, "daemon_hook_process_closed")
         if not self._started:
             return HookProcessReview(None, "daemon_hook_process_not_ready")
+        started_at = time.monotonic()
         try:
-            slot = self._slots.get_nowait()
+            slot = self._slots.get(timeout=min(_HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS, self._timeout_seconds))
         except queue.Empty:
             return HookProcessReview(None, "daemon_hook_process_overloaded")
 
@@ -122,7 +120,8 @@ class HookProcessRunner:
         }
         try:
             slot.connection.send(("review", request))
-            if not slot.connection.poll(self._timeout_seconds):
+            remaining_seconds = max(0.0, self._timeout_seconds - (time.monotonic() - started_at))
+            if not slot.connection.poll(remaining_seconds):
                 self._increment_metric("timeouts")
                 self._replace_slot_async(slot)
                 return HookProcessReview(None, "daemon_hook_process_timeout")
@@ -161,8 +160,6 @@ class HookProcessRunner:
         return HookProcessReview(typed_response, None)
 
     def stats(self) -> dict[str, int]:
-        """Return content-free worker health counters."""
-
         with self._state_lock:
             worker_count = len(self._all_slots)
         with self._metrics_lock:
@@ -238,8 +235,6 @@ class HookProcessRunner:
             return False
 
     def _supervise_capacity(self, generation: int) -> None:
-        """Reconcile desired worker capacity with bounded spawn pressure."""
-
         retry_delay = 0.05
         while True:
             with self._state_lock:

@@ -2044,24 +2044,25 @@ def _guard_daemon_process_inventory_for_guard_home(guard_home: Path) -> list[tup
                 continue
             if isinstance(command_line, str) and command_line.strip():
                 entries.append((pid, command_line.strip()))
-    elif sys.platform.startswith("linux"):
-        proc_entries = _linux_proc_process_entries()
-        if proc_entries is None:
-            return None
-        entries = proc_entries
     else:
         ps_path = _trusted_posix_ps_path()
         if ps_path is None:
-            return None
-        output = _bounded_process_query_stdout([ps_path, "-axo", "pid=,command="])
-        if output is None:
-            return None
-        entries = []
-        for line in output.splitlines():
-            match = re.match(r"^\s*(\d+)\s+(.*)$", line)
-            if match is None:
-                continue
-            entries.append((int(match.group(1)), match.group(2).strip()))
+            if not sys.platform.startswith("linux"):
+                return None
+            proc_entries = _linux_proc_process_entries()
+            if proc_entries is None:
+                return None
+            entries = proc_entries
+        else:
+            output = _bounded_process_query_stdout([ps_path, "-axo", "pid=,command="])
+            if output is None:
+                return None
+            entries = []
+            for line in output.splitlines():
+                match = re.match(r"^\s*(\d+)\s+(.*)$", line)
+                if match is None:
+                    continue
+                entries.append((int(match.group(1)), match.group(2).strip()))
 
     processes: list[tuple[int, int]] = []
     for pid, command_line in entries:

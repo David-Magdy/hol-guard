@@ -31,6 +31,7 @@ def test_linux_process_inventory_uses_bounded_procfs_without_ps(
     (daemon_process / "cmdline").write_bytes(b"\0".join(command_parts) + b"\0")
     read_proc_entries = manager._linux_proc_process_entries
     monkeypatch.setattr(manager.sys, "platform", "linux")
+    monkeypatch.setattr(manager, "_trusted_posix_ps_path", lambda: None)
     monkeypatch.setattr(
         manager,
         "_linux_proc_process_entries",

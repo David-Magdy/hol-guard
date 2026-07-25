@@ -23,7 +23,7 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, BinaryIO, TypedDict, TypeGuard, cast
+from typing import Any, BinaryIO, ClassVar, TypedDict, TypeGuard, cast
 from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 from ...version import __version__
@@ -317,6 +317,7 @@ _MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS = 24
 _DAEMON_REQUEST_READ_TIMEOUT_SECONDS = 0.25
 _DAEMON_CONNECTION_ADMISSION_WAIT_SECONDS = 0.05
 _DAEMON_UNCLASSIFIED_WATCHDOG_POLL_SECONDS = 0.025
+_AIBOM_REFRESH_STOP_JOIN_TIMEOUT_SECONDS = 5.0
 _DAEMON_CONTROL_PATHS = frozenset(
     {
         "/v1/healthz/details",
@@ -6701,6 +6702,41 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
 class GuardDaemonServer:
     """Small local daemon for health, receipts, and approval-center introspection."""
 
+    _quarantine_lock: ClassVar[threading.Lock] = threading.Lock()
+    _quarantined_services: ClassVar[dict[str, GuardDaemonServer]] = {}
+
+    @staticmethod
+    def _quarantine_key(guard_home: Path) -> str:
+        try:
+            return str(guard_home.resolve())
+        except OSError:
+            return str(guard_home)
+
+    @classmethod
+    def _retry_quarantined_service(cls, guard_home: Path) -> bool:
+        key = cls._quarantine_key(guard_home)
+        with cls._quarantine_lock:
+            service = cls._quarantined_services.get(key)
+        if service is None:
+            return True
+        return service._finish_service()
+
+    def _is_quarantined(self) -> bool:
+        key = self._quarantine_key(self._server.store.guard_home)
+        with type(self)._quarantine_lock:
+            return type(self)._quarantined_services.get(key) is self
+
+    def _record_quarantine_state(self, *, contained: bool) -> bool:
+        key = self._quarantine_key(self._server.store.guard_home)
+        with type(self)._quarantine_lock:
+            current = type(self)._quarantined_services.get(key)
+            if contained:
+                if current is self:
+                    _ = type(self)._quarantined_services.pop(key, None)
+            else:
+                type(self)._quarantined_services[key] = self
+        return contained
+
     def __init__(
         self,
         store: GuardStore,
@@ -6715,8 +6751,11 @@ class GuardDaemonServer:
         home_dir: Path | None = None,
         workspace_dir: Path | None = None,
     ) -> None:
+        if not type(self)._retry_quarantined_service(store.guard_home):
+            raise RuntimeError("A previous Guard daemon remains quarantined after unconfirmed containment.")
         _validate_dashboard_bundle()
         self._shutdown_started = threading.Event()
+        self._finish_service_lock = threading.Lock()
         self._owner_lock: BinaryIO | None = None
         self._server = _GuardDaemonHttpServer(
             (host, port),
@@ -6758,8 +6797,16 @@ class GuardDaemonServer:
             return
         self._thread = None
         self._begin_service()
-        self._thread = threading.Thread(target=self._serve_forever, daemon=True)
-        self._thread.start()
+        try:
+            self._thread = threading.Thread(target=self._serve_forever, daemon=True)
+            self._thread.start()
+        except BaseException as error:
+            self._thread = None
+            if not self._finish_service():
+                add_note = getattr(error, "add_note", None)
+                if callable(add_note):
+                    add_note("Guard retained daemon ownership because startup containment was unconfirmed.")
+            raise
 
     def serve(self) -> None:
         self._begin_service()
@@ -6776,6 +6823,11 @@ class GuardDaemonServer:
                 self._thread = None
 
     def _begin_service(self) -> None:
+        if self._is_quarantined():
+            if self._aibom_refresh_thread is not None and self._aibom_refresh_thread.is_alive():
+                raise RuntimeError("AIBOM inventory refresh is still stopping")
+            self._require_command_activity_maintenance_stopped()
+            raise RuntimeError("This Guard daemon is quarantined after unconfirmed containment.")
         self._owner_lock = acquire_guard_daemon_owner_lock(self._server.store.guard_home)
         try:
             self._begin_owned_service()
@@ -6896,6 +6948,10 @@ class GuardDaemonServer:
             _ = self._finish_service()
 
     def _finish_service(self) -> bool:
+        with self._finish_service_lock:
+            return self._finish_service_locked()
+
+    def _finish_service_locked(self) -> bool:
         self._shutdown_started.set()
         contained = True
         stop_unclassified_watchdog = getattr(self._server, "stop_unclassified_watchdog", None)
@@ -6945,6 +7001,11 @@ class GuardDaemonServer:
             )
         with suppress(Exception):
             self._server.store.clear_runtime_state(session_id=self._server.runtime_session_id)
+        if contained and self._is_quarantined():
+            try:
+                self._server.server_close()
+            except Exception:
+                contained = False
         if contained:
             try:
                 release_guard_daemon_owner_lock(getattr(self, "_owner_lock", None))
@@ -6952,7 +7013,7 @@ class GuardDaemonServer:
                 contained = False
             else:
                 self._owner_lock = None
-        return contained
+        return self._record_quarantine_state(contained=contained)
 
     @staticmethod
     def _join_service_thread(
@@ -6967,7 +7028,7 @@ class GuardDaemonServer:
         return thread if thread.is_alive() else None
 
     def _join_service_background_threads(self) -> bool:
-        deadline = time.monotonic() + 5.0
+        deadline = time.monotonic() + _AIBOM_REFRESH_STOP_JOIN_TIMEOUT_SECONDS
         self._watchdog_thread = self._join_service_thread(
             getattr(self, "_watchdog_thread", None),
             deadline=deadline,

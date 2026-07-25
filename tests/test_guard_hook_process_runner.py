@@ -457,6 +457,31 @@ def test_crashed_worker_is_replaced_and_reviews_resume(tmp_path: Path) -> None:
     assert recovered.payload is not None
 
 
+def test_review_waits_briefly_for_prepared_worker_capacity(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=0.5)
+    runner.start()
+    slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+    release = threading.Timer(0.05, lambda: runner._slots.put_nowait(slot))  # pyright: ignore[reportPrivateUsage]
+    release.start()
+    try:
+        started = time.monotonic()
+        result = runner.review(
+            payload={"hook_event_name": "SessionStart"},
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        release.join(timeout=1)
+        runner.close()
+
+    assert elapsed >= 0.04
+    assert result.payload is not None
+
+
 def test_close_joins_in_flight_worker_recovery(tmp_path: Path) -> None:
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=0.5)
     runner.start()
