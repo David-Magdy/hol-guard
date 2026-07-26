@@ -79,6 +79,7 @@ class StoreSecretPolicyIntegrityMixin:
         guard_event_queue_limit: int = 1000,
         prime_policy_integrity: bool = True,
         allow_system_keyring: bool = False,
+        daemon_managed_schema: bool = False,
         source: str = "default",
     ) -> None:
         self.guard_home = guard_home
@@ -112,8 +113,9 @@ class StoreSecretPolicyIntegrityMixin:
         self._guard_event_queue_limit = max(1, guard_event_queue_limit)
         self._prime_policy_integrity_on_initialize = prime_policy_integrity
         self._allow_system_keyring = allow_system_keyring
+        self._daemon_managed_schema = daemon_managed_schema
         self.path = self.guard_home / "guard.db"
-        self._initialize()
+        self._initialize_serialized()
 
     def set_policy_integrity_state_listener(
         self,
@@ -1078,10 +1080,11 @@ class StoreSecretPolicyIntegrityMixin:
             return
 
         def compute_prepared_state(base_state: dict[str, object]) -> dict[str, object]:
-            connection = sqlite3.connect(self.path, timeout=SQLITE_CONNECT_TIMEOUT_SECONDS)
+            connect_timeout_seconds = sqlite_connect_timeout_seconds()
+            connection = sqlite3.connect(self.path, timeout=connect_timeout_seconds)
             connection.row_factory = sqlite3.Row
             try:
-                connection.execute(f"pragma busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+                connection.execute(f"pragma busy_timeout={int(connect_timeout_seconds * 1000)}")
                 return self._prepared_startup_policy_integrity_state(
                     connection,
                     key=raw_key,
@@ -1094,10 +1097,11 @@ class StoreSecretPolicyIntegrityMixin:
         prepared_state = compute_prepared_state(trusted_state)
         current_trusted_state = self._load_policy_integrity_control_state(create=False)
         if current_trusted_state is None:
-            connection = sqlite3.connect(self.path, timeout=SQLITE_CONNECT_TIMEOUT_SECONDS)
+            connect_timeout_seconds = sqlite_connect_timeout_seconds()
+            connection = sqlite3.connect(self.path, timeout=connect_timeout_seconds)
             connection.row_factory = sqlite3.Row
             try:
-                connection.execute(f"pragma busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+                connection.execute(f"pragma busy_timeout={int(connect_timeout_seconds * 1000)}")
                 still_matches = self._prefetched_startup_state_still_matches_local_rows(
                     connection,
                     key=raw_key,
