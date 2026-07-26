@@ -138,6 +138,7 @@ def record_post_hook_command_activity_best_effort(
     event: str,
     payload: Mapping[str, object],
     succeeded: bool,
+    raise_on_persistence_error: bool = False,
 ) -> bool:
     """Transition strong pairs or record a fact-minimal unpaired command post."""
 
@@ -160,6 +161,8 @@ def record_post_hook_command_activity_best_effort(
         )
     except Exception:
         _record_persistence_failure(store, "post_record_failed")
+        if raise_on_persistence_error:
+            raise
         return False
 
 

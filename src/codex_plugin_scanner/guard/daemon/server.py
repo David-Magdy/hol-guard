@@ -6645,6 +6645,18 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "limit": daemon_server.request_capacity_limit,
                 "rejected": daemon_server.rejected_requests,
             }
+        if evidence_writer_stats["failures"] and evidence_writer_stats["queued"]:
+            load_state = "store-contended"
+            load_detail = "Evidence persistence is retrying outside the security decision path."
+        elif scheduler_stats["expired"] or process_scheduler_stats["expired"] or daemon_server.rejected_hook_requests:
+            load_state = "saturated"
+            load_detail = "Secure review capacity was exhausted; recovery is automatic as load falls."
+        elif scheduler_stats["queued"] or process_scheduler_stats["queued"]:
+            load_state = "backlogged"
+            load_detail = "Queued reviews are draining automatically."
+        else:
+            load_state = "healthy"
+            load_detail = "Review capacity is available."
         return {
             "ok": True,
             "receipts": len(store.list_receipts(limit=500)),
@@ -6671,6 +6683,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "schema_version": activity_health.schema_version,
             },
             "hook_capacity": hook_capacity,
+            "hook_load": {
+                "state": load_state,
+                "detail": load_detail,
+            },
             "hook_process_capacity": process_scheduler_stats,
             "hook_workers": daemon_server.hook_process_runner.stats(),
             "request_capacity": request_capacity,

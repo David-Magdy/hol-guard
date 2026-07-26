@@ -136,7 +136,7 @@ def run_workload(spec: WorkloadSpec, *, root: Path) -> WorkloadResult:
                         challenge_response = connection.getresponse()
                         challenge_body = challenge_response.read()
                         if challenge_response.status == 503 and attempt == 0:
-                            time.sleep(0.05)
+                            time.sleep(0.025 + (index % 6) * 0.01)
                             continue
                         if challenge_response.status != 200:
                             raise RuntimeError(f"challenge-status-{challenge_response.status}")
