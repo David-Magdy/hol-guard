@@ -6417,6 +6417,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         scheduler_stats = daemon_server.runtime_hook_scheduler.stats()
         process_scheduler_stats = daemon_server.runtime_hook_process_scheduler.stats()
         evidence_writer_stats = daemon_server.runtime_hook_evidence_writer.stats()
+        sqlite_profile = store.sqlite_profile()
+        sqlite_migration_gate = store.sqlite_migration_gate_report()
         with daemon_server.hook_capacity_lock:
             hook_capacity = {
                 "active": scheduler_stats["active"],
@@ -6448,6 +6450,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "approvals": pending_approvals,
             "pending_approvals": pending_approvals,
             "hook_evidence_writer": evidence_writer_stats,
+            "sqlite_profile": sqlite_profile,
+            "sqlite_migration_gate": sqlite_migration_gate,
             "uptime_seconds": uptime,
             "pid": os.getpid(),
             "tables": store.list_table_names(),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+from errno import ENOSPC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,19 +11,20 @@ from codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer import Runti
 from codex_plugin_scanner.guard.store import GuardStore
 
 
-def test_writer_keeps_blocked_persistence_off_submitter(tmp_path: Path) -> None:
+def test_writer_keeps_blocked_persistence_off_submitter_without_raw_payload(tmp_path: Path) -> None:
     entered = threading.Event()
     release = threading.Event()
     recorded: list[object] = []
 
     def record(**kwargs: object) -> bool:
-        recorded.append(kwargs["payload"])
+        recorded.append(kwargs["has_command"])
         entered.set()
         assert release.wait(timeout=1)
         return True
 
     with patch(
-        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer.record_post_hook_command_activity_best_effort",
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
+        "persist_deferred_post_hook_command_activity",
         side_effect=record,
     ):
         writer = RuntimeHookEvidenceWriter(store=GuardStore(tmp_path / "guard-home"))
@@ -32,7 +34,7 @@ def test_writer_keeps_blocked_persistence_off_submitter(tmp_path: Path) -> None:
             accepted = writer.submit_command_activity(
                 harness="pi",
                 event="PostToolUse",
-                payload={"tool_name": "read", "metadata": metadata},
+                payload={"tool_name": "read", "tool_call_id": "private-request-id", "metadata": metadata},
                 succeeded=True,
             )
             metadata["command"] = "changed after submission"
@@ -40,12 +42,16 @@ def test_writer_keeps_blocked_persistence_off_submitter(tmp_path: Path) -> None:
             assert accepted is True
             assert elapsed < 0.1
             assert entered.wait(timeout=1)
+            journal = (tmp_path / "guard-home" / "runtime-hook-evidence.jsonl").read_text(encoding="utf-8")
+            assert "rg safe" not in journal
+            assert "changed after submission" not in journal
+            assert "private-request-id" not in journal
         finally:
             release.set()
             assert writer.stop(timeout_seconds=1)
 
     assert writer.stats()["processed"] == 1
-    assert recorded == [{"tool_name": "read", "metadata": {"command": "rg safe"}}]
+    assert recorded == [False]
 
 
 def test_writer_drops_only_evidence_when_queue_is_full(tmp_path: Path) -> None:
@@ -58,7 +64,8 @@ def test_writer_drops_only_evidence_when_queue_is_full(tmp_path: Path) -> None:
         return True
 
     with patch(
-        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer.record_post_hook_command_activity_best_effort",
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
+        "persist_deferred_post_hook_command_activity",
         side_effect=record,
     ):
         writer = RuntimeHookEvidenceWriter(
@@ -110,8 +117,135 @@ def test_writer_stops_with_bounded_sqlite_contention(tmp_path: Path) -> None:
         )
         time.sleep(0.02)
         started = time.monotonic()
-        assert writer.stop(timeout_seconds=1)
+        assert not writer.stop(timeout_seconds=1)
         assert time.monotonic() - started < 0.5
     finally:
         lock.rollback()
         lock.close()
+
+
+def test_writer_drains_accepted_records_on_shutdown(tmp_path: Path) -> None:
+    recorded: list[bool] = []
+
+    def record(**kwargs: object) -> bool:
+        recorded.append(bool(kwargs["has_command"]))
+        return True
+
+    with patch(
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
+        "persist_deferred_post_hook_command_activity",
+        side_effect=record,
+    ):
+        writer = RuntimeHookEvidenceWriter(
+            store=GuardStore(tmp_path / "guard-home"),
+            batch_wait_seconds=0.025,
+        )
+        for command in ("first", "second", "third"):
+            assert writer.submit_command_activity(
+                harness="pi",
+                event="PostToolUse",
+                payload={"command": command},
+                succeeded=True,
+            )
+        assert writer.stop(timeout_seconds=1)
+
+    assert recorded == [True, True, True]
+    assert writer.stats()["durable_pending"] == 0
+
+
+def test_writer_recovers_accepted_record_after_failed_process(tmp_path: Path) -> None:
+    guard_home = tmp_path / "guard-home"
+    journal = guard_home / "runtime-hook-evidence.jsonl"
+    failed = threading.Event()
+
+    def fail(**_kwargs: object) -> bool:
+        failed.set()
+        raise sqlite3.OperationalError("database is locked")
+
+    with patch(
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
+        "persist_deferred_post_hook_command_activity",
+        side_effect=fail,
+    ):
+        first = RuntimeHookEvidenceWriter(store=GuardStore(guard_home), batch_wait_seconds=0)
+        assert first.submit_command_activity(
+            harness="pi",
+            event="PostToolUse",
+            payload={"command": "recover me"},
+            succeeded=True,
+        )
+        assert failed.wait(timeout=1)
+        assert not first.stop(timeout_seconds=1)
+        assert first.stats()["durable_pending"] == 1
+        assert journal.stat().st_mode & 0o777 == 0o600
+
+    recorded: list[object] = []
+    with patch(
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
+        "persist_deferred_post_hook_command_activity",
+        side_effect=lambda **kwargs: recorded.append(kwargs["has_command"]) or True,
+    ):
+        recovered = RuntimeHookEvidenceWriter(store=GuardStore(guard_home), batch_wait_seconds=0)
+        assert recovered.stop(timeout_seconds=1)
+
+    assert recovered.stats()["recovered"] == 1
+    assert recovered.stats()["durable_pending"] == 0
+    assert recorded == [True]
+
+
+def test_writer_preserves_only_failed_records_from_partial_batch(tmp_path: Path) -> None:
+    guard_home = tmp_path / "guard-home"
+    attempts: list[int] = []
+
+    def record(**kwargs: object) -> bool:
+        del kwargs
+        attempts.append(len(attempts) + 1)
+        if len(attempts) == 2:
+            raise sqlite3.OperationalError("partial batch failure")
+        return True
+
+    with patch(
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
+        "persist_deferred_post_hook_command_activity",
+        side_effect=record,
+    ):
+        writer = RuntimeHookEvidenceWriter(store=GuardStore(guard_home), batch_wait_seconds=0.05)
+        for command in ("first", "second", "third"):
+            assert writer.submit_command_activity(
+                harness="pi",
+                event="PostToolUse",
+                payload={"command": command},
+                succeeded=True,
+            )
+        assert not writer.stop(timeout_seconds=1)
+
+    assert attempts == [1, 2, 3]
+    assert writer.stats()["processed"] == 2
+    assert writer.stats()["durable_pending"] == 1
+    journal = (guard_home / "runtime-hook-evidence.jsonl").read_text(encoding="utf-8")
+    assert journal.count("\n") == 1
+    assert "first" not in journal
+    assert "second" not in journal
+    assert "third" not in journal
+
+
+def test_writer_rejects_record_when_durable_journal_is_full(tmp_path: Path) -> None:
+    writer = RuntimeHookEvidenceWriter(
+        store=GuardStore(tmp_path / "guard-home"),
+        batch_wait_seconds=0,
+    )
+    try:
+        with patch("os.write", side_effect=OSError(ENOSPC, "No space left on device")):
+            assert not writer.submit_command_activity(
+                harness="pi",
+                event="PostToolUse",
+                payload={"command": "not accepted"},
+                succeeded=True,
+            )
+        stats = writer.stats()
+        assert stats["accepted"] == 0
+        assert stats["dropped"] == 1
+        assert stats["failures"] == 1
+        assert stats["degraded"] is True
+    finally:
+        assert writer.stop(timeout_seconds=1)

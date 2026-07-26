@@ -4,7 +4,15 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
+
+from .sqlite_profile import (
+    SQLiteMigrationGateReport,
+    SQLiteProfiler,
+    SQLiteProfileSnapshot,
+    sqlite_error_is_busy_locked,
+)
 
 # ruff: noqa: F403,F405
 from .store_base import *
@@ -134,6 +142,7 @@ _REQUIRED_SCHEMA_MIGRATION_VERSIONS = tuple(range(2, STORAGE_MAINTENANCE_MIGRATI
 
 
 class StoreConnectionSchemaMixin:
+    _sqlite_profiler_init_lock = threading.Lock()
     _startup_prefetched_policy_integrity_secret_material: object | tuple[bytes | None, str | None] = (
         _POLICY_INTEGRITY_LOOKUP_UNSET
     )
@@ -142,19 +151,57 @@ class StoreConnectionSchemaMixin:
     )
     _startup_prefetched_policy_integrity_repair_failed = False
 
+    def _sqlite_profiler(self) -> SQLiteProfiler:
+        profiler = self.__dict__.get("_guard_sqlite_profiler")
+        if not isinstance(profiler, SQLiteProfiler):
+            with self._sqlite_profiler_init_lock:
+                profiler = self.__dict__.get("_guard_sqlite_profiler")
+                if not isinstance(profiler, SQLiteProfiler):
+                    profiler = SQLiteProfiler()
+                    self.__dict__["_guard_sqlite_profiler"] = profiler
+        return profiler
+
+    def sqlite_profile(self) -> SQLiteProfileSnapshot:
+        return self._sqlite_profiler().snapshot()
+
+    def sqlite_migration_gate_report(
+        self,
+        *,
+        end_to_end_p95_ms: float | None = None,
+    ) -> SQLiteMigrationGateReport:
+        return self._sqlite_profiler().migration_gate_report(end_to_end_p95_ms=end_to_end_p95_ms)
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connect_timeout_seconds = sqlite_connect_timeout_seconds()
-        connection = sqlite3.connect(self.path, timeout=connect_timeout_seconds)
+        profiler = self._sqlite_profiler()
+        connect_started = time.monotonic()
+        try:
+            connection = sqlite3.connect(self.path, timeout=connect_timeout_seconds)
+        except sqlite3.OperationalError as error:
+            profiler.record_connect((time.monotonic() - connect_started) * 1000)
+            if sqlite_error_is_busy_locked(error):
+                profiler.record_busy_locked()
+            raise
+        profiler.record_connect((time.monotonic() - connect_started) * 1000)
         connection.row_factory = sqlite3.Row
         start = time.monotonic()
         notification: dict[str, object] | None = None
         try:
             connection.execute(f"pragma busy_timeout={int(connect_timeout_seconds * 1000)}")
             yield connection
-            connection.commit()
+            commit_started = time.monotonic()
+            try:
+                connection.commit()
+            finally:
+                profiler.record_commit((time.monotonic() - commit_started) * 1000)
             notification = self._take_policy_integrity_state_notification(connection)
+        except sqlite3.OperationalError as error:
+            if sqlite_error_is_busy_locked(error):
+                profiler.record_busy_locked()
+            raise
         finally:
+            profiler.record_transaction((time.monotonic() - start) * 1000)
             if notification is None:
                 self._take_policy_integrity_state_notification(connection)
             connection.close()

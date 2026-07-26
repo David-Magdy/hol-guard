@@ -1357,6 +1357,18 @@ class TestGuardSurfaceServer:
         assert operator_health["workers_busy"] == health["hook_workers"]["busy"]
         assert operator_health["workers_ready"] == health["hook_workers"]["ready"]
         assert "automatically" in operator_health["automatic_recovery"]
+        assert set(health["sqlite_profile"]) == {
+            "connects",
+            "transactions",
+            "commits",
+            "busy_locked",
+            "busy_locked_percent",
+            "connect_ms",
+            "transaction_ms",
+            "commit_ms",
+        }
+        assert health["sqlite_migration_gate"]["conclusion"] == "insufficient_end_to_end_profile"
+        assert health["hook_evidence_writer"]["degraded"] is False
 
     def test_guard_daemon_queues_hook_burst_until_active_review_completes(
         self,

@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
-from collections import deque
+import time
+from collections import OrderedDict, deque
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import TypedDict, final
+from pathlib import Path
+from typing import TypedDict, cast, final
+from uuid import uuid4
 
-from ..cli.commands_support_command_activity import record_post_hook_command_activity_best_effort
+from ..cli.commands_support_command_activity import persist_deferred_post_hook_command_activity
+from ..runtime.command_activity_contract import CorrelationHandle, CorrelationKind
+from ..runtime.command_activity_correlation import (
+    derive_proven_request_correlation,
+    load_or_create_installation_correlation_key,
+)
 from ..sqlite_tuning import sqlite_connect_timeout_override
 from ..store import GuardStore
 
@@ -22,16 +31,91 @@ class RuntimeHookEvidenceWriterStats(TypedDict):
     processed: int
     dropped: int
     failures: int
+    recovered: int
+    durable_pending: int
+    degraded: bool
     running: bool
 
 
 @dataclass(frozen=True, slots=True)
 class _CommandActivityRecord:
+    record_id: str
     harness: str
     event: str
-    payload: dict[str, object]
+    correlation: CorrelationHandle | None
+    has_command: bool
     succeeded: bool
     payload_bytes: int
+
+    def serialized(self) -> bytes:
+        return (
+            json.dumps(
+                {
+                    "record_id": self.record_id,
+                    "harness": self.harness,
+                    "event": self.event,
+                    "correlation": (
+                        {
+                            "kind": self.correlation.kind.value,
+                            "harness": self.correlation.harness,
+                            "key_id": self.correlation.key_id,
+                            "digest": self.correlation.digest,
+                        }
+                        if self.correlation is not None
+                        else None
+                    ),
+                    "has_command": self.has_command,
+                    "succeeded": self.succeeded,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            + b"\n"
+        )
+
+    @classmethod
+    def from_json(cls, value: object) -> _CommandActivityRecord | None:
+        if not isinstance(value, dict):
+            return None
+        fields = cast(dict[str, object], value)
+        record_id = fields.get("record_id")
+        harness = fields.get("harness")
+        event = fields.get("event")
+        correlation_value = fields.get("correlation")
+        has_command = fields.get("has_command")
+        succeeded = fields.get("succeeded")
+        if (
+            not isinstance(record_id, str)
+            or not isinstance(harness, str)
+            or not isinstance(event, str)
+            or not isinstance(has_command, bool)
+            or not isinstance(succeeded, bool)
+        ):
+            return None
+        correlation: CorrelationHandle | None = None
+        if correlation_value is not None:
+            if not isinstance(correlation_value, dict):
+                return None
+            correlation_fields = cast(dict[str, object], correlation_value)
+            try:
+                correlation = CorrelationHandle(
+                    kind=CorrelationKind(str(correlation_fields.get("kind"))),
+                    harness=str(correlation_fields.get("harness")),
+                    key_id=str(correlation_fields.get("key_id")),
+                    digest=str(correlation_fields.get("digest")),
+                )
+            except (TypeError, ValueError):
+                return None
+        record = cls(record_id, harness, event, correlation, has_command, succeeded, 0)
+        return cls(
+            record.record_id,
+            record.harness,
+            record.event,
+            record.correlation,
+            record.has_command,
+            record.succeeded,
+            len(record.serialized()),
+        )
 
 
 @final
@@ -46,6 +130,7 @@ class RuntimeHookEvidenceWriter:
         max_bytes: int = 16 * 1024 * 1024,
         max_batch: int = 50,
         batch_wait_seconds: float = 0.025,
+        journal_path: Path | None = None,
     ) -> None:
         if min(max_records, max_bytes, max_batch) < 1 or batch_wait_seconds < 0:
             raise ValueError("runtime hook evidence writer limits are invalid")
@@ -57,13 +142,19 @@ class RuntimeHookEvidenceWriter:
         self._batch_wait_seconds = batch_wait_seconds
         self._condition = threading.Condition()
         self._records: deque[_CommandActivityRecord] = deque()
+        self._durable: OrderedDict[str, _CommandActivityRecord] = OrderedDict()
         self._queued_bytes = 0
         self._accepted = 0
         self._processed = 0
         self._dropped = 0
         self._failures = 0
+        self._recovered = 0
+        self._degraded = False
         self._stopping = False
+        self._drain_deadline: float | None = None
         self._sqlite_timeout_seconds = 0.05
+        self._journal_path = journal_path or self._guard_home / "runtime-hook-evidence.jsonl"
+        self._recover_journal()
         self._thread = threading.Thread(
             target=self._run,
             name="hol-guard-hook-evidence",
@@ -82,14 +173,23 @@ class RuntimeHookEvidenceWriter:
         try:
             snapshot = deepcopy(dict(payload))
             encoded = json.dumps(snapshot, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        except (TypeError, ValueError):
+            key = load_or_create_installation_correlation_key(self._guard_home)
+            correlation = derive_proven_request_correlation(
+                harness=harness,
+                event=event,
+                payload=snapshot,
+                key=key,
+            )
+        except Exception:
             with self._condition:
                 self._dropped += 1
             return False
         record = _CommandActivityRecord(
+            record_id=uuid4().hex,
             harness=harness,
             event=event,
-            payload=snapshot,
+            correlation=correlation,
+            has_command=_payload_has_command(snapshot),
             succeeded=succeeded,
             payload_bytes=len(encoded),
         )
@@ -100,7 +200,16 @@ class RuntimeHookEvidenceWriter:
                 or self._queued_bytes + record.payload_bytes > self._max_bytes
             ):
                 self._dropped += 1
+                self._degraded = True
                 return False
+            try:
+                self._append_journal(record)
+            except OSError:
+                self._dropped += 1
+                self._failures += 1
+                self._degraded = True
+                return False
+            self._durable[record.record_id] = record
             self._records.append(record)
             self._queued_bytes += record.payload_bytes
             self._accepted += 1
@@ -116,46 +225,56 @@ class RuntimeHookEvidenceWriter:
                 "processed": self._processed,
                 "dropped": self._dropped,
                 "failures": self._failures,
+                "recovered": self._recovered,
+                "durable_pending": len(self._durable),
+                "degraded": self._degraded or bool(self._durable and not self._records),
                 "running": self._thread.is_alive() and not self._stopping,
             }
 
     def stop(self, *, timeout_seconds: float = 1.0) -> bool:
         with self._condition:
-            if self._records:
-                self._dropped += len(self._records)
-                self._records.clear()
-                self._queued_bytes = 0
             self._stopping = True
+            self._drain_deadline = time.monotonic() + max(0.0, timeout_seconds)
             self._condition.notify_all()
         self._thread.join(timeout=max(0.0, timeout_seconds))
-        return not self._thread.is_alive()
+        with self._condition:
+            drained = not self._durable
+            if not drained:
+                self._degraded = True
+        return not self._thread.is_alive() and drained
 
     def _run(self) -> None:
         while True:
             batch = self._next_batch()
             if not batch:
                 return
-            for index, record in enumerate(batch):
+            for record in batch:
                 with self._condition:
-                    if self._stopping:
-                        self._dropped += len(batch) - index
+                    if self._drain_expired():
+                        self._degraded = True
                         return
                 try:
                     with sqlite_connect_timeout_override(self._sqlite_timeout_seconds):
-                        _ = record_post_hook_command_activity_best_effort(
+                        _ = persist_deferred_post_hook_command_activity(
                             store=self._store,
-                            guard_home=self._guard_home,
                             harness=record.harness,
-                            event=record.event,
-                            payload=record.payload,
+                            correlation=record.correlation,
+                            has_command=record.has_command,
                             succeeded=record.succeeded,
                         )
                 except Exception:
                     with self._condition:
                         self._failures += 1
-                finally:
+                        self._degraded = True
+                else:
                     with self._condition:
                         self._processed += 1
+                        _ = self._durable.pop(record.record_id, None)
+                        try:
+                            self._rewrite_journal()
+                        except OSError:
+                            self._failures += 1
+                            self._degraded = True
 
     def _next_batch(self) -> list[_CommandActivityRecord]:
         with self._condition:
@@ -171,6 +290,86 @@ class RuntimeHookEvidenceWriter:
                 self._queued_bytes -= record.payload_bytes
                 batch.append(record)
             return batch
+
+    def _drain_expired(self) -> bool:
+        return self._stopping and self._drain_deadline is not None and time.monotonic() >= self._drain_deadline
+
+    def _recover_journal(self) -> None:
+        try:
+            raw_lines = self._journal_path.read_bytes().splitlines()
+        except FileNotFoundError:
+            return
+        except OSError:
+            self._degraded = True
+            self._failures += 1
+            return
+        for raw_line in raw_lines:
+            try:
+                decoded = cast(object, json.loads(raw_line))
+                record = _CommandActivityRecord.from_json(decoded)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                record = None
+            if record is None:
+                self._degraded = True
+                self._failures += 1
+                continue
+            if len(self._records) >= self._max_records or self._queued_bytes + record.payload_bytes > self._max_bytes:
+                self._degraded = True
+                self._failures += 1
+                continue
+            self._durable[record.record_id] = record
+            self._records.append(record)
+            self._queued_bytes += record.payload_bytes
+            self._recovered += 1
+
+    def _append_journal(self, record: _CommandActivityRecord) -> None:
+        self._journal_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(self._journal_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        original_size = os.fstat(descriptor).st_size
+        try:
+            os.fchmod(descriptor, 0o600)
+            self._write_all(descriptor, record.serialized())
+            os.fsync(descriptor)
+        except OSError:
+            os.ftruncate(descriptor, original_size)
+            raise
+        finally:
+            os.close(descriptor)
+
+    def _rewrite_journal(self) -> None:
+        temporary = self._journal_path.with_suffix(".tmp")
+        descriptor = os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+        try:
+            for record in self._durable.values():
+                self._write_all(descriptor, record.serialized())
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, self._journal_path)
+
+    @staticmethod
+    def _write_all(descriptor: int, payload: bytes) -> None:
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written < 1:
+                raise OSError("evidence journal write made no progress")
+            view = view[written:]
+
+
+def _payload_has_command(payload: Mapping[str, object]) -> bool:
+    arguments = payload.get("tool_input", payload.get("arguments"))
+    if isinstance(arguments, Mapping):
+        command_arguments = cast(Mapping[object, object], arguments)
+        for key in ("command", "cmd", "shell_command", "shellCommand"):
+            value = command_arguments.get(key)
+            if isinstance(value, str) and value.strip():
+                return True
+    for key in ("command", "cmd"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
 
 
 __all__ = ["RuntimeHookEvidenceWriter", "RuntimeHookEvidenceWriterStats"]
