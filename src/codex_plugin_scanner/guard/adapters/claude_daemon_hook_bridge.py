@@ -141,6 +141,14 @@ def _remaining_seconds(deadline: float | None, *, cap: float) -> float:
     return min(cap, max(0.0, deadline - time.monotonic()))
 
 
+def _deadline_with_reserve(deadline: float | None, *, reserve_seconds: float) -> float | None:
+    """Keep time for a required later operation inside one absolute hook deadline."""
+
+    if deadline is None:
+        return None
+    return max(time.monotonic(), deadline - reserve_seconds)
+
+
 def _post_to_loopback_daemon(
     endpoint: str,
     data: str,
@@ -392,14 +400,25 @@ def _recover_retry_or_fallback(
 ) -> str:
     if recovery_command and _run_recovery_command(
         recovery_command,
-        deadline=deadline,
+        deadline=_deadline_with_reserve(
+            deadline,
+            reserve_seconds=_DAEMON_IO_TIMEOUT_SECONDS + _FALLBACK_TIMEOUT_SECONDS,
+        ),
         failure_kind=failure_kind,
     ):
         try:
             endpoint = urljoin(_daemon_url(state_path, fallback_daemon_url), f"/v1/hooks/claude-code?{query}")
             _assert_loopback_http_url(endpoint)
             return _valid_hook_json_or_degraded(
-                _post_to_loopback_daemon(endpoint, data, state_path=state_path, deadline=deadline),
+                _post_to_loopback_daemon(
+                    endpoint,
+                    data,
+                    state_path=state_path,
+                    deadline=_deadline_with_reserve(
+                        deadline,
+                        reserve_seconds=_FALLBACK_TIMEOUT_SECONDS,
+                    ),
+                ),
                 reason=f"{reason}; recovered daemon returned malformed hook JSON",
                 data=data,
             )
