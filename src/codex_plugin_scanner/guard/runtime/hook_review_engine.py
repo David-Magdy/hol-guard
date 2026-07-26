@@ -122,11 +122,16 @@ class HookReviewEngine:
         return response
 
     @staticmethod
-    def _scan_deadline(start: float, budget_ms: int = HOOK_SCANNER_DEFAULT_BUDGET_MS) -> float:
-        return min(
+    def _scan_deadline(
+        start: float,
+        budget_ms: int = HOOK_SCANNER_DEFAULT_BUDGET_MS,
+        deadline_monotonic: float | None = None,
+    ) -> float:
+        deadline = min(
             start + (HOOK_ENGINE_TOTAL_BUDGET_MS / 1000.0),
             time.monotonic() + (budget_ms / 1000.0),
         )
+        return min(deadline, deadline_monotonic) if deadline_monotonic is not None else deadline
 
     def _review_inner(self, request: HookReviewRequest, *, start: float) -> HookReviewResponse:
         # Load config.
@@ -143,7 +148,11 @@ class HookReviewEngine:
 
         # Source-read fast path for PostToolUse with guard_source_ref.
         if request.event_name == "PostToolUse" and request.source_ref is not None:
-            deadline = self._scan_deadline(start, HOOK_SOURCE_FAST_PATH_BUDGET_MS)
+            deadline = self._scan_deadline(
+                start,
+                HOOK_SOURCE_FAST_PATH_BUDGET_MS,
+                request.deadline_monotonic,
+            )
             source_result = evaluate_source_file_ref(
                 request=request,
                 envelope=envelope,
@@ -261,7 +270,7 @@ class HookReviewEngine:
         if output_was_truncated:
             # Output too large to scan in full — scan the excerpt before returning.
             excerpt = extracted.text[:SOURCE_READ_FULL_MODEL_BYTES_P95_TARGET]
-            deadline = self._scan_deadline(start)
+            deadline = self._scan_deadline(start, deadline_monotonic=request.deadline_monotonic)
             scan_result = self.scanner.scan_text(
                 excerpt,
                 local_content=scan_local_samples,
@@ -288,7 +297,7 @@ class HookReviewEngine:
             )
 
         # Scan the full output text.
-        deadline = self._scan_deadline(start)
+        deadline = self._scan_deadline(start, deadline_monotonic=request.deadline_monotonic)
         scan_result = self.scanner.scan_text(
             extracted.text,
             local_content=scan_local_samples,
@@ -362,7 +371,7 @@ class HookReviewEngine:
         if output_summary is not None and output_summary.text_excerpt:
             excerpt = output_summary.text_excerpt
             # Scan the excerpt for secrets.
-            deadline = self._scan_deadline(start)
+            deadline = self._scan_deadline(start, deadline_monotonic=request.deadline_monotonic)
             scan_result = self.scanner.scan_text(
                 excerpt,
                 local_content=scan_local_samples,

@@ -75,6 +75,7 @@ class HookReviewRequest:
     output_summary: HookOutputSummary | None = None
     source_ref: HookSourceFileRef | None = None
     received_at_monotonic: float = 0.0
+    deadline_monotonic: float | None = None
     request_id: str | None = None
 
 

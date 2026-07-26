@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -114,6 +115,50 @@ def _request(
         source_ref=source_ref,
         output_summary=output_summary,
     )
+
+
+def test_inline_scan_honors_outer_daemon_deadline(
+    engine: HookReviewEngine,
+    scanner: ContentScanner,
+    workspace: Path,
+    home_dir: Path,
+    guard_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_deadlines: list[float | None] = []
+    original_scan_text = scanner.scan_text
+
+    def capture_deadline(
+        text: str,
+        *,
+        local_content: bool,
+        source_context: bool,
+        max_bytes: int,
+        deadline_monotonic: float | None,
+    ):
+        observed_deadlines.append(deadline_monotonic)
+        return original_scan_text(
+            text,
+            local_content=local_content,
+            source_context=source_context,
+            max_bytes=max_bytes,
+            deadline_monotonic=deadline_monotonic,
+        )
+
+    monkeypatch.setattr(scanner, "scan_text", capture_deadline)
+    outer_deadline = time.monotonic() + 1
+    base_request = _request(
+        payload={"hook_event_name": "PostToolUse", "tool_response": "routine output"},
+        cwd=workspace,
+        home_dir=home_dir,
+        guard_home=guard_home,
+    )
+    request = replace(base_request, deadline_monotonic=outer_deadline)
+    response = engine.review(request)
+
+    assert response.decision == "allow"
+    assert observed_deadlines
+    assert all(deadline is not None and deadline <= outer_deadline for deadline in observed_deadlines)
 
 
 class TestSafeSourceRefAllowOriginal:

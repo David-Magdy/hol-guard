@@ -48,9 +48,7 @@ def test_default_review_deadline_stays_inside_pi_host_budget() -> None:
 
     assert pi_daemon_timeout_seconds > hook_runner_module._HOOK_PROCESS_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
     assert (
-        pi_host_timeout_seconds - pi_deadline_reserve_seconds
-        > hook_runner_module._HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
-        + hook_runner_module._HOOK_PROCESS_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
+        pi_host_timeout_seconds - pi_deadline_reserve_seconds > hook_runner_module._HOOK_PROCESS_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -689,6 +687,31 @@ def test_review_waits_briefly_for_prepared_worker_capacity(tmp_path: Path) -> No
 
     assert elapsed >= 0.04
     assert result.payload is not None
+
+
+def test_review_worker_wait_respects_outer_deadline(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=1.0)
+    runner.start()
+    slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+    try:
+        started = time.monotonic()
+        result = runner.review(
+            payload={"hook_event_name": "SessionStart"},
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+            deadline=time.monotonic() + 0.02,
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
+        runner.close()
+
+    assert elapsed < 0.2
+    assert result.payload is None
+    assert result.reason_code == "daemon_hook_process_deadline_exhausted"
 
 
 def test_close_retains_worker_when_guardian_identity_is_lost(tmp_path: Path) -> None:
