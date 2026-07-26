@@ -112,6 +112,7 @@ def test_writer_stops_with_bounded_sqlite_contention(tmp_path: Path) -> None:
         started = time.monotonic()
         assert writer.stop(timeout_seconds=1)
         assert time.monotonic() - started < 0.5
+        assert writer.stats()["failures"] == 3
     finally:
         lock.rollback()
         lock.close()

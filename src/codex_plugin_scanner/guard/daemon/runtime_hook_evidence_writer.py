@@ -142,6 +142,7 @@ class RuntimeHookEvidenceWriter:
                             event=record.event,
                             payload=record.payload,
                             succeeded=record.succeeded,
+                            raise_on_persistence_error=True,
                         )
                 except Exception:
                     with self._condition:
