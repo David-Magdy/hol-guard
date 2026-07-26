@@ -148,6 +148,7 @@ def corpus_record_count() -> int:
         CRITICAL_COMMAND_FLOORS,
         CRITICAL_NEAR_MISS_COMMANDS,
     )
+    from tests.test_guard_command_specialized_variants import SPECIALIZED_SAFE_VARIANT_CASES
     from tests.test_guard_data_flow import BENIGN_DATA_FLOW_CASES, MALICIOUS_DATA_FLOW_CASES
     from tests.test_guard_github_command_capabilities import GITHUB_REVIEW_FLOORS
     from tests.test_guard_github_command_capability_edges import (
@@ -172,6 +173,7 @@ def corpus_record_count() -> int:
         + len(GITHUB_REVIEW_FLOORS)
         + len(PR_MERGE_ADMIN_CAPABILITY_CASES)
         + len(UNRELATED_DYNAMIC_COMMAND_CASES)
+        + len(SPECIALIZED_SAFE_VARIANT_CASES)
         + len(BENIGN_DATA_FLOW_CASES)
         + len(MALICIOUS_DATA_FLOW_CASES)
         + len(LOCAL_COMPOSE_SAFE_CASES)
