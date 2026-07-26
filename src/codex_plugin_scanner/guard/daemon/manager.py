@@ -43,6 +43,7 @@ from .discovery import (
     load_daemon_discovery_key,
     verify_daemon_state,
 )
+from .lifecycle_journal import record_daemon_lifecycle_event
 
 DEFAULT_GUARD_DAEMON_PORT = 4781
 GUARD_DAEMON_PORT_RANGE = 1000
@@ -478,9 +479,27 @@ def recover_guard_daemon_after_hook_failure(
     }:
         raise ValueError(f"Unsupported Guard daemon hook failure kind: {failure_kind}")
 
+    with suppress(Exception):
+        record_daemon_lifecycle_event(
+            guard_home,
+            event="recovery_requested",
+            reason=failure_kind,
+        )
     with _guard_daemon_recovery_lock(guard_home):
         with _guard_daemon_start_lock(guard_home):
             state = load_authenticated_daemon_state(guard_home)
+            if isinstance(state, dict):
+                state_pid = state.get("pid")
+                state_id = state.get("state_id")
+                if isinstance(state_pid, int) and state_pid > 0 and not _guard_daemon_pid_is_running(state_pid):
+                    with suppress(Exception):
+                        record_daemon_lifecycle_event(
+                            guard_home,
+                            event="death_observed",
+                            reason="process_missing",
+                            pid=state_pid,
+                            session_id=state_id if isinstance(state_id, str) else None,
+                        )
             current_url = load_guard_daemon_url(guard_home)
             live_process_url = _authenticated_live_current_daemon_url(guard_home, state)
             if current_url is not None:
@@ -594,6 +613,15 @@ def retire_all_guard_daemons_for_home(
                 )
             elif state_pid not in handled_pids:
                 handled_pids.add(state_pid)
+                state_id = authenticated_state.get("state_id")
+                with suppress(Exception):
+                    record_daemon_lifecycle_event(
+                        guard_home,
+                        event="retirement_requested",
+                        reason="managed_retirement",
+                        pid=state_pid,
+                        session_id=state_id if isinstance(state_id, str) else None,
+                    )
                 retirement_succeeded = _retire_guard_daemon_pid(
                     state_pid,
                     expected_guard_home=guard_home,
@@ -653,6 +681,13 @@ def guard_daemon_retirement_is_complete(guard_home: Path) -> bool:
         return False
     inventory = _guard_daemon_process_inventory_for_guard_home(guard_home)
     return inventory == []
+
+
+def guard_daemon_process_count(guard_home: Path) -> int | None:
+    """Return the number of enumerable daemon processes for one Guard home."""
+
+    inventory = _guard_daemon_process_inventory_for_guard_home(guard_home)
+    return None if inventory is None else len(inventory)
 
 
 def guard_daemon_url_for_home(guard_home: Path) -> str:

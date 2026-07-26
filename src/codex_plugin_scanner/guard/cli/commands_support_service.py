@@ -192,6 +192,7 @@ def _matching_advisories(store: GuardStore, publisher: object) -> list[dict[str,
 
 def _handle_daemon_status(guard_home: Path, as_json: bool) -> int:
     from codex_plugin_scanner.version import __version__
+    from codex_plugin_scanner.guard.daemon.lifecycle_journal import load_daemon_lifecycle_events
 
     url = load_guard_daemon_url(guard_home)
     running = False
@@ -225,6 +226,9 @@ def _handle_daemon_status(guard_home: Path, as_json: bool) -> int:
         payload["pid"] = pid
     if url is not None:
         payload["url"] = url
+    lifecycle_events = load_daemon_lifecycle_events(guard_home, limit=1)
+    if lifecycle_events:
+        payload["last_lifecycle_event"] = lifecycle_events[-1]
     _emit("daemon", payload, as_json)
     return 0
 

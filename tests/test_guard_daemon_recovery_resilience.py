@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager_module
+from codex_plugin_scanner.guard.daemon.lifecycle_journal import load_daemon_lifecycle_events
 
 
 def _old_generation() -> dict[str, object]:
@@ -83,6 +84,40 @@ def test_recovery_starts_when_overloaded_state_has_no_live_generation(
 
     assert recovered == "http://127.0.0.1:4782"
     assert retired == []
+
+
+def test_recovery_records_trigger_and_missing_authenticated_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    state = {
+        **_old_generation(),
+        "pid": 999_999,
+        "state_id": "stopped-generation",
+    }
+    monkeypatch.setattr(daemon_manager_module, "load_authenticated_daemon_state", lambda _home: state)
+    monkeypatch.setattr(daemon_manager_module, "load_guard_daemon_url", lambda _home: None)
+    monkeypatch.setattr(daemon_manager_module, "_guard_daemon_pid_is_running", lambda _pid: False)
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "ensure_guard_daemon",
+        lambda _home, *, home_dir=None: "http://127.0.0.1:4782",
+    )
+
+    recovered = daemon_manager_module.recover_guard_daemon_after_hook_failure(
+        guard_home,
+        failure_kind="transport-failure",
+    )
+
+    assert recovered == "http://127.0.0.1:4782"
+    events = load_daemon_lifecycle_events(guard_home)
+    assert [(event["event"], event.get("reason")) for event in events] == [
+        ("recovery_requested", "transport-failure"),
+        ("death_observed", "process_missing"),
+    ]
+    assert events[-1]["pid"] == 999_999
+    assert events[-1].get("session_id") == "stopped-generation"
 
 
 def test_recovery_preserves_authenticated_live_process_when_health_probe_misses(

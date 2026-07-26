@@ -228,6 +228,7 @@ from .discovery import (
     load_daemon_discovery_key,
 )
 from .hook_process_runner import HookProcessRunner
+from .lifecycle_journal import record_daemon_lifecycle_event
 from .manager import (
     GUARD_DAEMON_COMPATIBILITY_VERSION,
     acquire_guard_daemon_owner_lock,
@@ -6873,6 +6874,7 @@ class GuardDaemonServer:
         self._serve_forever()
 
     def stop(self) -> None:
+        self._record_lifecycle("shutdown_requested", reason="explicit_stop")
         self._shutdown_started.set()
         self._server.shutdown()
         self._server.server_close()
@@ -6883,6 +6885,7 @@ class GuardDaemonServer:
                 self._thread = None
 
     def _begin_service(self) -> None:
+        self._record_lifecycle("start_requested")
         if self._is_quarantined():
             if self._aibom_refresh_thread is not None and self._aibom_refresh_thread.is_alive():
                 raise RuntimeError("AIBOM inventory refresh is still stopping")
@@ -6892,6 +6895,7 @@ class GuardDaemonServer:
         try:
             self._begin_owned_service()
         except BaseException as error:
+            self._record_lifecycle("start_failed", reason="initialization_failed")
             if not self._finish_service():
                 add_note = getattr(error, "add_note", None)
                 if callable(add_note):
@@ -6932,6 +6936,7 @@ class GuardDaemonServer:
             self._live_request_sync_worker,
         )
         self._start_command_activity_maintenance()
+        self._record_lifecycle("ready")
 
     def _maintain_command_activity_best_effort(self) -> None:
         now = datetime.now(timezone.utc)
@@ -7016,11 +7021,29 @@ class GuardDaemonServer:
         self._server.store.set_sync_payload("aibom_inventory_context", payload, now)
 
     def _serve_forever(self) -> None:
+        stop_reason = "serve_loop_returned"
         try:
             self._server.serve_forever()
+            if self._shutdown_started.is_set():
+                stop_reason = "requested_shutdown"
+        except BaseException:
+            stop_reason = "serve_loop_failed"
+            self._record_lifecycle("serve_failed", reason="unexpected_exception")
+            raise
         finally:
             self._server.server_close()
             _ = self._finish_service()
+            self._record_lifecycle("stopped", reason=stop_reason)
+
+    def _record_lifecycle(self, event: str, *, reason: str | None = None) -> None:
+        with suppress(Exception):
+            record_daemon_lifecycle_event(
+                self._server.store.guard_home,
+                event=event,
+                session_id=self._server.runtime_session_id,
+                reason=reason,
+                port=self.port,
+            )
 
     def _finish_service(self) -> bool:
         finish_lock = getattr(self, "_finish_service_lock", None)

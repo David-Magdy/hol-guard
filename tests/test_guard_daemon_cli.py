@@ -56,6 +56,29 @@ class TestDaemonStatusCommand:
         assert code == 0
         assert "version" in payload
 
+    def test_status_includes_latest_storage_independent_lifecycle_event(self, tmp_path: Path) -> None:
+        from codex_plugin_scanner.guard.daemon.lifecycle_journal import record_daemon_lifecycle_event
+
+        record_daemon_lifecycle_event(
+            tmp_path,
+            event="stopped",
+            reason="serve_loop_failed",
+            pid=1234,
+        )
+
+        code, payload = _run(["daemon", "status"], tmp_path)
+
+        assert code == 0
+        last_event = payload["last_lifecycle_event"]
+        assert isinstance(last_event, dict)
+        assert last_event == {
+            "event": "stopped",
+            "pid": 1234,
+            "reason": "serve_loop_failed",
+            "recorded_at_ns": last_event["recorded_at_ns"],
+            "version": 1,
+        }
+
     def test_status_does_not_wait_for_guard_database_writer(self, tmp_path: Path) -> None:
         from codex_plugin_scanner.guard.store import GuardStore
 
