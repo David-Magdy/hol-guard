@@ -3042,6 +3042,10 @@
     background-color: var(--color-purple-500);
   }
 
+  .bg-red-50 {
+    background-color: var(--color-red-50);
+  }
+
   .bg-red-50\/40 {
     background-color: #fef2f266;
   }
@@ -4139,6 +4143,16 @@
   @supports (color: color-mix(in lab, red, red)) {
     .text-brand-dark\/50 {
       color: color-mix(in oklab, var(--brand-dark) 50%, transparent);
+    }
+  }
+
+  .text-brand-dark\/55 {
+    color: var(--brand-dark);
+  }
+
+  @supports (color: color-mix(in lab, red, red)) {
+    .text-brand-dark\/55 {
+      color: color-mix(in oklab, var(--brand-dark) 55%, transparent);
     }
   }
 
