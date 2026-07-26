@@ -24,7 +24,10 @@ class _SequencedEvent:
     def wait(self, timeout: float) -> bool:
         assert timeout == 3_600
         self.calls += 1
-        return self.calls > 2
+        return self.calls > 1
+
+    def is_set(self) -> bool:
+        return self.calls > 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +66,7 @@ def test_long_lived_daemon_rechecks_daily_and_uses_global_retention(monkeypatch:
     service._shutdown_started = cast(threading.Event, cast(object, _SequencedEvent()))
     maintenance_calls: list[int] = []
     service._maintain_command_activity_best_effort = lambda: maintenance_calls.append(1)
+    service._maintain_storage_best_effort = lambda: True
     service._command_activity_maintenance_loop()
     assert len(maintenance_calls) == 2
 

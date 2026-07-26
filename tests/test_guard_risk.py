@@ -1176,14 +1176,57 @@ def test_tool_action_request_classifier_skips_git_commit_with_coauthored_by_trai
     assert request is None
 
 
-def test_tool_action_request_classifier_reviews_gh_pr_create_body_file():
+def test_tool_action_request_classifier_allows_static_markdown_gh_pr_create_body_file(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    body_file = tmp_path / "points-portal-command-builder-a11y-pr-body.md"
+    body_file.write_text("## Summary\n- Wire the capability gate.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                "gh pr create --base main --head fix/guard-command-builder-a11y "
+                "--title 'fix(portal): wire command capability gate' "
+                f"--body-file {body_file}"
+            )
+        },
+        cwd=workspace,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is None
+
+
+def test_tool_action_request_classifier_allows_canonical_pr_body_file_with_standard_flags(tmp_path):
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text("## Summary\n- Render report dates reliably.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                'gh pr create --title "fix(guard): render report dates" '
+                "--body-file pr-body.md --base main --head fix/report-date 2>&1"
+            )
+        },
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is None
+
+
+@pytest.mark.parametrize(
+    "body_file",
+    ("-", "/tmp/guard-pr-body.txt", "'~/focused-pr-body.md'", "~otheruser/focused-pr-body.md"),
+)
+def test_tool_action_request_classifier_reviews_nonstatic_gh_pr_create_body_file(body_file):
     request = extract_sensitive_tool_action_request(
         "bash",
         {
             "command": (
                 "gh pr create --repo hashgraph-online/hol-guard "
                 "--title 'feat(guard): notify desktop for approvals' "
-                "--body-file /tmp/guard-pr-body.md"
+                f"--body-file {body_file}"
             )
         },
     )
@@ -1192,7 +1235,149 @@ def test_tool_action_request_classifier_reviews_gh_pr_create_body_file():
     assert request.action_class == "GitHub content mutation command"
 
 
-def test_tool_action_request_classifier_reviews_single_quoted_gh_pr_create_markdown_body():
+def test_tool_action_request_classifier_reviews_missing_gh_pr_create_body_file(tmp_path):
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file {tmp_path / 'missing.md'}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_secret_bearing_gh_pr_create_body_file(tmp_path):
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text(
+        "Authorization: Bearer ghp_" + "012345678901234567890123456789012345\n",
+        encoding="utf-8",
+    )
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file {body_file}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_symlinked_gh_pr_create_body_file(tmp_path):
+    source = tmp_path / "source-pr-body.md"
+    source.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    body_file = tmp_path / "pr-body.md"
+    body_file.symlink_to(source)
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file {body_file}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_dynamic_title_with_canonical_pr_body_file(tmp_path):
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": 'gh pr create --title "$GITHUB_TOKEN" --body-file pr-body.md'},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub PR dynamic content"
+
+
+def test_tool_action_request_classifier_reviews_background_command_after_canonical_pr_body_file(tmp_path):
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": "gh pr create --title 'Static title' --body-file pr-body.md & echo continued"},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_padded_gh_pr_create_body_file(tmp_path: Path) -> None:
+    safe_body = tmp_path / "pr-body.md"
+    safe_body.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    padded_body = tmp_path / " pr-body.md"
+    padded_body.write_text("Unreviewed content.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": "gh pr create --title 'Static title' --body-file ' pr-body.md'"},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+@pytest.mark.parametrize(
+    "substitution",
+    ("<(touch marker)", ">(cat)", "$(touch marker)", "`touch marker`"),
+)
+def test_tool_action_request_classifier_reviews_substitution_outside_gh_pr_create_body_file(
+    tmp_path: Path,
+    substitution: str,
+) -> None:
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file pr-body.md {substitution}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+
+
+def test_tool_action_request_classifier_reviews_globbed_gh_pr_create_body_file(tmp_path):
+    literal_body = tmp_path / "[a]-pr-body.md"
+    literal_body.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    expanded_body = tmp_path / "a-pr-body.md"
+    expanded_body.write_text(
+        "Authorization: Bearer ghp_" + "012345678901234567890123456789012345\n",
+        encoding="utf-8",
+    )
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file {literal_body}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+@pytest.mark.parametrize(
+    "template_arg",
+    ("--template body.md", "--template=body.md", "-Tbody.md"),
+)
+def test_tool_action_request_classifier_reviews_gh_pr_create_template(template_arg):
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": f'gh pr create --title "focused fix" {template_arg}'},
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_allows_single_quoted_gh_pr_create_markdown_body():
     request = extract_sensitive_tool_action_request(
         "bash",
         {
@@ -1206,8 +1391,86 @@ def test_tool_action_request_classifier_reviews_single_quoted_gh_pr_create_markd
         },
     )
 
+    assert request is None
+
+
+def test_tool_action_request_classifier_allows_static_inline_gh_pr_create_compound(tmp_path):
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                f"cd {tmp_path} && "
+                'gh pr create --title "feat(guard): focused fix" '
+                '--body "Static summary. Tests pass." 2>&1 | tail -3'
+            )
+        },
+        cwd=tmp_path,
+    )
+
+    assert request is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        'gh pr create --title "$GITHUB_TOKEN" --body "Static summary"',
+        'gh pr create --title "Static title" --body "${GITHUB_TOKEN}"',
+        'gh pr create --title "$(printenv GITHUB_TOKEN)" --body "Static summary"',
+        'gh pr create --title "Static title" --body "Static summary" --label "$GITHUB_TOKEN"',
+        'gh pr create -t"$GITHUB_TOKEN" -b"Static summary"',
+        'sudo gh pr create --title "Static title" --body "$GITHUB_TOKEN"',
+        'command -- gh pr create --title "Static title" --body "$GITHUB_TOKEN"',
+        'env GH_HOST=github.com gh pr create --title "Static title" --body "$GITHUB_TOKEN"',
+    ),
+)
+def test_tool_action_request_classifier_reviews_dynamic_gh_pr_create_content(command):
+    request = extract_sensitive_tool_action_request("bash", {"command": command})
+
+    assert request is not None
+    assert request.action_class == "GitHub PR dynamic content"
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "gh pr create --fill",
+        "gh pr create -f",
+        'gh pr create --title "Static title"',
+        'gh pr create --title "Static title" --body "Static summary" -e',
+        'gh pr create --title "Static title" --body "Static summary" --recover input',
+        'gh pr create --title "Static title" --body "Static summary" --web',
+        'gh pr create --title "Static title" --body "Static summary" -w',
+    ),
+)
+def test_tool_action_request_classifier_reviews_content_derived_gh_pr_create(command):
+    request = extract_sensitive_tool_action_request("bash", {"command": command})
+
     assert request is not None
     assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_allows_single_quoted_pr_literals_with_shell_metacharacters():
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                "gh pr create --title 'Document $GITHUB_TOKEN handling' "
+                "--body 'Verification: `python -m pytest` and ${TOKEN} remain literal.'"
+            )
+        },
+    )
+
+    assert request is None
+
+
+def test_tool_action_request_classifier_preserves_dangerous_action_after_pr_create():
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": ('gh pr create --title "focused fix" --body "Static summary" && gh pr merge 17 --admin')},
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub administrator pull-request merge command"
 
 
 def test_tool_action_request_classifier_explains_gh_pr_create_double_quoted_markdown_substitution():
@@ -1263,7 +1526,7 @@ def test_tool_action_request_classifier_explains_wrapped_gh_pr_create_body_subst
     assert request.action_class == "GitHub PR body shell substitution"
 
 
-def test_tool_action_request_classifier_reviews_pr_create_with_unrelated_substitution():
+def test_tool_action_request_classifier_allows_pr_create_with_unrelated_substitution():
     request = extract_sensitive_tool_action_request(
         "bash",
         {
@@ -1276,11 +1539,10 @@ def test_tool_action_request_classifier_reviews_pr_create_with_unrelated_substit
         },
     )
 
-    assert request is not None
-    assert request.action_class == "GitHub content mutation command"
+    assert request is None
 
 
-def test_tool_action_request_classifier_reviews_pr_create_with_attached_body_flag():
+def test_tool_action_request_classifier_allows_pr_create_with_attached_static_body_flag():
     request = extract_sensitive_tool_action_request(
         "bash",
         {
@@ -1293,8 +1555,7 @@ def test_tool_action_request_classifier_reviews_pr_create_with_attached_body_fla
         },
     )
 
-    assert request is not None
-    assert request.action_class == "GitHub content mutation command"
+    assert request is None
 
 
 def test_tool_action_request_classifier_ignores_single_quoted_env_split_string_body():

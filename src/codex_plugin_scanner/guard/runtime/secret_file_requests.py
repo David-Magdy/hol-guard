@@ -47,6 +47,8 @@ from .github_capability_interaction import (
     github_capability_action_class,
     github_capability_requires_confirmation,
 )
+from .github_command_capabilities import static_markdown_pr_body_file_operand
+from .github_pr_body_file import github_pr_body_file_is_safe
 from .github_shell_capabilities import GitHubShellAnalysis
 from .github_shell_capabilities import classify_github_shell_capabilities as _classify_github_shell_capabilities
 from .interpreter_options import shell_interpreter_command_payload as _shell_interpreter_command_payload
@@ -1544,6 +1546,24 @@ def _destructive_shell_tool_action_request(
             canonical_command=canonical_command,
             interpreter_executable_identities=interpreter_executable_identities,
         )
+    if _gh_pr_create_has_active_shell_expansion(detection_command_text) or (
+        raw_command_text is not None
+        and raw_command_text != detection_command_text
+        and _gh_pr_create_has_active_shell_expansion(raw_command_text)
+    ):
+        return ToolActionRequestMatch(
+            tool_name=tool_name,
+            normalized_tool_name=normalized_tool_name,
+            command_text=command_text,
+            action_class="GitHub PR dynamic content",
+            reason=(
+                "Guard reviews `gh pr create` arguments with active shell expansion because environment variables "
+                "or command substitutions can publish local secrets as pull-request metadata. Quote literal `$` "
+                "and backticks with single quotes to keep static PR creation prompt-free."
+            ),
+            canonical_command=canonical_command,
+            interpreter_executable_identities=interpreter_executable_identities,
+        )
     extension_interaction = classify_command_extension_interaction(
         canonical_command,
         BUILT_IN_COMMAND_EXTENSION_REGISTRY,
@@ -1657,6 +1677,20 @@ def _destructive_shell_tool_action_request(
             pytest_config_reason_codes=pytest_config_assessment.reason_codes,
             interpreter_executable_identities=interpreter_executable_identities,
         )
+    if _gh_pr_create_uses_safe_static_body_file(
+        detection_command_text,
+        cwd=cwd,
+        home_dir=home_dir,
+    ) and (
+        raw_command_text is None
+        or raw_command_text == detection_command_text
+        or _gh_pr_create_uses_safe_static_body_file(
+            raw_command_text,
+            cwd=cwd,
+            home_dir=home_dir,
+        )
+    ):
+        return None
     github_assessment = classify_github_shell_capabilities(
         raw_command_text or detection_command_text,
         home_dir=home_dir,
@@ -1832,6 +1866,76 @@ def _gh_pr_create_body_has_shell_command_substitution(command_text: str, *, dept
             continue
         if _gh_pr_create_body_args_have_substitution(segment[body_args_start_index:]):
             return True
+    return False
+
+
+def _gh_pr_create_has_active_shell_expansion(command_text: str, *, depth: int = 0) -> bool:
+    if depth > 2 or ("$" not in command_text and "`" not in command_text):
+        return False
+    tokens = _shell_tokens_preserving_quote_context(command_text)
+    for segment in _shell_token_segments(tokens):
+        for env_split_string in _gh_pr_env_split_string_payloads_with_active_expansion(segment):
+            if _gh_pr_create_has_active_shell_expansion(env_split_string, depth=depth + 1):
+                return True
+        args_start_index = _gh_pr_create_body_args_start_index(segment)
+        if args_start_index is None:
+            continue
+        plain_segment = [token.plain for token in segment]
+        index = args_start_index
+        while index < len(segment):
+            redirect_tokens_consumed = _leading_shell_redirection_tokens_consumed(plain_segment, index)
+            if redirect_tokens_consumed > 0:
+                index += redirect_tokens_consumed
+                continue
+            if _shell_token_has_active_expansion(segment[index].raw):
+                return True
+            index += 1
+    return False
+
+
+def _gh_pr_env_split_string_payloads_with_active_expansion(
+    segment: list[_ShellTokenWithQuoteContext],
+) -> tuple[str, ...]:
+    env_index = _shell_segment_env_index([token.plain for token in segment])
+    if env_index is None:
+        return ()
+    parsed = parse_env_wrapper([token.plain for token in segment[env_index + 1 :]])
+    payloads: list[str] = []
+    for expansion in parsed.split_expansions:
+        source_index = env_index + 1 + expansion.source_index
+        if source_index < len(segment) and _shell_token_has_active_expansion(segment[source_index].raw):
+            payloads.append(expansion.payload.strip())
+    return tuple(payload for payload in payloads if payload)
+
+
+def _shell_token_has_active_expansion(raw_token: str) -> bool:
+    index = 0
+    single_quoted = False
+    double_quoted = False
+    parameter_prefixes = frozenset("{(_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz*?@#$!-")
+    while index < len(raw_token):
+        character = raw_token[index]
+        if single_quoted:
+            if character == "'":
+                single_quoted = False
+            index += 1
+            continue
+        if character == "\\":
+            index += 2
+            continue
+        if character == "'" and not double_quoted:
+            single_quoted = True
+            index += 1
+            continue
+        if character == '"':
+            double_quoted = not double_quoted
+            index += 1
+            continue
+        if character == "`":
+            return True
+        if character == "$" and index + 1 < len(raw_token) and raw_token[index + 1] in parameter_prefixes:
+            return True
+        index += 1
     return False
 
 
@@ -2041,6 +2145,29 @@ def _gh_pr_create_body_args_have_substitution(args: list[_ShellTokenWithQuoteCon
     return False
 
 
+def _gh_pr_create_uses_safe_static_body_file(
+    command_text: str,
+    *,
+    cwd: Path | None,
+    home_dir: Path | None,
+) -> bool:
+    if _shell_command_substitution_payloads(command_text):
+        return False
+    segments = _shell_token_segments(_shell_tokens_preserving_quote_context(command_text))
+    if len(segments) != 1:
+        return False
+    segment = segments[0]
+    args_start_index = _gh_pr_create_body_args_start_index(segment)
+    if args_start_index is None:
+        return False
+    operand = static_markdown_pr_body_file_operand(tuple(token.plain for token in segment[args_start_index:]))
+    return operand is not None and github_pr_body_file_is_safe(
+        operand,
+        cwd=cwd,
+        home_dir=home_dir,
+    )
+
+
 def _shell_tokens_preserving_quote_context(command_text: str) -> list[_ShellTokenWithQuoteContext]:
     tokens: list[_ShellTokenWithQuoteContext] = []
     index = 0
@@ -2088,6 +2215,9 @@ def _shell_tokens_preserving_quote_context(command_text: str) -> list[_ShellToke
                 quote = char
                 index += 1
                 continue
+            if char == "&" and _is_fd_duplication_ampersand(command_text, index=index, token_start=start):
+                index += 1
+                continue
             if char.isspace() or char in {";", "&", "|"}:
                 break
             index += 1
@@ -2095,6 +2225,24 @@ def _shell_tokens_preserving_quote_context(command_text: str) -> list[_ShellToke
         if raw_token:
             tokens.append(_ShellTokenWithQuoteContext(raw=raw_token, plain=_plain_shell_token(raw_token)))
     return tokens
+
+
+def _is_fd_duplication_ampersand(command_text: str, *, index: int, token_start: int) -> bool:
+    if index <= token_start or command_text[index - 1] not in {"<", ">"}:
+        return False
+    descriptor_index = index + 1
+    if descriptor_index >= len(command_text):
+        return False
+    if command_text[descriptor_index] == "-":
+        descriptor_index += 1
+    else:
+        if not command_text[descriptor_index].isdigit():
+            return False
+        while descriptor_index < len(command_text) and command_text[descriptor_index].isdigit():
+            descriptor_index += 1
+    return descriptor_index >= len(command_text) or (
+        command_text[descriptor_index].isspace() or command_text[descriptor_index] in {";", "&", "|"}
+    )
 
 
 def _plain_shell_token(raw_token: str) -> str:

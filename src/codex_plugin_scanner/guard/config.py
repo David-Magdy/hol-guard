@@ -34,11 +34,13 @@ NON_MIGRATED_GUARD_RUNTIME_FILES = frozenset(
         "guard.db-journal",
         "guard.db-shm",
         "guard.db-wal",
+        "schema-migration.lock",
     }
 )
 GUARD_HOME_METADATA_FILES = frozenset(
     {
         "oauth-keychain-access.json",
+        "schema-migration.lock",
         "system-keyring-availability.json",
     }
 )
@@ -47,7 +49,8 @@ GUARD_DB_BACKUP_SLEEP_SECONDS = 0.05
 WORKSPACE_CONFIG_FILENAMES = (".ai-plugin-scanner-guard.toml", ".hol-guard.toml")
 MAX_APPROVAL_WAIT_TIMEOUT_SECONDS = 600
 
-# Fast hook review rollout flags (environment-controlled for safe staged rollout).
+# Hook review controls. The resident worker stays opt-in during the 3.1 alpha;
+# operators can enable it only after the rollout gate is satisfied.
 # These are read from os.environ at call time so tests/daemon can toggle without restart.
 HOOK_FAST_PATH_ENV = "HOL_GUARD_HOOK_FAST_PATH"
 HOOK_SOURCE_REF_ENV = "HOL_GUARD_HOOK_SOURCE_REF"
@@ -1045,7 +1048,13 @@ def _guard_home_has_state(path: Path) -> bool:
     entries = list(path.iterdir())
     if not entries:
         return False
-    if any(entry.name not in {"guard.db", *GUARD_HOME_METADATA_FILES} for entry in entries):
+    state_entries = [
+        entry for entry in entries if entry.name not in {"guard.db", "secrets", *GUARD_HOME_METADATA_FILES}
+    ]
+    if state_entries:
+        return True
+    secrets_dir = path / "secrets"
+    if secrets_dir.is_dir() and any(entry.name != "key.bin" for entry in secrets_dir.iterdir()):
         return True
     database_path = path / "guard.db"
     if not database_path.is_file():

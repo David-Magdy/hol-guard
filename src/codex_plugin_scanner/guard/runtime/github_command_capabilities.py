@@ -235,6 +235,12 @@ def classify_github_cli(args: Sequence[str]) -> GitHubCommandAssessment:
                 "github.command.force-mutation",
                 "The command forcefully changes remote repository state.",
             )
+        if top_level == "pr" and subcommand == "create" and _pr_create_has_static_inline_content(tail):
+            return _assessment(
+                "propose_remote",
+                "github.command.pr-proposal",
+                "The command creates a pull-request proposal without merging or changing repository controls.",
+            )
         if subcommand in _MAINTENANCE_SUBCOMMANDS.get(top_level, frozenset()):
             if _has_dynamic_value(original):
                 return _assessment(
@@ -271,6 +277,143 @@ def _has_option(args: Sequence[str], option: str) -> bool:
 
 def _has_any_option(args: Sequence[str], *options: str) -> bool:
     return any(_has_option(args, option) for option in options)
+
+
+def _pr_create_has_static_inline_content(args: Sequence[str]) -> bool:
+    content_derived_options = (
+        "--body-file",
+        "--template",
+        "--fill",
+        "--fill-first",
+        "--fill-verbose",
+        "--recover",
+        "--web",
+        "--editor",
+        "--dry-run",
+    )
+    if any(_has_option(args, option) for option in content_derived_options):
+        return False
+    if any(_has_short_option(args, option) for option in ("-F", "-T")):
+        return False
+    if any(_has_short_boolean_option(args, option) for option in ("-e", "-f", "-w")):
+        return False
+    return _has_explicit_option_value(args, "--title", "-t") and _has_explicit_option_value(
+        args,
+        "--body",
+        "-b",
+    )
+
+
+def static_markdown_pr_body_file_operand(args: Sequence[str]) -> str | None:
+    """Return one unambiguous Markdown body file from a static PR proposal."""
+
+    incompatible_options = (
+        "--body",
+        "--template",
+        "--fill",
+        "--fill-first",
+        "--fill-verbose",
+        "--recover",
+        "--web",
+        "--editor",
+        "--dry-run",
+    )
+    if any(_has_option(args, option) for option in incompatible_options):
+        return None
+    if any(_has_short_option(args, option) for option in ("-T", "-b")):
+        return None
+    if any(_has_short_boolean_option(args, option) for option in ("-e", "-f", "-w")):
+        return None
+    if not _has_explicit_option_value(args, "--title", "-t"):
+        return None
+    body_files: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"--body-file", "-F"}:
+            if index + 1 >= len(args):
+                return None
+            body_files.append(args[index + 1])
+            index += 2
+            continue
+        if token.startswith("--body-file="):
+            body_files.append(token.partition("=")[2])
+        elif token.startswith("-F") and len(token) > 2:
+            body_files.append(token[2:])
+        index += 1
+    if len(body_files) != 1:
+        return None
+    body_file = body_files[0]
+    shell_expansion_markers = ("$", "`", "*", "?", "[", "]", "{", "}", "(", ")", "<", ">", "^", "#", "~")
+    if (
+        not body_file
+        or body_file == "-"
+        or body_file.startswith("=")
+        or any(marker in body_file for marker in shell_expansion_markers)
+    ):
+        return None
+    if not body_file.lower().endswith((".md", ".markdown")):
+        return None
+    return body_file
+
+
+def _has_short_option(args: Sequence[str], option: str) -> bool:
+    return any(token == option or (token.startswith(option) and len(token) > len(option)) for token in args)
+
+
+def _has_short_boolean_option(args: Sequence[str], option: str) -> bool:
+    long_value_options = frozenset(
+        {
+            "--assignee",
+            "--base",
+            "--body",
+            "--body-file",
+            "--head",
+            "--label",
+            "--milestone",
+            "--project",
+            "--recover",
+            "--repo",
+            "--reviewer",
+            "--template",
+            "--title",
+        }
+    )
+    short_value_options = frozenset("aBbFHlmprRTt")
+    option_name = option.removeprefix("-")
+    index = 0
+    while index < len(args):
+        token = args[index]
+        is_short_value_option = len(token) == 2 and token.startswith("-") and token[1] in short_value_options
+        if token in long_value_options or is_short_value_option:
+            index += 2
+            continue
+        if any(token.startswith(f"{value_option}=") for value_option in long_value_options):
+            index += 1
+            continue
+        if token == option:
+            return True
+        if not token.startswith("-") or token.startswith("--") or len(token) < 3:
+            index += 1
+            continue
+        cluster = token[1:]
+        if cluster[0] not in short_value_options and option_name in cluster:
+            return True
+        index += 1
+    return False
+
+
+def _has_explicit_option_value(args: Sequence[str], long_option: str, short_option: str) -> bool:
+    for index, token in enumerate(args):
+        if token in {long_option, short_option}:
+            if index + 1 < len(args) and args[index + 1]:
+                return True
+            continue
+        if token.startswith(f"{long_option}="):
+            return bool(token.partition("=")[2])
+        if token.startswith(short_option) and len(token) > len(short_option):
+            return True
+    return False
 
 
 def _has_dynamic_value(args: Sequence[str]) -> bool:

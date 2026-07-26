@@ -19,6 +19,7 @@ from codex_plugin_scanner.guard.cli import commands as guard_commands_module
 from codex_plugin_scanner.guard.config import GuardConfig
 from codex_plugin_scanner.guard.daemon import GuardDaemonServer
 from codex_plugin_scanner.guard.daemon import server as daemon_server_module
+from codex_plugin_scanner.guard.daemon.discovery import load_authenticated_daemon_state
 from codex_plugin_scanner.guard.desktop_notifications import DesktopNotificationSetupResult
 from codex_plugin_scanner.guard.local_dashboard_session import (
     LOCAL_DASHBOARD_SESSION_AUDIENCE,
@@ -92,6 +93,40 @@ def _decode_dashboard_session_claims(token: str) -> dict[str, object]:
 
 
 class TestGuardSurfaceServer:
+    def test_daemon_trust_snapshot_tracks_only_committed_integrity_transitions(self, tmp_path: Path) -> None:
+        store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        degraded = {
+            "backend": "system-keyring",
+            "degraded_reasons": ["policy_integrity_key_unavailable"],
+            "mode": "degraded",
+        }
+        protected = {
+            "backend": "system-keyring",
+            "degraded_reasons": [],
+            "mode": "protected",
+        }
+
+        try:
+            with store._connect() as connection:
+                store._queue_policy_integrity_state_notification(connection, degraded)
+            committed_state = load_authenticated_daemon_state(store.guard_home)
+
+            with pytest.raises(RuntimeError, match="rollback"), store._connect() as connection:
+                store._queue_policy_integrity_state_notification(connection, protected)
+                raise RuntimeError("rollback")
+            rolled_back_state = load_authenticated_daemon_state(store.guard_home)
+        finally:
+            daemon.stop()
+
+        assert committed_state is not None
+        assert committed_state["trust_status"] == degraded
+        assert rolled_back_state is not None
+        assert rolled_back_state["trust_status"] == degraded
+
+
+
     def test_local_dashboard_session_preserves_reserved_claims(self) -> None:
         token = build_local_dashboard_session_token(
             auth_token="daemon-auth-token",
@@ -644,7 +679,10 @@ class TestGuardSurfaceServer:
             daemon.stop()
 
         assert hook_payload["decision"] == "deny"
-        assert "Kubernetes secret read command" in str(hook_payload["reason"])
+        assert "Kubernetes secret read command" in str(hook_payload["reason"]), {
+            "hook_payload": hook_payload,
+            "worker_stats": daemon._server.hook_process_runner.stats(),
+        }
 
     def test_guard_daemon_cursor_hook_endpoint_applies_hook_env_overlay(self, tmp_path, monkeypatch) -> None:
         store = GuardStore(tmp_path / "guard-home")
@@ -652,18 +690,19 @@ class TestGuardSurfaceServer:
         workspace_dir.mkdir(parents=True, exist_ok=True)
         captured: dict[str, str | None] = {}
 
-        def fake_run_guard_command(args, *, input_text, output_stream):
-            del input_text
-            captured["binding"] = os.environ.get("HOL_GUARD_CURSOR_APPROVAL_BINDING")
-            captured["proof"] = os.environ.get("HOL_GUARD_CURSOR_AFTER_SHELL_PROOF")
-            captured["managed"] = os.environ.get("HOL_GUARD_MANAGED_CURSOR_HOOK")
-            captured["session"] = os.environ.get("CURSOR_SESSION_ID")
-            output_stream.write("{}")
-            return 0
+        def fake_review(**kwargs):
+            hook_env = kwargs["hook_env"]
+            captured["binding"] = hook_env.get("HOL_GUARD_CURSOR_APPROVAL_BINDING")
+            captured["proof"] = hook_env.get("HOL_GUARD_CURSOR_AFTER_SHELL_PROOF")
+            captured["managed"] = hook_env.get("HOL_GUARD_MANAGED_CURSOR_HOOK")
+            captured["session"] = hook_env.get("CURSOR_SESSION_ID")
+            from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessReview
 
-        monkeypatch.setattr(guard_commands_module, "run_guard_command", fake_run_guard_command)
+            return HookProcessReview({}, None)
+
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
+        monkeypatch.setattr(daemon._server.hook_process_runner, "review", fake_review)
 
         try:
             request = urllib.request.Request(
@@ -866,15 +905,15 @@ class TestGuardSurfaceServer:
         workspace_dir.mkdir(parents=True, exist_ok=True)
         captured: dict[str, str | None] = {}
 
-        def fake_run_guard_command(args, *, input_text, output_stream):
-            del input_text
-            captured["workspace"] = args.workspace
-            output_stream.write("{}")
-            return 0
+        def fake_review(**kwargs):
+            captured["workspace"] = str(kwargs["workspace"])
+            from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessReview
 
-        monkeypatch.setattr(guard_commands_module, "run_guard_command", fake_run_guard_command)
+            return HookProcessReview({}, None)
+
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
+        monkeypatch.setattr(daemon._server.hook_process_runner, "review", fake_review)
 
         try:
             trailing_none = workspace_dir / "None"
@@ -3074,7 +3113,7 @@ class TestGuardDaemonFastHookPath:
     HOL_GUARD_HOOK_FAST_PATH=1 enabled, proving that:
     - PostToolUse with guard_source_ref uses the resident worker
     - PreToolUse falls through to legacy CLI (not the worker)
-    - PostToolUse without source_ref falls through to legacy CLI
+    - PostToolUse inline output uses the resident scanner
     - Worker exceptions return fail-safe deny/block
     """
 
@@ -3190,8 +3229,8 @@ class TestGuardDaemonFastHookPath:
         assert result.get("model_output_action") != "not_applicable"
         assert result.get("reason_code") != "non_post_tool_event"
 
-    def test_fast_path_post_tool_use_without_source_ref_falls_back(self, tmp_path, monkeypatch) -> None:
-        """PostToolUse without guard_source_ref must fall through to legacy CLI."""
+    def test_fast_path_post_tool_use_without_source_ref_scans_inline_output(self, tmp_path, monkeypatch) -> None:
+        """PostToolUse inline output is scanned without a second approval."""
         home_dir = tmp_path / "home"
         workspace_dir = tmp_path / "workspace"
         workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -3229,17 +3268,18 @@ class TestGuardDaemonFastHookPath:
             daemon.stop()
             monkeypatch.delenv("HOL_GUARD_HOOK_FAST_PATH", raising=False)
 
-        # Legacy CLI path handles this (may return {} for allow).
-        assert result.get("model_output_action") != "not_applicable"
+        assert result["decision"] == "allow"
+        assert result["model_output_action"] == "allow_original"
+        assert result["reason_code"] == "output_scan_allow"
 
-    def test_fast_path_disabled_uses_legacy(self, tmp_path, monkeypatch) -> None:
-        """When HOL_GUARD_HOOK_FAST_PATH is not set, legacy CLI is used."""
+    def test_fast_path_explicitly_disabled_uses_legacy(self, tmp_path, monkeypatch) -> None:
+        """An emergency environment override can restore the legacy path."""
         home_dir = tmp_path / "home"
         workspace_dir = tmp_path / "workspace"
         workspace_dir.mkdir(parents=True, exist_ok=True)
 
         store = GuardStore(home_dir)
-        monkeypatch.delenv("HOL_GUARD_HOOK_FAST_PATH", raising=False)
+        monkeypatch.setenv("HOL_GUARD_HOOK_FAST_PATH", "0")
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
 
@@ -3283,11 +3323,16 @@ class TestGuardDaemonFastHookPath:
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
 
-        def broken_review_http_payload(**kwargs):
-            raise RuntimeError("boom")
-
         try:
-            monkeypatch.setattr(daemon._server.hook_worker, "review_http_payload", broken_review_http_payload)
+
+            def fail_review(**_kwargs: object) -> dict[str, object]:
+                raise RuntimeError("resident worker failed")
+
+            monkeypatch.setattr(
+                daemon._server.hook_worker,
+                "review_http_payload",
+                fail_review,
+            )
             payload = {
                 "hook_event_name": "PostToolUse",
                 "tool_name": "Read",

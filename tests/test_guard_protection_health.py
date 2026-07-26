@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import cast
 
+from codex_plugin_scanner.guard import approvals as approvals_module
 from codex_plugin_scanner.guard.models import GuardRuntimeState
 from codex_plugin_scanner.guard.runtime.protection_health import (
     PROTECTION_CHECK_IDS,
@@ -57,11 +58,13 @@ def _payload(
     errors: int = 0,
     activity_count: int = 1,
     runtime_state: dict[str, object] | None = None,
+    hook_verification: dict[str, bool] | None = None,
 ) -> dict[str, object]:
     return build_runtime_protection_health(
         store=_Store(count=activity_count, dropped=dropped, errors=errors),
         runtime_state={"last_heartbeat_at": _NOW.isoformat()} if runtime_state is None else runtime_state,
         managed_installs=installs or [],
+        hook_verification=hook_verification,
         trust_status=trust or {},
         now=_NOW,
     )
@@ -84,6 +87,25 @@ def test_missing_positive_proofs_never_claim_protected_or_partial() -> None:
         assert payload["state"] == "degraded"
         assert payload["label"] == "Degraded"
         assert payload["state"] not in {"protected", "partial"}
+
+
+def test_canonical_managed_install_supersedes_legacy_alias() -> None:
+    installs = [
+        {"harness": "claude", "active": True, "manifest": {}},
+        {"harness": "claude-code", "active": True, "manifest": {"canonical": True}},
+    ]
+
+    assert approvals_module._canonical_managed_installs_for_health(installs) == [
+        {"harness": "claude-code", "active": True, "manifest": {"canonical": True}}
+    ]
+
+    active_alias = [
+        {"harness": "claude", "active": True, "manifest": {"alias": True}},
+        {"harness": "claude-code", "active": False, "manifest": {"canonical": True}},
+    ]
+    assert approvals_module._canonical_managed_installs_for_health(active_alias) == [
+        {"harness": "claude-code", "active": True, "manifest": {"alias": True}}
+    ]
 
 
 def test_report_distinguishes_failed_and_unproven_facts() -> None:
@@ -114,13 +136,13 @@ def test_report_distinguishes_failed_and_unproven_facts() -> None:
     assert degraded_by_id["harness_hooks"] == {
         "check_id": "harness_hooks",
         "status": "fail",
-        "reason_code": "one_or_more_hooks_inactive",
+        "reason_code": "no_managed_harness",
     }
     assert degraded_by_id["tamper_checks"]["status"] == "fail"
     assert degraded_by_id["decision_stream"]["status"] == "fail"
 
 
-def test_duplicate_harness_rows_preserve_the_most_restrictive_signal() -> None:
+def test_inactive_duplicate_rows_do_not_override_an_active_install() -> None:
     for installs in (
         [{"harness": "codex", "active": False}, {"harness": "codex", "active": True}],
         [{"harness": "codex", "active": True}, {"harness": "codex", "active": False}],
@@ -132,9 +154,30 @@ def test_duplicate_harness_rows_preserve_the_most_restrictive_signal() -> None:
         checks = cast(list[dict[str, str]], apps[0]["checks"])
         assert checks[0] == {
             "check_id": "harness_hooks",
-            "status": "fail",
-            "reason_code": "hooks_inactive",
+            "status": "unknown",
+            "reason_code": "hook_attestation_unavailable",
         }
+
+
+def test_inactive_historical_rows_do_not_degrade_verified_active_hooks() -> None:
+    payload = _payload(
+        installs=[
+            {"harness": "pi", "active": False},
+            {"harness": "cursor", "active": True},
+        ],
+        trust={"runtime_protection": "protected", "remembered_rules": "enforced"},
+        hook_verification={"cursor": True},
+    )
+
+    assert payload["state"] == "degraded"
+    apps = cast(list[dict[str, object]], payload["apps"])
+    assert [app["harness"] for app in apps] == ["cursor"]
+    checks = cast(list[dict[str, str]], apps[0]["checks"])
+    assert checks[0] == {
+        "check_id": "harness_hooks",
+        "status": "pass",
+        "reason_code": "hooks_verified",
+    }
 
 
 def test_stale_or_invalid_runtime_rows_never_prove_daemon_health() -> None:
