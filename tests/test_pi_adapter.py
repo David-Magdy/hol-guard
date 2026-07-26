@@ -354,7 +354,7 @@ class TestPiInstall:
         assert "[...GUARD_CLI_WRAPPER_ARGS, JSON.stringify(args)]" in text
         assert "async function daemonGuardResponse(" in text
         assert "await fetch(`http://127.0.0.1:${connection.port}/v1/hooks/pi?" in text
-        assert "let daemonAttempt = await daemonGuardResponse(serializedPayload, cwd);" in text
+        assert "serializedPayload, cwd, GUARD_DAEMON_TIMEOUT_MS, deadlineAt," in text
         assert "const response = await runGuard(" in text
         assert "if (result.error) {" in text
         assert "const errorMessage = result.error.message;" in text
