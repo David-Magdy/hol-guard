@@ -151,12 +151,19 @@ def corpus_record_count() -> int:
     )
     from tests.test_guard_command_specialized_variants import SPECIALIZED_SAFE_VARIANT_CASES
     from tests.test_guard_data_flow import BENIGN_DATA_FLOW_CASES, MALICIOUS_DATA_FLOW_CASES
-    from tests.test_guard_github_command_capabilities import GITHUB_REVIEW_FLOORS
+    from tests.test_guard_github_command_capabilities import GITHUB_CAPABILITY_CASES, GITHUB_REVIEW_FLOORS
     from tests.test_guard_github_command_capability_edges import (
         PR_MERGE_ADMIN_CAPABILITY_CASES,
         UNRELATED_DYNAMIC_COMMAND_CASES,
     )
     from tests.test_guard_package_shims import PACKAGE_SHIM_GUARD_CASES
+    from tests.test_guard_js_semver_phase11 import (
+        SEMVER_OR_CLAUSE_CASES,
+        SEMVER_ORDINARY_RANGE_CASES,
+        SEMVER_PRERELEASE_BASE_CASES,
+        SEMVER_SUPPORTED_RANGE_CASES,
+        SEMVER_ZERO_MAJOR_CASES,
+    )
     from tests.test_guard_risk import (
         ENCODED_EXEC_PIPELINE_CASES,
         LOCAL_COMPOSE_SAFE_CASES,
@@ -164,6 +171,7 @@ def corpus_record_count() -> int:
         MUTATING_PYTHON_MODULE_DENY_CASES,
         SENSITIVE_DOCKER_DENY_CASES,
     )
+    from tests.test_guard_runtime import COPILOT_NATIVE_DENY_COMMANDS
 
     return (
         sum(1 for _ in iter_benign_corpus())
@@ -175,11 +183,18 @@ def corpus_record_count() -> int:
         + len(CRITICAL_COMMAND_FLOORS)
         + len(CRITICAL_NEAR_MISS_COMMANDS)
         + len(GITHUB_REVIEW_FLOORS)
+        + len(GITHUB_CAPABILITY_CASES)
         + len(PR_MERGE_ADMIN_CAPABILITY_CASES)
         + len(UNRELATED_DYNAMIC_COMMAND_CASES)
         + len(SPECIALIZED_SAFE_VARIANT_CASES)
         + len(PACKAGE_SHIM_GUARD_CASES)
         + len(ENCODED_EXEC_PIPELINE_CASES)
+        + len(SEMVER_ORDINARY_RANGE_CASES)
+        + len(SEMVER_OR_CLAUSE_CASES)
+        + len(SEMVER_PRERELEASE_BASE_CASES)
+        + len(SEMVER_SUPPORTED_RANGE_CASES)
+        + len(SEMVER_ZERO_MAJOR_CASES)
+        + len(COPILOT_NATIVE_DENY_COMMANDS)
         + len(BENIGN_DATA_FLOW_CASES)
         + len(MALICIOUS_DATA_FLOW_CASES)
         + len(LOCAL_COMPOSE_SAFE_CASES)

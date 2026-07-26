@@ -337,6 +337,61 @@ def test_main_recovers_missing_daemon_and_retries_hook(
     assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
+def test_recovery_retry_reserves_time_for_local_package_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [2.0]
+    recovery_deadlines: list[float | None] = []
+    retry_deadlines: list[float | None] = []
+
+    monkeypatch.setattr(bridge.time, "monotonic", lambda: now[0])
+
+    def fake_recover(
+        command: tuple[str, ...],
+        *,
+        deadline: float | None = None,
+        failure_kind: str,
+    ) -> bool:
+        del command, failure_kind
+        recovery_deadlines.append(deadline)
+        assert deadline is not None
+        now[0] = min(deadline, now[0] + bridge._RECOVERY_TIMEOUT_SECONDS)
+        return True
+
+    def fake_post(
+        endpoint: str,
+        data: str,
+        *,
+        state_path: str | Path,
+        deadline: float | None = None,
+    ) -> str:
+        del endpoint, data, state_path
+        retry_deadlines.append(deadline)
+        assert deadline is not None
+        now[0] = min(deadline, now[0] + bridge._DAEMON_IO_TIMEOUT_SECONDS)
+        raise TimeoutError("recovered daemon unavailable")
+
+    monkeypatch.setattr(bridge, "_run_recovery_command", fake_recover)
+    monkeypatch.setattr(bridge, "_post_to_loopback_daemon", fake_post)
+
+    response = bridge._recover_retry_or_fallback(
+        "daemon unavailable",
+        json.dumps({"hook_event_name": "PreToolUse"}),
+        state_path="/missing/daemon-state.json",
+        fallback_daemon_url="http://127.0.0.1:5474",
+        fallback_command=(
+            sys.executable,
+            "-c",
+            "import time;time.sleep(1.25);print('{\"review\":true}')",
+        ),
+        recovery_command=(sys.executable, "-c", "pass"),
+        query="",
+        deadline=8.0,
+    )
+
+    assert json.loads(response) == {"review": True}
+    assert recovery_deadlines == [4.0]
+    assert retry_deadlines == [6.0]
+
+
 def test_recovery_only_restarts_for_transport_auth_and_server_failures() -> None:
     assert not bridge._daemon_failure_is_recoverable(ValueError("invalid loopback URL"))
     assert not bridge._daemon_failure_is_recoverable(

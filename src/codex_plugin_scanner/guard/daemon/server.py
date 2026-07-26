@@ -224,6 +224,7 @@ from .dashboard_reconnect import (
     prepare_dashboard_reconnect_authorization,
 )
 from .dashboard_update import merge_dashboard_update_progress, schedule_guard_dashboard_update
+from .diagnostics import DaemonDiagnostics
 from .discovery import (
     DAEMON_DISCOVERY_CHALLENGE_TTL_SECONDS,
     DAEMON_DISCOVERY_PROTOCOL_VERSION,
@@ -479,6 +480,7 @@ class _GuardDaemonHttpServer(HTTPServer):
     general_request_executor: _BoundedRequestExecutor
     control_request_executor: _BoundedRequestExecutor
     request_executors_stopped: bool
+    diagnostics: DaemonDiagnostics
 
     def handle_error(self, request: object, client_address: tuple[str, int]) -> None:
         """Suppress expected peer disconnects without hiding server defects."""
@@ -491,7 +493,7 @@ class _GuardDaemonHttpServer(HTTPServer):
             and error.errno in {errno.EBADF, errno.ECONNABORTED, errno.ECONNRESET, errno.EPIPE}
         ):
             return
-        super().handle_error(cast(socket.socket, request), client_address)
+        self.diagnostics.record_exception("http_request_failed")
 
     def server_close(self) -> None:
         _ = self._stop_request_executors()
@@ -512,6 +514,7 @@ class _GuardDaemonHttpServer(HTTPServer):
         runtime_started_at: str,
         idle_timeout_seconds: float | None,
         shutdown_started: threading.Event,
+        diagnostics: DaemonDiagnostics,
     ) -> None:
         super().__init__(server_address, handler_class)
         self.store = store
@@ -526,6 +529,7 @@ class _GuardDaemonHttpServer(HTTPServer):
         self.active_stream_clients = 0
         self.active_stream_clients_lock = threading.Lock()
         self.shutdown_started = shutdown_started
+        self.diagnostics = diagnostics
         self.package_firewall_connect_state = None
         self.package_firewall_connect_state_lock = threading.Lock()
         self.guard_cloud_connect_state = None
@@ -7319,7 +7323,13 @@ class GuardDaemonServer:
     ) -> None:
         if not type(self)._retry_quarantined_service(store.guard_home):
             raise RuntimeError("A previous Guard daemon remains quarantined after unconfirmed containment.")
-        _validate_dashboard_bundle()
+        self._diagnostics = DaemonDiagnostics(store.guard_home)
+        try:
+            _validate_dashboard_bundle()
+        except BaseException:
+            self._diagnostics.record_exception("daemon_initialization_failed")
+            self._diagnostics.close(timeout_seconds=0.5)
+            raise
         self._shutdown_started = threading.Event()
         self._finish_service_lock = threading.Lock()
         self._owner_lock: BinaryIO | None = None
@@ -7336,6 +7346,7 @@ class GuardDaemonServer:
                 idle_timeout_seconds=idle_timeout_seconds,
             ),
             shutdown_started=self._shutdown_started,
+            diagnostics=self._diagnostics,
         )
         self.port = self._server.daemon_port()
         self._bundle_refresh_backoff_seconds = bundle_refresh_backoff_seconds
@@ -7373,6 +7384,7 @@ class GuardDaemonServer:
                 active_deferral_seconds=0,
             )
         except BaseException as error:
+            self._diagnostics.record_exception("daemon_start_thread_failed")
             serve_thread_contained = True
             if serve_thread_started and self._thread is not None:
                 self._server.shutdown()
@@ -7401,6 +7413,7 @@ class GuardDaemonServer:
 
     def stop(self) -> None:
         self._record_lifecycle("shutdown_requested", reason="explicit_stop")
+        self._diagnostics.record("daemon_shutdown_requested")
         self._shutdown_started.set()
         self._server.shutdown()
         self._server.server_close()
@@ -7421,6 +7434,7 @@ class GuardDaemonServer:
         try:
             self._begin_owned_service()
         except BaseException as error:
+            self._diagnostics.record_exception("daemon_start_failed")
             self._record_lifecycle("start_failed", reason="initialization_failed")
             if not self._finish_service():
                 add_note = getattr(error, "add_note", None)
@@ -7463,6 +7477,7 @@ class GuardDaemonServer:
         )
         self._start_command_activity_maintenance()
         self._record_lifecycle("ready")
+        self._diagnostics.record("daemon_ready")
 
     def _maintain_command_activity_best_effort(self) -> None:
         now = datetime.now(timezone.utc)
@@ -7555,8 +7570,10 @@ class GuardDaemonServer:
         except BaseException:
             stop_reason = "serve_loop_failed"
             self._record_lifecycle("serve_failed", reason="unexpected_exception")
+            self._diagnostics.record_exception("daemon_serve_failed")
             raise
         finally:
+            self._diagnostics.record("daemon_stopped", detail=stop_reason)
             self._server.server_close()
             _ = self._finish_service()
             self._record_lifecycle("stopped", reason=stop_reason)
@@ -7656,6 +7673,8 @@ class GuardDaemonServer:
                 contained = False
             else:
                 self._owner_lock = None
+        with suppress(Exception):
+            self._diagnostics.close(timeout_seconds=1.0)
         return self._record_quarantine_state(contained=contained)
 
     @staticmethod
