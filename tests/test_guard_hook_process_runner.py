@@ -446,9 +446,7 @@ def test_deferred_runner_serves_startup_floor_before_backfilling(tmp_path: Path)
         assert runner.stats()["ready"] == 2
 
         runner.enable_full_capacity(delay_seconds=0)
-        deadline = time.monotonic() + 3
-        while runner.stats()["ready"] != 4 and time.monotonic() < deadline:
-            time.sleep(0.02)
+        assert runner.wait_for_capacity(minimum_workers=4, timeout_seconds=8)
         ready_workers = runner.stats()["ready"]
     finally:
         runner.close()
