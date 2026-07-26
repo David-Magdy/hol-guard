@@ -577,6 +577,85 @@ def test_idempotent_review_retries_once_after_worker_death(tmp_path: Path) -> No
     assert result.payload["decision"] == "allow"
 
 
+def test_worker_retry_withdraws_scheduler_capacity_before_reusing_slot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = RuntimeHookScheduler(active_limit=0, queued_limit=4)
+    runner = HookProcessRunner(
+        guard_home=tmp_path,
+        process_limit=2,
+        timeout_seconds=2,
+        capacity_listener=scheduler.set_active_limit,
+    )
+    permits = []
+    try:
+        runner.start()
+        monkeypatch.setattr(runner, "_replace_slot_async", lambda _slot: None)
+        first_slot = next(iter(runner._all_slots.values()))  # pyright: ignore[reportPrivateUsage]
+        first_slot.process.kill()
+        first_slot.process.join(timeout=1)
+        queued_slots = [
+            runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+            for _index in range(runner._slots.qsize())  # pyright: ignore[reportPrivateUsage]
+        ]
+        runner._slots.put_nowait(first_slot)  # pyright: ignore[reportPrivateUsage]
+        for queued_slot in queued_slots:
+            if queued_slot is not first_slot:
+                runner._slots.put_nowait(queued_slot)  # pyright: ignore[reportPrivateUsage]
+
+        for index in range(2):
+            admission = scheduler.acquire(
+                harness="pi",
+                client_key=f"active-{index}",
+                lane="decision",
+                payload_bytes=1,
+                deadline=time.monotonic() + 2,
+            )
+            assert admission.permit is not None
+            permits.append(admission.permit)
+
+        result = runner.review(
+            payload={
+                "hook_event_name": "PostToolUse",
+                "tool_call_id": "scheduler-retry",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo hello"},
+                "tool_response": [{"type": "text", "text": "hello\n"}],
+            },
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+            deadline=time.monotonic() + 2,
+        )
+        assert result.payload is not None
+        assert scheduler.stats()["active_limit"] == 1
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            queued = executor.submit(
+                scheduler.acquire,
+                harness="pi",
+                client_key="queued",
+                lane="decision",
+                payload_bytes=1,
+                deadline=time.monotonic() + 1,
+            )
+            time.sleep(0.05)
+            permits.pop().release()
+            time.sleep(0.05)
+            assert not queued.done()
+            permits.pop().release()
+            queued_admission = queued.result(timeout=1)
+        assert queued_admission.permit is not None
+        queued_admission.permit.release()
+    finally:
+        for permit in permits:
+            permit.release()
+        runner.close()
+
+
 def test_worker_prewarm_does_not_create_approval_request(tmp_path: Path) -> None:
     store = GuardStore(tmp_path)
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1)

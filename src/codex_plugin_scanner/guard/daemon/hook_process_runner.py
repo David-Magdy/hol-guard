@@ -205,6 +205,7 @@ class HookProcessRunner:
                 raw_message = slot.connection.recv()
             except (BrokenPipeError, EOFError, OSError):
                 self._increment_metric("failures")
+                self._withdraw_slot_capacity(slot)
                 retry_slot: HookWorkerSlot | None = None
                 if _runtime_hook_review_is_idempotent(payload):
                     with suppress(queue.Empty):
@@ -218,7 +219,12 @@ class HookProcessRunner:
                         minimum_workers=1,
                         timeout_seconds=min(_HOOK_PROCESS_RETRY_READY_SECONDS, remaining_seconds),
                     ):
-                        return HookProcessReview(None, "daemon_hook_process_failed")
+                        reason_code = (
+                            "daemon_hook_process_deadline_exhausted"
+                            if time.monotonic() >= review_deadline
+                            else "daemon_hook_process_failed"
+                        )
+                        return HookProcessReview(None, reason_code)
                     try:
                         retry_slot = self._slots.get_nowait()
                     except queue.Empty:
@@ -498,6 +504,11 @@ class HookProcessRunner:
                 start_failed = True
         if start_failed:
             self._mark_containment_failed()
+
+    def _withdraw_slot_capacity(self, slot: HookWorkerSlot) -> None:
+        with self._state_lock:
+            self._ready_slot_ids.discard(slot.process.pid or id(slot))
+        self._publish_capacity()
 
     def _retire_idle_slot_async(self, slot: HookWorkerSlot) -> None:
         def contained() -> None:
