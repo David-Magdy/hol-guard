@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import pytest
 
+from codex_plugin_scanner.guard.daemon import hook_process_capacity as capacity_module
 from codex_plugin_scanner.guard.daemon.hook_process_capacity import (
     HookProcessCapacityPolicy,
     HookProcessLoad,
     default_hook_worker_memory_ceiling,
     initial_hook_worker_target,
+    process_tree_rss_bytes,
     validate_hook_worker_limit,
 )
 
@@ -56,6 +58,32 @@ def test_worker_limit_accepts_only_two_through_sixteen() -> None:
 def test_default_memory_ceiling_applies_floor_and_cap() -> None:
     assert default_hook_worker_memory_ceiling(1024**3) == 512 * 1024**2
     assert default_hook_worker_memory_ceiling(8 * 1024**3) == 1536 * 1024**2
+
+
+def test_process_tree_rss_includes_nested_worker_descendants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process_table = "\n".join(
+        (
+            "10 1 100",
+            "11 10 50",
+            "12 11 25",
+            "99 1 1000",
+        )
+    )
+    monkeypatch.setattr(capacity_module.os.path, "isfile", lambda _path: True)
+    monkeypatch.setattr(
+        capacity_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: capacity_module.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=process_table,
+            stderr="",
+        ),
+    )
+
+    assert process_tree_rss_bytes((10,)) == 175 * 1024
 
 
 def test_scale_up_requires_ten_continuous_seconds_and_one_second_spacing() -> None:

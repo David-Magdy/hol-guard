@@ -53,15 +53,15 @@ def process_cpu_ratio() -> float | None:
 
 
 def process_tree_rss_bytes(process_ids: tuple[int, ...]) -> int | None:
-    live_process_ids = tuple(sorted({process_id for process_id in process_ids if process_id > 0}))
-    if not live_process_ids or os.name == "nt":
+    root_process_ids = {process_id for process_id in process_ids if process_id > 0}
+    if not root_process_ids or os.name == "nt":
         return None
     ps_path = next((path for path in ("/bin/ps", "/usr/bin/ps") if os.path.isfile(path)), None)
     if ps_path is None:
         return None
     try:
         result = subprocess.run(
-            [ps_path, "-o", "rss=", "-p", ",".join(str(process_id) for process_id in live_process_ids)],
+            [ps_path, "-axo", "pid=,ppid=,rss="],
             check=False,
             capture_output=True,
             text=True,
@@ -71,10 +71,29 @@ def process_tree_rss_bytes(process_ids: tuple[int, ...]) -> int | None:
         return None
     if result.returncode != 0:
         return None
-    try:
-        rss_kib = sum(int(value) for value in result.stdout.split())
-    except ValueError:
-        return None
+    process_rows: list[tuple[int, int, int]] = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 3:
+            continue
+        try:
+            process_rows.append((int(fields[0]), int(fields[1]), int(fields[2])))
+        except ValueError:
+            continue
+    included_process_ids = set(root_process_ids)
+    while True:
+        descendants = {
+            process_id
+            for process_id, parent_process_id, _rss_kib in process_rows
+            if parent_process_id in included_process_ids
+        }
+        expanded = included_process_ids | descendants
+        if expanded == included_process_ids:
+            break
+        included_process_ids = expanded
+    rss_kib = sum(
+        rss_kib for process_id, _parent_process_id, rss_kib in process_rows if process_id in included_process_ids
+    )
     return rss_kib * 1024
 
 

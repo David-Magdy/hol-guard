@@ -538,6 +538,45 @@ def test_prewarmed_runner_scans_post_tool_output_in_isolated_worker(tmp_path: Pa
     assert runner.stats()["workers"] == 0
 
 
+def test_idempotent_review_retries_once_after_worker_death(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=2, timeout_seconds=2)
+    try:
+        runner.start()
+        first_slot = next(iter(runner._all_slots.values()))  # pyright: ignore[reportPrivateUsage]
+        first_slot.process.kill()
+        first_slot.process.join(timeout=1)
+        queued_slots = [
+            runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+            for _index in range(runner._slots.qsize())  # pyright: ignore[reportPrivateUsage]
+        ]
+        runner._slots.put_nowait(first_slot)  # pyright: ignore[reportPrivateUsage]
+        for queued_slot in queued_slots:
+            if queued_slot is not first_slot:
+                runner._slots.put_nowait(queued_slot)  # pyright: ignore[reportPrivateUsage]
+
+        result = runner.review(
+            payload={
+                "hook_event_name": "PostToolUse",
+                "tool_call_id": "retryable-review",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo hello"},
+                "tool_response": [{"type": "text", "text": "hello\n"}],
+            },
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+            deadline=time.monotonic() + 2,
+        )
+    finally:
+        runner.close()
+
+    assert result.reason_code is None
+    assert result.payload is not None
+    assert result.payload["decision"] == "allow"
+
+
 def test_worker_prewarm_does_not_create_approval_request(tmp_path: Path) -> None:
     store = GuardStore(tmp_path)
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1)
@@ -854,6 +893,8 @@ def test_runner_rejects_invalid_limits() -> None:
         _ = HookProcessRunner(process_limit=0)
     with pytest.raises(ValueError, match="timeout_seconds"):
         _ = HookProcessRunner(timeout_seconds=0)
+    with pytest.raises(ValueError, match="must not exceed 16"):
+        _ = HookProcessRunner(process_limit=17)
 
 
 def test_recovery_failure_kind_is_tightly_allowlisted(tmp_path: Path) -> None:

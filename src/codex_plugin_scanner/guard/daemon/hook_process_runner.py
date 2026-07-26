@@ -36,6 +36,7 @@ _HOOK_PROCESS_READY_TIMEOUT_SECONDS = 14.0
 _HOOK_PROCESS_BACKFILL_DELAY_SECONDS = 2.0
 _HOOK_PROCESS_BACKFILL_MAX_DEFERRAL_SECONDS = 5.0
 _HOOK_PROCESS_RETRY_MAX_SECONDS = 5.0
+_HOOK_PROCESS_RETRY_READY_SECONDS = 0.25
 
 
 @final
@@ -53,6 +54,8 @@ class HookProcessRunner:
     ):
         if process_limit is not None and process_limit < 1:
             raise ValueError("process_limit must be positive")
+        if process_limit is not None and process_limit > _HOOK_PROCESS_MAX_LIMIT:
+            raise ValueError("process_limit must not exceed 16")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self._guard_home: Path | None = guard_home.resolve(strict=False) if guard_home is not None else None
@@ -175,6 +178,14 @@ class HookProcessRunner:
         worker_deadline = time.monotonic() + self._timeout_seconds
         review_deadline = min(worker_deadline, outer_deadline)
         caller_deadline_limited = outer_deadline <= worker_deadline
+        request = {
+            "payload": dict(payload),
+            "harness": harness,
+            "home_dir": str(home_dir),
+            "guard_home": str(guard_home),
+            "workspace": str(workspace) if workspace is not None else None,
+            "hook_env": {key: value for key, value in hook_env.items() if key in HOOK_ENV_ALLOWLIST},
+        }
         try:
             if review_deadline <= time.monotonic():
                 return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
@@ -183,14 +194,6 @@ class HookProcessRunner:
             except queue.Empty:
                 return HookProcessReview(None, "daemon_hook_process_not_ready")
             try:
-                request = {
-                    "payload": dict(payload),
-                    "harness": harness,
-                    "home_dir": str(home_dir),
-                    "guard_home": str(guard_home),
-                    "workspace": str(workspace) if workspace is not None else None,
-                    "hook_env": {key: value for key, value in hook_env.items() if key in HOOK_ENV_ALLOWLIST},
-                }
                 slot.connection.send(("review", request))
                 remaining_seconds = max(0.0, review_deadline - time.monotonic())
                 if not slot.connection.poll(remaining_seconds):
@@ -202,8 +205,36 @@ class HookProcessRunner:
                 raw_message = slot.connection.recv()
             except (BrokenPipeError, EOFError, OSError):
                 self._increment_metric("failures")
+                retry_slot: HookWorkerSlot | None = None
+                if _runtime_hook_review_is_idempotent(payload):
+                    with suppress(queue.Empty):
+                        retry_slot = self._slots.get_nowait()
                 self._replace_slot_async(slot)
-                return HookProcessReview(None, "daemon_hook_process_failed")
+                if not _runtime_hook_review_is_idempotent(payload):
+                    return HookProcessReview(None, "daemon_hook_process_failed")
+                if retry_slot is None:
+                    remaining_seconds = max(0.0, review_deadline - time.monotonic())
+                    if not self.wait_for_capacity(
+                        minimum_workers=1,
+                        timeout_seconds=min(_HOOK_PROCESS_RETRY_READY_SECONDS, remaining_seconds),
+                    ):
+                        return HookProcessReview(None, "daemon_hook_process_failed")
+                    try:
+                        retry_slot = self._slots.get_nowait()
+                    except queue.Empty:
+                        return HookProcessReview(None, "daemon_hook_process_failed")
+                slot = retry_slot
+                try:
+                    slot.connection.send(("review", request))
+                    remaining_seconds = max(0.0, review_deadline - time.monotonic())
+                    if not slot.connection.poll(remaining_seconds):
+                        self._replace_slot_async(slot)
+                        return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
+                    raw_message = slot.connection.recv()
+                except (BrokenPipeError, EOFError, OSError):
+                    self._increment_metric("failures")
+                    self._replace_slot_async(slot)
+                    return HookProcessReview(None, "daemon_hook_process_failed")
         finally:
             with self._state_lock:
                 remaining_reviews = self._active_reviews.get(generation, 0) - 1
@@ -587,6 +618,16 @@ class HookProcessRunner:
             self._capacity_target = target
         self._recovery_event.set()
         self._trim_excess_ready_capacity()
+
+
+def _runtime_hook_review_is_idempotent(payload: Mapping[str, object]) -> bool:
+    event_name = payload.get("hook_event_name") or payload.get("hookEventName")
+    if not isinstance(event_name, str):
+        return False
+    return any(
+        isinstance(payload.get(identity_key), str) and bool(payload.get(identity_key))
+        for identity_key in ("tool_call_id", "toolCallId", "action_id", "operation_id")
+    )
 
 
 __all__ = ["HookProcessReview", "HookProcessRunner"]
