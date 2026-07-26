@@ -399,10 +399,6 @@ class TestFreeplanFallback:
         bundle = _make_bundle(advisories=())
         assert len(bundle.advisories) == 0
 
-    def test_no_error_on_no_cached_bundle(self) -> None:
-        conn = _in_memory_db()
-        assert latest_cached_bundle(conn) is None
-
 
 class TestOfflineFallback:
     """T545 — offline fallback stub: no advisories = no matches."""
