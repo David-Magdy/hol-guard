@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -103,20 +104,29 @@ class HookReviewEngine:
         Never raises. Any unexpected exception returns deny/block.
         """
         start = time.monotonic()
+        response: HookReviewResponse
         try:
-            return self._review_inner(request, start=start)
+            response = self._review_inner(request, start=start)
         except HookFailSafe as error:
-            return error.to_response()
-        except Exception:
-            return HookReviewResponse(
+            response = error.to_response()
+        except Exception as error:
+            self._record_failure("engine", error)
+            response = HookReviewResponse(
                 decision="deny",
                 reason="HOL Guard could not complete local hook review safely.",
                 model_output_action="block",
                 notice="warning",
                 reason_code="engine_exception",
             )
-        finally:
-            self._record_metrics(request, start)
+        self._record_metrics(request, response, start)
+        return response
+
+    @staticmethod
+    def _scan_deadline(start: float, budget_ms: int = HOOK_SCANNER_DEFAULT_BUDGET_MS) -> float:
+        return min(
+            start + (HOOK_ENGINE_TOTAL_BUDGET_MS / 1000.0),
+            time.monotonic() + (budget_ms / 1000.0),
+        )
 
     def _review_inner(self, request: HookReviewRequest, *, start: float) -> HookReviewResponse:
         # Load config.
@@ -133,7 +143,7 @@ class HookReviewEngine:
 
         # Source-read fast path for PostToolUse with guard_source_ref.
         if request.event_name == "PostToolUse" and request.source_ref is not None:
-            deadline = start + (HOOK_SOURCE_FAST_PATH_BUDGET_MS / 1000.0)
+            deadline = self._scan_deadline(start, HOOK_SOURCE_FAST_PATH_BUDGET_MS)
             source_result = evaluate_source_file_ref(
                 request=request,
                 envelope=envelope,
@@ -251,7 +261,7 @@ class HookReviewEngine:
         if output_was_truncated:
             # Output too large to scan in full — scan the excerpt before returning.
             excerpt = extracted.text[:SOURCE_READ_FULL_MODEL_BYTES_P95_TARGET]
-            deadline = start + (HOOK_SCANNER_DEFAULT_BUDGET_MS / 1000.0)
+            deadline = self._scan_deadline(start)
             scan_result = self.scanner.scan_text(
                 excerpt,
                 local_content=scan_local_samples,
@@ -278,7 +288,7 @@ class HookReviewEngine:
             )
 
         # Scan the full output text.
-        deadline = start + (HOOK_SCANNER_DEFAULT_BUDGET_MS / 1000.0)
+        deadline = self._scan_deadline(start)
         scan_result = self.scanner.scan_text(
             extracted.text,
             local_content=scan_local_samples,
@@ -352,7 +362,7 @@ class HookReviewEngine:
         if output_summary is not None and output_summary.text_excerpt:
             excerpt = output_summary.text_excerpt
             # Scan the excerpt for secrets.
-            deadline = start + (HOOK_SCANNER_DEFAULT_BUDGET_MS / 1000.0)
+            deadline = self._scan_deadline(start)
             scan_result = self.scanner.scan_text(
                 excerpt,
                 local_content=scan_local_samples,
@@ -396,28 +406,44 @@ class HookReviewEngine:
             reason_code="no_output_to_review",
         )
 
-    def _record_metrics(self, request: HookReviewRequest, start: float) -> None:
+    def _record_metrics(
+        self,
+        request: HookReviewRequest,
+        response: HookReviewResponse,
+        start: float,
+    ) -> None:
         """Record metrics without raw content."""
         if self.metrics is None:
             return
         latency_ms = (time.monotonic() - start) * 1000.0
         record = getattr(self.metrics, "record", None)
         if callable(record):
-            record(
-                harness=request.harness,
-                event_name=request.event_name,
-                route="engine",
-                payload_kind=request.payload_kind,
-                output_size=0,
-                latency_ms=latency_ms,
-                decision="unknown",
-                policy_action=None,
-                model_output_action="unknown",
-                reason_code="unknown",
-                cache_status="not_applicable",
-                fallback_kind="none",
-                scanner_bytes=0,
-            )
+            try:
+                record(
+                    harness=request.harness,
+                    event_name=request.event_name,
+                    route="engine",
+                    payload_kind=request.payload_kind,
+                    output_size=0,
+                    latency_ms=latency_ms,
+                    decision=response.decision,
+                    policy_action=response.policy_action,
+                    model_output_action=response.model_output_action,
+                    reason_code=response.reason_code,
+                    cache_status="not_applicable",
+                    fallback_kind="none",
+                    scanner_bytes=0,
+                )
+            except Exception as error:
+                self._record_failure("metrics", error)
+
+    def _record_failure(self, stage: str, error: Exception) -> None:
+        if self.metrics is None:
+            return
+        record_failure = getattr(self.metrics, "record_failure", None)
+        if callable(record_failure):
+            with suppress(Exception):
+                record_failure(stage=stage, exception_type=type(error).__name__)
 
 
 __all__ = [

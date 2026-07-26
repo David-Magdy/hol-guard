@@ -5220,6 +5220,29 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         guard_home: str | None,
         workspace: str | None,
     ) -> None:
+        from ..runtime.hook_payload_reference import (
+            HookPayloadReferenceError,
+            hydrate_hook_payload_reference,
+        )
+
+        try:
+            payload = hydrate_hook_payload_reference(payload)
+        except HookPayloadReferenceError as error:
+            self._daemon_server().hook_worker.metrics.record_failure(
+                stage="server",
+                exception_type=type(error).__name__,
+            )
+            self._write_json(
+                self._runtime_hook_fail_safe_response(
+                    payload,
+                    params,
+                    default_harness=default_harness,
+                    reason="HOL Guard could not authenticate the local hook payload.",
+                    reason_code="invalid_hook_payload_reference",
+                )
+            )
+            return
+
         if self._hook_fast_path_enabled():
             result = self._handle_runtime_hook_fast(
                 payload,
@@ -5289,9 +5312,13 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             # PreToolUse/PermissionRequest/PostToolUse-without-source-ref
             # still get full policy/permission/approval checks.
             return None
-        except Exception:
+        except Exception as error:
             # Fail safe: deny/block. Do not fall back to legacy CLI for
             # requests that omitted full output and supplied only guard_source_ref.
+            self._daemon_server().hook_worker.metrics.record_failure(
+                stage="server",
+                exception_type=type(error).__name__,
+            )
             rt_values = params.get("runtime-harness", [])
             actual_harness = (
                 rt_values[-1].strip()
