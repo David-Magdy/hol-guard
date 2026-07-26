@@ -1158,12 +1158,14 @@ class TestGuardSurfaceServer:
             "_hook_safe_roots",
             lambda _self: (home_dir.resolve(),),
         )
-        monkeypatch.setattr(
-            guard_commands_module,
-            "run_guard_command",
-            lambda _args, *, input_text, output_stream: output_stream.write('{"decision":"allow"}') * 0,
-        )
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessReview
+
+        monkeypatch.setattr(
+            daemon._server.hook_process_runner,
+            "review",
+            lambda **_kwargs: HookProcessReview({"decision": "allow"}, None),
+        )
         daemon.start()
 
         try:
