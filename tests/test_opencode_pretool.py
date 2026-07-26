@@ -305,6 +305,32 @@ console.log(overlap);
     assert completed.stdout.strip() == "HOL Guard fallback review is already in progress"
 
 
+def test_pretool_plugin_detects_split_windows_job_marker(tmp_path: Path) -> None:
+    completed = _run_generated_spawn_script(
+        tmp_path,
+        """
+const result = await spawnGuardProcess({
+  args: [
+    "-c",
+    "import sys,time;sys.stderr.write('HOL_GUARD_WINDOWS_JOB_CONT');"
+      + "sys.stderr.flush();time.sleep(0.05);"
+      + "sys.stderr.write('AINED\\\\nvisible');sys.stderr.flush()",
+  ],
+  cwd: process.cwd(),
+  deadlineMs: Date.now() + 2_000,
+  env: {},
+  stdin: "",
+});
+console.log(JSON.stringify(result));
+""",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["exitCode"] == 0
+    assert result["stderr"] == "visible"
+
+
 def test_pretool_plugin_cleanup_failure_settles_and_latches(tmp_path: Path) -> None:
     bun = _bun_executable()
     if bun is None:

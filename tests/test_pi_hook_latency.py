@@ -289,6 +289,41 @@ def test_pi_hook_deadline_stays_inside_host_timeout() -> None:
 
 
 @pytest.mark.skipif(_bun_executable() is None, reason="Bun is required to execute Pi cleanup helpers")
+def test_pi_cli_detects_split_windows_job_marker(tmp_path: Path) -> None:
+    from codex_plugin_scanner.guard.adapters.pi_extension_cli_runtime_source import CLI_RUNTIME_HELPERS_SOURCE
+
+    bun = _bun_executable()
+    assert bun is not None
+    script_path = tmp_path / "pi-split-marker.ts"
+    _ = script_path.write_text(
+        CLI_RUNTIME_HELPERS_SOURCE
+        + """
+const state: GuardStderrMarkerState = { pending: '', contained: false };
+const first = consumeGuardStderrChunk(state, 'HOL_GUARD_WINDOWS_JOB_CONT', false);
+const second = consumeGuardStderrChunk(state, 'AINED\\nvisible', false);
+const final = consumeGuardStderrChunk(state, '', true);
+console.log(JSON.stringify({
+  contained: state.contained,
+  stderr: first + second + final,
+}));
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [bun, str(script_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert _decode_json_object(completed.stdout) == {
+        "contained": True,
+        "stderr": "visible",
+    }
+
+
+@pytest.mark.skipif(_bun_executable() is None, reason="Bun is required to execute Pi cleanup helpers")
 def test_pi_cli_cleanup_failure_settles_and_latches(tmp_path: Path) -> None:
     from codex_plugin_scanner.guard.adapters.pi_extension_cli_runtime_source import CLI_RUNTIME_HELPERS_SOURCE
 

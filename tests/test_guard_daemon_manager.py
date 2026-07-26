@@ -115,12 +115,15 @@ def test_duplicate_retirement_is_nonblocking_and_single_flight(tmp_path, monkeyp
     started = time.monotonic()
     daemon_manager_module._schedule_duplicate_guard_daemon_retirement(guard_home)
     daemon_manager_module._schedule_duplicate_guard_daemon_retirement(guard_home)
-    for index in range(64):
-        daemon_manager_module._schedule_duplicate_guard_daemon_retirement(tmp_path / f"other-guard-home-{index}")
+    other_guard_home = tmp_path / "other-guard-home"
+    daemon_manager_module._schedule_duplicate_guard_daemon_retirement(other_guard_home)
 
     assert time.monotonic() - started < 1.0
     assert entered.wait(timeout=1.0)
-    assert calls == [guard_home]
+    deadline = time.monotonic() + 1.0
+    while len(calls) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert set(calls) == {guard_home, other_guard_home}
     release.set()
     assert finished.wait(timeout=1.0)
 

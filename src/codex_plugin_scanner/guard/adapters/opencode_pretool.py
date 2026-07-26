@@ -33,6 +33,29 @@ const GUARD_TASKKILL_PATH = __GUARD_TASKKILL_PATH__;
 const INTERCEPT_TOOLS = new Set(__INTERCEPT_TOOLS__);
 const GUARD_HOOK_TIMEOUT_MS = 30_000;
 const GUARD_WINDOWS_JOB_MARKER = "HOL_GUARD_WINDOWS_JOB_CONTAINED\\n";
+
+type GuardStderrMarkerState = {
+  pending: string;
+  contained: boolean;
+};
+
+function consumeGuardStderrChunk(
+  state: GuardStderrMarkerState,
+  chunk: string,
+  flush: boolean,
+): string {
+  state.pending += chunk;
+  if (state.pending.includes(GUARD_WINDOWS_JOB_MARKER)) {
+    state.contained = true;
+    state.pending = state.pending.replaceAll(GUARD_WINDOWS_JOB_MARKER, "");
+  }
+  const retainedChars = flush
+    ? 0
+    : Math.min(state.pending.length, GUARD_WINDOWS_JOB_MARKER.length - 1);
+  const emitted = state.pending.slice(0, state.pending.length - retainedChars);
+  state.pending = state.pending.slice(state.pending.length - retainedChars);
+  return emitted;
+}
 let fallbackInFlight = false;
 let fallbackContainmentFailed = false;
 
@@ -319,17 +342,15 @@ export async function spawnGuardProcess(options: {
     let stdout = "";
     let stderr = "";
     let windowsJobContained = false;
+    const stderrMarkerState: GuardStderrMarkerState = { pending: "", contained: false };
     proc.stdout?.setEncoding("utf8");
     proc.stderr?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk: string) => {
       stdout += chunk;
     });
     proc.stderr?.on("data", (chunk: string) => {
-      if (chunk.includes(GUARD_WINDOWS_JOB_MARKER)) {
-        windowsJobContained = true;
-        chunk = chunk.replaceAll(GUARD_WINDOWS_JOB_MARKER, "");
-      }
-      stderr += chunk;
+      stderr += consumeGuardStderrChunk(stderrMarkerState, chunk, false);
+      windowsJobContained = stderrMarkerState.contained;
     });
     proc.on("error", (error) => {
       if (timedOut) return;
@@ -337,6 +358,7 @@ export async function spawnGuardProcess(options: {
     });
     proc.on("close", (code: number | null) => {
       if (timedOut) return;
+      stderr += consumeGuardStderrChunk(stderrMarkerState, "", true);
       finish({ kind: "resolve", value: { exitCode: code ?? 1, stdout, stderr } });
     });
     timer = setTimeout(() => {

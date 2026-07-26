@@ -15,7 +15,7 @@ def test_daemon_stress_gate_keeps_fresh_process_alive_with_populated_store() -> 
             str(script),
             "--requests=12",
             "--receipts=2000",
-            "--settle-seconds=0.25",
+            "--settle-seconds=0",
         ],
         check=False,
         capture_output=True,

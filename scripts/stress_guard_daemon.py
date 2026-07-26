@@ -201,6 +201,16 @@ def run_stress(
                     and _pid_is_running(initial_pid)
                 )
                 time.sleep(min(0.25, max(0.0, settle_deadline - time.monotonic())))
+            health_checks += 1
+            if not _health_is_ready(daemon_url):
+                health_failures += 1
+            final_state = load_authenticated_daemon_state(guard_home)
+            pid_stable = (
+                pid_stable
+                and final_state is not None
+                and final_state.get("pid") == initial_pid
+                and _pid_is_running(initial_pid)
+            )
             process_count = guard_daemon_process_count(guard_home)
         finally:
             _ = retire_all_guard_daemons_for_home(guard_home)
