@@ -392,6 +392,10 @@ async function runGuardHook(
   deadlineMs: number,
 ) {
   const workspace = directory?.trim() || process.cwd();
+  const guardedPayload = {
+    ...payload,
+    guard_remaining_ms: Math.min(60_000, Math.max(1, deadlineMs - Date.now())),
+  };
   const guardArgv = [
     "guard",
     "hook",
@@ -408,7 +412,7 @@ async function runGuardHook(
     cwd: GUARD_HOME,
     deadlineMs,
     env: hookProcessEnv(guardArgv),
-    stdin: JSON.stringify(payload),
+    stdin: JSON.stringify(guardedPayload),
   });
 }
 
@@ -533,8 +537,42 @@ export const HolGuardPretoolPlugin = async ({
           },
           deadlineMs,
         );
+        const firstPayload = parseGuardPayload(result.stdout);
+        if (firstPayload?.reason_code === "transient_overload") {
+          const retryAfter = typeof firstPayload.retry_after_ms === "number"
+            ? Math.min(75, Math.max(25, Math.floor(firstPayload.retry_after_ms)))
+            : 25;
+          const estimatedService = typeof firstPayload.estimated_service_ms === "number"
+            ? Math.min(2_800, Math.max(100, Math.floor(firstPayload.estimated_service_ms)))
+            : 750;
+          const jitterMs = Math.max(retryAfter, 25 + Math.floor(Math.random() * 51));
+          if (deadlineMs - Date.now() >= jitterMs + estimatedService + 100) {
+            await new Promise((resolve) => setTimeout(resolve, jitterMs));
+            result = await runGuardHook(
+              directory,
+              {
+                hook_event_name: "PreToolUse",
+                event: "PreToolUse",
+                tool_name: input.tool,
+                tool_input: { command },
+                cwd: workspace,
+                source_scope: directory?.trim() ? "project" : "global",
+              },
+              deadlineMs,
+            );
+          }
+          if (parseGuardPayload(result.stdout)?.reason_code === "transient_overload") {
+            throw new Error(
+              "HOL Guard is temporarily saturated and kept this action blocked. " +
+                "No approval was requested; retry the action.",
+            );
+          }
+        }
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
+        if (detail.startsWith("HOL Guard is temporarily saturated")) {
+          throw new Error(detail);
+        }
         throw new Error(
           `HOL Guard could not review this ${input.tool} command (${detail}). ` +
             "Re-run `hol-guard install opencode` and ensure the Guard CLI is available.",

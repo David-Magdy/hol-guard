@@ -273,6 +273,7 @@ class TestPiInstall:
         assert "if (details.kind === 'input') void openApprovalUrl(response, openedApprovalCenters)" in text
         assert "trySpawnOpen(command, args)" in text
         assert "child.once('error', () => settle(false))" in text
+
         assert "pollApprovalResolution" in text
         assert "GUARD_APPROVAL_RESUME_FETCH_TIMEOUT_MS" in text
         assert "controller?.abort()" in text
@@ -315,6 +316,28 @@ class TestPiInstall:
         assert str(extension_path) in json.loads(settings_path.read_text(encoding="utf-8"))["extensions"]
         assert omp_extension_path.is_file()
         assert str(omp_extension_path) in json.loads(omp_settings_path.read_text(encoding="utf-8"))["extensions"]
+
+    def test_reinstall_migrates_existing_extension_to_deadline_retry_contract(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        monkeypatch.setattr(
+            "codex_plugin_scanner.guard.adapters.pi.install_guard_shim",
+            lambda *args, **kwargs: {"shim_path": str(ctx.guard_home / "bin" / "guard-pi"), "notes": []},
+        )
+        adapter = get_adapter("pi")
+        first = adapter.install(ctx)
+        extension_path = Path(str(first["config_path"]))
+        extension_path.write_text("// stale managed Pi extension\n", encoding="utf-8")
+
+        adapter.install(ctx)
+
+        migrated = extension_path.read_text(encoding="utf-8")
+        assert "guard_remaining_ms" in migrated
+        assert "transient_overload" in migrated
+        assert "25 + Math.floor(Math.random() * 51)" in migrated
 
     def test_install_writes_managed_extension_that_denies_on_hook_errors(self, tmp_path: Path, monkeypatch) -> None:
         ctx = _ctx(tmp_path)
