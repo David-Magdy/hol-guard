@@ -244,6 +244,7 @@ from .manager import (
     write_guard_daemon_state,
 )
 from .runtime_heartbeat import RuntimeHeartbeatWriter
+from .runtime_hook_deadline import RuntimeHookDeadline
 from .runtime_hook_evidence_writer import RuntimeHookEvidenceWriter
 from .runtime_hook_scheduler import RuntimeHookAdmissionReason, RuntimeHookLane, RuntimeHookScheduler
 
@@ -5264,11 +5265,22 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             hydrate_hook_payload_reference,
         )
 
-        hook_deadline = self._daemon_server().request_deadline(
+        transport_deadline = self._daemon_server().request_deadline(
             self.request,
             _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS,
         )
         params = parse_qs(query)
+        remaining_hint = payload.pop("guard_remaining_seconds", None)
+        if remaining_hint is None:
+            remaining_hint_ms = payload.pop("guard_remaining_ms", None)
+            if isinstance(remaining_hint_ms, (int, float)) and not isinstance(remaining_hint_ms, bool):
+                remaining_hint = float(remaining_hint_ms) / 1000.0
+        if remaining_hint is None:
+            remaining_hint = _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS
+        hinted_deadline = RuntimeHookDeadline.from_remaining_hint(remaining_hint)
+        hook_deadline = RuntimeHookDeadline(
+            expires_at=min(hinted_deadline.expires_at, transport_deadline)
+        )
         hook_env = _runtime_hook_env_overlay_from_payload(payload)
         payload = {key: value for key, value in payload.items() if key != "hook_env"}
         try:
@@ -5315,7 +5327,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
 
         byte_reservation, reservation_reason = daemon_server.runtime_hook_scheduler.reserve_bytes(
             payload_bytes=payload_bytes,
-            deadline=hook_deadline,
+            deadline=hook_deadline.expires_at,
         )
         if byte_reservation is None:
             self._record_hook_capacity_rejection(daemon_server, capacity_harness)
@@ -5347,9 +5359,15 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 )
                 return
             hydrated_payload_bytes = self._runtime_hook_payload_size(payload)
+            normalized_payload = json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
             resize_reason = byte_reservation.resize(
                 hydrated_payload_bytes,
-                deadline=hook_deadline,
+                deadline=hook_deadline.expires_at,
             )
             if resize_reason is not None:
                 self._record_hook_capacity_rejection(daemon_server, capacity_harness)
@@ -5369,6 +5387,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 payload_bytes=hydrated_payload_bytes,
                 deadline=hook_deadline,
                 byte_reservation=byte_reservation,
+                normalized_payload=normalized_payload,
             )
             if admission.permit is None:
                 self._record_hook_capacity_rejection(daemon_server, capacity_harness)
@@ -5381,6 +5400,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     )
                 )
                 return
+            normalized_object = cast(object, json.loads(normalized_payload))
+            if not _is_string_object_dict(normalized_object):
+                raise RuntimeError("normalized runtime hook payload must remain an object")
+            payload = normalized_object
         with daemon_server.hook_capacity_lock:
             daemon_server.active_hook_requests += 1
             daemon_server.hook_harness_active[capacity_harness] = (
@@ -5397,7 +5420,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     guard_home=guard_home,
                     workspace=workspace,
                     payload_hydrated=True,
-                    deadline=hook_deadline,
+                    deadline=hook_deadline.expires_at,
                 )
         finally:
             with daemon_server.hook_capacity_lock:
@@ -6592,7 +6615,14 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "per_harness_rejected": dict(daemon_server.hook_harness_rejected),
                 "rejected": daemon_server.rejected_hook_requests,
                 "expired": scheduler_stats["expired"],
+                "cancelled": scheduler_stats["cancelled"],
+                "retries": scheduler_stats["retries"],
                 "completed": scheduler_stats["completed"],
+                "oldest_queued_ms": scheduler_stats["oldest_queued_ms"],
+                "queue_wait_by_lane_p95_ms": scheduler_stats["queue_wait_by_lane_p95_ms"],
+                "service_time_by_lane_p95_ms": scheduler_stats["service_time_by_lane_p95_ms"],
+                "queue_wait_by_lane_p99_ms": scheduler_stats["queue_wait_by_lane_p99_ms"],
+                "service_time_by_lane_p99_ms": scheduler_stats["service_time_by_lane_p99_ms"],
                 "rejection_reasons": scheduler_stats["rejected"],
             }
         with daemon_server.request_capacity_lock:

@@ -7,138 +7,31 @@ import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Final, Literal, TypedDict, final
+from typing import Final, final
 
-RuntimeHookLane = Literal["decision", "content-security", "evidence"]
-RuntimeHookAdmissionReason = Literal[
-    "daemon_hook_deadline_exhausted",
-    "daemon_hook_queue_capacity",
-    "daemon_hook_queue_bytes",
-]
+from .runtime_hook_deadline import RuntimeHookDeadline
+from .runtime_hook_scheduler_contracts import (
+    QueuedRuntimeHook,
+    RuntimeHookAdmission,
+    RuntimeHookByteReservation,
+    RuntimeHookPermit,
+    RuntimeHookSchedulerStats,
+)
+from .runtime_hook_scheduler_types import RuntimeHookAdmissionReason, RuntimeHookLane
 
 _LANE_WEIGHTS: Final[dict[RuntimeHookLane, int]] = {
     "decision": 4,
     "content-security": 3,
     "evidence": 1,
 }
-_LANE_WHEEL: Final[tuple[RuntimeHookLane, ...]] = tuple(
-    lane for lane, weight in _LANE_WEIGHTS.items() for _ in range(weight)
-)
-
-
-class RuntimeHookSchedulerStats(TypedDict):
-    active: int
-    active_limit: int
-    queued: int
-    queued_limit: int
-    retained_bytes: int
-    retained_bytes_limit: int
-    admitted: int
-    completed: int
-    expired: int
-    rejected: dict[str, int]
-    per_harness_active: dict[str, int]
-    per_harness_queued: dict[str, int]
-    queue_wait_p95_ms: float
-    service_time_p95_ms: float
-    oldest_queued_ms: float
-
-
-@dataclass(slots=True)
-class _QueuedHook:
-    sequence: int
-    harness: str
-    client_key: str
-    lane: RuntimeHookLane
-    payload_bytes: int
-    deadline: float
-    queued_at: float
-    admitted_at: float | None = None
-    admitted: bool = False
-
-
-@final
-class RuntimeHookPermit:
-    """An acquired scheduler slot that must be released exactly once."""
-
-    def __init__(self, scheduler: RuntimeHookScheduler, item: _QueuedHook):
-        self._scheduler = scheduler
-        self._item = item
-        self._released = False
-
-    def release(self) -> None:
-        if self._released:
-            return
-        self._released = True
-        self._scheduler.release_permit(self._item)
-
-    def __enter__(self) -> RuntimeHookPermit:
-        return self
-
-    def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
-        self.release()
-
-
-@final
-class RuntimeHookByteReservation:
-    """A bounded payload-byte reservation that can transfer to queued work."""
-
-    def __init__(self, scheduler: RuntimeHookScheduler, payload_bytes: int):
-        self._scheduler = scheduler
-        self.payload_bytes = payload_bytes
-        self._transferred = False
-        self._released = False
-
-    def transfer(self) -> None:
-        if self._released or self._transferred:
-            raise RuntimeError("runtime hook byte reservation is no longer transferable")
-        self._transferred = True
-
-    def is_owned_by(self, scheduler: RuntimeHookScheduler) -> bool:
-        return self._scheduler is scheduler
-
-    def resize(
-        self,
-        payload_bytes: int,
-        *,
-        deadline: float,
-    ) -> RuntimeHookAdmissionReason | None:
-        if self._released or self._transferred:
-            raise RuntimeError("runtime hook byte reservation is no longer resizable")
-        if payload_bytes < 0:
-            raise ValueError("runtime hook byte reservation cannot be negative")
-        if payload_bytes > self.payload_bytes:
-            reason = self._scheduler.grow_reserved_bytes(
-                current_bytes=self.payload_bytes,
-                payload_bytes=payload_bytes,
-                deadline=deadline,
-            )
-            if reason is not None:
-                return reason
-        released_bytes = self.payload_bytes - payload_bytes
-        self.payload_bytes = payload_bytes
-        if released_bytes > 0:
-            self._scheduler.release_reserved_bytes(released_bytes)
-        return None
-
-    def release(self) -> None:
-        if self._released or self._transferred:
-            return
-        self._released = True
-        self._scheduler.release_reserved_bytes(self.payload_bytes)
-
-    def __enter__(self) -> RuntimeHookByteReservation:
-        return self
-
-    def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
-        self.release()
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeHookAdmission:
-    permit: RuntimeHookPermit | None
-    reason_code: RuntimeHookAdmissionReason | None
+_LANES: Final[tuple[RuntimeHookLane, ...]] = tuple(_LANE_WEIGHTS)
+_AGE_BOOST_SECONDS: Final = 0.5
+_DEFAULT_SERVICE_SECONDS: Final = 0.75
+_MIN_SERVICE_SECONDS: Final = 0.1
+_MAX_SERVICE_SECONDS: Final = 2.8
+_MIN_PREDICTION_SAMPLES: Final = 20
+_HISTOGRAM_WINDOW_SECONDS: Final = 60.0
+_STABLE_HARNESSES: Final = frozenset({"pi", "codex", "claude-code", "cursor", "opencode"})
 
 
 @final
@@ -176,10 +69,11 @@ class RuntimeHookScheduler:
         self._condition = threading.Condition()
         self._queues: dict[
             RuntimeHookLane,
-            OrderedDict[tuple[str, str], deque[_QueuedHook]],
+            OrderedDict[tuple[str, str], deque[QueuedRuntimeHook]],
         ] = {lane: OrderedDict() for lane in _LANE_WEIGHTS}
         self._sequence = 0
         self._lane_cursor = 0
+        self._lane_deficits: dict[RuntimeHookLane, int] = dict.fromkeys(_LANES, 0)
         self._active = 0
         self._active_by_harness: dict[str, int] = {}
         self._active_by_client: dict[str, int] = {}
@@ -190,9 +84,17 @@ class RuntimeHookScheduler:
         self._admitted = 0
         self._completed = 0
         self._expired = 0
+        self._cancelled = 0
+        self._retries = 0
         self._rejected: dict[str, int] = {}
         self._queue_wait_samples: deque[float] = deque(maxlen=2048)
         self._service_time_samples: deque[float] = deque(maxlen=2048)
+        self._queue_wait_by_lane: dict[RuntimeHookLane, deque[tuple[float, float]]] = {
+            lane: deque(maxlen=2048) for lane in _LANES
+        }
+        self._service_time_by_lane: dict[RuntimeHookLane, deque[tuple[float, float]]] = {
+            lane: deque(maxlen=2048) for lane in _LANES
+        }
 
     def acquire(
         self,
@@ -201,14 +103,27 @@ class RuntimeHookScheduler:
         client_key: str,
         lane: RuntimeHookLane,
         payload_bytes: int,
-        deadline: float,
+        deadline: float | RuntimeHookDeadline,
         byte_reservation: RuntimeHookByteReservation | None = None,
+        cancellation: threading.Event | None = None,
+        normalized_payload: bytes | None = None,
     ) -> RuntimeHookAdmission:
         if payload_bytes < 0:
             raise ValueError("payload_bytes must not be negative")
+        if normalized_payload is not None and len(normalized_payload) != payload_bytes:
+            raise ValueError("normalized_payload length must match payload_bytes")
         with self._condition:
             now = self._monotonic()
-            if deadline <= now:
+            resolved_deadline = (
+                deadline
+                if isinstance(deadline, RuntimeHookDeadline)
+                else RuntimeHookDeadline(
+                    expires_at=deadline,
+                    transport_reserve_seconds=0.0,
+                    serialization_reserve_seconds=0.0,
+                )
+            )
+            if resolved_deadline.expires_at <= now:
                 return self._reject("daemon_hook_deadline_exhausted")
             if self._queued >= self._queued_limit:
                 return self._reject("daemon_hook_queue_capacity")
@@ -224,14 +139,16 @@ class RuntimeHookScheduler:
                 raise ValueError("runtime hook byte reservation belongs to another scheduler")
 
             self._sequence += 1
-            item = _QueuedHook(
+            item = QueuedRuntimeHook(
                 sequence=self._sequence,
                 harness=harness,
                 client_key=client_key,
                 lane=lane,
                 payload_bytes=payload_bytes,
-                deadline=deadline,
+                deadline=resolved_deadline,
                 queued_at=now,
+                cancellation=cancellation,
+                normalized_payload=normalized_payload or b"",
             )
             self._enqueue(item)
             if byte_reservation is not None:
@@ -239,15 +156,22 @@ class RuntimeHookScheduler:
             else:
                 self._retained_bytes += payload_bytes
             self._dispatch()
-            while not item.admitted:
-                remaining = deadline - self._monotonic()
+            while not item.admitted and item.rejection_reason is None:
+                remaining = resolved_deadline.expires_at - self._monotonic()
                 if remaining <= 0:
                     if self._remove_queued(item):
                         self._expired += 1
                         self._condition.notify_all()
                     return RuntimeHookAdmission(None, "daemon_hook_deadline_exhausted")
-                _ = self._condition.wait(timeout=remaining)
+                if cancellation is not None and cancellation.is_set():
+                    if self._remove_queued(item):
+                        self._cancelled += 1
+                        self._condition.notify_all()
+                    return RuntimeHookAdmission(None, "daemon_hook_deadline_exhausted")
+                _ = self._condition.wait(timeout=min(remaining, 0.05) if cancellation is not None else remaining)
                 self._dispatch()
+            if item.rejection_reason is not None:
+                return RuntimeHookAdmission(None, item.rejection_reason)
             return RuntimeHookAdmission(RuntimeHookPermit(self, item), None)
 
     def reserve_bytes(
@@ -313,13 +237,36 @@ class RuntimeHookScheduler:
                 "admitted": self._admitted,
                 "completed": self._completed,
                 "expired": self._expired,
+                "cancelled": self._cancelled,
+                "retries": self._retries,
                 "rejected": dict(self._rejected),
-                "per_harness_active": dict(self._active_by_harness),
-                "per_harness_queued": dict(self._queued_by_harness),
+                "per_harness_active": self._bounded_harness_counts(self._active_by_harness),
+                "per_harness_queued": self._bounded_harness_counts(self._queued_by_harness),
                 "queue_wait_p95_ms": self._percentile_ms(self._queue_wait_samples, 0.95),
                 "service_time_p95_ms": self._percentile_ms(self._service_time_samples, 0.95),
+                "queue_wait_p99_ms": self._percentile_ms(self._queue_wait_samples, 0.99),
+                "service_time_p99_ms": self._percentile_ms(self._service_time_samples, 0.99),
                 "oldest_queued_ms": self._oldest_queued_ms(now),
+                "queue_wait_by_lane_p95_ms": {
+                    lane: self._timed_percentile_ms(samples, now) for lane, samples in self._queue_wait_by_lane.items()
+                },
+                "service_time_by_lane_p95_ms": {
+                    lane: self._timed_percentile_ms(samples, now)
+                    for lane, samples in self._service_time_by_lane.items()
+                },
+                "queue_wait_by_lane_p99_ms": {
+                    lane: self._timed_percentile_ms(samples, now, percentile=0.99)
+                    for lane, samples in self._queue_wait_by_lane.items()
+                },
+                "service_time_by_lane_p99_ms": {
+                    lane: self._timed_percentile_ms(samples, now, percentile=0.99)
+                    for lane, samples in self._service_time_by_lane.items()
+                },
             }
+
+    def record_retry(self) -> None:
+        with self._condition:
+            self._retries += 1
 
     def set_active_limit(self, active_limit: int) -> None:
         if active_limit < 0:
@@ -332,7 +279,7 @@ class RuntimeHookScheduler:
         self._rejected[reason_code] = self._rejected.get(reason_code, 0) + 1
         return RuntimeHookAdmission(None, reason_code)
 
-    def _enqueue(self, item: _QueuedHook) -> None:
+    def _enqueue(self, item: QueuedRuntimeHook) -> None:
         clients = self._queues[item.lane]
         clients.setdefault((item.client_key, item.harness), deque()).append(item)
         self._queued += 1
@@ -349,19 +296,28 @@ class RuntimeHookScheduler:
             item.admitted = True
             item.admitted_at = self._monotonic()
             self._queue_wait_samples.append(max(0.0, item.admitted_at - item.queued_at))
+            self._queue_wait_by_lane[item.lane].append((item.admitted_at, max(0.0, item.admitted_at - item.queued_at)))
             self._active += 1
             self._active_by_harness[item.harness] = self._active_by_harness.get(item.harness, 0) + 1
             self._active_by_client[item.client_key] = self._active_by_client.get(item.client_key, 0) + 1
             self._admitted += 1
         self._condition.notify_all()
 
-    def _next_item(self) -> _QueuedHook | None:
+    def _next_item(self) -> QueuedRuntimeHook | None:
+        boosted = self._oldest_aged_eligible()
+        if boosted is not None:
+            return boosted
         active_share_limit = max(1, math.ceil(self._active_limit / 2))
-        for _ in range(len(_LANE_WHEEL)):
-            lane = _LANE_WHEEL[self._lane_cursor]
-            self._lane_cursor = (self._lane_cursor + 1) % len(_LANE_WHEEL)
+        for _ in range(sum(_LANE_WEIGHTS.values()) + len(_LANES)):
+            lane = _LANES[self._lane_cursor]
+            if self._lane_deficits[lane] == 0:
+                self._lane_deficits[lane] = _LANE_WEIGHTS[lane]
             clients = self._queues[lane]
             if not clients:
+                self._lane_deficits[lane] = 0
+                self._lane_cursor = (self._lane_cursor + 1) % len(_LANES)
+                continue
+            if self._lane_deficits[lane] < 1:
                 continue
             for _ in range(len(clients)):
                 group_key, items = clients.popitem(last=False)
@@ -373,11 +329,62 @@ class RuntimeHookScheduler:
                 if competing_client and self._active_by_client.get(client_key, 0) >= active_share_limit:
                     clients[group_key] = items
                     continue
+                if not self._can_finish(items[0]):
+                    item = items.popleft()
+                    if items:
+                        clients[group_key] = items
+                    self._reject_queued(item, "daemon_hook_deadline_exhausted")
+                    continue
                 item = items.popleft()
                 if items:
                     clients[group_key] = items
+                self._lane_deficits[lane] -= 1
+                if self._lane_deficits[lane] == 0:
+                    self._lane_cursor = (self._lane_cursor + 1) % len(_LANES)
                 return item
+            self._lane_deficits[lane] = 0
+            self._lane_cursor = (self._lane_cursor + 1) % len(_LANES)
         return None
+
+    def _oldest_aged_eligible(self) -> QueuedRuntimeHook | None:
+        now = self._monotonic()
+        candidates = [
+            items[0]
+            for clients in self._queues.values()
+            for items in clients.values()
+            if items and now - items[0].queued_at >= _AGE_BOOST_SECONDS
+        ]
+        for item in sorted(candidates, key=lambda candidate: candidate.sequence):
+            if self._active_by_harness.get(item.harness, 0) >= self._per_harness_active_limit:
+                continue
+            competing_client = self._has_competing_client(item.client_key)
+            active_share_limit = max(1, math.ceil(self._active_limit / 2))
+            if competing_client and self._active_by_client.get(item.client_key, 0) >= active_share_limit:
+                continue
+            if not self._can_finish(item):
+                _ = self._remove_queued(item)
+                item.rejection_reason = "daemon_hook_deadline_exhausted"
+                self._expired += 1
+                continue
+            self._remove_from_lane(item)
+            return item
+        return None
+
+    def _can_finish(self, item: QueuedRuntimeHook) -> bool:
+        if item.deadline.serialization_reserve_seconds == 0.0:
+            return item.deadline.expires_at > self._monotonic()
+        return item.deadline.can_dispatch(
+            self._service_estimate(item.lane),
+            monotonic=self._monotonic,
+        )
+
+    def _service_estimate(self, lane: RuntimeHookLane) -> float:
+        now = self._monotonic()
+        recent = [value for timestamp, value in self._service_time_by_lane[lane] if now - timestamp <= 60.0]
+        if len(recent) < _MIN_PREDICTION_SAMPLES:
+            return _DEFAULT_SERVICE_SECONDS
+        estimate = self._percentile(deque(recent), 0.95)
+        return min(_MAX_SERVICE_SECONDS, max(_MIN_SERVICE_SECONDS, estimate))
 
     def _has_competing_client(self, client_key: str) -> bool:
         return any(
@@ -389,17 +396,26 @@ class RuntimeHookScheduler:
         for clients in self._queues.values():
             for group_key in tuple(clients):
                 items = clients[group_key]
-                retained = deque(item for item in items if item.deadline > now)
+                retained = deque(
+                    item
+                    for item in items
+                    if item.deadline.expires_at > now and (item.cancellation is None or not item.cancellation.is_set())
+                )
                 for item in items:
-                    if item.deadline <= now:
+                    if item.deadline.expires_at <= now:
                         self._drop_queued(item)
                         self._expired += 1
+                        item.rejection_reason = "daemon_hook_deadline_exhausted"
+                    elif item.cancellation is not None and item.cancellation.is_set():
+                        self._drop_queued(item)
+                        self._cancelled += 1
+                        item.rejection_reason = "daemon_hook_deadline_exhausted"
                 if retained:
                     clients[group_key] = retained
                 else:
                     _ = clients.pop(group_key, None)
 
-    def _remove_queued(self, target: _QueuedHook) -> bool:
+    def _remove_queued(self, target: QueuedRuntimeHook) -> bool:
         clients = self._queues[target.lane]
         group_key = (target.client_key, target.harness)
         items = clients.get(group_key)
@@ -414,16 +430,29 @@ class RuntimeHookScheduler:
         self._drop_queued(target)
         return True
 
-    def _decrement_queued(self, item: _QueuedHook) -> None:
+    def _remove_from_lane(self, target: QueuedRuntimeHook) -> None:
+        clients = self._queues[target.lane]
+        group_key = (target.client_key, target.harness)
+        items = clients[group_key]
+        items.remove(target)
+        if not items:
+            _ = clients.pop(group_key)
+
+    def _reject_queued(self, item: QueuedRuntimeHook, reason: RuntimeHookAdmissionReason) -> None:
+        self._drop_queued(item)
+        item.rejection_reason = reason
+        self._expired += 1
+
+    def _decrement_queued(self, item: QueuedRuntimeHook) -> None:
         self._queued -= 1
         self._decrement_counter(self._queued_by_harness, item.harness)
         self._decrement_counter(self._queued_by_client, item.client_key)
 
-    def _drop_queued(self, item: _QueuedHook) -> None:
+    def _drop_queued(self, item: QueuedRuntimeHook) -> None:
         self._decrement_queued(item)
         self._retained_bytes -= item.payload_bytes
 
-    def release_permit(self, item: _QueuedHook) -> None:
+    def release_permit(self, item: QueuedRuntimeHook) -> None:
         """Release one admitted work item and dispatch the next waiter."""
 
         with self._condition:
@@ -433,7 +462,10 @@ class RuntimeHookScheduler:
             self._retained_bytes -= item.payload_bytes
             self._completed += 1
             if item.admitted_at is not None:
-                self._service_time_samples.append(max(0.0, self._monotonic() - item.admitted_at))
+                finished_at = self._monotonic()
+                service_time = max(0.0, finished_at - item.admitted_at)
+                self._service_time_samples.append(service_time)
+                self._service_time_by_lane[item.lane].append((finished_at, service_time))
             self._dispatch()
 
     def _oldest_queued_ms(self, now: float) -> float:
@@ -450,6 +482,32 @@ class RuntimeHookScheduler:
         ordered = sorted(samples)
         index = max(0, math.ceil(len(ordered) * percentile) - 1)
         return ordered[index] * 1000.0
+
+    @staticmethod
+    def _percentile(samples: deque[float], percentile: float) -> float:
+        if not samples:
+            return 0.0
+        ordered = sorted(samples)
+        return ordered[max(0, math.ceil(len(ordered) * percentile) - 1)]
+
+    @classmethod
+    def _timed_percentile_ms(
+        cls,
+        samples: deque[tuple[float, float]],
+        now: float,
+        *,
+        percentile: float = 0.95,
+    ) -> float:
+        recent = deque(value for timestamp, value in samples if now - timestamp <= _HISTOGRAM_WINDOW_SECONDS)
+        return cls._percentile(recent, percentile) * 1000.0
+
+    @staticmethod
+    def _bounded_harness_counts(counts: dict[str, int]) -> dict[str, int]:
+        bounded: dict[str, int] = {}
+        for harness, count in counts.items():
+            key = harness if harness in _STABLE_HARNESSES else "other"
+            bounded[key] = bounded.get(key, 0) + count
+        return bounded
 
     @staticmethod
     def _decrement_counter(counters: dict[str, int], key: str) -> None:
