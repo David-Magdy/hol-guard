@@ -539,6 +539,8 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
             oldest = next(iter(self.unclassified_connections.values()), None)
         if oldest is not None:
             self._close_unclassified_socket(oldest[0])
+            with self.request_capacity_lock:
+                self.rejected_requests += 1
 
     @staticmethod
     def _close_unclassified_socket(request: socket.socket) -> None:
