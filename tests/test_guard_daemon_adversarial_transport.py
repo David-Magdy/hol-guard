@@ -326,7 +326,7 @@ def test_128_connection_storm_keeps_fixed_workers_and_control_liveness(
         with daemon._server.request_capacity_lock:
             assert daemon._server.active_requests == 128
         assert len(daemon._server.general_request_executor.threads) == 32
-        assert len(daemon._server.control_request_executor.threads) == 4
+        assert len(daemon._server.control_request_executor.threads) == 8
         assert all(thread.is_alive() for thread in executor_threads)
 
         started = time.monotonic()

@@ -316,8 +316,8 @@ class _CursorReceiptContext(TypedDict):
 
 
 _MAX_CONCURRENT_DAEMON_REQUESTS = 32
-_MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS = 4
-_MAX_CONCURRENT_DAEMON_CRITICAL_REQUESTS = 4
+_MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS = 8
+_MAX_CONCURRENT_DAEMON_CRITICAL_REQUESTS = 8
 _MAX_CONCURRENT_DAEMON_CONNECTIONS = 128
 _MAX_CONCURRENT_RUNTIME_HOOKS = 32
 _MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS = 24
@@ -325,6 +325,7 @@ _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS = 3.0
 _RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS = 1.2
 _DAEMON_REQUEST_READ_TIMEOUT_SECONDS = 0.4
 _DAEMON_CONNECTION_ADMISSION_WAIT_SECONDS = 0.05
+_DAEMON_CONTROL_ADMISSION_WAIT_SECONDS = 1.0
 _DAEMON_UNCLASSIFIED_WATCHDOG_POLL_SECONDS = 0.025
 _AIBOM_REFRESH_STOP_JOIN_TIMEOUT_SECONDS = 5.0
 _DAEMON_CONTROL_PATHS = frozenset(
@@ -776,7 +777,12 @@ class _GuardDaemonHttpServer(HTTPServer):
             previous_kind = self.request_capacity_kinds.pop(id(request), None)
         if previous_kind is not None:
             self._request_capacity_for_kind(previous_kind).release()
-        if not capacity.acquire(blocking=False):
+        admitted = (
+            capacity.acquire(timeout=_DAEMON_CONTROL_ADMISSION_WAIT_SECONDS)
+            if capacity_kind in {"critical", "control"}
+            else capacity.acquire(blocking=False)
+        )
+        if not admitted:
             with self.request_capacity_lock:
                 self.rejected_requests += 1
             return False

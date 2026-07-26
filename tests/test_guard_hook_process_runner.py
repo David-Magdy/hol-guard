@@ -346,7 +346,7 @@ def test_prewarmed_runner_handles_real_hook_and_closes(tmp_path: Path) -> None:
 
 
 def test_prewarmed_runner_does_not_hide_a_second_worker_queue(tmp_path: Path) -> None:
-    runner = HookProcessRunner(process_limit=4, timeout_seconds=1.8)
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=4, timeout_seconds=1.8)
     barrier = threading.Barrier(24)
 
     def review(index: int) -> HookProcessReview:

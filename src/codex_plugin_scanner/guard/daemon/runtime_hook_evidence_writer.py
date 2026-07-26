@@ -268,7 +268,6 @@ class RuntimeHookEvidenceWriter:
                             correlation=record.correlation,
                             has_command=record.has_command,
                             succeeded=record.succeeded,
-                            raise_on_persistence_error=True,
                         )
                 except Exception:
                     with self._condition:
