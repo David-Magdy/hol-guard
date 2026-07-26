@@ -6,8 +6,9 @@ import json
 import threading
 from collections import deque
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import TypedDict, cast, final
+from typing import TypedDict, final
 
 from ..cli.commands_support_command_activity import record_post_hook_command_activity_best_effort
 from ..sqlite_tuning import sqlite_connect_timeout_override
@@ -79,17 +80,12 @@ class RuntimeHookEvidenceWriter:
         succeeded: bool,
     ) -> bool:
         try:
-            encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-            decoded = cast(object, json.loads(encoded))
+            snapshot = deepcopy(dict(payload))
+            encoded = json.dumps(snapshot, separators=(",", ":"), sort_keys=True).encode("utf-8")
         except (TypeError, ValueError):
             with self._condition:
                 self._dropped += 1
             return False
-        if not isinstance(decoded, dict):
-            with self._condition:
-                self._dropped += 1
-            return False
-        snapshot = cast(dict[str, object], decoded)
         record = _CommandActivityRecord(
             harness=harness,
             event=event,

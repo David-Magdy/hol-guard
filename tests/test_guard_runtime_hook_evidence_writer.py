@@ -13,8 +13,10 @@ from codex_plugin_scanner.guard.store import GuardStore
 def test_writer_keeps_blocked_persistence_off_submitter(tmp_path: Path) -> None:
     entered = threading.Event()
     release = threading.Event()
+    recorded: list[object] = []
 
-    def record(**_kwargs: object) -> bool:
+    def record(**kwargs: object) -> bool:
+        recorded.append(kwargs["payload"])
         entered.set()
         assert release.wait(timeout=1)
         return True
@@ -25,13 +27,15 @@ def test_writer_keeps_blocked_persistence_off_submitter(tmp_path: Path) -> None:
     ):
         writer = RuntimeHookEvidenceWriter(store=GuardStore(tmp_path / "guard-home"))
         started = time.monotonic()
+        metadata: dict[str, object] = {"command": "rg safe"}
         try:
             accepted = writer.submit_command_activity(
                 harness="pi",
                 event="PostToolUse",
-                payload={"tool_name": "read", "command": "rg safe"},
+                payload={"tool_name": "read", "metadata": metadata},
                 succeeded=True,
             )
+            metadata["command"] = "changed after submission"
             elapsed = time.monotonic() - started
             assert accepted is True
             assert elapsed < 0.1
@@ -41,6 +45,7 @@ def test_writer_keeps_blocked_persistence_off_submitter(tmp_path: Path) -> None:
             assert writer.stop(timeout_seconds=1)
 
     assert writer.stats()["processed"] == 1
+    assert recorded == [{"tool_name": "read", "metadata": {"command": "rg safe"}}]
 
 
 def test_writer_drops_only_evidence_when_queue_is_full(tmp_path: Path) -> None:
