@@ -1211,6 +1211,113 @@ def test_tool_action_request_classifier_allows_canonical_pr_body_file_with_stand
     assert request is None
 
 
+def test_tool_action_request_classifier_allows_bounded_gh_pr_edit_body_file(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    body_file = (
+        home / ".omp" / "agent" / "sessions" / "workspace-bucket" / "session-id" / "local" / "hol-guard-pr-body.md"
+    )
+    workspace.mkdir()
+    _write_text(body_file, "## Summary\n- Focused change.\n")
+
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                "gh pr edit 1905 --repo hashgraph-online/hol-guard "
+                "--body-file ~/.omp/agent/sessions/workspace-bucket/"
+                "session-id/local/hol-guard-pr-body.md"
+            )
+        },
+        cwd=workspace,
+        home_dir=home,
+    )
+
+    assert request is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "gh pr edit $PR --body-file pr-body.md",
+        "gh pr edit 1905 --repo $REPO --body-file pr-body.md",
+        "gh pr edit 1905 --title changed --body-file pr-body.md",
+        "gh pr edit 1905 --body-file $BODY",
+        "gh pr edit 1905 --body-file '~/pr-body.md'",
+        "gh pr edit 1905 --body-file $(printf pr-body.md)",
+        "gh pr edit 1905 --body-file pr-body.md && gh pr merge 1905",
+        "gh pr edit https://github.com/example/repo/pull/1905 --body-file pr-body.md",
+        "GH_HOST=example.invalid gh pr edit 1905 --body-file pr-body.md",
+        "LD_PRELOAD=./evil.so gh pr edit 1905 --body-file pr-body.md",
+        "HOME=. gh pr edit 1905 --body-file pr-body.md",
+        "env GH_HOST=example.invalid gh pr edit 1905 --body-file pr-body.md",
+        "sudo gh pr edit 1905 --body-file pr-body.md",
+        "< <(printf x) gh pr edit 1905 --body-file pr-body.md",
+    ),
+)
+def test_tool_action_request_classifier_reviews_unbounded_gh_pr_edit(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    _write_text(tmp_path / "pr-body.md", "## Summary\n- Focused change.\n")
+
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": command},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+
+
+def test_tool_action_request_classifier_reviews_secret_bearing_gh_pr_edit_body_file(tmp_path: Path) -> None:
+    body_file = tmp_path / "pr-body.md"
+    _write_text(
+        body_file,
+        "Authorization: Bearer ghp_" + "012345678901234567890123456789012345\n",
+    )
+
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": "gh pr edit 1905 --body-file pr-body.md"},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_symlinked_gh_pr_edit_body_file(tmp_path: Path) -> None:
+    source = tmp_path / "source-pr-body.md"
+    _write_text(source, "## Summary\n- Focused change.\n")
+    body_file = tmp_path / "pr-body.md"
+    body_file.symlink_to(source)
+
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": "gh pr edit 1905 --body-file pr-body.md"},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_missing_gh_pr_edit_body_file(tmp_path: Path) -> None:
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": "gh pr edit 1905 --body-file missing-pr-body.md"},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
 @pytest.mark.parametrize(
     "body_file",
     ("-", "/tmp/guard-pr-body.txt", "'~/focused-pr-body.md'", "~otheruser/focused-pr-body.md"),

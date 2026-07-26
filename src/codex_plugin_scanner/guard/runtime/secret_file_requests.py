@@ -55,7 +55,10 @@ from .github_capability_interaction import (
     github_capability_requires_confirmation,
 )
 from .github_command_capabilities import static_markdown_pr_body_file_operand
-from .github_pr_body_file import github_pr_body_file_is_safe
+from .github_pr_body_file import (
+    github_pr_body_file_is_safe,
+    static_markdown_pr_edit_body_file_operand,
+)
 from .github_shell_capabilities import GitHubShellAnalysis
 from .github_shell_capabilities import classify_github_shell_capabilities as _classify_github_shell_capabilities
 from .interpreter_options import shell_interpreter_command_payload as _shell_interpreter_command_payload
@@ -1672,6 +1675,23 @@ def _destructive_shell_tool_action_request(
             canonical_command=canonical_command,
             interpreter_executable_identities=interpreter_executable_identities,
         )
+    if _gh_pr_edit_has_shell_command_substitution(detection_command_text) or (
+        raw_command_text is not None
+        and raw_command_text != detection_command_text
+        and _gh_pr_edit_has_shell_command_substitution(raw_command_text)
+    ):
+        return ToolActionRequestMatch(
+            tool_name=tool_name,
+            normalized_tool_name=normalized_tool_name,
+            command_text=command_text,
+            action_class="GitHub PR edit shell substitution",
+            reason=(
+                "Guard reviews shell substitution around `gh pr edit` because it can execute local commands before "
+                "GitHub receives the pull-request metadata."
+            ),
+            canonical_command=canonical_command,
+            interpreter_executable_identities=interpreter_executable_identities,
+        )
     if _gh_pr_create_has_active_shell_expansion(detection_command_text) or (
         raw_command_text is not None
         and raw_command_text != detection_command_text
@@ -1987,6 +2007,20 @@ def _destructive_shell_tool_action_request(
         raw_command_text is None
         or raw_command_text == detection_command_text
         or _gh_pr_create_uses_safe_static_body_file(
+            raw_command_text,
+            cwd=cwd,
+            home_dir=home_dir,
+        )
+    ):
+        return None
+    if _gh_pr_edit_uses_safe_static_body_file(
+        detection_command_text,
+        cwd=cwd,
+        home_dir=home_dir,
+    ) and (
+        raw_command_text is None
+        or raw_command_text == detection_command_text
+        or _gh_pr_edit_uses_safe_static_body_file(
             raw_command_text,
             cwd=cwd,
             home_dir=home_dir,
@@ -2758,6 +2792,16 @@ def _gh_pr_create_body_has_shell_command_substitution(command_text: str, *, dept
     return False
 
 
+def _gh_pr_edit_has_shell_command_substitution(command_text: str) -> bool:
+    if not _shell_command_substitution_payloads(command_text):
+        return False
+    for segment in _shell_token_segments(_shell_tokens_preserving_quote_context(command_text)):
+        plain = [token.plain for token in segment]
+        if any(plain[index : index + 3] == ["gh", "pr", "edit"] for index in range(max(0, len(plain) - 2))):
+            return True
+    return False
+
+
 def _gh_pr_create_has_active_shell_expansion(command_text: str, *, depth: int = 0) -> bool:
     if depth > 2 or ("$" not in command_text and "`" not in command_text):
         return False
@@ -2848,6 +2892,14 @@ class _ShellTokenWithQuoteContext:
 
 
 def _gh_pr_create_body_args_start_index(segment: list[_ShellTokenWithQuoteContext]) -> int | None:
+    return _gh_pr_body_args_start_index(segment, operations=frozenset({"create", "new"}))
+
+
+def _gh_pr_body_args_start_index(
+    segment: list[_ShellTokenWithQuoteContext],
+    *,
+    operations: frozenset[str],
+) -> int | None:
     index = 0
     plain_segment = [token.plain for token in segment]
     while index < len(segment):
@@ -2863,10 +2915,7 @@ def _gh_pr_create_body_args_start_index(segment: list[_ShellTokenWithQuoteContex
             pr_command_index = _skip_gh_pr_options(segment, index + 2)
             if pr_command_index >= len(segment):
                 return None
-            if segment[pr_command_index].plain in {
-                "create",
-                "new",
-            }:
+            if segment[pr_command_index].plain in operations:
                 return pr_command_index + 1
             return None
         if _SHELL_ASSIGNMENT_PATTERN.match(_shell_command_token_without_attached_redirection(token.plain)):
@@ -3050,6 +3099,40 @@ def _gh_pr_create_uses_safe_static_body_file(
     if args_start_index is None:
         return False
     operand = static_markdown_pr_body_file_operand(tuple(token.plain for token in segment[args_start_index:]))
+    return operand is not None and github_pr_body_file_is_safe(
+        operand,
+        cwd=cwd,
+        home_dir=home_dir,
+    )
+
+
+def _gh_pr_edit_uses_safe_static_body_file(
+    command_text: str,
+    *,
+    cwd: Path | None,
+    home_dir: Path | None,
+) -> bool:
+    if _shell_command_substitution_payloads(command_text):
+        return False
+    segments = _shell_token_segments(_shell_tokens_preserving_quote_context(command_text))
+    if len(segments) != 1:
+        return False
+    segment = segments[0]
+    if (
+        len(segment) < 4
+        or tuple(token.raw for token in segment[:3]) != ("gh", "pr", "edit")
+        or tuple(token.plain for token in segment[:3]) != ("gh", "pr", "edit")
+        or any(_shell_token_has_active_expansion(token.raw) for token in segment)
+    ):
+        return False
+    args_start_index = 3
+    operand = static_markdown_pr_edit_body_file_operand(tuple(token.plain for token in segment[args_start_index:]))
+    if (
+        operand is not None
+        and operand.startswith("~/")
+        and not any(token.plain == operand and token.raw.startswith("~/") for token in segment[args_start_index:])
+    ):
+        return False
     return operand is not None and github_pr_body_file_is_safe(
         operand,
         cwd=cwd,

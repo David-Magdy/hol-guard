@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -14,6 +15,56 @@ from .secret_sensitivity import classify_secret_content, classify_secret_path
 
 _MAX_PR_BODY_BYTES = 128 * 1024
 _MAX_PR_BODY_AGE_SECONDS = 24 * 60 * 60
+
+
+def static_markdown_pr_edit_body_file_operand(args: Sequence[str]) -> str | None:
+    """Return one body file from a narrowly bounded pull-request edit."""
+
+    selectors: list[str] = []
+    body_files: list[str] = []
+    repositories: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if token in {"--body-file", "-F", "--repo", "-R"}:
+            if index + 1 >= len(args):
+                return None
+            value = args[index + 1]
+            (body_files if token in {"--body-file", "-F"} else repositories).append(value)
+            index += 2
+            continue
+        if token.startswith("--body-file="):
+            body_files.append(token.partition("=")[2])
+        elif token.startswith("--repo="):
+            repositories.append(token.partition("=")[2])
+        elif token.startswith("-F") and len(token) > 2:
+            body_files.append(token[2:])
+        elif token.startswith("-R") and len(token) > 2:
+            repositories.append(token[2:])
+        elif token.startswith("-"):
+            return None
+        else:
+            selectors.append(token)
+        index += 1
+    if len(selectors) != 1 or not selectors[0].isdigit() or int(selectors[0]) < 1:
+        return None
+    if len(body_files) != 1 or len(repositories) > 1:
+        return None
+    if repositories and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repositories[0]) is None:
+        return None
+    body_file = body_files[0]
+    shell_expansion_markers = ("$", "`", "*", "?", "[", "]", "{", "}", "(", ")", "<", ">", "^", "#")
+    if (
+        not body_file
+        or body_file == "-"
+        or body_file.startswith("=")
+        or any(marker in body_file for marker in shell_expansion_markers)
+        or ("~" in body_file and not body_file.startswith("~/"))
+    ):
+        return None
+    if not body_file.lower().endswith((".md", ".markdown")):
+        return None
+    return body_file
 
 
 def github_pr_body_file_is_safe(
@@ -33,7 +84,7 @@ def github_pr_body_file_is_safe(
         return False
     if not _is_pr_body_markdown_name(candidate.name):
         return False
-    authored_root = _authored_location_root(candidate, cwd=cwd)
+    authored_root = _authored_location_root(candidate, cwd=cwd, home_dir=home_dir)
     if authored_root is None or not _ancestor_chain_is_controlled(candidate, root=authored_root):
         return False
     try:
@@ -93,7 +144,7 @@ def _resolve_operand(operand: str, *, cwd: Path, home_dir: Path) -> Path | None:
         return None
 
 
-def _authored_location_root(candidate: Path, *, cwd: Path) -> Path | None:
+def _authored_location_root(candidate: Path, *, cwd: Path, home_dir: Path) -> Path | None:
     # A separate process running as this user already has the same GitHub CLI
     # authority. This boundary prevents accidental agent publication of files
     # outside the active workspace and current-user temporary locations.
@@ -103,6 +154,7 @@ def _authored_location_root(candidate: Path, *, cwd: Path) -> Path | None:
             Path(tempfile.gettempdir()).resolve(),
             Path("/tmp").resolve(),
             Path("/var/tmp").resolve(),
+            *filter(None, (_omp_session_authored_root(candidate, home_dir=home_dir),)),
         },
         key=lambda path: len(path.parts),
         reverse=True,
@@ -111,6 +163,17 @@ def _authored_location_root(candidate: Path, *, cwd: Path) -> Path | None:
         (root for root in roots if candidate == root or candidate.is_relative_to(root)),
         None,
     )
+
+
+def _omp_session_authored_root(candidate: Path, *, home_dir: Path) -> Path | None:
+    resolved_home = home_dir.resolve()
+    try:
+        relative_parts = candidate.relative_to(resolved_home).parts
+    except (OSError, ValueError):
+        return None
+    if len(relative_parts) != 7 or relative_parts[:3] != (".omp", "agent", "sessions") or relative_parts[5] != "local":
+        return None
+    return resolved_home
 
 
 def _ancestor_chain_is_controlled(candidate: Path, *, root: Path) -> bool:
