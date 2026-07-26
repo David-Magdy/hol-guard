@@ -368,7 +368,7 @@ def test_guard_name_inside_read_only_search_does_not_trigger_self_protection(tmp
     memory.write_text("hol-guard release notes\n", encoding="utf-8")
 
     artifact = _artifact(
-        f"sed -n '1,240p' {skill} && rg -n -i 'hol-guard|release/2.2' {memory}",
+        f"sed -n '1,240p' {shlex.quote(str(skill))} && rg -n -i 'hol-guard|release/2.2' {shlex.quote(str(memory))}",
         home=home,
         harness="codex",
     )
@@ -384,13 +384,20 @@ def test_compound_rg_ignore_case_does_not_become_sed_in_place(tmp_path: Path) ->
     source.write_text("hol-guard\n", encoding="utf-8")
 
     artifact = _artifact(
-        f"sed -n '1,20p' {source} && rg -i hol-guard {source}",
+        f"sed -n '1,20p' {shlex.quote(str(source))} && rg -i hol-guard {shlex.quote(str(source))}",
         home=home,
         workspace=workspace,
     )
 
     assert artifact is None
-    assert _artifact(f"sed -i 's/a/b/' {source}", home=home, workspace=workspace) is not None
+    assert (
+        _artifact(
+            f"sed -i 's/a/b/' {shlex.quote(str(source))}",
+            home=home,
+            workspace=workspace,
+        )
+        is not None
+    )
 
 
 @pytest.mark.parametrize(
