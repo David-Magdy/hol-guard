@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TypedDict, final
 
 from .hook_process_entrypoint import hook_worker_main
+from .hook_process_metrics import increment_bounded_metric
 from .hook_process_protocol import (
     HOOK_ENV_ALLOWLIST,
     as_string_object_dict,
@@ -472,11 +473,9 @@ class HookProcessRunner:
     def _record_response_metrics(self, response: Mapping[str, object]) -> None:
         decision = response.get("decision")
         reason_code = response.get("reason_code")
-        safe_decision = decision if isinstance(decision, str) and decision.isidentifier() else "unknown"
-        safe_reason = reason_code if isinstance(reason_code, str) and reason_code.isidentifier() else "unknown"
         with self._metrics_lock:
-            self._decisions[safe_decision] = self._decisions.get(safe_decision, 0) + 1
-            self._reason_codes[safe_reason] = self._reason_codes.get(safe_reason, 0) + 1
+            increment_bounded_metric(self._decisions, decision)
+            increment_bounded_metric(self._reason_codes, reason_code)
 
     def _retire_slot(self, slot: HookWorkerSlot, *, graceful: bool = False) -> bool:
         contained = retire_worker_slot(slot, graceful=graceful)

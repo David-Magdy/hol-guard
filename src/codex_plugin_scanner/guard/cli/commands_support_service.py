@@ -217,12 +217,8 @@ def _handle_daemon_status(guard_home: Path, as_json: bool) -> int:
         except Exception:
             pass
     authenticated_state = load_authenticated_daemon_state(guard_home) if running else None
-    daemon_version = (
-        authenticated_state.get("package_version")
-        if authenticated_state is not None
-        and isinstance(authenticated_state.get("package_version"), str)
-        else None
-    )
+    package_version = authenticated_state.get("package_version") if authenticated_state is not None else None
+    daemon_version = package_version if isinstance(package_version, str) and package_version else None
     payload: dict[str, object] = {
         "running": running,
         "guard_home": str(guard_home),
