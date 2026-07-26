@@ -47,6 +47,7 @@ from .false_positive_rules import (
     split_fd_args_and_exec,
     target_is_known_skill_doc_path,
 )
+from .git_execution_safety import git_binary_path_is_trusted
 from .github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
 from .github_capability_contract import GitHubCommandAssessment
 from .github_capability_interaction import (
@@ -1373,7 +1374,7 @@ def _git_status_has_execution_free_config(cwd: Path | None) -> bool:
         execution_cwd = (cwd or Path.cwd()).resolve()
     except OSError:
         return False
-    if not _git_binary_path_is_trusted(resolved_git, cwd=execution_cwd):
+    if not git_binary_path_is_trusted(resolved_git, cwd=execution_cwd):
         return False
     try:
         result = subprocess.run(
@@ -1468,7 +1469,7 @@ def _git_log_has_execution_free_config(cwd: Path) -> bool:
         execution_cwd = cwd.resolve()
     except OSError:
         return False
-    if not _git_binary_path_is_trusted(resolved_git, cwd=execution_cwd):
+    if not git_binary_path_is_trusted(resolved_git, cwd=execution_cwd):
         return False
     for key in ("core.pager", "pager.log"):
         try:
@@ -1489,38 +1490,6 @@ def _git_log_has_execution_free_config(cwd: Path) -> bool:
         values = [value.strip() for value in result.stdout.split("\0") if value.strip()]
         if any(value != "cat" for value in values):
             return False
-    return True
-
-
-def _git_binary_path_is_trusted(git_path: Path, *, cwd: Path) -> bool:
-    try:
-        untrusted_roots = (
-            cwd.resolve(),
-            Path.home().resolve(),
-            Path("/tmp").resolve(),
-            Path("/private/tmp").resolve(),
-        )
-    except (OSError, RuntimeError):
-        return False
-    for untrusted_root in untrusted_roots:
-        try:
-            _ = git_path.relative_to(untrusted_root)
-        except ValueError:
-            continue
-        return False
-    current_uid = getattr(os, "getuid", lambda: -1)()
-    current_groups = set(getattr(os, "getgroups", lambda: [])())
-    try:
-        for candidate in (git_path, *git_path.parents):
-            metadata = candidate.stat()
-            if metadata.st_mode & stat.S_IWOTH:
-                return False
-            if metadata.st_mode & stat.S_IWGRP and metadata.st_gid not in current_groups:
-                return False
-            if candidate == git_path and current_uid >= 0 and metadata.st_uid not in {0, current_uid}:
-                return False
-    except OSError:
-        return False
     return True
 
 

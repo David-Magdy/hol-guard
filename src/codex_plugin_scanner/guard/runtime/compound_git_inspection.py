@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
+from pathlib import Path
 from typing import Final
 
+from .git_execution_safety import git_binary_path_is_trusted
 from .shell_execution_context import ShellExecutionContext, ShellExecutionSegment
 
 _REF: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}")
@@ -57,9 +62,11 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
     if tokens is None or len(tokens) < 2:
         return False
     operation_index = 1
+    repository_path: str | None = None
     if tokens[1] == "-C":
         if len(tokens) < 4 or not _safe_repository_path(tokens[2]):
             return False
+        repository_path = tokens[2]
         operation_index = 3
     operation = tokens[operation_index]
     args = tokens[operation_index + 1 :]
@@ -78,11 +85,9 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
     if operation == "ls-files":
         return _safe_ls_files_args(args)
     if operation == "show":
-        return bool(args) and all(
-            arg in {"--stat", "--oneline", "--name-only", "--name-status", "HEAD"}
-            or _safe_ref(arg)
-            or _safe_object_path(arg)
-            for arg in args
+        return _safe_show_args(args) and _git_show_has_execution_free_config(
+            segment,
+            repository_path=repository_path,
         )
     return False
 
@@ -110,7 +115,8 @@ def _safe_repository_path(value: str) -> bool:
         return True
     if not value or len(value) > 512 or value.startswith(("/", "~")) or _dynamic(value):
         return False
-    components = value.split("/")
+    normalized = value[:-1] if value.endswith("/") else value
+    components = normalized.split("/")
     if components[:1] == ["."]:
         components = components[1:]
     return bool(components) and all(
@@ -138,6 +144,67 @@ def _safe_diff_args(args: tuple[str, ...]) -> bool:
         )
         and all(_safe_repository_path(path) for path in paths)
     )
+
+
+def _safe_show_args(args: tuple[str, ...]) -> bool:
+    if not args:
+        return False
+    allowed_options = {"--stat", "--oneline", "--name-only", "--name-status"}
+    if "--" not in args:
+        return all(arg in allowed_options or arg == "HEAD" or _safe_ref(arg) or _safe_object_path(arg) for arg in args)
+    separator = args.index("--")
+    revisions = args[:separator]
+    paths = args[separator + 1 :]
+    refs = tuple(arg for arg in revisions if arg not in allowed_options)
+    return (
+        bool(paths)
+        and len(refs) == 1
+        and (refs[0] == "HEAD" or _safe_ref(refs[0]))
+        and all(arg in allowed_options or arg in refs for arg in revisions)
+        and all(_safe_repository_path(path) for path in paths)
+    )
+
+
+def _git_show_has_execution_free_config(
+    segment: ShellExecutionSegment,
+    *,
+    repository_path: str | None,
+) -> bool:
+    if segment.effective_cwd is None:
+        return False
+    if any(
+        os.environ.get(key, "").strip() for key in ("GIT_EXTERNAL_DIFF", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
+    ):
+        return False
+    git_path = shutil.which("git")
+    if git_path is None:
+        return False
+    try:
+        resolved_git = Path(git_path).resolve()
+        execution_cwd = segment.effective_cwd.resolve()
+        repository_cwd = (execution_cwd / repository_path).resolve() if repository_path is not None else execution_cwd
+    except OSError:
+        return False
+    if not git_binary_path_is_trusted(resolved_git, cwd=repository_cwd):
+        return False
+    try:
+        result = subprocess.run(
+            [
+                str(resolved_git),
+                "config",
+                "--null",
+                "--get-regexp",
+                r"^(diff\..*\.(command|textconv)|diff\.external)$",
+            ],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 1 and not result.stdout
 
 
 def _safe_ls_files_args(args: tuple[str, ...]) -> bool:
