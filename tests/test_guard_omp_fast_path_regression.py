@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import urllib.parse
 import urllib.request
@@ -38,6 +39,21 @@ def test_omp_post_tool_read_burst_uses_resident_scanner(
     )
     endpoint = f"http://127.0.0.1:{daemon.port}/v1/hooks/pi?{query}"
     safe_output = "Safe skill instructions for local development.\n" * 700
+    normalized_output = safe_output.rstrip("\n")
+    source_refs: list[dict[str, object]] = []
+    for index in range(24):
+        source_path = workspace / f"routine-{index}.md"
+        source_path.write_text(safe_output, encoding="utf-8")
+        source_refs.append(
+            {
+                "version": 1,
+                "kind": "source_file",
+                "path": source_path.name,
+                "tool_input_path": source_path.name,
+                "output_sha256": hashlib.sha256(normalized_output.encode("utf-8")).hexdigest(),
+                "output_chars": len(normalized_output),
+            }
+        )
 
     def review(index: int) -> dict[str, object]:
         request = urllib.request.Request(
@@ -46,9 +62,9 @@ def test_omp_post_tool_read_burst_uses_resident_scanner(
                 {
                     "hook_event_name": "PostToolUse",
                     "tool_call_id": f"omp-read-{index}",
-                    "tool_name": "read",
-                    "tool_input": {"path": f"skill://routine-{index}"},
-                    "tool_response": [{"type": "text", "text": safe_output}],
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": source_refs[index]["path"]},
+                    "guard_source_ref": source_refs[index],
                 }
             ).encode(),
             headers={
@@ -69,7 +85,8 @@ def test_omp_post_tool_read_burst_uses_resident_scanner(
     finally:
         daemon.stop()
 
-    assert all(result.get("decision") == "allow" for result in results)
-    assert all(result.get("reason_code") == "output_scan_allow" for result in results)
+    assert all(result.get("decision") == "allow" for result in results), results
+    assert all(result.get("model_output_action") == "allow_original" for result in results)
+    assert all(result.get("reason_code") == "source_full_scan_allow" for result in results)
     assert worker_stats["timeouts"] == 0
     assert worker_stats["restarts"] == 0
