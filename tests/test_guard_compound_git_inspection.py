@@ -193,6 +193,44 @@ def test_cross_workspace_git_show_rejects_configured_textconv(
     assert artifact is not None
 
 
+def test_cross_workspace_git_show_rejects_textconv_in_git_c_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for key in ("GIT_EXTERNAL_DIFF", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"):
+        monkeypatch.delenv(key, raising=False)
+    home = tmp_path / "home"
+    active_workspace = home / "projects" / "active"
+    repositories = home / "projects" / "repositories"
+    inspected_workspace = repositories / "inspected"
+    active_workspace.mkdir(parents=True)
+    _init_repository(inspected_workspace)
+    _ = (inspected_workspace / ".git" / "config").write_text(
+        '[diff "guard"]\n    textconv = helper\n',
+        encoding="utf-8",
+    )
+    (inspected_workspace / "workers" / "services").mkdir(parents=True)
+
+    artifact = _hook_runtime_artifact(
+        harness="pi",
+        payload={
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": (
+                    f"cd {repositories} && git -C inspected show b56514561 -- workers/services/ 2>&1 | head -60"
+                )
+            },
+        },
+        action_envelope=None,
+        home_dir=home,
+        guard_home=home / ".guard",
+        workspace=active_workspace,
+    )
+
+    assert artifact is not None
+
+
 @pytest.mark.parametrize(
     "inspection",
     (

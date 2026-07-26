@@ -62,9 +62,11 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
     if tokens is None or len(tokens) < 2:
         return False
     operation_index = 1
+    repository_path: str | None = None
     if tokens[1] == "-C":
         if len(tokens) < 4 or not _safe_repository_path(tokens[2]):
             return False
+        repository_path = tokens[2]
         operation_index = 3
     operation = tokens[operation_index]
     args = tokens[operation_index + 1 :]
@@ -83,7 +85,10 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
     if operation == "ls-files":
         return _safe_ls_files_args(args)
     if operation == "show":
-        return _safe_show_args(args) and _git_show_has_execution_free_config(segment)
+        return _safe_show_args(args) and _git_show_has_execution_free_config(
+            segment,
+            repository_path=repository_path,
+        )
     return False
 
 
@@ -160,7 +165,11 @@ def _safe_show_args(args: tuple[str, ...]) -> bool:
     )
 
 
-def _git_show_has_execution_free_config(segment: ShellExecutionSegment) -> bool:
+def _git_show_has_execution_free_config(
+    segment: ShellExecutionSegment,
+    *,
+    repository_path: str | None,
+) -> bool:
     if segment.effective_cwd is None:
         return False
     if any(
@@ -173,9 +182,10 @@ def _git_show_has_execution_free_config(segment: ShellExecutionSegment) -> bool:
     try:
         resolved_git = Path(git_path).resolve()
         execution_cwd = segment.effective_cwd.resolve()
+        repository_cwd = (execution_cwd / repository_path).resolve() if repository_path is not None else execution_cwd
     except OSError:
         return False
-    if not git_binary_path_is_trusted(resolved_git, cwd=execution_cwd):
+    if not git_binary_path_is_trusted(resolved_git, cwd=repository_cwd):
         return False
     try:
         result = subprocess.run(
@@ -186,7 +196,7 @@ def _git_show_has_execution_free_config(segment: ShellExecutionSegment) -> bool:
                 "--get-regexp",
                 r"^(diff\..*\.(command|textconv)|diff\.external)$",
             ],
-            cwd=execution_cwd,
+            cwd=repository_cwd,
             check=False,
             capture_output=True,
             text=True,
