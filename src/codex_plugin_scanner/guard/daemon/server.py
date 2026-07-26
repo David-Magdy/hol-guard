@@ -322,6 +322,7 @@ _MAX_CONCURRENT_DAEMON_CONNECTIONS = (
 _MAX_CONCURRENT_RUNTIME_HOOKS = 32
 _MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS = 24
 _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS = 3.0
+_RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS = 1.2
 _DAEMON_REQUEST_READ_TIMEOUT_SECONDS = 0.4
 _DAEMON_CONNECTION_ADMISSION_WAIT_SECONDS = 0.05
 _DAEMON_UNCLASSIFIED_WATCHDOG_POLL_SECONDS = 0.025
@@ -378,6 +379,7 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     hook_harness_rejected: dict[str, int]
     hook_capacity_lock: threading.Lock
     runtime_hook_scheduler: RuntimeHookScheduler
+    runtime_hook_process_scheduler: RuntimeHookScheduler
     runtime_hook_evidence_writer: RuntimeHookEvidenceWriter
     connection_executor: ThreadPoolExecutor
     request_capacity: threading.BoundedSemaphore
@@ -471,6 +473,11 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
             max_workers=_MAX_CONCURRENT_DAEMON_CONNECTIONS,
             thread_name_prefix="hol-guard-http",
         )
+        self.runtime_hook_process_scheduler = RuntimeHookScheduler(
+            active_limit=0,
+            per_harness_active_limit=_MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS,
+            retained_bytes_limit=1,
+        )
         self.request_capacity_limit = _MAX_CONCURRENT_DAEMON_REQUESTS
         self.request_capacity = threading.BoundedSemaphore(self.request_capacity_limit)
         self.connection_capacity_limit = _MAX_CONCURRENT_DAEMON_CONNECTIONS
@@ -488,6 +495,7 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self.unclassified_watchdog_stop = threading.Event()
         self.unclassified_watchdog_thread = None
         self.hook_process_runner = HookProcessRunner(guard_home=store.guard_home)
+        self.hook_process_runner.set_capacity_listener(self.runtime_hook_process_scheduler.set_active_limit)
         self.runtime_heartbeat = RuntimeHeartbeatWriter(
             store=store,
             session_id=runtime_session_id,
@@ -5498,14 +5506,44 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
     ) -> None:
         runtime_harness = self._optional_string(params.get("runtime-harness", [None])[-1])
         harness = runtime_harness or default_harness
-        review = self._daemon_server().hook_process_runner.review(
-            payload=payload,
+        daemon_server = self._daemon_server()
+        workspace_path = Path(workspace) if workspace is not None else None
+        process_deadline = min(
+            deadline if deadline is not None else float("inf"),
+            time.monotonic() + _RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS,
+        )
+        admission = daemon_server.runtime_hook_process_scheduler.acquire(
             harness=harness,
-            home_dir=Path(home_dir) if home_dir is not None else Path.home(),
-            guard_home=(Path(guard_home) if guard_home is not None else self._daemon_server().store.guard_home),
-            workspace=Path(workspace) if workspace is not None else None,
-            hook_env=hook_env,
-            deadline=deadline,
+            client_key=self._runtime_hook_client_key(payload, workspace),
+            lane=self._runtime_hook_lane(payload),
+            payload_bytes=0,
+            deadline=process_deadline,
+        )
+        if admission.permit is None:
+            self._write_json(
+                self._runtime_hook_fail_safe_response(
+                    payload,
+                    params,
+                    default_harness=default_harness,
+                    reason="HOL Guard could not complete isolated local hook review safely.",
+                    reason_code=admission.reason_code or "daemon_hook_process_not_ready",
+                )
+            )
+            return
+        with admission.permit:
+            review = daemon_server.hook_process_runner.review(
+                payload=payload,
+                harness=harness,
+                home_dir=Path(home_dir) if home_dir is not None else Path.home(),
+                guard_home=(Path(guard_home) if guard_home is not None else daemon_server.store.guard_home),
+                workspace=workspace_path,
+                hook_env=hook_env,
+                deadline=process_deadline,
+            )
+        scheduler_stats = daemon_server.runtime_hook_process_scheduler.stats()
+        daemon_server.hook_process_runner.observe_load(
+            queue_p95_ms=scheduler_stats["queue_wait_p95_ms"],
+            queued=scheduler_stats["queued"],
         )
         if review.payload is not None:
             self._write_json(review.payload)
@@ -6384,6 +6422,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         pending_approvals = store.count_approval_requests()
         activity_health = store.get_command_activity_persistence_health()
         scheduler_stats = daemon_server.runtime_hook_scheduler.stats()
+        process_scheduler_stats = daemon_server.runtime_hook_process_scheduler.stats()
         evidence_writer_stats = daemon_server.runtime_hook_evidence_writer.stats()
         with daemon_server.hook_capacity_lock:
             hook_capacity = {
@@ -6413,10 +6452,14 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         if evidence_writer_stats["failures"]:
             load_state = "store-contended"
             load_detail = "Evidence persistence is retrying outside the security decision path."
-        elif scheduler_stats["expired"] or daemon_server.rejected_hook_requests:
+        elif (
+            scheduler_stats["expired"]
+            or process_scheduler_stats["expired"]
+            or daemon_server.rejected_hook_requests
+        ):
             load_state = "saturated"
             load_detail = "Secure review capacity was exhausted; recovery is automatic as load falls."
-        elif scheduler_stats["queued"]:
+        elif scheduler_stats["queued"] or process_scheduler_stats["queued"]:
             load_state = "backlogged"
             load_detail = "Queued reviews are draining automatically."
         else:
@@ -6450,6 +6493,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "state": load_state,
                 "detail": load_detail,
             },
+            "hook_process_capacity": process_scheduler_stats,
             "hook_workers": daemon_server.hook_process_runner.stats(),
             "request_capacity": request_capacity,
         }
@@ -7075,7 +7119,10 @@ class GuardDaemonServer:
             self._thread = threading.Thread(target=self._serve_forever, daemon=True)
             self._thread.start()
             serve_thread_started = True
-            self._server.hook_process_runner.enable_full_capacity()
+            self._server.hook_process_runner.enable_full_capacity(
+                delay_seconds=0,
+                active_deferral_seconds=0,
+            )
         except BaseException as error:
             serve_thread_contained = True
             if serve_thread_started and self._thread is not None:
@@ -7097,7 +7144,10 @@ class GuardDaemonServer:
 
     def serve(self) -> None:
         self._begin_service()
-        self._server.hook_process_runner.enable_full_capacity()
+        self._server.hook_process_runner.enable_full_capacity(
+            delay_seconds=0,
+            active_deferral_seconds=0,
+        )
         self._serve_forever()
 
     def stop(self) -> None:
