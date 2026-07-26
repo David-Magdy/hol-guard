@@ -1786,7 +1786,13 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 receipt_limit=25 if include_receipts else 0,
                 containment_health=self._containment_health_payload(),
             )
-            self._write_json({**snapshot, "security_level": config.security_level})
+            self._write_json(
+                {
+                    **snapshot,
+                    "security_level": config.security_level,
+                    "operator_health": self._operator_health_payload(),
+                }
+            )
             return
         if parsed.path == "/v1/harnesses":
             context = self._harness_context({})
@@ -6463,6 +6469,71 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "hook_process_capacity": process_scheduler_stats,
             "hook_workers": daemon_server.hook_process_runner.stats(),
             "request_capacity": request_capacity,
+        }
+
+    def _operator_health_payload(self) -> dict[str, object]:
+        daemon_server = self._daemon_server()
+        scheduler = daemon_server.runtime_hook_scheduler.stats()
+        workers = daemon_server.hook_process_runner.stats()
+        evidence_writer = daemon_server.runtime_hook_evidence_writer.stats()
+        activity_health = daemon_server.store.get_command_activity_persistence_health()
+        rejected = scheduler["rejected"]
+
+        worker_fault = workers["configured"] > 0 and workers["workers"] == 0
+        evidence_fault = not evidence_writer["running"]
+        store_busy = (
+            activity_health.persistence_error_count > 0
+            and activity_health.last_error_code is not None
+            and activity_health.last_error_code.startswith("sqlite.")
+        )
+        saturated = (
+            scheduler["expired"] > 0
+            or any(
+                rejected.get(reason, 0) > 0
+                for reason in (
+                    "daemon_hook_deadline_exhausted",
+                    "daemon_hook_queue_capacity",
+                    "daemon_hook_queue_bytes",
+                )
+            )
+            or (
+                scheduler["queued_limit"] > 0
+                and scheduler["queued"] >= scheduler["queued_limit"]
+            )
+        )
+
+        if worker_fault or evidence_fault:
+            state = "saturated"
+            cause = "A local processing component stopped and needs repair."
+        elif store_busy:
+            state = "store-contended"
+            cause = "The local evidence store is busy; queued writes are retrying automatically."
+        elif saturated:
+            state = "saturated"
+            cause = "Local review capacity is full; new work waits or receives a typed retry."
+        elif scheduler["queued"] > 0:
+            state = "backlogged"
+            cause = "A short local backlog is waiting behind active reviews."
+        else:
+            state = "healthy"
+            cause = "Local reviews are processing within available capacity."
+
+        repairable = worker_fault or evidence_fault
+        return {
+            "state": state,
+            "cause": cause,
+            "automatic_recovery": (
+                "Repair restores the stopped local component."
+                if repairable
+                else "Guard drains queued work and adjusts ready workers automatically."
+            ),
+            "repairable": repairable,
+            "queue_depth": scheduler["queued"],
+            "queue_limit": scheduler["queued_limit"],
+            "oldest_wait_ms": scheduler["oldest_queued_ms"],
+            "workers_busy": workers["busy"],
+            "workers_ready": workers["ready"],
+            "workers_configured": workers["configured"],
         }
 
     @staticmethod

@@ -1331,6 +1331,12 @@ class TestGuardSurfaceServer:
             )
             with urllib.request.urlopen(health_request, timeout=5) as response:
                 health = json.loads(response.read().decode("utf-8"))
+            runtime_request = urllib.request.Request(
+                f"http://127.0.0.1:{daemon.port}/v1/runtime?include_items=0&include_receipts=0",
+                headers={"X-Guard-Token": daemon._server.auth_token},
+            )
+            with urllib.request.urlopen(runtime_request, timeout=5) as response:
+                runtime = json.loads(response.read().decode("utf-8"))
         finally:
             daemon.stop()
 
@@ -1344,6 +1350,13 @@ class TestGuardSurfaceServer:
         assert health["hook_workers"]["decisions"] == {}
         assert health["request_capacity"]["limit"] == 64
         assert health["request_capacity"]["critical_limit"] == 4
+        operator_health = runtime["operator_health"]
+        assert operator_health["state"] == "saturated"
+        assert operator_health["repairable"] is False
+        assert operator_health["queue_depth"] == health["hook_capacity"]["queued"]
+        assert operator_health["workers_busy"] == health["hook_workers"]["busy"]
+        assert operator_health["workers_ready"] == health["hook_workers"]["ready"]
+        assert "automatically" in operator_health["automatic_recovery"]
 
     def test_guard_daemon_queues_hook_burst_until_active_review_completes(
         self,

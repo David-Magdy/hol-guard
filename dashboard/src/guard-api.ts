@@ -162,6 +162,7 @@ type RuntimeSnapshotPayload = Omit<
   | "managed_installs"
   | "cloud_command_capability"
   | "protection_health"
+  | "operator_health"
   | "runtime_state"
   | "latest_receipts"
   | "inventory"
@@ -174,6 +175,7 @@ type RuntimeSnapshotPayload = Omit<
   managed_installs?: unknown;
   cloud_command_capability?: unknown;
   protection_health?: unknown;
+  operator_health?: unknown;
   runtime_state?: unknown;
 };
 
@@ -1611,6 +1613,38 @@ function normalizeCloudCommandCapability(raw: unknown): GuardRuntimeSnapshot["cl
   };
 }
 
+function nonNegativeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+export function normalizeOperatorHealth(raw: unknown): GuardRuntimeSnapshot["operator_health"] {
+  if (!isRecord(raw)) {
+    return undefined;
+  }
+  const state = raw["state"];
+  const cause = raw["cause"];
+  const automaticRecovery = raw["automatic_recovery"];
+  if (
+    !["healthy", "backlogged", "saturated", "store-contended"].includes(String(state))
+    || typeof cause !== "string"
+    || typeof automaticRecovery !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    state: state as "healthy" | "backlogged" | "saturated" | "store-contended",
+    cause,
+    automatic_recovery: automaticRecovery,
+    repairable: raw["repairable"] === true,
+    queue_depth: nonNegativeNumber(raw["queue_depth"]),
+    queue_limit: nonNegativeNumber(raw["queue_limit"]),
+    oldest_wait_ms: nonNegativeNumber(raw["oldest_wait_ms"]),
+    workers_busy: nonNegativeNumber(raw["workers_busy"]),
+    workers_ready: nonNegativeNumber(raw["workers_ready"]),
+    workers_configured: nonNegativeNumber(raw["workers_configured"]),
+  };
+}
+
 export function normalizeRuntimeSnapshot(snapshot: RuntimeSnapshotPayload): GuardRuntimeSnapshot {
   const protectionHealth = normalizeProtectionHealth(snapshot.protection_health);
   const runtimeState = normalizeRuntimeState(snapshot.runtime_state);
@@ -1630,6 +1664,7 @@ export function normalizeRuntimeSnapshot(snapshot: RuntimeSnapshotPayload): Guar
     supply_chain: normalizeSupplyChainSnapshot(snapshot.supply_chain),
     managed_installs: normalizeManagedInstalls(snapshot.managed_installs),
     cloud_command_capability: normalizeCloudCommandCapability(snapshot.cloud_command_capability),
+    operator_health: normalizeOperatorHealth(snapshot.operator_health),
     protection_health: protectionHealth,
   };
 }
@@ -1981,6 +2016,18 @@ export function buildDemoRuntimeSnapshot(): GuardRuntimeSnapshot {
       started_at: now,
       last_heartbeat_at: now,
       approval_center_url: "http://127.0.0.1:4455"
+    },
+    operator_health: {
+      state: "healthy",
+      cause: "Local reviews are processing within available capacity.",
+      automatic_recovery: "Guard drains queued work and adjusts ready workers automatically.",
+      repairable: false,
+      queue_depth: 0,
+      queue_limit: 256,
+      oldest_wait_ms: 0,
+      workers_busy: 1,
+      workers_ready: 3,
+      workers_configured: 4,
     },
     device: {
       installation_id: "demo-device-7f4a9c2d",

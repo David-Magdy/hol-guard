@@ -1,4 +1,4 @@
-import { g as getHeatmapLevel, j as jsxRuntimeExports, S as SectionLabel, E as EvidenceInsightsShareButton, G as GuardStatMetric, H as HomeInsightsMetrics, a as EvidenceActivityHeatmapMini, r as reactExports, h as homeCommandActivityModel, b as HiMiniCommandLine, c as HiMiniChevronRight, d as createCommandActivityClient, f as fetchCommandActivityApi, u as useReceiptAnalytics, e as harnessDisplayName, i as isConnectableAppHarness, p as protectionHealthFor, k as EmptyState, A as ActionButton, l as EvidenceInsightsShareModal, m as HiMiniCheckCircle, n as GuardHero, o as formatNumber, q as HiMiniShieldCheck, D as DeviceProofCard, s as guardActionDisposition, t as formatRelativeTime, v as guardActionActivityCopy, w as HiMiniSparkles, x as HiMiniXMark, y as HiMiniChevronUp, z as HiMiniChevronDown, B as resolveCloudIntelCopy, C as HiMiniCloud, F as HiMiniQuestionMarkCircle, I as useFocusTrap, J as approvalProofRequiresPassword, K as HiMiniExclamationTriangle, L as HiMiniBolt, M as Badge, N as HiMiniMinusCircle } from "../guard-dashboard.js";
+import { g as getHeatmapLevel, j as jsxRuntimeExports, S as SectionLabel, E as EvidenceInsightsShareButton, G as GuardStatMetric, H as HomeInsightsMetrics, a as EvidenceActivityHeatmapMini, r as reactExports, h as homeCommandActivityModel, b as HiMiniCommandLine, c as HiMiniChevronRight, d as createCommandActivityClient, f as fetchCommandActivityApi, u as useReceiptAnalytics, e as harnessDisplayName, i as isConnectableAppHarness, p as protectionHealthFor, k as EmptyState, A as ActionButton, l as EvidenceInsightsShareModal, m as HiMiniCheckCircle, n as GuardHero, O as OperatorHealthCard, o as formatNumber, q as HiMiniShieldCheck, D as DeviceProofCard, s as guardActionDisposition, t as formatRelativeTime, v as guardActionActivityCopy, w as HiMiniSparkles, x as HiMiniXMark, y as HiMiniChevronUp, z as HiMiniChevronDown, B as resolveCloudIntelCopy, C as HiMiniCloud, F as HiMiniQuestionMarkCircle, I as useFocusTrap, J as approvalProofRequiresPassword, K as HiMiniExclamationTriangle, L as HiMiniBolt, M as Badge, N as HiMiniMinusCircle } from "../guard-dashboard.js";
 import { H as HomeProtectionModule } from "./home-protection-module.js";
 function HomeInsightsSkeleton() {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
@@ -310,6 +310,7 @@ function HomeWorkspace(props) {
         cta: /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: ctaAction, "data-primary": "true", children: state.ctaLabel })
       }
     ),
+    snapshot.operator_health ? /* @__PURE__ */ jsxRuntimeExports.jsx(OperatorHealthCard, { health: snapshot.operator_health }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       EvidenceInsightsHomePreview,
       {
