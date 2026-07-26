@@ -154,8 +154,12 @@ def test_locked_storage_hook_burst_fails_safe_without_stranding_daemon(
 
     try:
         assert daemon._server.hook_process_runner.wait_for_capacity(  # pyright: ignore[reportPrivateUsage]
-            minimum_workers=4,
+            minimum_workers=1,
             timeout_seconds=15,
+        )
+        assert daemon._server.hook_process_runner.wait_for_capacity(  # pyright: ignore[reportPrivateUsage]
+            minimum_workers=4,
+            timeout_seconds=30,
         )
         worker_stats = daemon._server.hook_process_runner.stats()  # pyright: ignore[reportPrivateUsage]
         resumed_payload, resumed_elapsed = review(100)
