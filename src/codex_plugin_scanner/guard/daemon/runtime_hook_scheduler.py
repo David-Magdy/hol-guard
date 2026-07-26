@@ -325,7 +325,7 @@ class RuntimeHookScheduler:
         while self._active < self._active_limit and self._queued > 0:
             item = self._next_item()
             if item is None:
-                return
+                break
             self._decrement_queued(item)
             item.admitted = True
             self._active += 1

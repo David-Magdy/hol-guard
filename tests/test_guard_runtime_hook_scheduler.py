@@ -268,6 +268,61 @@ def test_scheduler_bounds_bytes_before_payload_hydration() -> None:
     assert scheduler.stats()["retained_bytes"] == 0
 
 
+def test_expired_waiter_wakes_byte_reservation_when_dispatch_remains_blocked() -> None:
+    scheduler = RuntimeHookScheduler(
+        active_limit=2,
+        per_harness_active_limit=1,
+        retained_bytes_limit=3,
+    )
+    active = scheduler.acquire(
+        harness="pi",
+        client_key="active",
+        lane="decision",
+        payload_bytes=1,
+        deadline=time.monotonic() + 1,
+    )
+    assert active.permit is not None
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        expires_at = time.monotonic() + 0.5
+        expired = executor.submit(
+            scheduler.acquire,
+            harness="pi",
+            client_key="expired",
+            lane="decision",
+            payload_bytes=1,
+            deadline=expires_at,
+        )
+        waiting = executor.submit(
+            scheduler.acquire,
+            harness="pi",
+            client_key="waiting",
+            lane="decision",
+            payload_bytes=1,
+            deadline=time.monotonic() + 1,
+        )
+        readiness_deadline = time.monotonic() + 0.25
+        while scheduler.stats()["queued"] < 2 and time.monotonic() < readiness_deadline:
+            time.sleep(0.001)
+        assert scheduler.stats()["queued"] == 2
+        reservation = executor.submit(
+            scheduler.reserve_bytes,
+            payload_bytes=1,
+            deadline=expires_at + 1,
+        )
+
+        assert expired.result(timeout=1).reason_code == "daemon_hook_deadline_exhausted"
+        admitted, reason = reservation.result(timeout=0.25)
+        assert admitted is not None
+        assert reason is None
+        admitted.release()
+        active.permit.release()
+        queued = waiting.result(timeout=0.25)
+
+    assert queued.permit is not None
+    queued.permit.release()
+
+
 def test_scheduler_rejects_single_payload_larger_than_byte_limit() -> None:
     scheduler = RuntimeHookScheduler(retained_bytes_limit=10)
 
