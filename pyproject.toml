@@ -159,6 +159,7 @@ markers = [
   "release: required for a release-candidate verification gate",
   "security_critical: protects a Guard security boundary that cannot be removed without an equivalent replacement",
   "slow: marks tests as slow (deselected by default; run with -m slow to include)",
+  "soak: marks long-running acceptance workloads that require explicit opt-in",
   "compat: verifies a supported Python or platform compatibility contract",
 ]
 
