@@ -40,6 +40,9 @@ class RuntimeHookSchedulerStats(TypedDict):
     rejected: dict[str, int]
     per_harness_active: dict[str, int]
     per_harness_queued: dict[str, int]
+    queue_wait_p95_ms: float
+    service_time_p95_ms: float
+    oldest_queued_ms: float
 
 
 @dataclass(slots=True)
@@ -50,6 +53,8 @@ class _QueuedHook:
     lane: RuntimeHookLane
     payload_bytes: int
     deadline: float
+    queued_at: float
+    admitted_at: float | None = None
     admitted: bool = False
 
 
@@ -159,7 +164,7 @@ class RuntimeHookScheduler:
             per_client_queued_limit,
             retained_bytes_limit,
         )
-        if any(limit < 1 for limit in limits):
+        if active_limit < 0 or any(limit < 1 for limit in limits[1:]):
             raise ValueError("runtime hook scheduler limits must be positive")
         self._active_limit = active_limit
         self._per_harness_active_limit = per_harness_active_limit
@@ -186,6 +191,8 @@ class RuntimeHookScheduler:
         self._completed = 0
         self._expired = 0
         self._rejected: dict[str, int] = {}
+        self._queue_wait_samples: deque[float] = deque(maxlen=2048)
+        self._service_time_samples: deque[float] = deque(maxlen=2048)
 
     def acquire(
         self,
@@ -224,6 +231,7 @@ class RuntimeHookScheduler:
                 lane=lane,
                 payload_bytes=payload_bytes,
                 deadline=deadline,
+                queued_at=now,
             )
             self._enqueue(item)
             if byte_reservation is not None:
@@ -294,6 +302,7 @@ class RuntimeHookScheduler:
 
     def stats(self) -> RuntimeHookSchedulerStats:
         with self._condition:
+            now = self._monotonic()
             return {
                 "active": self._active,
                 "active_limit": self._active_limit,
@@ -307,7 +316,17 @@ class RuntimeHookScheduler:
                 "rejected": dict(self._rejected),
                 "per_harness_active": dict(self._active_by_harness),
                 "per_harness_queued": dict(self._queued_by_harness),
+                "queue_wait_p95_ms": self._percentile_ms(self._queue_wait_samples, 0.95),
+                "service_time_p95_ms": self._percentile_ms(self._service_time_samples, 0.95),
+                "oldest_queued_ms": self._oldest_queued_ms(now),
             }
+
+    def set_active_limit(self, active_limit: int) -> None:
+        if active_limit < 0:
+            raise ValueError("runtime hook scheduler active limit must not be negative")
+        with self._condition:
+            self._active_limit = active_limit
+            self._dispatch()
 
     def _reject(self, reason_code: RuntimeHookAdmissionReason) -> RuntimeHookAdmission:
         self._rejected[reason_code] = self._rejected.get(reason_code, 0) + 1
@@ -328,6 +347,8 @@ class RuntimeHookScheduler:
                 break
             self._decrement_queued(item)
             item.admitted = True
+            item.admitted_at = self._monotonic()
+            self._queue_wait_samples.append(max(0.0, item.admitted_at - item.queued_at))
             self._active += 1
             self._active_by_harness[item.harness] = self._active_by_harness.get(item.harness, 0) + 1
             self._active_by_client[item.client_key] = self._active_by_client.get(item.client_key, 0) + 1
@@ -411,7 +432,24 @@ class RuntimeHookScheduler:
             self._decrement_counter(self._active_by_client, item.client_key)
             self._retained_bytes -= item.payload_bytes
             self._completed += 1
+            if item.admitted_at is not None:
+                self._service_time_samples.append(max(0.0, self._monotonic() - item.admitted_at))
             self._dispatch()
+
+    def _oldest_queued_ms(self, now: float) -> float:
+        oldest = min(
+            (item.queued_at for clients in self._queues.values() for items in clients.values() for item in items),
+            default=None,
+        )
+        return 0.0 if oldest is None else max(0.0, now - oldest) * 1000.0
+
+    @staticmethod
+    def _percentile_ms(samples: deque[float], percentile: float) -> float:
+        if not samples:
+            return 0.0
+        ordered = sorted(samples)
+        index = max(0, math.ceil(len(ordered) * percentile) - 1)
+        return ordered[index] * 1000.0
 
     @staticmethod
     def _decrement_counter(counters: dict[str, int], key: str) -> None:

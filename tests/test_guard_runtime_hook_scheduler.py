@@ -38,6 +38,62 @@ def test_scheduler_waits_for_capacity_instead_of_rejecting() -> None:
     assert scheduler.stats()["rejected"] == {}
 
 
+def test_scheduler_dynamic_capacity_wakes_waiter() -> None:
+    scheduler = RuntimeHookScheduler(active_limit=0)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        waiting = executor.submit(
+            scheduler.acquire,
+            harness="pi",
+            client_key="one",
+            lane="decision",
+            payload_bytes=1,
+            deadline=time.monotonic() + 1,
+        )
+        time.sleep(0.02)
+        assert not waiting.done()
+        scheduler.set_active_limit(1)
+        admitted = waiting.result(timeout=1)
+
+    assert admitted.permit is not None
+    admitted.permit.release()
+    assert scheduler.stats()["active_limit"] == 1
+
+
+def test_scheduler_handles_48_routine_reviews_without_capacity_rejection() -> None:
+    scheduler = RuntimeHookScheduler(
+        active_limit=8,
+        queued_limit=64,
+        per_harness_queued_limit=64,
+        per_client_queued_limit=16,
+    )
+    barrier = threading.Barrier(48)
+
+    def review(index: int) -> None:
+        barrier.wait(timeout=2)
+        admission = scheduler.acquire(
+            harness="pi",
+            client_key=f"client-{index % 6}",
+            lane="decision",
+            payload_bytes=1,
+            deadline=time.monotonic() + 2,
+        )
+        assert admission.permit is not None
+        time.sleep(0.002)
+        admission.permit.release()
+
+    with ThreadPoolExecutor(max_workers=48) as executor:
+        futures = [executor.submit(review, index) for index in range(48)]
+        for future in futures:
+            future.result(timeout=3)
+
+    stats = scheduler.stats()
+    assert stats["completed"] == 48
+    assert stats["rejected"] == {}
+    assert stats["queue_wait_p95_ms"] > 0
+    assert stats["service_time_p95_ms"] > 0
+
+
 def test_scheduler_expires_waiter_at_its_deadline() -> None:
     scheduler = RuntimeHookScheduler(active_limit=1)
     first = scheduler.acquire(

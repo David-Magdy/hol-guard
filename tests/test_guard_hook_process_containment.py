@@ -5,7 +5,7 @@ import threading
 import pytest
 
 from codex_plugin_scanner.guard.daemon import hook_process_worker as hook_worker_module
-from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessRunner
+from codex_plugin_scanner.guard.daemon.hook_process_spawner import hook_worker_became_ready
 from codex_plugin_scanner.guard.daemon.hook_process_worker import HookWorkerSlot, retire_worker_slot
 
 
@@ -87,7 +87,7 @@ def test_explicit_pre_isolation_failure_allows_direct_cleanup() -> None:
         connection=_ProtocolConnection(("isolation_failed", None)),
     )
 
-    assert not HookProcessRunner._slot_became_ready(slot, 0.1)  # pyright: ignore[reportPrivateUsage]
+    assert not hook_worker_became_ready(slot, 0.1)
     assert slot.pre_isolation_contained
     assert retire_worker_slot(slot)
 

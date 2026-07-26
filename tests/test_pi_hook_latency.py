@@ -15,7 +15,7 @@ from typing import Protocol, cast
 
 import pytest
 
-from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessReview
+from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessReview, HookProcessRunner
 from codex_plugin_scanner.guard.daemon.manager import GUARD_DAEMON_COMPATIBILITY_VERSION
 from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
 from codex_plugin_scanner.guard.store import GuardStore
@@ -23,7 +23,7 @@ from codex_plugin_scanner.guard.store import GuardStore
 
 class _DaemonInternals(Protocol):
     auth_token: str
-    hook_process_runner: object
+    hook_process_runner: HookProcessRunner
 
 
 def _daemon_internals(daemon: GuardDaemonServer) -> _DaemonInternals:
@@ -153,7 +153,7 @@ def test_pi_hook_is_not_queued_behind_unrelated_overlay_free_review(
     assert first_result == [{"decision": "allow"}]
 
 
-def test_pi_daemon_keeps_health_responsive_during_twenty_active_hooks(
+def test_pi_daemon_keeps_health_responsive_at_active_process_capacity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -174,6 +174,8 @@ def test_pi_daemon_keeps_health_responsive_during_twenty_active_hooks(
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
     monkeypatch.setattr(_daemon_internals(daemon).hook_process_runner, "review", fake_review)
     daemon.start()
+    process_capacity = _daemon_internals(daemon).hook_process_runner.stats()["ready"]
+    assert process_capacity >= 1
     results: list[dict[str, object]] = []
     failures: list[Exception] = []
 
@@ -189,12 +191,12 @@ def test_pi_daemon_keeps_health_responsive_during_twenty_active_hooks(
         except Exception as error:
             failures.append(error)
 
-    threads = [threading.Thread(target=run_hook, args=(index,)) for index in range(20)]
+    threads = [threading.Thread(target=run_hook, args=(index,)) for index in range(process_capacity)]
     for thread in threads:
         thread.start()
     try:
         with started_condition:
-            assert started_condition.wait_for(lambda: started_count == 20, timeout=5)
+            assert started_condition.wait_for(lambda: started_count == process_capacity, timeout=5)
         health_started_at = time.monotonic()
         with urllib.request.urlopen(f"http://127.0.0.1:{daemon.port}/healthz", timeout=1) as response:
             health = json.loads(response.read())
@@ -213,13 +215,16 @@ def test_pi_daemon_keeps_health_responsive_during_twenty_active_hooks(
 
     assert health == {"ok": True, "compatibility_version": GUARD_DAEMON_COMPATIBILITY_VERSION}
     assert health_elapsed < 0.5
-    assert detailed_health["hook_capacity"]["active"] == 20
+    assert detailed_health["hook_capacity"]["active"] == process_capacity
     assert detailed_health["hook_capacity"]["limit"] == 32
     assert detailed_health["hook_capacity"]["rejected"] == 0
-    assert detailed_health["hook_capacity"]["per_harness_active"]["pi"] == 20
+    assert detailed_health["hook_capacity"]["per_harness_active"]["pi"] == process_capacity
+    assert detailed_health["hook_process_capacity"]["active"] == process_capacity
+    assert detailed_health["hook_process_capacity"]["active_limit"] == process_capacity
+    assert detailed_health["hook_process_capacity"]["queued"] == 0
     assert detailed_health["request_capacity"]["limit"] == 64
     assert failures == []
-    assert results == [{"decision": "allow"}] * 20
+    assert results == [{"decision": "allow"}] * process_capacity
 
 
 def test_pi_extension_keeps_fallbacks_inside_outer_hook_deadline(tmp_path: Path) -> None:
@@ -372,7 +377,9 @@ console.log(JSON.stringify({
 
     assert payload["code"] == "ECONTAINMENT"
     assert payload["recoveryAllowed"] is False
-    assert float(payload["elapsedMs"]) < 1_000
+    elapsed_ms = payload["elapsedMs"]
+    assert isinstance(elapsed_ms, int | float)
+    assert float(elapsed_ms) < 1_000
 
 
 @pytest.mark.skipif(_bun_executable() is None, reason="Bun is required to execute Pi cleanup helpers")
