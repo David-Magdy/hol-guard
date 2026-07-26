@@ -23,8 +23,7 @@ def test_writer_keeps_blocked_persistence_off_submitter_without_raw_payload(tmp_
         return True
 
     with patch(
-        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
-        "persist_deferred_post_hook_command_activity",
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer.persist_deferred_post_hook_command_activity",
         side_effect=record,
     ):
         writer = RuntimeHookEvidenceWriter(store=GuardStore(tmp_path / "guard-home"))
@@ -64,8 +63,7 @@ def test_writer_drops_only_evidence_when_queue_is_full(tmp_path: Path) -> None:
         return True
 
     with patch(
-        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
-        "persist_deferred_post_hook_command_activity",
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer.persist_deferred_post_hook_command_activity",
         side_effect=record,
     ):
         writer = RuntimeHookEvidenceWriter(
@@ -132,8 +130,7 @@ def test_writer_drains_accepted_records_on_shutdown(tmp_path: Path) -> None:
         return True
 
     with patch(
-        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
-        "persist_deferred_post_hook_command_activity",
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer.persist_deferred_post_hook_command_activity",
         side_effect=record,
     ):
         writer = RuntimeHookEvidenceWriter(
@@ -163,8 +160,7 @@ def test_writer_recovers_accepted_record_after_failed_process(tmp_path: Path) ->
         raise sqlite3.OperationalError("database is locked")
 
     with patch(
-        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
-        "persist_deferred_post_hook_command_activity",
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer.persist_deferred_post_hook_command_activity",
         side_effect=fail,
     ):
         first = RuntimeHookEvidenceWriter(store=GuardStore(guard_home), batch_wait_seconds=0)
@@ -181,8 +177,7 @@ def test_writer_recovers_accepted_record_after_failed_process(tmp_path: Path) ->
 
     recorded: list[object] = []
     with patch(
-        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
-        "persist_deferred_post_hook_command_activity",
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer.persist_deferred_post_hook_command_activity",
         side_effect=lambda **kwargs: recorded.append(kwargs["has_command"]) or True,
     ):
         recovered = RuntimeHookEvidenceWriter(store=GuardStore(guard_home), batch_wait_seconds=0)
@@ -205,8 +200,7 @@ def test_writer_preserves_only_failed_records_from_partial_batch(tmp_path: Path)
         return True
 
     with patch(
-        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer."
-        "persist_deferred_post_hook_command_activity",
+        "codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer.persist_deferred_post_hook_command_activity",
         side_effect=record,
     ):
         writer = RuntimeHookEvidenceWriter(store=GuardStore(guard_home), batch_wait_seconds=0.05)

@@ -5278,9 +5278,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         if remaining_hint is None:
             remaining_hint = _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS
         hinted_deadline = RuntimeHookDeadline.from_remaining_hint(remaining_hint)
-        hook_deadline = RuntimeHookDeadline(
-            expires_at=min(hinted_deadline.expires_at, transport_deadline)
-        )
+        hook_deadline = RuntimeHookDeadline(expires_at=min(hinted_deadline.expires_at, transport_deadline))
         hook_env = _runtime_hook_env_overlay_from_payload(payload)
         payload = {key: value for key, value in payload.items() if key != "hook_env"}
         try:
@@ -6690,10 +6688,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     "daemon_hook_queue_bytes",
                 )
             )
-            or (
-                scheduler["queued_limit"] > 0
-                and scheduler["queued"] >= scheduler["queued_limit"]
-            )
+            or (scheduler["queued_limit"] > 0 and scheduler["queued"] >= scheduler["queued_limit"])
         )
 
         if worker_fault or evidence_fault:

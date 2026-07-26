@@ -49,8 +49,7 @@ _HOOK_DEADLINE_SECONDS = 8
 _MINIMUM_OPERATION_SECONDS = 0.01
 _OVERLOAD_RESERVE_MS = 100
 _OVERLOAD_REASON = (
-    "HOL Guard is temporarily saturated and kept this action blocked. "
-    "No approval was requested; retry the action."
+    "HOL Guard is temporarily saturated and kept this action blocked. No approval was requested; retry the action."
 )
 
 

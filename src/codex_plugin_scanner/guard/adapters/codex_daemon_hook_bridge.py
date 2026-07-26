@@ -64,8 +64,7 @@ _LAUNCH_INTEGRITY_REASON = (
 _MINIMUM_OPERATION_SECONDS = 0.01
 _OVERLOAD_RESERVE_MS = 100
 _OVERLOAD_REASON = (
-    "HOL Guard is temporarily saturated and kept this action blocked. "
-    "No approval was requested; retry the action."
+    "HOL Guard is temporarily saturated and kept this action blocked. No approval was requested; retry the action."
 )
 
 
@@ -527,6 +526,7 @@ def main(
     daemon_overloaded = False
     transient_overload = False
     failure_kind = "transport-failure"
+
     def daemon_request() -> dict[str, object] | None:
         return _daemon_response(
             state_path=state_path,
