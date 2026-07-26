@@ -8,11 +8,44 @@ import pytest
 
 from codex_plugin_scanner.guard.runtime.github_capability_contract import GitHubCommandCapability
 from codex_plugin_scanner.guard.runtime.github_command_capabilities import classify_github_cli
+from codex_plugin_scanner.guard.runtime.github_pr_body_file import static_markdown_pr_edit_body_file_operand
 from codex_plugin_scanner.guard.runtime.secret_file_requests import extract_sensitive_tool_action_request
 
 
 def _text(*parts: str) -> str:
     return "".join(parts)
+
+
+def test_static_markdown_pr_edit_body_file_operand_accepts_bounded_edit() -> None:
+    assert (
+        static_markdown_pr_edit_body_file_operand(
+            (
+                "1905",
+                "--repo",
+                "hashgraph-online/hol-guard",
+                "--body-file",
+                "~/.omp/agent/sessions/workspace/session/local/hol-guard-pr-body.md",
+            )
+        )
+        == "~/.omp/agent/sessions/workspace/session/local/hol-guard-pr-body.md"
+    )
+
+
+@pytest.mark.parametrize(
+    "args",
+    (
+        ("$PR", "--body-file", "pr-body.md"),
+        ("1905", "--repo", "$REPO", "--body-file", "pr-body.md"),
+        ("1905", "--title", "changed", "--body-file", "pr-body.md"),
+        ("1905", "--body", "changed"),
+        ("1905", "--body-file", "pr-body.md", "--body-file", "other-pr-body.md"),
+        ("1905", "--body-file", "~/other/pr-body.md~"),
+        ("1905", "--body-file", "pr-body.txt"),
+        ("https://github.com/example/repo/pull/1905", "--body-file", "pr-body.md"),
+    ),
+)
+def test_static_markdown_pr_edit_body_file_operand_rejects_unbounded_edit(args: tuple[str, ...]) -> None:
+    assert static_markdown_pr_edit_body_file_operand(args) is None
 
 
 @pytest.mark.parametrize(
