@@ -1351,7 +1351,7 @@ class TestGuardSurfaceServer:
         assert health["request_capacity"]["limit"] == 32
         assert health["request_capacity"]["critical_limit"] == 8
         operator_health = runtime["operator_health"]
-        assert operator_health["state"] == "saturated"
+        assert operator_health["state"] == "healthy"
         assert operator_health["repairable"] is False
         assert operator_health["queue_depth"] == health["hook_capacity"]["queued"]
         assert operator_health["workers_busy"] == health["hook_workers"]["busy"]

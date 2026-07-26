@@ -324,6 +324,7 @@ _MAX_CONCURRENT_RUNTIME_HOOKS = 32
 _MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS = 24
 _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS = 3.0
 _RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS = 1.45
+_RUNTIME_POST_HOOK_PROCESS_TIMEOUT_SECONDS = 2.75
 _DAEMON_REQUEST_READ_TIMEOUT_SECONDS = 0.4
 _DAEMON_CONNECTION_ADMISSION_WAIT_SECONDS = 0.05
 _DAEMON_CONTROL_ADMISSION_WAIT_SECONDS = 1.0
@@ -5705,9 +5706,15 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         harness = runtime_harness or default_harness
         daemon_server = self._daemon_server()
         workspace_path = Path(workspace) if workspace is not None else None
+        hook_event_name = payload.get("hook_event_name")
+        process_timeout_seconds = (
+            _RUNTIME_POST_HOOK_PROCESS_TIMEOUT_SECONDS
+            if isinstance(hook_event_name, str) and hook_event_name.strip().lower() == "posttooluse"
+            else _RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS
+        )
         process_deadline = min(
             deadline if deadline is not None else float("inf"),
-            time.monotonic() + _RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS,
+            time.monotonic() + process_timeout_seconds,
         )
         admission = daemon_server.runtime_hook_process_scheduler.acquire(
             harness=harness,
