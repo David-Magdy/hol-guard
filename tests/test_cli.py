@@ -23,7 +23,7 @@ EXPECTED_GOOD_PLUGIN_SCORE = 91
 
 
 class TestFormatJson:
-    def test_valid_json_output(self):
+    def test_good_plugin_json_output_has_expected_schema_and_category_structure(self):
         result = scan_plugin(FIXTURES / "good-plugin")
         output = format_json(result)
         parsed = json.loads(output)
@@ -40,10 +40,6 @@ class TestFormatJson:
         assert "summary" in parsed
         assert "findings" in parsed
 
-    def test_categories_have_correct_structure(self):
-        result = scan_plugin(FIXTURES / "good-plugin")
-        output = format_json(result)
-        parsed = json.loads(output)
         cat = parsed["categories"][0]
         assert "name" in cat
         assert "score" in cat
@@ -66,22 +62,15 @@ class TestFormatJson:
 
 
 class TestFormatText:
-    def test_contains_header(self):
+    def test_good_plugin_text_output_contains_summary_and_categories(self):
         result = scan_plugin(FIXTURES / "good-plugin")
         output = format_text(result)
         assert "Plugin Scanner" in output
         assert f"{result.score}/100" in output
         assert "Excellent" in output
 
-    def test_contains_category_names(self):
-        result = scan_plugin(FIXTURES / "good-plugin")
-        output = format_text(result)
         assert "Manifest Validation" in output
         assert "Security" in output
-
-    def test_contains_final_score_line(self):
-        result = scan_plugin(FIXTURES / "good-plugin")
-        output = format_text(result)
         assert "Final Score" in output
 
     def test_bad_plugin_output(self):

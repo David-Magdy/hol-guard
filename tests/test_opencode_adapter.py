@@ -237,43 +237,37 @@ class TestOpenCodeConfigPrecedence:
 
 
 class TestOpenCodeInstall:
-    def test_install_creates_managed_config_file(self, tmp_path: Path) -> None:
+    def test_fresh_install_creates_contract_and_is_idempotent(self, tmp_path: Path) -> None:
         ctx = _ctx(tmp_path)
-        result = OpenCodeHarnessAdapter().install(ctx)
-        managed_config = Path(result["managed_config_path"])
+        adapter = OpenCodeHarnessAdapter()
+        first_result = adapter.install(ctx)
+
+        managed_config = Path(first_result["managed_config_path"])
         assert managed_config.is_file()
 
-    def test_install_creates_backup_file(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        result = OpenCodeHarnessAdapter().install(ctx)
-        backup_path = Path(result["backup_path"])
+        backup_path = Path(first_result["backup_path"])
         assert backup_path.is_file()
 
-    def test_install_creates_state_file(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        result = OpenCodeHarnessAdapter().install(ctx)
-        state_path = Path(result["state_path"])
+        state_path = Path(first_result["state_path"])
         assert state_path.is_file()
 
-    def test_install_creates_runtime_config(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        result = OpenCodeHarnessAdapter().install(ctx)
-        runtime_path = Path(result["runtime_config_path"])
+        runtime_path = Path(first_result["runtime_config_path"])
         assert runtime_path.is_file()
-
-    def test_install_runtime_config_has_schema(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        result = OpenCodeHarnessAdapter().install(ctx)
-        runtime_path = Path(result["runtime_config_path"])
         payload = json.loads(runtime_path.read_text(encoding="utf-8"))
         assert "$schema" in payload
 
-    def test_install_backup_records_no_prior_content_when_new(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        result = OpenCodeHarnessAdapter().install(ctx)
-        backup_path = Path(result["backup_path"])
         backup_payload = json.loads(backup_path.read_text(encoding="utf-8"))
         assert backup_payload["existed"] is False
+
+        assert first_result["active"] is True
+        assert first_result["harness"] == "opencode"
+        assert isinstance(first_result["notes"], list)
+        assert len(first_result["notes"]) > 0
+        assert first_result["runtime_env_var"] == "OPENCODE_CONFIG_CONTENT"
+
+        second_result = adapter.install(ctx)
+        assert first_result["managed_config_path"] == second_result["managed_config_path"]
+        assert Path(second_result["managed_config_path"]).is_file()
 
     def test_install_backup_preserves_original_content(self, tmp_path: Path) -> None:
         ctx = _ctx(tmp_path)
@@ -287,19 +281,6 @@ class TestOpenCodeInstall:
         assert backup_payload["existed"] is True
         assert backup_payload["content"] == original
 
-    def test_install_marks_harness_as_active(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        result = OpenCodeHarnessAdapter().install(ctx)
-        assert result["active"] is True
-        assert result["harness"] == "opencode"
-
-    def test_install_is_idempotent(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        result1 = OpenCodeHarnessAdapter().install(ctx)
-        result2 = OpenCodeHarnessAdapter().install(ctx)
-        assert result1["managed_config_path"] == result2["managed_config_path"]
-        assert Path(result2["managed_config_path"]).is_file()
-
     def test_install_with_existing_mcp_adds_permission_rules(self, tmp_path: Path) -> None:
         ctx = _ctx(tmp_path)
         target = OpenCodeHarnessAdapter._managed_install_config_path(ctx)
@@ -308,17 +289,6 @@ class TestOpenCodeInstall:
         OpenCodeHarnessAdapter().install(ctx)
         managed_config = json.loads(target.read_text(encoding="utf-8"))
         assert "permission" in managed_config
-
-    def test_install_report_includes_notes(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        result = OpenCodeHarnessAdapter().install(ctx)
-        assert isinstance(result["notes"], list)
-        assert len(result["notes"]) > 0
-
-    def test_install_report_includes_runtime_env_var(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        result = OpenCodeHarnessAdapter().install(ctx)
-        assert result["runtime_env_var"] == "OPENCODE_CONFIG_CONTENT"
 
     def test_install_keeps_original_mcp_servers_on_disk(self, tmp_path: Path) -> None:
         ctx = _ctx(tmp_path)
@@ -505,26 +475,18 @@ class TestOpenCodeUninstall:
         OpenCodeHarnessAdapter().uninstall(ctx)
         assert target.read_text(encoding="utf-8") == original
 
-    def test_uninstall_removes_file_when_no_prior_config_existed(self, tmp_path: Path) -> None:
+    def test_fresh_uninstall_removes_artifacts_and_marks_harness_inactive(self, tmp_path: Path) -> None:
         ctx = _ctx(tmp_path)
-        OpenCodeHarnessAdapter().install(ctx)
-        target = OpenCodeHarnessAdapter._managed_install_config_path(ctx)
-        OpenCodeHarnessAdapter().uninstall(ctx)
-        assert not target.is_file()
-
-    def test_uninstall_marks_harness_inactive(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        OpenCodeHarnessAdapter().install(ctx)
-        result = OpenCodeHarnessAdapter().uninstall(ctx)
-        assert result["active"] is False
-        assert result["harness"] == "opencode"
-
-    def test_uninstall_removes_state_file(self, tmp_path: Path) -> None:
-        ctx = _ctx(tmp_path)
-        install_result = OpenCodeHarnessAdapter().install(ctx)
+        adapter = OpenCodeHarnessAdapter()
+        install_result = adapter.install(ctx)
+        target = adapter._managed_install_config_path(ctx)
         state_path = Path(install_result["state_path"])
         assert state_path.is_file()
-        OpenCodeHarnessAdapter().uninstall(ctx)
+
+        result = adapter.uninstall(ctx)
+        assert not target.is_file()
+        assert result["active"] is False
+        assert result["harness"] == "opencode"
         assert not state_path.is_file()
 
 
