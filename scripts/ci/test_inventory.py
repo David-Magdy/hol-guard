@@ -144,6 +144,7 @@ def corpus_record_count() -> int:
         COPILOT_NODE_DELETE_DENY_CASES,
     )
     from tests.guard_seeded_faults import PARSER_SEEDED_FAULTS
+    from tests.test_guard_action_lattice import ACTION_LATTICE_PAIR_CASES
     from tests.test_guard_command_critical_floors import (
         CRITICAL_COMMAND_FLOORS,
         CRITICAL_NEAR_MISS_COMMANDS,
@@ -155,7 +156,9 @@ def corpus_record_count() -> int:
         PR_MERGE_ADMIN_CAPABILITY_CASES,
         UNRELATED_DYNAMIC_COMMAND_CASES,
     )
+    from tests.test_guard_package_shims import PACKAGE_SHIM_GUARD_CASES
     from tests.test_guard_risk import (
+        ENCODED_EXEC_PIPELINE_CASES,
         LOCAL_COMPOSE_SAFE_CASES,
         LOCAL_SHELL_RISK_CASES,
         MUTATING_PYTHON_MODULE_DENY_CASES,
@@ -168,12 +171,15 @@ def corpus_record_count() -> int:
         + len(COPILOT_ENCODED_EXEC_DENY_CASES)
         + len(COPILOT_NODE_DELETE_DENY_CASES)
         + len(PARSER_SEEDED_FAULTS)
+        + len(ACTION_LATTICE_PAIR_CASES)
         + len(CRITICAL_COMMAND_FLOORS)
         + len(CRITICAL_NEAR_MISS_COMMANDS)
         + len(GITHUB_REVIEW_FLOORS)
         + len(PR_MERGE_ADMIN_CAPABILITY_CASES)
         + len(UNRELATED_DYNAMIC_COMMAND_CASES)
         + len(SPECIALIZED_SAFE_VARIANT_CASES)
+        + len(PACKAGE_SHIM_GUARD_CASES)
+        + len(ENCODED_EXEC_PIPELINE_CASES)
         + len(BENIGN_DATA_FLOW_CASES)
         + len(MALICIOUS_DATA_FLOW_CASES)
         + len(LOCAL_COMPOSE_SAFE_CASES)
