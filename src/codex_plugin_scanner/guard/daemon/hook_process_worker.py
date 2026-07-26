@@ -12,6 +12,8 @@ from typing import Protocol
 
 from ..codex_hook_windows_job import windows_system_executable_path
 
+_WORKER_RETIRE_JOIN_TIMEOUT_SECONDS = 2.0
+
 
 class WorkerProcess(Protocol):
     @property
@@ -122,7 +124,7 @@ def retire_worker_slot(slot: HookWorkerSlot, *, graceful: bool = False) -> bool:
         tree_contained = False
     else:
         tree_contained = slot.windows_job_contained
-    slot.process.join(timeout=0.5)
+    slot.process.join(timeout=_WORKER_RETIRE_JOIN_TIMEOUT_SECONDS)
     contained = (tree_contained or slot.windows_job_contained) and not slot.process.is_alive()
     if not contained:
         with slot.retire_lock:

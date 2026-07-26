@@ -25,6 +25,18 @@ class _DeadGuardian:
         return
 
 
+class _SlowlyScheduledGuardian(_DeadGuardian):
+    def __init__(self) -> None:
+        self._alive = True
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    def join(self, timeout: float | None = None) -> None:
+        if timeout is not None and timeout >= 1:
+            self._alive = False
+
+
 class _Connection:
     def send(self, obj: object) -> None:
         del obj
@@ -78,3 +90,19 @@ def test_explicit_pre_isolation_failure_allows_direct_cleanup() -> None:
     assert not HookProcessRunner._slot_became_ready(slot, 0.1)  # pyright: ignore[reportPrivateUsage]
     assert slot.pre_isolation_contained
     assert retire_worker_slot(slot)
+
+
+def test_contained_guardian_gets_bounded_time_to_exit_after_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guardian = _SlowlyScheduledGuardian()
+    slot = HookWorkerSlot(
+        process=guardian,
+        connection=_Connection(),
+        isolation_ready=True,
+    )
+    monkeypatch.setattr(hook_worker_module.os, "name", "posix")
+    monkeypatch.setattr(hook_worker_module.os, "killpg", lambda *_args: None)
+
+    assert retire_worker_slot(slot)
+    assert not guardian.is_alive()
