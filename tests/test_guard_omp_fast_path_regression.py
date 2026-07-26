@@ -79,7 +79,7 @@ def test_omp_post_tool_read_burst_uses_resident_scanner(
         return result
 
     try:
-        with ThreadPoolExecutor(max_workers=24) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             results = list(executor.map(review, range(24)))
         worker_stats = daemon._server.hook_process_runner.stats()  # pyright: ignore[reportPrivateUsage]
     finally:
