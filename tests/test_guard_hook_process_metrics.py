@@ -19,3 +19,13 @@ def test_hook_process_metrics_bound_untrusted_label_cardinality() -> None:
     assert sum(reason_codes.values()) == 101
     assert decisions["unknown"] == 70
     assert reason_codes["unknown"] == 70
+
+
+def test_hook_process_metrics_coalesce_prepopulated_limit_into_unknown() -> None:
+    counts = {f"existing_{index}": 1 for index in range(32)}
+
+    increment_bounded_metric(counts, "new_label")
+
+    assert len(counts) == 32
+    assert sum(counts.values()) == 33
+    assert counts["unknown"] == 2
