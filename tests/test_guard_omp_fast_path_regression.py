@@ -11,6 +11,7 @@ from typing import TypeGuard, cast
 
 import pytest
 
+from codex_plugin_scanner.guard.daemon import server as daemon_server_module
 from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
 from codex_plugin_scanner.guard.store import GuardStore
 
@@ -28,6 +29,7 @@ def test_omp_post_tool_read_burst_uses_resident_scanner(
     workspace.mkdir(parents=True)
     store = GuardStore(home_dir)
     monkeypatch.setenv("HOL_GUARD_HOOK_FAST_PATH", "1")
+    monkeypatch.setattr(daemon_server_module, "_RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS", 5.0)
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
     daemon.start()
     query = urllib.parse.urlencode(
