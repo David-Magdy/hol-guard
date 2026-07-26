@@ -106,7 +106,7 @@ class HookProcessRunner:
             self._recovery_event.clear()
             self._generation += 1
             generation = self._generation
-            self._capacity_target = 1 if defer_backfill else self._initial_target
+            self._capacity_target = min(2, self._initial_target) if defer_backfill else self._initial_target
             self._backfill_not_before = 0.0
             self._backfill_force_after = 0.0
             self._closed = False
@@ -131,14 +131,23 @@ class HookProcessRunner:
             timeout_seconds=_HOOK_PROCESS_READY_TIMEOUT_SECONDS,
         )
 
-    def enable_full_capacity(self, *, delay_seconds: float = _HOOK_PROCESS_BACKFILL_DELAY_SECONDS) -> None:
+    def enable_full_capacity(
+        self,
+        *,
+        delay_seconds: float = _HOOK_PROCESS_BACKFILL_DELAY_SECONDS,
+        active_deferral_seconds: float | None = None,
+    ) -> None:
+        if active_deferral_seconds is None:
+            active_deferral_seconds = _HOOK_PROCESS_BACKFILL_MAX_DEFERRAL_SECONDS
+        if active_deferral_seconds < 0:
+            raise ValueError("active_deferral_seconds must not be negative")
         with self._state_lock:
             if self._closed or not self._started:
                 return
             now = time.monotonic()
             self._capacity_target = self._initial_target
             self._backfill_not_before = now + max(0.0, delay_seconds)
-            self._backfill_force_after = self._backfill_not_before + _HOOK_PROCESS_BACKFILL_MAX_DEFERRAL_SECONDS
+            self._backfill_force_after = self._backfill_not_before + active_deferral_seconds
         self._recovery_event.set()
 
     def review(

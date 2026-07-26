@@ -438,22 +438,22 @@ def test_scheduler_and_runner_complete_48_routine_reviews_without_capacity_denia
     assert scheduler.stats()["rejected"] == {}
 
 
-def test_deferred_runner_serves_first_worker_before_backfilling(tmp_path: Path) -> None:
-    runner = HookProcessRunner(guard_home=tmp_path, process_limit=2, timeout_seconds=2)
+def test_deferred_runner_serves_startup_floor_before_backfilling(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=4, timeout_seconds=2)
     ready_workers = 0
     try:
         runner.start(defer_backfill=True)
-        assert runner.stats()["ready"] == 1
+        assert runner.stats()["ready"] == 2
 
         runner.enable_full_capacity(delay_seconds=0)
         deadline = time.monotonic() + 3
-        while runner.stats()["ready"] != 2 and time.monotonic() < deadline:
+        while runner.stats()["ready"] != 4 and time.monotonic() < deadline:
             time.sleep(0.02)
         ready_workers = runner.stats()["ready"]
     finally:
         runner.close()
 
-    assert ready_workers == 2
+    assert ready_workers == 4
     assert runner.stats()["workers"] == 0
 
 
@@ -461,7 +461,7 @@ def test_deferred_runner_bounds_backfill_deferral_during_active_reviews(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runner = HookProcessRunner(guard_home=tmp_path, process_limit=2)
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=3)
     original_start = runner._start_slot  # pyright: ignore[reportPrivateUsage]
     attempts = 0
 
@@ -479,8 +479,8 @@ def test_deferred_runner_bounds_backfill_deferral_during_active_reviews(
             runner._active_reviews[generation] = 1  # pyright: ignore[reportPrivateUsage]
         runner.enable_full_capacity(delay_seconds=0)
         time.sleep(0.1)
-        assert attempts == 1
-        assert runner.wait_for_capacity(minimum_workers=2, timeout_seconds=5)
+        assert attempts == 2
+        assert runner.wait_for_capacity(minimum_workers=3, timeout_seconds=5)
     finally:
         with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
             runner._active_reviews.clear()  # pyright: ignore[reportPrivateUsage]
