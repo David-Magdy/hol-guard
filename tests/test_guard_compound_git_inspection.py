@@ -152,9 +152,17 @@ def test_cross_workspace_git_show_keeps_unsafe_variants_guarded(
     assert artifact is not None
 
 
+@pytest.mark.parametrize(
+    "inspection",
+    (
+        "git show HEAD",
+        "git show b56514561 -- workers/services/ 2>&1 | head -60",
+    ),
+)
 def test_cross_workspace_git_show_rejects_configured_textconv(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    inspection: str,
 ) -> None:
     for key in ("GIT_EXTERNAL_DIFF", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"):
         monkeypatch.delenv(key, raising=False)
@@ -174,9 +182,7 @@ def test_cross_workspace_git_show_rejects_configured_textconv(
         payload={
             "hook_event_name": "PreToolUse",
             "tool_name": "Bash",
-            "tool_input": {
-                "command": (f"cd {inspected_workspace} && git show b56514561 -- workers/services/ 2>&1 | head -60")
-            },
+            "tool_input": {"command": f"cd {inspected_workspace} && {inspection}"},
         },
         action_envelope=None,
         home_dir=home,

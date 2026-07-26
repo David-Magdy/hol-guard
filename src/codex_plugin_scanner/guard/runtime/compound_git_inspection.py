@@ -83,7 +83,7 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
     if operation == "ls-files":
         return _safe_ls_files_args(args)
     if operation == "show":
-        return _safe_show_args(args) and ("--" not in args or _git_show_has_execution_free_config(segment))
+        return _safe_show_args(args) and _git_show_has_execution_free_config(segment)
     return False
 
 
