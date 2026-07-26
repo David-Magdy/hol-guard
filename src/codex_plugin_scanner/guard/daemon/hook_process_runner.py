@@ -141,7 +141,9 @@ class HookProcessRunner:
             generation = self._generation
             self._active_reviews[generation] = self._active_reviews.get(generation, 0) + 1
         outer_deadline = deadline if deadline is not None else float("inf")
-        review_deadline = min(time.monotonic() + self._timeout_seconds, outer_deadline)
+        worker_deadline = time.monotonic() + self._timeout_seconds
+        review_deadline = min(worker_deadline, outer_deadline)
+        caller_deadline_limited = outer_deadline <= worker_deadline
         try:
             try:
                 acquire_timeout = min(
@@ -166,8 +168,10 @@ class HookProcessRunner:
                 slot.connection.send(("review", request))
                 remaining_seconds = max(0.0, review_deadline - time.monotonic())
                 if not slot.connection.poll(remaining_seconds):
-                    self._increment_metric("timeouts")
                     self._replace_slot_async(slot)
+                    if caller_deadline_limited:
+                        return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
+                    self._increment_metric("timeouts")
                     return HookProcessReview(None, "daemon_hook_process_timeout")
                 raw_message = slot.connection.recv()
             except (BrokenPipeError, EOFError, OSError):

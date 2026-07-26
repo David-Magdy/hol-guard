@@ -260,6 +260,49 @@ def test_slow_pi_reviews_release_every_slot_within_client_daemon_budget(
     assert worker_timeout < GUARD_DAEMON_HOOK_TIMEOUT_MS / 1000
 
 
+def test_poll_phase_caller_deadline_retires_worker_without_timeout_metric(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    runner = HookProcessRunner(
+        guard_home=tmp_path,
+        process_limit=1,
+        timeout_seconds=1,
+    )
+    runner._started = True  # pyright: ignore[reportPrivateUsage]
+    process = _FakeProcess(1)
+    slot = HookWorkerSlot(
+        process=process,
+        connection=_SlowConnection(
+            entered=[0],
+            entered_lock=threading.Lock(),
+            all_entered=threading.Event(),
+        ),
+        pre_isolation_contained=True,
+    )
+    runner._all_slots[process.pid] = slot  # pyright: ignore[reportPrivateUsage]
+    runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(hook_worker_module, "terminate_worker_tree", _contain_fake_process)
+
+    result = runner.review(
+        payload={"hook_event_name": "PreToolUse"},
+        harness="pi",
+        home_dir=tmp_path,
+        guard_home=tmp_path,
+        workspace=tmp_path,
+        hook_env={},
+        deadline=time.monotonic() + 0.02,
+    )
+
+    assert result.reason_code == "daemon_hook_process_deadline_exhausted"
+    assert runner.stats()["timeouts"] == 0
+    retire_deadline = time.monotonic() + 0.5
+    while runner.stats()["workers"] and time.monotonic() < retire_deadline:
+        time.sleep(0.01)
+    assert runner.stats()["workers"] == 0
+    assert runner.close_contained()
+
+
 def test_retirement_thread_exhaustion_fails_pool_closed_without_delaying_review(
     tmp_path,
     monkeypatch,
