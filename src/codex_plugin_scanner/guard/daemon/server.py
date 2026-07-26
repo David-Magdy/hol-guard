@@ -20,7 +20,6 @@ import time
 import uuid
 import webbrowser
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -381,7 +380,6 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     runtime_hook_scheduler: RuntimeHookScheduler
     runtime_hook_process_scheduler: RuntimeHookScheduler
     runtime_hook_evidence_writer: RuntimeHookEvidenceWriter
-    connection_executor: ThreadPoolExecutor
     request_capacity: threading.BoundedSemaphore
     request_capacity_limit: int
     connection_capacity: threading.BoundedSemaphore
@@ -411,9 +409,6 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         super().handle_error(cast(socket.socket, request), client_address)
 
     def server_close(self) -> None:
-        executor = getattr(self, "connection_executor", None)
-        if executor is not None:
-            executor.shutdown(wait=True, cancel_futures=True)
         writer = getattr(self, "runtime_hook_evidence_writer", None)
         if writer is not None:
             _ = writer.stop(timeout_seconds=1.0)
@@ -468,10 +463,6 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self.runtime_hook_scheduler = RuntimeHookScheduler(
             active_limit=_MAX_CONCURRENT_RUNTIME_HOOKS,
             per_harness_active_limit=_MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS,
-        )
-        self.connection_executor = ThreadPoolExecutor(
-            max_workers=_MAX_CONCURRENT_DAEMON_CONNECTIONS,
-            thread_name_prefix="hol-guard-http",
         )
         self.runtime_hook_process_scheduler = RuntimeHookScheduler(
             active_limit=0,
@@ -533,11 +524,7 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         with self.request_capacity_lock:
             self.active_requests += 1
         try:
-            _ = self.connection_executor.submit(
-                self.process_request_thread,
-                request_socket,
-                client_address,
-            )
+            super().process_request(request_socket, client_address)
         except BaseException:
             self._release_request_capacity(request_socket)
             raise
