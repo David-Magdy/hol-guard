@@ -6449,14 +6449,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "limit": daemon_server.request_capacity_limit,
                 "rejected": daemon_server.rejected_requests,
             }
-        if evidence_writer_stats["failures"]:
+        if evidence_writer_stats["failures"] and evidence_writer_stats["queued"]:
             load_state = "store-contended"
             load_detail = "Evidence persistence is retrying outside the security decision path."
-        elif (
-            scheduler_stats["expired"]
-            or process_scheduler_stats["expired"]
-            or daemon_server.rejected_hook_requests
-        ):
+        elif scheduler_stats["expired"] or process_scheduler_stats["expired"] or daemon_server.rejected_hook_requests:
             load_state = "saturated"
             load_detail = "Secure review capacity was exhausted; recovery is automatic as load falls."
         elif scheduler_stats["queued"] or process_scheduler_stats["queued"]:
