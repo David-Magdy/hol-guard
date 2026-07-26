@@ -20,6 +20,7 @@ import time
 import uuid
 import webbrowser
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -378,6 +379,7 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     hook_capacity_lock: threading.Lock
     runtime_hook_scheduler: RuntimeHookScheduler
     runtime_hook_evidence_writer: RuntimeHookEvidenceWriter
+    connection_executor: ThreadPoolExecutor
     request_capacity: threading.BoundedSemaphore
     request_capacity_limit: int
     connection_capacity: threading.BoundedSemaphore
@@ -407,6 +409,9 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         super().handle_error(cast(socket.socket, request), client_address)
 
     def server_close(self) -> None:
+        executor = getattr(self, "connection_executor", None)
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
         writer = getattr(self, "runtime_hook_evidence_writer", None)
         if writer is not None:
             _ = writer.stop(timeout_seconds=1.0)
@@ -462,6 +467,10 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
             active_limit=_MAX_CONCURRENT_RUNTIME_HOOKS,
             per_harness_active_limit=_MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS,
         )
+        self.connection_executor = ThreadPoolExecutor(
+            max_workers=_MAX_CONCURRENT_DAEMON_CONNECTIONS,
+            thread_name_prefix="hol-guard-http",
+        )
         self.request_capacity_limit = _MAX_CONCURRENT_DAEMON_REQUESTS
         self.request_capacity = threading.BoundedSemaphore(self.request_capacity_limit)
         self.connection_capacity_limit = _MAX_CONCURRENT_DAEMON_CONNECTIONS
@@ -516,7 +525,11 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         with self.request_capacity_lock:
             self.active_requests += 1
         try:
-            super().process_request(request_socket, client_address)
+            _ = self.connection_executor.submit(
+                self.process_request_thread,
+                request_socket,
+                client_address,
+            )
         except BaseException:
             self._release_request_capacity(request_socket)
             raise
@@ -6397,6 +6410,18 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "limit": daemon_server.request_capacity_limit,
                 "rejected": daemon_server.rejected_requests,
             }
+        if evidence_writer_stats["failures"]:
+            load_state = "store-contended"
+            load_detail = "Evidence persistence is retrying outside the security decision path."
+        elif scheduler_stats["expired"] or daemon_server.rejected_hook_requests:
+            load_state = "saturated"
+            load_detail = "Secure review capacity was exhausted; recovery is automatic as load falls."
+        elif scheduler_stats["queued"]:
+            load_state = "backlogged"
+            load_detail = "Queued reviews are draining automatically."
+        else:
+            load_state = "healthy"
+            load_detail = "Review capacity is available."
         return {
             "ok": True,
             "receipts": len(store.list_receipts(limit=500)),
@@ -6421,6 +6446,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "schema_version": activity_health.schema_version,
             },
             "hook_capacity": hook_capacity,
+            "hook_load": {
+                "state": load_state,
+                "detail": load_detail,
+            },
             "hook_workers": daemon_server.hook_process_runner.stats(),
             "request_capacity": request_capacity,
         }

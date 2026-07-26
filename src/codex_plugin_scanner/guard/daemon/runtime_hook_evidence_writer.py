@@ -7,7 +7,7 @@ import threading
 from collections import deque
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TypedDict, final
 
 from ..cli.commands_support_command_activity import record_post_hook_command_activity_best_effort
@@ -32,6 +32,7 @@ class _CommandActivityRecord:
     payload: dict[str, object]
     succeeded: bool
     payload_bytes: int
+    attempts: int = 0
 
 
 @final
@@ -121,10 +122,6 @@ class RuntimeHookEvidenceWriter:
 
     def stop(self, *, timeout_seconds: float = 1.0) -> bool:
         with self._condition:
-            if self._records:
-                self._dropped += len(self._records)
-                self._records.clear()
-                self._queued_bytes = 0
             self._stopping = True
             self._condition.notify_all()
         self._thread.join(timeout=max(0.0, timeout_seconds))
@@ -135,11 +132,7 @@ class RuntimeHookEvidenceWriter:
             batch = self._next_batch()
             if not batch:
                 return
-            for index, record in enumerate(batch):
-                with self._condition:
-                    if self._stopping:
-                        self._dropped += len(batch) - index
-                        return
+            for record in batch:
                 try:
                     with sqlite_connect_timeout_override(self._sqlite_timeout_seconds):
                         _ = record_post_hook_command_activity_best_effort(
@@ -153,9 +146,13 @@ class RuntimeHookEvidenceWriter:
                 except Exception:
                     with self._condition:
                         self._failures += 1
-                finally:
-                    with self._condition:
-                        self._processed += 1
+                        if record.attempts < 2:
+                            self._records.appendleft(replace(record, attempts=record.attempts + 1))
+                            self._queued_bytes += record.payload_bytes
+                            self._condition.notify()
+                            continue
+                with self._condition:
+                    self._processed += 1
 
     def _next_batch(self) -> list[_CommandActivityRecord]:
         with self._condition:
