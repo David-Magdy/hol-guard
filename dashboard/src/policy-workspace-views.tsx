@@ -221,15 +221,15 @@ function PolicyRuleRow({ policy, cloudControlsUrl, onClear, onNavigate, cloudVar
         </div>
       </EvidenceTableCell>
 
-      <EvidenceTableCell className="hidden w-[88px] lg:table-cell">
+      <EvidenceTableCell className="hidden w-[88px] whitespace-nowrap lg:table-cell">
         <span className="text-sm text-brand-dark">{resolvePolicyRowSourceLabel(policy)}</span>
       </EvidenceTableCell>
 
-      <EvidenceTableCell className="hidden w-[104px] lg:table-cell">
+      <EvidenceTableCell className="hidden w-[104px] whitespace-nowrap lg:table-cell">
         <span className="text-sm font-medium text-brand-blue">{scopeTag}</span>
       </EvidenceTableCell>
 
-      <EvidenceTableCell className="hidden w-[96px] lg:table-cell">
+      <EvidenceTableCell className="hidden w-[96px] whitespace-nowrap lg:table-cell">
         <span className="font-medium text-brand-blue">{harnessDisplayName(policy.harness)}</span>
       </EvidenceTableCell>
 
@@ -255,13 +255,13 @@ function PolicyRuleRow({ policy, cloudControlsUrl, onClear, onNavigate, cloudVar
       <EvidenceTableCell className="hidden w-[108px] text-right lg:table-cell">
         <div className="flex items-center justify-end gap-2">
           {cloudManaged ? (
-            <span className="text-xs font-medium text-slate-500">Read-only</span>
+            <span className="whitespace-nowrap text-xs font-medium text-slate-500">Read-only</span>
           ) : null}
           {canClear ? (
             <button
               type="button"
               onClick={handleClear}
-              className="inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:text-rose-700"
+              className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-rose-600 hover:text-rose-700"
             >
               Remove rule
             </button>
