@@ -19,8 +19,8 @@ def _fixture_id(workload: WorkloadSpec) -> str:
 
 
 @pytest.mark.parametrize("workload", load_correctness_workloads(), ids=_fixture_id)
-def test_packaged_correctness_workloads(workload: WorkloadSpec) -> None:
-    result = run_workload(workload)
+def test_packaged_correctness_workloads(workload: WorkloadSpec, tmp_path: Path) -> None:
+    result = run_workload(workload, root=tmp_path)
     expected_secrets = sum(
         (client["requests"] + workload["secret_stride"] - 1) // workload["secret_stride"]
         for client in workload["clients"]
@@ -229,11 +229,11 @@ def test_aggregate_report_drops_sensitive_and_unbounded_fields() -> None:
 
 @pytest.mark.slow
 @pytest.mark.soak
-def test_opt_in_soak_profile_is_separate_from_correctness() -> None:
+def test_opt_in_soak_profile_is_separate_from_correctness(tmp_path: Path) -> None:
     # The release runner replaces this bounded smoke duration with the manifest's
     # 1,800-second duration; marking it slow keeps it out of routine PR checks.
     workload = load_correctness_workloads()[-1]
-    result = run_workload(workload)
+    result = run_workload(workload, root=tmp_path)
     assert result.generic_failures == 0
     assert result.pid_stable
     assert result.workers_stable

@@ -309,7 +309,8 @@ class StoreConnectionSchemaMixin:
                     _release_advisory_file_lock(handle)
 
     def _initialize_serialized(self) -> None:
-        if getattr(self, "_daemon_managed_schema", False) and self._schema_is_current():
+        daemon_managed = getattr(self, "_daemon_managed_schema", False)
+        if daemon_managed and self._schema_is_current():
             self._initialize_policy_integrity()
             return
         timeout_seconds = sqlite_connect_timeout_seconds()
@@ -319,6 +320,15 @@ class StoreConnectionSchemaMixin:
             poll_seconds=min(0.05, max(timeout_seconds, 0.001)),
             timeout_message="Timed out waiting for the Guard schema migration lock.",
         ):
+            if daemon_managed:
+                deadline = time.monotonic() + timeout_seconds
+                while True:
+                    if self._schema_is_current():
+                        self._initialize_policy_integrity()
+                        return
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(min(0.025, max(0.0, deadline - time.monotonic())))
             self._initialize()
 
     def _initialize(self) -> None:

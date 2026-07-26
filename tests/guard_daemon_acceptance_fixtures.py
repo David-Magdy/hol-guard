@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import resource
+import secrets
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, cast
+from unittest.mock import patch
 
-from codex_plugin_scanner.guard.daemon.runtime_hook_scheduler import RuntimeHookScheduler
+from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
+from codex_plugin_scanner.guard.store import GuardStore
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "guard-daemon-acceptance" / "workloads.json"
 
@@ -48,6 +55,7 @@ class WorkloadResult:
     browser_launches: int
     inbox_requests: int
     dispatch_counts: dict[str, int]
+    failure_reasons: dict[str, int]
 
 
 def load_correctness_workloads() -> tuple[WorkloadSpec, ...]:
@@ -55,62 +63,169 @@ def load_correctness_workloads() -> tuple[WorkloadSpec, ...]:
     return tuple(cast(list[WorkloadSpec], payload["correctness"]))
 
 
-def run_workload(spec: WorkloadSpec) -> WorkloadResult:
-    """Run a bounded workload through the production admission scheduler."""
+def run_workload(spec: WorkloadSpec, *, root: Path) -> WorkloadResult:
+    """Run a bounded workload through authenticated production hook endpoints."""
 
     request_count = sum(client["requests"] for client in spec["clients"])
     max_workers = sum(client["concurrency"] for client in spec["clients"])
-    scheduler = RuntimeHookScheduler(
-        active_limit=max(8, max_workers),
-        per_harness_active_limit=max(8, max_workers),
-        queued_limit=request_count,
-        per_harness_queued_limit=request_count,
-        per_client_queued_limit=request_count,
-        retained_bytes_limit=max(1024, request_count * 16),
+    guard_home = root / "guard-home"
+    workspace = root / "workspace"
+    workspace.mkdir(parents=True)
+    store = GuardStore(guard_home)
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0, idle_timeout_seconds=0)
+    daemon.start()
+    daemon_state = cast(
+        dict[str, object],
+        json.loads((guard_home / "daemon-state.json").read_text(encoding="utf-8")),
     )
+    if not daemon._server.hook_process_runner.wait_for_capacity(
+        minimum_workers=1,
+        timeout_seconds=15,
+    ):
+        raise RuntimeError("production hook workers did not become ready")
     initial_pid = os.getpid()
     initial_workers = threading.active_count()
     initial_rss = _rss_bytes()
+    initial_inbox = len(store.list_approval_requests(status=None, limit=None))
     outcomes: Counter[str] = Counter()
     dispatch: Counter[str] = Counter()
+    failure_reasons: Counter[str] = Counter()
     latencies_ms: list[float] = []
     lock = threading.Lock()
 
     def review(harness: str, client: str, index: int) -> None:
         started = time.monotonic()
-        admission = scheduler.acquire(
-            harness=harness,
-            client_key=client,
-            lane="decision",
-            payload_bytes=16,
-            deadline=started + 10,
+        secret_request = index % spec["secret_stride"] == 0
+        output = (
+            "token=sk-proj-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE" if secret_request else "routine documentation"
         )
-        if admission.permit is None:
-            outcome = admission.reason_code or "generic_failure"
-        else:
-            try:
-                # Fixture labels carry no command, path, prompt, or secret material.
-                outcome = "secret_denied" if index % spec["secret_stride"] == 0 else "routine_allowed"
-                with lock:
-                    dispatch[harness] += 1
-            finally:
-                admission.permit.release()
+        payload = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
+            "tool_input": {"path": "src/secret.txt" if secret_request else "docs/readme.md"},
+            "tool_response": [{"type": "text", "text": output}],
+            "stdout": output,
+            "session_id": client,
+            "guard_remaining_ms": 10_000,
+        }
+        query = (
+            f"guard-home={urllib.parse.quote(str(guard_home))}&"
+            f"home={urllib.parse.quote(str(root))}&"
+            f"workspace={urllib.parse.quote(str(workspace))}"
+        )
+        try:
+            if harness == "codex":
+                result = None
+                for attempt in range(2):
+                    nonce = secrets.token_hex(32)
+                    connection = http.client.HTTPConnection("127.0.0.1", daemon.port, timeout=12)
+                    try:
+                        connection.request(
+                            "POST",
+                            "/v1/daemon/identity-challenge",
+                            body=json.dumps(
+                                {
+                                    "protocol_version": 1,
+                                    "nonce": nonce,
+                                    "state_id": daemon_state["state_id"],
+                                    "hook_event": "PostToolUse",
+                                }
+                            ).encode(),
+                            headers={"Content-Type": "application/json", "Connection": "keep-alive"},
+                        )
+                        challenge_response = connection.getresponse()
+                        challenge_body = challenge_response.read()
+                        if challenge_response.status == 503 and attempt == 0:
+                            time.sleep(0.05)
+                            continue
+                        if challenge_response.status != 200:
+                            raise RuntimeError(f"challenge-status-{challenge_response.status}")
+                        challenge = cast(dict[str, object], json.loads(challenge_body))
+                        connection.request(
+                            "POST",
+                            f"/v1/hooks/codex?{query}",
+                            body=json.dumps(payload).encode(),
+                            headers={
+                                "Connection": "close",
+                                "Content-Type": "application/json",
+                                "X-Guard-Token": daemon._server.auth_token,
+                                "X-Guard-Daemon-Nonce": nonce,
+                                "X-Guard-Daemon-Proof": str(challenge["proof"]),
+                                "X-Guard-Remaining-Ms": "10000",
+                            },
+                        )
+                        hook_response = connection.getresponse()
+                        hook_body = hook_response.read()
+                        if hook_response.status != 200:
+                            raise RuntimeError(f"hook-status-{hook_response.status}")
+                        result = cast(dict[str, object], json.loads(hook_body))
+                        break
+                    finally:
+                        connection.close()
+                if result is None:
+                    raise RuntimeError("codex-review-unavailable")
+            else:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{daemon.port}/v1/hooks/{harness}?{query}",
+                    data=json.dumps(payload).encode(),
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Guard-Token": daemon._server.auth_token,
+                        "X-Guard-Remaining-Ms": "10000",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=12) as response:
+                    result = cast(dict[str, object], json.loads(response.read()))
+            blocked = _response_blocks_action(result)
+            outcome = (
+                "secret_denied"
+                if secret_request and blocked
+                else "routine_allowed"
+                if not secret_request and not blocked
+                else "generic_failure"
+            )
+            with lock:
+                dispatch[harness] += 1
+                if outcome == "generic_failure":
+                    failure_reasons[str(result.get("reason_code", result.get("decision", "unexpected-response")))] += 1
+        except Exception as error:
+            outcome = "generic_failure"
+            with lock:
+                error_key = (
+                    f"HTTPError:{error.code}"
+                    if isinstance(error, urllib.error.HTTPError)
+                    else f"{type(error).__name__}:{error}"
+                )
+                failure_reasons[error_key] += 1
         elapsed_ms = (time.monotonic() - started) * 1000
         with lock:
             outcomes[outcome] += 1
             latencies_ms.append(elapsed_ms)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(review, client["harness"], client["client"], index)
-            for client in spec["clients"]
-            for index in range(client["requests"])
-        ]
-        for future in futures:
-            future.result(timeout=15)
+    browser_calls: list[str] = []
+    try:
+        with (
+            patch(
+                "codex_plugin_scanner.guard.daemon.server.webbrowser.open",
+                side_effect=lambda url: browser_calls.append(str(url)) or False,
+            ),
+            ThreadPoolExecutor(max_workers=max_workers) as executor,
+        ):
+            futures = [
+                executor.submit(review, client["harness"], client["client"], index)
+                for client in spec["clients"]
+                for index in range(client["requests"])
+            ]
+            for future in futures:
+                future.result(timeout=30)
+        worker_stats = daemon._server.hook_process_runner.stats()
+        scheduler_stats = daemon._server.runtime_hook_scheduler.stats()
+        final_inbox = len(store.list_approval_requests(status=None, limit=None))
+    finally:
+        daemon.stop()
 
     ordered = sorted(latencies_ms)
-    stats = scheduler.stats()
     return WorkloadResult(
         fixture_id=spec["id"],
         requests=request_count,
@@ -119,15 +234,35 @@ def run_workload(spec: WorkloadSpec) -> WorkloadResult:
         capacity_denials=sum(value for key, value in outcomes.items() if key.startswith("daemon_hook_")),
         generic_failures=outcomes["generic_failure"],
         pid_stable=os.getpid() == initial_pid,
-        workers_stable=threading.active_count() <= initial_workers + 1,
-        queue_bounded=stats["queued"] <= stats["queued_limit"] and stats["retained_bytes"] == 0,
+        workers_stable=(
+            worker_stats["workers"] <= worker_stats["configured"]
+            and worker_stats["failures"] == 0
+            and worker_stats["restarts"] == 0
+            and threading.active_count() <= initial_workers + 1
+        ),
+        queue_bounded=(
+            scheduler_stats["queued"] <= scheduler_stats["queued_limit"] and scheduler_stats["retained_bytes"] == 0
+        ),
         rss_growth_bytes=max(0, _rss_bytes() - initial_rss),
         p95_ms=_percentile(ordered, 0.95),
         p99_ms=_percentile(ordered, 0.99),
-        browser_launches=0,
-        inbox_requests=0,
+        browser_launches=len(browser_calls),
+        inbox_requests=max(0, final_inbox - initial_inbox),
         dispatch_counts=dict(dispatch),
+        failure_reasons=dict(failure_reasons),
     )
+
+
+def _response_blocks_action(result: dict[str, object]) -> bool:
+    if result.get("decision") in {"deny", "block", "ask"} or result.get("continue") is False:
+        return True
+    hook_output = result.get("hookSpecificOutput")
+    if not isinstance(hook_output, dict):
+        return False
+    if hook_output.get("permissionDecision") in {"deny", "block", "ask"}:
+        return True
+    decision = hook_output.get("decision")
+    return isinstance(decision, dict) and decision.get("behavior") in {"deny", "block", "ask"}
 
 
 def _percentile(ordered: list[float], fraction: float) -> float:

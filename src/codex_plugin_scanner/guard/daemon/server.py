@@ -772,6 +772,10 @@ class _GuardDaemonHttpServer(HTTPServer):
     def claim_request_capacity(self, request: socket.socket, path: str) -> bool:
         capacity_kind = self._request_capacity_kind(path)
         capacity = self._request_capacity_for_kind(capacity_kind)
+        with self.request_capacity_lock:
+            previous_kind = self.request_capacity_kinds.pop(id(request), None)
+        if previous_kind is not None:
+            self._request_capacity_for_kind(previous_kind).release()
         if not capacity.acquire(blocking=False):
             with self.request_capacity_lock:
                 self.rejected_requests += 1

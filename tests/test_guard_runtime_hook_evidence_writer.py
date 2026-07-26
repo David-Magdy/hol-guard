@@ -115,8 +115,9 @@ def test_writer_stops_with_bounded_sqlite_contention(tmp_path: Path) -> None:
         )
         time.sleep(0.02)
         started = time.monotonic()
-        assert not writer.stop(timeout_seconds=1)
+        assert writer.stop(timeout_seconds=1)
         assert time.monotonic() - started < 0.5
+        assert writer.stats()["durable_pending"] == 1
     finally:
         lock.rollback()
         lock.close()
@@ -171,7 +172,7 @@ def test_writer_recovers_accepted_record_after_failed_process(tmp_path: Path) ->
             succeeded=True,
         )
         assert failed.wait(timeout=1)
-        assert not first.stop(timeout_seconds=1)
+        assert first.stop(timeout_seconds=1)
         assert first.stats()["durable_pending"] == 1
         assert journal.stat().st_mode & 0o777 == 0o600
 
@@ -188,7 +189,7 @@ def test_writer_recovers_accepted_record_after_failed_process(tmp_path: Path) ->
     assert recorded == [True]
 
 
-def test_writer_preserves_only_failed_records_from_partial_batch(tmp_path: Path) -> None:
+def test_writer_retries_transient_partial_batch_failure_live(tmp_path: Path) -> None:
     guard_home = tmp_path / "guard-home"
     attempts: list[int] = []
 
@@ -211,13 +212,16 @@ def test_writer_preserves_only_failed_records_from_partial_batch(tmp_path: Path)
                 payload={"command": command},
                 succeeded=True,
             )
-        assert not writer.stop(timeout_seconds=1)
+        deadline = time.monotonic() + 1
+        while writer.stats()["processed"] != 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert writer.stop(timeout_seconds=1)
 
-    assert attempts == [1, 2, 3]
-    assert writer.stats()["processed"] == 2
-    assert writer.stats()["durable_pending"] == 1
+    assert attempts == [1, 2, 3, 4]
+    assert writer.stats()["processed"] == 3
+    assert writer.stats()["durable_pending"] == 0
     journal = (guard_home / "runtime-hook-evidence.jsonl").read_text(encoding="utf-8")
-    assert journal.count("\n") == 1
+    assert journal == ""
     assert "first" not in journal
     assert "second" not in journal
     assert "third" not in journal
@@ -229,17 +233,65 @@ def test_writer_rejects_record_when_durable_journal_is_full(tmp_path: Path) -> N
         batch_wait_seconds=0,
     )
     try:
-        with patch("os.write", side_effect=OSError(ENOSPC, "No space left on device")):
-            assert not writer.submit_command_activity(
+        attempted = threading.Event()
+
+        def fail_write(*_args: object) -> int:
+            attempted.set()
+            raise OSError(ENOSPC, "No space left on device")
+
+        with patch("os.write", side_effect=fail_write):
+            assert writer.submit_command_activity(
                 harness="pi",
                 event="PostToolUse",
                 payload={"command": "not accepted"},
                 succeeded=True,
             )
+            assert attempted.wait(timeout=1)
+            deadline = time.monotonic() + 1
+            while writer.stats()["dropped"] != 1 and time.monotonic() < deadline:
+                time.sleep(0.01)
         stats = writer.stats()
-        assert stats["accepted"] == 0
+        assert stats["accepted"] == 1
         assert stats["dropped"] == 1
         assert stats["failures"] == 1
         assert stats["degraded"] is True
+    finally:
+        assert writer.stop(timeout_seconds=1)
+
+
+def test_writer_rejects_symlinked_journal_without_modifying_target(tmp_path: Path) -> None:
+    guard_home = tmp_path / "guard-home"
+    guard_home.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("do not modify", encoding="utf-8")
+    (guard_home / "runtime-hook-evidence.jsonl").symlink_to(victim)
+
+    writer = RuntimeHookEvidenceWriter(store=GuardStore(guard_home), batch_wait_seconds=0)
+    try:
+        assert writer.submit_command_activity(
+            harness="pi",
+            event="PostToolUse",
+            payload={"command": "rg safe"},
+            succeeded=True,
+        )
+        deadline = time.monotonic() + 1
+        while writer.stats()["dropped"] != 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+    finally:
+        assert writer.stop(timeout_seconds=1)
+
+    assert victim.read_text(encoding="utf-8") == "do not modify"
+    assert writer.stats()["degraded"] is True
+
+
+def test_writer_bounds_oversized_journal_recovery(tmp_path: Path) -> None:
+    guard_home = tmp_path / "guard-home"
+    guard_home.mkdir()
+    (guard_home / "runtime-hook-evidence.jsonl").write_bytes(b"x" * 65)
+
+    writer = RuntimeHookEvidenceWriter(store=GuardStore(guard_home), max_bytes=64)
+    try:
+        assert writer.stats()["recovered"] == 0
+        assert writer.stats()["degraded"] is True
     finally:
         assert writer.stop(timeout_seconds=1)

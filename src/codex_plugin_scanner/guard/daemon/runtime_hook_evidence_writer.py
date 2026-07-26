@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import threading
 import time
 from collections import OrderedDict, deque
@@ -143,6 +144,7 @@ class RuntimeHookEvidenceWriter:
         self._condition = threading.Condition()
         self._records: deque[_CommandActivityRecord] = deque()
         self._durable: OrderedDict[str, _CommandActivityRecord] = OrderedDict()
+        self._retry_attempts: dict[str, int] = {}
         self._queued_bytes = 0
         self._accepted = 0
         self._processed = 0
@@ -202,14 +204,6 @@ class RuntimeHookEvidenceWriter:
                 self._dropped += 1
                 self._degraded = True
                 return False
-            try:
-                self._append_journal(record)
-            except OSError:
-                self._dropped += 1
-                self._failures += 1
-                self._degraded = True
-                return False
-            self._durable[record.record_id] = record
             self._records.append(record)
             self._queued_bytes += record.payload_bytes
             self._accepted += 1
@@ -238,10 +232,9 @@ class RuntimeHookEvidenceWriter:
             self._condition.notify_all()
         self._thread.join(timeout=max(0.0, timeout_seconds))
         with self._condition:
-            drained = not self._durable
-            if not drained:
+            if self._durable:
                 self._degraded = True
-        return not self._thread.is_alive() and drained
+        return not self._thread.is_alive()
 
     def _run(self) -> None:
         while True:
@@ -253,6 +246,19 @@ class RuntimeHookEvidenceWriter:
                     if self._drain_expired():
                         self._degraded = True
                         return
+                with self._condition:
+                    already_durable = record.record_id in self._durable
+                if not already_durable:
+                    try:
+                        self._append_journal(record)
+                    except OSError:
+                        with self._condition:
+                            self._dropped += 1
+                            self._failures += 1
+                            self._degraded = True
+                        continue
+                    with self._condition:
+                        self._durable[record.record_id] = record
                 try:
                     with sqlite_connect_timeout_override(self._sqlite_timeout_seconds):
                         _ = persist_deferred_post_hook_command_activity(
@@ -266,9 +272,16 @@ class RuntimeHookEvidenceWriter:
                     with self._condition:
                         self._failures += 1
                         self._degraded = True
+                        if not self._stopping:
+                            attempt = self._retry_attempts.get(record.record_id, 0) + 1
+                            self._retry_attempts[record.record_id] = attempt
+                            self._records.append(record)
+                            self._queued_bytes += record.payload_bytes
+                            _ = self._condition.wait(timeout=min(1.0, 0.05 * (2 ** min(attempt - 1, 5))))
                 else:
                     with self._condition:
                         self._processed += 1
+                        self._retry_attempts.pop(record.record_id, None)
                         _ = self._durable.pop(record.record_id, None)
                         try:
                             self._rewrite_journal()
@@ -296,13 +309,22 @@ class RuntimeHookEvidenceWriter:
 
     def _recover_journal(self) -> None:
         try:
-            raw_lines = self._journal_path.read_bytes().splitlines()
+            descriptor = self._open_journal(os.O_RDONLY)
         except FileNotFoundError:
             return
         except OSError:
             self._degraded = True
             self._failures += 1
             return
+        try:
+            metadata = os.fstat(descriptor)
+            if metadata.st_size > self._max_bytes:
+                self._degraded = True
+                self._failures += 1
+                return
+            raw_lines = os.read(descriptor, self._max_bytes + 1).splitlines()
+        finally:
+            os.close(descriptor)
         for raw_line in raw_lines:
             try:
                 decoded = cast(object, json.loads(raw_line))
@@ -324,7 +346,7 @@ class RuntimeHookEvidenceWriter:
 
     def _append_journal(self, record: _CommandActivityRecord) -> None:
         self._journal_path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor = os.open(self._journal_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        descriptor = self._open_journal(os.O_APPEND | os.O_CREAT | os.O_WRONLY)
         original_size = os.fstat(descriptor).st_size
         try:
             os.fchmod(descriptor, 0o600)
@@ -337,15 +359,29 @@ class RuntimeHookEvidenceWriter:
             os.close(descriptor)
 
     def _rewrite_journal(self) -> None:
-        temporary = self._journal_path.with_suffix(".tmp")
-        descriptor = os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+        temporary = self._journal_path.with_name(f".{self._journal_path.name}.{uuid4().hex}.tmp")
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(temporary, flags, 0o600)
         try:
-            for record in self._durable.values():
-                self._write_all(descriptor, record.serialized())
-            os.fsync(descriptor)
+            try:
+                for record in self._durable.values():
+                    self._write_all(descriptor, record.serialized())
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            os.replace(temporary, self._journal_path)
         finally:
+            temporary.unlink(missing_ok=True)
+
+    def _open_journal(self, flags: int) -> int:
+        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(self._journal_path, flags, 0o600)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             os.close(descriptor)
-        os.replace(temporary, self._journal_path)
+            raise OSError("evidence journal is not a private regular file")
+        return descriptor
 
     @staticmethod
     def _write_all(descriptor: int, payload: bytes) -> None:
