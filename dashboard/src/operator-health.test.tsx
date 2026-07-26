@@ -53,7 +53,10 @@ for (const state of ["healthy", "backlogged", "saturated", "store-contended"] as
 
 const repairMarkup = renderToStaticMarkup(<OperatorHealthCard health={health("saturated", true)} />);
 assert(repairMarkup.includes("Repair local processing"), "an actual component fault must offer repair");
-assert(repairMarkup.includes("/settings#approval-center-repair"), "repair must link to the working settings action");
+assert(
+  repairMarkup.includes("/settings?section=maintenance#approval-center-repair"),
+  "repair must link to the working settings action",
+);
 
 const normalized = normalizeOperatorHealth({
   ...health("backlogged"),

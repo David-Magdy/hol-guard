@@ -29,17 +29,30 @@ _ALLOWED_RESULT_FIELDS: Final = (
 
 def sanitize_report(payload: dict[str, object]) -> dict[str, object]:
     results = cast(list[object], payload.get("results", []))
-    sanitized_results = [
-        {field: item[field] for field in _ALLOWED_RESULT_FIELDS if field in item}
-        for raw_item in results
-        if isinstance(raw_item, dict)
-        for item in [cast(dict[str, object], raw_item)]
-    ]
+    sanitized_results: list[dict[str, object]] = []
+    for raw_item in results:
+        if not isinstance(raw_item, dict):
+            continue
+        item = cast(dict[str, object], raw_item)
+        sanitized = {field: item[field] for field in _ALLOWED_RESULT_FIELDS if field in item}
+        dispatch_counts = sanitized.get("dispatch_counts")
+        if isinstance(dispatch_counts, dict):
+            typed_dispatch_counts = cast(dict[object, object], dispatch_counts)
+            if not all(type(key) is str and type(value) is int for key, value in typed_dispatch_counts.items()):
+                _ = sanitized.pop("dispatch_counts", None)
+        else:
+            _ = sanitized.pop("dispatch_counts", None)
+        sanitized_results.append(sanitized)
+
+    def string_field(name: str, default: str) -> str:
+        value = payload.get(name)
+        return value if isinstance(value, str) else default
+
     return {
         "schema_version": 1,
-        "package_version": str(payload.get("package_version", "unknown")),
-        "git_sha": str(payload.get("git_sha", "unknown")),
-        "profile": str(payload.get("profile", "correctness")),
+        "package_version": string_field("package_version", "unknown"),
+        "git_sha": string_field("git_sha", "unknown"),
+        "profile": string_field("profile", "correctness"),
         "passed": bool(payload.get("passed", False)),
         "results": sanitized_results,
     }

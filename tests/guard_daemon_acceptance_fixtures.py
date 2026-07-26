@@ -38,6 +38,14 @@ class WorkloadSpec(TypedDict):
     secret_stride: int
 
 
+class SoakSpec(TypedDict):
+    id: str
+    duration_seconds: int
+    steady_requests_per_second: int
+    burst_concurrency: int
+    opt_in: bool
+
+
 @dataclass(frozen=True, slots=True)
 class WorkloadResult:
     fixture_id: str
@@ -61,6 +69,23 @@ class WorkloadResult:
 def load_correctness_workloads() -> tuple[WorkloadSpec, ...]:
     payload = cast(dict[str, object], json.loads(FIXTURE_PATH.read_text(encoding="utf-8")))
     return tuple(cast(list[WorkloadSpec], payload["correctness"]))
+
+
+def load_soak_workload() -> WorkloadSpec:
+    payload = cast(dict[str, object], json.loads(FIXTURE_PATH.read_text(encoding="utf-8")))
+    soak = cast(SoakSpec, payload["soak"])
+    return {
+        "id": soak["id"],
+        "clients": [
+            {
+                "harness": "pi",
+                "client": "pi-soak",
+                "requests": soak["duration_seconds"] * soak["steady_requests_per_second"],
+                "concurrency": soak["burst_concurrency"],
+            }
+        ],
+        "secret_stride": 10,
+    }
 
 
 def run_workload(spec: WorkloadSpec, *, root: Path) -> WorkloadResult:
@@ -178,8 +203,11 @@ def run_workload(spec: WorkloadSpec, *, root: Path) -> WorkloadResult:
                 with urllib.request.urlopen(request, timeout=12) as response:
                     result = cast(dict[str, object], json.loads(response.read()))
             blocked = _response_blocks_action(result)
+            reason_code = result.get("reason_code")
             outcome = (
-                "secret_denied"
+                str(reason_code)
+                if isinstance(reason_code, str) and reason_code.startswith("daemon_hook_")
+                else "secret_denied"
                 if secret_request and blocked
                 else "routine_allowed"
                 if not secret_request and not blocked
@@ -187,7 +215,7 @@ def run_workload(spec: WorkloadSpec, *, root: Path) -> WorkloadResult:
             )
             with lock:
                 dispatch[harness] += 1
-                if outcome == "generic_failure":
+                if outcome == "generic_failure" or outcome.startswith("daemon_hook_"):
                     failure_reasons[str(result.get("reason_code", result.get("decision", "unexpected-response")))] += 1
         except Exception as error:
             outcome = "generic_failure"

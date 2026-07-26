@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 import time
 from errno import ENOSPC
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from codex_plugin_scanner.guard.daemon.runtime_hook_evidence_writer import RuntimeHookEvidenceWriter
 from codex_plugin_scanner.guard.store import GuardStore
@@ -260,6 +263,7 @@ def test_writer_rejects_record_when_durable_journal_is_full(tmp_path: Path) -> N
         assert writer.stop(timeout_seconds=1)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="unprivileged Windows runners cannot create symlinks")
 def test_writer_rejects_symlinked_journal_without_modifying_target(tmp_path: Path) -> None:
     guard_home = tmp_path / "guard-home"
     guard_home.mkdir()

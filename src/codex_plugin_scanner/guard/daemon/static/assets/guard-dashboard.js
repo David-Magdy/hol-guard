@@ -22014,7 +22014,7 @@ function OperatorHealthCard(props) {
         " ",
         health.automatic_recovery
       ] }),
-      health.repairable ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: "/settings#approval-center-repair", variant: "secondary", children: "Repair local processing" }) : null
+      health.repairable ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: "/settings?section=maintenance#approval-center-repair", variant: "secondary", children: "Repair local processing" }) : null
     ] })
   ] });
 }

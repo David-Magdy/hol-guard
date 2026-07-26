@@ -21,6 +21,7 @@ from ..runtime.command_activity_correlation import (
     derive_proven_request_correlation,
     load_or_create_installation_correlation_key,
 )
+from ..runtime.command_activity_privacy import InstallationCorrelationKey
 from ..sqlite_tuning import sqlite_connect_timeout_override
 from ..store import GuardStore
 
@@ -146,6 +147,7 @@ class RuntimeHookEvidenceWriter:
         self._records: deque[_CommandActivityRecord] = deque()
         self._durable: OrderedDict[str, _CommandActivityRecord] = OrderedDict()
         self._retry_attempts: dict[str, int] = {}
+        self._in_flight = False
         self._queued_bytes = 0
         self._accepted = 0
         self._processed = 0
@@ -157,6 +159,12 @@ class RuntimeHookEvidenceWriter:
         self._drain_deadline: float | None = None
         self._sqlite_timeout_seconds = 0.05
         self._journal_path = journal_path or self._guard_home / "runtime-hook-evidence.jsonl"
+        try:
+            self._correlation_key: InstallationCorrelationKey | None = load_or_create_installation_correlation_key(
+                self._guard_home
+            )
+        except (OSError, ValueError):
+            self._correlation_key = None
         self._recover_journal()
         self._thread = threading.Thread(
             target=self._run,
@@ -176,13 +184,7 @@ class RuntimeHookEvidenceWriter:
         try:
             snapshot = deepcopy(dict(payload))
             encoded = json.dumps(snapshot, separators=(",", ":"), sort_keys=True).encode("utf-8")
-            key = load_or_create_installation_correlation_key(self._guard_home)
-            correlation = derive_proven_request_correlation(
-                harness=harness,
-                event=event,
-                payload=snapshot,
-                key=key,
-            )
+            correlation = self._derive_correlation(harness=harness, event=event, payload=snapshot)
         except Exception:
             with self._condition:
                 self._dropped += 1
@@ -211,6 +213,24 @@ class RuntimeHookEvidenceWriter:
             self._condition.notify()
         return True
 
+    def _derive_correlation(
+        self,
+        *,
+        harness: str,
+        event: str,
+        payload: Mapping[str, object],
+    ) -> CorrelationHandle | None:
+        key = self._correlation_key
+        if key is None:
+            key = load_or_create_installation_correlation_key(self._guard_home)
+            self._correlation_key = key
+        try:
+            return derive_proven_request_correlation(harness=harness, event=event, payload=payload, key=key)
+        except (OSError, ValueError):
+            key = load_or_create_installation_correlation_key(self._guard_home)
+            self._correlation_key = key
+            return derive_proven_request_correlation(harness=harness, event=event, payload=payload, key=key)
+
     def stats(self) -> RuntimeHookEvidenceWriterStats:
         with self._condition:
             return {
@@ -222,7 +242,7 @@ class RuntimeHookEvidenceWriter:
                 "failures": self._failures,
                 "recovered": self._recovered,
                 "durable_pending": len(self._durable),
-                "degraded": self._degraded or bool(self._durable and not self._records),
+                "degraded": self._degraded or bool(self._durable and not self._records and not self._in_flight),
                 "running": self._thread.is_alive() and not self._stopping,
             }
 
@@ -247,6 +267,7 @@ class RuntimeHookEvidenceWriter:
                     if self._drain_expired():
                         self._degraded = True
                         return
+                    self._in_flight = True
                 with self._condition:
                     already_durable = record.record_id in self._durable
                 if not already_durable:
@@ -257,6 +278,7 @@ class RuntimeHookEvidenceWriter:
                             self._dropped += 1
                             self._failures += 1
                             self._degraded = True
+                            self._in_flight = False
                         continue
                     with self._condition:
                         self._durable[record.record_id] = record
@@ -279,16 +301,22 @@ class RuntimeHookEvidenceWriter:
                             self._records.append(record)
                             self._queued_bytes += record.payload_bytes
                             _ = self._condition.wait(timeout=min(1.0, 0.05 * (2 ** min(attempt - 1, 5))))
+                        self._in_flight = False
                 else:
                     with self._condition:
                         self._processed += 1
                         self._retry_attempts.pop(record.record_id, None)
                         _ = self._durable.pop(record.record_id, None)
-                        try:
-                            self._rewrite_journal()
-                        except OSError:
+                        durable_records = tuple(self._durable.values())
+                    try:
+                        self._rewrite_journal(durable_records)
+                    except OSError:
+                        with self._condition:
                             self._failures += 1
                             self._degraded = True
+                    finally:
+                        with self._condition:
+                            self._in_flight = False
 
     def _next_batch(self) -> list[_CommandActivityRecord]:
         with self._condition:
@@ -359,14 +387,14 @@ class RuntimeHookEvidenceWriter:
         finally:
             os.close(descriptor)
 
-    def _rewrite_journal(self) -> None:
+    def _rewrite_journal(self, records: tuple[_CommandActivityRecord, ...]) -> None:
         temporary = self._journal_path.with_name(f".{self._journal_path.name}.{uuid4().hex}.tmp")
         flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(temporary, flags, 0o600)
         try:
             try:
-                for record in self._durable.values():
+                for record in records:
                     self._write_all(descriptor, record.serialized())
                 os.fsync(descriptor)
             finally:

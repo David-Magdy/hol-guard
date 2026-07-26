@@ -6704,8 +6704,6 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         workers = daemon_server.hook_process_runner.stats()
         evidence_writer = daemon_server.runtime_hook_evidence_writer.stats()
         activity_health = daemon_server.store.get_command_activity_persistence_health()
-        rejected = scheduler["rejected"]
-
         worker_fault = workers["configured"] > 0 and workers["workers"] == 0
         evidence_fault = not evidence_writer["running"]
         store_busy = (
@@ -6713,18 +6711,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             and activity_health.last_error_code is not None
             and activity_health.last_error_code.startswith("sqlite.")
         )
-        saturated = (
-            scheduler["expired"] > 0
-            or any(
-                rejected.get(reason, 0) > 0
-                for reason in (
-                    "daemon_hook_deadline_exhausted",
-                    "daemon_hook_queue_capacity",
-                    "daemon_hook_queue_bytes",
-                )
-            )
-            or (scheduler["queued_limit"] > 0 and scheduler["queued"] >= scheduler["queued_limit"])
-        )
+        saturated = scheduler["queued_limit"] > 0 and scheduler["queued"] >= scheduler["queued_limit"]
 
         if worker_fault or evidence_fault:
             state = "saturated"

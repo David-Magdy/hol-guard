@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sqlite3
 import threading
 from dataclasses import dataclass
 from typing import TypedDict, final
@@ -84,7 +85,7 @@ class SQLiteProfiler:
 
     def snapshot(self) -> SQLiteProfileSnapshot:
         with self._lock:
-            attempts = max(self._connects, 1)
+            attempts = max(self._transactions + self._commits, 1)
             return {
                 "connects": self._connects,
                 "transactions": self._transactions,
@@ -106,10 +107,10 @@ class SQLiteProfiler:
         )
         store_gate = store_percent > 20.0 if store_percent is not None else None
         busy_gate = snapshot["busy_locked_percent"] > 0.1
-        if store_gate is None:
-            conclusion = "insufficient_end_to_end_profile"
-        elif store_gate or busy_gate:
+        if store_gate or busy_gate:
             conclusion = "sqlite_migration_evaluation_required"
+        elif store_gate is None:
+            conclusion = "insufficient_end_to_end_profile"
         else:
             conclusion = "retain_sqlite_wal"
         return {
@@ -126,6 +127,8 @@ class SQLiteProfiler:
 
 
 def sqlite_error_is_busy_locked(error: BaseException) -> bool:
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
     message = str(error).lower()
     return "locked" in message or "busy" in message
 

@@ -6271,11 +6271,9 @@ def _looks_destructive_shell_command(
     normalized = command_text.strip()
     if not normalized:
         return False
-    normalized_casefolded = normalized.casefold()
-    if "hol-guard" in normalized_casefolded or "plugin-guard" in normalized_casefolded:
-        critical_factors = command_critical_floor_factors(parse_shell_command(normalized, cwd=cwd, home_dir=home_dir))
-        if any(factor.basis.action_floor == "block" for factor in critical_factors):
-            return True
+    critical_factors = command_critical_floor_factors(parse_shell_command(normalized, cwd=cwd, home_dir=home_dir))
+    if any(factor.basis.action_floor == "block" for factor in critical_factors):
+        return True
     if not _execution_context_applied:
         execution_context = execution_context or model_shell_execution_context(
             normalized,
@@ -6397,8 +6395,9 @@ def _looks_destructive_shell_command(
         if _looks_destructive_shell_command(shell_script, cwd=cwd, home_dir=home_dir):
             return True
     return any(
-        command_name == "sed" and any(part == "-i" or part.startswith("-i") for part in parts[1:])
-        for command_name in command_names
+        Path(segment[0]).name.lower() == "sed" and any(part == "-i" or part.startswith("-i") for part in segment[1:])
+        for segment in _read_only_lookup_segments(parts)
+        if segment
     )
 
 

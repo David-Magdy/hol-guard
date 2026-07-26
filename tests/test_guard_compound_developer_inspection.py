@@ -358,6 +358,41 @@ def test_guard_removal_help_stays_non_destructive(tmp_path: Path) -> None:
     assert artifact is None
 
 
+def test_guard_name_inside_read_only_search_does_not_trigger_self_protection(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    skill = home / ".codex" / "plugins" / "github" / "SKILL.md"
+    memory = home / ".codex" / "memories" / "MEMORY.md"
+    skill.parent.mkdir(parents=True)
+    memory.parent.mkdir(parents=True)
+    skill.write_text("github skill\n", encoding="utf-8")
+    memory.write_text("hol-guard release notes\n", encoding="utf-8")
+
+    artifact = _artifact(
+        f"sed -n '1,240p' {skill} && rg -n -i 'hol-guard|release/2.2' {memory}",
+        home=home,
+        harness="codex",
+    )
+
+    assert artifact is None
+
+
+def test_compound_rg_ignore_case_does_not_become_sed_in_place(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "workspace"
+    source = workspace / "source.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text("hol-guard\n", encoding="utf-8")
+
+    artifact = _artifact(
+        f"sed -n '1,20p' {source} && rg -i hol-guard {source}",
+        home=home,
+        workspace=workspace,
+    )
+
+    assert artifact is None
+    assert _artifact(f"sed -i 's/a/b/' {source}", home=home, workspace=workspace) is not None
+
+
 @pytest.mark.parametrize(
     "command",
     (

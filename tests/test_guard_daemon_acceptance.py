@@ -11,7 +11,12 @@ from typing import Protocol, cast
 import pytest
 
 from codex_plugin_scanner.guard.daemon.runtime_hook_scheduler import RuntimeHookScheduler
-from tests.guard_daemon_acceptance_fixtures import WorkloadSpec, load_correctness_workloads, run_workload
+from tests.guard_daemon_acceptance_fixtures import (
+    WorkloadSpec,
+    load_correctness_workloads,
+    load_soak_workload,
+    run_workload,
+)
 
 
 def _fixture_id(workload: WorkloadSpec) -> str:
@@ -65,7 +70,9 @@ def test_twice_capacity_overload_is_typed_bounded_and_recovers() -> None:
             )
             for index in range(8)
         ]
+        wait_deadline = time.monotonic() + 5
         while scheduler.stats()["queued"] != 8:
+            assert time.monotonic() < wait_deadline, "queued admissions never reached capacity"
             time.sleep(0.001)
         rejected = [
             scheduler.acquire(
@@ -135,7 +142,9 @@ def test_clock_jump_expires_work_without_corrupting_scheduler() -> None:
             payload_bytes=8,
             deadline=20.0,
         )
+        wait_deadline = time.monotonic() + 5
         while scheduler.stats()["queued"] != 1:
+            assert time.monotonic() < wait_deadline, "clock-jump admission was never queued"
             time.sleep(0.001)
         clock["now"] = 21.0
         scheduler.set_active_limit(1)
@@ -232,7 +241,7 @@ def test_aggregate_report_drops_sensitive_and_unbounded_fields() -> None:
 def test_opt_in_soak_profile_is_separate_from_correctness(tmp_path: Path) -> None:
     # The release runner replaces this bounded smoke duration with the manifest's
     # 1,800-second duration; marking it slow keeps it out of routine PR checks.
-    workload = load_correctness_workloads()[-1]
+    workload = load_soak_workload()
     result = run_workload(workload, root=tmp_path)
     assert result.generic_failures == 0
     assert result.pid_stable

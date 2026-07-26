@@ -70,7 +70,9 @@ export function OperatorHealthCard(props: { health: GuardOperatorHealth }) {
           <span className="font-semibold text-brand-dark">Automatic recovery:</span> {health.automatic_recovery}
         </p>
         {health.repairable ? (
-          <ActionButton href="/settings#approval-center-repair" variant="secondary">Repair local processing</ActionButton>
+          <ActionButton href="/settings?section=maintenance#approval-center-repair" variant="secondary">
+            Repair local processing
+          </ActionButton>
         ) : null}
       </div>
     </div>
