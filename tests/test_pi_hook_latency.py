@@ -222,7 +222,7 @@ def test_pi_daemon_keeps_health_responsive_at_active_process_capacity(
     assert detailed_health["hook_process_capacity"]["active"] == process_capacity
     assert detailed_health["hook_process_capacity"]["active_limit"] == process_capacity
     assert detailed_health["hook_process_capacity"]["queued"] == 0
-    assert detailed_health["request_capacity"]["limit"] == 64
+    assert detailed_health["request_capacity"]["limit"] == 32
     assert failures == []
     assert results == [{"decision": "allow"}] * process_capacity
 

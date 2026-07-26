@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import hmac
 import inspect
@@ -10,6 +11,7 @@ import json
 import mimetypes
 import os
 import platform
+import queue
 import secrets
 import socket
 import sqlite3
@@ -19,12 +21,12 @@ import threading
 import time
 import uuid
 import webbrowser
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, BinaryIO, ClassVar, TypedDict, TypeGuard, cast
+from typing import Any, BinaryIO, ClassVar, TypeAlias, TypedDict, TypeGuard, cast
 from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 from ...version import __version__
@@ -312,12 +314,10 @@ class _CursorReceiptContext(TypedDict):
     summary: dict[str, object]
 
 
-_MAX_CONCURRENT_DAEMON_REQUESTS = 64
-_MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS = 8
+_MAX_CONCURRENT_DAEMON_REQUESTS = 32
+_MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS = 4
 _MAX_CONCURRENT_DAEMON_CRITICAL_REQUESTS = 4
-_MAX_CONCURRENT_DAEMON_CONNECTIONS = (
-    _MAX_CONCURRENT_DAEMON_REQUESTS + _MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS + _MAX_CONCURRENT_DAEMON_CRITICAL_REQUESTS
-)
+_MAX_CONCURRENT_DAEMON_CONNECTIONS = 128
 _MAX_CONCURRENT_RUNTIME_HOOKS = 32
 _MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS = 24
 _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS = 3.0
@@ -341,7 +341,81 @@ _DAEMON_CRITICAL_PATHS = frozenset(
 _PEER_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
 
-class _GuardDaemonHttpServer(ThreadingHTTPServer):
+_TransportWorkItem: TypeAlias = tuple[socket.socket, tuple[str, int]]
+
+
+class _BoundedRequestExecutor:
+    def __init__(
+        self,
+        *,
+        name: str,
+        workers: int,
+        queue_limit: int,
+        run: Callable[[socket.socket, tuple[str, int]], None],
+        discard: Callable[[socket.socket], None],
+    ) -> None:
+        self._queue: queue.Queue[_TransportWorkItem | None] = queue.Queue(maxsize=queue_limit)
+        self._run = run
+        self._discard = discard
+        self._stopped = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._threads = [
+            threading.Thread(
+                target=self._worker,
+                daemon=True,
+                name=f"guard-http-{name}-{index + 1}",
+            )
+            for index in range(workers)
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    @property
+    def threads(self) -> tuple[threading.Thread, ...]:
+        return tuple(self._threads)
+
+    def submit(self, request: socket.socket, client_address: tuple[str, int]) -> bool:
+        with self._lifecycle_lock:
+            if self._stopped.is_set():
+                return False
+            try:
+                self._queue.put_nowait((request, client_address))
+            except queue.Full:
+                return False
+        return True
+
+    def shutdown(self, *, timeout_seconds: float) -> bool:
+        with self._lifecycle_lock:
+            if not self._stopped.is_set():
+                self._stopped.set()
+                while True:
+                    try:
+                        item = self._queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if item is not None:
+                        self._discard(item[0])
+                    self._queue.task_done()
+                for _ in self._threads:
+                    self._queue.put_nowait(None)
+        deadline = time.monotonic() + timeout_seconds
+        for thread in self._threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        return all(not thread.is_alive() for thread in self._threads)
+
+    def _worker(self) -> None:
+        while True:
+            item = self._queue.get()
+            try:
+                if item is None:
+                    return
+                self._run(*item)
+            finally:
+                self._queue.task_done()
+
+
+class _GuardDaemonHttpServer(HTTPServer):
     request_queue_size = _MAX_CONCURRENT_DAEMON_CONNECTIONS
 
     store: GuardStore
@@ -391,6 +465,8 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     active_requests: int
     rejected_requests: int
     request_capacity_kinds: dict[int, str]
+    request_accepted_at: dict[int, float]
+    active_connections: dict[int, socket.socket]
     request_capacity_lock: threading.Lock
     unclassified_connections: dict[int, tuple[socket.socket, float]]
     unclassified_connections_lock: threading.Lock
@@ -398,17 +474,25 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     unclassified_watchdog_thread: threading.Thread | None
     hook_process_runner: HookProcessRunner
     runtime_heartbeat: RuntimeHeartbeatWriter
+    general_request_executor: _BoundedRequestExecutor
+    control_request_executor: _BoundedRequestExecutor
+    request_executors_stopped: bool
 
     def handle_error(self, request: object, client_address: tuple[str, int]) -> None:
         """Suppress expected peer disconnects without hiding server defects."""
 
         import sys
 
-        if isinstance(sys.exc_info()[1], _PEER_DISCONNECT_ERRORS):
+        error = sys.exc_info()[1]
+        if isinstance(error, _PEER_DISCONNECT_ERRORS) or (
+            isinstance(error, OSError)
+            and error.errno in {errno.EBADF, errno.ECONNABORTED, errno.ECONNRESET, errno.EPIPE}
+        ):
             return
         super().handle_error(cast(socket.socket, request), client_address)
 
     def server_close(self) -> None:
+        _ = self._stop_request_executors()
         writer = getattr(self, "runtime_hook_evidence_writer", None)
         if writer is not None:
             _ = writer.stop(timeout_seconds=1.0)
@@ -480,6 +564,8 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self.active_requests = 0
         self.rejected_requests = 0
         self.request_capacity_kinds = {}
+        self.request_accepted_at = {}
+        self.active_connections = {}
         self.request_capacity_lock = threading.Lock()
         self.unclassified_connections = {}
         self.unclassified_connections_lock = threading.Lock()
@@ -503,6 +589,21 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
             runtime=self.runtime,
             opener=webbrowser.open,
         )
+        self.request_executors_stopped = False
+        self.general_request_executor = _BoundedRequestExecutor(
+            name="general",
+            workers=_MAX_CONCURRENT_DAEMON_REQUESTS,
+            queue_limit=_MAX_CONCURRENT_DAEMON_CONNECTIONS,
+            run=self._process_request_worker,
+            discard=self._discard_request,
+        )
+        self.control_request_executor = _BoundedRequestExecutor(
+            name="control",
+            workers=_MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS,
+            queue_limit=_MAX_CONCURRENT_DAEMON_CONNECTIONS,
+            run=self._process_request_worker,
+            discard=self._discard_request,
+        )
 
     def process_request(self, request: object, client_address: tuple[str, int]) -> None:
         request_socket = cast(socket.socket, request)
@@ -523,32 +624,88 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self._register_unclassified_connection(request_socket)
         with self.request_capacity_lock:
             self.active_requests += 1
-        try:
-            super().process_request(request_socket, client_address)
-        except BaseException:
-            self._release_request_capacity(request_socket)
-            raise
+        executor = (
+            self.control_request_executor
+            if self._transport_request_is_control(request_socket)
+            else self.general_request_executor
+        )
+        if not executor.submit(request_socket, client_address):
+            with self.request_capacity_lock:
+                self.rejected_requests += 1
+            self._discard_request(request_socket)
 
-    def process_request_thread(self, request: object, client_address: tuple[str, int]) -> None:
-        request_socket = cast(socket.socket, request)
+    def _process_request_worker(self, request_socket: socket.socket, client_address: tuple[str, int]) -> None:
         try:
-            super().process_request_thread(request_socket, client_address)
+            self.finish_request(request_socket, client_address)
+            self.shutdown_request(request_socket)
+        except BaseException:
+            self.handle_error(request_socket, client_address)
+            self.shutdown_request(request_socket)
         finally:
             self._release_request_capacity(request_socket)
+
+    def _discard_request(self, request_socket: socket.socket) -> None:
+        self.shutdown_request(request_socket)
+        self._release_request_capacity(request_socket)
 
     def _release_request_capacity(self, request: socket.socket) -> None:
         self.classify_connection(request)
         with self.request_capacity_lock:
-            self.active_requests -= 1
+            was_active = self.request_accepted_at.pop(id(request), None) is not None
+            self.active_connections.pop(id(request), None)
+            if was_active:
+                self.active_requests -= 1
             capacity_kind = self.request_capacity_kinds.pop(id(request), None)
         if capacity_kind is not None:
             self._request_capacity_for_kind(capacity_kind).release()
-        self.connection_capacity.release()
+        if was_active:
+            self.connection_capacity.release()
 
     def _register_unclassified_connection(self, request: socket.socket) -> None:
-        deadline = time.monotonic() + _DAEMON_REQUEST_READ_TIMEOUT_SECONDS
+        accepted_at = time.monotonic()
+        deadline = accepted_at + _DAEMON_REQUEST_READ_TIMEOUT_SECONDS
+        with self.request_capacity_lock:
+            self.request_accepted_at[id(request)] = accepted_at
+            self.active_connections[id(request)] = request
         with self.unclassified_connections_lock:
             self.unclassified_connections[id(request)] = (request, deadline)
+
+    def request_deadline(self, request: socket.socket, timeout_seconds: float) -> float:
+        with self.request_capacity_lock:
+            accepted_at = self.request_accepted_at.get(id(request), time.monotonic())
+        return accepted_at + timeout_seconds
+
+    @staticmethod
+    def _transport_request_is_control(request: socket.socket) -> bool:
+        try:
+            request.setblocking(False)
+            buffered = request.recv(4_096, socket.MSG_PEEK)
+        except (BlockingIOError, InterruptedError, OSError):
+            return False
+        finally:
+            with suppress(OSError):
+                request.settimeout(_DAEMON_REQUEST_READ_TIMEOUT_SECONDS)
+        request_line = buffered.splitlines()[0] if buffered else b""
+        parts = request_line.split()
+        if len(parts) < 2:
+            return False
+        try:
+            path = parts[1].decode("ascii").split("?", 1)[0]
+        except UnicodeDecodeError:
+            return False
+        return path in _DAEMON_CONTROL_PATHS or path in _DAEMON_CRITICAL_PATHS
+
+    def _stop_request_executors(self) -> bool:
+        if self.request_executors_stopped:
+            return True
+        with self.request_capacity_lock:
+            requests = list(self.active_connections.values())
+        for request in requests:
+            self._close_unclassified_socket(request)
+        general_stopped = self.general_request_executor.shutdown(timeout_seconds=5.0)
+        control_stopped = self.control_request_executor.shutdown(timeout_seconds=5.0)
+        self.request_executors_stopped = general_stopped and control_stopped
+        return self.request_executors_stopped
 
     def classify_connection(self, request: socket.socket) -> None:
         with self.unclassified_connections_lock:
@@ -558,7 +715,7 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         with self.unclassified_connections_lock:
             oldest = next(iter(self.unclassified_connections.values()), None)
         if oldest is not None:
-            self._close_unclassified_socket(oldest[0])
+            self._discard_request(oldest[0])
             with self.request_capacity_lock:
                 self.rejected_requests += 1
 
@@ -5107,7 +5264,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             hydrate_hook_payload_reference,
         )
 
-        hook_deadline = time.monotonic() + _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS
+        hook_deadline = self._daemon_server().request_deadline(
+            self.request,
+            _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS,
+        )
         params = parse_qs(query)
         hook_env = _runtime_hook_env_overlay_from_payload(payload)
         payload = {key: value for key, value in payload.items() if key != "hook_env"}
@@ -7378,6 +7538,12 @@ class GuardDaemonServer:
     def _finish_service_locked(self) -> bool:
         self._shutdown_started.set()
         contained = True
+        stop_request_executors = getattr(self._server, "_stop_request_executors", None)
+        if callable(stop_request_executors):
+            try:
+                contained = stop_request_executors() is not False and contained
+            except Exception:
+                contained = False
         stop_unclassified_watchdog = getattr(self._server, "stop_unclassified_watchdog", None)
         if callable(stop_unclassified_watchdog):
             try:

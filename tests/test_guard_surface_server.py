@@ -1348,7 +1348,7 @@ class TestGuardSurfaceServer:
         assert health["hook_capacity"]["per_harness_rejected"]["pi"] == 1
         assert health["hook_capacity"]["rejection_reasons"] == {"daemon_hook_queue_bytes": 1}
         assert health["hook_workers"]["decisions"] == {}
-        assert health["request_capacity"]["limit"] == 64
+        assert health["request_capacity"]["limit"] == 32
         assert health["request_capacity"]["critical_limit"] == 4
         operator_health = runtime["operator_health"]
         assert operator_health["state"] == "saturated"
