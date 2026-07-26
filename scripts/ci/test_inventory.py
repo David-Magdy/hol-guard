@@ -144,9 +144,22 @@ def corpus_record_count() -> int:
         COPILOT_NODE_DELETE_DENY_CASES,
     )
     from tests.guard_seeded_faults import PARSER_SEEDED_FAULTS
-    from tests.test_guard_command_critical_floors import CRITICAL_COMMAND_FLOORS
+    from tests.test_guard_command_critical_floors import (
+        CRITICAL_COMMAND_FLOORS,
+        CRITICAL_NEAR_MISS_COMMANDS,
+    )
     from tests.test_guard_data_flow import BENIGN_DATA_FLOW_CASES, MALICIOUS_DATA_FLOW_CASES
     from tests.test_guard_github_command_capabilities import GITHUB_REVIEW_FLOORS
+    from tests.test_guard_github_command_capability_edges import (
+        PR_MERGE_ADMIN_CAPABILITY_CASES,
+        UNRELATED_DYNAMIC_COMMAND_CASES,
+    )
+    from tests.test_guard_risk import (
+        LOCAL_COMPOSE_SAFE_CASES,
+        LOCAL_SHELL_RISK_CASES,
+        MUTATING_PYTHON_MODULE_DENY_CASES,
+        SENSITIVE_DOCKER_DENY_CASES,
+    )
 
     return (
         sum(1 for _ in iter_benign_corpus())
@@ -155,9 +168,16 @@ def corpus_record_count() -> int:
         + len(COPILOT_NODE_DELETE_DENY_CASES)
         + len(PARSER_SEEDED_FAULTS)
         + len(CRITICAL_COMMAND_FLOORS)
+        + len(CRITICAL_NEAR_MISS_COMMANDS)
         + len(GITHUB_REVIEW_FLOORS)
+        + len(PR_MERGE_ADMIN_CAPABILITY_CASES)
+        + len(UNRELATED_DYNAMIC_COMMAND_CASES)
         + len(BENIGN_DATA_FLOW_CASES)
         + len(MALICIOUS_DATA_FLOW_CASES)
+        + len(LOCAL_COMPOSE_SAFE_CASES)
+        + len(LOCAL_SHELL_RISK_CASES)
+        + len(MUTATING_PYTHON_MODULE_DENY_CASES)
+        + len(SENSITIVE_DOCKER_DENY_CASES)
     )
 
 
