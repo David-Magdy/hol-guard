@@ -85,6 +85,7 @@ class HookProcessRunner:
         )
         self._backfill_not_before: float = 0.0
         self._backfill_force_after: float = 0.0
+        self._adaptive_refresh_enabled: bool = True
         self._active_reviews: dict[int, int] = {}
         self._closed: bool = False
         self._started: bool = False
@@ -107,6 +108,7 @@ class HookProcessRunner:
             self._generation += 1
             generation = self._generation
             self._capacity_target = min(2, self._initial_target) if defer_backfill else self._initial_target
+            self._adaptive_refresh_enabled = not defer_backfill
             self._backfill_not_before = 0.0
             self._backfill_force_after = 0.0
             self._closed = False
@@ -146,6 +148,7 @@ class HookProcessRunner:
                 return
             now = time.monotonic()
             self._capacity_target = self._initial_target
+            self._adaptive_refresh_enabled = True
             self._backfill_not_before = now + max(0.0, delay_seconds)
             self._backfill_force_after = self._backfill_not_before + active_deferral_seconds
         self._recovery_event.set()
@@ -559,6 +562,9 @@ class HookProcessRunner:
         adaptive_capacity = self._adaptive_capacity
         if adaptive_capacity is None:
             return
+        with self._state_lock:
+            if not self._adaptive_refresh_enabled:
+                return
         with self._metrics_lock:
             outcomes = sum(self._decisions.values()) + self._failures + self._timeouts
             failure_rate = (self._failures + self._timeouts) / outcomes if outcomes else 0.0

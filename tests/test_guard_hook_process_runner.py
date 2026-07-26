@@ -457,6 +457,25 @@ def test_deferred_runner_serves_startup_floor_before_backfilling(tmp_path: Path)
     assert runner.stats()["workers"] == 0
 
 
+def test_deferred_runner_does_not_adapt_before_backfill_is_enabled(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path)
+    adaptive_capacity = runner._adaptive_capacity  # pyright: ignore[reportPrivateUsage]
+    assert adaptive_capacity is not None
+
+    try:
+        runner.start(defer_backfill=True)
+        deferred_target = runner._capacity_target  # pyright: ignore[reportPrivateUsage]
+        runner._refresh_capacity_policy()  # pyright: ignore[reportPrivateUsage]
+
+        assert deferred_target == 2
+        assert runner._capacity_target == deferred_target  # pyright: ignore[reportPrivateUsage]
+
+        runner.enable_full_capacity(delay_seconds=0)
+        assert runner._adaptive_refresh_enabled  # pyright: ignore[reportPrivateUsage]
+    finally:
+        runner.close()
+
+
 def test_deferred_runner_bounds_backfill_deferral_during_active_reviews(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
