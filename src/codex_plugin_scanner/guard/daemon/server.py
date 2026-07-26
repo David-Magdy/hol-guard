@@ -241,6 +241,8 @@ from .manager import (
     write_guard_daemon_state,
 )
 from .runtime_heartbeat import RuntimeHeartbeatWriter
+from .runtime_hook_evidence_writer import RuntimeHookEvidenceWriter
+from .runtime_hook_scheduler import RuntimeHookAdmissionReason, RuntimeHookLane, RuntimeHookScheduler
 
 _HEADLESS_CLOUD_SYNC_STATE_LOCK = threading.Lock()
 _HEADLESS_CLOUD_SYNC_IN_FLIGHT: set[str] = set()
@@ -317,6 +319,7 @@ _MAX_CONCURRENT_DAEMON_CONNECTIONS = (
 )
 _MAX_CONCURRENT_RUNTIME_HOOKS = 32
 _MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS = 24
+_RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS = 3.0
 _DAEMON_REQUEST_READ_TIMEOUT_SECONDS = 0.4
 _DAEMON_CONNECTION_ADMISSION_WAIT_SECONDS = 0.05
 _DAEMON_UNCLASSIFIED_WATCHDOG_POLL_SECONDS = 0.025
@@ -367,14 +370,13 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     containment_health_cache: dict[str, object] | None
     containment_health_cache_monotonic: float
     containment_health_cache_lock: threading.Lock
-    hook_capacity: threading.BoundedSemaphore
-    hook_capacity_limit: int
     active_hook_requests: int
     rejected_hook_requests: int
-    hook_harness_capacity: dict[str, threading.BoundedSemaphore]
     hook_harness_active: dict[str, int]
     hook_harness_rejected: dict[str, int]
     hook_capacity_lock: threading.Lock
+    runtime_hook_scheduler: RuntimeHookScheduler
+    runtime_hook_evidence_writer: RuntimeHookEvidenceWriter
     request_capacity: threading.BoundedSemaphore
     request_capacity_limit: int
     connection_capacity: threading.BoundedSemaphore
@@ -402,6 +404,12 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         if isinstance(sys.exc_info()[1], _PEER_DISCONNECT_ERRORS):
             return
         super().handle_error(cast(socket.socket, request), client_address)
+
+    def server_close(self) -> None:
+        writer = getattr(self, "runtime_hook_evidence_writer", None)
+        if writer is not None:
+            _ = writer.stop(timeout_seconds=1.0)
+        super().server_close()
 
     def __init__(
         self,
@@ -444,14 +452,15 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self.containment_health_cache = None
         self.containment_health_cache_monotonic = 0.0
         self.containment_health_cache_lock = threading.Lock()
-        self.hook_capacity_limit = _MAX_CONCURRENT_RUNTIME_HOOKS
-        self.hook_capacity = threading.BoundedSemaphore(self.hook_capacity_limit)
         self.active_hook_requests = 0
         self.rejected_hook_requests = 0
-        self.hook_harness_capacity = {}
         self.hook_harness_active = {}
         self.hook_harness_rejected = {}
         self.hook_capacity_lock = threading.Lock()
+        self.runtime_hook_scheduler = RuntimeHookScheduler(
+            active_limit=_MAX_CONCURRENT_RUNTIME_HOOKS,
+            per_harness_active_limit=_MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS,
+        )
         self.request_capacity_limit = _MAX_CONCURRENT_DAEMON_REQUESTS
         self.request_capacity = threading.BoundedSemaphore(self.request_capacity_limit)
         self.connection_capacity_limit = _MAX_CONCURRENT_DAEMON_CONNECTIONS
@@ -478,7 +487,8 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self.store.set_policy_integrity_state_listener(self.publish_trust_state)
         from .hook_worker import HookWorker
 
-        self.hook_worker = HookWorker(store=store)
+        self.runtime_hook_evidence_writer = RuntimeHookEvidenceWriter(store=store)
+        self.hook_worker = HookWorker(store=store, activity_writer=self.runtime_hook_evidence_writer)
         self.approval_attention = ApprovalAttentionCoordinator(
             store=store,
             runtime=self.runtime,
@@ -618,15 +628,6 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         if path in _DAEMON_CONTROL_PATHS:
             return "control"
         return "general"
-
-    def hook_harness_semaphore(self, harness: str) -> threading.BoundedSemaphore:
-        capacity_harness = self.canonical_hook_capacity_harness(harness)
-        with self.hook_capacity_lock:
-            capacity = self.hook_harness_capacity.get(capacity_harness)
-            if capacity is None:
-                capacity = threading.BoundedSemaphore(_MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS)
-                self.hook_harness_capacity[capacity_harness] = capacity
-            return capacity
 
     @staticmethod
     def canonical_hook_capacity_harness(harness: str) -> str:
@@ -5068,6 +5069,13 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         )
 
     def _handle_runtime_hook(self, payload: dict[str, object], query: str, *, default_harness: str) -> None:
+        from ..runtime.hook_payload_reference import (
+            HookPayloadReferenceError,
+            hook_payload_reference_size,
+            hydrate_hook_payload_reference,
+        )
+
+        hook_deadline = time.monotonic() + _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS
         params = parse_qs(query)
         hook_env = _runtime_hook_env_overlay_from_payload(payload)
         payload = {key: value for key, value in payload.items() if key != "hook_env"}
@@ -5093,49 +5101,149 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         capacity_harness = daemon_server.canonical_hook_capacity_harness(
             (runtime_harness or default_harness).strip().lower().replace("_", "-")
         )
-        harness_capacity = daemon_server.hook_harness_semaphore(capacity_harness)
-        if not harness_capacity.acquire(blocking=False):
+        try:
+            payload_bytes = hook_payload_reference_size(payload)
+            if payload_bytes is None:
+                payload_bytes = self._runtime_hook_payload_size(payload)
+        except HookPayloadReferenceError as error:
+            daemon_server.hook_worker.metrics.record_failure(
+                stage="server",
+                exception_type=type(error).__name__,
+            )
+            self._write_json(
+                self._runtime_hook_fail_safe_response(
+                    payload,
+                    params,
+                    default_harness=default_harness,
+                    reason="HOL Guard could not authenticate the local hook payload.",
+                    reason_code="invalid_hook_payload_reference",
+                )
+            )
+            return
+
+        byte_reservation, reservation_reason = daemon_server.runtime_hook_scheduler.reserve_bytes(
+            payload_bytes=payload_bytes,
+            deadline=hook_deadline,
+        )
+        if byte_reservation is None:
             self._record_hook_capacity_rejection(daemon_server, capacity_harness)
             self._write_json(
                 self._runtime_hook_capacity_response(
                     payload,
                     params,
                     default_harness=default_harness,
+                    reason_code=reservation_reason,
                 )
             )
             return
-        if not daemon_server.hook_capacity.acquire(blocking=False):
-            harness_capacity.release()
-            self._record_hook_capacity_rejection(daemon_server, capacity_harness)
-            self._write_json(
-                self._runtime_hook_capacity_response(
-                    payload,
-                    params,
-                    default_harness=default_harness,
+        with byte_reservation:
+            try:
+                payload = hydrate_hook_payload_reference(payload)
+            except HookPayloadReferenceError as error:
+                daemon_server.hook_worker.metrics.record_failure(
+                    stage="server",
+                    exception_type=type(error).__name__,
                 )
+                self._write_json(
+                    self._runtime_hook_fail_safe_response(
+                        payload,
+                        params,
+                        default_harness=default_harness,
+                        reason="HOL Guard could not authenticate the local hook payload.",
+                        reason_code="invalid_hook_payload_reference",
+                    )
+                )
+                return
+            hydrated_payload_bytes = self._runtime_hook_payload_size(payload)
+            resize_reason = byte_reservation.resize(
+                hydrated_payload_bytes,
+                deadline=hook_deadline,
             )
-            return
+            if resize_reason is not None:
+                self._record_hook_capacity_rejection(daemon_server, capacity_harness)
+                self._write_json(
+                    self._runtime_hook_capacity_response(
+                        payload,
+                        params,
+                        default_harness=default_harness,
+                        reason_code=resize_reason,
+                    )
+                )
+                return
+            admission = daemon_server.runtime_hook_scheduler.acquire(
+                harness=capacity_harness,
+                client_key=self._runtime_hook_client_key(payload, workspace),
+                lane=self._runtime_hook_lane(payload),
+                payload_bytes=hydrated_payload_bytes,
+                deadline=hook_deadline,
+                byte_reservation=byte_reservation,
+            )
+            if admission.permit is None:
+                self._record_hook_capacity_rejection(daemon_server, capacity_harness)
+                self._write_json(
+                    self._runtime_hook_capacity_response(
+                        payload,
+                        params,
+                        default_harness=default_harness,
+                        reason_code=admission.reason_code,
+                    )
+                )
+                return
         with daemon_server.hook_capacity_lock:
             daemon_server.active_hook_requests += 1
             daemon_server.hook_harness_active[capacity_harness] = (
                 daemon_server.hook_harness_active.get(capacity_harness, 0) + 1
             )
         try:
-            self._execute_runtime_hook(
-                payload,
-                params,
-                hook_env=hook_env,
-                default_harness=default_harness,
-                home_dir=home_dir,
-                guard_home=guard_home,
-                workspace=workspace,
-            )
+            with admission.permit:
+                self._execute_runtime_hook(
+                    payload,
+                    params,
+                    hook_env=hook_env,
+                    default_harness=default_harness,
+                    home_dir=home_dir,
+                    guard_home=guard_home,
+                    workspace=workspace,
+                    payload_hydrated=True,
+                    deadline=hook_deadline,
+                )
         finally:
             with daemon_server.hook_capacity_lock:
                 daemon_server.active_hook_requests -= 1
                 daemon_server.hook_harness_active[capacity_harness] -= 1
-            daemon_server.hook_capacity.release()
-            harness_capacity.release()
+
+    @staticmethod
+    def _runtime_hook_lane(payload: Mapping[str, object]) -> RuntimeHookLane:
+        from .hook_worker import runtime_hook_event_name
+
+        event = runtime_hook_event_name(payload).lower().replace("_", "").replace("-", "")
+        if event in {"pretooluse", "permissionrequest", "userpromptsubmit", "userpromptsubmitted"}:
+            return "decision"
+        return "content-security"
+
+    @staticmethod
+    def _runtime_hook_client_key(payload: Mapping[str, object], workspace: str | None) -> str:
+        session = next(
+            (
+                payload.get(key)
+                for key in ("session_id", "conversation_id", "thread_id")
+                if isinstance(payload.get(key), str) and payload.get(key)
+            ),
+            "",
+        )
+        material = f"{workspace or ''}\0{session}"
+        return hashlib.sha256(material.encode("utf-8", errors="replace")).hexdigest()[:32]
+
+    @staticmethod
+    def _runtime_hook_payload_size(payload: Mapping[str, object]) -> int:
+        return len(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        )
 
     @staticmethod
     def _record_hook_capacity_rejection(
@@ -5154,13 +5262,19 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         params: Mapping[str, list[str]],
         *,
         default_harness: str,
+        reason_code: RuntimeHookAdmissionReason | None = None,
     ) -> dict[str, object]:
+        resolved_reason_code = reason_code or "daemon_hook_queue_capacity"
+        if resolved_reason_code == "daemon_hook_deadline_exhausted":
+            reason = "HOL Guard could not complete local review within the hook deadline. Retry this action."
+        else:
+            reason = "HOL Guard is safely queueing the maximum local review workload. Retry this action."
         return self._runtime_hook_fail_safe_response(
             payload,
             params,
             default_harness=default_harness,
-            reason="HOL Guard is at local review capacity. Retry this action after the active reviews complete.",
-            reason_code="daemon_hook_capacity",
+            reason=reason,
+            reason_code=resolved_reason_code,
         )
 
     def _runtime_hook_fail_safe_response(
@@ -5220,29 +5334,32 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         home_dir: str | None,
         guard_home: str | None,
         workspace: str | None,
+        payload_hydrated: bool = False,
+        deadline: float | None = None,
     ) -> None:
         from ..runtime.hook_payload_reference import (
             HookPayloadReferenceError,
             hydrate_hook_payload_reference,
         )
 
-        try:
-            payload = hydrate_hook_payload_reference(payload)
-        except HookPayloadReferenceError as error:
-            self._daemon_server().hook_worker.metrics.record_failure(
-                stage="server",
-                exception_type=type(error).__name__,
-            )
-            self._write_json(
-                self._runtime_hook_fail_safe_response(
-                    payload,
-                    params,
-                    default_harness=default_harness,
-                    reason="HOL Guard could not authenticate the local hook payload.",
-                    reason_code="invalid_hook_payload_reference",
+        if not payload_hydrated:
+            try:
+                payload = hydrate_hook_payload_reference(payload)
+            except HookPayloadReferenceError as error:
+                self._daemon_server().hook_worker.metrics.record_failure(
+                    stage="server",
+                    exception_type=type(error).__name__,
                 )
-            )
-            return
+                self._write_json(
+                    self._runtime_hook_fail_safe_response(
+                        payload,
+                        params,
+                        default_harness=default_harness,
+                        reason="HOL Guard could not authenticate the local hook payload.",
+                        reason_code="invalid_hook_payload_reference",
+                    )
+                )
+                return
 
         if self._hook_fast_path_enabled():
             result = self._handle_runtime_hook_fast(
@@ -5252,6 +5369,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 home_dir=home_dir,
                 guard_home=guard_home,
                 workspace=workspace,
+                deadline=deadline,
             )
             if result is not None:
                 self._write_json(result)
@@ -5265,6 +5383,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             home_dir=home_dir,
             guard_home=guard_home,
             workspace=workspace,
+            deadline=deadline,
         )
 
     def _hook_fast_path_enabled(self) -> bool:
@@ -5281,6 +5400,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         home_dir: str | None,
         guard_home: str | None,
         workspace: str | None,
+        deadline: float | None,
     ) -> dict[str, object] | None:
         """Try the resident hook worker. Return None to fall back to legacy.
 
@@ -5307,6 +5427,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 home_dir=Path(home_dir),
                 guard_home=Path(guard_home),
                 workspace=Path(workspace) if workspace else None,
+                deadline=deadline,
             )
         except HookWorkerUnsupported:
             # Not eligible for fast path — fall back to legacy CLI so
@@ -5342,6 +5463,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         home_dir: str | None,
         guard_home: str | None,
         workspace: str | None,
+        deadline: float | None,
     ) -> None:
         runtime_harness = self._optional_string(params.get("runtime-harness", [None])[-1])
         harness = runtime_harness or default_harness
@@ -5352,6 +5474,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             guard_home=(Path(guard_home) if guard_home is not None else self._daemon_server().store.guard_home),
             workspace=Path(workspace) if workspace is not None else None,
             hook_env=hook_env,
+            deadline=deadline,
         )
         if review.payload is not None:
             self._write_json(review.payload)
@@ -6227,13 +6350,23 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         store = daemon_server.store
         pending_approvals = store.count_approval_requests()
         activity_health = store.get_command_activity_persistence_health()
+        scheduler_stats = daemon_server.runtime_hook_scheduler.stats()
+        evidence_writer_stats = daemon_server.runtime_hook_evidence_writer.stats()
         with daemon_server.hook_capacity_lock:
             hook_capacity = {
-                "active": daemon_server.active_hook_requests,
-                "limit": daemon_server.hook_capacity_limit,
-                "per_harness_active": dict(daemon_server.hook_harness_active),
+                "active": scheduler_stats["active"],
+                "limit": scheduler_stats["active_limit"],
+                "queued": scheduler_stats["queued"],
+                "queued_limit": scheduler_stats["queued_limit"],
+                "retained_bytes": scheduler_stats["retained_bytes"],
+                "retained_bytes_limit": scheduler_stats["retained_bytes_limit"],
+                "per_harness_active": scheduler_stats["per_harness_active"],
+                "per_harness_queued": scheduler_stats["per_harness_queued"],
                 "per_harness_rejected": dict(daemon_server.hook_harness_rejected),
                 "rejected": daemon_server.rejected_hook_requests,
+                "expired": scheduler_stats["expired"],
+                "completed": scheduler_stats["completed"],
+                "rejection_reasons": scheduler_stats["rejected"],
             }
         with daemon_server.request_capacity_lock:
             request_capacity = {
@@ -6249,6 +6382,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "receipts": len(store.list_receipts(limit=500)),
             "approvals": pending_approvals,
             "pending_approvals": pending_approvals,
+            "hook_evidence_writer": evidence_writer_stats,
             "uptime_seconds": uptime,
             "pid": os.getpid(),
             "tables": store.list_table_names(),
@@ -7128,6 +7262,12 @@ class GuardDaemonServer:
         if runtime_heartbeat is not None:
             try:
                 contained = runtime_heartbeat.stop(timeout_seconds=1.0) is not False and contained
+            except Exception:
+                contained = False
+        runtime_hook_evidence_writer = getattr(self._server, "runtime_hook_evidence_writer", None)
+        if runtime_hook_evidence_writer is not None:
+            try:
+                contained = runtime_hook_evidence_writer.stop(timeout_seconds=1.0) is not False and contained
             except Exception:
                 contained = False
         hook_process_runner = getattr(self._server, "hook_process_runner", None)

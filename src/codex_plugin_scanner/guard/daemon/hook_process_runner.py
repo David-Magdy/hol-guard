@@ -131,6 +131,7 @@ class HookProcessRunner:
         guard_home: Path,
         workspace: Path | None,
         hook_env: Mapping[str, str],
+        deadline: float | None = None,
     ) -> HookProcessReview:
         with self._state_lock:
             if self._closed:
@@ -139,12 +140,20 @@ class HookProcessRunner:
                 return HookProcessReview(None, "daemon_hook_process_not_ready")
             generation = self._generation
             self._active_reviews[generation] = self._active_reviews.get(generation, 0) + 1
-        started_at = time.monotonic()
+        outer_deadline = deadline if deadline is not None else float("inf")
+        review_deadline = min(time.monotonic() + self._timeout_seconds, outer_deadline)
         try:
             try:
-                slot = self._slots.get(timeout=min(_HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS, self._timeout_seconds))
+                acquire_timeout = min(
+                    _HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS, max(0.0, review_deadline - time.monotonic())
+                )
+                if acquire_timeout <= 0:
+                    return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
+                slot = self._slots.get(timeout=acquire_timeout)
             except queue.Empty:
-                return HookProcessReview(None, "daemon_hook_process_overloaded")
+                expired = time.monotonic() >= review_deadline
+                reason_code = "daemon_hook_process_deadline_exhausted" if expired else "daemon_hook_process_overloaded"
+                return HookProcessReview(None, reason_code)
             try:
                 request = {
                     "payload": dict(payload),
@@ -155,7 +164,7 @@ class HookProcessRunner:
                     "hook_env": {key: value for key, value in hook_env.items() if key in HOOK_ENV_ALLOWLIST},
                 }
                 slot.connection.send(("review", request))
-                remaining_seconds = max(0.0, self._timeout_seconds - (time.monotonic() - started_at))
+                remaining_seconds = max(0.0, review_deadline - time.monotonic())
                 if not slot.connection.poll(remaining_seconds):
                     self._increment_metric("timeouts")
                     self._replace_slot_async(slot)
