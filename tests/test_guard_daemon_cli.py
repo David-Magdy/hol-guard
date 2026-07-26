@@ -97,6 +97,34 @@ class TestDaemonStatusCommand:
         assert payload["daemon_version"] == "2.1.28"
         assert payload["cli_version"] != payload["daemon_version"]
 
+    def test_status_treats_empty_serving_daemon_version_as_unavailable(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        (tmp_path / "daemon-state.json").write_text(
+            json.dumps({"pid": 1234, "port": 5474}),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(service_module, "_guard_daemon_pid_is_running", lambda _pid: True)
+        monkeypatch.setattr(
+            service_module,
+            "_guard_daemon_pid_matches_command",
+            lambda _pid, *, expected_guard_home: expected_guard_home == tmp_path,
+        )
+        monkeypatch.setattr(
+            discovery_module,
+            "load_authenticated_daemon_state",
+            lambda _guard_home: {"package_version": ""},
+        )
+
+        assert service_module._handle_daemon_status(tmp_path, True) == 0
+        payload = cast(dict[str, object], json.loads(capsys.readouterr().out))
+
+        assert payload["version"] == "unknown"
+        assert payload["daemon_version"] is None
+
     def test_status_includes_latest_storage_independent_lifecycle_event(self, tmp_path: Path) -> None:
         from codex_plugin_scanner.guard.daemon.lifecycle_journal import record_daemon_lifecycle_event
 
