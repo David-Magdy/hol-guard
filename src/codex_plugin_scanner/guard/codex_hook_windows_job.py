@@ -4,18 +4,50 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import os
 import subprocess
 from ctypes import wintypes
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from typing import Protocol, cast
 
 _CREATE_SUSPENDED = 0x00000004
+_JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
 _TH32CS_SNAPTHREAD = 0x00000004
 _THREAD_SUSPEND_RESUME = 0x0002
 _RESUME_THREAD_FAILED = 0xFFFFFFFF
 _ERROR_NO_MORE_FILES = 18
+
+
+class _WindowsDirectoryFunction(Protocol):
+    argtypes: list[object]
+    restype: object
+
+    def __call__(self, buffer: object, size: int) -> int: ...
+
+
+class _WindowsDirectoryKernel32(Protocol):
+    GetSystemWindowsDirectoryW: _WindowsDirectoryFunction
+
+
+def windows_system_executable_path(filename: str) -> str:
+    """Resolve a system executable without trusting PATH or environment variables."""
+
+    if os.name != "nt":
+        raise OSError("Windows system APIs are unavailable")
+    if PureWindowsPath(filename).name != filename or filename in {"", ".", ".."}:
+        raise ValueError("Windows system executable must be a filename")
+    buffer = ctypes.create_unicode_buffer(32768)
+    kernel32 = cast(_WindowsDirectoryKernel32, _kernel32())
+    get_system_windows_directory = kernel32.GetSystemWindowsDirectoryW
+    get_system_windows_directory.argtypes = [wintypes.LPWSTR, wintypes.DWORD]
+    get_system_windows_directory.restype = wintypes.DWORD
+    length = get_system_windows_directory(buffer, len(buffer))
+    if length == 0 or length >= len(buffer):
+        raise OSError(ctypes.get_last_error(), "GetSystemWindowsDirectoryW failed")
+    return str(PureWindowsPath(buffer.value, "System32", filename))
 
 
 class _BasicLimitInformation(ctypes.Structure):
@@ -100,10 +132,11 @@ def spawn_windows_hook_process(
     *,
     cwd: Path,
     environment: dict[str, str],
+    allow_breakaway: bool = False,
 ) -> tuple[subprocess.Popen[bytes], WindowsHookJob]:
     """Start suspended, assign to a kill-on-close job, then resume."""
 
-    job = _create_job()
+    job = _create_job(allow_breakaway=allow_breakaway)
     process: subprocess.Popen[bytes] | None = None
     try:
         process = subprocess.Popen(
@@ -119,6 +152,31 @@ def spawn_windows_hook_process(
         return process, job
     except BaseException:
         _cleanup_failed_spawn(process, job)
+        raise
+
+
+def assign_current_process_to_windows_hook_job(
+    *,
+    allow_breakaway: bool = False,
+) -> WindowsHookJob:
+    """Contain the current trusted bootstrap before it can spawn descendants."""
+
+    if os.name != "nt":
+        raise OSError("Windows Job Objects are unavailable")
+    job = _create_job(allow_breakaway=allow_breakaway)
+    try:
+        kernel32 = _kernel32()
+        get_current_process = kernel32.GetCurrentProcess
+        get_current_process.argtypes = []
+        get_current_process.restype = wintypes.HANDLE
+        process_handle = get_current_process()
+        if not process_handle:
+            raise OSError(ctypes.get_last_error(), "GetCurrentProcess failed")
+        _assign_process_handle_to_job(int(process_handle), job)
+        return job
+    except BaseException:
+        with contextlib.suppress(OSError):
+            close_windows_hook_job(job)
         raise
 
 
@@ -140,7 +198,7 @@ def _kernel32():  # type: ignore[no-untyped-def]
     return win_dll("kernel32", use_last_error=True)
 
 
-def _create_job() -> WindowsHookJob:
+def _create_job(*, allow_breakaway: bool = False) -> WindowsHookJob:
     kernel32 = _kernel32()
     create_job = kernel32.CreateJobObjectW
     create_job.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
@@ -154,7 +212,7 @@ def _create_job() -> WindowsHookJob:
     job = WindowsHookJob(handle=int(raw_handle))
     try:
         limits = _ExtendedLimitInformation()
-        limits.basic_limit_information.limit_flags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        limits.basic_limit_information.limit_flags = _job_limit_flags(allow_breakaway=allow_breakaway)
         if not set_information(
             wintypes.HANDLE(job.handle),
             _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
@@ -169,7 +227,19 @@ def _create_job() -> WindowsHookJob:
         raise
 
 
+def _job_limit_flags(*, allow_breakaway: bool) -> int:
+    flags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if allow_breakaway:
+        flags |= _JOB_OBJECT_LIMIT_BREAKAWAY_OK
+    return flags
+
+
 def _assign_and_resume(process: subprocess.Popen[bytes], job: WindowsHookJob) -> None:
+    _assign_process_handle_to_job(_process_handle(process), job)
+    _resume_primary_thread(process.pid)
+
+
+def _assign_process_handle_to_job(process_handle: int, job: WindowsHookJob) -> None:
     kernel32 = _kernel32()
     assign_process = kernel32.AssignProcessToJobObject
     assign_process.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
@@ -177,7 +247,6 @@ def _assign_and_resume(process: subprocess.Popen[bytes], job: WindowsHookJob) ->
     is_process_in_job = kernel32.IsProcessInJob
     is_process_in_job.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
     is_process_in_job.restype = wintypes.BOOL
-    process_handle = _process_handle(process)
     if not assign_process(wintypes.HANDLE(job.handle), wintypes.HANDLE(process_handle)):
         raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
     assigned = wintypes.BOOL()
@@ -190,7 +259,6 @@ def _assign_and_resume(process: subprocess.Popen[bytes], job: WindowsHookJob) ->
         or not assigned.value
     ):
         raise OSError(ctypes.get_last_error(), "IsProcessInJob failed")
-    _resume_primary_thread(process.pid)
 
 
 def _process_handle(process: subprocess.Popen[bytes]) -> int:
@@ -286,6 +354,7 @@ def _close_process_streams(process: subprocess.Popen[bytes]) -> None:
 
 __all__ = [
     "WindowsHookJob",
+    "assign_current_process_to_windows_hook_job",
     "close_windows_hook_job",
     "spawn_windows_hook_process",
 ]
