@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import threading
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -132,6 +133,27 @@ def retire_worker_slot(slot: HookWorkerSlot, *, graceful: bool = False) -> bool:
     return contained
 
 
+def worker_retirement_thread(
+    slot: HookWorkerSlot,
+    *,
+    graceful: bool,
+    name: str,
+    on_contained: Callable[[], None],
+    on_failed: Callable[[], None],
+    on_done: Callable[[threading.Thread], None],
+) -> threading.Thread:
+    def retire() -> None:
+        try:
+            if retire_worker_slot(slot, graceful=graceful):
+                on_contained()
+            else:
+                on_failed()
+        finally:
+            on_done(threading.current_thread())
+
+    return threading.Thread(target=retire, name=name, daemon=True)
+
+
 __all__ = [
     "HookProcessReview",
     "HookWorkerSlot",
@@ -140,4 +162,5 @@ __all__ = [
     "retire_worker_slot",
     "terminate_owned_process_group",
     "terminate_worker_tree",
+    "worker_retirement_thread",
 ]

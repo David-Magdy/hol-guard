@@ -28,11 +28,13 @@ from codex_plugin_scanner.guard.codex_hook_windows_job import (
 )
 from codex_plugin_scanner.guard.daemon import hook_process_entrypoint as hook_entrypoint_module
 from codex_plugin_scanner.guard.daemon import hook_process_runner as hook_runner_module
+from codex_plugin_scanner.guard.daemon import hook_process_spawner as hook_spawner_module
 from codex_plugin_scanner.guard.daemon import hook_process_worker as hook_worker_module
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager_module
 from codex_plugin_scanner.guard.daemon.hook_process_protocol import capture_hook_command
 from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessRunner
 from codex_plugin_scanner.guard.daemon.hook_process_worker import HookProcessReview, HookWorkerSlot
+from codex_plugin_scanner.guard.daemon.runtime_hook_scheduler import RuntimeHookScheduler
 from codex_plugin_scanner.guard.models import GuardApprovalRequest
 from codex_plugin_scanner.guard.store import GuardStore
 
@@ -343,7 +345,7 @@ def test_prewarmed_runner_handles_real_hook_and_closes(tmp_path: Path) -> None:
     assert sum(stats["reason_codes"].values()) == 1
 
 
-def test_prewarmed_runner_queues_multi_pi_burst_inside_deadline(tmp_path: Path) -> None:
+def test_prewarmed_runner_does_not_hide_a_second_worker_queue(tmp_path: Path) -> None:
     runner = HookProcessRunner(process_limit=4, timeout_seconds=1.8)
     barrier = threading.Barrier(24)
 
@@ -372,9 +374,68 @@ def test_prewarmed_runner_queues_multi_pi_burst_inside_deadline(tmp_path: Path) 
     finally:
         runner.close()
 
+    assert any(result.reason_code is None for result in results)
+    assert {result.reason_code for result in results if result.reason_code is not None} <= {
+        "daemon_hook_process_not_ready"
+    }
+    assert elapsed < 1.0
+
+
+def test_scheduler_and_runner_complete_48_routine_reviews_without_capacity_denial(
+    tmp_path: Path,
+) -> None:
+    scheduler = RuntimeHookScheduler(
+        active_limit=0,
+        queued_limit=64,
+        per_harness_queued_limit=64,
+        per_client_queued_limit=16,
+    )
+    runner = HookProcessRunner(
+        guard_home=tmp_path,
+        process_limit=8,
+        timeout_seconds=2.8,
+        capacity_listener=scheduler.set_active_limit,
+    )
+    barrier = threading.Barrier(48)
+
+    def review(index: int) -> HookProcessReview:
+        barrier.wait(timeout=3)
+        admission = scheduler.acquire(
+            harness="pi",
+            client_key=f"client-{index % 6}",
+            lane="decision",
+            payload_bytes=1,
+            deadline=time.monotonic() + 10,
+        )
+        assert admission.permit is not None
+        with admission.permit:
+            return runner.review(
+                payload={
+                    "hook_event_name": "PreToolUse",
+                    "tool_call_id": f"scheduled-pi-{index}",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "git status --short"},
+                },
+                harness="pi",
+                home_dir=tmp_path,
+                guard_home=tmp_path,
+                workspace=tmp_path,
+                hook_env={},
+                deadline=time.monotonic() + 4,
+            )
+
+    try:
+        runner.start()
+        with ThreadPoolExecutor(max_workers=48) as executor:
+            results = list(executor.map(review, range(48)))
+    finally:
+        runner.close()
+
+    failures = [result.reason_code for result in results if result.payload is None]
+    assert failures == [], runner.stats()
     assert all(result.reason_code is None for result in results)
-    assert all(result.payload is not None for result in results)
-    assert elapsed < 2.0
+    assert scheduler.stats()["completed"] == 48
+    assert scheduler.stats()["rejected"] == {}
 
 
 def test_deferred_runner_serves_first_worker_before_backfilling(tmp_path: Path) -> None:
@@ -476,7 +537,7 @@ def test_transient_initial_worker_failure_replenishes_capacity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1)
-    original_ready = runner._slot_became_ready  # pyright: ignore[reportPrivateUsage]
+    original_ready = hook_spawner_module.hook_worker_became_ready
     attempts = 0
 
     def transient_ready(slot: HookWorkerSlot, timeout: float) -> bool:
@@ -485,7 +546,7 @@ def test_transient_initial_worker_failure_replenishes_capacity(
         ready = original_ready(slot, timeout)
         return attempts > 1 and ready
 
-    monkeypatch.setattr(runner, "_slot_became_ready", transient_ready)
+    monkeypatch.setattr(hook_runner_module, "hook_worker_became_ready", transient_ready)
     ready_workers = 0
     review_payload: dict[str, object] | None = None
     try:
@@ -664,12 +725,10 @@ def test_crashed_guardian_fails_closed_without_stale_group_cleanup(tmp_path: Pat
     assert retry.reason_code == "daemon_hook_process_closed"
 
 
-def test_review_waits_briefly_for_prepared_worker_capacity(tmp_path: Path) -> None:
+def test_review_returns_immediately_without_prepared_worker_capacity(tmp_path: Path) -> None:
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=1.0)
     runner.start()
     slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
-    release = threading.Timer(0.05, lambda: runner._slots.put_nowait(slot))  # pyright: ignore[reportPrivateUsage]
-    release.start()
     try:
         started = time.monotonic()
         result = runner.review(
@@ -682,11 +741,12 @@ def test_review_waits_briefly_for_prepared_worker_capacity(tmp_path: Path) -> No
         )
         elapsed = time.monotonic() - started
     finally:
-        release.join(timeout=1)
+        runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
         runner.close()
 
-    assert elapsed >= 0.04
-    assert result.payload is not None
+    assert elapsed < 0.04
+    assert result.payload is None
+    assert result.reason_code == "daemon_hook_process_not_ready"
 
 
 def test_review_worker_wait_respects_outer_deadline(tmp_path: Path) -> None:
@@ -711,7 +771,7 @@ def test_review_worker_wait_respects_outer_deadline(tmp_path: Path) -> None:
 
     assert elapsed < 0.2
     assert result.payload is None
-    assert result.reason_code == "daemon_hook_process_deadline_exhausted"
+    assert result.reason_code == "daemon_hook_process_not_ready"
 
 
 def test_close_retains_worker_when_guardian_identity_is_lost(tmp_path: Path) -> None:

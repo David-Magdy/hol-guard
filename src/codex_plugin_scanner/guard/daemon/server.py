@@ -458,7 +458,7 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self.hook_harness_rejected = {}
         self.hook_capacity_lock = threading.Lock()
         self.runtime_hook_scheduler = RuntimeHookScheduler(
-            active_limit=_MAX_CONCURRENT_RUNTIME_HOOKS,
+            active_limit=0,
             per_harness_active_limit=_MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS,
         )
         self.request_capacity_limit = _MAX_CONCURRENT_DAEMON_REQUESTS
@@ -478,6 +478,7 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self.unclassified_watchdog_stop = threading.Event()
         self.unclassified_watchdog_thread = None
         self.hook_process_runner = HookProcessRunner(guard_home=store.guard_home)
+        self.hook_process_runner.set_capacity_listener(self.runtime_hook_scheduler.set_active_limit)
         self.runtime_heartbeat = RuntimeHeartbeatWriter(
             store=store,
             session_id=runtime_session_id,
@@ -5211,6 +5212,11 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             with daemon_server.hook_capacity_lock:
                 daemon_server.active_hook_requests -= 1
                 daemon_server.hook_harness_active[capacity_harness] -= 1
+            scheduler_stats = daemon_server.runtime_hook_scheduler.stats()
+            daemon_server.hook_process_runner.observe_load(
+                queue_p95_ms=scheduler_stats["queue_wait_p95_ms"],
+                queued=scheduler_stats["queued"],
+            )
 
     @staticmethod
     def _runtime_hook_lane(payload: Mapping[str, object]) -> RuntimeHookLane:
