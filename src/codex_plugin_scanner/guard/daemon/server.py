@@ -107,6 +107,7 @@ from ..config import (
     load_guard_config,
     reset_guard_settings,
     update_guard_settings,
+    update_guard_update_channel,
 )
 from ..desktop_notifications import (
     desktop_notification_setup_payload,
@@ -1842,7 +1843,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             self._write_json(
                 merge_dashboard_update_progress(
                     store.guard_home,
-                    build_guard_update_status_payload(),
+                    build_guard_update_status_payload(guard_home=store.guard_home),
                 )
             )
             return
@@ -2286,9 +2287,13 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/update/reconnect/prepare":
             self._handle_dashboard_reconnect_prepare()
             return
+        if parsed.path == "/v1/update/channel":
+            self._handle_update_channel(payload)
+            return
         if parsed.path == "/v1/update":
             force_pypi_reinstall = bool(payload.get("force_pypi_reinstall"))
-            status_payload = build_guard_update_status_payload()
+            guard_home = self.server.store.guard_home  # type: ignore[attr-defined]
+            status_payload = build_guard_update_status_payload(guard_home=guard_home)
             if status_payload.get("python_update_required") is True:
                 self._write_json(
                     {
@@ -2329,7 +2334,6 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     status=400,
                 )
                 return
-            guard_home = self.server.store.guard_home  # type: ignore[attr-defined]
             daemon_pid = os.getpid()
             daemon_port = self._daemon_server().daemon_port()
             self._write_json(
@@ -2338,6 +2342,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     daemon_pid=daemon_pid,
                     daemon_port=daemon_port,
                     force_pypi_reinstall=force_pypi_reinstall,
+                    include_alpha=status_payload.get("release_channel") == "alpha",
+                    status_payload=status_payload,
                 )
             )
             return
@@ -4578,6 +4584,18 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             return
         self._write_json(_settings_response_payload(guard_home, editable_guard_settings(config)))
 
+    def _handle_update_channel(self, payload: dict[str, object]) -> None:
+        guard_home = self.server.store.guard_home  # type: ignore[attr-defined]
+        try:
+            update_guard_update_channel(guard_home, payload.get("update_channel"))
+        except ApprovalGateError as error:
+            self._write_approval_gate_error(error)
+            return
+        except ValueError as error:
+            self._write_json({"error": "invalid_update_channel", "message": str(error)}, status=400)
+            return
+        self._write_json(build_guard_update_status_payload(guard_home=guard_home))
+
     def _handle_settings_import(self, payload: dict[str, object]) -> None:
         settings = payload.get("settings")
         if not isinstance(settings, dict):
@@ -5992,6 +6010,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "/v1/protection/repair",
             "/v1/notifications/setup",
             "/v1/update/status",
+            "/v1/update/channel",
             "/v1/update/reconnect/prepare",
         }:
             return True
@@ -6012,7 +6031,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             if len(path_parts) == 4 and path_parts[:2] == ["v1", "sessions"] and path_parts[3] == "resume":
                 return True
         if self.command == "POST":
-            if path in {"/v1/update", "/v1/update/reconnect/prepare"}:
+            if path in {"/v1/update", "/v1/update/channel", "/v1/update/reconnect/prepare"}:
                 return True
             if (
                 len(path_parts) == 4
@@ -6281,6 +6300,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "/v1/settings/reset",
             "/v1/read-state",
             "/v1/update",
+            "/v1/update/channel",
             "/v1/update/reconnect/challenge",
             "/v1/update/reconnect/prepare",
             "/v1/update/reconnect/verify",
@@ -6763,6 +6783,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "/v1/cloud/connect",
             "/v1/notifications/setup",
             "/v1/update",
+            "/v1/update/channel",
             "/v1/update/reconnect/prepare",
             "/v1/command-activity/feedback",
         }:
