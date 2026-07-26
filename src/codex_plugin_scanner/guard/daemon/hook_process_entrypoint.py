@@ -167,9 +167,7 @@ def _hook_evaluator_main(connection: Connection, configured_guard_home: str | No
             )
         except BaseException as error:
             reason_code = (
-                "daemon_hook_process_not_ready"
-                if sqlite_error_is_busy_locked(error)
-                else "daemon_hook_process_failed"
+                "daemon_hook_process_not_ready" if sqlite_error_is_busy_locked(error) else "daemon_hook_process_failed"
             )
             response = {"payload": None, "reason_code": reason_code}
         try:
