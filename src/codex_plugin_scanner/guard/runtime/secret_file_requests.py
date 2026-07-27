@@ -1266,6 +1266,7 @@ def is_explicitly_benign_tool_action_request(
             continue
         if home_dir is not None and _looks_like_safe_compound_developer_inspection(
             stripped_command,
+            cwd=cwd,
             home_dir=home_dir,
         ):
             found_benign_candidate = True
@@ -1398,16 +1399,26 @@ def _git_status_has_execution_free_config(cwd: Path | None) -> bool:
     return bool(values) and all(value in {"0", "false", "no", "off"} for value in values)
 
 
-def _looks_like_safe_compound_developer_inspection(command_text: str, *, home_dir: Path) -> bool:
+def _looks_like_safe_compound_developer_inspection(
+    command_text: str,
+    *,
+    cwd: Path | None,
+    home_dir: Path,
+) -> bool:
     """Auto-relax only whole commands composed of bounded local observers."""
 
     if any(marker in command_text for marker in ("$(", "`", "<(", ">(")):
         return False
-    context = low_risk_compound_developer_execution_context(command_text, home_dir=home_dir)
+    context = low_risk_compound_developer_execution_context(
+        command_text,
+        cwd=cwd,
+        home_dir=home_dir,
+    )
     if context is None or not context.complete:
         return False
+    first_inspection_segment = 1 if shell_execution_context_starts_with_literal_cd(context) else 0
     saw_inspection = False
-    for segment in context.segments[1:]:
+    for segment in context.segments[first_inspection_segment:]:
         if any(
             control not in {"&&", "||", "|", ";", "\n"} for control in (*segment.control_before, *segment.control_after)
         ):
@@ -2098,17 +2109,24 @@ def shell_execution_context_starts_with_literal_cd(context: ShellExecutionContex
 def low_risk_compound_developer_execution_context(
     command_text: str,
     *,
+    cwd: Path | None = None,
     home_dir: Path,
 ) -> ShellExecutionContext | None:
     """Model a deterministic whole-command developer inspection from the user's home."""
 
     delayed = re.fullmatch(r"\s*sleep\s+([1-9]\d{0,3})\s*&&\s*(.+)", command_text, re.DOTALL)
     if delayed is not None and int(delayed.group(1)) <= 3600:
-        recovered = _low_risk_compound_developer_execution_context(delayed.group(2), home_dir=home_dir)
+        recovered = _low_risk_compound_developer_execution_context(
+            delayed.group(2),
+            cwd=cwd,
+            home_dir=home_dir,
+        )
         return replace(recovered, command_text=command_text) if recovered is not None else None
 
     return _low_risk_compound_developer_execution_context(
-        command_text, home_dir=home_dir
+        command_text,
+        cwd=cwd,
+        home_dir=home_dir,
     ) or _bounded_verified_source_edit_execution_context(command_text, home_dir=home_dir)
 
 
@@ -2494,14 +2512,16 @@ def _runner_argument_escapes_root(arg: str, *, cwd: Path, root: Path) -> bool:
 def _low_risk_compound_developer_execution_context(
     command_text: str,
     *,
+    cwd: Path | None = None,
     home_dir: Path,
 ) -> ShellExecutionContext | None:
     """Recognize one inspection chain after optional delay handling."""
 
+    initial_root = cwd or home_dir
     context = model_shell_execution_context(
         command_text,
-        cwd=home_dir,
-        workspace_root=home_dir,
+        cwd=initial_root,
+        workspace_root=initial_root,
         home_dir=home_dir,
     )
     workspace_root = _leading_literal_cd_workspace_root(context, home_dir=home_dir)
@@ -2512,7 +2532,8 @@ def _low_risk_compound_developer_execution_context(
             workspace_root=workspace_root,
             home_dir=home_dir,
         )
-    if not shell_execution_context_starts_with_literal_cd(context):
+    starts_with_literal_cd = shell_execution_context_starts_with_literal_cd(context)
+    if not starts_with_literal_cd and cwd is None:
         return None
     if is_low_risk_compound_git_inspection(context):
         return context
@@ -2522,7 +2543,8 @@ def _low_risk_compound_developer_execution_context(
     )
     inspection_root = context.workspace_root or home_dir
     saw_inspection = False
-    for segment in context.segments[1:]:
+    first_inspection_segment = 1 if starts_with_literal_cd else 0
+    for segment in context.segments[first_inspection_segment:]:
         if any(
             control not in {"&&", "||", "|", ";", "\n"} for control in (*segment.control_before, *segment.control_after)
         ):

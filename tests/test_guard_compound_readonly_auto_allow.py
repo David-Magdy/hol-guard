@@ -68,6 +68,41 @@ def test_multiline_read_only_inspection_is_explicitly_benign(tmp_path: Path) -> 
     )
 
 
+def test_compound_inspection_uses_current_repository_without_redundant_cd(tmp_path: Path) -> None:
+    home_dir, repository = _repository(tmp_path)
+    command = 'pwd; git status --short --branch; sed -n "1,5p" ui.tsx'
+
+    assert _is_benign(command, home_dir=home_dir, repository=repository)
+    assert (
+        extract_sensitive_tool_action_request(
+            "bash",
+            {"command": command},
+            cwd=repository,
+            home_dir=home_dir,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "pwd; git status --short --branch; rm -rf build",
+        "pwd; git status --short --branch; cat .env",
+        "pwd; git status --short --branch; ls $(printf ui.tsx)",
+        "pwd; git status --short --branch; ls ../../outside",
+        "pwd; git status --short --branch; grep export ../../outside",
+    ),
+)
+def test_compound_current_repository_rejects_sensitive_or_dynamic_segments(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    home_dir, repository = _repository(tmp_path)
+
+    assert not _is_benign(command, home_dir=home_dir, repository=repository)
+
+
 @pytest.mark.parametrize(
     "suffix",
     (
