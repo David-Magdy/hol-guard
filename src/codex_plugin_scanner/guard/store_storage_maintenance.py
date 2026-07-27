@@ -10,11 +10,13 @@ from datetime import datetime, timedelta
 from typing import Final, Protocol, cast
 
 STORAGE_MAINTENANCE_MIGRATION_VERSION: Final = 20
-DEFAULT_STORAGE_MAINTENANCE_BATCH_SIZE: Final = 2_000
+STORAGE_QUERY_INDEX_MIGRATION_VERSION: Final = 21
+DEFAULT_STORAGE_MAINTENANCE_BATCH_SIZE: Final = 500
 DEFAULT_RECEIPT_DETAIL_LIMIT: Final = 250_000
 DEFAULT_GUARD_EVENT_LIMIT: Final = 250_000
 DEFAULT_UPLOADED_CLOUD_EVENT_LIMIT: Final = 10_000
 UPLOADED_CLOUD_EVENT_RETAIN_DAYS: Final = 7
+STORAGE_MAINTENANCE_BUSY_TIMEOUT_MS: Final = 25
 _MAX_BATCH_SIZE: Final = 10_000
 
 
@@ -72,6 +74,7 @@ class StoreStorageMaintenanceMixin:
             uploaded_cloud_event_limit=uploaded_cloud_event_limit,
         )
         with self._connect() as connection:
+            connection.execute(f"pragma busy_timeout={STORAGE_MAINTENANCE_BUSY_TIMEOUT_MS}")
             connection.execute("begin immediate")
             receipts_archived = _archive_receipt_batch(
                 connection,
@@ -120,6 +123,8 @@ class StoreStorageMaintenanceMixin:
                     pages_reclaimed,
                 ),
             )
+        if completed:
+            _run_passive_housekeeping(self)
         return StorageMaintenanceResult(
             ran=True,
             completed=completed,
@@ -155,7 +160,7 @@ def _archive_receipt_batch(
                 where approval.request_id = r.approval_request_id
                   and approval.status = 'pending'
               )
-            order by r.rowid
+            order by r.timestamp
             limit ?
             """,
             (cutoff.isoformat(), boundary, boundary, batch_size),
@@ -212,7 +217,7 @@ def _delete_guard_event_batch(
               select 1 from guard_workflow_capability_authority_transitions as transition
               where transition.event_id = event.event_id
             )
-          order by event.rowid
+          order by event.occurred_at
           limit ?
         )
         """,
@@ -242,7 +247,7 @@ def _delete_uploaded_cloud_event_batch(
           from guard_cloud_events
           where uploaded_at is not null
             and (uploaded_at < ? or (? is not null and rowid <= ?))
-          order by rowid
+          order by uploaded_at, occurred_at
           limit ?
         )
         """,
@@ -282,6 +287,17 @@ def _reclaim_free_pages(connection: sqlite3.Connection, *, batch_size: int) -> i
     return max(before - after, 0)
 
 
+def _run_passive_housekeeping(owner: _ConnectionOwner) -> None:
+    try:
+        with owner._connect() as connection:
+            connection.execute("pragma busy_timeout=0")
+            connection.execute("pragma optimize")
+            connection.execute("pragma wal_checkpoint(passive)")
+    except sqlite3.Error:
+        # Maintenance never delays or fails an enforcement request.
+        return
+
+
 def _validate_inputs(
     *,
     now: datetime,
@@ -311,7 +327,9 @@ __all__ = [
     "DEFAULT_RECEIPT_DETAIL_LIMIT",
     "DEFAULT_STORAGE_MAINTENANCE_BATCH_SIZE",
     "DEFAULT_UPLOADED_CLOUD_EVENT_LIMIT",
+    "STORAGE_MAINTENANCE_BUSY_TIMEOUT_MS",
     "STORAGE_MAINTENANCE_MIGRATION_VERSION",
+    "STORAGE_QUERY_INDEX_MIGRATION_VERSION",
     "StorageMaintenanceResult",
     "StoreStorageMaintenanceMixin",
     "storage_maintenance_schema_statements",

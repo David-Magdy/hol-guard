@@ -26,6 +26,7 @@ from .store_live_request_outbox import ensure_live_request_outbox_schema, seed_l
 from .store_secret_policy_integrity import _POLICY_INTEGRITY_LOOKUP_UNSET
 from .store_storage_maintenance import (
     STORAGE_MAINTENANCE_MIGRATION_VERSION,
+    STORAGE_QUERY_INDEX_MIGRATION_VERSION,
     storage_maintenance_schema_statements,
 )
 from .store_workflow_capabilities_schema import ensure_workflow_capability_schema
@@ -138,7 +139,7 @@ _POLICY_INDEX_STATEMENTS = (
 )
 
 _RECEIPT_WARN_ROLLUP_MIGRATION_VERSION = 16
-_REQUIRED_SCHEMA_MIGRATION_VERSIONS = tuple(range(2, STORAGE_MAINTENANCE_MIGRATION_VERSION + 1))
+_REQUIRED_SCHEMA_MIGRATION_VERSIONS = tuple(range(2, STORAGE_QUERY_INDEX_MIGRATION_VERSION + 1))
 
 
 class StoreConnectionSchemaMixin:
@@ -840,6 +841,10 @@ class StoreConnectionSchemaMixin:
             self._record_schema_version(
                 connection,
                 version=STORAGE_MAINTENANCE_MIGRATION_VERSION,
+            )
+            self._record_schema_version(
+                connection,
+                version=STORAGE_QUERY_INDEX_MIGRATION_VERSION,
             )
             if not self._schema_version_applied(connection, version=2):
                 self._record_schema_version(connection, version=2)
