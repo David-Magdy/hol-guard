@@ -15706,6 +15706,7 @@ function resolveSupplyChainAuditFailure(detail) {
 }
 const GUARD_TOKEN_PARAM = "guard-token";
 const GUARD_DAEMON_PARAM = "guardDaemon";
+const GUARD_UPDATE_CHANNEL_STORAGE_KEY = "guard-update-channel";
 const GUARD_SURFACE_PROTOCOL_VERSIONS = ["1.1", "1.0"];
 const DEFAULT_GUARD_DAEMON_PORT = 4781;
 const GUARD_DAEMON_PORT_RANGE = 1e3;
@@ -15785,6 +15786,21 @@ function saveBrowserStorage(getStorage, name, value) {
 function saveGuardStorage(name, value) {
   saveBrowserStorage(() => window.sessionStorage, name, value);
   saveBrowserStorage(() => window.localStorage, name, value);
+}
+function isGuardUpdateChannel(value) {
+  return value === "stable" || value === "alpha";
+}
+function readRememberedGuardUpdateChannel() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const value = readGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY);
+  return isGuardUpdateChannel(value) ? value : null;
+}
+function rememberGuardUpdateChannel(channel) {
+  if (typeof window !== "undefined") {
+    saveGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY, channel);
+  }
 }
 function readGuardToken() {
   const locationKey = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -17947,7 +17963,7 @@ function normalizeGuardUpdateVersionCheck(raw) {
     update_available: typeof value.update_available === "boolean" ? value.update_available : null
   };
 }
-function normalizeGuardUpdateStatus(raw) {
+function normalizeGuardUpdateStatus(raw, fallbackReleaseChannel = null) {
   const value = isRecord$1(raw) ? raw : {};
   const versionCheck = normalizeGuardUpdateVersionCheck(value.version_check);
   const currentVersion = stringValue$1(value.current_version) ?? versionCheck.current_version ?? "unknown";
@@ -17966,7 +17982,7 @@ function normalizeGuardUpdateStatus(raw) {
     update_suppressed: value.update_suppressed === true ? true : void 0,
     retry_command: typeof value.retry_command === "string" ? value.retry_command : void 0,
     update_attempt_message: typeof value.update_attempt_message === "string" ? value.update_attempt_message : void 0,
-    release_channel: value.release_channel === "alpha" ? "alpha" : "stable"
+    release_channel: isGuardUpdateChannel(value.release_channel) ? value.release_channel : fallbackReleaseChannel ?? "stable"
   };
 }
 async function fetchGuardUpdateStatus() {
@@ -17988,7 +18004,12 @@ async function fetchGuardUpdateStatus() {
     });
   }
   const payload = await readJson("/v1/update/status", { cache: "no-store" });
-  return normalizeGuardUpdateStatus(payload);
+  const declaredChannel = isRecord$1(payload) && isGuardUpdateChannel(payload.release_channel) ? payload.release_channel : null;
+  const status = normalizeGuardUpdateStatus(payload, readRememberedGuardUpdateChannel());
+  if (declaredChannel) {
+    rememberGuardUpdateChannel(declaredChannel);
+  }
+  return status;
 }
 async function scheduleGuardUpdate(options) {
   if (isGuardDemoMode()) {
@@ -18031,7 +18052,9 @@ async function setGuardUpdateChannel(channel, proof) {
     const value = isRecord$1(payload) ? payload : {};
     throw new Error(stringValue$1(value.message) ?? `Update channel failed with ${response.status}`);
   }
-  return normalizeGuardUpdateStatus(payload);
+  const declaredChannel = isRecord$1(payload) && isGuardUpdateChannel(payload.release_channel) ? payload.release_channel : channel;
+  rememberGuardUpdateChannel(declaredChannel);
+  return normalizeGuardUpdateStatus(payload, declaredChannel);
 }
 async function setupDesktopNotifications() {
   if (isGuardDemoMode()) {
@@ -18949,7 +18972,7 @@ function GuardUpdatePanel(props) {
   const showUpdateButton = props.updateStatus?.update_available === true && props.updateStatus.auto_updatable && props.updateStatus.update_suppressed !== true && phase !== "updating" && phase !== "reconnecting";
   const showReinstallButton = shouldPromptRecoveryReinstall(props.updateStatus) && phase !== "updating" && phase !== "reconnecting";
   const busy = phase === "updating" || phase === "reconnecting";
-  const useAlpha = props.updateStatus?.release_channel === "alpha";
+  const useAlpha = props.updateStatus?.release_channel === "alpha" || props.updateStatus == null && readRememberedGuardUpdateChannel() === "alpha";
   const [alphaModalOpen, setAlphaModalOpen] = reactExports.useState(false);
   const [alphaSavePending, setAlphaSavePending] = reactExports.useState(false);
   const [alphaSaveError, setAlphaSaveError] = reactExports.useState(null);

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
+from typing import Final
 
 import pytest
 
-from codex_plugin_scanner.guard.runtime.github_capability_contract import GitHubCommandCapability
 from codex_plugin_scanner.guard.runtime.github_command_capabilities import classify_github_cli
 from codex_plugin_scanner.guard.runtime.github_pr_body_file import static_markdown_pr_edit_body_file_operand
 from codex_plugin_scanner.guard.runtime.secret_file_requests import extract_sensitive_tool_action_request
@@ -126,6 +126,28 @@ GITHUB_CAPABILITY_CASES = (
         ),
         "maintain_remote",
         "github.graphql.maintain",
+    ),
+    (
+        (
+            "api",
+            "graphql",
+            "-f",
+            'query=mutation{resolveReviewThread(input:{threadId:"PRRT_kwDOQGomAs6T6b-G"}){thread{isResolved}}}',
+        ),
+        "routine_review_thread_remote",
+        "github.graphql.routine-review-thread-resolution",
+    ),
+    (
+        (
+            "--repo",
+            "owner/repository",
+            "api",
+            "graphql",
+            "-f",
+            'query=mutation{resolveReviewThread(input:{threadId:"PRRT_kwDOQGomAs6T6b-G"}){thread{isResolved}}}',
+        ),
+        "routine_review_thread_remote",
+        "github.graphql.routine-review-thread-resolution",
     ),
     (("pr", "merge", "17", "--squash", "--delete-branch"), "delete_remote", "github.command.pr-merge"),
     (("pr", "merge", "17", "--admin"), "admin_merge_remote", "github.command.pr-admin-merge"),
@@ -302,6 +324,8 @@ GITHUB_CAPABILITY_CASES = (
     ),
     (("project-alias",), "unknown", "github.command.extension-or-alias"),
 )
+
+
 def test_classify_github_cli_capabilities() -> None:
     failures: list[str] = []
     for args, capability, reason_code in GITHUB_CAPABILITY_CASES:
@@ -339,6 +363,58 @@ def test_classify_github_cli_rejects_ambiguous_graphql_inputs(args: tuple[str, .
     assessment = classify_github_cli(args)
 
     assert assessment.capability == "unknown"
+
+
+@pytest.mark.parametrize(
+    "args",
+    (
+        (
+            "api",
+            "graphql",
+            "-f",
+            'query=mutation{resolveReviewThread(input:{threadId:"PRRT_kwDOQGomAs6T6b-G"}){thread{id}}}',
+        ),
+        (
+            "api",
+            "graphql",
+            "-f",
+            'query=mutation{resolveReviewThread(input:{threadId:"PRRT_kwDOQGomAs6T6b-G"}){thread{isResolved}}}',
+            "-f",
+            "extra=value",
+        ),
+        (
+            "api",
+            "graphql",
+            "--repo",
+            "owner/repository",
+            "-f",
+            'query=mutation{resolveReviewThread(input:{threadId:"PRRT_kwDOQGomAs6T6b-G"}){thread{isResolved}}}',
+        ),
+        (
+            "api",
+            "graphql",
+            "-f",
+            'query=mutation{resolveReviewThread(input:{threadId:"PRRT_kwDOQGomAs6T6b-G"}){thread{isResolved}}}',
+            "--jq",
+            ".data",
+        ),
+    ),
+)
+def test_routine_review_thread_resolution_rejects_noncanonical_variants(args: tuple[str, ...]) -> None:
+    assessment = classify_github_cli(args)
+
+    assert assessment.capabilities != ("routine_review_thread_remote",)
+
+
+def test_guard_keeps_exact_review_thread_resolution_prompt_free() -> None:
+    command = (
+        "gh api graphql -f "
+        "'query=mutation{resolveReviewThread(input:{threadId:\"PRRT_kwDOQGomAs6T6b-G\"}){thread{isResolved}}}'"
+    )
+
+    match = extract_sensitive_tool_action_request("Bash", {"command": command})
+
+    assert match is None
 
 
 @pytest.mark.parametrize(

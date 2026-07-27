@@ -6,6 +6,7 @@ import {
   fetchCommandActivityApi,
   fetchAllPendingRequests,
   fetchApprovalPage,
+  fetchGuardUpdateStatus,
   GuardHarnessActionError,
   fetchQueueSummary,
 	  fetchResumeStatus,
@@ -15,9 +16,11 @@ import {
   parseActionEnvelope,
   parseDecisionV2,
   readGuardToken,
+  readRememberedGuardUpdateChannel,
   runHarnessAction,
   runPackageFirewallAction,
   runPackageSync,
+  setGuardUpdateChannel,
   startPackageFirewallConnect,
 	  runAuditRemediation,
 	  resolveRequestWithQueueResult,
@@ -1212,6 +1215,32 @@ assert(
   headerValue(sessionOnlyCalls[0].init, "X-Guard-Dashboard-Session") === "token-session-only",
   "L078ad: fetchApprovalPage falls back to sessionStorage when localStorage is unavailable"
 );
+
+const updateChannelStorage = new Map<string, string>();
+installGuardWindow("?guardDaemon=http%3A%2F%2F127.0.0.1%3A4781", { localStorage: updateChannelStorage });
+installFetchStub({
+  "/v1/update/channel": { release_channel: "alpha" },
+});
+const selectedUpdateChannel = await setGuardUpdateChannel("alpha");
+assert(selectedUpdateChannel.release_channel === "alpha", "L078ae: update channel save returns alpha");
+assert(readRememberedGuardUpdateChannel() === "alpha", "L078af: successful channel save is remembered");
+
+installGuardWindow("?guardDaemon=http%3A%2F%2F127.0.0.1%3A4781", { localStorage: updateChannelStorage });
+installFetchStub({
+  "/v1/update/status": { current_version: "2.2.0a68" },
+});
+const reloadedUpdateChannel = await fetchGuardUpdateStatus();
+assert(
+  reloadedUpdateChannel.release_channel === "alpha",
+  "L078ag: remembered alpha channel survives a reload when status omits the channel",
+);
+
+installFetchStub({
+  "/v1/update/status": { current_version: "2.2.0a68", release_channel: "stable" },
+});
+const authoritativeStableChannel = await fetchGuardUpdateStatus();
+assert(authoritativeStableChannel.release_channel === "stable", "L078ah: daemon status remains authoritative");
+assert(readRememberedGuardUpdateChannel() === "stable", "L078ai: daemon status reconciles remembered channel");
 
 installGuardWindow("?guard-token=token-pending-pages&guardDaemon=http%3A%2F%2F127.0.0.1%3A4781");
 const codexPageItem: GuardApprovalRequest = {
