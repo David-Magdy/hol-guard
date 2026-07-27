@@ -2592,6 +2592,67 @@ export async function createCloudExceptionRequest(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Command-policy exception requests (Phase 11)
+// ---------------------------------------------------------------------------
+
+export type GuardCommandPolicyRequestedDuration =
+  | "once"
+  | "session"
+  | "machine"
+  | "workspace"
+  | "30d"
+  | "90d";
+
+/**
+ * Input for a command-policy exception request. Carries ONLY correlation
+ * identifiers — never the raw command, regex, graph, or policy action.
+ * The Cloud re-fetches the bound pending command server-side.
+ */
+export type GuardCommandPolicyExceptionRequestInput = {
+  kind: "command-policy";
+  sourceLocalRequestId: string;
+  sourceMachineInstallationId: string;
+  workspaceId: string;
+  requestedDuration: GuardCommandPolicyRequestedDuration;
+  reason: string;
+  note?: string;
+};
+
+export type GuardCommandPolicyExceptionRequestResult =
+  | { status: "created"; requestId: string; proposalId: string; triageItemId: string | null }
+  | { status: "duplicate"; requestId: string; proposalId: string }
+  | { status: "rejected"; reason: string };
+
+/**
+ * Submit a command-policy exception request through the daemon proxy.
+ *
+ * The daemon validates the payload locally (no raw command/graph keys
+ * allowed), forces the local-request snapshot sync, then forwards to
+ * Cloud using the existing runtime sync auth. The Cloud re-fetches the
+ * bound pending command server-side using the correlation identifiers.
+ */
+export async function createCommandPolicyExceptionRequest(
+  input: GuardCommandPolicyExceptionRequestInput,
+): Promise<GuardCommandPolicyExceptionRequestResult> {
+  if (isGuardDemoMode()) {
+    return {
+      status: "created",
+      requestId: "demo-command-policy-request",
+      proposalId: "demo-policy-proposal",
+      triageItemId: null,
+    };
+  }
+  return readJson<GuardCommandPolicyExceptionRequestResult>("/v1/policy/cloud-exception-requests", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...guardAuthHeaders(),
+    },
+    body: JSON.stringify(input),
+  });
+}
+
 export async function fetchPolicies(): Promise<GuardPolicyDecision[]> {
   if (isGuardDemoMode()) {
     return getDemoPolicy("codex");
