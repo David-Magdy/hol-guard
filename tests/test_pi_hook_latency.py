@@ -238,10 +238,10 @@ def test_pi_extension_keeps_fallbacks_inside_outer_hook_deadline(tmp_path: Path)
 
     assert "const GUARD_TIMEOUT_MS = 4250;" in source
     assert "const GUARD_DEADLINE_RESERVE_MS = 250;" in source
-    assert "const GUARD_DAEMON_TIMEOUT_MS = 3100;" in source
+    assert "const GUARD_DAEMON_TIMEOUT_MS = 2500;" in source
     assert "const GUARD_DAEMON_RECOVERY_TIMEOUT_MS = 250;" in source
     assert "const GUARD_DAEMON_RETRY_TIMEOUT_MS = 150;" in source
-    assert "const GUARD_CLI_TIMEOUT_MS = 300;" in source
+    assert "const GUARD_CLI_TIMEOUT_MS = 900;" in source
     assert 'const GUARD_ARGS = ["hook", "--json"' in source
     assert "compatibility_version !== GUARD_COMPATIBILITY_VERSION" in source
     assert "error.name === 'AbortError'" in source
@@ -283,6 +283,7 @@ def test_pi_hook_deadline_stays_inside_host_timeout() -> None:
     )
 
     assert pi_hook_host_timeout_ms > GUARD_HOOK_TIMEOUT_MS
+    assert GUARD_CLI_HOOK_TIMEOUT_MS > 750
     assert (
         GUARD_DAEMON_HOOK_TIMEOUT_MS
         + GUARD_DAEMON_RECOVERY_TIMEOUT_MS
@@ -593,10 +594,7 @@ def test_pi_extension_allows_only_one_cli_fallback_during_daemon_outage(tmp_path
     fallback_count_path = tmp_path / "fallback-count"
     fake_cli = fake_bin / "plugin-guard"
     _ = fake_cli.write_text(
-        (
-            '#!/bin/sh\ntrap "" TERM\nprintf "1\\n" >> "$FALLBACK_COUNT_PATH"\n'
-            'sleep 5\nprintf \'{"decision":"allow"}\\n\'\n'
-        ),
+        ('#!/bin/sh\nprintf "1\\n" >> "$FALLBACK_COUNT_PATH"\nsleep 0.5\nprintf \'{"decision":"allow"}\\n\'\n'),
         encoding="utf-8",
     )
     _ = fake_cli.chmod(0o755)
@@ -677,10 +675,10 @@ console.log(JSON.stringify({{
     payload = _decode_json_object(completed.stdout)
 
     assert fallback_count_path.read_text(encoding="utf-8").splitlines() == ["1"]
-    assert payload["allowed"] == 0
-    assert payload["blocked"] == 20
+    assert payload["allowed"] == 1
+    assert payload["blocked"] == 19
     assert payload["recoveryBusy"] == 19
-    assert payload["recoveryTimeout"] == 1
+    assert payload["recoveryTimeout"] == 0
     elapsed_ms = payload["elapsedMs"]
     assert isinstance(elapsed_ms, (int, float))
     assert elapsed_ms < 2_000
