@@ -16147,6 +16147,7 @@ async function fetchGuardUpdateStatusAtOrigin(origin, guardToken) {
   }
   const { response, payload } = await fetchGuardDaemonCandidateJson(`${candidateOrigin}/v1/update/status`, {
     headers: guardToken ? { "X-Guard-Dashboard-Session": guardToken } : {},
+    cache: "no-store",
     redirect: "error"
   });
   if (!response.ok) {
@@ -17986,7 +17987,7 @@ async function fetchGuardUpdateStatus() {
       blocked_reason: null
     });
   }
-  const payload = await readJson("/v1/update/status");
+  const payload = await readJson("/v1/update/status", { cache: "no-store" });
   return normalizeGuardUpdateStatus(payload);
 }
 async function scheduleGuardUpdate(options) {
@@ -19089,21 +19090,36 @@ function useGuardUpdate(options) {
   const [updatePhase, setUpdatePhase] = reactExports.useState(enabled ? "checking" : "idle");
   const reconnectStartedAt = reactExports.useRef(null);
   const updatePhaseRef = reactExports.useRef("checking");
+  const updateStatusEpoch = reactExports.useRef(0);
+  const channelMutationId = reactExports.useRef(0);
+  const channelMutationPending = reactExports.useRef(false);
+  const isMounted = reactExports.useRef(false);
   reactExports.useEffect(() => {
     updatePhaseRef.current = updatePhase;
   }, [updatePhase]);
+  reactExports.useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
   const refreshUpdateStatus = reactExports.useCallback(async () => {
-    if (!enabled) {
+    if (!enabled || !isMounted.current || channelMutationPending.current) {
       return;
     }
+    const epoch = updateStatusEpoch.current;
+    const mutationId = channelMutationId.current;
     try {
       const status = await fetchGuardUpdateStatus();
+      if (!isMounted.current || epoch !== updateStatusEpoch.current || mutationId !== channelMutationId.current || channelMutationPending.current) {
+        return;
+      }
       setUpdateStatus(status);
       if (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle") {
         setUpdatePhase("idle");
       }
     } catch {
-      if (updatePhaseRef.current === "checking") {
+      if (isMounted.current && updatePhaseRef.current === "checking") {
         setUpdatePhase("idle");
       }
     }
@@ -19114,9 +19130,14 @@ function useGuardUpdate(options) {
       return;
     }
     let cancelled = false;
+    const epoch = updateStatusEpoch.current;
+    const mutationId = channelMutationId.current;
     void fetchGuardUpdateStatus().then((status) => {
-      if (!cancelled && (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle")) {
-        setUpdateStatus(status);
+      if (cancelled || epoch !== updateStatusEpoch.current || mutationId !== channelMutationId.current || channelMutationPending.current) {
+        return;
+      }
+      setUpdateStatus(status);
+      if (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle") {
         setUpdatePhase("idle");
       }
     }).catch(() => {
@@ -19159,6 +19180,7 @@ function useGuardUpdate(options) {
             redirectToGuardDaemonOrigin(origin, readGuardToken());
             return true;
           }
+          updateStatusEpoch.current += 1;
           setUpdateStatus(reconnectResult.status);
           setUpdatePhase("idle");
           options?.onReconnected?.();
@@ -19230,7 +19252,23 @@ function useGuardUpdate(options) {
     });
   }, [scheduleAndWait, updateStatus]);
   const onSetUpdateChannel = reactExports.useCallback(async (channel, proof) => {
-    setUpdateStatus(await setGuardUpdateChannel(channel, proof));
+    const mutationId = ++channelMutationId.current;
+    updateStatusEpoch.current += 1;
+    channelMutationPending.current = true;
+    try {
+      const status = await setGuardUpdateChannel(channel, proof);
+      if (mutationId === channelMutationId.current) {
+        updateStatusEpoch.current += 1;
+        setUpdateStatus(status);
+        if (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle") {
+          setUpdatePhase("idle");
+        }
+      }
+    } finally {
+      if (mutationId === channelMutationId.current) {
+        channelMutationPending.current = false;
+      }
+    }
   }, []);
   return {
     guardVersion: updateStatus?.current_version ?? null,
