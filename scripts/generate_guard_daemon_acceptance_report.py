@@ -53,7 +53,7 @@ def sanitize_report(payload: dict[str, object]) -> dict[str, object]:
         "package_version": string_field("package_version", "unknown"),
         "git_sha": string_field("git_sha", "unknown"),
         "profile": string_field("profile", "correctness"),
-        "passed": bool(payload.get("passed", False)),
+        "passed": payload.get("passed") is True,
         "results": sanitized_results,
     }
 

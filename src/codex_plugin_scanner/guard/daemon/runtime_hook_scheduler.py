@@ -371,8 +371,6 @@ class RuntimeHookScheduler:
         return None
 
     def _can_finish(self, item: QueuedRuntimeHook) -> bool:
-        if item.deadline.serialization_reserve_seconds == 0.0:
-            return item.deadline.expires_at > self._monotonic()
         return item.deadline.can_dispatch(
             self._service_estimate(item.lane),
             monotonic=self._monotonic,
