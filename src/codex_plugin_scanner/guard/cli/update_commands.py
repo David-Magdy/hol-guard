@@ -1415,7 +1415,7 @@ def _update_command(
     allow_prerelease = _target_version_is_prerelease(target_version)
     if use_pypi:
         if installer == "uv":
-            command = ["uv", "tool", "install", "--force"]
+            command = ["uv", "tool", "install", "--force", "--refresh-package", "hol-guard"]
             if allow_prerelease:
                 command.append("--prerelease=allow")
             command.append(package)
