@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -162,7 +164,7 @@ def test_canonical_gate_blocks_lifecycle_override_bypass(
 
     from codex_plugin_scanner.guard.cli import commands_router
 
-    monkeypatch.setattr(commands_router, "_run_guard_update_command", update_handler)
+    monkeypatch.setattr(commands_router, "_run_guard_update_command", update_handler, raising=False)
     parser = argparse.ArgumentParser()
     add_guard_root_parser(parser)
     args = parser.parse_args(["update", override_flag, str(alternate_home), "--json"])
@@ -172,7 +174,8 @@ def test_canonical_gate_blocks_lifecycle_override_bypass(
 
     assert exit_code == 4
     assert handler_called is False
-    assert '"error": "approval_gate_interactive_required"' in output.getvalue()
+    payload = cast(dict[str, object], json.loads(output.getvalue()))
+    assert payload["error"] == "approval_gate_interactive_required"
 
 
 def test_canonical_gate_ignores_ambient_home_override(

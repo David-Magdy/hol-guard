@@ -27,6 +27,7 @@ class LifecycleGateRequirement:
 
 
 def lifecycle_gate_requirement(args: argparse.Namespace) -> LifecycleGateRequirement | None:
+    # Every protection-mutating command must be listed here; unmatched commands are intentionally exempt.
     command = _string_attribute(args, "guard_command")
     if _bool_attribute(args, "dry_run"):
         return None
