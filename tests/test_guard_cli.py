@@ -4098,22 +4098,6 @@ args = ["workspace-skill.js", "--changed"]
         assert output["resulting_version"] == "2.0.1092"
         assert output["status"] == "updated"
 
-    def test_guard_update_refreshes_exact_alpha_release_from_uv_canary(self):
-        assert guard_update_commands_module._update_command(
-            "uv",
-            use_pypi=True,
-            target_version="2.2.0a71",
-        ) == [
-            "uv",
-            "tool",
-            "install",
-            "--force",
-            "--refresh-package",
-            "hol-guard",
-            "--prerelease=allow",
-            "hol-guard==2.2.0a71",
-        ]
-
     def test_guard_update_marks_already_current_pipx_runs_as_current(self, tmp_path, monkeypatch, capsys):
         home_dir = tmp_path / "home"
         commands: list[list[str]] = []

@@ -109,7 +109,16 @@ def test_update_command_allows_prerelease_for_alpha_pins() -> None:
         "uv",
         use_pypi=True,
         target_version="2.1.0a51",
-    ) == ["uv", "tool", "install", "--force", "--prerelease=allow", "hol-guard==2.1.0a51"]
+    ) == [
+        "uv",
+        "tool",
+        "install",
+        "--force",
+        "--refresh-package",
+        "hol-guard",
+        "--prerelease=allow",
+        "hol-guard==2.1.0a51",
+    ]
     assert update_commands._update_command(
         "pipx",
         use_pypi=True,
@@ -124,7 +133,7 @@ def test_update_command_allows_prerelease_for_alpha_pins() -> None:
         "uv",
         use_pypi=True,
         target_version="2.0.1127",
-    ) == ["uv", "tool", "install", "--force", "hol-guard==2.0.1127"]
+    ) == ["uv", "tool", "install", "--force", "--refresh-package", "hol-guard", "hol-guard==2.0.1127"]
 
 
 def test_latest_alpha_version_stays_in_current_major_and_skips_yanked(
