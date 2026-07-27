@@ -388,8 +388,8 @@ def test_recovery_retry_reserves_time_for_local_package_review(monkeypatch: pyte
     )
 
     assert json.loads(response) == {"review": True}
-    assert recovery_deadlines == [4.0]
-    assert retry_deadlines == [6.0]
+    assert recovery_deadlines == [3.5]
+    assert retry_deadlines == [5.5]
 
 
 def test_recovery_only_restarts_for_transport_auth_and_server_failures() -> None:

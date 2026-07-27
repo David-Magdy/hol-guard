@@ -46,6 +46,7 @@ _FALLBACK_TIMEOUT_SECONDS = 2
 _MAX_DAEMON_RESPONSE_BYTES = 1_000_000
 _MAX_HOOK_INPUT_BYTES = 1_000_000
 _HOOK_DEADLINE_SECONDS = 8
+_FALLBACK_SCHEDULING_RESERVE_SECONDS = 0.5
 _MINIMUM_OPERATION_SECONDS = 0.01
 _OVERLOAD_RESERVE_MS = 100
 _OVERLOAD_REASON = (
@@ -498,7 +499,9 @@ def _recover_retry_or_fallback(
         recovery_command,
         deadline=_deadline_with_reserve(
             deadline,
-            reserve_seconds=_DAEMON_IO_TIMEOUT_SECONDS + _FALLBACK_TIMEOUT_SECONDS,
+            reserve_seconds=(
+                _DAEMON_IO_TIMEOUT_SECONDS + _FALLBACK_TIMEOUT_SECONDS + _FALLBACK_SCHEDULING_RESERVE_SECONDS
+            ),
         ),
         failure_kind=failure_kind,
     ):
@@ -512,7 +515,7 @@ def _recover_retry_or_fallback(
                     state_path=state_path,
                     deadline=_deadline_with_reserve(
                         deadline,
-                        reserve_seconds=_FALLBACK_TIMEOUT_SECONDS,
+                        reserve_seconds=_FALLBACK_TIMEOUT_SECONDS + _FALLBACK_SCHEDULING_RESERVE_SECONDS,
                     ),
                 ),
                 reason=f"{reason}; recovered daemon returned malformed hook JSON",
