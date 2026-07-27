@@ -1,0 +1,110 @@
+"""Step-up authorization for commands that change Guard protection."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TextIO, cast
+
+from ..approval_gate import public_config, require_high_risk
+from .approval_gate_prompt import prompt_for_approval_gate
+
+_ENROLLMENT_NOTICE = (
+    "Security recommendation: protect Guard administration with an approval password or Authenticator. "
+    "Run `hol-guard dashboard`, then enable these controls in Settings."
+)
+
+
+@dataclass(frozen=True)
+class LifecycleGateRequirement:
+    action: str
+    subject: str
+
+
+def lifecycle_gate_requirement(args: argparse.Namespace) -> LifecycleGateRequirement | None:
+    command = _string_attribute(args, "guard_command")
+    if _bool_attribute(args, "dry_run"):
+        return None
+    if command in {"install", "uninstall", "update", "disconnect"}:
+        return LifecycleGateRequirement(command, _command_subject(args))
+    apps_command = _string_attribute(args, "apps_command")
+    if command == "apps" and apps_command in {"connect", "repair", "disconnect"}:
+        return LifecycleGateRequirement(f"apps.{apps_command}", _string_attribute(args, "harness") or "all")
+    if command == "bootstrap" and not _bool_attribute(args, "skip_install"):
+        return LifecycleGateRequirement("bootstrap.install", _string_attribute(args, "harness") or "detected")
+    if command == "init" and not _bool_attribute(args, "skip_apps"):
+        return LifecycleGateRequirement("init.install", "detected")
+    if command == "device" and _string_attribute(args, "device_command") == "rotate":
+        return LifecycleGateRequirement("device.rotate", "local-installation")
+    commands_command = _string_attribute(args, "commands_command")
+    if command == "commands" and commands_command in {"enable", "approve", "revoke"}:
+        action = f"commands.{commands_command}"
+        subject = _string_attribute(args, "job_id") or "remote-command-authority"
+        return LifecycleGateRequirement(action, subject)
+    if command == "daemon" and _string_attribute(args, "daemon_command") == "stop":
+        return LifecycleGateRequirement("daemon.stop", "local-daemon")
+    trust_command = _string_attribute(args, "trust_command")
+    if command == "trust" and trust_command in {"setup", "reset"}:
+        return LifecycleGateRequirement(f"trust.{trust_command}", "local-trust")
+    if command == "doctor" and _bool_attribute(args, "repair"):
+        return LifecycleGateRequirement("doctor.repair", _string_attribute(args, "harness") or "all")
+    return None
+
+
+def enforce_lifecycle_gate(
+    args: argparse.Namespace,
+    *,
+    guard_home: Path,
+    error_stream: TextIO | None = None,
+) -> None:
+    requirement = lifecycle_gate_requirement(args)
+    if requirement is None:
+        return
+    gate = public_config(guard_home)
+    if not gate.enabled:
+        print(_ENROLLMENT_NOTICE, file=error_stream or sys.stderr)
+        return
+    gate_input = prompt_for_approval_gate(guard_home, use_cooldown=False)
+    _ = require_high_risk(
+        guard_home,
+        purpose="protection_lifecycle",
+        approval_gate_input=gate_input,
+        action=requirement.action,
+        scope="local-protection",
+        subject=requirement.subject,
+    )
+
+
+def _command_subject(args: argparse.Namespace) -> str:
+    command = _string_attribute(args, "guard_command")
+    if command == "install":
+        return "all" if _bool_attribute(args, "all") else _string_attribute(args, "harness") or "detected"
+    if command == "uninstall":
+        if _bool_attribute(args, "self_uninstall"):
+            return "hol-guard"
+        return "all" if _bool_attribute(args, "all") else _string_attribute(args, "harness") or "detected"
+    if command == "disconnect":
+        return _string_attribute(args, "source") or "default"
+    return "hol-guard"
+
+
+def _attribute(args: argparse.Namespace, name: str) -> object | None:
+    return cast(dict[str, object], vars(args)).get(name)
+
+
+def _string_attribute(args: argparse.Namespace, name: str) -> str:
+    value = _attribute(args, name)
+    return value if isinstance(value, str) else ""
+
+
+def _bool_attribute(args: argparse.Namespace, name: str) -> bool:
+    return _attribute(args, name) is True
+
+
+__all__ = [
+    "LifecycleGateRequirement",
+    "enforce_lifecycle_gate",
+    "lifecycle_gate_requirement",
+]
