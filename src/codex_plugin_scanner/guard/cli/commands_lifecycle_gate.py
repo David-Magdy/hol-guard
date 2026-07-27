@@ -18,6 +18,15 @@ _ENROLLMENT_NOTICE = (
     "Security recommendation: protect Guard administration with an approval password or Authenticator. "
     "Run `hol-guard dashboard`, then enable these controls in Settings."
 )
+_CANONICAL_AUTHORITY_ACTION_PREFIXES = (
+    "apps.",
+    "bootstrap.",
+    "doctor.",
+    "init.",
+    "install",
+    "uninstall",
+    "update",
+)
 
 
 @dataclass(frozen=True)
@@ -66,7 +75,7 @@ def enforce_lifecycle_gate(
     requirement = lifecycle_gate_requirement(args)
     if requirement is None:
         return
-    authority_home = lifecycle_authority_home(guard_home)
+    authority_home = lifecycle_authority_home(guard_home, requirement=requirement)
     gate = public_config(authority_home)
     if not gate.enabled:
         print(_ENROLLMENT_NOTICE, file=error_stream or sys.stderr)
@@ -82,9 +91,15 @@ def enforce_lifecycle_gate(
     )
 
 
-def lifecycle_authority_home(target_home: Path) -> Path:
+def lifecycle_authority_home(
+    target_home: Path,
+    *,
+    requirement: LifecycleGateRequirement,
+) -> Path:
     """Prefer the canonical gate for mutations that can affect global protection."""
 
+    if not requirement.action.startswith(_CANONICAL_AUTHORITY_ACTION_PREFIXES):
+        return target_home
     canonical_home = canonical_lifecycle_home()
     if canonical_home == target_home:
         return target_home
