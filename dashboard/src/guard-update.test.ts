@@ -63,6 +63,28 @@ const loadingMarkup = renderToStaticMarkup(
 );
 assert(loadingMarkup.includes("Try alpha updates"), "sidebar should expose the alpha confirmation while version status loads");
 
+const rememberedChannelStorage = {
+  getItem(key: string): string | null {
+    return key === "guard-update-channel" ? "alpha" : null;
+  },
+  setItem: () => undefined,
+};
+Object.assign(globalThis, {
+  window: {
+    sessionStorage: rememberedChannelStorage,
+    localStorage: rememberedChannelStorage,
+  },
+});
+const rememberedAlphaMarkup = renderToStaticMarkup(
+  createElement(GuardUpdatePanel, {
+    onSetUpdateChannel: () => undefined,
+  }),
+);
+assert(
+  rememberedAlphaMarkup.includes('aria-label="Alpha updates enabled"'),
+  "sidebar should retain a confirmed alpha channel while status is unavailable",
+);
+
 const alphaDialogMarkup = renderToStaticMarkup(
   createElement(AlphaChannelDialog, {
     useAlpha: false,
