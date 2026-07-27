@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import hmac
 import inspect
@@ -10,6 +11,7 @@ import json
 import mimetypes
 import os
 import platform
+import queue
 import secrets
 import socket
 import sqlite3
@@ -19,12 +21,12 @@ import threading
 import time
 import uuid
 import webbrowser
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, BinaryIO, ClassVar, TypedDict, TypeGuard, cast
+from typing import Any, BinaryIO, ClassVar, TypeAlias, TypedDict, TypeGuard, cast
 from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunparse
 
 from ...version import __version__
@@ -243,6 +245,7 @@ from .manager import (
     write_guard_daemon_state,
 )
 from .runtime_heartbeat import RuntimeHeartbeatWriter
+from .runtime_hook_deadline import RuntimeHookDeadline
 from .runtime_hook_evidence_writer import RuntimeHookEvidenceWriter
 from .runtime_hook_scheduler import RuntimeHookAdmissionReason, RuntimeHookLane, RuntimeHookScheduler
 
@@ -313,18 +316,18 @@ class _CursorReceiptContext(TypedDict):
     summary: dict[str, object]
 
 
-_MAX_CONCURRENT_DAEMON_REQUESTS = 64
+_MAX_CONCURRENT_DAEMON_REQUESTS = 32
 _MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS = 8
-_MAX_CONCURRENT_DAEMON_CRITICAL_REQUESTS = 4
-_MAX_CONCURRENT_DAEMON_CONNECTIONS = (
-    _MAX_CONCURRENT_DAEMON_REQUESTS + _MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS + _MAX_CONCURRENT_DAEMON_CRITICAL_REQUESTS
-)
+_MAX_CONCURRENT_DAEMON_CRITICAL_REQUESTS = 8
+_MAX_CONCURRENT_DAEMON_CONNECTIONS = 128
 _MAX_CONCURRENT_RUNTIME_HOOKS = 32
 _MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS = 24
 _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS = 3.0
-_RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS = 1.2
+_RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS = 1.45
+_RUNTIME_POST_HOOK_PROCESS_TIMEOUT_SECONDS = 2.75
 _DAEMON_REQUEST_READ_TIMEOUT_SECONDS = 0.4
 _DAEMON_CONNECTION_ADMISSION_WAIT_SECONDS = 0.05
+_DAEMON_CONTROL_ADMISSION_WAIT_SECONDS = 1.0
 _DAEMON_UNCLASSIFIED_WATCHDOG_POLL_SECONDS = 0.025
 _AIBOM_REFRESH_STOP_JOIN_TIMEOUT_SECONDS = 5.0
 _DAEMON_CONTROL_PATHS = frozenset(
@@ -342,7 +345,81 @@ _DAEMON_CRITICAL_PATHS = frozenset(
 _PEER_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
 
-class _GuardDaemonHttpServer(ThreadingHTTPServer):
+_TransportWorkItem: TypeAlias = tuple[socket.socket, tuple[str, int]]
+
+
+class _BoundedRequestExecutor:
+    def __init__(
+        self,
+        *,
+        name: str,
+        workers: int,
+        queue_limit: int,
+        run: Callable[[socket.socket, tuple[str, int]], None],
+        discard: Callable[[socket.socket], None],
+    ) -> None:
+        self._queue: queue.Queue[_TransportWorkItem | None] = queue.Queue(maxsize=queue_limit)
+        self._run = run
+        self._discard = discard
+        self._stopped = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._threads = [
+            threading.Thread(
+                target=self._worker,
+                daemon=True,
+                name=f"guard-http-{name}-{index + 1}",
+            )
+            for index in range(workers)
+        ]
+        for thread in self._threads:
+            thread.start()
+
+    @property
+    def threads(self) -> tuple[threading.Thread, ...]:
+        return tuple(self._threads)
+
+    def submit(self, request: socket.socket, client_address: tuple[str, int]) -> bool:
+        with self._lifecycle_lock:
+            if self._stopped.is_set():
+                return False
+            try:
+                self._queue.put_nowait((request, client_address))
+            except queue.Full:
+                return False
+        return True
+
+    def shutdown(self, *, timeout_seconds: float) -> bool:
+        with self._lifecycle_lock:
+            if not self._stopped.is_set():
+                self._stopped.set()
+                while True:
+                    try:
+                        item = self._queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if item is not None:
+                        self._discard(item[0])
+                    self._queue.task_done()
+                for _ in self._threads:
+                    self._queue.put_nowait(None)
+        deadline = time.monotonic() + timeout_seconds
+        for thread in self._threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        return all(not thread.is_alive() for thread in self._threads)
+
+    def _worker(self) -> None:
+        while True:
+            item = self._queue.get()
+            try:
+                if item is None:
+                    return
+                self._run(*item)
+            finally:
+                self._queue.task_done()
+
+
+class _GuardDaemonHttpServer(HTTPServer):
     request_queue_size = _MAX_CONCURRENT_DAEMON_CONNECTIONS
 
     store: GuardStore
@@ -392,6 +469,8 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     active_requests: int
     rejected_requests: int
     request_capacity_kinds: dict[int, str]
+    request_accepted_at: dict[int, float]
+    active_connections: dict[int, socket.socket]
     request_capacity_lock: threading.Lock
     unclassified_connections: dict[int, tuple[socket.socket, float]]
     unclassified_connections_lock: threading.Lock
@@ -399,6 +478,9 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     unclassified_watchdog_thread: threading.Thread | None
     hook_process_runner: HookProcessRunner
     runtime_heartbeat: RuntimeHeartbeatWriter
+    general_request_executor: _BoundedRequestExecutor
+    control_request_executor: _BoundedRequestExecutor
+    request_executors_stopped: bool
     diagnostics: DaemonDiagnostics
 
     def handle_error(self, request: object, client_address: tuple[str, int]) -> None:
@@ -406,11 +488,16 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
 
         import sys
 
-        if isinstance(sys.exc_info()[1], _PEER_DISCONNECT_ERRORS):
+        error = sys.exc_info()[1]
+        if isinstance(error, _PEER_DISCONNECT_ERRORS) or (
+            isinstance(error, OSError)
+            and error.errno in {errno.EBADF, errno.ECONNABORTED, errno.ECONNRESET, errno.EPIPE}
+        ):
             return
         self.diagnostics.record_exception("http_request_failed")
 
     def server_close(self) -> None:
+        _ = self._stop_request_executors()
         writer = getattr(self, "runtime_hook_evidence_writer", None)
         if writer is not None:
             _ = writer.stop(timeout_seconds=1.0)
@@ -484,6 +571,8 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self.active_requests = 0
         self.rejected_requests = 0
         self.request_capacity_kinds = {}
+        self.request_accepted_at = {}
+        self.active_connections = {}
         self.request_capacity_lock = threading.Lock()
         self.unclassified_connections = {}
         self.unclassified_connections_lock = threading.Lock()
@@ -507,6 +596,21 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
             runtime=self.runtime,
             opener=webbrowser.open,
         )
+        self.request_executors_stopped = False
+        self.general_request_executor = _BoundedRequestExecutor(
+            name="general",
+            workers=_MAX_CONCURRENT_DAEMON_REQUESTS,
+            queue_limit=_MAX_CONCURRENT_DAEMON_CONNECTIONS,
+            run=self._process_request_worker,
+            discard=self._discard_request,
+        )
+        self.control_request_executor = _BoundedRequestExecutor(
+            name="control",
+            workers=_MAX_CONCURRENT_DAEMON_CONTROL_REQUESTS,
+            queue_limit=_MAX_CONCURRENT_DAEMON_CONNECTIONS,
+            run=self._process_request_worker,
+            discard=self._discard_request,
+        )
 
     def process_request(self, request: object, client_address: tuple[str, int]) -> None:
         request_socket = cast(socket.socket, request)
@@ -527,32 +631,88 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         self._register_unclassified_connection(request_socket)
         with self.request_capacity_lock:
             self.active_requests += 1
-        try:
-            super().process_request(request_socket, client_address)
-        except BaseException:
-            self._release_request_capacity(request_socket)
-            raise
+        executor = (
+            self.control_request_executor
+            if self._transport_request_is_control(request_socket)
+            else self.general_request_executor
+        )
+        if not executor.submit(request_socket, client_address):
+            with self.request_capacity_lock:
+                self.rejected_requests += 1
+            self._discard_request(request_socket)
 
-    def process_request_thread(self, request: object, client_address: tuple[str, int]) -> None:
-        request_socket = cast(socket.socket, request)
+    def _process_request_worker(self, request_socket: socket.socket, client_address: tuple[str, int]) -> None:
         try:
-            super().process_request_thread(request_socket, client_address)
+            self.finish_request(request_socket, client_address)
+            self.shutdown_request(request_socket)
+        except BaseException:
+            self.handle_error(request_socket, client_address)
+            self.shutdown_request(request_socket)
         finally:
             self._release_request_capacity(request_socket)
+
+    def _discard_request(self, request_socket: socket.socket) -> None:
+        self.shutdown_request(request_socket)
+        self._release_request_capacity(request_socket)
 
     def _release_request_capacity(self, request: socket.socket) -> None:
         self.classify_connection(request)
         with self.request_capacity_lock:
-            self.active_requests -= 1
+            was_active = self.request_accepted_at.pop(id(request), None) is not None
+            self.active_connections.pop(id(request), None)
+            if was_active:
+                self.active_requests -= 1
             capacity_kind = self.request_capacity_kinds.pop(id(request), None)
         if capacity_kind is not None:
             self._request_capacity_for_kind(capacity_kind).release()
-        self.connection_capacity.release()
+        if was_active:
+            self.connection_capacity.release()
 
     def _register_unclassified_connection(self, request: socket.socket) -> None:
-        deadline = time.monotonic() + _DAEMON_REQUEST_READ_TIMEOUT_SECONDS
+        accepted_at = time.monotonic()
+        deadline = accepted_at + _DAEMON_REQUEST_READ_TIMEOUT_SECONDS
+        with self.request_capacity_lock:
+            self.request_accepted_at[id(request)] = accepted_at
+            self.active_connections[id(request)] = request
         with self.unclassified_connections_lock:
             self.unclassified_connections[id(request)] = (request, deadline)
+
+    def request_deadline(self, request: socket.socket, timeout_seconds: float) -> float:
+        with self.request_capacity_lock:
+            accepted_at = self.request_accepted_at.get(id(request), time.monotonic())
+        return accepted_at + timeout_seconds
+
+    @staticmethod
+    def _transport_request_is_control(request: socket.socket) -> bool:
+        try:
+            request.setblocking(False)
+            buffered = request.recv(4_096, socket.MSG_PEEK)
+        except (BlockingIOError, InterruptedError, OSError):
+            return False
+        finally:
+            with suppress(OSError):
+                request.settimeout(_DAEMON_REQUEST_READ_TIMEOUT_SECONDS)
+        request_line = buffered.splitlines()[0] if buffered else b""
+        parts = request_line.split()
+        if len(parts) < 2:
+            return False
+        try:
+            path = parts[1].decode("ascii").split("?", 1)[0]
+        except UnicodeDecodeError:
+            return False
+        return path in _DAEMON_CONTROL_PATHS or path in _DAEMON_CRITICAL_PATHS
+
+    def _stop_request_executors(self) -> bool:
+        if self.request_executors_stopped:
+            return True
+        with self.request_capacity_lock:
+            requests = list(self.active_connections.values())
+        for request in requests:
+            self._close_unclassified_socket(request)
+        general_stopped = self.general_request_executor.shutdown(timeout_seconds=5.0)
+        control_stopped = self.control_request_executor.shutdown(timeout_seconds=5.0)
+        self.request_executors_stopped = general_stopped and control_stopped
+        return self.request_executors_stopped
 
     def classify_connection(self, request: socket.socket) -> None:
         with self.unclassified_connections_lock:
@@ -562,7 +722,7 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
         with self.unclassified_connections_lock:
             oldest = next(iter(self.unclassified_connections.values()), None)
         if oldest is not None:
-            self._close_unclassified_socket(oldest[0])
+            self._discard_request(oldest[0])
             with self.request_capacity_lock:
                 self.rejected_requests += 1
 
@@ -618,7 +778,16 @@ class _GuardDaemonHttpServer(ThreadingHTTPServer):
     def claim_request_capacity(self, request: socket.socket, path: str) -> bool:
         capacity_kind = self._request_capacity_kind(path)
         capacity = self._request_capacity_for_kind(capacity_kind)
-        if not capacity.acquire(blocking=False):
+        with self.request_capacity_lock:
+            previous_kind = self.request_capacity_kinds.pop(id(request), None)
+        if previous_kind is not None:
+            self._request_capacity_for_kind(previous_kind).release()
+        admitted = (
+            capacity.acquire(timeout=_DAEMON_CONTROL_ADMISSION_WAIT_SECONDS)
+            if capacity_kind in {"critical", "control"}
+            else capacity.acquire(blocking=False)
+        )
+        if not admitted:
             with self.request_capacity_lock:
                 self.rejected_requests += 1
             return False
@@ -1790,7 +1959,13 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 receipt_limit=25 if include_receipts else 0,
                 containment_health=self._containment_health_payload(),
             )
-            self._write_json({**snapshot, "security_level": config.security_level})
+            self._write_json(
+                {
+                    **snapshot,
+                    "security_level": config.security_level,
+                    "operator_health": self._operator_health_payload(),
+                }
+            )
             return
         if parsed.path == "/v1/harnesses":
             context = self._harness_context({})
@@ -5114,8 +5289,20 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             hydrate_hook_payload_reference,
         )
 
-        hook_deadline = time.monotonic() + _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS
+        transport_deadline = self._daemon_server().request_deadline(
+            self.request,
+            _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS,
+        )
         params = parse_qs(query)
+        remaining_hint = payload.pop("guard_remaining_seconds", None)
+        if remaining_hint is None:
+            remaining_hint_ms = payload.pop("guard_remaining_ms", None)
+            if isinstance(remaining_hint_ms, (int, float)) and not isinstance(remaining_hint_ms, bool):
+                remaining_hint = float(remaining_hint_ms) / 1000.0
+        if remaining_hint is None:
+            remaining_hint = _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS
+        hinted_deadline = RuntimeHookDeadline.from_remaining_hint(remaining_hint)
+        hook_deadline = RuntimeHookDeadline(expires_at=min(hinted_deadline.expires_at, transport_deadline))
         hook_env = _runtime_hook_env_overlay_from_payload(payload)
         payload = {key: value for key, value in payload.items() if key != "hook_env"}
         try:
@@ -5162,7 +5349,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
 
         byte_reservation, reservation_reason = daemon_server.runtime_hook_scheduler.reserve_bytes(
             payload_bytes=payload_bytes,
-            deadline=hook_deadline,
+            deadline=hook_deadline.expires_at,
         )
         if byte_reservation is None:
             self._record_hook_capacity_rejection(daemon_server, capacity_harness)
@@ -5194,9 +5381,15 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 )
                 return
             hydrated_payload_bytes = self._runtime_hook_payload_size(payload)
+            normalized_payload = json.dumps(
+                payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
             resize_reason = byte_reservation.resize(
                 hydrated_payload_bytes,
-                deadline=hook_deadline,
+                deadline=hook_deadline.expires_at,
             )
             if resize_reason is not None:
                 self._record_hook_capacity_rejection(daemon_server, capacity_harness)
@@ -5216,6 +5409,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 payload_bytes=hydrated_payload_bytes,
                 deadline=hook_deadline,
                 byte_reservation=byte_reservation,
+                normalized_payload=normalized_payload,
             )
             if admission.permit is None:
                 self._record_hook_capacity_rejection(daemon_server, capacity_harness)
@@ -5228,6 +5422,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     )
                 )
                 return
+            normalized_object = cast(object, json.loads(normalized_payload))
+            if not _is_string_object_dict(normalized_object):
+                raise RuntimeError("normalized runtime hook payload must remain an object")
+            payload = normalized_object
         with daemon_server.hook_capacity_lock:
             daemon_server.active_hook_requests += 1
             daemon_server.hook_harness_active[capacity_harness] = (
@@ -5244,7 +5442,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     guard_home=guard_home,
                     workspace=workspace,
                     payload_hydrated=True,
-                    deadline=hook_deadline,
+                    deadline=hook_deadline.expires_at,
                 )
         finally:
             with daemon_server.hook_capacity_lock:
@@ -5508,9 +5706,15 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         harness = runtime_harness or default_harness
         daemon_server = self._daemon_server()
         workspace_path = Path(workspace) if workspace is not None else None
+        hook_event_name = payload.get("hook_event_name")
+        process_timeout_seconds = (
+            _RUNTIME_POST_HOOK_PROCESS_TIMEOUT_SECONDS
+            if isinstance(hook_event_name, str) and hook_event_name.strip().lower() == "posttooluse"
+            else _RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS
+        )
         process_deadline = min(
             deadline if deadline is not None else float("inf"),
-            time.monotonic() + _RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS,
+            time.monotonic() + process_timeout_seconds,
         )
         admission = daemon_server.runtime_hook_process_scheduler.acquire(
             harness=harness,
@@ -6424,6 +6628,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         scheduler_stats = daemon_server.runtime_hook_scheduler.stats()
         process_scheduler_stats = daemon_server.runtime_hook_process_scheduler.stats()
         evidence_writer_stats = daemon_server.runtime_hook_evidence_writer.stats()
+        sqlite_profile = store.sqlite_profile()
+        sqlite_migration_gate = store.sqlite_migration_gate_report()
         with daemon_server.hook_capacity_lock:
             hook_capacity = {
                 "active": scheduler_stats["active"],
@@ -6437,7 +6643,14 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "per_harness_rejected": dict(daemon_server.hook_harness_rejected),
                 "rejected": daemon_server.rejected_hook_requests,
                 "expired": scheduler_stats["expired"],
+                "cancelled": scheduler_stats["cancelled"],
+                "retries": scheduler_stats["retries"],
                 "completed": scheduler_stats["completed"],
+                "oldest_queued_ms": scheduler_stats["oldest_queued_ms"],
+                "queue_wait_by_lane_p95_ms": scheduler_stats["queue_wait_by_lane_p95_ms"],
+                "service_time_by_lane_p95_ms": scheduler_stats["service_time_by_lane_p95_ms"],
+                "queue_wait_by_lane_p99_ms": scheduler_stats["queue_wait_by_lane_p99_ms"],
+                "service_time_by_lane_p99_ms": scheduler_stats["service_time_by_lane_p99_ms"],
                 "rejection_reasons": scheduler_stats["rejected"],
             }
         with daemon_server.request_capacity_lock:
@@ -6467,6 +6680,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "approvals": pending_approvals,
             "pending_approvals": pending_approvals,
             "hook_evidence_writer": evidence_writer_stats,
+            "sqlite_profile": sqlite_profile,
+            "sqlite_migration_gate": sqlite_migration_gate,
             "uptime_seconds": uptime,
             "pid": os.getpid(),
             "tables": store.list_table_names(),
@@ -6492,6 +6707,55 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "hook_process_capacity": process_scheduler_stats,
             "hook_workers": daemon_server.hook_process_runner.stats(),
             "request_capacity": request_capacity,
+        }
+
+    def _operator_health_payload(self) -> dict[str, object]:
+        daemon_server = self._daemon_server()
+        scheduler = daemon_server.runtime_hook_scheduler.stats()
+        workers = daemon_server.hook_process_runner.stats()
+        evidence_writer = daemon_server.runtime_hook_evidence_writer.stats()
+        activity_health = daemon_server.store.get_command_activity_persistence_health()
+        worker_fault = workers["configured"] > 0 and workers["workers"] == 0
+        evidence_fault = not evidence_writer["running"]
+        store_busy = (
+            activity_health.persistence_error_count > 0
+            and activity_health.last_error_code is not None
+            and activity_health.last_error_code.startswith("sqlite.")
+        )
+        saturated = scheduler["queued_limit"] > 0 and scheduler["queued"] >= scheduler["queued_limit"]
+
+        if worker_fault or evidence_fault:
+            state = "saturated"
+            cause = "A local processing component stopped and needs repair."
+        elif store_busy:
+            state = "store-contended"
+            cause = "The local evidence store is busy; queued writes are retrying automatically."
+        elif saturated:
+            state = "saturated"
+            cause = "Local review capacity is full; new work waits or receives a typed retry."
+        elif scheduler["queued"] > 0:
+            state = "backlogged"
+            cause = "A short local backlog is waiting behind active reviews."
+        else:
+            state = "healthy"
+            cause = "Local reviews are processing within available capacity."
+
+        repairable = worker_fault or evidence_fault
+        return {
+            "state": state,
+            "cause": cause,
+            "automatic_recovery": (
+                "Repair restores the stopped local component."
+                if repairable
+                else "Guard drains queued work and adjusts ready workers automatically."
+            ),
+            "repairable": repairable,
+            "queue_depth": scheduler["queued"],
+            "queue_limit": scheduler["queued_limit"],
+            "oldest_wait_ms": scheduler["oldest_queued_ms"],
+            "workers_busy": workers["busy"],
+            "workers_ready": workers["ready"],
+            "workers_configured": workers["configured"],
         }
 
     @staticmethod
@@ -7345,6 +7609,12 @@ class GuardDaemonServer:
     def _finish_service_locked(self) -> bool:
         self._shutdown_started.set()
         contained = True
+        stop_request_executors = getattr(self._server, "_stop_request_executors", None)
+        if callable(stop_request_executors):
+            try:
+                contained = stop_request_executors() is not False and contained
+            except Exception:
+                contained = False
         stop_unclassified_watchdog = getattr(self._server, "stop_unclassified_watchdog", None)
         if callable(stop_unclassified_watchdog):
             try:

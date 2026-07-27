@@ -514,6 +514,21 @@ export type GuardCloudCommandCapability = {
   revoke_command: string;
 };
 
+export type GuardOperatorHealthState = "healthy" | "backlogged" | "saturated" | "store-contended";
+
+export type GuardOperatorHealth = {
+  state: GuardOperatorHealthState;
+  cause: string;
+  automatic_recovery: string;
+  repairable: boolean;
+  queue_depth: number;
+  queue_limit: number;
+  oldest_wait_ms: number;
+  workers_busy: number;
+  workers_ready: number;
+  workers_configured: number;
+};
+
 export type GuardRuntimeSnapshot = {
   generated_at: string;
   approval_center_url: string | null;
@@ -551,6 +566,7 @@ export type GuardRuntimeSnapshot = {
   managed_installs?: GuardManagedInstall[];
   inventory?: GuardInventoryItem[];
   cloud_command_capability?: GuardCloudCommandCapability;
+  operator_health?: GuardOperatorHealth;
   security_level?: "balanced" | "strict" | "custom";
   supply_chain?: SupplyChainSnapshot;
 };

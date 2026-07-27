@@ -388,8 +388,8 @@ def test_recovery_retry_reserves_time_for_local_package_review(monkeypatch: pyte
     )
 
     assert json.loads(response) == {"review": True}
-    assert recovery_deadlines == [4.0]
-    assert retry_deadlines == [6.0]
+    assert recovery_deadlines == [3.5]
+    assert retry_deadlines == [5.5]
 
 
 def test_recovery_only_restarts_for_transport_auth_and_server_failures() -> None:
@@ -409,6 +409,40 @@ def test_recovery_only_restarts_for_transport_auth_and_server_failures() -> None
     )
     assert not bridge._daemon_failure_is_recoverable(bridge._DaemonHTTPError(503, '{"error":"daemon_overloaded"}'))
     assert bridge._daemon_failure_kind(bridge._DaemonHTTPError(429, "busy")) == "overload"
+
+
+def test_typed_transient_overload_retries_once_without_recovery_or_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    attempts = 0
+
+    def fake_post(*_args: object, **_kwargs: object) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise bridge._DaemonHTTPError(
+                503,
+                '{"reason_code":"transient_overload","retry_after_ms":25,"estimated_service_ms":100}',
+            )
+        return '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
+
+    monkeypatch.setattr(bridge, "_post_to_loopback_daemon", fake_post)
+    monkeypatch.setattr(bridge.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"hook_event_name":"PreToolUse"}'))
+
+    assert (
+        bridge.main(
+            state_path=tmp_path / "guard-home" / "daemon-state.json",
+            fallback_daemon_url="http://127.0.0.1:5474",
+            fallback_command=("should-not-run",),
+            query="guard-home=%2Ftmp",
+        )
+        == 0
+    )
+    assert attempts == 2
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "allow"
     assert bridge._daemon_failure_kind(TimeoutError("deadline")) == "transport-failure"
     assert bridge._daemon_failure_kind(ValueError("bad state")) == "authenticated-control-plane-failure"
 

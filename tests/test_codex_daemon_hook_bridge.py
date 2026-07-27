@@ -249,7 +249,9 @@ def test_main_posts_to_authenticated_daemon(
     assert exit_code == 0
     assert _DaemonHandler.captured_challenge_guard_token is None
     assert _DaemonHandler.captured_guard_token == "fixture-token"
-    assert json.loads(str(_DaemonHandler.captured_hook_body)) == hook_payload
+    captured_hook_payload = json.loads(str(_DaemonHandler.captured_hook_body))
+    assert captured_hook_payload.pop("guard_remaining_ms") in range(1, 10_001)
+    assert captured_hook_payload == hook_payload
     assert json.loads(str(_DaemonHandler.captured_hook_body))["tool_input"]["command"] == complete_command
     assert _ProxyHandler.captured_paths == []
     assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
@@ -603,7 +605,7 @@ def test_main_starts_daemon_once_then_retries_hook(
     assert json.loads(capsys.readouterr().out) == {}
 
 
-def test_authenticated_overload_uses_fallback_without_restarting(
+def test_authenticated_overload_fails_closed_without_fallback_or_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -633,7 +635,40 @@ def test_authenticated_overload_uses_fallback_without_restarting(
 
     assert bridge.main(**config) == 0
     assert starts == []
-    assert json.loads(capsys.readouterr().out) == {}
+    payload = json.loads(capsys.readouterr().out)
+    output = payload["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert "temporarily saturated" in output["permissionDecisionReason"]
+
+
+def test_typed_transient_overload_retries_once_when_deadline_fits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    attempts = 0
+
+    def daemon_response(**kwargs: object) -> dict[str, object]:
+        del kwargs
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise bridge._DaemonResponseError(
+                503,
+                '{"reason_code":"transient_overload","retry_after_ms":25,"estimated_service_ms":100}',
+                authenticated=True,
+            )
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}
+
+    guard_home = tmp_path / "guard-home"
+    guard_home.mkdir()
+    monkeypatch.setattr(bridge, "_daemon_response", daemon_response)
+    monkeypatch.setattr(bridge.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"hook_event_name":"PreToolUse"}'))
+
+    assert bridge.main(**_bridge_config(guard_home, 1)) == 0
+    assert attempts == 2
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
 def test_daemon_failure_kind_separates_overload_transport_and_control_plane() -> None:

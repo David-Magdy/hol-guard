@@ -16788,6 +16788,32 @@ function normalizeCloudCommandCapability(raw) {
     revoke_command: typeof raw["revoke_command"] === "string" ? raw["revoke_command"] : "hol-guard commands revoke --confirm revoke"
   };
 }
+function nonNegativeNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+function normalizeOperatorHealth(raw) {
+  if (!isRecord$1(raw)) {
+    return void 0;
+  }
+  const state = raw["state"];
+  const cause = raw["cause"];
+  const automaticRecovery = raw["automatic_recovery"];
+  if (!["healthy", "backlogged", "saturated", "store-contended"].includes(String(state)) || typeof cause !== "string" || typeof automaticRecovery !== "string") {
+    return void 0;
+  }
+  return {
+    state,
+    cause,
+    automatic_recovery: automaticRecovery,
+    repairable: raw["repairable"] === true,
+    queue_depth: nonNegativeNumber(raw["queue_depth"]),
+    queue_limit: nonNegativeNumber(raw["queue_limit"]),
+    oldest_wait_ms: nonNegativeNumber(raw["oldest_wait_ms"]),
+    workers_busy: nonNegativeNumber(raw["workers_busy"]),
+    workers_ready: nonNegativeNumber(raw["workers_ready"]),
+    workers_configured: nonNegativeNumber(raw["workers_configured"])
+  };
+}
 function normalizeRuntimeSnapshot(snapshot) {
   const protectionHealth = normalizeProtectionHealth(snapshot.protection_health);
   const runtimeState = normalizeRuntimeState(snapshot.runtime_state);
@@ -16807,6 +16833,7 @@ function normalizeRuntimeSnapshot(snapshot) {
     supply_chain: normalizeSupplyChainSnapshot(snapshot.supply_chain),
     managed_installs: normalizeManagedInstalls(snapshot.managed_installs),
     cloud_command_capability: normalizeCloudCommandCapability(snapshot.cloud_command_capability),
+    operator_health: normalizeOperatorHealth(snapshot.operator_health),
     protection_health: protectionHealth
   };
 }
@@ -17078,6 +17105,18 @@ function buildDemoRuntimeSnapshot() {
       started_at: now2,
       last_heartbeat_at: now2,
       approval_center_url: "http://127.0.0.1:4455"
+    },
+    operator_health: {
+      state: "healthy",
+      cause: "Local reviews are processing within available capacity.",
+      automatic_recovery: "Guard drains queued work and adjusts ready workers automatically.",
+      repairable: false,
+      queue_depth: 0,
+      queue_limit: 256,
+      oldest_wait_ms: 0,
+      workers_busy: 1,
+      workers_ready: 3,
+      workers_configured: 4
     },
     device: {
       installation_id: "demo-device-7f4a9c2d",
@@ -21932,6 +21971,63 @@ function parseInterceptProofSnapshot(body) {
     summary,
     tone: interceptProved ? "success" : "warning"
   };
+}
+const countFormatter = new Intl.NumberFormat();
+function formatOperatorCount(value) {
+  return countFormatter.format(value);
+}
+function formatOldestWait(milliseconds) {
+  if (milliseconds < 1e3) return `${formatOperatorCount(Math.round(milliseconds))} ms`;
+  return `${(milliseconds / 1e3).toLocaleString(void 0, { maximumFractionDigits: 1 })} s`;
+}
+function operatorHealthLabel(state) {
+  if (state === "store-contended") return "Store contended";
+  return state[0].toUpperCase() + state.slice(1);
+}
+function operatorHealthTone(state) {
+  if (state === "healthy") return "green";
+  if (state === "backlogged") return "blue";
+  return "attention";
+}
+function OperatorHealthCard(props) {
+  const health = props.health;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl border border-border bg-white px-5 py-4", "data-operator-health": health.state, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.18em] text-brand-blue", children: "Local processing" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Tag, { tone: operatorHealthTone(health.state), children: operatorHealthLabel(health.state) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-relaxed text-brand-dark/80", children: health.cause }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { className: "mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-xs text-slate-500", children: "Queue" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("dd", { className: "text-sm font-semibold text-brand-dark", children: [
+          formatOperatorCount(health.queue_depth),
+          " / ",
+          formatOperatorCount(health.queue_limit)
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-xs text-slate-500", children: "Oldest wait" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { className: "text-sm font-semibold text-brand-dark", children: formatOldestWait(health.oldest_wait_ms) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-xs text-slate-500", children: "Workers busy" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { className: "text-sm font-semibold text-brand-dark", children: formatOperatorCount(health.workers_busy) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-xs text-slate-500", children: "Workers ready" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { className: "text-sm font-semibold text-brand-dark", children: formatOperatorCount(health.workers_ready) })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs leading-relaxed text-slate-600", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-semibold text-brand-dark", children: "Automatic recovery:" }),
+        " ",
+        health.automatic_recovery
+      ] }),
+      health.repairable ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: "/settings?section=maintenance#approval-center-repair", variant: "secondary", children: "Repair local processing" }) : null
+    ] })
+  ] });
 }
 function resolveProtectionLevelCopy(level) {
   if (level === "gentle") {
@@ -30255,7 +30351,7 @@ clientExports.createRoot(container).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
 );
 export {
-  HiMiniAdjustmentsHorizontal as $,
+  HiMiniBellAlert as $,
   ActionButton as A,
   resolveCloudIntelCopy as B,
   HiMiniCloud as C,
@@ -30270,139 +30366,140 @@ export {
   HiMiniBolt as L,
   Badge as M,
   HiMiniMinusCircle as N,
-  HiMiniWrenchScrewdriver as O,
-  HiMiniExclamationCircle as P,
-  ProofStrip as Q,
-  HiMiniEye as R,
+  OperatorHealthCard as O,
+  HiMiniWrenchScrewdriver as P,
+  HiMiniExclamationCircle as Q,
+  ProofStrip as R,
   SectionLabel as S,
-  HiMiniXCircle as T,
-  HiMiniClipboardDocumentCheck as U,
-  HiMiniClipboard as V,
-  getDefaultExportFromCjs as W,
-  React as X,
-  HiMiniKey as Y,
-  HiMiniLockClosed as Z,
-  HiMiniBellAlert as _,
+  HiMiniEye as T,
+  HiMiniXCircle as U,
+  HiMiniClipboardDocumentCheck as V,
+  HiMiniClipboard as W,
+  getDefaultExportFromCjs as X,
+  React as Y,
+  HiMiniKey as Z,
+  HiMiniLockClosed as _,
   EvidenceActivityHeatmapMini as a,
-  HiMiniArrowTopRightOnSquare as a$,
-  HiMiniCircleStack as a0,
-  TabBar as a1,
-  resolveProtectionLevelCopy as a2,
-  fetchSettings as a3,
-  fetchRuntimeSnapshot as a4,
-  updateSettings as a5,
-  clearPolicy as a6,
-  clearReviewQueue as a7,
-  revokeApprovalGateCooldown as a8,
-  disableApprovalGateTotp as a9,
-  EvidenceActionList as aA,
-  EvidenceActionDetail as aB,
-  policyIdentityKey as aC,
-  HiMiniChartBar as aD,
-  runHarnessAction as aE,
-  GuardHarnessActionError as aF,
-  HiMiniRocketLaunch as aG,
-  HiMiniArrowPath as aH,
-  HiMiniTrash as aI,
-  clearLabelForScope as aJ,
-  formatHarnessCommand as aK,
-  isSupplyChainAuditIncomplete as aL,
-  isSupplyChainAuditEvidence as aM,
-  buildApprovalProofCredentials as aN,
-  isApprovalProofSubmitDisabled as aO,
-  ApprovalProofFieldInputs as aP,
-  readString$1 as aQ,
-  isRecord$2 as aR,
-  HiMiniClock as aS,
-  IconActionButton as aT,
-  HiMiniBeaker as aU,
-  ActivationSummary as aV,
-  ActionResultPanel as aW,
-  HiMiniBugAnt as aX,
-  GuardModalLayer as aY,
-  ConnectFlowCard as aZ,
-  ApprovalProofInline as a_,
-  importSettings as aa,
-  resetSettings as ab,
-  enrollApprovalGateTotp as ac,
-  verifyApprovalGateTotp as ad,
-  clearEvidence as ae,
-  exportDiagnostics as af,
-  repairApprovalCenter as ag,
-  exportSettings as ah,
-  setupDesktopNotifications as ai,
-  Tag as aj,
-  HiMiniMagnifyingGlass as ak,
-  HiMiniCog6Tooth as al,
-  approvalGateCooldownLabel as am,
-  fetchApprovalPage as an,
-  fetchPolicy as ao,
-  HiMiniArrowLeft as ap,
-  HiMiniHome as aq,
-  appSetupTarget as ar,
-  guardActionPresentation as as,
-  DEFAULT_FILTER_STATE as at,
-  filterEvidence as au,
-  sortEvidence as av,
-  computeMetrics as aw,
-  CommandActivityWorkspace as ax,
-  EvidenceFilterBar as ay,
-  EvidenceInsightStrip as az,
+  ApprovalProofInline as a$,
+  HiMiniAdjustmentsHorizontal as a0,
+  HiMiniCircleStack as a1,
+  TabBar as a2,
+  resolveProtectionLevelCopy as a3,
+  fetchSettings as a4,
+  fetchRuntimeSnapshot as a5,
+  updateSettings as a6,
+  clearPolicy as a7,
+  clearReviewQueue as a8,
+  revokeApprovalGateCooldown as a9,
+  EvidenceInsightStrip as aA,
+  EvidenceActionList as aB,
+  EvidenceActionDetail as aC,
+  policyIdentityKey as aD,
+  HiMiniChartBar as aE,
+  runHarnessAction as aF,
+  GuardHarnessActionError as aG,
+  HiMiniRocketLaunch as aH,
+  HiMiniArrowPath as aI,
+  HiMiniTrash as aJ,
+  clearLabelForScope as aK,
+  formatHarnessCommand as aL,
+  isSupplyChainAuditIncomplete as aM,
+  isSupplyChainAuditEvidence as aN,
+  buildApprovalProofCredentials as aO,
+  isApprovalProofSubmitDisabled as aP,
+  ApprovalProofFieldInputs as aQ,
+  readString$1 as aR,
+  isRecord$2 as aS,
+  HiMiniClock as aT,
+  IconActionButton as aU,
+  HiMiniBeaker as aV,
+  ActivationSummary as aW,
+  ActionResultPanel as aX,
+  HiMiniBugAnt as aY,
+  GuardModalLayer as aZ,
+  ConnectFlowCard as a_,
+  disableApprovalGateTotp as aa,
+  importSettings as ab,
+  resetSettings as ac,
+  enrollApprovalGateTotp as ad,
+  verifyApprovalGateTotp as ae,
+  clearEvidence as af,
+  exportDiagnostics as ag,
+  repairApprovalCenter as ah,
+  exportSettings as ai,
+  setupDesktopNotifications as aj,
+  Tag as ak,
+  HiMiniMagnifyingGlass as al,
+  HiMiniCog6Tooth as am,
+  approvalGateCooldownLabel as an,
+  fetchApprovalPage as ao,
+  fetchPolicy as ap,
+  HiMiniArrowLeft as aq,
+  HiMiniHome as ar,
+  appSetupTarget as as,
+  guardActionPresentation as at,
+  DEFAULT_FILTER_STATE as au,
+  filterEvidence as av,
+  sortEvidence as aw,
+  computeMetrics as ax,
+  CommandActivityWorkspace as ay,
+  EvidenceFilterBar as az,
   HiMiniCommandLine as b,
-  HiMiniCloudArrowDown as b0,
-  fetchPackageFirewallStatus as b1,
-  runPackageAudit as b2,
-  resolveSupplyChainAuditFailure as b3,
-  runPackageSync as b4,
-  startPackageFirewallConnect as b5,
-  openPackageFirewallAuthorizeFallback as b6,
-  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b7,
-  runPackageFirewallAction as b8,
-  parseInterceptProofSnapshot as b9,
-  HiMiniNoSymbol as bA,
-  HiMiniCube as bB,
-  HiMiniArrowDownTray as bC,
-  HiMiniQueueList as bD,
-  Surface as bE,
-  HiMiniCheckBadge as bF,
-  fetchSupplyChainBundle as bG,
-  isSupplyChainScannerEvidence as bH,
-  isBlockedGuardAction as bI,
-  HiMiniDocumentMagnifyingGlass as bJ,
-  HiMiniShieldExclamation as bK,
-  HiMiniComputerDesktop as bL,
-  HiMiniChevronLeft as bM,
-  HiMiniFunnel as bN,
-  HiMiniArrowDown as bO,
-  HiMiniArrowUp as bP,
-  runAuditRemediation as bQ,
-  HiMiniSignal as bR,
-  activatePackageFirewallRuntime as ba,
-  EntitlementNotice as bb,
-  fetchReceipts as bc,
-  WorkspacePageHeader as bd,
-  __vitePreload as be,
-  scopeLabel as bf,
-  guardAwareHref as bg,
-  HiMiniDocumentText as bh,
-  HiMiniCloudArrowUp as bi,
-  HiMiniCheck as bj,
-  HiMiniCodeBracket as bk,
-  HiMiniClipboardDocument as bl,
-  HiMiniUsers as bm,
-  HiMiniFolder as bn,
-  HiMiniInformationCircle as bo,
-  HiMiniIdentification as bp,
-  policyActionLabel as bq,
-  createCloudExceptionRequest as br,
-  HiMiniArrowRight as bs,
-  HiMiniPuzzlePiece as bt,
-  HiMiniGlobeAlt as bu,
-  fetchCloudExceptions as bv,
-  fetchCloudExceptionRequests as bw,
-  downloadBlob as bx,
-  PolicyStatField as by,
-  PaginationControls as bz,
+  HiMiniArrowTopRightOnSquare as b0,
+  HiMiniCloudArrowDown as b1,
+  fetchPackageFirewallStatus as b2,
+  runPackageAudit as b3,
+  resolveSupplyChainAuditFailure as b4,
+  runPackageSync as b5,
+  startPackageFirewallConnect as b6,
+  openPackageFirewallAuthorizeFallback as b7,
+  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b8,
+  runPackageFirewallAction as b9,
+  PaginationControls as bA,
+  HiMiniNoSymbol as bB,
+  HiMiniCube as bC,
+  HiMiniArrowDownTray as bD,
+  HiMiniQueueList as bE,
+  Surface as bF,
+  HiMiniCheckBadge as bG,
+  fetchSupplyChainBundle as bH,
+  isSupplyChainScannerEvidence as bI,
+  isBlockedGuardAction as bJ,
+  HiMiniDocumentMagnifyingGlass as bK,
+  HiMiniShieldExclamation as bL,
+  HiMiniComputerDesktop as bM,
+  HiMiniChevronLeft as bN,
+  HiMiniFunnel as bO,
+  HiMiniArrowDown as bP,
+  HiMiniArrowUp as bQ,
+  runAuditRemediation as bR,
+  HiMiniSignal as bS,
+  parseInterceptProofSnapshot as ba,
+  activatePackageFirewallRuntime as bb,
+  EntitlementNotice as bc,
+  fetchReceipts as bd,
+  WorkspacePageHeader as be,
+  __vitePreload as bf,
+  scopeLabel as bg,
+  guardAwareHref as bh,
+  HiMiniDocumentText as bi,
+  HiMiniCloudArrowUp as bj,
+  HiMiniCheck as bk,
+  HiMiniCodeBracket as bl,
+  HiMiniClipboardDocument as bm,
+  HiMiniUsers as bn,
+  HiMiniFolder as bo,
+  HiMiniInformationCircle as bp,
+  HiMiniIdentification as bq,
+  policyActionLabel as br,
+  createCloudExceptionRequest as bs,
+  HiMiniArrowRight as bt,
+  HiMiniPuzzlePiece as bu,
+  HiMiniGlobeAlt as bv,
+  fetchCloudExceptions as bw,
+  fetchCloudExceptionRequests as bx,
+  downloadBlob as by,
+  PolicyStatField as bz,
   HiMiniChevronRight as c,
   createCommandActivityClient as d,
   harnessDisplayName as e,

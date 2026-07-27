@@ -1,6 +1,6 @@
 import { ActionButton, Badge, KeyValueGrid, SectionLabel, Surface, Tag, ProofStrip } from "./approval-center-primitives";
 import { harnessDisplayName, formatRelativeTime } from "./approval-center-utils";
-import type { GuardCloudCommandCapability, GuardCloudSyncHealth, GuardInventoryItem, GuardProofStatus, GuardProtectionState, GuardReceipt, GuardRuntimeDevice, GuardRuntimeSnapshot, PackageManagerProtection } from "./guard-types";
+import type { GuardCloudCommandCapability, GuardCloudSyncHealth, GuardInventoryItem, GuardOperatorHealth, GuardOperatorHealthState, GuardProofStatus, GuardProtectionState, GuardReceipt, GuardRuntimeDevice, GuardRuntimeSnapshot, PackageManagerProtection } from "./guard-types";
 import { protectionHealthFor } from "./protection-health";
 import { guardActionPresentation } from "./guard-action";
 import type { GuardActionPresentation } from "./guard-action";
@@ -15,6 +15,69 @@ type RuntimeOverviewProps = {
 };
 
 type RuntimeProofTone = "blue" | "green" | "purple" | "slate" | "attention";
+
+const countFormatter = new Intl.NumberFormat();
+
+export function formatOperatorCount(value: number): string {
+  return countFormatter.format(value);
+}
+
+export function formatOldestWait(milliseconds: number): string {
+  if (milliseconds < 1_000) return `${formatOperatorCount(Math.round(milliseconds))} ms`;
+  return `${(milliseconds / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })} s`;
+}
+
+function operatorHealthLabel(state: GuardOperatorHealthState): string {
+  if (state === "store-contended") return "Store contended";
+  return state[0].toUpperCase() + state.slice(1);
+}
+
+function operatorHealthTone(state: GuardOperatorHealthState): RuntimeProofTone {
+  if (state === "healthy") return "green";
+  if (state === "backlogged") return "blue";
+  return "attention";
+}
+
+export function OperatorHealthCard(props: { health: GuardOperatorHealth }) {
+  const health = props.health;
+  return (
+    <div className="rounded-xl border border-border bg-white px-5 py-4" data-operator-health={health.state}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-blue">Local processing</p>
+        <Tag tone={operatorHealthTone(health.state)}>{operatorHealthLabel(health.state)}</Tag>
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-brand-dark/80">{health.cause}</p>
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+        <div>
+          <dt className="text-xs text-slate-500">Queue</dt>
+          <dd className="text-sm font-semibold text-brand-dark">{formatOperatorCount(health.queue_depth)} / {formatOperatorCount(health.queue_limit)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">Oldest wait</dt>
+          <dd className="text-sm font-semibold text-brand-dark">{formatOldestWait(health.oldest_wait_ms)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">Workers busy</dt>
+          <dd className="text-sm font-semibold text-brand-dark">{formatOperatorCount(health.workers_busy)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">Workers ready</dt>
+          <dd className="text-sm font-semibold text-brand-dark">{formatOperatorCount(health.workers_ready)}</dd>
+        </div>
+      </dl>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+        <p className="text-xs leading-relaxed text-slate-600">
+          <span className="font-semibold text-brand-dark">Automatic recovery:</span> {health.automatic_recovery}
+        </p>
+        {health.repairable ? (
+          <ActionButton href="/settings?section=maintenance#approval-center-repair" variant="secondary">
+            Repair local processing
+          </ActionButton>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function protectionProofTone(state: GuardProtectionState): RuntimeProofTone {
   if (state === "protected") return "green";

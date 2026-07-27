@@ -205,7 +205,6 @@ class HookProcessRunner:
                 raw_message = slot.connection.recv()
             except (BrokenPipeError, EOFError, OSError):
                 self._increment_metric("failures")
-                self._withdraw_slot_capacity(slot)
                 retry_slot: HookWorkerSlot | None = None
                 if _runtime_hook_review_is_idempotent(payload):
                     with suppress(queue.Empty):
@@ -473,6 +472,8 @@ class HookProcessRunner:
         return outcome
 
     def _replace_slot_async(self, slot: HookWorkerSlot) -> None:
+        self._withdraw_slot_capacity(slot)
+
         def contained() -> None:
             with self._state_lock:
                 slot_id = slot.process.pid or id(slot)

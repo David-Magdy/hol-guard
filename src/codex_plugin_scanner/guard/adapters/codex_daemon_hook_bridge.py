@@ -12,7 +12,7 @@ import stat
 import sys
 import time
 import urllib.error
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -62,6 +62,10 @@ _LAUNCH_INTEGRITY_REASON = (
     "HOL Guard could not authenticate its managed Codex hook launcher. Run `hol-guard install codex`, then retry."
 )
 _MINIMUM_OPERATION_SECONDS = 0.01
+_OVERLOAD_RESERVE_MS = 100
+_OVERLOAD_REASON = (
+    "HOL Guard is temporarily saturated and kept this action blocked. No approval was requested; retry the action."
+)
 
 
 class _DaemonResponseError(ValueError):
@@ -91,6 +95,47 @@ def _json_object(text: str) -> dict[str, object] | None:
     except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _with_remaining_hint(data: str, deadline: float) -> str:
+    payload = _json_object(data)
+    if payload is None:
+        return data
+    payload["guard_remaining_ms"] = min(60_000, max(1, int((deadline - time.monotonic()) * 1000)))
+    return json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+
+
+def _transient_overload(error: BaseException) -> tuple[int, int] | None:
+    if not isinstance(error, _DaemonResponseError) or not error.authenticated:
+        return None
+    payload = _json_object(error.detail)
+    if payload is None or payload.get("reason_code") != "transient_overload":
+        return None
+    retry_after = payload.get("retry_after_ms", 25)
+    estimated_service = payload.get("estimated_service_ms", 750)
+    if not isinstance(retry_after, int) or isinstance(retry_after, bool):
+        return None
+    if not isinstance(estimated_service, int) or isinstance(estimated_service, bool):
+        return None
+    return min(75, max(25, retry_after)), min(2_800, max(100, estimated_service))
+
+
+def _retry_transient_overload(
+    error: BaseException,
+    *,
+    deadline: float,
+    request: Callable[[], dict[str, object] | None],
+) -> dict[str, object] | None:
+    overload = _transient_overload(error)
+    if overload is None:
+        return None
+    retry_after_ms, estimated_service_ms = overload
+    jitter_ms = max(retry_after_ms, 25 + secrets.randbelow(51))
+    remaining_ms = int((deadline - time.monotonic()) * 1000)
+    if remaining_ms < jitter_ms + estimated_service_ms + _OVERLOAD_RESERVE_MS:
+        return None
+    time.sleep(jitter_ms / 1000)
+    return request()
 
 
 def _private_file_text(path: Path, *, label: str) -> str:
@@ -432,10 +477,11 @@ def _daemon_response(
         if connection.sock is not None:
             connection.sock.settimeout(remaining)
         hook_path = f"/v1/hooks/codex?{query}"
+        hinted_data = _with_remaining_hint(data, deadline)
         connection.request(
             "POST",
             hook_path,
-            body=data.encode("utf-8"),
+            body=hinted_data.encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
                 "Connection": "close",
@@ -478,17 +524,28 @@ def main(
     trusted_launch: _TrustedHookLaunch | None = None
     launch_integrity_failed = False
     daemon_overloaded = False
+    transient_overload = False
     failure_kind = "transport-failure"
-    try:
-        response = _daemon_response(
+
+    def daemon_request() -> dict[str, object] | None:
+        return _daemon_response(
             state_path=state_path,
             query=query,
             data=data,
             timeout_seconds=_remaining_seconds(deadline),
         )
+
+    try:
+        response = daemon_request()
     except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError) as error:
         daemon_overloaded = _authenticated_daemon_overload(error)
+        transient_overload = _transient_overload(error) is not None
         failure_kind = _daemon_failure_kind(error)
+        if transient_overload:
+            try:
+                response = _retry_transient_overload(error, deadline=deadline, request=daemon_request)
+            except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError):
+                response = None
         if manifest_path is not None or config_json is not None:
             try:
                 if manifest_path is None or config_json is None:
@@ -504,7 +561,7 @@ def main(
                 launch_integrity_failed = True
         start_succeeded = (
             False
-            if daemon_overloaded
+            if daemon_overloaded or response is not None
             else (
                 trusted_launch.run_start(
                     start_command,
@@ -520,7 +577,7 @@ def main(
                 )
             )
         )
-        if start_succeeded:
+        if start_succeeded and response is None:
             try:
                 response = _daemon_response(
                     state_path=state_path,
@@ -530,7 +587,7 @@ def main(
                 )
             except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError):
                 response = None
-    if response is None:
+    if response is None and not daemon_overloaded:
         if trusted_launch is not None:
             fallback_stdout = trusted_launch.run_fallback(
                 fallback_command,
@@ -546,7 +603,13 @@ def main(
                 timeout_seconds=_remaining_seconds(deadline),
             )
     if response is None:
-        failure_reason = _LAUNCH_INTEGRITY_REASON if launch_integrity_failed else _FAIL_CLOSED_REASON
+        failure_reason = (
+            _OVERLOAD_REASON
+            if daemon_overloaded
+            else _LAUNCH_INTEGRITY_REASON
+            if launch_integrity_failed
+            else _FAIL_CLOSED_REASON
+        )
         response = _fail_closed(event_name, failure_reason)
     sys.stdout.write(json.dumps(response, separators=(",", ":")))
     return 0

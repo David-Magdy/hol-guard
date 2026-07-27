@@ -355,7 +355,7 @@ def test_expired_waiter_wakes_byte_reservation_when_dispatch_remains_blocked() -
             client_key="waiting",
             lane="decision",
             payload_bytes=1,
-            deadline=time.monotonic() + 1,
+            deadline=time.monotonic() + 2,
         )
         readiness_deadline = time.monotonic() + 0.25
         while scheduler.stats()["queued"] < 2 and time.monotonic() < readiness_deadline:

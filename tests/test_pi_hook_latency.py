@@ -222,7 +222,7 @@ def test_pi_daemon_keeps_health_responsive_at_active_process_capacity(
     assert detailed_health["hook_process_capacity"]["active"] == process_capacity
     assert detailed_health["hook_process_capacity"]["active_limit"] == process_capacity
     assert detailed_health["hook_process_capacity"]["queued"] == 0
-    assert detailed_health["request_capacity"]["limit"] == 64
+    assert detailed_health["request_capacity"]["limit"] == 32
     assert failures == []
     assert results == [{"decision": "allow"}] * process_capacity
 
@@ -533,7 +533,11 @@ let fetchCount = 0;
 globalThis.fetch = async () => {{
   fetchCount += 1;
   return new Response(
-    JSON.stringify({{ error: "daemon_hook_capacity" }}),
+    JSON.stringify({{
+      reason_code: "transient_overload",
+      retry_after_ms: 25,
+      estimated_service_ms: 100,
+    }}),
     {{ status: 503, headers: {{ "Content-Type": "application/json" }} }},
   );
 }};
@@ -548,7 +552,7 @@ const results = await Promise.all(Array.from({{ length: 20 }}, (_, index) => han
 console.log(JSON.stringify({{
   fetchCount,
   blocked: results.filter((result) => result?.block === true).length,
-  overloadReasons: notices.filter((reason) => reason.includes("daemon_hook_capacity")).length,
+  overloadReasons: notices.filter((reason) => reason.includes("temporarily saturated")).length,
 }}));
 """,
         encoding="utf-8",
@@ -562,7 +566,7 @@ console.log(JSON.stringify({{
     )
     payload = _decode_json_object(completed.stdout)
 
-    assert payload == {"fetchCount": 20, "blocked": 20, "overloadReasons": 20}
+    assert payload == {"fetchCount": 40, "blocked": 20, "overloadReasons": 20}
 
 
 @pytest.mark.skipif(

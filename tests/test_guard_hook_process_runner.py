@@ -346,7 +346,7 @@ def test_prewarmed_runner_handles_real_hook_and_closes(tmp_path: Path) -> None:
 
 
 def test_prewarmed_runner_does_not_hide_a_second_worker_queue(tmp_path: Path) -> None:
-    runner = HookProcessRunner(process_limit=4, timeout_seconds=1.8)
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=4, timeout_seconds=1.8)
     barrier = threading.Barrier(24)
 
     def review(index: int) -> HookProcessReview:
@@ -591,7 +591,11 @@ def test_worker_retry_withdraws_scheduler_capacity_before_reusing_slot(
     permits = []
     try:
         runner.start()
-        monkeypatch.setattr(runner, "_replace_slot_async", lambda _slot: None)
+        monkeypatch.setattr(
+            runner,
+            "_replace_slot_async",
+            lambda slot: runner._withdraw_slot_capacity(slot),  # pyright: ignore[reportPrivateUsage]
+        )
         first_slot = next(iter(runner._all_slots.values()))  # pyright: ignore[reportPrivateUsage]
         first_slot.process.kill()
         first_slot.process.join(timeout=1)
@@ -638,6 +642,56 @@ def test_worker_retry_withdraws_scheduler_capacity_before_reusing_slot(
                 scheduler.acquire,
                 harness="pi",
                 client_key="queued",
+                lane="decision",
+                payload_bytes=1,
+                deadline=time.monotonic() + 1,
+            )
+            time.sleep(0.05)
+            permits.pop().release()
+            time.sleep(0.05)
+            assert not queued.done()
+            permits.pop().release()
+            queued_admission = queued.result(timeout=1)
+        assert queued_admission.permit is not None
+        queued_admission.permit.release()
+    finally:
+        for permit in permits:
+            permit.release()
+        runner.close()
+
+
+def test_every_async_worker_replacement_withdraws_scheduler_capacity_first(
+    tmp_path: Path,
+) -> None:
+    scheduler = RuntimeHookScheduler(active_limit=0, queued_limit=4)
+    runner = HookProcessRunner(
+        guard_home=tmp_path,
+        process_limit=2,
+        capacity_listener=scheduler.set_active_limit,
+    )
+    permits = []
+    try:
+        runner.start()
+        slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+        for index in range(2):
+            admission = scheduler.acquire(
+                harness="pi",
+                client_key=f"replacement-active-{index}",
+                lane="decision",
+                payload_bytes=1,
+                deadline=time.monotonic() + 2,
+            )
+            assert admission.permit is not None
+            permits.append(admission.permit)
+
+        runner._replace_slot_async(slot)  # pyright: ignore[reportPrivateUsage]
+        assert scheduler.stats()["active_limit"] == 1
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            queued = executor.submit(
+                scheduler.acquire,
+                harness="pi",
+                client_key="replacement-queued",
                 lane="decision",
                 payload_bytes=1,
                 deadline=time.monotonic() + 1,

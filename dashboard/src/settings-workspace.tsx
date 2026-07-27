@@ -1721,7 +1721,7 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
                         </ActionButton>
                       </div>
                     </div>
-                    <div>
+                    <div id="approval-center-repair">
                       <p className="text-sm font-semibold text-brand-dark">Repair approval center</p>
                       <p className="text-xs text-slate-500">Use when the approval link fails after Guard restarts.</p>
                       <div className="mt-2">
