@@ -4092,7 +4092,9 @@ args = ["workspace-skill.js", "--changed"]
 
         assert rc == 0
         assert output["installer"] == "uv"
-        assert commands == [["uv", "tool", "install", "--force", "hol-guard==2.0.1092"]]
+        assert commands == [
+            ["uv", "tool", "install", "--force", "--refresh-package", "hol-guard", "hol-guard==2.0.1092"]
+        ]
         assert output["resulting_version"] == "2.0.1092"
         assert output["status"] == "updated"
 
