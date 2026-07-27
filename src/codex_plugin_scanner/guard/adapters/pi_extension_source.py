@@ -67,8 +67,8 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "sys.stderr.write('HOL_GUARD_WINDOWS_JOB_CONTAINED\\n') if _windows_job is not None else None;"
         "sys.stderr.flush() if _windows_job is not None else None;"
         "from pathlib import Path;"
-        "from codex_plugin_scanner.guard.daemon.manager import recover_guard_daemon_after_hook_failure;"
-        f"recover_guard_daemon_after_hook_failure(Path({str(guard_home)!r}),"
+        "from codex_plugin_scanner.guard.daemon import schedule_guard_daemon_recovery;"
+        f"schedule_guard_daemon_recovery(Path({str(guard_home)!r}),"
         f"home_dir=Path({str(home_dir)!r}),failure_kind=sys.argv[1])"
     )
     recovery_command_json = json.dumps(str(Path(sys.executable).expanduser().absolute()))

@@ -9,6 +9,7 @@ from .manager import (
     load_guard_daemon_url,
     recover_guard_daemon_after_hook_failure,
     repair_approval_center_locator,
+    schedule_guard_daemon_recovery,
 )
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "load_guard_surface_daemon_client",
     "recover_guard_daemon_after_hook_failure",
     "repair_approval_center_locator",
+    "schedule_guard_daemon_recovery",
 ]
 
 
