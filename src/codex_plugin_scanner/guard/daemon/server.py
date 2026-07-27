@@ -92,6 +92,7 @@ from ..cloud_exception_requests import (
     CloudExceptionRequestError,
     fetch_cloud_exception_requests,
     submit_cloud_exception_request,
+    submit_command_policy_exception_request,
 )
 from ..codex_resume import (
     ResumeNotSupportedError,
@@ -4599,7 +4600,12 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
     def _handle_cloud_exception_request_create(self, payload: dict[str, object]) -> None:
         store = self.server.store  # type: ignore[attr-defined]
         try:
-            result = submit_cloud_exception_request(store, payload)
+            # Route command-policy requests to the dedicated validator/submitter.
+            kind = payload.get("kind")
+            if kind == "command-policy":
+                result = submit_command_policy_exception_request(store, payload)
+            else:
+                result = submit_cloud_exception_request(store, payload)
         except ValueError as error:
             message = str(error).strip() or "Invalid Guard exception request payload."
             self._write_json({"error": "invalid_payload", "message": message}, status=400)
