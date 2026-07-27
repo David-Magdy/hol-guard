@@ -524,6 +524,49 @@ def recover_guard_daemon_after_hook_failure(
         return ensure_guard_daemon(guard_home, home_dir=home_dir)
 
 
+def schedule_guard_daemon_recovery(
+    guard_home: Path,
+    *,
+    home_dir: Path | None = None,
+    failure_kind: GuardDaemonHookFailureKind = "authenticated-control-plane-failure",
+) -> None:
+    """Run classified daemon recovery independently of a bounded hook process."""
+
+    if failure_kind not in {
+        "authenticated-control-plane-failure",
+        "overload",
+        "transport-failure",
+    }:
+        raise ValueError(f"Unsupported Guard daemon hook failure kind: {failure_kind}")
+    trusted_home = _trusted_daemon_home(home_dir)
+    command = _isolated_python_module_command(
+        "codex_plugin_scanner.guard.daemon.recovery_worker",
+        _trusted_daemon_import_paths(),
+        [str(guard_home), str(trusted_home), failure_kind],
+    )
+    launcher_env = _daemon_launcher_env(home_dir=trusted_home, guard_home=guard_home)
+    if os.name == "nt":
+        subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=trusted_home,
+            env=launcher_env,
+            creationflags=_windows_daemon_creation_flags(allow_job_breakaway=False),
+        )
+        return
+    subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=trusted_home,
+        env=launcher_env,
+        start_new_session=True,
+    )
+
+
 def _authenticated_live_current_daemon_url(
     guard_home: Path,
     state: dict[str, object] | None,

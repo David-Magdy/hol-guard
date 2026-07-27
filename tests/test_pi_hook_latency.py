@@ -250,8 +250,8 @@ def test_pi_extension_keeps_fallbacks_inside_outer_hook_deadline(tmp_path: Path)
     assert 'recoveryKind: "transport-failure"' in timeout_branch
     assert "response.status === 401 || response.status === 403" in source
     assert 'recoveryKind: "authenticated-control-plane-failure"' in source
+    assert "schedule_guard_daemon_recovery" in source
     assert "failure_kind=sys.argv[1]" in source
-    assert "recover_guard_daemon_after_hook_failure" in source
     assert source.count("assign_current_process_to_windows_hook_job") == 4
     assert "_windows_job=assign_current_process_to_windows_hook_job()" in source
     assert "allow_breakaway=True" in source
