@@ -505,7 +505,7 @@ def recover_guard_daemon_after_hook_failure(
             if current_url is not None:
                 if failure_kind != "authenticated-control-plane-failure" or _daemon_generation_is_recent(state):
                     return current_url
-            elif live_process_url is not None and failure_kind == "overload":
+            elif live_process_url is not None and (failure_kind == "overload" or _daemon_generation_is_recent(state)):
                 return live_process_url
             live_generation_url = current_url or live_process_url
             if live_generation_url is not None:
