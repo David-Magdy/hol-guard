@@ -22,6 +22,7 @@ _EXPECTED_FLOORS = {
     "read_remote": "allow",
     "propose_remote": "allow",
     "routine_merge_remote": "allow",
+    "routine_review_thread_remote": "allow",
     "write_local": "review",
     "maintain_remote": "review",
     "content_remote": "review",
@@ -42,6 +43,16 @@ _EXPECTED_FLOORS = {
     (
         (("pr", "view", "17"), ("read_remote",), False),
         (("pr", "create", "--title", "Ready", "--body", "Static summary"), ("propose_remote",), False),
+        (
+            (
+                "api",
+                "graphql",
+                "-f",
+                'query=mutation{resolveReviewThread(input:{threadId:"PRRT_kwDOQGomAs6T6b-G"}){thread{isResolved}}}',
+            ),
+            ("routine_review_thread_remote",),
+            False,
+        ),
         (
             (
                 "api",
@@ -111,7 +122,10 @@ def test_every_capability_has_an_explicit_floor(capability: GitHubCommandCapabil
     assert assessment.action_floor == expected
 
 
-@pytest.mark.parametrize("capability", ("read_local", "read_remote", "propose_remote", "routine_merge_remote"))
+@pytest.mark.parametrize(
+    "capability",
+    ("read_local", "read_remote", "propose_remote", "routine_merge_remote", "routine_review_thread_remote"),
+)
 def test_prompt_free_capabilities_cannot_be_rendered_as_review_actions(capability: GitHubCommandCapability) -> None:
     assessment = github_assessment(capability, "test.read", "test read")
 

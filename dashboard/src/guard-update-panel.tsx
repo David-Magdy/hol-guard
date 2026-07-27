@@ -4,6 +4,7 @@ import { HiMiniAdjustmentsHorizontal, HiMiniArrowPath, HiMiniBeaker } from "reac
 import {
   fetchGuardUpdateStatus,
   prepareGuardDaemonReconnect,
+  readRememberedGuardUpdateChannel,
   reconnectGuardDaemonAfterUpdate,
   readGuardToken,
   redirectToGuardDaemonOrigin,
@@ -111,7 +112,9 @@ export function GuardUpdatePanel(props: GuardUpdatePanelProps) {
     phase !== "reconnecting";
   const showReinstallButton = shouldPromptRecoveryReinstall(props.updateStatus) && phase !== "updating" && phase !== "reconnecting";
   const busy = phase === "updating" || phase === "reconnecting";
-  const useAlpha = props.updateStatus?.release_channel === "alpha";
+  const useAlpha = props.updateStatus?.release_channel === "alpha" || (
+    props.updateStatus == null && readRememberedGuardUpdateChannel() === "alpha"
+  );
   const [alphaModalOpen, setAlphaModalOpen] = useState(false);
   const [alphaSavePending, setAlphaSavePending] = useState(false);
   const [alphaSaveError, setAlphaSaveError] = useState<string | null>(null);

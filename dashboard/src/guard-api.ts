@@ -92,6 +92,7 @@ import {
 
 const GUARD_TOKEN_PARAM = "guard-token";
 const GUARD_DAEMON_PARAM = "guardDaemon";
+const GUARD_UPDATE_CHANNEL_STORAGE_KEY = "guard-update-channel";
 const GUARD_SURFACE_PROTOCOL_VERSIONS = ["1.1", "1.0"] as const;
 const DEFAULT_GUARD_DAEMON_PORT = 4781;
 const GUARD_DAEMON_PORT_RANGE = 1000;
@@ -274,6 +275,24 @@ function saveBrowserStorage(getStorage: () => Storage, name: string, value: stri
 function saveGuardStorage(name: string, value: string): void {
   saveBrowserStorage(() => window.sessionStorage, name, value);
   saveBrowserStorage(() => window.localStorage, name, value);
+}
+
+function isGuardUpdateChannel(value: unknown): value is "stable" | "alpha" {
+  return value === "stable" || value === "alpha";
+}
+
+export function readRememberedGuardUpdateChannel(): "stable" | "alpha" | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const value = readGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY);
+  return isGuardUpdateChannel(value) ? value : null;
+}
+
+function rememberGuardUpdateChannel(channel: "stable" | "alpha"): void {
+  if (typeof window !== "undefined") {
+    saveGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY, channel);
+  }
 }
 
 export function readGuardToken(): string | null {
@@ -3099,7 +3118,10 @@ function normalizeGuardUpdateVersionCheck(raw: unknown): GuardUpdateVersionCheck
   };
 }
 
-export function normalizeGuardUpdateStatus(raw: unknown): GuardUpdateStatus {
+export function normalizeGuardUpdateStatus(
+  raw: unknown,
+  fallbackReleaseChannel: "stable" | "alpha" | null = null,
+): GuardUpdateStatus {
   const value = isRecord(raw) ? raw : {};
   const versionCheck = normalizeGuardUpdateVersionCheck(value.version_check);
   const currentVersion = stringValue(value.current_version) ?? versionCheck.current_version ?? "unknown";
@@ -3124,7 +3146,9 @@ export function normalizeGuardUpdateStatus(raw: unknown): GuardUpdateStatus {
     retry_command: typeof value.retry_command === "string" ? value.retry_command : undefined,
     update_attempt_message:
       typeof value.update_attempt_message === "string" ? value.update_attempt_message : undefined,
-    release_channel: value.release_channel === "alpha" ? "alpha" : "stable",
+    release_channel: isGuardUpdateChannel(value.release_channel)
+      ? value.release_channel
+      : (fallbackReleaseChannel ?? "stable"),
   };
 }
 
@@ -3147,7 +3171,14 @@ export async function fetchGuardUpdateStatus(): Promise<GuardUpdateStatus> {
     });
   }
   const payload = await readJson<unknown>("/v1/update/status", { cache: "no-store" });
-  return normalizeGuardUpdateStatus(payload);
+  const declaredChannel = isRecord(payload) && isGuardUpdateChannel(payload.release_channel)
+    ? payload.release_channel
+    : null;
+  const status = normalizeGuardUpdateStatus(payload, readRememberedGuardUpdateChannel());
+  if (declaredChannel) {
+    rememberGuardUpdateChannel(declaredChannel);
+  }
+  return status;
 }
 
 export async function scheduleGuardUpdate(
@@ -3210,7 +3241,11 @@ export async function setGuardUpdateChannel(
     const value = isRecord(payload) ? payload : {};
     throw new Error(stringValue(value.message) ?? `Update channel failed with ${response.status}`);
   }
-  return normalizeGuardUpdateStatus(payload);
+  const declaredChannel = isRecord(payload) && isGuardUpdateChannel(payload.release_channel)
+    ? payload.release_channel
+    : channel;
+  rememberGuardUpdateChannel(declaredChannel);
+  return normalizeGuardUpdateStatus(payload, declaredChannel);
 }
 
 export async function setupDesktopNotifications(): Promise<GuardNotificationSetupResult> {
