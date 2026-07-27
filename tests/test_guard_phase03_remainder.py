@@ -76,7 +76,15 @@ def test_update_detects_uv_tool_install_and_pins_latest_version(monkeypatch: pyt
 
     assert exit_code == 0
     assert payload["installer"] == "uv"
-    assert payload["command"] == ["uv", "tool", "install", "--force", "hol-guard==2.0.10"]
+    assert payload["command"] == [
+        "uv",
+        "tool",
+        "install",
+        "--force",
+        "--refresh-package",
+        "hol-guard",
+        "hol-guard==2.0.10",
+    ]
     assert payload["retry_command"] == "hol-guard update"
     assert payload["binary_diagnostics"]["path_status"] == "uv_tool_shim_detected"
 
