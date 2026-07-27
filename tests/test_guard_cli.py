@@ -4218,16 +4218,21 @@ args = ["workspace-skill.js", "--changed"]
     def test_guard_update_ignores_malformed_guard_config(self, tmp_path, monkeypatch, capsys):
         home_dir = tmp_path / "home"
         _write_text(home_dir / "config.toml", "[broken\n")
+        captured_alpha: list[object] = []
         monkeypatch.setattr(
             guard_commands_module,
             "run_guard_update",
-            lambda **_: ({"status": "updated", "message": "ok"}, 0),
+            lambda **kwargs: (
+                captured_alpha.append(kwargs.get("include_alpha")) or {"status": "updated", "message": "ok"},
+                0,
+            ),
         )
 
         rc = main(["guard", "update", "--home", str(home_dir), "--json"])
         output = json.loads(capsys.readouterr().out)
 
         assert rc == 0
+        assert captured_alpha == [False]
         assert output["status"] == "updated"
         assert output["message"] == "ok"
 
@@ -4291,6 +4296,27 @@ args = ["workspace-skill.js", "--changed"]
         )
 
         rc = main(["guard", "update", "--home", str(home_dir), "--alpha", "--json"])
+        output = json.loads(capsys.readouterr().out)
+
+        assert rc == 0
+        assert captured_alpha == [True]
+        assert output["status"] == "planned"
+
+    def test_guard_update_uses_persisted_alpha_channel(self, tmp_path, monkeypatch, capsys):
+        home_dir = tmp_path / "home"
+        _write_text(home_dir / "config.toml", 'update_channel = "alpha"\n')
+        captured_alpha: list[object] = []
+
+        monkeypatch.setattr(
+            guard_commands_module,
+            "run_guard_update",
+            lambda **kwargs: (
+                captured_alpha.append(kwargs.get("include_alpha")) or {"status": "planned", "message": "ok"},
+                0,
+            ),
+        )
+
+        rc = main(["guard", "update", "--home", str(home_dir), "--json"])
         output = json.loads(capsys.readouterr().out)
 
         assert rc == 0
