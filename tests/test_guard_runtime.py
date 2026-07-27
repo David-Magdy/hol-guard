@@ -73,6 +73,7 @@ from codex_plugin_scanner.guard.runtime.approval_context import (
     approval_context_tokens_validation_reason,
     build_approval_context_token,
 )
+from codex_plugin_scanner.guard.runtime.command_activity_api_contract import CommandActivityListQuery
 from codex_plugin_scanner.guard.runtime.package_intent import (
     build_package_request_artifact,
     extract_package_intent_request,
@@ -1556,6 +1557,7 @@ clearer UX and an implementation plan with technical references.
         home_dir = tmp_path / "home"
         workspace_dir = tmp_path / "workspace"
         _build_guard_fixture(home_dir, workspace_dir)
+        _write_text(home_dir / "config.toml", 'default_action = "require-reapproval"\n')
         source_file = workspace_dir / "__tests__" / "guard-connect-shell.test.tsx"
         _write_text(source_file, "const label = 'HOL_GUARD_FAKE_CREDENTIAL=fixture-only';\n")
         event = {
@@ -1585,6 +1587,10 @@ clearer UX and an implementation plan with technical references.
         assert rc == 0
         assert output["recorded"] is True
         assert "approval_requests" not in output
+        assert any(
+            item.get("classifier") == "_codex_post_tool_command_is_read_only_source_inspection"
+            for item in output["scanner_evidence"]
+        )
 
     @pytest.mark.parametrize(
         "command",
@@ -14148,6 +14154,47 @@ def test_guard_hook_codex_emits_no_native_output_for_safe_requests(tmp_path, cap
     assert output == ""
     assert GuardStore(home_dir).list_receipts(limit=10) == []
     assert pending == []
+
+
+def test_guard_hook_codex_strict_default_allows_safe_post_tool_git_metadata(tmp_path, capsys, monkeypatch):
+    home_dir = tmp_path / "home"
+    workspace_dir = tmp_path / "workspace"
+    _build_guard_fixture(home_dir, workspace_dir)
+    _write_text(home_dir / "config.toml", 'default_action = "require-reapproval"\n')
+    event = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git status --short --branch"},
+        "tool_response": {"output": "## main"},
+        "source_scope": "project",
+        "cwd": str(workspace_dir),
+    }
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+
+    rc = main(
+        [
+            "guard",
+            "hook",
+            "--home",
+            str(home_dir),
+            "--workspace",
+            str(workspace_dir),
+            "--harness",
+            "codex",
+        ]
+    )
+    output = capsys.readouterr().out
+    store = GuardStore(home_dir)
+    activity_page = store.list_command_activity_page(CommandActivityListQuery(limit=10))
+
+    assert rc == 0
+    assert output == ""
+    assert store.list_approval_requests(limit=10) == []
+    assert len(activity_page["items"]) == 1
+    activity = activity_page["items"][0]
+    assert activity["harness"] == "codex"
+    assert activity["hook_phase"] == "post_success"
+    assert activity["prompted"] is False
 
 
 @pytest.mark.parametrize(

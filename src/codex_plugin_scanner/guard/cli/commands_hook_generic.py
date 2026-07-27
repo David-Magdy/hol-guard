@@ -496,9 +496,11 @@ def _generic_hook_approval_reuse(
 def _should_relax_configured_default(
     *,
     configured_action: GuardAction,
+    harness: str = "codex",
     has_narrow_override: bool,
     home_dir: Path | None,
     payload: Mapping[str, object],
+    runtime_artifact_checked: bool = False,
     runtime_workspace: Path | None,
 ) -> bool:
     if has_narrow_override or configured_action not in {"review", "require-reapproval"}:
@@ -517,6 +519,14 @@ def _should_relax_configured_default(
                 config_path="<runtime>",
             )
             is None
+        )
+    if event_name == "PostToolUse" and runtime_artifact_checked and _canonical_harness_name(harness) == "codex":
+        from .commands_support_codex_commands import _codex_post_tool_command_is_read_only_source_inspection
+
+        return _codex_post_tool_command_is_read_only_source_inspection(
+            payload=dict(payload),
+            cwd=runtime_workspace,
+            home_dir=home_dir,
         )
     return event_name == "PreToolUse" and is_explicitly_benign_tool_action_request(
         payload.get("tool_name"),
@@ -537,6 +547,7 @@ def _run_hook_generic_payload(
     runtime_workspace: Path | None,
     store: GuardStore,
     post_claim_revalidator: Callable[[str], int | None] | None = None,
+    runtime_artifact_checked: bool = False,
     _claimed_saved_allow_hash: str | None = None,
     _claim_saved_approval: bool = True,
     _post_claim_refresh_failed: bool = False,
@@ -568,11 +579,18 @@ def _run_hook_generic_payload(
         unknown_action="require-reapproval",
     )
     hook_event_name = _hook_event_name(payload_map)
+    verified_benign_classifier = (
+        "_codex_post_tool_command_is_read_only_source_inspection"
+        if hook_event_name == "PostToolUse"
+        else "is_explicitly_benign_tool_action_request"
+    )
     verified_benign_default = _should_relax_configured_default(
         configured_action=configured_policy_normalization.action,
+        harness=args.harness,
         has_narrow_override=configured_narrow_override is not None,
         home_dir=home_dir,
         payload=payload_map,
+        runtime_artifact_checked=runtime_artifact_checked,
         runtime_workspace=runtime_workspace,
     )
     current_config_normalization = (
@@ -717,6 +735,7 @@ def _run_hook_generic_payload(
                 runtime_workspace=runtime_workspace,
                 store=store,
                 post_claim_revalidator=None,
+                runtime_artifact_checked=runtime_artifact_checked,
                 _claimed_saved_allow_hash=runtime_artifact_hash,
                 _claim_saved_approval=False,
                 _post_claim_refresh_failed=_post_claim_refresh_failed,
@@ -817,7 +836,7 @@ def _run_hook_generic_payload(
                 "input_source": "local_config",
                 "status": "relaxed_verified_benign",
                 "reason_code": _VERIFIED_BENIGN_DEFAULT_DISPOSITION_REASON,
-                "classifier": "is_explicitly_benign_tool_action_request",
+                "classifier": verified_benign_classifier,
             }
         )
     if daemon_hint_disposition is not None:
@@ -919,6 +938,13 @@ def _run_hook_generic_payload(
             cwd=runtime_workspace,
             home_dir=home_dir,
         )
+    if (
+        _canonical_harness_name(args.harness) == "codex"
+        and hook_event_name == "PostToolUse"
+        and not getattr(args, "json", False)
+        and policy_action not in {"review", "require-reapproval", "sandbox-required", "block"}
+    ):
+        return 0
     if _should_emit_copilot_hook_response(args):
         _emit_copilot_hook_response(
             policy_action=policy_action,
