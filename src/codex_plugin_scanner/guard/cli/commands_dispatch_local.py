@@ -213,6 +213,13 @@ def _run_guard_update_command(
         except (OSError, RuntimeError, sqlite3.Error) as error:
             store = None
             update_store_error = error
+    try:
+        local_config = config or load_guard_config(guard_home, workspace=workspace)
+    except (OSError, ValueError):
+        local_config = None
+    include_alpha = bool(getattr(args, "alpha", False)) or (
+        local_config is not None and local_config.update_channel == "alpha"
+    )
     payload, exit_code = run_guard_update(
         dry_run=dry_run,
         context=context,
@@ -221,7 +228,7 @@ def _run_guard_update_command(
         now=_now(),
         wheel=getattr(args, "wheel", None),
         guard_home=guard_home,
-        include_alpha=bool(getattr(args, "alpha", False)),
+        include_alpha=include_alpha,
         force_pypi_reinstall=bool(getattr(args, "force_pypi_reinstall", False)),
     )
     if update_store_error is not None:
