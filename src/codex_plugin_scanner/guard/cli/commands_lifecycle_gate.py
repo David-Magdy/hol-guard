@@ -21,6 +21,7 @@ _ENROLLMENT_NOTICE = (
 _CANONICAL_AUTHORITY_ACTION_PREFIXES = (
     "apps.",
     "bootstrap.",
+    "disconnect",
     "doctor.",
     "init.",
     "install",

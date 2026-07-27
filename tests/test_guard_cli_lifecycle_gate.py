@@ -200,3 +200,24 @@ def test_canonical_gate_ignores_ambient_home_override(
             argparse.Namespace(guard_command="update"),
             guard_home=fake_home / ".hol-guard",
         )
+
+
+def test_cloud_disconnect_uses_canonical_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    canonical_home = tmp_path / "canonical"
+    alternate_home = tmp_path / "alternate"
+    monkeypatch.setattr(commands_lifecycle_gate, "canonical_lifecycle_home", lambda: canonical_home)
+    password = "correct horse battery staple"
+    _ = update_settings(
+        canonical_home,
+        {"enabled": True, "new_password": password, "confirm_password": password},
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    with pytest.raises(ApprovalGateError, match="interactive terminal"):
+        enforce_lifecycle_gate(
+            argparse.Namespace(guard_command="disconnect", source="default"),
+            guard_home=alternate_home,
+        )
