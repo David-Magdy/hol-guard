@@ -144,6 +144,7 @@ def test_canonical_gate_blocks_lifecycle_override_bypass(
     canonical_parent = tmp_path / "canonical"
     alternate_home = tmp_path / "alternate"
     canonical_parent.mkdir()
+    monkeypatch.setattr(commands_lifecycle_gate, "trusted_user_home", lambda: canonical_parent)
     monkeypatch.setenv("HOME", str(canonical_parent))
     canonical_home = commands_lifecycle_gate.canonical_lifecycle_home()
     password = "correct horse battery staple"
@@ -172,3 +173,27 @@ def test_canonical_gate_blocks_lifecycle_override_bypass(
     assert exit_code == 4
     assert handler_called is False
     assert '"error": "approval_gate_interactive_required"' in output.getvalue()
+
+
+def test_canonical_gate_ignores_ambient_home_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trusted_home = tmp_path / "trusted"
+    fake_home = tmp_path / "fake"
+    trusted_home.mkdir()
+    monkeypatch.setattr(commands_lifecycle_gate, "trusted_user_home", lambda: trusted_home)
+    monkeypatch.setenv("HOME", str(fake_home))
+    canonical_home = commands_lifecycle_gate.canonical_lifecycle_home()
+    password = "correct horse battery staple"
+    _ = update_settings(
+        canonical_home,
+        {"enabled": True, "new_password": password, "confirm_password": password},
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    with pytest.raises(ApprovalGateError, match="interactive terminal"):
+        enforce_lifecycle_gate(
+            argparse.Namespace(guard_command="update"),
+            guard_home=fake_home / ".hol-guard",
+        )

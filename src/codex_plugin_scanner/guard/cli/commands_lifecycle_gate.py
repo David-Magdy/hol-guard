@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO, cast
 
 from ..approval_gate import public_config, require_high_risk
-from ..config import resolve_guard_home
+from ..config import resolve_guard_home_for_user_home
+from ..windows_paths import trusted_windows_user_profile
 from .approval_gate_prompt import prompt_for_approval_gate
 
 _ENROLLMENT_NOTICE = (
@@ -91,7 +93,17 @@ def lifecycle_authority_home(target_home: Path) -> Path:
 
 
 def canonical_lifecycle_home() -> Path:
-    return resolve_guard_home()
+    return resolve_guard_home_for_user_home(trusted_user_home())
+
+
+def trusted_user_home() -> Path:
+    """Resolve the effective OS account home without ambient environment input."""
+
+    if os.name == "nt":
+        return trusted_windows_user_profile()
+    import pwd
+
+    return Path(pwd.getpwuid(os.geteuid()).pw_dir).resolve()
 
 
 def _command_subject(args: argparse.Namespace) -> str:
@@ -126,4 +138,5 @@ __all__ = [
     "enforce_lifecycle_gate",
     "lifecycle_authority_home",
     "lifecycle_gate_requirement",
+    "trusted_user_home",
 ]

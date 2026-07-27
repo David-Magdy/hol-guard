@@ -369,8 +369,14 @@ def resolve_guard_home(override: str | None = None) -> Path:
 
     if override:
         return Path(override).expanduser().resolve()
-    canonical_home = Path.home() / DEFAULT_GUARD_DIRNAME
-    legacy_home = _existing_legacy_guard_home()
+    return resolve_guard_home_for_user_home(Path.home())
+
+
+def resolve_guard_home_for_user_home(user_home: Path) -> Path:
+    """Resolve Guard state beneath an already authenticated user home."""
+
+    canonical_home = user_home / DEFAULT_GUARD_DIRNAME
+    legacy_home = _existing_legacy_guard_home(user_home)
     if legacy_home is None:
         return canonical_home
     if _guard_home_has_sync_credentials(canonical_home):
@@ -952,9 +958,9 @@ def _string_object_table(value: object) -> dict[str, object] | None:
     return {key: item for key, item in value.items() if isinstance(key, str)}
 
 
-def _existing_legacy_guard_home() -> Path | None:
+def _existing_legacy_guard_home(user_home: Path) -> Path | None:
     for relative_path in LEGACY_GUARD_DIRNAMES:
-        candidate = Path.home() / relative_path
+        candidate = user_home / relative_path
         if candidate.exists():
             return candidate
     return None
