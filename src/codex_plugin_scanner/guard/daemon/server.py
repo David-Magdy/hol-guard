@@ -7551,7 +7551,7 @@ class GuardDaemonServer:
             return
         self._maintain_command_activity_best_effort()
         storage_complete = self._maintain_storage_best_effort()
-        while not self._shutdown_started.wait(3_600 if storage_complete else 1):
+        while not self._shutdown_started.wait(3_600 if storage_complete else 5):
             self._maintain_command_activity_best_effort()
             storage_complete = self._maintain_storage_best_effort()
 
