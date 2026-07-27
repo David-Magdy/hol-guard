@@ -16,6 +16,8 @@ from codex_plugin_scanner.guard.cli.commands_lifecycle_gate import (
     enforce_lifecycle_gate,
     lifecycle_gate_requirement,
 )
+from codex_plugin_scanner.guard.cli.commands_parser import add_guard_root_parser
+from codex_plugin_scanner.guard.cli.commands_router import run_guard_command
 
 
 @pytest.mark.parametrize(
@@ -67,8 +69,12 @@ def test_lifecycle_gate_exempts_read_only_dry_run_and_recovery(
     assert lifecycle_gate_requirement(argparse.Namespace(**attributes)) is None
 
 
-def test_lifecycle_gate_warns_and_allows_when_protection_is_disabled(tmp_path: Path) -> None:
+def test_lifecycle_gate_warns_and_allows_when_protection_is_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     error_stream = io.StringIO()
+    monkeypatch.setattr(commands_lifecycle_gate, "canonical_lifecycle_home", lambda: tmp_path)
 
     enforce_lifecycle_gate(
         argparse.Namespace(guard_command="uninstall", harness="codex"),
@@ -87,6 +93,7 @@ def test_lifecycle_gate_requires_fresh_password_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     password = "correct horse battery staple"
+    monkeypatch.setattr(commands_lifecycle_gate, "canonical_lifecycle_home", lambda: tmp_path)
     _ = update_settings(
         tmp_path,
         {"enabled": True, "new_password": password, "confirm_password": password},
@@ -110,6 +117,7 @@ def test_lifecycle_gate_accepts_valid_password_and_binds_grant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     password = "correct horse battery staple"
+    monkeypatch.setattr(commands_lifecycle_gate, "canonical_lifecycle_home", lambda: tmp_path)
     _ = update_settings(
         tmp_path,
         {"enabled": True, "new_password": password, "confirm_password": password},
@@ -125,3 +133,42 @@ def test_lifecycle_gate_accepts_valid_password_and_binds_grant(
         argparse.Namespace(guard_command="install", harness="codex"),
         guard_home=tmp_path,
     )
+
+
+@pytest.mark.parametrize("override_flag", ["--home", "--guard-home"])
+def test_canonical_gate_blocks_lifecycle_override_bypass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    override_flag: str,
+) -> None:
+    canonical_parent = tmp_path / "canonical"
+    alternate_home = tmp_path / "alternate"
+    canonical_parent.mkdir()
+    monkeypatch.setenv("HOME", str(canonical_parent))
+    canonical_home = commands_lifecycle_gate.canonical_lifecycle_home()
+    password = "correct horse battery staple"
+    _ = update_settings(
+        canonical_home,
+        {"enabled": True, "new_password": password, "confirm_password": password},
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    handler_called = False
+
+    def update_handler(*_args: object, **_kwargs: object) -> int:
+        nonlocal handler_called
+        handler_called = True
+        return 0
+
+    from codex_plugin_scanner.guard.cli import commands_router
+
+    monkeypatch.setattr(commands_router, "_run_guard_update_command", update_handler)
+    parser = argparse.ArgumentParser()
+    add_guard_root_parser(parser)
+    args = parser.parse_args(["update", override_flag, str(alternate_home), "--json"])
+    output = io.StringIO()
+
+    exit_code = run_guard_command(args, output_stream=output)
+
+    assert exit_code == 4
+    assert handler_called is False
+    assert '"error": "approval_gate_interactive_required"' in output.getvalue()

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TextIO, cast
 
 from ..approval_gate import public_config, require_high_risk
+from ..config import resolve_guard_home
 from .approval_gate_prompt import prompt_for_approval_gate
 
 _ENROLLMENT_NOTICE = (
@@ -62,19 +63,35 @@ def enforce_lifecycle_gate(
     requirement = lifecycle_gate_requirement(args)
     if requirement is None:
         return
-    gate = public_config(guard_home)
+    authority_home = lifecycle_authority_home(guard_home)
+    gate = public_config(authority_home)
     if not gate.enabled:
         print(_ENROLLMENT_NOTICE, file=error_stream or sys.stderr)
         return
-    gate_input = prompt_for_approval_gate(guard_home, use_cooldown=False)
+    gate_input = prompt_for_approval_gate(authority_home, use_cooldown=False)
     _ = require_high_risk(
-        guard_home,
+        authority_home,
         purpose="protection_lifecycle",
         approval_gate_input=gate_input,
         action=requirement.action,
         scope="local-protection",
         subject=requirement.subject,
     )
+
+
+def lifecycle_authority_home(target_home: Path) -> Path:
+    """Prefer the canonical gate for mutations that can affect global protection."""
+
+    canonical_home = canonical_lifecycle_home()
+    if canonical_home == target_home:
+        return target_home
+    if public_config(canonical_home).enabled:
+        return canonical_home
+    return target_home
+
+
+def canonical_lifecycle_home() -> Path:
+    return resolve_guard_home()
 
 
 def _command_subject(args: argparse.Namespace) -> str:
@@ -105,6 +122,8 @@ def _bool_attribute(args: argparse.Namespace, name: str) -> bool:
 
 __all__ = [
     "LifecycleGateRequirement",
+    "canonical_lifecycle_home",
     "enforce_lifecycle_gate",
+    "lifecycle_authority_home",
     "lifecycle_gate_requirement",
 ]
