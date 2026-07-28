@@ -364,7 +364,7 @@ _SAFE_SHELL_REDIRECT_TARGETS = frozenset(
     }
 )
 _READ_ONLY_LOOKUP_COMMANDS = frozenset(
-    {"cat", "fd", "find", "grep", "egrep", "fgrep", "head", "ls", "pwd", "rg", "sed", "tail"}
+    {"cat", "date", "fd", "find", "grep", "egrep", "fgrep", "head", "ls", "pwd", "rg", "sed", "tail"}
 )
 _READ_ONLY_LOOKUP_FILTERS = frozenset({"cat", "grep", "egrep", "fgrep", "head", "sed", "tail"})
 _READ_ONLY_SEARCH_EXECUTION_FLAGS = {
@@ -6924,6 +6924,8 @@ def _read_only_lookup_primary_segment_is_safe(command: str, args: list[str], *, 
         return _read_only_lookup_ls_args_are_safe(args, home_dir=home_dir)
     if command == "pwd":
         return all(arg in {"-L", "-P"} for arg in args)
+    if command == "date":
+        return _read_only_lookup_date_args_are_safe(args)
     if command in {"grep", "egrep", "fgrep", "rg"}:
         return _read_only_lookup_search_args_are_safe(command, args, home_dir=home_dir)
     if command == "fd":
@@ -6931,6 +6933,22 @@ def _read_only_lookup_primary_segment_is_safe(command: str, args: list[str], *, 
     if command == "find":
         return _read_only_lookup_find_args_are_safe(args, home_dir=home_dir)
     return False
+
+
+def _read_only_lookup_date_args_are_safe(args: list[str]) -> bool:
+    if not args:
+        return True
+    saw_format = False
+    for arg in args:
+        if arg in {"-u", "--utc", "--universal"}:
+            continue
+        if arg.startswith("+") and len(arg) <= 256 and "\n" not in arg:
+            if saw_format:
+                return False
+            saw_format = True
+            continue
+        return False
+    return True
 
 
 def _read_only_lookup_filter_segment_is_safe(
