@@ -54,6 +54,14 @@ args = ["-m", "http.server", "9000"]
     assert output["approval_center_reachable"] is True
     assert output["bootstrap_install"]["installed"] is True
     assert output["bootstrap_install"]["harness"] == "codex"
+    assert output["bootstrap_install"]["agent_safety_guidance"] == {
+        "status": "installed",
+        "changed": True,
+        "agents_path": "~/.codex/AGENTS.md",
+        "safety_path": "~/.hol-support/SAFETY.md",
+    }
+    assert (home_dir / ".codex" / "AGENTS.md").is_file()
+    assert (home_dir / ".hol-support" / "SAFETY.md").is_file()
     assert output["shell_alias"]["snippet"] == "alias guardp='hol-guard protect'"
     assert output["next_steps"][0]["command"] == "hol-guard run codex --dry-run"
 
