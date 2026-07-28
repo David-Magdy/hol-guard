@@ -867,7 +867,7 @@ def _run_hook_generic_payload(
     ]
     if local_tool_eligibility is not None:
         scanner_evidence.append(local_tool_eligibility.to_evidence())
-    if local_tool_grant is not None:
+    if local_tool_grant is not None and local_tool_eligibility is not None:
         scanner_evidence.append(
             {
                 "source": "trusted_local_tool_grant",
