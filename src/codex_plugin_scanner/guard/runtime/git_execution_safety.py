@@ -288,6 +288,67 @@ def git_fetch_origin_has_execution_free_config(
     return True
 
 
+def git_worktree_add_has_execution_free_config(
+    cwd: Path,
+    *,
+    git_binary: Path | None = None,
+) -> bool:
+    """Reject worktree creation when checkout can invoke configured code."""
+
+    resolved_git = git_binary or trusted_git_binary_for_cwd(cwd)
+    if resolved_git is None or not git_fetch_origin_has_execution_free_config(cwd, git_binary=resolved_git):
+        return False
+    try:
+        repository_cwd = cwd.resolve()
+        config = subprocess.run(
+            [str(resolved_git), "config", "--null", "--list"],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+        hook_paths = subprocess.run(
+            [
+                str(resolved_git),
+                "rev-parse",
+                "--git-path",
+                "hooks/post-checkout",
+                "--git-path",
+                "hooks/reference-transaction",
+            ],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    parsed_config = _parse_null_git_config(config.stdout) if config.returncode == 0 else None
+    if parsed_config is None or any(
+        key == "core.hookspath" or (key.startswith("filter.") and key.endswith((".clean", ".smudge", ".process")))
+        for key, values in parsed_config.items()
+        if any(value.strip() for value in values)
+    ):
+        return False
+    if hook_paths.returncode != 0:
+        return False
+    paths = hook_paths.stdout.splitlines()
+    if len(paths) != 2:
+        return False
+    for value in paths:
+        hook_path = Path(value)
+        if not hook_path.is_absolute():
+            hook_path = repository_cwd / hook_path
+        try:
+            if hook_path.exists() and (os.name == "nt" or os.access(hook_path, os.X_OK)):
+                return False
+        except OSError:
+            return False
+    return True
+
+
 def _parse_null_git_config(output: str) -> dict[str, tuple[str, ...]] | None:
     parsed: dict[str, list[str]] = {}
     for entry in output.split("\0"):
@@ -402,5 +463,6 @@ __all__ = (
     "git_fetch_origin_has_execution_free_config",
     "git_status_args_are_read_only",
     "git_status_has_execution_free_config",
+    "git_worktree_add_has_execution_free_config",
     "trusted_git_binary_for_cwd",
 )
