@@ -1583,10 +1583,19 @@ def _looks_like_safe_compound_developer_inspection(
             and _read_only_lookup_filter_segment_is_safe(command_name, args, home_dir=segment_root)
         ):
             continue
-        if command_name in _READ_ONLY_LOOKUP_COMMANDS and _read_only_lookup_primary_segment_is_safe(
-            command_name,
-            args,
-            home_dir=segment_root,
+        if (
+            command_name in _READ_ONLY_LOOKUP_COMMANDS
+            and _read_only_lookup_primary_segment_is_safe(
+                command_name,
+                args,
+                home_dir=segment_root,
+            )
+            and _local_read_operands_resolve_safely(
+                command_name,
+                args,
+                cwd=segment_root,
+                root=context.workspace_root or home_dir,
+            )
         ):
             saw_inspection = True
             continue
@@ -2425,11 +2434,13 @@ def _bounded_in_place_sed_target(
     if target.startswith("-") or not _read_only_lookup_target_is_safe(target, allow_dirs=False, home_dir=cwd):
         return None
     try:
-        resolved = (cwd / target).resolve(strict=True)
+        candidate = cwd / target
+        lexical = Path(os.path.abspath(os.fspath(candidate)))
+        resolved = candidate.resolve(strict=True)
         _ = resolved.relative_to(workspace_root.resolve(strict=True))
     except (OSError, RuntimeError, ValueError):
         return None
-    return target if resolved.is_file() else None
+    return target if resolved == lexical and resolved.is_file() else None
 
 
 def _bounded_current_workspace_source_edit_execution_context(
@@ -2853,10 +2864,19 @@ def _low_risk_compound_developer_execution_context(
         if _safe_cli_metadata_segment_is_safe(command_name, args, cwd=segment_root):
             saw_inspection = True
             continue
-        if command_name in _READ_ONLY_LOOKUP_COMMANDS and _read_only_lookup_primary_segment_is_safe(
-            command_name,
-            args,
-            home_dir=segment_root,
+        if (
+            command_name in _READ_ONLY_LOOKUP_COMMANDS
+            and _read_only_lookup_primary_segment_is_safe(
+                command_name,
+                args,
+                home_dir=segment_root,
+            )
+            and _local_read_operands_resolve_safely(
+                command_name,
+                args,
+                cwd=segment_root,
+                root=inspection_root,
+            )
         ):
             saw_inspection = True
             continue
@@ -3870,6 +3890,47 @@ def _shell_segment_file_operand_tokens(segment: list[str]) -> tuple[str, ...]:
     if command_name in {"grep", "egrep", "fgrep", "rg"}:
         return _search_file_operand_tokens(command_name, args)
     return ()
+
+
+def _local_read_operands_resolve_safely(
+    command_name: str,
+    args: list[str],
+    *,
+    cwd: Path,
+    root: Path,
+) -> bool:
+    """Reject local read operands redirected through symlink path components."""
+
+    allow_dirs = command_name in {"grep", "egrep", "fgrep", "rg"}
+    for operand in _shell_segment_file_operand_tokens([command_name, *args]):
+        stripped = operand.strip().strip("'\"")
+        if not stripped or stripped == "-":
+            continue
+        has_glob_metacharacter = any(character in stripped for character in "*?[")
+        candidate = Path(stripped)
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        try:
+            lexical = Path(os.path.abspath(os.fspath(candidate)))
+            resolved = candidate.resolve(strict=True)
+            relative = resolved.relative_to(root.resolve(strict=True))
+        except FileNotFoundError:
+            if has_glob_metacharacter:
+                return False
+            continue
+        except (OSError, RuntimeError, ValueError):
+            return False
+        safe_git_pointer = command_name == "cat" and relative.as_posix() == ".git"
+        if resolved != lexical or (
+            not safe_git_pointer
+            and not _read_only_lookup_target_is_safe(
+                relative.as_posix(),
+                allow_dirs=allow_dirs and resolved.is_dir(),
+                home_dir=root,
+            )
+        ):
+            return False
+    return True
 
 
 def _cat_file_operand_tokens(args: list[str]) -> tuple[str, ...]:

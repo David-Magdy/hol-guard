@@ -188,15 +188,13 @@ def _codex_command_is_read_only_source_inspection(
         if not home_context.segments:
             return False
         first = home_context.segments[0]
-        if (
-            first.control_before
-            or first.directory_operation != "cd"
-            or _codex_literal_home_workspace_target(first.tokens, home_dir=home_dir) is None
-        ):
+        workspace_target = _codex_literal_home_workspace_target(first.tokens, home_dir=home_dir)
+        if first.control_before or first.directory_operation != "cd" or workspace_target is None:
             return False
         return _codex_contextual_source_inspection_is_read_only(
             home_context,
             home_dir=home_dir,
+            workspace_root=workspace_target,
         )
     chained_segments = _split_codex_safe_read_only_chain(command)
     if chained_segments is not None:
@@ -228,6 +226,7 @@ def _codex_contextual_source_inspection_is_read_only(
     context: ShellExecutionContext,
     *,
     home_dir: Path | None,
+    workspace_root: Path | None = None,
 ) -> bool:
     if not context.complete:
         return False
@@ -240,6 +239,14 @@ def _codex_contextual_source_inspection_is_read_only(
         if segment.directory_operation is not None:
             pipeline_open = False
             continue
+        if workspace_root is not None:
+            segment_cwd = segment.effective_cwd
+            if segment_cwd is None:
+                return False
+            try:
+                _ = segment_cwd.resolve(strict=True).relative_to(workspace_root.resolve(strict=True))
+            except (OSError, RuntimeError, ValueError):
+                return False
         segment_cwd, reason = validate_shell_execution_segment(context, segment)
         if segment_cwd is None or reason is not None:
             return False

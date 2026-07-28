@@ -45,6 +45,92 @@ def test_literal_sibling_repo_read_only_inspection_does_not_require_review(tmp_p
     assert match is None
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    (
+        "cd ../sibling && cat src/safe.ts",
+        "cd .. && cat sibling/src/safe.ts",
+        "cat ../sibling/src/safe.ts",
+    ),
+)
+def test_literal_repo_read_only_inspection_rejects_later_workspace_escape(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "workspace"
+    repo = home_dir / "projects" / "project"
+    sibling = home_dir / "projects" / "sibling"
+    workspace.mkdir(parents=True)
+    _source_file(repo, "src/safe.ts")
+    _source_file(sibling, "src/safe.ts")
+    (repo / ".git").mkdir()
+    (sibling / ".git").mkdir()
+
+    command = f"cd ~/projects/project && {suffix}"
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": command},
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+    assert match is not None
+    assert not guard_commands_module._codex_command_is_read_only_source_inspection(
+        command,
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+
+def test_literal_repo_read_only_inspection_stays_within_first_marked_workspace(tmp_path: Path) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "workspace"
+    repo = home_dir / "projects" / "project"
+    workspace.mkdir(parents=True)
+    _source_file(repo, "src/safe.ts")
+    (repo / ".git").mkdir()
+    command = "cd ~/projects/project && cd src && sed -n '1,20p' safe.ts"
+
+    assert guard_commands_module._codex_command_is_read_only_source_inspection(
+        command,
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+
+@pytest.mark.parametrize("link_kind", ("file", "directory"))
+def test_literal_repo_read_only_inspection_rejects_symlinked_hidden_operand(
+    tmp_path: Path,
+    link_kind: str,
+) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "workspace"
+    repo = home_dir / "projects" / "project"
+    workspace.mkdir(parents=True)
+    _source_file(repo, "src/safe.ts")
+    (repo / ".git").mkdir()
+    hidden = repo / ".private"
+    hidden.mkdir()
+    (hidden / "safe.ts").write_text("secret\n", encoding="utf-8")
+    if link_kind == "file":
+        target = repo / "src" / "linked.ts"
+        target.symlink_to(hidden / "safe.ts")
+    else:
+        linked_dir = repo / "linked"
+        linked_dir.symlink_to(hidden, target_is_directory=True)
+        target = linked_dir / "safe.ts"
+
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": f"cd ~/projects/project && cat {target.relative_to(repo)}"},
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+    assert match is not None
+
+
 def test_read_only_source_pipeline_allows_identifier_like_output(tmp_path: Path) -> None:
     home_dir = tmp_path / "home"
     workspace = home_dir / "workspace"
@@ -189,6 +275,37 @@ def test_literal_current_workspace_bounded_sed_edit_rejects_symlink_escape(tmp_p
     match = extract_sensitive_tool_action_request(
         "Bash",
         {"command": "sed -i '' 's/old/new/g' src/linked.ts"},
+        cwd=workspace,
+        home_dir=home_dir,
+    )
+
+    assert match is not None
+
+
+@pytest.mark.parametrize("link_kind", ("file", "directory"))
+def test_literal_current_workspace_bounded_sed_edit_rejects_symlink_components(
+    tmp_path: Path,
+    link_kind: str,
+) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "projects" / "project"
+    workspace.mkdir(parents=True)
+    (workspace / ".git").mkdir()
+    hidden = workspace / ".private"
+    hidden.mkdir()
+    (hidden / "safe.ts").write_text("old\n", encoding="utf-8")
+    source = workspace / "src"
+    source.mkdir()
+    target = source / "safe.ts"
+    if link_kind == "file":
+        target.symlink_to(hidden / "safe.ts")
+    else:
+        target.parent.rmdir()
+        target.parent.symlink_to(hidden, target_is_directory=True)
+
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": "sed -i '' 's/old/new/g' src/safe.ts"},
         cwd=workspace,
         home_dir=home_dir,
     )
