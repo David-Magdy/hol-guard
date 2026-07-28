@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -32,8 +33,12 @@ def test_literal_sibling_repo_read_only_inspection_does_not_require_review(tmp_p
     workspace = home_dir / "workspace"
     repo = home_dir / "projects" / "policy-workspace"
     workspace.mkdir(parents=True)
+    subprocess.run(
+        ["git", "init", "--quiet", f"--separate-git-dir={repo.parent / 'repo.git'}", str(repo)],
+        check=True,
+        capture_output=True,
+    )
     _source_file(repo, "app/guard/_components/controls/policy-studio/guided-policy-view.tsx")
-    (repo / ".git").write_text("gitdir: ../repo.git\n", encoding="utf-8")
 
     match = extract_sensitive_tool_action_request(
         "Bash",
