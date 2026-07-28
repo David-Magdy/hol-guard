@@ -35,7 +35,7 @@ _GIT_FETCH_EXECUTION_ENV = frozenset(
 )
 _SAFE_GITHUB_REPOSITORY_PATH = re.compile(r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?")
 _SAFE_GIT_HELPER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
-_GIT_PROBE_TIMEOUT_SECONDS = 0.25
+_GIT_PROBE_TIMEOUT_SECONDS = 1.0
 _READ_ONLY_GIT_STATUS_FLAGS = frozenset(
     {
         "--ahead-behind",
@@ -211,6 +211,8 @@ def git_fetch_origin_has_execution_free_config(
             text=True,
             timeout=_GIT_PROBE_TIMEOUT_SECONDS,
         )
+        if repository.returncode != 0 or repository.stdout.strip().casefold() != "true":
+            return False
         config = subprocess.run(
             [str(resolved_git), "config", "--null", "--list"],
             cwd=repository_cwd,
@@ -219,6 +221,14 @@ def git_fetch_origin_has_execution_free_config(
             text=True,
             timeout=_GIT_PROBE_TIMEOUT_SECONDS,
         )
+        if config.returncode != 0:
+            return False
+        parsed_config = _parse_null_git_config(config.stdout)
+        if parsed_config is None or _git_fetch_config_routes_execution(parsed_config):
+            return False
+        urls = parsed_config.get("remote.origin.url", ())
+        if not urls or not all(_safe_github_https_remote_url(value) for value in urls):
+            return False
         git_exec_path = subprocess.run(
             [str(resolved_git), "--exec-path"],
             cwd=repository_cwd,
@@ -227,6 +237,8 @@ def git_fetch_origin_has_execution_free_config(
             text=True,
             timeout=_GIT_PROBE_TIMEOUT_SECONDS,
         )
+        if git_exec_path.returncode != 0:
+            return False
         hook_paths = subprocess.run(
             [
                 str(resolved_git),
@@ -235,6 +247,8 @@ def git_fetch_origin_has_execution_free_config(
                 "hooks/post-fetch",
                 "--git-path",
                 "hooks/pre-auto-gc",
+                "--git-path",
+                "hooks/reference-transaction",
             ],
             cwd=repository_cwd,
             check=False,
@@ -243,18 +257,6 @@ def git_fetch_origin_has_execution_free_config(
             timeout=_GIT_PROBE_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.SubprocessError):
-        return False
-    if repository.returncode != 0 or repository.stdout.strip().casefold() != "true":
-        return False
-    if config.returncode != 0:
-        return False
-    parsed_config = _parse_null_git_config(config.stdout)
-    if parsed_config is None or _git_fetch_config_routes_execution(parsed_config):
-        return False
-    urls = parsed_config.get("remote.origin.url", ())
-    if not urls or not all(_safe_github_https_remote_url(value) for value in urls):
-        return False
-    if git_exec_path.returncode != 0:
         return False
     try:
         exec_path = Path(git_exec_path.stdout.strip()).resolve(strict=True)
@@ -272,7 +274,7 @@ def git_fetch_origin_has_execution_free_config(
     if hook_paths.returncode != 0:
         return False
     resolved_hook_paths = hook_paths.stdout.splitlines()
-    if len(resolved_hook_paths) != 2:
+    if len(resolved_hook_paths) != 3:
         return False
     for value in resolved_hook_paths:
         hook_path = Path(value)
@@ -305,6 +307,8 @@ def _git_fetch_config_routes_execution(config: dict[str, tuple[str, ...]]) -> bo
         return True
     if any(key.startswith("url.") and key.endswith(".insteadof") for key in config):
         return True
+    if not all(_safe_origin_fetch_refspec(value) for value in config.get("remote.origin.fetch", ())):
+        return True
     boolean_keys = {
         "remote.origin.mirror",
         "remote.origin.prune",
@@ -332,15 +336,27 @@ def _safe_github_https_remote_url(value: str) -> bool:
         port = parsed.port
     except ValueError:
         return False
+    path_parts = parsed.path.removesuffix(".git").split("/")
     return bool(
         parsed.scheme.casefold() == "https"
         and parsed.hostname is not None
         and parsed.hostname.casefold() == "github.com"
+        and parsed.username is None
+        and parsed.password is None
         and port in {None, 443}
         and not parsed.query
         and not parsed.fragment
+        and len(path_parts) == 3
+        and all(part not in {"", ".", ".."} for part in path_parts[1:])
         and _SAFE_GITHUB_REPOSITORY_PATH.fullmatch(parsed.path)
     )
+
+
+def _safe_origin_fetch_refspec(value: str) -> bool:
+    normalized = value.strip()
+    if normalized.startswith("+"):
+        normalized = normalized[1:]
+    return normalized == "refs/heads/*:refs/remotes/origin/*"
 
 
 def _trusted_credential_helper(value: str, *, git_exec_path: Path, cwd: Path) -> bool:
@@ -353,7 +369,7 @@ def _trusted_credential_helper(value: str, *, git_exec_path: Path, cwd: Path) ->
             return False
         helper_binary = helper_command[0]
         if helper_binary == "gh":
-            gh_path = shutil.which("gh")
+            gh_path = _path_command_for_cwd("gh", cwd=cwd)
         elif Path(helper_binary).is_absolute() and Path(helper_binary).name == "gh":
             gh_path = helper_binary
         else:
@@ -370,6 +386,16 @@ def _trusted_credential_helper(value: str, *, git_exec_path: Path, cwd: Path) ->
     except (OSError, RuntimeError):
         return False
     return helper.is_file() and git_binary_path_is_trusted(helper, cwd=cwd)
+
+
+def _path_command_for_cwd(command: str, *, cwd: Path) -> str | None:
+    path_entries: list[str] = []
+    for entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
+        candidate = Path(entry or ".").expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        path_entries.append(str(candidate))
+    return shutil.which(command, path=os.pathsep.join(path_entries))
 
 
 __all__ = (

@@ -1294,8 +1294,10 @@ def _looks_like_safe_standalone_git_routine(command_text: str, *, cwd: Path | No
         return False
     if "&" in command_text:
         return False
+    if cwd is None:
+        return False
     try:
-        execution_cwd = (cwd or Path.cwd()).resolve()
+        execution_cwd = cwd.resolve()
     except (OSError, RuntimeError):
         return False
     context = model_shell_execution_context(

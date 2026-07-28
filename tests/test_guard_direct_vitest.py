@@ -266,18 +266,20 @@ def test_direct_vitest_rejects_arbitrary_javascript_runner(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("shadowed_command", ("node", "head", "tail"))
+@pytest.mark.parametrize("path_entry", (".", "bin"))
 def test_direct_vitest_rejects_shadowed_runtime_commands(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     shadowed_command: str,
+    path_entry: str,
 ) -> None:
     home, caller, workspace, runner = _fixture(tmp_path)
-    shadow_bin = workspace / "bin"
-    shadow_bin.mkdir()
-    shadow = shadow_bin / shadowed_command
+    shadow_directory = workspace if path_entry == "." else workspace / path_entry
+    shadow_directory.mkdir(exist_ok=True)
+    shadow = shadow_directory / shadowed_command
     _ = shadow.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     shadow.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{shadow_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("PATH", f"{path_entry}{os.pathsep}{os.environ.get('PATH', '')}")
     suffix = "--no-coverage 2>&1 | head -40" if shadowed_command == "head" else "--no-coverage 2>&1 | tail -40"
 
     assert not is_explicitly_benign_tool_action_request(

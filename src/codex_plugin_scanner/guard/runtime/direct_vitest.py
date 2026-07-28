@@ -280,7 +280,13 @@ def _trusted_env_node_runtime(runner: Path, *, cwd: Path, home_dir: Path) -> boo
 
 
 def _trusted_path_command(command: str, *, cwd: Path, home_dir: Path) -> bool:
-    path = shutil.which(command)
+    path_entries: list[str] = []
+    for entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
+        candidate = Path(entry or ".").expanduser()
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        path_entries.append(str(candidate))
+    path = shutil.which(command, path=os.pathsep.join(path_entries))
     if path is None:
         return False
     try:
