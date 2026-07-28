@@ -1059,6 +1059,45 @@ class TestGuardSurfaceServer:
         events = store.list_events(event_name="daemon.auth.unauthorized")
         assert events[-1]["payload"]["path"] == "/v1/hooks/claude-code"
 
+    def test_guard_daemon_coalesces_repeated_unauthorized_audit_writes(self, tmp_path) -> None:
+        store = GuardStore(tmp_path / "guard-home")
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+
+        try:
+            url = f"http://127.0.0.1:{daemon.port}/v1/runtime"
+            for _ in range(20):
+                with pytest.raises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(url, timeout=5)
+                assert error.value.code == 401
+        finally:
+            daemon.stop()
+
+        events = store.list_events(event_name="daemon.auth.unauthorized")
+        assert len(events) == 1
+        assert events[0]["payload"]["path"] == "/v1/runtime"
+
+    def test_guard_daemon_auth_audit_failure_does_not_break_denial(self, tmp_path) -> None:
+        store = GuardStore(tmp_path / "guard-home")
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        blocker = sqlite3.connect(store.path, timeout=0.1, isolation_level=None)
+        _ = blocker.execute("begin exclusive")
+
+        try:
+            started = time.monotonic()
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(f"http://127.0.0.1:{daemon.port}/v1/runtime", timeout=5)
+            elapsed = time.monotonic() - started
+        finally:
+            blocker.rollback()
+            blocker.close()
+            daemon.stop()
+
+        assert error.value.code == 401
+        assert elapsed < 0.25
+        assert json.loads(error.value.read().decode("utf-8")) == {"error": "unauthorized"}
+
     def test_guard_daemon_claude_hook_endpoint_returns_notification_context_with_auth(self, tmp_path) -> None:
         home_dir = tmp_path / "home"
         workspace_dir = tmp_path / "workspace"
