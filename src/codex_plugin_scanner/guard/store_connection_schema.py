@@ -201,10 +201,14 @@ class StoreConnectionSchemaMixin:
         notification: dict[str, object] | None = None
         try:
             connection.execute(f"pragma busy_timeout={int(connect_timeout_seconds * 1000)}")
-            # Hot-path tuning: NORMAL is crash-safe under WAL (durability comes from
-            # checkpointing, not per-commit fsync); enlarge the page cache and mmap
-            # window so multi-GB stores don't thrash the default 2 MiB cache.
-            connection.execute("pragma synchronous=NORMAL")
+            # Hot-path tuning: synchronous=NORMAL is only safe once the database
+            # is in WAL mode (durability comes from checkpointing, not per-commit
+            # fsync). Leave FULL for rollback-journal DBs and schema-init paths.
+            journal_mode_row = connection.execute("pragma journal_mode").fetchone()
+            if journal_mode_row is not None and str(journal_mode_row[0]).lower() == "wal":
+                connection.execute("pragma synchronous=NORMAL")
+            # Enlarge the page cache and mmap window so multi-GB stores don't
+            # thrash the default 2 MiB cache.
             connection.execute(f"pragma cache_size=-{SQLITE_CACHE_SIZE_KIB}")
             connection.execute(f"pragma mmap_size={SQLITE_MMAP_SIZE_BYTES}")
             yield connection
