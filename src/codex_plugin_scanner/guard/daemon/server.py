@@ -153,7 +153,6 @@ from ..review_contracts import (
     validate_remote_approval_request_binding,
     validated_remote_approval_envelope,
 )
-from ..sqlite_tuning import sqlite_connect_timeout_override
 from ..runtime.approval_attention import ApprovalAttentionCoordinator
 from ..runtime.command_activity_contract import ActivityApprovalReuseStatus, ActivityDecisionReason
 from ..runtime.command_activity_lifecycle import CommandActivityDecisionFacts, build_pre_hook_evidence
@@ -197,6 +196,7 @@ from ..shims import (
     probe_package_shim_intercepts,
     uninstall_package_shims,
 )
+from ..sqlite_tuning import sqlite_connect_timeout_override
 from ..stable_digest import stable_digest_hex
 from ..store import GuardStore
 from ..store_approvals import InvalidApprovalCursorError
