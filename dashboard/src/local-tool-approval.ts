@@ -100,13 +100,14 @@ export function localToolTargetLabel(
 }
 
 export function localToolDurationLabel(duration: GuardLocalToolGrantDuration): string {
-  return {
+  const labels: Record<GuardLocalToolGrantDuration, string> = {
     once: "Once",
     "15m": "15 min",
     "1h": "1 hour",
     "5h": "5 hours",
     version: "Until tool changes",
-  }[duration];
+  };
+  return labels[duration];
 }
 
 export function localToolReadOnlyReasonLabel(reason: string): string {

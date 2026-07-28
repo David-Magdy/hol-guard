@@ -692,11 +692,11 @@ def _run_hook_generic_payload(
         )
         if configured_narrow_override is None
         and cli_action_normalization is None
-        and payload_action_normalization is None
+        and (payload_action_normalization is None or ignored_payload_action_reason is not None)
         and daemon_hint_disposition != "tightened_to_block"
         else None
     )
-    if local_tool_grant is not None:
+    if local_tool_grant is not None and local_tool_eligibility is not None:
         current_policy_action = "allow"
         policy_action = "allow"
     runtime_artifact_hash = _generic_hook_approval_context_token(
@@ -865,6 +865,17 @@ def _run_hook_generic_payload(
             **policy_composition,
         },
     ]
+    if local_tool_eligibility is not None:
+        scanner_evidence.append(local_tool_eligibility.to_evidence())
+    if local_tool_grant is not None:
+        scanner_evidence.append(
+            {
+                "source": "trusted_local_tool_grant",
+                "applied": True,
+                "tool_identity_hash": local_tool_eligibility.tool_identity_hash,
+                "capability": local_tool_eligibility.capability,
+            }
+        )
     if ignored_payload_action_reason is not None:
         scanner_evidence.append(
             {

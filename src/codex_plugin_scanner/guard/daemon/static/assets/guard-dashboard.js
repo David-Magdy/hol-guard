@@ -15542,13 +15542,14 @@ function localToolTargetLabel(target, options) {
   return target === "capability" ? `Only ${options.capability} calls` : "All recognized read-only calls";
 }
 function localToolDurationLabel(duration) {
-  return {
+  const labels = {
     once: "Once",
     "15m": "15 min",
     "1h": "1 hour",
     "5h": "5 hours",
     version: "Until tool changes"
-  }[duration];
+  };
+  return labels[duration];
 }
 function localToolReadOnlyReasonLabel(reason) {
   if (reason.startsWith("http_")) {
@@ -28218,7 +28219,8 @@ function TemporaryMcpApprovalControls(props) {
 const EXCLUSION_COPY = "Guard rechecks the executable and script before every call. Writes, shell chaining, redirects, embedded commands, environment overrides, and changed tool files still require review.";
 function LocalToolApprovalControls(props) {
   const expiry = localToolExpiryLabel(props.duration);
-  const descriptionId = "local-tool-trust-boundary";
+  const durationDescriptionId = "local-tool-duration-description";
+  const targetDescriptionId = "local-tool-target-description";
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 space-y-5", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-y border-slate-200/70 py-3", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm font-semibold text-brand-dark", children: [
@@ -28231,8 +28233,9 @@ function LocalToolApprovalControls(props) {
         ". Arguments may vary, but the tool files and selected capability must still match."
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-describedby": descriptionId, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-describedby": durationDescriptionId, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue", children: "How long should this choice last?" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: durationDescriptionId, className: "mt-1 text-xs text-muted-foreground", children: "Choose one-time approval or an explicit reusable trust window." }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5", children: props.options.allowed_durations.map((duration) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "label",
         {
@@ -28255,8 +28258,9 @@ function LocalToolApprovalControls(props) {
         duration
       )) })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-describedby": descriptionId, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-describedby": targetDescriptionId, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue", children: "What should it cover?" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: targetDescriptionId, className: "mt-1 text-xs text-muted-foreground", children: "Limit trust to this capability, or include other calls Guard independently recognizes as read-only." }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 grid grid-cols-1 gap-2 md:grid-cols-2", children: props.options.allowed_targets.map((target) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "label",
         {
@@ -28291,7 +28295,7 @@ function LocalToolApprovalControls(props) {
       ] }),
       props.duration === "version" && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-muted-foreground", children: "Trust ends automatically when the executable, script, or approved output processor changes." })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: descriptionId, className: "text-xs leading-5 text-brand-dark/70", children: EXCLUSION_COPY })
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs leading-5 text-brand-dark/70", children: EXCLUSION_COPY })
   ] });
 }
 const commonScopeValues = /* @__PURE__ */ new Set(["artifact"]);

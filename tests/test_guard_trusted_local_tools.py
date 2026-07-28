@@ -155,6 +155,14 @@ def test_local_tool_trust_rejects_jq_file_inputs(
         )
         is None
     )
+    assert (
+        local_tool_approval_eligibility(
+            "node xads.mjs request --method=GET --path=/stats | jq '.data' /path/to/secret",
+            cwd=workspace,
+            home_dir=workspace,
+        )
+        is None
+    )
 
 
 def test_local_tool_trust_allows_variable_read_queries_and_invalidates_changed_bytes(

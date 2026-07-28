@@ -55,6 +55,24 @@ _JQ_FILE_OPTIONS: Final = frozenset(
         "--slurpfile",
     }
 )
+_JQ_SAFE_SHORT_OPTION_CHARACTERS: Final = frozenset("RacenrSsjMC")
+_JQ_SAFE_LONG_OPTIONS: Final = frozenset(
+    {
+        "--ascii-output",
+        "--compact-output",
+        "--exit-status",
+        "--join-output",
+        "--monochrome-output",
+        "--null-input",
+        "--raw-input",
+        "--raw-output",
+        "--seq",
+        "--slurp",
+        "--sort-keys",
+        "--tab",
+        "--unbuffered",
+    }
+)
 _HARD_RISK_EXCLUSIONS: Final = (
     "shell_chaining",
     "shell_redirection",
@@ -364,12 +382,27 @@ def _read_only_reason(arguments: Sequence[str], operation: str) -> str | None:
 
 
 def _safe_jq_arguments(arguments: Sequence[str]) -> bool:
-    return not any(
-        argument in _JQ_FILE_OPTIONS
-        or argument.startswith("-L")
-        or any(argument.startswith(f"{option}=") for option in _JQ_FILE_OPTIONS)
-        for argument in arguments
-    )
+    filter_seen = False
+    for argument in arguments:
+        if (
+            argument in _JQ_FILE_OPTIONS
+            or argument.startswith("-L")
+            or any(argument.startswith(f"{option}=") for option in _JQ_FILE_OPTIONS)
+        ):
+            return False
+        if not filter_seen and argument in _JQ_SAFE_LONG_OPTIONS:
+            continue
+        if (
+            not filter_seen
+            and argument.startswith("-")
+            and len(argument) > 1
+            and all(character in _JQ_SAFE_SHORT_OPTION_CHARACTERS for character in argument[1:])
+        ):
+            continue
+        if filter_seen:
+            return False
+        filter_seen = True
+    return filter_seen
 
 
 def _tool_display_name(segment: CommandSegment, binding: Mapping[str, object]) -> str:

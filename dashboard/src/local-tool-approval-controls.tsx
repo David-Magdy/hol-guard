@@ -21,7 +21,8 @@ const EXCLUSION_COPY =
 
 export function LocalToolApprovalControls(props: Props) {
   const expiry = localToolExpiryLabel(props.duration);
-  const descriptionId = "local-tool-trust-boundary";
+  const durationDescriptionId = "local-tool-duration-description";
+  const targetDescriptionId = "local-tool-target-description";
   return (
     <div className="mt-6 space-y-5">
       <div className="border-y border-slate-200/70 py-3">
@@ -33,10 +34,13 @@ export function LocalToolApprovalControls(props: Props) {
         </p>
       </div>
 
-      <fieldset aria-describedby={descriptionId}>
+      <fieldset aria-describedby={durationDescriptionId}>
         <legend className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue">
           How long should this choice last?
         </legend>
+        <p id={durationDescriptionId} className="mt-1 text-xs text-muted-foreground">
+          Choose one-time approval or an explicit reusable trust window.
+        </p>
         <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
           {props.options.allowed_durations.map((duration) => (
             <label
@@ -61,10 +65,13 @@ export function LocalToolApprovalControls(props: Props) {
         </div>
       </fieldset>
 
-      <fieldset aria-describedby={descriptionId}>
+      <fieldset aria-describedby={targetDescriptionId}>
         <legend className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue">
           What should it cover?
         </legend>
+        <p id={targetDescriptionId} className="mt-1 text-xs text-muted-foreground">
+          Limit trust to this capability, or include other calls Guard independently recognizes as read-only.
+        </p>
         <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
           {props.options.allowed_targets.map((target) => (
             <label
@@ -113,7 +120,7 @@ export function LocalToolApprovalControls(props: Props) {
           </p>
         )}
       </div>
-      <p id={descriptionId} className="text-xs leading-5 text-brand-dark/70">
+      <p className="text-xs leading-5 text-brand-dark/70">
         {EXCLUSION_COPY}
       </p>
     </div>
