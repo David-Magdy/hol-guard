@@ -82,7 +82,7 @@ def is_safe_codex_memory_registry_search(command_text: str, *, cwd: Path | None,
         rg_path = _trusted_path_command("rg", cwd=cwd)
     except (OSError, RuntimeError):
         return False
-    return rg_path is not None
+    return rg_path is not None and not os.environ.get("RIPGREP_CONFIG_PATH", "").strip()
 
 
 def _path_has_symlink_below_home(path: Path, *, home_dir: Path) -> bool:

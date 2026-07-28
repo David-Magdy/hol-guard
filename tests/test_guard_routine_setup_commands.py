@@ -116,6 +116,12 @@ def test_codex_memory_registry_search_is_exact_and_nonexecuting(
         cwd=tmp_path,
         home_dir=tmp_path,
     )
+    monkeypatch.setenv("RIPGREP_CONFIG_PATH", str(tmp_path / "rg.conf"))
+    assert not routine_setup_commands.is_safe_codex_memory_registry_search(
+        "rg -n guard ~/.codex/memories/MEMORY.md",
+        cwd=tmp_path,
+        home_dir=tmp_path,
+    )
 
 
 def test_codex_memory_registry_search_rejects_symlinked_parent(
