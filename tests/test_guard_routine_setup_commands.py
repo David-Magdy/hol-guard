@@ -119,6 +119,11 @@ def test_worktree_filter_check_is_scoped_to_selected_ref(tmp_path: Path) -> None
         repository,
         "HEAD",
     )
+    assert git_execution_safety._git_ref_uses_checkout_filter(
+        git_binary,
+        repository,
+        "--help",
+    )
 
 
 def test_codex_memory_registry_search_is_exact_and_nonexecuting(

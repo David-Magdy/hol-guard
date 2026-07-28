@@ -362,6 +362,8 @@ def git_worktree_add_has_execution_free_config(
 
 
 def _git_ref_uses_checkout_filter(git_binary: Path, cwd: Path, ref: str) -> bool:
+    if ref.startswith("-"):
+        return True
     try:
         files = subprocess.run(
             [str(git_binary), "ls-tree", "-r", "--name-only", "-z", ref],

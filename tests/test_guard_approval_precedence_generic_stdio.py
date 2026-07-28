@@ -113,12 +113,13 @@ def _run_generic_hook(
     payload: dict[str, object],
     store: GuardStore,
     workspace: Path,
+    harness: str = _GENERIC_HARNESS,
     post_claim_revalidator: Callable[[str], int | None] | None = None,
 ) -> tuple[int, dict[str, object]]:
     args = argparse.Namespace(
         artifact_id=None,
         artifact_name=None,
-        harness=_GENERIC_HARNESS,
+        harness=harness,
         json=True,
         policy_action=None,
     )
@@ -450,6 +451,45 @@ def test_generic_hook_observe_mode_records_block_without_enforcing_it(
     if event_name == "PreToolUse":
         assert recorded_activity["policy_action"] == "allow"
         assert recorded_activity["prompted"] is False
+
+
+def test_codex_pretool_observe_mode_persists_observed_decision_evidence(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = GuardStore(tmp_path / "guard-home")
+    config = GuardConfig(
+        guard_home=tmp_path / "guard-home",
+        workspace=workspace,
+        default_action="block",
+        mode="observe",
+    )
+    payload = {
+        **_generic_payload(),
+        "event": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git status --short"},
+    }
+
+    rc, _output = _run_generic_hook(
+        capsys=capsys,
+        config=config,
+        payload=payload,
+        store=store,
+        workspace=workspace,
+        harness="codex",
+    )
+
+    assert rc == 0
+    receipt = store.list_receipts(limit=1)[0]
+    assert receipt["policy_decision"] == "allow"
+    assert {
+        "source": "observe_mode",
+        "observed_policy_action": "block",
+        "authoritative_action": "allow",
+    } in receipt["scanner_evidence"]
 
 
 @pytest.mark.parametrize(

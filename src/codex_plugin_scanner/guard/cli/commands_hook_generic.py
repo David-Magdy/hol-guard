@@ -894,6 +894,7 @@ def _run_hook_generic_payload(
         args.harness == "codex"
         and hook_event_name == "PreToolUse"
         and policy_action not in {"review", "require-reapproval", "sandbox-required", "block"}
+        and observed_policy_action is None
     )
     effective_action_envelope = (
         action_envelope.with_pre_execution_result(policy_action) if action_envelope is not None else None
