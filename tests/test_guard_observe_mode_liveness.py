@@ -22,6 +22,7 @@ def _review_request(
     daemon: GuardDaemonServer,
     *,
     endpoint: str,
+    event: str = "PreToolUse",
     guard_home: Path,
     workspace: Path,
 ) -> dict[str, object]:
@@ -33,7 +34,7 @@ def _review_request(
         ),
         data=json.dumps(
             {
-                "hook_event_name": "PreToolUse",
+                "hook_event_name": event,
                 "tool_name": "Bash",
                 "tool_input": {"command": "git status --short"},
             }
@@ -106,9 +107,67 @@ def test_observe_mode_does_not_block_failed_local_review(
     assert payload == expected
 
 
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    (
+        (
+            "PermissionRequest",
+            {
+                "reason_code": _DEADLINE_REASON,
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {"behavior": "allow"},
+                },
+            },
+        ),
+        (
+            "PostToolUse",
+            {
+                "continue": True,
+                "reason_code": _DEADLINE_REASON,
+                "observed_review_failure": True,
+            },
+        ),
+    ),
+)
+def test_observe_mode_uses_native_nonblocking_claude_responses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    event: str,
+    expected: dict[str, object],
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    guard_home.mkdir(parents=True)
+    (guard_home / "config.toml").write_text('mode = "observe"\n', encoding="utf-8")
+    daemon = GuardDaemonServer(GuardStore(guard_home), host="127.0.0.1", port=0)
+    daemon.start()
+    monkeypatch.setattr(
+        daemon._server.hook_process_runner,  # pyright: ignore[reportPrivateUsage]
+        "review",
+        _failed_review,
+    )
+
+    try:
+        payload = _review_request(
+            daemon,
+            endpoint="claude-code",
+            event=event,
+            guard_home=guard_home,
+            workspace=workspace,
+        )
+    finally:
+        daemon.stop()
+
+    assert payload == expected
+
+
+@pytest.mark.parametrize("endpoint", ("pi", "claude-code"))
 def test_prompt_mode_still_blocks_failed_local_review(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
 ) -> None:
     guard_home = tmp_path / "guard-home"
     workspace = tmp_path / "workspace"
@@ -124,12 +183,17 @@ def test_prompt_mode_still_blocks_failed_local_review(
     try:
         payload = _review_request(
             daemon,
-            endpoint="pi",
+            endpoint=endpoint,
             guard_home=guard_home,
             workspace=workspace,
         )
     finally:
         daemon.stop()
 
-    assert payload["decision"] == "deny"
+    if endpoint == "pi":
+        assert payload["decision"] == "deny"
+    else:
+        hook_output = payload["hookSpecificOutput"]
+        assert isinstance(hook_output, dict)
+        assert hook_output["permissionDecision"] == "deny"
     assert payload["reason_code"] == _DEADLINE_REASON

@@ -5590,7 +5590,11 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                         "permissionDecision": "allow",
                     },
                 }
-            return {"reason_code": reason_code}
+            return {
+                "continue": True,
+                "reason_code": reason_code,
+                "observed_review_failure": True,
+            }
         if harness == "pi":
             return {
                 "decision": "deny",
