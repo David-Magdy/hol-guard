@@ -643,7 +643,20 @@ def _hook_runtime_artifact(
             home_dir=home_dir,
         )
     runtime_artifacts: list[GuardArtifact] = []
-    if package_intent is not None and not _routine_local_runner_has_complete_evidence(package_intent):
+    verified_local_vitest = (
+        isinstance(raw_command_text, str)
+        and direct_local_vitest_execution_context(
+            raw_command_text,
+            cwd=workspace,
+            home_dir=home_dir,
+        )
+        is not None
+    )
+    if (
+        package_intent is not None
+        and not verified_local_vitest
+        and not _routine_local_runner_has_complete_evidence(package_intent)
+    ):
         runtime_artifacts.append(
             build_package_request_artifact(
                 harness=harness,

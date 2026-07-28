@@ -59,8 +59,12 @@ def direct_local_vitest_execution_context(
     _ = runner_tokens.pop()
     if len(runner_tokens) < 4 or any(_has_shell_dynamics(token) for token in runner_tokens):
         return None
-    runner_path = Path(runner_tokens[0])
-    if not runner_path.is_absolute():
+    runner_path, args, require_no_coverage = _vitest_runner_invocation(
+        runner_tokens,
+        workspace=workspace,
+        home_dir=home_dir,
+    )
+    if runner_path is None:
         return None
     installed_version = _verified_vitest_runner(
         runner_path,
@@ -72,8 +76,8 @@ def direct_local_vitest_execution_context(
         installed_version=installed_version,
     ):
         return None
-    args = runner_tokens[1:]
-    if args[0] != "run" or args.count("--no-coverage") != 1:
+    no_coverage_count = args.count("--no-coverage")
+    if args[0] != "run" or no_coverage_count > 1 or (require_no_coverage and no_coverage_count != 1):
         return None
     targets = [arg for arg in args[1:] if arg != "--no-coverage"]
     if not targets or any(arg.startswith("-") for arg in targets):
@@ -88,6 +92,30 @@ def direct_local_vitest_execution_context(
     ):
         return None
     return context
+
+
+def _vitest_runner_invocation(
+    runner_tokens: list[str],
+    *,
+    workspace: Path,
+    home_dir: Path,
+) -> tuple[Path | None, list[str], bool]:
+    executable = runner_tokens[0]
+    runner_path = Path(executable)
+    if runner_path.is_absolute():
+        return runner_path, runner_tokens[1:], True
+    if executable != "npx" or not _trusted_path_command("npx", cwd=workspace, home_dir=home_dir):
+        return None, [], False
+    index = 1
+    while index < len(runner_tokens) and runner_tokens[index] in {"--no", "--no-install"}:
+        index += 1
+    if index >= len(runner_tokens) or runner_tokens[index] != "vitest":
+        return None, [], False
+    try:
+        local_runner = (workspace / "node_modules" / "vitest" / "vitest.mjs").resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None, [], False
+    return local_runner, runner_tokens[index + 1 :], False
 
 
 def _literal_leading_cd_target(
