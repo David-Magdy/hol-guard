@@ -10,6 +10,7 @@ from ..adapters import get_adapter, list_adapters
 from ..adapters.base import HarnessAdapter, HarnessContext
 from ..adapters.contracts import contract_for
 from ..adapters.cursor import CursorHarnessAdapter
+from ..agent_safety_guidance import install_agent_safety_guidance, uninstall_agent_safety_guidance
 from ..consumer import detect_all
 from ..managed_install_proof import bind_managed_install_proof
 from ..runtime.mcp_skill_firewall import build_mcp_skill_firewall_fingerprints, portal_skill_identity
@@ -65,6 +66,10 @@ def apply_managed_install(
         "managed_installs": managed_installs,
         "auto_detected": requested_harness is None or install_all,
     }
+    if active and managed_installs:
+        payload["agent_safety_guidance"] = install_agent_safety_guidance(context.home_dir)
+    elif managed_installs and not any(bool(item.get("active")) for item in store.list_managed_installs()):
+        payload["agent_safety_guidance"] = uninstall_agent_safety_guidance(context.home_dir)
     if len(managed_installs) == 1:
         payload["managed_install"] = managed_installs[0]
     if active and context.workspace_dir is not None:
@@ -480,9 +485,7 @@ def _resolve_targets(
     if targets:
         return targets
     action = "install" if command == "install" else "remove"
-    raise ValueError(
-        f"No supported harnesses were detected for Guard {action}. Pass a harness explicitly or configure one first."
-    )
+    raise ValueError(f"No supported Guard harnesses detected for {action}; pass one explicitly or configure one first.")
 
 
 __all__ = [

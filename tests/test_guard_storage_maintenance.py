@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
@@ -332,7 +333,7 @@ def test_current_schema_probe_treats_lock_contention_as_unknown(
     assert store._schema_is_current() is False  # pyright: ignore[reportPrivateUsage]
 
 
-def test_daemon_managed_schema_does_not_poll_while_holding_migration_lock(
+def test_schema_initialization_does_not_poll_while_holding_migration_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -351,13 +352,92 @@ def test_daemon_managed_schema_does_not_poll_while_holding_migration_lock(
 
     store._daemon_managed_schema = True  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(store, "_schema_is_current", schema_is_current)
-    monkeypatch.setattr(store, "_initialize", initialize)
+    monkeypatch.setattr(store, "_initialize_schema", initialize)
     monkeypatch.setattr(store, "_hold_advisory_file_lock", lambda **_kwargs: nullcontext())
 
     store._initialize_serialized()  # pyright: ignore[reportPrivateUsage]
 
     assert schema_checks == 2
     assert initializes == 1
+
+
+def test_schema_initialization_releases_process_lock_before_policy_priming(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard", prime_policy_integrity=False)
+    schema_initialized = False
+
+    def initialize_schema() -> None:
+        nonlocal schema_initialized
+        schema_initialized = True
+
+    def initialize_policy_integrity() -> None:
+        assert schema_initialized is True
+        path_key = str(store.path.absolute())
+        assert path_key not in store._schema_initialization_states  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(store, "_initialize_schema", initialize_schema)
+    monkeypatch.setattr(store, "_initialize_policy_integrity", initialize_policy_integrity)
+
+    store._initialize_serialized()  # pyright: ignore[reportPrivateUsage]
+
+
+def test_schema_initialization_wait_is_bounded_and_preserves_leader_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard", prime_policy_integrity=False)
+    path_key = str(store.path.absolute())
+    leader_lock = threading.Lock()
+    leader_lock.acquire()
+    leader_state = store_connection_schema._SchemaInitializationState(  # pyright: ignore[reportPrivateUsage]
+        lock=leader_lock,
+        references=1,
+    )
+    with store._schema_initialization_locks_guard:  # pyright: ignore[reportPrivateUsage]
+        store._schema_initialization_states[path_key] = leader_state  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(store_connection_schema, "sqlite_connect_timeout_seconds", lambda: 0.01)
+
+    try:
+        with pytest.raises(TimeoutError, match="schema migration lock"):
+            store._initialize_serialized()  # pyright: ignore[reportPrivateUsage]
+        assert leader_state.references == 1
+    finally:
+        leader_lock.release()
+        with store._schema_initialization_locks_guard:  # pyright: ignore[reportPrivateUsage]
+            del store._schema_initialization_states[path_key]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_schema_initialization_waiter_retries_after_leader_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard", prime_policy_integrity=False)
+    leader_started = threading.Event()
+    release_leader = threading.Event()
+    call_count = 0
+
+    def initialize_schema() -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            leader_started.set()
+            assert release_leader.wait(timeout=1.0)
+            raise RuntimeError("leader failed")
+
+    monkeypatch.setattr(store, "_initialize_schema", initialize_schema)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        leader = executor.submit(store._initialize_serialized)  # pyright: ignore[reportPrivateUsage]
+        assert leader_started.wait(timeout=1.0)
+        waiter = executor.submit(store._initialize_serialized)  # pyright: ignore[reportPrivateUsage]
+        release_leader.set()
+        with pytest.raises(RuntimeError, match="leader failed"):
+            leader.result()
+        waiter.result()
+
+    assert call_count == 2
+    assert store._schema_initialization_states == {}  # pyright: ignore[reportPrivateUsage]
 
 
 def test_version_21_upgrade_adds_workflow_event_index(tmp_path: Path) -> None:

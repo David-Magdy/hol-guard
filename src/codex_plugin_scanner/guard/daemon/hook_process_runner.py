@@ -190,7 +190,16 @@ class HookProcessRunner:
             if review_deadline <= time.monotonic():
                 return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
             try:
-                slot = self._slots.get_nowait()
+                slot = (
+                    self._slots.get(
+                        timeout=min(
+                            _HOOK_PROCESS_RETRY_READY_SECONDS,
+                            max(0.0, review_deadline - time.monotonic()),
+                        )
+                    )
+                    if deadline is not None
+                    else self._slots.get_nowait()
+                )
             except queue.Empty:
                 return HookProcessReview(None, "daemon_hook_process_not_ready")
             try:

@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import ClassVar
 
 from .sqlite_profile import (
     SQLiteMigrationGateReport,
@@ -142,8 +144,17 @@ _RECEIPT_WARN_ROLLUP_MIGRATION_VERSION = 16
 _REQUIRED_SCHEMA_MIGRATION_VERSIONS = tuple(range(2, STORAGE_QUERY_INDEX_MIGRATION_VERSION + 1))
 
 
+@dataclass
+class _SchemaInitializationState:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    references: int = 0
+    last_run_succeeded: bool = False
+
+
 class StoreConnectionSchemaMixin:
     _sqlite_profiler_init_lock = threading.Lock()
+    _schema_initialization_locks_guard: ClassVar[threading.Lock] = threading.Lock()
+    _schema_initialization_states: ClassVar[dict[str, _SchemaInitializationState]] = {}
     _startup_prefetched_policy_integrity_secret_material: object | tuple[bytes | None, str | None] = (
         _POLICY_INTEGRITY_LOOKUP_UNSET
     )
@@ -315,18 +326,48 @@ class StoreConnectionSchemaMixin:
             self._initialize_policy_integrity()
             return
         timeout_seconds = sqlite_connect_timeout_seconds()
-        with self._hold_advisory_file_lock(
-            path=self.guard_home / "schema-migration.lock",
-            timeout_seconds=timeout_seconds,
-            poll_seconds=min(0.05, max(timeout_seconds, 0.001)),
-            timeout_message="Timed out waiting for the Guard schema migration lock.",
-        ):
-            if daemon_managed and self._schema_is_current():
-                self._initialize_policy_integrity()
-                return
-            self._initialize()
+        deadline = time.monotonic() + timeout_seconds
+        path_key = str(self.path.absolute())
+        with self._schema_initialization_locks_guard:
+            state = self._schema_initialization_states.setdefault(path_key, _SchemaInitializationState())
+            state.references += 1
+        process_contended = not state.lock.acquire(blocking=False)
+        acquired = not process_contended or state.lock.acquire(timeout=timeout_seconds)
+        if not acquired:
+            with self._schema_initialization_locks_guard:
+                state.references -= 1
+                if state.references == 0:
+                    del self._schema_initialization_states[path_key]
+            raise TimeoutError("Timed out waiting for the Guard schema migration lock.")
+        schema_ready = False
+        try:
+            if process_contended and state.last_run_succeeded and self._schema_is_current():
+                schema_ready = True
+            else:
+                state.last_run_succeeded = False
+                remaining_seconds = max(0.0, deadline - time.monotonic())
+                with self._hold_advisory_file_lock(
+                    path=self.guard_home / "schema-migration.lock",
+                    timeout_seconds=remaining_seconds,
+                    poll_seconds=min(0.05, max(remaining_seconds, 0.001)),
+                    timeout_message="Timed out waiting for the Guard schema migration lock.",
+                ):
+                    if daemon_managed and self._schema_is_current():
+                        schema_ready = True
+                    else:
+                        self._initialize_schema()
+                        schema_ready = True
+                    state.last_run_succeeded = True
+        finally:
+            state.lock.release()
+            with self._schema_initialization_locks_guard:
+                state.references -= 1
+                if state.references == 0:
+                    del self._schema_initialization_states[path_key]
+        if schema_ready:
+            self._initialize_policy_integrity()
 
-    def _initialize(self) -> None:
+    def _initialize_schema(self) -> None:
         initialize_incremental_vacuum = not self.path.exists()
         statements = (
             """
@@ -851,7 +892,6 @@ class StoreConnectionSchemaMixin:
                 """
             )
             self._repair_store_permissions()
-        self._initialize_policy_integrity()
 
     def _initialize_policy_integrity(self) -> None:
         if getattr(self, "_prime_policy_integrity_on_initialize", True):
