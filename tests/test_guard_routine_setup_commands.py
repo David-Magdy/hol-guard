@@ -74,7 +74,10 @@ def test_safe_git_worktree_add_rejects_checkout_hooks(
     tmp_path: Path,
 ) -> None:
     repository = _repository(tmp_path)
-    hook = repository / ".git" / "hooks" / "post-checkout"
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    _git(repository, "config", "core.hooksPath", str(hooks))
+    hook = hooks / "post-checkout"
     hook.write_text("#!/bin/sh\nexit 0\n")
     hook.chmod(0o755)
 

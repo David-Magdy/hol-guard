@@ -327,7 +327,7 @@ def git_worktree_add_has_execution_free_config(
         return False
     parsed_config = _parse_null_git_config(config.stdout) if config.returncode == 0 else None
     if parsed_config is None or any(
-        key == "core.hookspath" or (key.startswith("filter.") and key.endswith((".clean", ".smudge", ".process")))
+        key.startswith("filter.") and key.endswith((".clean", ".smudge", ".process"))
         for key, values in parsed_config.items()
         if any(value.strip() for value in values)
     ):
