@@ -6097,18 +6097,13 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             daemon_server.diagnostics.record_exception("auth_audit_persistence_failed")
 
     def _record_query_token_rejection(self) -> None:
-        self._daemon_server().store.add_event(
+        self._record_bounded_denial_event(
             "daemon.auth.query_token_rejected",
-            {
-                "method": self.command,
-                "path": urlparse(self.path).path,
-                "has_query_token": True,
-            },
-            _now(),
+            {"method": self.command, "path": urlparse(self.path).path, "has_query_token": True},
         )
 
     def _record_hook_path_rejection(self, *, parameter: str, reason: str) -> None:
-        self._daemon_server().store.add_event(
+        self._record_bounded_denial_event(
             "daemon.hook.path_rejected",
             {
                 "method": self.command,
@@ -6116,8 +6111,15 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "parameter": parameter,
                 "reason": reason,
             },
-            _now(),
         )
+
+    def _record_bounded_denial_event(self, event_name: str, payload: dict[str, object]) -> None:
+        daemon_server = self._daemon_server()
+        try:
+            with sqlite_connect_timeout_override(_AUTH_AUDIT_SQLITE_TIMEOUT_SECONDS):
+                daemon_server.store.add_event(event_name, payload, _now())
+        except (OSError, sqlite3.Error):
+            daemon_server.diagnostics.record_exception("auth_audit_persistence_failed")
 
     def _header_token_is_valid(self, *, payload: dict[str, object] | None = None) -> bool:
         token = self.headers.get("X-Guard-Token")
