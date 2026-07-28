@@ -52,6 +52,8 @@ if TYPE_CHECKING:
         _HOOK_DAEMON_FAILURE_STATUSES,
         _HOOK_DAEMON_PRESERVED_DENY_REASON,
         _HOOK_DAEMON_STRICT_REASON,
+        _hook_command_text,
+        _now,
     )
     from .commands_support_claude_approval import _claude_native_pretooluse_terminal_notice
     from .commands_support_hook_payload import (
@@ -90,7 +92,7 @@ from ..action_lattice import (
     most_restrictive_guard_action,
     normalize_guard_action_result,
 )
-from ..models import GuardAction
+from ..models import GuardAction, GuardArtifact, HarnessDetection
 from ..runtime.approval_context import (
     approval_context_tokens_validation_reason,
     build_approval_context_token,
@@ -974,6 +976,61 @@ def _run_hook_generic_payload(
             output_stream=output_stream,
         )
         return 0
+    if (
+        hook_is_pre_event(hook_event_name)
+        and policy_action in {"review", "require-reapproval"}
+        and not isinstance(payload_map.get("approval_requests"), list)
+    ):
+        approval_center_url = schedule_guard_daemon_ensure(
+            store.guard_home,
+            home_dir=home_dir,
+        )
+        command_text = _hook_command_text(payload_map)
+        config_path = str(runtime_workspace) if runtime_workspace is not None else ""
+        artifact = GuardArtifact(
+            artifact_id=artifact_id,
+            name=artifact_name,
+            harness=args.harness,
+            artifact_type="tool_action_request",
+            source_scope="project",
+            config_path=config_path,
+            command=command_text or None,
+            metadata={
+                "action_class": "unmatched tool action",
+                "request_summary": "Guard requires approval because no command rule matched this tool action.",
+            },
+        )
+        queued = queue_blocked_approvals(
+            detection=HarnessDetection(
+                harness=args.harness,
+                installed=True,
+                command_available=True,
+                config_paths=(config_path,),
+                artifacts=(artifact,),
+            ),
+            evaluation={
+                "artifacts": [
+                    {
+                        "artifact_id": artifact_id,
+                        "artifact_name": artifact_name,
+                        "artifact_hash": runtime_artifact_hash,
+                        "artifact_type": artifact.artifact_type,
+                        "source_scope": artifact.source_scope,
+                        "config_path": config_path,
+                        "policy_action": policy_action,
+                        "changed_fields": changed_capabilities or ["tool_action"],
+                        "launch_target": command_text,
+                        "risk_summary": "No command rule matched this tool action.",
+                    }
+                ]
+            },
+            store=store,
+            approval_center_url=approval_center_url,
+            now=_now(),
+            redaction_level=config.receipt_redaction_level,
+        )
+        payload_map["approval_requests"] = queued
+        payload_map["approval_center_url"] = approval_center_url
     _localize_pending_approval_copy(payload_map, harness=args.harness)
     incoming_reason = (
         daemon_failure_reason
