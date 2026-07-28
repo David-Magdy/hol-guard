@@ -1081,7 +1081,7 @@ class TestGuardSurfaceServer:
         store = GuardStore(tmp_path / "guard-home")
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
-        blocker = sqlite3.connect(store.path, timeout=0.1, isolation_level=None)
+        blocker = sqlite3.connect(store.path, timeout=5, isolation_level=None)
         _ = blocker.execute("begin exclusive")
         url = f"http://127.0.0.1:{daemon.port}/v1/runtime"
 
