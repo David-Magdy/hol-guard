@@ -6090,6 +6090,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             with sqlite_connect_timeout_override(_AUTH_AUDIT_SQLITE_TIMEOUT_SECONDS):
                 daemon_server.store.add_event("daemon.auth.unauthorized", payload, _now())
         except (OSError, sqlite3.Error):
+            with daemon_server.auth_audit_lock:
+                current = daemon_server.auth_audit_windows.get(key)
+                if current is not None and current[0] == now:
+                    _ = daemon_server.auth_audit_windows.pop(key)
             daemon_server.diagnostics.record_exception("auth_audit_persistence_failed")
 
     def _record_query_token_rejection(self) -> None:

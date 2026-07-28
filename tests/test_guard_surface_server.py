@@ -1083,20 +1083,29 @@ class TestGuardSurfaceServer:
         daemon.start()
         blocker = sqlite3.connect(store.path, timeout=0.1, isolation_level=None)
         _ = blocker.execute("begin exclusive")
+        url = f"http://127.0.0.1:{daemon.port}/v1/runtime"
 
         try:
             started = time.monotonic()
             with pytest.raises(urllib.error.HTTPError) as error:
-                urllib.request.urlopen(f"http://127.0.0.1:{daemon.port}/v1/runtime", timeout=5)
+                urllib.request.urlopen(url, timeout=5)
             elapsed = time.monotonic() - started
         finally:
             blocker.rollback()
             blocker.close()
+
+        try:
+            with pytest.raises(urllib.error.HTTPError) as retry_error:
+                urllib.request.urlopen(url, timeout=5)
+        finally:
             daemon.stop()
 
         assert error.value.code == 401
         assert elapsed < 0.25
         assert json.loads(error.value.read().decode("utf-8")) == {"error": "unauthorized"}
+        assert retry_error.value.code == 401
+        events = store.list_events(event_name="daemon.auth.unauthorized")
+        assert len(events) == 1
 
     def test_guard_daemon_claude_hook_endpoint_returns_notification_context_with_auth(self, tmp_path) -> None:
         home_dir = tmp_path / "home"
