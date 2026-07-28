@@ -75,6 +75,7 @@ _JQ_SAFE_LONG_OPTIONS: Final = frozenset(
 )
 _SIDE_EFFECTING_OPTIONS: Final = frozenset(
     {
+        "-o",
         "--apply",
         "--create",
         "--delete",
@@ -93,6 +94,8 @@ _SIDE_EFFECTING_OPTIONS: Final = frozenset(
         "--write",
     }
 )
+_HTTP_METHOD_OPTIONS: Final = frozenset({"-x", "--method", "--request"})
+_VARIABLE_READ_SELECTOR_OPTIONS: Final = frozenset({"--path", "--query"})
 _HARD_RISK_EXCLUSIONS: Final = (
     "shell_chaining",
     "shell_redirection",
@@ -390,10 +393,15 @@ def _read_only_reason(arguments: Sequence[str], operation: str) -> str | None:
         return None
     methods: list[str] = []
     for index, argument in enumerate(arguments):
-        if argument.startswith("--method="):
+        option = _normalized_option(argument)
+        if option not in _HTTP_METHOD_OPTIONS:
+            continue
+        if "=" in argument:
             methods.append(argument.split("=", 1)[1].upper())
-        elif argument == "--method" and index + 1 < len(arguments):
+        elif index + 1 < len(arguments):
             methods.append(arguments[index + 1].upper())
+        else:
+            return None
     if len(methods) > 1:
         return None
     method = methods[0] if methods else None
@@ -408,12 +416,26 @@ def _argument_shape(segment: CommandSegment) -> list[str]:
     executable = executable_name(segment.executable)
     start = 2 if executable in _INTERPRETERS else 1
     shape: list[str] = []
-    for argument in segment.arguments[start:]:
+    arguments = segment.arguments[start:]
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
         option = _normalized_option(argument)
-        if option is not None:
-            shape.append(option)
+        if option is None:
+            shape.extend(("<positional>", argument))
+            index += 1
+            continue
+        shape.append(option)
+        if "=" in argument:
+            value = argument.split("=", 1)[1]
+        elif index + 1 < len(arguments) and _normalized_option(arguments[index + 1]) is None:
+            index += 1
+            value = arguments[index]
         else:
-            shape.append("<value>")
+            index += 1
+            continue
+        shape.append("<selector>" if option in _VARIABLE_READ_SELECTOR_OPTIONS else value)
+        index += 1
     return shape
 
 

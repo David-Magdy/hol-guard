@@ -100,6 +100,14 @@ def test_local_tool_eligibility_is_digest_bound_and_read_only(
     assert changed_options is not None
     assert changed_options.tool_identity_hash != first.tool_identity_hash
 
+    changed_semantics = local_tool_approval_eligibility(
+        command + " --mode=write",
+        cwd=workspace,
+        home_dir=workspace,
+    )
+    assert changed_semantics is not None
+    assert changed_semantics.tool_identity_hash != first.tool_identity_hash
+
     _ = tool.write_text("export const version = 2;\n")
     changed = local_tool_approval_eligibility(command, cwd=workspace, home_dir=workspace)
     assert changed is not None
@@ -141,6 +149,9 @@ def test_local_tool_eligibility_supports_verified_jq_output_processing(
         "node xads.mjs request --method=GET --path=/stats > result.json",
         "node xads.mjs request --method=GET --path=/stats --output=result.json",
         "node xads.mjs request --method=GET --path=/stats --write",
+        "node xads.mjs request -X POST --path=/campaigns",
+        "node xads.mjs request --request=POST --path=/campaigns",
+        "node xads.mjs request --method=GET --path=/stats -o result.json",
         "TOKEN=value node xads.mjs request --method=GET --path=/stats",
         "node -e 'process.stdout.write(\"safe\")' request --method=GET",
     ),
