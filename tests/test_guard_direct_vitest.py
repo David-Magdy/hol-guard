@@ -63,12 +63,15 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     package_dir = runner_project / "node_modules" / "vitest"
     package_dir.mkdir(parents=True)
     _ = (package_dir / "package.json").write_text(
-        json.dumps({"name": "vitest", "version": "4.1.8"}),
+        json.dumps({"name": "vitest", "version": "4.1.8", "bin": {"vitest": "./vitest.mjs"}}),
         encoding="utf-8",
     )
     runner = package_dir / "vitest.mjs"
     _ = runner.write_text("#!/usr/bin/env node\n", encoding="utf-8")
     runner.chmod(0o755)
+    bin_directory = runner_project / "node_modules" / ".bin"
+    bin_directory.mkdir()
+    _ = (bin_directory / "vitest").symlink_to("../vitest/vitest.mjs")
     return home, caller, workspace, runner
 
 
@@ -78,7 +81,7 @@ def _command(workspace: Path, runner: Path, *, suffix: str = "--no-coverage 2>&1
 
 def _trust_fixture_command(command: str, *, cwd: Path, home_dir: Path) -> bool:
     del cwd, home_dir
-    return command in {"head", "node", "tail"}
+    return command in {"head", "node", "npx", "tail"}
 
 
 def test_verified_direct_vitest_run_is_explicitly_benign(
@@ -118,6 +121,113 @@ def test_verified_direct_vitest_run_is_explicitly_benign(
             workspace=caller,
         )
         is None
+    )
+
+
+def test_verified_npx_vitest_run_is_explicitly_benign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, caller, workspace, runner = _fixture(tmp_path)
+    _ = (workspace / "node_modules").symlink_to(runner.parents[1], target_is_directory=True)
+    command = f"cd {workspace} && npx vitest run tests/unit.test.ts 2>&1 | tail -40"
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert (
+        extract_sensitive_tool_action_request(
+            "bash",
+            {"command": command},
+            cwd=caller,
+            home_dir=home,
+        )
+        is None
+    )
+    assert is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": command},
+        cwd=caller,
+        home_dir=home,
+    )
+    assert (
+        _hook_runtime_artifact(
+            harness="codex",
+            payload={
+                "hook_event_name": "PreToolUse",
+                "tool_name": "bash",
+                "tool_input": {"command": command},
+            },
+            action_envelope=None,
+            home_dir=home,
+            guard_home=home / ".guard",
+            workspace=caller,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "runner_command",
+    (
+        "npx vitest run tests/unit.test.ts --config attacker.ts",
+        "npx --package=vitest vitest run tests/unit.test.ts",
+        "npx other run tests/unit.test.ts",
+        "npx --no --no-install vitest",
+    ),
+)
+def test_npx_vitest_rejects_unbounded_runner_arguments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runner_command: str,
+) -> None:
+    home, caller, workspace, runner = _fixture(tmp_path)
+    _ = (workspace / "node_modules").symlink_to(runner.parents[1], target_is_directory=True)
+    command = f"cd {workspace} && {runner_command} 2>&1 | tail -40"
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert not is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": command},
+        cwd=caller,
+        home_dir=home,
+    )
+
+
+def test_npx_vitest_rejects_retargeted_bin_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, caller, workspace, runner = _fixture(tmp_path)
+    node_modules = runner.parents[1]
+    _ = (workspace / "node_modules").symlink_to(node_modules, target_is_directory=True)
+    attacker = node_modules / "attacker.mjs"
+    _ = attacker.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    bin_entry = node_modules / ".bin" / "vitest"
+    bin_entry.unlink()
+    _ = bin_entry.symlink_to("../attacker.mjs")
+    command = f"cd {workspace} && npx vitest run tests/unit.test.ts 2>&1 | tail -40"
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert not is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": command},
+        cwd=caller,
+        home_dir=home,
+    )
+
+
+def test_npx_vitest_requires_installed_local_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, caller, workspace, _runner = _fixture(tmp_path)
+    command = f"cd {workspace} && npx vitest run tests/unit.test.ts 2>&1 | tail -40"
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert not is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": command},
+        cwd=caller,
+        home_dir=home,
     )
 
 
