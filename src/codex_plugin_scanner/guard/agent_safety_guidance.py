@@ -9,6 +9,7 @@ import secrets
 import stat
 from contextlib import suppress
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 from typing import final
 
@@ -24,45 +25,24 @@ _MANAGED_BLOCK = f"""\
 - Follow that guide to avoid unnecessary approval prompts without bypassing HOL Guard.
 {_MANAGED_END}
 """
-_SAFETY_GUIDANCE_BODY = """\
-# HOL Guard Agent Safety
-
-Use these command-shaping rules to reduce avoidable Guard reviews while preserving review for genuinely sensitive work.
-
-## Plan clear actions
-
-- Use one semantic action per tool call. Prefer the tool's working-directory option over changing directories
-  in a shell chain.
-- Use complete, exact paths. Do not use ellipses, placeholder fragments, or unresolved shell expansions
-  in executable commands.
-- Keep errors visible. Do not suppress diagnostics or trim output until the underlying action succeeds.
-- Separate inspection from mutation so Guard and the user can verify the target before it changes.
-- If Guard pauses an action, do not automatically retry equivalent spellings. Wait for approval or choose
-  a safer operation.
-
-## Prefer bounded operations
-
-- Use read-only Git inspection before writes. Do not rewrite history, discard changes, or delete branches
-  without explicit authorization.
-- For filesystem changes, name one exact destination and avoid overwrite flags. For symbolic links, verify
-  the source and destination separately, then create one link without replacing an existing path.
-- For package work, state the package manager, workspace, package, and version explicitly. Use the repository
-  lockfile flow and never pipe a downloaded installer into a shell.
-- For remote work, state the host and destination explicitly. Keep file transfer, remote execution, and local
-  cleanup as separate actions.
-- Never read secret files, credential stores, or environment files unless the user explicitly authorizes
-  the exact access. Never send local file contents to an untrusted destination.
-
-## Keep review where it matters
-
-Guard review is expected for destructive changes, permission or security changes, credential access, remote
-execution, releases, deployments, and other actions with material side effects.
-
-Do not reshape commands to conceal those effects.
-"""
+_SAFETY_GUIDANCE_BODY = (
+    files("codex_plugin_scanner.guard").joinpath("agent-safety-guidance.md").read_text(encoding="utf-8")
+)
 _SAFETY_GUIDANCE = f"<!-- HOL GUARD MANAGED SAFETY DOCUMENT v2 -->\n{_SAFETY_GUIDANCE_BODY}"
-_KNOWN_SAFETY_GUIDANCE = (_SAFETY_GUIDANCE_BODY, _SAFETY_GUIDANCE)
+_LEGACY_SAFETY_GUIDANCE_DIGESTS = frozenset(
+    {
+        "8dfc18925c07e425e6ac5e5c4b5aba27d15e9bba4472409cf57411085f6389ed",
+        "5276fa1bb1460b07d4ce2c42f732931b06744d11ad28fd9422dc2ff24be1eeda",
+    }
+)
 _MANAGED_PATTERN = re.compile(rf"(?ms)^{re.escape(_MANAGED_BEGIN)}\n.*?^{re.escape(_MANAGED_END)}\n?")
+
+
+def _is_known_safety_guidance(content: str) -> bool:
+    if content == _SAFETY_GUIDANCE:
+        return True
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return digest in _LEGACY_SAFETY_GUIDANCE_DIGESTS
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +73,7 @@ def install_agent_safety_guidance(home_dir: Path) -> dict[str, object]:
             existing_agents, agents_mode, agents_state = _read_regular_at(agents_parent, agents_path.name)
             updated_agents = _upsert_managed_block(existing_agents or "")
             existing_safety, safety_mode, safety_state = _read_regular_at(safety_parent, safety_path.name)
-            if existing_safety is not None and existing_safety not in _KNOWN_SAFETY_GUIDANCE:
+            if existing_safety is not None and not _is_known_safety_guidance(existing_safety):
                 raise ValueError("Guard refused to trust an unmanaged SAFETY.md file")
             if existing_safety != _SAFETY_GUIDANCE:
                 _write_text_at(safety_parent, safety_path.name, _SAFETY_GUIDANCE, safety_mode, safety_state)
@@ -138,7 +118,7 @@ def uninstall_agent_safety_guidance(home_dir: Path) -> dict[str, object]:
         if safety_path.parent.exists():
             with _OpenedParent(safety_path) as safety_parent:
                 existing_safety, _, safety_state = _read_regular_at(safety_parent, safety_path.name)
-                if existing_safety in _KNOWN_SAFETY_GUIDANCE:
+                if existing_safety is not None and _is_known_safety_guidance(existing_safety):
                     _unlink_at(safety_parent, safety_path.name, safety_state)
                     safety_changed = True
                 elif existing_safety is not None:
