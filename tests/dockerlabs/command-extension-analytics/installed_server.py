@@ -91,7 +91,6 @@ def _run_installed_hook(
 ) -> None:
     command = [
         "hol-guard",
-        "guard",
         "hook",
         "--guard-home",
         str(GUARD_HOME),
