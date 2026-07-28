@@ -79,6 +79,10 @@ from .pytest_config import (
     combine_pytest_config_assessments,
 )
 from .restricted_pytest import PYTEST_RESTRICTED_PROFILE_VERSION
+from .routine_setup_commands import (
+    is_safe_codex_memory_registry_search,
+    is_safe_git_worktree_add,
+)
 from .secret_sensitivity import SecretPathMatch as SensitivePathMatch
 from .secret_sensitivity import classify_secret_path
 from .sed_scripts import sed_script_is_bounded_print
@@ -1251,6 +1255,20 @@ def is_explicitly_benign_tool_action_request(
             found_benign_candidate = True
             continue
         if _looks_like_safe_standalone_git_routine(stripped_command, cwd=cwd):
+            found_benign_candidate = True
+            continue
+        if home_dir is not None and is_safe_git_worktree_add(
+            stripped_command,
+            cwd=cwd,
+            home_dir=home_dir,
+        ):
+            found_benign_candidate = True
+            continue
+        if home_dir is not None and is_safe_codex_memory_registry_search(
+            stripped_command,
+            cwd=cwd,
+            home_dir=home_dir,
+        ):
             found_benign_candidate = True
             continue
         if (

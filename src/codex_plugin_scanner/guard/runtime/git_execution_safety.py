@@ -288,6 +288,112 @@ def git_fetch_origin_has_execution_free_config(
     return True
 
 
+def git_worktree_add_has_execution_free_config(
+    cwd: Path,
+    *,
+    git_binary: Path | None = None,
+    ref: str = "HEAD",
+) -> bool:
+    """Reject worktree creation when checkout can invoke configured code."""
+
+    resolved_git = git_binary or trusted_git_binary_for_cwd(cwd)
+    if (
+        resolved_git is None
+        or not git_fetch_origin_has_execution_free_config(cwd, git_binary=resolved_git)
+        or not git_status_has_execution_free_config(cwd, git_binary=resolved_git)
+    ):
+        return False
+    try:
+        repository_cwd = cwd.resolve()
+        config = subprocess.run(
+            [str(resolved_git), "config", "--null", "--list"],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+        hook_paths = subprocess.run(
+            [
+                str(resolved_git),
+                "rev-parse",
+                "--git-path",
+                "hooks/post-checkout",
+                "--git-path",
+                "hooks/reference-transaction",
+            ],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    parsed_config = _parse_null_git_config(config.stdout) if config.returncode == 0 else None
+    configured_filters = (
+        (
+            key.startswith("filter.") and key.endswith((".clean", ".smudge", ".process"))
+            for key, values in parsed_config.items()
+            if any(value.strip() for value in values)
+        )
+        if parsed_config is not None
+        else ()
+    )
+    if parsed_config is None or (
+        any(configured_filters) and _git_ref_uses_checkout_filter(resolved_git, repository_cwd, ref)
+    ):
+        return False
+    if hook_paths.returncode != 0:
+        return False
+    paths = hook_paths.stdout.splitlines()
+    if len(paths) != 2:
+        return False
+    for value in paths:
+        hook_path = Path(value)
+        if not hook_path.is_absolute():
+            hook_path = repository_cwd / hook_path
+        try:
+            if hook_path.exists() and (os.name == "nt" or os.access(hook_path, os.X_OK)):
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def _git_ref_uses_checkout_filter(git_binary: Path, cwd: Path, ref: str) -> bool:
+    if ref.startswith("-"):
+        return True
+    try:
+        files = subprocess.run(
+            [str(git_binary), "ls-tree", "-r", "--name-only", "-z", ref],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+        if files.returncode != 0:
+            return True
+        attributes = subprocess.run(
+            [str(git_binary), "check-attr", "-z", "--stdin", f"--source={ref}", "filter"],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            input=files.stdout,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if attributes.returncode != 0:
+        return True
+    fields = attributes.stdout.split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()
+    if len(fields) % 3 != 0:
+        return True
+    return any(value not in {b"unspecified", b"unset"} for value in fields[2::3])
+
+
 def _parse_null_git_config(output: str) -> dict[str, tuple[str, ...]] | None:
     parsed: dict[str, list[str]] = {}
     for entry in output.split("\0"):
@@ -402,5 +508,6 @@ __all__ = (
     "git_fetch_origin_has_execution_free_config",
     "git_status_args_are_read_only",
     "git_status_has_execution_free_config",
+    "git_worktree_add_has_execution_free_config",
     "trusted_git_binary_for_cwd",
 )

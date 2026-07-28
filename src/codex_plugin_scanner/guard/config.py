@@ -855,7 +855,7 @@ def overlay_synced_guard_policy(
         return config
     next_mode = config.mode
     raw_mode = payload.get("mode")
-    if isinstance(raw_mode, str) and raw_mode in VALID_GUARD_MODES:
+    if config.mode != "observe" and isinstance(raw_mode, str) and raw_mode in VALID_GUARD_MODES:
         next_mode = raw_mode
     default_action = _coerce_action_value(payload.get("defaultAction"), config.default_action)
     unknown_publisher_action = _coerce_action_value(

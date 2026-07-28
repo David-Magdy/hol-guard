@@ -127,13 +127,6 @@ def _review_runtime_artifact_hook(
         "block",
         "sandbox-required",
     }
-    policy_composition = response_payload.get("policy_composition")
-    post_claim_revalidated = (
-        isinstance(policy_composition, Mapping)
-        and isinstance(policy_composition.get("approval_reuse_source"), str)
-        and str(policy_composition["approval_reuse_source"]).startswith("claimed_")
-    )
-    post_claim_failure = post_claim_revalidated and policy_action not in {"allow", "warn"}
     if terminal_action:
         response_payload["approval_requests"] = []
         response_payload["terminal_action"] = policy_action
@@ -147,8 +140,7 @@ def _review_runtime_artifact_hook(
                 "HOL Guard blocked this action with a terminal policy decision. Browser approval cannot override it."
             )
     if policy_action in {"review", "require-reapproval", "sandbox-required", "block"} or cursor_native_queue:
-        saved_policy_blocks = policy_action == "block" and stored_policy_action == "block"
-        if observe_mode and not saved_policy_blocks and not post_claim_failure:
+        if observe_mode:
             should_queue_approval_center = not terminal_action and not (
                 policy_action == "block" and stored_policy_action == "block"
             )

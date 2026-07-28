@@ -793,6 +793,10 @@ def _run_hook_generic_payload(
         )
         policy_action = approval_reuse.action
         approval_reuse_source = "claimed_saved_policy_decision"
+    observed_policy_action: GuardAction | None = None
+    if config.mode == "observe" and policy_action not in {"allow", "warn"}:
+        observed_policy_action = policy_action
+        policy_action = "allow"
     policy_composition = {
         "current_config_action": current_config_normalization.action,
         "configured_policy_action": configured_policy_normalization.action,
@@ -815,6 +819,7 @@ def _run_hook_generic_payload(
         "saved_policy_action": stored_policy_action,
         "approval_reuse_source": approval_reuse_source,
         "authoritative_action": policy_action,
+        "observed_policy_action": observed_policy_action,
     }
     scanner_evidence: list[dict[str, object]] = [
         {
@@ -857,6 +862,14 @@ def _run_hook_generic_payload(
                 "reason_code": daemon_hint_reason_code,
             }
         )
+    if observed_policy_action is not None:
+        scanner_evidence.append(
+            {
+                "source": "observe_mode",
+                "observed_policy_action": observed_policy_action,
+                "authoritative_action": "allow",
+            }
+        )
     for input_source, normalization in (
         ("current_config_action", current_config_normalization),
         ("trusted_cli_override", cli_action_normalization),
@@ -881,6 +894,7 @@ def _run_hook_generic_payload(
         args.harness == "codex"
         and hook_event_name == "PreToolUse"
         and policy_action not in {"review", "require-reapproval", "sandbox-required", "block"}
+        and observed_policy_action is None
     )
     effective_action_envelope = (
         action_envelope.with_pre_execution_result(policy_action) if action_envelope is not None else None
@@ -939,7 +953,7 @@ def _run_hook_generic_payload(
             policy_action=cast(GuardAction, policy_action),
             receipt_id=command_activity_receipt_id,
             prompted=command_activity_was_prompted(
-                cast(GuardAction, current_policy_action),
+                cast(GuardAction, policy_action),
                 command_activity_reuse_status,
             ),
             approval_reuse_status=command_activity_reuse_status,
