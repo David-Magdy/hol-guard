@@ -70,6 +70,22 @@ def test_stale_duration_manifest_falls_back_without_blocking_sharding(
     assert "equal-weight fallback" in capsys.readouterr().err
 
 
+def test_unreadable_duration_manifest_falls_back_without_blocking_sharding(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "durations.json.gz"
+    monkeypatch.setattr(
+        pytest_shard,
+        "load_duration_manifest",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("permission denied")),
+    )
+
+    assert pytest_shard._load_current_durations(manifest, 28) is None
+    assert "permission denied" in capsys.readouterr().err
+
+
 def test_ci_workflow_cancels_stale_runs_and_executes_each_shard() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     tests_job = workflow.split("  tests:\n", maxsplit=1)[1].split("\n  ci-python-312:", maxsplit=1)[0]
@@ -83,6 +99,7 @@ def test_ci_workflow_cancels_stale_runs_and_executes_each_shard() -> None:
     assert workflow.count("if: steps.setup-uv-primary.outcome == 'failure'") == 5
     assert "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'" in mutation_job
     assert "timeout-minutes: 8" in mutation_job
+    assert "persist-credentials: false" in mutation_job
     assert "mutmut run --max-children 4" in mutation_job
     assert "mutation_gate.py --target command-model" in mutation_job
     assert workflow.count("uv run --no-sync python scripts/ci/pytest_shard.py") == 2

@@ -2351,6 +2351,7 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
             installed_distribution = _status_installed_distribution(
                 installer=installer,
                 managed_policy=managed_policy,
+                guard_home=resolved_guard_home,
             )
         except UpdateSubprocessError as error:
             auto_updatable = False
@@ -2443,11 +2444,12 @@ def _status_installed_distribution(
     *,
     installer: str,
     managed_policy: ManagedPolicy | None,
+    guard_home: Path,
 ) -> InstalledDistribution:
     network = managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()
     index_url = managed_policy.update.index_url if managed_policy is not None else None
     context = build_trusted_update_context(
-        guard_home=resolve_guard_home(),
+        guard_home=guard_home,
         workspace_dir=None,
         installer_kind=installer,
         source_url=index_url,

@@ -148,6 +148,12 @@ def test_update_status_uses_persisted_alpha_channel(tmp_path: Path, monkeypatch:
     (guard_home / "config.toml").write_text('update_channel = "alpha"\n', encoding="utf-8")
     seen: dict[str, object] = {}
     monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands._status_installed_distribution",
+        lambda **kwargs: (
+            seen.update({"status_guard_home": kwargs["guard_home"]}) or build_legacy_status_distribution(**kwargs)
+        ),
+    )
+    monkeypatch.setattr(
         "codex_plugin_scanner.guard.cli.update_commands._version_check_payload",
         lambda current_version, **kwargs: (
             seen.update(kwargs)
@@ -166,6 +172,7 @@ def test_update_status_uses_persisted_alpha_channel(tmp_path: Path, monkeypatch:
 
     assert payload["release_channel"] == "alpha"
     assert seen["include_alpha"] is True
+    assert seen["status_guard_home"] == guard_home
 
 
 def test_daemon_update_status_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

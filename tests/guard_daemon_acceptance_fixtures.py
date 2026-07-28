@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import importlib
 import json
 import os
 import resource
@@ -86,6 +87,22 @@ def load_soak_workload() -> WorkloadSpec:
         ],
         "secret_stride": 10,
     }
+
+
+def load_adversarial_nodeids() -> tuple[str, ...]:
+    payload = cast(dict[str, object], json.loads(FIXTURE_PATH.read_text(encoding="utf-8")))
+    return tuple(cast(list[str], payload["adversarial_nodeids"]))
+
+
+def assert_adversarial_nodeids_resolve() -> None:
+    for nodeid in load_adversarial_nodeids():
+        module_path, separator, function_name = nodeid.partition("::")
+        if not separator or not module_path.startswith("tests/") or not module_path.endswith(".py"):
+            raise AssertionError(f"invalid adversarial nodeid: {nodeid}")
+        module_name = module_path.removesuffix(".py").replace("/", ".")
+        module = importlib.import_module(module_name)
+        if not hasattr(module, function_name):
+            raise AssertionError(f"missing adversarial nodeid: {nodeid}")
 
 
 def run_workload(spec: WorkloadSpec, *, root: Path) -> WorkloadResult:

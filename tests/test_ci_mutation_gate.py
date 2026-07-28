@@ -40,6 +40,29 @@ def test_mutation_score_uses_all_evaluated_mutants() -> None:
     assert mutation_gate.mutation_score(_counts()) == pytest.approx(64.4262)
 
 
+def test_mutation_gate_supports_direct_script_execution(tmp_path: Path) -> None:
+    summary = tmp_path / "summary.json"
+    summary.write_text(json.dumps(_counts()), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "--target",
+            "command-model",
+            "--summary",
+            str(summary),
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["target"] == "command-model"
+
+
 def test_mutation_gate_accepts_measured_parser_baseline_and_target_contracts(tmp_path: Path) -> None:
     baseline = mutation_gate.BASELINES["command-model"]
     assert mutation_gate.validation_errors(baseline, _counts()) == ()

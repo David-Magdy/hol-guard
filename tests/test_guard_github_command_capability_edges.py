@@ -4,6 +4,7 @@ from pathlib import Path
 
 from codex_plugin_scanner.guard.runtime.github_capability_contract import GitHubCommandCapability
 from codex_plugin_scanner.guard.runtime.github_command_capabilities import classify_github_cli
+from codex_plugin_scanner.guard.runtime.github_routine_merge import is_routine_squash_merge
 from codex_plugin_scanner.guard.runtime.secret_file_requests import extract_sensitive_tool_action_request
 
 PR_MERGE_ADMIN_CAPABILITY_CASES: tuple[tuple[str, tuple[str, ...], tuple[GitHubCommandCapability, ...]], ...] = (
@@ -30,6 +31,12 @@ def test_pr_merge_admin_capability_matches_github_boolean_option_semantics() -> 
         assert actual_capabilities == expected_capabilities, (
             f"{case_id}: {args!r}; expected {expected_capabilities!r}, got {actual_capabilities!r}"
         )
+
+
+def test_routine_squash_merge_rejects_unbounded_numeric_pull_request() -> None:
+    assert is_routine_squash_merge(("18446744073709551615", "--squash"))
+    assert not is_routine_squash_merge(("1" * 21, "--squash"))
+    assert classify_github_cli(("pr", "merge", "1" * 100_000, "--squash")).capabilities == ("merge_remote",)
 
 
 UNRELATED_DYNAMIC_COMMAND_CASES = (

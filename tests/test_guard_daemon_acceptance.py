@@ -13,6 +13,7 @@ import pytest
 from codex_plugin_scanner.guard.daemon.runtime_hook_scheduler import RuntimeHookScheduler
 from tests.guard_daemon_acceptance_fixtures import (
     WorkloadSpec,
+    assert_adversarial_nodeids_resolve,
     load_correctness_workloads,
     load_soak_workload,
     run_workload,
@@ -21,6 +22,10 @@ from tests.guard_daemon_acceptance_fixtures import (
 
 def _fixture_id(workload: WorkloadSpec) -> str:
     return workload["id"]
+
+
+def test_adversarial_workload_nodeids_resolve() -> None:
+    assert_adversarial_nodeids_resolve()
 
 
 @pytest.mark.parametrize("workload", load_correctness_workloads(), ids=_fixture_id)

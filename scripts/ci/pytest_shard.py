@@ -107,9 +107,7 @@ def build_node_shards(
 def _estimate_node_durations(node_ids: list[str], durations: Mapping[str, float]) -> dict[str, float]:
     known_node_ids = set(node_ids)
     known = sorted(
-        duration
-        for node_id in known_node_ids
-        if (duration := durations.get(node_id_digest(node_id), 0.0)) > 0
+        duration for node_id in known_node_ids if (duration := durations.get(node_id_digest(node_id), 0.0)) > 0
     )
     fallback = max(UNKNOWN_NODE_DURATION_SECONDS, known[(len(known) - 1) // 2] if known else 0.0)
     return {node_id: durations.get(node_id_digest(node_id), fallback) for node_id in node_ids}
@@ -122,7 +120,7 @@ def _load_current_durations(path: Path, max_age_days: int) -> dict[str, float] |
             now=datetime.now(timezone.utc),
             max_age=timedelta(days=max_age_days),
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         print(f"pytest duration manifest unavailable; using equal-weight fallback: {exc}", file=sys.stderr)
         return None
 
