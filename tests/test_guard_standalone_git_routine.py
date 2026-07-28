@@ -148,7 +148,6 @@ def test_standalone_fetch_rejects_execution_routing_or_widening_config(
         "file:///tmp/project.git",
         "ssh://github.com/example/project.git",
         "https://example.invalid/example/project.git",
-        "https://user:token@github.com/example/project.git",
         "https://github.com/../project.git",
     ),
 )
@@ -157,6 +156,24 @@ def test_standalone_fetch_rejects_non_github_https_origin(tmp_path: Path, remote
     _ = subprocess.run(["git", "-C", str(repository), "remote", "set-url", "origin", remote_url], check=True)
 
     assert not _is_benign("git fetch origin release/2.2", home=home, repository=repository)
+
+
+def test_standalone_fetch_accepts_github_https_origin_with_userinfo(tmp_path: Path) -> None:
+    home, repository = _repository(tmp_path)
+    _ = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "remote",
+            "set-url",
+            "origin",
+            "https://account:credential@github.com/example/project.git",
+        ],
+        check=True,
+    )
+
+    assert _is_benign("git fetch origin release/2.2", home=home, repository=repository)
 
 
 @pytest.mark.parametrize("variable", ("GIT_EXEC_PATH", "GIT_SSH_COMMAND", "GIT_ASKPASS"))

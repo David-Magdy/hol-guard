@@ -341,8 +341,6 @@ def _safe_github_https_remote_url(value: str) -> bool:
         parsed.scheme.casefold() == "https"
         and parsed.hostname is not None
         and parsed.hostname.casefold() == "github.com"
-        and parsed.username is None
-        and parsed.password is None
         and port in {None, 443}
         and not parsed.query
         and not parsed.fragment
