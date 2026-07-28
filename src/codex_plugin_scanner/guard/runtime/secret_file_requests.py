@@ -47,7 +47,13 @@ from .false_positive_rules import (
     split_fd_args_and_exec,
     target_is_known_skill_doc_path,
 )
-from .git_execution_safety import git_binary_path_is_trusted
+from .git_execution_safety import (
+    git_binary_path_is_trusted,
+    git_config_routing_environment_is_clean,
+    git_status_args_are_read_only,
+    git_status_has_execution_free_config,
+    trusted_git_binary_for_cwd,
+)
 from .github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
 from .github_capability_contract import GitHubCommandAssessment
 from .github_capability_interaction import (
@@ -358,34 +364,6 @@ _READ_ONLY_LOOKUP_FILTERS = frozenset({"cat", "grep", "egrep", "fgrep", "head", 
 _READ_ONLY_SEARCH_EXECUTION_FLAGS = {
     "rg": frozenset({"--config-path", "--hostname-bin", "--pre", "--pre-glob"}),
 }
-_READ_ONLY_GIT_STATUS_FLAGS = frozenset(
-    {
-        "--ahead-behind",
-        "--branch",
-        "--ignored",
-        "--long",
-        "--no-ahead-behind",
-        "--no-renames",
-        "--porcelain",
-        "--renames",
-        "--short",
-        "--show-stash",
-        "--untracked-files",
-        "-b",
-        "-s",
-        "-u",
-        "-z",
-    }
-)
-_READ_ONLY_GIT_STATUS_VALUE_FLAGS = frozenset(
-    {
-        "--column",
-        "--find-renames",
-        "--ignored",
-        "--porcelain",
-        "--untracked-files",
-    }
-)
 _FIND_EXEC_PLACEHOLDER_TARGET = "guard-find-placeholder.py"
 _FIND_EXEC_ACTION_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 _FIND_EXEC_TERMINATOR_TOKENS = frozenset({";", r"\;", "+"})
@@ -1535,34 +1513,16 @@ def _safe_git_status_cd_target(command_name: str, args: list[str], *, cwd: Path)
     return resolved if resolved.is_dir() else None
 
 
-def _git_status_has_execution_free_config(cwd: Path | None) -> bool:
-    git_path = shutil.which("git")
-    if git_path is None:
-        return False
+def _git_status_has_execution_free_config(
+    cwd: Path | None,
+    *,
+    git_binary: Path | None = None,
+) -> bool:
     try:
-        resolved_git = Path(git_path).resolve()
         execution_cwd = (cwd or Path.cwd()).resolve()
     except OSError:
         return False
-    if not git_binary_path_is_trusted(resolved_git, cwd=execution_cwd):
-        return False
-    try:
-        result = subprocess.run(
-            [str(resolved_git), "config", "--null", "--get-all", "core.fsmonitor"],
-            cwd=execution_cwd,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=1,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if result.returncode == 1 and not result.stdout:
-        return True
-    if result.returncode != 0:
-        return False
-    values = [value.strip().lower() for value in result.stdout.split("\0") if value.strip()]
-    return bool(values) and all(value in {"0", "false", "no", "off"} for value in values)
+    return git_status_has_execution_free_config(execution_cwd, git_binary=git_binary)
 
 
 def _looks_like_safe_compound_developer_inspection(
@@ -1600,12 +1560,18 @@ def _looks_like_safe_compound_developer_inspection(
             saw_inspection = True
             continue
         if command_name == "git":
-            operation = _read_only_git_operation(args)
+            invocation = _read_only_git_invocation(args, cwd=segment_root)
+            if invocation is None:
+                return False
+            operation, git_cwd = invocation
+            git_binary = trusted_git_binary_for_cwd(segment_root)
+            if git_binary is None:
+                return False
             if operation == "status":
-                if not _git_status_has_execution_free_config(segment_root):
+                if not _git_status_has_execution_free_config(git_cwd, git_binary=git_binary):
                     return False
             elif operation == "log":
-                if not _git_log_has_execution_free_config(segment_root):
+                if not _git_log_has_execution_free_config(git_cwd, git_binary=git_binary):
                     return False
             elif operation not in {"ls-files", "rev-parse"}:
                 return False
@@ -1630,15 +1596,27 @@ def _looks_like_safe_compound_developer_inspection(
     return saw_inspection
 
 
-def _read_only_git_operation(args: list[str]) -> str | None:
+def _read_only_git_invocation(args: list[str], *, cwd: Path) -> tuple[str, Path] | None:
     if not args:
         return None
     operation_index = 0
+    git_cwd = cwd
     if args[0] == "-C":
         if len(args) < 3:
             return None
+        target = Path(args[1]).expanduser()
+        try:
+            target = (target if target.is_absolute() else cwd / target).resolve(strict=True)
+            target.relative_to(cwd.resolve())
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if not target.is_dir():
+            return None
+        git_cwd = target
         operation_index = 2
-    return args[operation_index].casefold()
+    elif args[0].startswith("-"):
+        return None
+    return args[operation_index].casefold(), git_cwd
 
 
 def _looks_like_safe_cli_metadata_command(command_text: str, parts: list[str], *, cwd: Path | None) -> bool:
@@ -1700,18 +1678,21 @@ def _which_for_execution_cwd(command: str, *, cwd: Path) -> str | None:
     return shutil.which(command, path=os.pathsep.join(path_entries))
 
 
-def _git_log_has_execution_free_config(cwd: Path) -> bool:
+def _git_log_has_execution_free_config(
+    cwd: Path,
+    *,
+    git_binary: Path | None = None,
+) -> bool:
     if any(os.environ.get(key, "").strip() not in {"", "cat"} for key in ("GIT_PAGER", "PAGER")):
         return False
-    git_path = shutil.which("git")
-    if git_path is None:
+    if not git_config_routing_environment_is_clean():
         return False
     try:
-        resolved_git = Path(git_path).resolve()
         execution_cwd = cwd.resolve()
     except OSError:
         return False
-    if not git_binary_path_is_trusted(resolved_git, cwd=execution_cwd):
+    resolved_git = git_binary or trusted_git_binary_for_cwd(execution_cwd)
+    if resolved_git is None:
         return False
     for key in ("core.pager", "pager.log"):
         try:
@@ -1736,29 +1717,7 @@ def _git_log_has_execution_free_config(cwd: Path) -> bool:
 
 
 def _git_status_args_are_read_only(args: list[str]) -> bool:
-    if not args or args[0].lower() != "status":
-        return False
-    after_option_terminator = False
-    for token in args[1:]:
-        if after_option_terminator:
-            continue
-        if token == "--":
-            after_option_terminator = True
-            continue
-        normalized = token.lower()
-        if normalized in _READ_ONLY_GIT_STATUS_FLAGS:
-            continue
-        if "=" in normalized and normalized.split("=", 1)[0] in _READ_ONLY_GIT_STATUS_VALUE_FLAGS:
-            continue
-        if (
-            normalized.startswith("-")
-            and len(normalized) > 2
-            and not normalized.startswith("--")
-            and all(f"-{flag}" in _READ_ONLY_GIT_STATUS_FLAGS for flag in normalized[1:])
-        ):
-            continue
-        return False
-    return True
+    return git_status_args_are_read_only(args)
 
 
 def _docker_sensitive_tool_action_request(

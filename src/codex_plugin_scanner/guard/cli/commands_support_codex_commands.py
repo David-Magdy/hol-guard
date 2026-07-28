@@ -23,6 +23,12 @@ if TYPE_CHECKING:
     from .commands_support_runtime_artifacts import _codex_command_references_sensitive_local_source
 
 
+from ..runtime.git_execution_safety import (
+    git_config_routing_environment_is_clean,
+    git_status_args_are_read_only,
+    git_status_has_execution_free_config,
+    trusted_git_binary_for_cwd,
+)
 from ..runtime.secret_file_requests import (
     COMMAND_CANDIDATE_LIST_KEYS,
     COMMAND_SEQUENCE_KEYS,
@@ -164,44 +170,54 @@ def _codex_post_tool_command_is_read_only_source_inspection(
     command_texts = _codex_post_tool_command_texts(payload)
     return bool(command_texts) and all(
         _codex_command_is_read_only_source_inspection(command_text, cwd=cwd, home_dir=home_dir)
-        or _codex_command_is_read_only_git_metadata(command_text)
+        or _codex_command_is_read_only_git_metadata(command_text, cwd=cwd)
         for command_text in command_texts
     )
 
 
-def _codex_command_is_read_only_git_metadata(command_text: str) -> bool:
+def _codex_command_is_read_only_git_metadata(
+    command_text: str,
+    *,
+    cwd: Path | None = None,
+) -> bool:
     if any(marker in command_text for marker in ("\n", "\r", ";", "&", "|", "<", ">", "`", "$(")):
         return False
     try:
         parts = shlex.split(command_text)
     except ValueError:
         return False
-    if not parts or Path(parts[0]).name.lower() != "git":
+    if not parts or parts[0] != "git":
+        return False
+    try:
+        execution_cwd = (cwd or Path.cwd()).resolve()
+    except (OSError, RuntimeError):
+        return False
+    if trusted_git_binary_for_cwd(execution_cwd) is None or not git_config_routing_environment_is_clean():
         return False
     args = parts[1:]
-    while args:
-        arg = args[0]
-        if arg in _CODEX_GIT_GLOBAL_VALUE_FLAGS:
-            if len(args) < 2:
-                return False
-            args = args[2:]
-            continue
-        if any(arg.startswith(f"{flag}=") for flag in _CODEX_GIT_GLOBAL_VALUE_FLAGS) or (
-            arg.startswith("-C") and len(arg) > 2
-        ):
-            args = args[1:]
-            continue
-        if arg in _CODEX_SAFE_GIT_GLOBAL_BOOLEAN_FLAGS:
-            args = args[1:]
-            continue
-        break
-    if not args:
+    if args[:1] == ["-C"]:
+        if len(args) < 3:
+            return False
+        target = Path(args[1]).expanduser()
+        try:
+            target = (target if target.is_absolute() else execution_cwd / target).resolve(strict=True)
+            target.relative_to(execution_cwd)
+        except (OSError, RuntimeError, ValueError):
+            return False
+        if not target.is_dir():
+            return False
+        execution_cwd = target
+        args = args[2:]
+    if not args or args[0].startswith("-"):
         return False
     if args[0] == "status":
-        return True
+        return git_status_args_are_read_only(args) and git_status_has_execution_free_config(execution_cwd)
     if args[0:2] == ["worktree", "list"]:
-        return True
-    return args[0:2] == ["branch", "--list"]
+        return all(
+            arg in {"--porcelain", "-v", "--verbose", "-z"} or arg.startswith("--expire=")
+            for arg in args[2:]
+        )
+    return args[0:2] == ["branch", "--list"] and all(not arg.startswith("-") for arg in args[2:])
 
 
 def _codex_post_tool_command_text(payload: dict[str, object]) -> str:

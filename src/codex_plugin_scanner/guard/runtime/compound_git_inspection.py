@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Final
 
-from .git_execution_safety import git_binary_path_is_trusted
+from .git_execution_safety import (
+    git_config_routing_environment_is_clean,
+    git_status_has_execution_free_config,
+    trusted_git_binary_for_cwd,
+)
 from .shell_execution_context import ShellExecutionContext, ShellExecutionSegment
 
 _REF: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}")
@@ -68,14 +71,28 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
             return False
         repository_path = tokens[2]
         operation_index = 3
+    invocation_cwds = _git_invocation_cwds(segment, repository_path=repository_path)
+    if invocation_cwds is None:
+        return False
+    execution_cwd, repository_cwd = invocation_cwds
+    resolved_git = trusted_git_binary_for_cwd(execution_cwd)
+    if resolved_git is None:
+        return False
     operation = tokens[operation_index]
     args = tokens[operation_index + 1 :]
     if operation == "fetch":
         return len(args) == 2 and args[0] == "origin" and _safe_ref(args[1])
     if operation == "log":
-        return _safe_bounded_log_args(args)
+        return _safe_bounded_log_args(args) and _git_log_has_execution_free_config(
+            repository_cwd,
+            git_binary=resolved_git,
+        )
     if operation == "status":
-        return bool(args) and all(_safe_status_arg(arg) for arg in args)
+        return (
+            bool(args)
+            and all(_safe_status_arg(arg) for arg in args)
+            and git_status_has_execution_free_config(repository_cwd, git_binary=resolved_git)
+        )
     if operation == "branch":
         return args in {("--show-current",), ("--list",)}
     if operation == "rev-parse":
@@ -172,20 +189,14 @@ def _git_show_has_execution_free_config(
 ) -> bool:
     if segment.effective_cwd is None:
         return False
-    if any(
-        os.environ.get(key, "").strip() for key in ("GIT_EXTERNAL_DIFF", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
-    ):
+    if os.environ.get("GIT_EXTERNAL_DIFF", "").strip() or not git_config_routing_environment_is_clean():
         return False
-    git_path = shutil.which("git")
-    if git_path is None:
+    invocation_cwds = _git_invocation_cwds(segment, repository_path=repository_path)
+    if invocation_cwds is None:
         return False
-    try:
-        resolved_git = Path(git_path).resolve()
-        execution_cwd = segment.effective_cwd.resolve()
-        repository_cwd = (execution_cwd / repository_path).resolve() if repository_path is not None else execution_cwd
-    except OSError:
-        return False
-    if not git_binary_path_is_trusted(resolved_git, cwd=repository_cwd):
+    execution_cwd, repository_cwd = invocation_cwds
+    resolved_git = trusted_git_binary_for_cwd(execution_cwd)
+    if resolved_git is None:
         return False
     try:
         result = subprocess.run(
@@ -205,6 +216,52 @@ def _git_show_has_execution_free_config(
     except (OSError, subprocess.SubprocessError):
         return False
     return result.returncode == 1 and not result.stdout
+
+
+def _git_invocation_cwds(
+    segment: ShellExecutionSegment,
+    *,
+    repository_path: str | None,
+) -> tuple[Path, Path] | None:
+    if segment.effective_cwd is None:
+        return None
+    try:
+        execution_cwd = segment.effective_cwd.resolve()
+        repository_cwd = (execution_cwd / repository_path).resolve() if repository_path is not None else execution_cwd
+    except (OSError, RuntimeError):
+        return None
+    return (execution_cwd, repository_cwd) if repository_cwd.is_dir() else None
+
+
+def _git_log_has_execution_free_config(
+    cwd: Path,
+    *,
+    git_binary: Path,
+) -> bool:
+    if any(os.environ.get(key, "").strip() not in {"", "cat"} for key in ("GIT_PAGER", "PAGER")):
+        return False
+    if not git_config_routing_environment_is_clean():
+        return False
+    for key in ("core.pager", "pager.log"):
+        try:
+            result = subprocess.run(
+                [str(git_binary), "config", "--null", "--get-all", key],
+                cwd=cwd,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=1,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode == 1 and not result.stdout:
+            continue
+        if result.returncode != 0:
+            return False
+        values = [value.strip() for value in result.stdout.split("\0") if value.strip()]
+        if any(value != "cat" for value in values):
+            return False
+    return True
 
 
 def _safe_ls_files_args(args: tuple[str, ...]) -> bool:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -229,6 +230,70 @@ def test_cross_workspace_git_show_rejects_textconv_in_git_c_target(
     )
 
     assert artifact is not None
+
+
+@pytest.mark.parametrize(
+    "inspection",
+    (
+        "git status --short",
+        "git log -1 --oneline",
+        "git show HEAD",
+    ),
+)
+def test_compound_git_inspection_rejects_path_shadowed_git(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inspection: str,
+) -> None:
+    home = tmp_path / "home"
+    workspace = home / "workspace"
+    _init_repository(workspace)
+    shadow_bin = workspace / "bin"
+    shadow_bin.mkdir()
+    shadow_git = shadow_bin / "git"
+    shadow_git.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    shadow_git.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{shadow_bin}:{os.environ.get('PATH', '')}")
+
+    assert _artifact(f"cd {workspace} && {inspection}", home=home) is not None
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        "GIT_CONFIG",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_SYSTEM",
+    ),
+)
+def test_compound_git_inspection_rejects_config_routing_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+) -> None:
+    home = tmp_path / "home"
+    workspace = home / "workspace"
+    _init_repository(workspace)
+    monkeypatch.setenv(key, "1")
+
+    assert _artifact(f"cd {workspace} && git show HEAD", home=home) is not None
+
+
+def test_compound_git_c_status_checks_target_repository_fsmonitor(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "workspace"
+    repository = workspace / "repository"
+    _init_repository(repository)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "core.fsmonitor", "./payload"],
+        check=True,
+        capture_output=True,
+    )
+
+    assert _artifact(f"cd {workspace} && git -C repository status --short", home=home) is not None
 
 
 @pytest.mark.parametrize(
