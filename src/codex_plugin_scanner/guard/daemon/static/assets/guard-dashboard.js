@@ -15385,37 +15385,37 @@ function protectionHealthFor(snapshot, harness = null) {
   const fallback = healthFromChecks(fallbackChecks());
   return { harness: STABLE_ID$1.test(harness) && harness.length <= 64 ? harness : "unknown", ...fallback };
 }
-const TARGETS = /* @__PURE__ */ new Set(["exact", "category", "server"]);
-const DURATIONS = /* @__PURE__ */ new Set(["once", "15m", "1h", "5h"]);
-function nonEmpty(value) {
+const TARGETS$1 = /* @__PURE__ */ new Set(["exact", "category", "server"]);
+const DURATIONS$1 = /* @__PURE__ */ new Set(["once", "15m", "1h", "5h"]);
+function nonEmpty$1(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
-function validTargets(value) {
+function validTargets$1(value) {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item) => TARGETS.has(item)))];
+  return [...new Set(value.filter((item) => TARGETS$1.has(item)))];
 }
-function validDurations(value) {
+function validDurations$1(value) {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item) => DURATIONS.has(item)))];
+  return [...new Set(value.filter((item) => DURATIONS$1.has(item)))];
 }
 function parseTemporaryMcpApproval(value) {
   if (typeof value !== "object" || value === null) return void 0;
   const raw = value;
-  if (raw.eligible !== true || !nonEmpty(raw.server_name) || !nonEmpty(raw.server_identity_hash) || !nonEmpty(raw.category)) {
+  if (raw.eligible !== true || !nonEmpty$1(raw.server_name) || !nonEmpty$1(raw.server_identity_hash) || !nonEmpty$1(raw.category)) {
     return void 0;
   }
-  const allowedTargets = validTargets(raw.allowed_targets);
-  const allowedDurations = validDurations(raw.allowed_durations);
+  const allowedTargets = validTargets$1(raw.allowed_targets);
+  const allowedDurations = validDurations$1(raw.allowed_durations);
   if (allowedTargets.length === 0 || allowedDurations.length === 0) return void 0;
   return {
     eligible: true,
     server_name: raw.server_name.trim(),
     server_identity_hash: raw.server_identity_hash,
     category: raw.category.trim(),
-    target_label: nonEmpty(raw.target_label) ? raw.target_label.trim() : null,
+    target_label: nonEmpty$1(raw.target_label) ? raw.target_label.trim() : null,
     allowed_targets: allowedTargets,
     allowed_durations: allowedDurations,
-    hard_risk_exclusions: Array.isArray(raw.hard_risk_exclusions) ? raw.hard_risk_exclusions.filter(nonEmpty).map((entry) => entry.trim()) : []
+    hard_risk_exclusions: Array.isArray(raw.hard_risk_exclusions) ? raw.hard_risk_exclusions.filter(nonEmpty$1).map((entry) => entry.trim()) : []
   };
 }
 function temporaryMcpApprovalOptions(item) {
@@ -15468,13 +15468,122 @@ function temporaryMcpExpiryLabel(duration, now2 = /* @__PURE__ */ new Date()) {
 }
 function temporaryMcpSummary(options, target, duration) {
   const coverage = target === "server" ? "Routine tools" : browserCapabilityLabel(options.category);
-  return ["Allow", options.server_name, coverage, options.target_label, temporaryMcpDurationLabel(duration)].filter(nonEmpty).join(" · ");
+  return ["Allow", options.server_name, coverage, options.target_label, temporaryMcpDurationLabel(duration)].filter(nonEmpty$1).join(" · ");
 }
 function buildTemporaryMcpResolutionFields(options, target, duration) {
   if (options === null || duration === "once" || !options.allowed_targets.includes(target) || !options.allowed_durations.includes(duration)) {
     return {};
   }
   return { mcp_grant_target: target, mcp_grant_duration: duration };
+}
+const TARGETS = /* @__PURE__ */ new Set(["capability", "version"]);
+const DURATIONS = /* @__PURE__ */ new Set(["once", "15m", "1h", "5h", "version"]);
+function nonEmpty(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function validTargets(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(
+    value.filter(
+      (item) => TARGETS.has(item)
+    )
+  )];
+}
+function validDurations(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(
+    value.filter(
+      (item) => DURATIONS.has(item)
+    )
+  )];
+}
+function parseLocalToolApproval(value) {
+  if (typeof value !== "object" || value === null) return void 0;
+  const raw = value;
+  if (raw.eligible !== true || !nonEmpty(raw.tool_name) || !nonEmpty(raw.tool_identity_hash) || !nonEmpty(raw.capability) || !nonEmpty(raw.read_only_reason)) {
+    return void 0;
+  }
+  const allowedTargets = validTargets(raw.allowed_targets);
+  const allowedDurations = validDurations(raw.allowed_durations);
+  if (allowedTargets.length === 0 || allowedDurations.length === 0) return void 0;
+  return {
+    eligible: true,
+    tool_name: raw.tool_name.trim(),
+    tool_identity_hash: raw.tool_identity_hash,
+    capability: raw.capability.trim(),
+    read_only_reason: raw.read_only_reason.trim(),
+    allowed_targets: allowedTargets,
+    allowed_durations: allowedDurations,
+    hard_risk_exclusions: Array.isArray(raw.hard_risk_exclusions) ? raw.hard_risk_exclusions.filter(nonEmpty).map((entry) => entry.trim()) : []
+  };
+}
+function localToolApprovalOptions(item) {
+  const value = parseLocalToolApproval(item.local_tool_approval);
+  if (value === void 0) return null;
+  const { eligible: _, ...options } = value;
+  return options;
+}
+function defaultLocalToolTarget(options) {
+  if (options.allowed_targets.includes("capability")) return "capability";
+  return options.allowed_targets[0];
+}
+function defaultLocalToolDuration(options) {
+  if (options.allowed_durations.includes("once")) return "once";
+  return options.allowed_durations[0];
+}
+function validLocalToolSelection(options, target, duration) {
+  if (options === null) return { target: "capability", duration: "once" };
+  return {
+    target: options.allowed_targets.includes(target) ? target : defaultLocalToolTarget(options),
+    duration: options.allowed_durations.includes(duration) ? duration : defaultLocalToolDuration(options)
+  };
+}
+function localToolTargetLabel(target, options) {
+  return target === "capability" ? `Only ${options.capability} calls` : "All recognized read-only calls";
+}
+function localToolDurationLabel(duration) {
+  return {
+    once: "Once",
+    "15m": "15 min",
+    "1h": "1 hour",
+    "5h": "5 hours",
+    version: "Until tool changes"
+  }[duration];
+}
+function localToolReadOnlyReasonLabel(reason) {
+  if (reason.startsWith("http_")) {
+    return `an HTTP ${reason.slice(5).toUpperCase()} request`;
+  }
+  if (reason.startsWith("operation_")) {
+    return `the read-only ${reason.slice(10)} operation`;
+  }
+  return "a recognized read-only operation";
+}
+function localToolAllowButtonLabel(duration) {
+  if (duration === "once") return "Approve once";
+  if (duration === "version") return "Trust this version";
+  return `Allow for ${localToolDurationLabel(duration)}`;
+}
+function localToolExpiryLabel(duration, now2 = /* @__PURE__ */ new Date()) {
+  if (duration === "once" || duration === "version") return null;
+  const milliseconds = { "15m": 15 * 6e4, "1h": 60 * 6e4, "5h": 5 * 60 * 6e4 }[duration];
+  return new Intl.DateTimeFormat(void 0, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(now2.getTime() + milliseconds));
+}
+function localToolSummary(options, target, duration) {
+  const coverage = target === "capability" ? options.capability : "recognized read-only calls";
+  return ["Allow", options.tool_name, coverage, localToolDurationLabel(duration)].join(" · ");
+}
+function buildLocalToolResolutionFields(options, target, duration) {
+  if (options === null || duration === "once" || !options.allowed_targets.includes(target) || !options.allowed_durations.includes(duration)) {
+    return {};
+  }
+  return {
+    local_tool_grant_target: target,
+    local_tool_grant_duration: duration
+  };
 }
 const CONNECTABLE_HARNESS_ALIASES = /* @__PURE__ */ new Set([
   "codex",
@@ -16667,6 +16776,7 @@ function normalizeApprovalRequest(item) {
     scope_restrictions: hasScopeContract ? scopeRestrictions ?? [] : void 0,
     task_capability_eligibility: hasScopeContract ? taskCapabilityEligibility : void 0,
     temporary_mcp_approval: parseTemporaryMcpApproval(item.temporary_mcp_approval),
+    local_tool_approval: parseLocalToolApproval(item.local_tool_approval),
     action_envelope_json: hasDecisionContractError ? null : actionEnvelope,
     decision_v2_json: hasDecisionContractError ? null : decisionV2,
     ...hasDecisionContractError ? { decision_contract_error: AUTHORITATIVE_DECISION_INCONSISTENT } : {}
@@ -17862,6 +17972,8 @@ async function resolveRequestWithQueueResult(input) {
       ...input.scope_contract_digest !== void 0 ? { scope_contract_digest: input.scope_contract_digest } : {},
       ...input.mcp_grant_target !== void 0 ? { mcp_grant_target: input.mcp_grant_target } : {},
       ...input.mcp_grant_duration !== void 0 ? { mcp_grant_duration: input.mcp_grant_duration } : {},
+      ...input.local_tool_grant_target !== void 0 ? { local_tool_grant_target: input.local_tool_grant_target } : {},
+      ...input.local_tool_grant_duration !== void 0 ? { local_tool_grant_duration: input.local_tool_grant_duration } : {},
       ...input.approval_password !== void 0 ? { approval_password: input.approval_password } : {},
       ...input.approval_totp_code !== void 0 ? { approval_totp_code: input.approval_totp_code } : {},
       ...input.approval_gate_use_cooldown !== void 0 ? { approval_gate_use_cooldown: input.approval_gate_use_cooldown } : {}
@@ -28036,7 +28148,7 @@ function pastDecisionVerb(decision) {
       return "blocked";
   }
 }
-const EXCLUSION_COPY = "Privileged browser access, file transfer, secrets, command execution, destructive actions, and shared-profile access still require review.";
+const EXCLUSION_COPY$1 = "Privileged browser access, file transfer, secrets, command execution, destructive actions, and shared-profile access still require review.";
 function TemporaryMcpApprovalControls(props) {
   const expiry = temporaryMcpExpiryLabel(props.duration);
   const descriptionId = "temporary-mcp-boundary";
@@ -28100,6 +28212,85 @@ function TemporaryMcpApprovalControls(props) {
         ". The Guard service sets the final expiry."
       ] })
     ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: descriptionId, className: "text-xs leading-5 text-brand-dark/70", children: EXCLUSION_COPY$1 })
+  ] });
+}
+const EXCLUSION_COPY = "Guard rechecks the executable and script before every call. Writes, shell chaining, redirects, embedded commands, environment overrides, and changed tool files still require review.";
+function LocalToolApprovalControls(props) {
+  const expiry = localToolExpiryLabel(props.duration);
+  const descriptionId = "local-tool-trust-boundary";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 space-y-5", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-y border-slate-200/70 py-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm font-semibold text-brand-dark", children: [
+        "Trust read-only calls from ",
+        props.options.tool_name
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-xs leading-5 text-muted-foreground", children: [
+        "Guard identified this as ",
+        localToolReadOnlyReasonLabel(props.options.read_only_reason),
+        ". Arguments may vary, but the tool files and selected capability must still match."
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-describedby": descriptionId, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue", children: "How long should this choice last?" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5", children: props.options.allowed_durations.map((duration) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "label",
+        {
+          className: `flex min-h-11 cursor-pointer items-center justify-center rounded-lg border px-3 text-center text-sm font-medium transition-colors focus-within:ring-2 focus-within:ring-brand-blue/30 ${props.duration === duration ? "border-brand-blue bg-brand-blue/[0.06] text-brand-dark" : "border-slate-200/70 bg-white text-brand-dark hover:bg-slate-50"}`,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                className: "sr-only",
+                type: "radio",
+                name: "local-tool-duration",
+                value: duration,
+                checked: props.duration === duration,
+                onChange: () => props.onDurationChange(duration)
+              }
+            ),
+            localToolDurationLabel(duration)
+          ]
+        },
+        duration
+      )) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-describedby": descriptionId, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue", children: "What should it cover?" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 grid grid-cols-1 gap-2 md:grid-cols-2", children: props.options.allowed_targets.map((target) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "label",
+        {
+          className: `flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 transition-colors focus-within:ring-2 focus-within:ring-brand-blue/30 ${props.target === target ? "border-brand-blue bg-brand-blue/[0.06]" : "border-slate-200/70 bg-white hover:bg-slate-50"}`,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                className: "mt-0.5 h-4 w-4 shrink-0 accent-brand-blue",
+                type: "radio",
+                name: "local-tool-target",
+                value: target,
+                checked: props.target === target,
+                onChange: () => props.onTargetChange(target)
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-sm font-medium text-brand-dark", children: localToolTargetLabel(target, props.options) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block text-xs text-muted-foreground", children: target === "capability" ? "The selected read-only operation may use different IDs, filters, and timestamps." : "Other operations run only when Guard independently recognizes them as read-only." })
+            ] })
+          ]
+        },
+        target
+      )) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-y border-slate-200/70 py-3", "aria-live": "polite", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: localToolSummary(props.options, props.target, props.duration) }),
+      expiry !== null && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-xs text-muted-foreground", children: [
+        "Expires around ",
+        expiry,
+        ". The Guard service sets the final expiry."
+      ] }),
+      props.duration === "version" && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-muted-foreground", children: "Trust ends automatically when the executable, script, or approved output processor changes." })
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: descriptionId, className: "text-xs leading-5 text-brand-dark/70", children: EXCLUSION_COPY })
   ] });
 }
@@ -28128,6 +28319,8 @@ function ReviewDecisionCard(props) {
   const [pendingContractKey, setPendingContractKey] = reactExports.useState(null);
   const [mcpGrantTarget, setMcpGrantTarget] = reactExports.useState("exact");
   const [mcpGrantDuration, setMcpGrantDuration] = reactExports.useState("once");
+  const [localToolGrantTarget, setLocalToolGrantTarget] = reactExports.useState("capability");
+  const [localToolGrantDuration, setLocalToolGrantDuration] = reactExports.useState("once");
   const timerRef = reactExports.useRef(null);
   const allowButtonRef = reactExports.useRef(null);
   const availableScopeChoices = reactExports.useMemo(
@@ -28155,6 +28348,10 @@ function ReviewDecisionCard(props) {
     () => item ? temporaryMcpApprovalOptions(item) : null,
     [item]
   );
+  const localToolOptions = reactExports.useMemo(
+    () => item ? localToolApprovalOptions(item) : null,
+    [item]
+  );
   const hasAllowScope = availableScopeChoices.length + advancedScopeOptions.length > 0;
   const decisionContractKey = item ? `${item.request_id}:${item.scope_contract_version ?? "legacy"}:${item.scope_contract_digest ?? "legacy"}` : null;
   reactExports.useEffect(() => {
@@ -28178,6 +28375,14 @@ function ReviewDecisionCard(props) {
         setMcpGrantTarget("exact");
         setMcpGrantDuration("once");
       }
+      const nextLocalToolOptions = localToolApprovalOptions(item);
+      if (nextLocalToolOptions !== null) {
+        setLocalToolGrantTarget(defaultLocalToolTarget(nextLocalToolOptions));
+        setLocalToolGrantDuration(defaultLocalToolDuration(nextLocalToolOptions));
+      } else {
+        setLocalToolGrantTarget("capability");
+        setLocalToolGrantDuration("once");
+      }
     }
   }, [item?.request_id, item?.scope_contract_version, item?.scope_contract_digest]);
   reactExports.useEffect(() => {
@@ -28185,6 +28390,11 @@ function ReviewDecisionCard(props) {
     if (selection.target !== mcpGrantTarget) setMcpGrantTarget(selection.target);
     if (selection.duration !== mcpGrantDuration) setMcpGrantDuration(selection.duration);
   }, [temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration]);
+  reactExports.useEffect(() => {
+    const selection = validLocalToolSelection(localToolOptions, localToolGrantTarget, localToolGrantDuration);
+    if (selection.target !== localToolGrantTarget) setLocalToolGrantTarget(selection.target);
+    if (selection.duration !== localToolGrantDuration) setLocalToolGrantDuration(selection.duration);
+  }, [localToolOptions, localToolGrantTarget, localToolGrantDuration]);
   reactExports.useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -28210,7 +28420,8 @@ function ReviewDecisionCard(props) {
           ...includeGateFields && needsPassword ? { approval_password: approvalPassword } : {},
           ...includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {},
           ...includeGateFields ? { approval_gate_use_cooldown: useCooldown } : {},
-          ...action === "allow" ? buildTemporaryMcpResolutionFields(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration) : {}
+          ...action === "allow" ? buildTemporaryMcpResolutionFields(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration) : {},
+          ...action === "allow" ? buildLocalToolResolutionFields(localToolOptions, localToolGrantTarget, localToolGrantDuration) : {}
         });
         setResolved(action);
         setApprovalPassword("");
@@ -28237,7 +28448,10 @@ function ReviewDecisionCard(props) {
       resolutionBlockReason,
       temporaryMcpOptions,
       mcpGrantTarget,
-      mcpGrantDuration
+      mcpGrantDuration,
+      localToolOptions,
+      localToolGrantTarget,
+      localToolGrantDuration
     ]
   );
   const handleRequestResolve = reactExports.useCallback(
@@ -28358,6 +28572,12 @@ function ReviewDecisionCard(props) {
   const topAlertItems = buildTopAlertItems(item);
   const evidenceItems = buildEvidenceItems(item);
   const actionPresentation = guardActionPresentation(item.policy_action);
+  let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
+  if (temporaryMcpOptions !== null) {
+    resolvedAllowButtonLabel = temporaryMcpAllowButtonLabel(mcpGrantDuration);
+  } else if (localToolOptions !== null) {
+    resolvedAllowButtonLabel = localToolAllowButtonLabel(localToolGrantDuration);
+  }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-5", children: [
     resolved && /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
@@ -28432,6 +28652,16 @@ function ReviewDecisionCard(props) {
             onDurationChange: setMcpGrantDuration
           }
         ),
+        temporaryMcpOptions === null && localToolOptions !== null && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          LocalToolApprovalControls,
+          {
+            options: localToolOptions,
+            target: localToolGrantTarget,
+            duration: localToolGrantDuration,
+            onTargetChange: setLocalToolGrantTarget,
+            onDurationChange: setLocalToolGrantDuration
+          }
+        ),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           ReviewScopeControls,
           {
@@ -28443,7 +28673,7 @@ function ReviewDecisionCard(props) {
             taskCapabilityCopy,
             allowScope,
             blockScope,
-            showAllowScopes: temporaryMcpOptions === null,
+            showAllowScopes: temporaryMcpOptions === null && localToolOptions === null,
             onAllowScopeChange: setAllowScope,
             onBlockScopeChange: setBlockScope
           }
@@ -28477,7 +28707,7 @@ function ReviewDecisionCard(props) {
               "Approving..."
             ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "h-4 w-4", "aria-hidden": "true" }),
-              temporaryMcpOptions === null ? allowButtonLabel(allowScope) : temporaryMcpAllowButtonLabel(mcpGrantDuration)
+              resolvedAllowButtonLabel
             ] })
           }
         ),
@@ -28544,7 +28774,7 @@ function ReviewDecisionCard(props) {
         onUseCooldownChange: handleUseCooldownChange,
         onSubmit: handleModalSubmit,
         onCancel: handleModalCancel,
-        submitLabel: pendingAction === "allow" ? temporaryMcpOptions === null ? allowButtonLabel(allowScope) : temporaryMcpAllowButtonLabel(mcpGrantDuration) : blockButtonLabel(blockScope)
+        submitLabel: pendingAction === "allow" ? resolvedAllowButtonLabel : blockButtonLabel(blockScope)
       }
     )
   ] });

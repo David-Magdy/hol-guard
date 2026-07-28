@@ -20,6 +20,7 @@ import {
   normalizeGuardAction,
 } from "./guard-action";
 import { parseTemporaryMcpApproval } from "./temporary-mcp-approval";
+import { parseLocalToolApproval } from "./local-tool-approval";
 import { isConnectableAppHarness } from "./apps/harness-setup-target";
 import type {
   GuardActionEnvelope,
@@ -122,6 +123,7 @@ type RawGuardApprovalRequest = Omit<
   | "scope_restrictions"
   | "task_capability_eligibility"
   | "temporary_mcp_approval"
+  | "local_tool_approval"
 > & {
   action_envelope_json?: unknown;
   decision_v2_json?: unknown;
@@ -136,6 +138,7 @@ type RawGuardApprovalRequest = Omit<
   scope_restrictions?: unknown;
   task_capability_eligibility?: unknown;
   temporary_mcp_approval?: unknown;
+  local_tool_approval?: unknown;
 };
 
 type RawGuardReceipt = Omit<GuardReceipt, "action_envelope_json" | "policy_decision"> & {
@@ -1459,6 +1462,7 @@ export function normalizeApprovalRequest(item: RawGuardApprovalRequest): GuardAp
     scope_restrictions: hasScopeContract ? scopeRestrictions ?? [] : undefined,
     task_capability_eligibility: hasScopeContract ? taskCapabilityEligibility : undefined,
     temporary_mcp_approval: parseTemporaryMcpApproval(item.temporary_mcp_approval),
+    local_tool_approval: parseLocalToolApproval(item.local_tool_approval),
     action_envelope_json: hasDecisionContractError ? null : actionEnvelope,
     decision_v2_json: hasDecisionContractError ? null : decisionV2,
     ...(hasDecisionContractError
@@ -2992,6 +2996,12 @@ export async function resolveRequestWithQueueResult(input: GuardApprovalResoluti
         : {}),
       ...(input.mcp_grant_target !== undefined ? { mcp_grant_target: input.mcp_grant_target } : {}),
       ...(input.mcp_grant_duration !== undefined ? { mcp_grant_duration: input.mcp_grant_duration } : {}),
+      ...(input.local_tool_grant_target !== undefined
+        ? { local_tool_grant_target: input.local_tool_grant_target }
+        : {}),
+      ...(input.local_tool_grant_duration !== undefined
+        ? { local_tool_grant_duration: input.local_tool_grant_duration }
+        : {}),
       ...(input.approval_password !== undefined ? { approval_password: input.approval_password } : {}),
       ...(input.approval_totp_code !== undefined ? { approval_totp_code: input.approval_totp_code } : {}),
       ...(input.approval_gate_use_cooldown !== undefined ? { approval_gate_use_cooldown: input.approval_gate_use_cooldown } : {})

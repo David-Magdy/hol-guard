@@ -107,6 +107,11 @@ from ..runtime.approval_reuse import (
     evaluate_approval_reuse,
 )
 from ..runtime.command_activity_contract import ActivityApprovalReuseStatus
+from ..trusted_local_tools import (
+    LocalToolApprovalEligibility,
+    local_tool_approval_eligibility,
+    matching_local_tool_grant,
+)
 from ._commands_shared import *
 from .commands_parser_helpers import *
 from .commands_support_codex_paths import _codex_prompt_credential_file_artifact
@@ -590,6 +595,14 @@ def _run_hook_generic_payload(
         unknown_action="require-reapproval",
     )
     hook_event_name = _hook_event_name(payload_map)
+    command_text = _hook_command_text(payload_map)
+    local_tool_eligibility: LocalToolApprovalEligibility | None = None
+    if hook_event_name == "PreToolUse" and isinstance(command_text, str) and command_text.strip():
+        local_tool_eligibility = local_tool_approval_eligibility(
+            command_text,
+            cwd=runtime_workspace or Path.cwd(),
+            home_dir=home_dir,
+        )
     verified_benign_classifier = (
         "_codex_post_tool_command_is_read_only_source_inspection"
         if hook_event_name == "PostToolUse"
@@ -670,6 +683,22 @@ def _run_hook_generic_payload(
                 daemon_failure_reason = _UNTRUSTED_DAEMON_PERMISSIVE_REASON
                 payload_map["permission_decision_reason"] = daemon_failure_reason
     current_policy_action = policy_action
+    local_tool_grant = (
+        matching_local_tool_grant(
+            store=store,
+            harness=args.harness,
+            eligibility=local_tool_eligibility,
+            current_action=current_policy_action,
+        )
+        if configured_narrow_override is None
+        and cli_action_normalization is None
+        and payload_action_normalization is None
+        and daemon_hint_disposition != "tightened_to_block"
+        else None
+    )
+    if local_tool_grant is not None:
+        current_policy_action = "allow"
+        policy_action = "allow"
     runtime_artifact_hash = _generic_hook_approval_context_token(
         action_envelope=action_envelope,
         artifact_id=artifact_id,
@@ -821,6 +850,7 @@ def _run_hook_generic_payload(
         "current_composed_action": current_policy_action,
         "saved_policy_action": stored_policy_action,
         "approval_reuse_source": approval_reuse_source,
+        "local_tool_grant": local_tool_grant is not None,
         "authoritative_action": policy_action,
         "observed_policy_action": observed_policy_action,
     }
@@ -986,7 +1016,6 @@ def _run_hook_generic_payload(
             store.guard_home,
             home_dir=home_dir,
         )
-        command_text = _hook_command_text(payload_map)
         redacted_command_text = _command_detail(command_text, home_dir=home_dir)
         config_path = str(runtime_workspace) if runtime_workspace is not None else ""
         artifact = GuardArtifact(
@@ -1023,6 +1052,9 @@ def _run_hook_generic_payload(
                         "changed_fields": changed_capabilities or ["tool_action"],
                         "launch_target": redacted_command_text,
                         "risk_summary": "No command rule matched this tool action.",
+                        "scanner_evidence": (
+                            [local_tool_eligibility.to_evidence()] if local_tool_eligibility is not None else []
+                        ),
                     }
                 ]
             },

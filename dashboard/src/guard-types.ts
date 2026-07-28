@@ -215,6 +215,7 @@ export type GuardApprovalRequest = {
   display_status?: string;
   scanner_evidence?: GuardScannerEvidence[];
   temporary_mcp_approval?: GuardTemporaryMcpApproval | null;
+  local_tool_approval?: GuardLocalToolApproval | null;
 };
 
 export type GuardTemporaryMcpGrantTarget = "exact" | "category" | "server";
@@ -231,6 +232,20 @@ export type GuardTemporaryMcpApproval = {
   hard_risk_exclusions: string[];
 };
 
+export type GuardLocalToolGrantTarget = "capability" | "version";
+export type GuardLocalToolGrantDuration = "once" | "15m" | "1h" | "5h" | "version";
+
+export type GuardLocalToolApproval = {
+  eligible: boolean;
+  tool_name: string;
+  tool_identity_hash: string;
+  capability: string;
+  read_only_reason: string;
+  allowed_targets: GuardLocalToolGrantTarget[];
+  allowed_durations: GuardLocalToolGrantDuration[];
+  hard_risk_exclusions: string[];
+};
+
 export type GuardApprovalResolutionInput = {
   requestId: string;
   action: "allow" | "block";
@@ -244,6 +259,8 @@ export type GuardApprovalResolutionInput = {
   scope_contract_digest?: string;
   mcp_grant_target?: GuardTemporaryMcpGrantTarget;
   mcp_grant_duration?: GuardTemporaryMcpGrantDuration;
+  local_tool_grant_target?: GuardLocalToolGrantTarget;
+  local_tool_grant_duration?: Exclude<GuardLocalToolGrantDuration, "once">;
 };
 
 export type GuardApprovalPageStatus = "pending" | "resolved" | "all";
