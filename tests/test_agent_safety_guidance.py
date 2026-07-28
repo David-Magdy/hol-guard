@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
 from typing import final
@@ -95,9 +96,15 @@ def test_install_agent_safety_guidance_refuses_symlinked_agents_file(tmp_path: P
     _ = protected_target.write_text("do not change\n", encoding="utf-8")
     agents_path.symlink_to(protected_target)
 
-    with pytest.raises(RuntimeError, match="symbolic links"):
+    with pytest.raises(RuntimeError) as raised:
         _ = install_agent_safety_guidance(home_dir)
 
+    cause = raised.value.__cause__
+    if isinstance(cause, OSError):
+        assert cause.errno == errno.ELOOP
+    else:
+        assert isinstance(cause, ValueError)
+        assert str(cause) == "Guard refused to replace a non-regular support file: AGENTS.md"
     assert protected_target.read_text(encoding="utf-8") == "do not change\n"
     assert not (home_dir / ".hol-support" / "SAFETY.md").exists()
 
