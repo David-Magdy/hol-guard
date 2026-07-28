@@ -952,7 +952,7 @@ def _run_hook_generic_payload(
             policy_action=cast(GuardAction, policy_action),
             receipt_id=command_activity_receipt_id,
             prompted=command_activity_was_prompted(
-                cast(GuardAction, current_policy_action),
+                cast(GuardAction, policy_action),
                 command_activity_reuse_status,
             ),
             approval_reuse_status=command_activity_reuse_status,

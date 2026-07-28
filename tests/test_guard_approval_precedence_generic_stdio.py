@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from codex_plugin_scanner.guard.cli import commands_hook_generic
 from codex_plugin_scanner.guard.cli import commands_support as guard_commands_module
 from codex_plugin_scanner.guard.cli.commands_hook_generic import (
     _generic_hook_approval_reuse,
@@ -405,6 +406,7 @@ def test_generic_hook_saved_allow_never_lowers_new_current_block(
 def test_generic_hook_observe_mode_records_block_without_enforcing_it(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
     event_name: str,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -416,7 +418,16 @@ def test_generic_hook_observe_mode_records_block_without_enforcing_it(
         default_action="block",
         mode="observe",
     )
-    payload = {**_generic_payload(), "hook_event_name": event_name}
+    payload = {**_generic_payload(), "event": event_name}
+    if event_name == "PreToolUse":
+        payload["tool_name"] = "Bash"
+        payload["tool_input"] = {"command": "git status --short"}
+    recorded_activity: dict[str, object] = {}
+    monkeypatch.setattr(
+        commands_hook_generic,
+        "record_pre_hook_command_activity_best_effort",
+        lambda **kwargs: recorded_activity.update(kwargs),
+    )
 
     rc, output = _run_generic_hook(
         capsys=capsys,
@@ -436,6 +447,9 @@ def test_generic_hook_observe_mode_records_block_without_enforcing_it(
         "authoritative_action": "allow",
     } in output["scanner_evidence"]
     assert store.list_receipts(limit=1)[0]["policy_decision"] == "allow"
+    if event_name == "PreToolUse":
+        assert recorded_activity["policy_action"] == "allow"
+        assert recorded_activity["prompted"] is False
 
 
 @pytest.mark.parametrize(
