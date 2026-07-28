@@ -248,15 +248,9 @@ def _run_hook_copilot_pretool(
     approval_reuse = _copilot_approval_reuse_evidence(decision)
     decision_scanner_evidence = _copilot_tool_decision_scanner_evidence(decision)
     saved_policy_blocks = decision.saved_action == "block"
-    post_claim_failure = decision.post_claim_revalidated and policy_action not in {"allow", "warn"}
     terminal_action = policy_action in {"block", "sandbox-required"}
     now = _now()
-    if (
-        config.mode == "observe"
-        and policy_action not in {"allow", "warn"}
-        and not saved_policy_blocks
-        and not post_claim_failure
-    ):
+    if config.mode == "observe" and policy_action not in {"allow", "warn"}:
         observed_policy_action = policy_action
         if not terminal_action:
             _queue_observed_copilot_approval(
@@ -407,8 +401,6 @@ def _run_hook_copilot_permission_request(
     policy_action = resolve_tool_call_policy_action(decision)
     approval_reuse = _copilot_approval_reuse_evidence(decision)
     decision_scanner_evidence = _copilot_tool_decision_scanner_evidence(decision)
-    saved_policy_blocks = decision.saved_action == "block"
-    post_claim_failure = decision.post_claim_revalidated and policy_action not in {"allow", "warn"}
     terminal_action = policy_action in {"block", "sandbox-required"}
     runtime_detection = _runtime_detection(args.harness, runtime_artifact)
     evaluation_payload: dict[str, object] = {
@@ -448,12 +440,7 @@ def _run_hook_copilot_permission_request(
         response_payload["approval_reuse"] = approval_reuse
     if decision_scanner_evidence:
         response_payload["scanner_evidence"] = list(decision_scanner_evidence)
-    if (
-        config.mode == "observe"
-        and policy_action not in {"allow", "warn"}
-        and not saved_policy_blocks
-        and not post_claim_failure
-    ):
+    if config.mode == "observe" and policy_action not in {"allow", "warn"}:
         observed_policy_action = policy_action
         queued = (
             []
