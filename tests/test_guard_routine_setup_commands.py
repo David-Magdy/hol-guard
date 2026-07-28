@@ -116,3 +116,24 @@ def test_codex_memory_registry_search_is_exact_and_nonexecuting(
         cwd=tmp_path,
         home_dir=tmp_path,
     )
+
+
+def test_codex_memory_registry_search_rejects_symlinked_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redirected = tmp_path / "redirected" / "memories"
+    redirected.mkdir(parents=True)
+    (redirected / "MEMORY.md").write_text("redirected\n")
+    (tmp_path / ".codex").symlink_to(tmp_path / "redirected", target_is_directory=True)
+    monkeypatch.setattr(
+        routine_setup_commands,
+        "_trusted_path_command",
+        lambda command, *, cwd: Path("/usr/bin/rg"),
+    )
+
+    assert not routine_setup_commands.is_safe_codex_memory_registry_search(
+        "rg guard ~/.codex/memories/MEMORY.md",
+        cwd=tmp_path,
+        home_dir=tmp_path,
+    )

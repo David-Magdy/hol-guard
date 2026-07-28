@@ -73,6 +73,7 @@ def is_safe_codex_memory_registry_search(command_text: str, *, cwd: Path | None,
     try:
         if (
             target.absolute() != expected.absolute()
+            or _path_has_symlink_below_home(expected, home_dir=home_dir)
             or target.is_symlink()
             or not target.is_file()
             or target.stat().st_size > 4 * 1024 * 1024
@@ -82,6 +83,22 @@ def is_safe_codex_memory_registry_search(command_text: str, *, cwd: Path | None,
     except (OSError, RuntimeError):
         return False
     return rg_path is not None
+
+
+def _path_has_symlink_below_home(path: Path, *, home_dir: Path) -> bool:
+    try:
+        relative_parts = path.absolute().relative_to(home_dir.absolute()).parts
+    except ValueError:
+        return True
+    candidate = home_dir.absolute()
+    for part in relative_parts:
+        candidate /= part
+        try:
+            if candidate.is_symlink():
+                return True
+        except OSError:
+            return True
+    return False
 
 
 def _literal_tokens(command_text: str) -> list[str] | None:
