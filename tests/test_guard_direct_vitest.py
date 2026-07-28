@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from codex_plugin_scanner.guard.cli.commands_support_runtime_artifacts import _hook_runtime_artifact
+from codex_plugin_scanner.guard.runtime import direct_vitest
 from codex_plugin_scanner.guard.runtime.secret_file_requests import (
     extract_sensitive_tool_action_request,
     is_explicitly_benign_tool_action_request,
@@ -75,9 +76,18 @@ def _command(workspace: Path, runner: Path, *, suffix: str = "--no-coverage 2>&1
     return f"cd {workspace} && {runner} run tests/unit.test.ts {suffix}"
 
 
-def test_verified_direct_vitest_run_is_explicitly_benign(tmp_path: Path) -> None:
+def _trust_fixture_command(command: str, *, cwd: Path, home_dir: Path) -> bool:
+    del cwd, home_dir
+    return command in {"head", "node", "tail"}
+
+
+def test_verified_direct_vitest_run_is_explicitly_benign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     home, caller, workspace, runner = _fixture(tmp_path)
     command = _command(workspace, runner)
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
 
     assert (
         extract_sensitive_tool_action_request(
