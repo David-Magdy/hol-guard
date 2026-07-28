@@ -5557,6 +5557,44 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         runtime_harness = self._optional_string(params.get("runtime-harness", [None])[-1])
         harness = (runtime_harness or default_harness).strip().lower().replace("_", "-")
         event = self._optional_string(payload.get("hook_event_name", payload.get("event"))) or "PreToolUse"
+        daemon_server = getattr(self, "server", None)
+        try:
+            observe_mode = (
+                daemon_server is not None
+                and load_guard_config(cast(_GuardDaemonHttpServer, daemon_server).store.guard_home).mode == "observe"
+            )
+        except (OSError, RuntimeError, TypeError, ValueError):
+            observe_mode = False
+        if observe_mode:
+            if harness == "pi":
+                return {
+                    "decision": "allow",
+                    "reason_code": reason_code,
+                    "observed_review_failure": True,
+                }
+            if event == "PermissionRequest":
+                return {
+                    "reason_code": reason_code,
+                    "hookSpecificOutput": {
+                        "hookEventName": event,
+                        "decision": {
+                            "behavior": "allow",
+                        },
+                    },
+                }
+            if event == "PreToolUse":
+                return {
+                    "reason_code": reason_code,
+                    "hookSpecificOutput": {
+                        "hookEventName": event,
+                        "permissionDecision": "allow",
+                    },
+                }
+            return {
+                "continue": True,
+                "reason_code": reason_code,
+                "observed_review_failure": True,
+            }
         if harness == "pi":
             return {
                 "decision": "deny",
