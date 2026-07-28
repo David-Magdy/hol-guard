@@ -2694,6 +2694,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 scope_contract_digest=scope_contract_digest,
                 mcp_grant_target=payload.get("mcp_grant_target"),
                 mcp_grant_duration=payload.get("mcp_grant_duration"),
+                local_tool_grant_target=payload.get("local_tool_grant_target"),
+                local_tool_grant_duration=payload.get("local_tool_grant_duration"),
             )
         except ApprovalRequestNotFoundError:
             self._write_json(

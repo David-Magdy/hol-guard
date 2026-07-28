@@ -76,6 +76,11 @@ from .temporary_mcp_approvals import (
     parse_temporary_mcp_grant_selection,
     temporary_mcp_grant_decision,
 )
+from .trusted_local_tools import (
+    LocalToolGrantSelection,
+    local_tool_grant_decision,
+    parse_local_tool_grant_selection,
+)
 
 GUARD_COMMAND = "hol-guard"
 GUARD_DASHBOARD_URL = "https://hol.org/guard"
@@ -603,6 +608,8 @@ def apply_approval_resolution(
     scope_contract_digest: str | None = None,
     mcp_grant_target: object | None = None,
     mcp_grant_duration: object | None = None,
+    local_tool_grant_target: object | None = None,
+    local_tool_grant_duration: object | None = None,
 ) -> dict[str, object]:
     request = store.get_approval_request(request_id)
     if request is None:
@@ -614,6 +621,8 @@ def apply_approval_resolution(
     temporary_mcp_selection: TemporaryMcpGrantSelection | None = None
     if (mcp_grant_target is None) != (mcp_grant_duration is None):
         raise ValueError("incomplete_temporary_mcp_approval")
+    if mcp_grant_target is not None and local_tool_grant_target is not None:
+        raise ValueError("mixed_temporary_grant_modes")
     if mcp_grant_target is not None:
         if action != "allow" or scope != "artifact":
             raise ValueError("temporary_mcp_approval_requires_artifact_allow")
@@ -621,6 +630,20 @@ def apply_approval_resolution(
             request,
             target=mcp_grant_target,
             duration=mcp_grant_duration,
+            now=resolved_at,
+        )
+    local_tool_selection: LocalToolGrantSelection | None = None
+    if (local_tool_grant_target is None) != (local_tool_grant_duration is None):
+        raise ValueError("incomplete_local_tool_approval")
+    if local_tool_grant_target is not None:
+        if action != "allow" or scope != "artifact":
+            raise ValueError("local_tool_approval_requires_artifact_allow")
+        if persist_policy is True:
+            raise ValueError("local_tool_approval_cannot_be_remembered")
+        local_tool_selection = parse_local_tool_grant_selection(
+            request,
+            target=local_tool_grant_target,
+            duration=local_tool_grant_duration,
             now=resolved_at,
         )
     selection = resolve_request_scope_selection(
@@ -762,6 +785,22 @@ def apply_approval_resolution(
             resolved_at,
             approval_gate_grant=resolved_gate_grant,
         )
+    if local_tool_selection is not None:
+        local_tool_decision = local_tool_grant_decision(
+            harness=str(request["harness"]),
+            selection=local_tool_selection,
+            reason=reason,
+        )
+        store.ensure_policy_integrity_ready_for_write(
+            harness=local_tool_decision.harness,
+            approval_gate_grant=resolved_gate_grant,
+            now=resolved_at,
+        )
+        store.upsert_policy(
+            local_tool_decision,
+            resolved_at,
+            approval_gate_grant=resolved_gate_grant,
+        )
 
     resolution_harness = None if scope == "global" else str(request["harness"])
     resolve_matching_scope_requests = resolve_scope_matches and not (action == "allow" and scope != "artifact")
@@ -866,6 +905,8 @@ def apply_approval_resolution(
         updated["scope_warning"] = selection.warning
     if temporary_mcp_selection is not None:
         updated["temporary_mcp_grant"] = _temporary_mcp_grant_result(temporary_mcp_selection)
+    if local_tool_selection is not None:
+        updated["local_tool_grant"] = _local_tool_grant_result(local_tool_selection)
     return updated
 
 
@@ -876,6 +917,16 @@ def _temporary_mcp_grant_result(selection: TemporaryMcpGrantSelection) -> dict[s
         "expires_at": selection.expires_at,
         "server_name": selection.eligibility.server_name,
         "category": selection.eligibility.category,
+    }
+
+
+def _local_tool_grant_result(selection: LocalToolGrantSelection) -> dict[str, object]:
+    return {
+        "target": selection.target,
+        "duration": selection.duration,
+        "expires_at": selection.expires_at,
+        "tool_name": selection.eligibility.tool_name,
+        "capability": selection.eligibility.capability,
     }
 
 

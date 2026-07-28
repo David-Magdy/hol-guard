@@ -58,6 +58,11 @@ from ..runtime.approval_reuse import (
 from ..runtime.github_workflow_runtime import resolved_github_workflow_capability_preflight
 from ..runtime.signals import GuardRiskSignalV3
 from ..shims import package_shim_status
+from ..trusted_local_tools import (
+    LocalToolApprovalEligibility,
+    local_tool_approval_eligibility,
+    matching_local_tool_grant,
+)
 from ._commands_shared import *
 from .commands_hook_github_workflow import (
     claimed_approval_request_id,
@@ -561,6 +566,47 @@ def _evaluate_runtime_artifact_hook(
                 else scanner_risk_signals[0]
             )
     current_policy_action = policy_action
+    local_tool_eligibility: LocalToolApprovalEligibility | None = None
+    raw_runtime_command = _runtime_package_raw_command(payload_map, action_envelope)
+    if (
+        event_name == "PreToolUse"
+        and runtime_artifact.artifact_type == "tool_action_request"
+        and raw_runtime_command is not None
+    ):
+        local_tool_eligibility = local_tool_approval_eligibility(
+            raw_runtime_command,
+            cwd=runtime_workspace or Path.cwd(),
+            home_dir=context.home_dir,
+        )
+    local_tool_grant = (
+        matching_local_tool_grant(
+            store=store,
+            harness=policy_harness,
+            eligibility=local_tool_eligibility,
+            current_action=current_policy_action,
+        )
+        if current_action_override is None
+        and cli_action_normalization is None
+        and payload_action_normalization is None
+        and not data_flow_signals
+        and not scanner_evidence
+        and package_evaluation is None
+        else None
+    )
+    if local_tool_eligibility is not None:
+        scanner_evidence_payload.append(local_tool_eligibility.to_evidence())
+    if local_tool_grant is not None and local_tool_eligibility is not None:
+        scanner_evidence_payload.append(
+            {
+                "source": "trusted_local_tool_grant",
+                "applied": True,
+                "tool_identity_hash": local_tool_eligibility.tool_identity_hash,
+                "capability": local_tool_eligibility.capability,
+            }
+        )
+        current_policy_action = "allow"
+        policy_action = "allow"
+        approval_context_policy_action = "allow"
     runtime_artifact_hash = _runtime_hook_approval_context_token(
         artifact=approval_context_artifact,
         content_hash=artifact_content_hash,

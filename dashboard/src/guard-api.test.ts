@@ -1632,6 +1632,8 @@ const resolution = await resolveRequestWithQueueResult({
   scope_contract_digest: "scope-digest",
   mcp_grant_target: "category",
   mcp_grant_duration: "5h",
+  local_tool_grant_target: "capability",
+  local_tool_grant_duration: "1h",
 });
 const resolveBody = JSON.parse(String(fetchResolveCalls[0].init?.body)) as Record<string, unknown>;
 
@@ -1651,6 +1653,11 @@ assert(
 assert(
   resolveBody["mcp_grant_target"] === "category" && resolveBody["mcp_grant_duration"] === "5h",
   "L077: resolveRequestWithQueueResult binds the selected temporary MCP grant",
+);
+assert(
+  resolveBody["local_tool_grant_target"] === "capability" &&
+    resolveBody["local_tool_grant_duration"] === "1h",
+  "L077: resolveRequestWithQueueResult binds the selected trusted local tool grant",
 );
 assert(resolution.remaining_pending_count === 1, "L077: resolveRequestWithQueueResult returns remaining count");
 assert(resolution.next_selectable_request_id === "req-next", "L077: resolveRequestWithQueueResult returns next selectable id");
