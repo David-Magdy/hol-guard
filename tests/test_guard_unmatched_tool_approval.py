@@ -72,7 +72,9 @@ def test_codex_unmatched_tool_block_returns_real_review_request(
                 "permission_mode": "bypassPermissions",
                 "tool_name": "Bash",
                 "tool_input": {
-                    "command": "node xads.mjs line-items --account-id=example",
+                    "command": (
+                        'node xads.mjs line-items --account-id=example -H "Authorization: Bearer secret-token-value"'
+                    ),
                 },
                 "tool_use_id": "call-1",
             }
@@ -115,4 +117,7 @@ def test_codex_unmatched_tool_block_returns_real_review_request(
     assert "Open HOL Guard to approve or keep this blocked:" in reason
     assert "Approve it in HOL Guard, then retry." not in reason
     assert pending[0]["artifact_type"] == "tool_action_request"
-    assert pending[0]["approval_url"].endswith(f"/requests/{pending[0]['request_id']}")
+    assert str(pending[0]["approval_url"]).endswith(f"/requests/{pending[0]['request_id']}")
+    pending_json = json.dumps(pending[0])
+    assert "secret-token-value" not in pending_json
+    assert "Bearer *****" in pending_json

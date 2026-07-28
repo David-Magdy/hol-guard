@@ -93,6 +93,7 @@ from ..action_lattice import (
     normalize_guard_action_result,
 )
 from ..models import GuardAction, GuardArtifact, HarnessDetection
+from ..runtime.actions import _command_detail
 from ..runtime.approval_context import (
     approval_context_tokens_validation_reason,
     build_approval_context_token,
@@ -986,6 +987,7 @@ def _run_hook_generic_payload(
             home_dir=home_dir,
         )
         command_text = _hook_command_text(payload_map)
+        redacted_command_text = _command_detail(command_text, home_dir=home_dir)
         config_path = str(runtime_workspace) if runtime_workspace is not None else ""
         artifact = GuardArtifact(
             artifact_id=artifact_id,
@@ -994,7 +996,7 @@ def _run_hook_generic_payload(
             artifact_type="tool_action_request",
             source_scope="project",
             config_path=config_path,
-            command=command_text or None,
+            command=redacted_command_text,
             metadata={
                 "action_class": "unmatched tool action",
                 "request_summary": "Guard requires approval because no command rule matched this tool action.",
@@ -1019,7 +1021,7 @@ def _run_hook_generic_payload(
                         "config_path": config_path,
                         "policy_action": policy_action,
                         "changed_fields": changed_capabilities or ["tool_action"],
-                        "launch_target": command_text,
+                        "launch_target": redacted_command_text,
                         "risk_summary": "No command rule matched this tool action.",
                     }
                 ]
