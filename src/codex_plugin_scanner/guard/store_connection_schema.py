@@ -201,6 +201,12 @@ class StoreConnectionSchemaMixin:
         notification: dict[str, object] | None = None
         try:
             connection.execute(f"pragma busy_timeout={int(connect_timeout_seconds * 1000)}")
+            # Hot-path tuning: NORMAL is crash-safe under WAL (durability comes from
+            # checkpointing, not per-commit fsync); enlarge the page cache and mmap
+            # window so multi-GB stores don't thrash the default 2 MiB cache.
+            connection.execute("pragma synchronous=NORMAL")
+            connection.execute(f"pragma cache_size=-{SQLITE_CACHE_SIZE_KIB}")
+            connection.execute(f"pragma mmap_size={SQLITE_MMAP_SIZE_BYTES}")
             yield connection
             commit_started = time.monotonic()
             try:
