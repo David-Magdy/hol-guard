@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from ..runtime.command_extensions import risk_classes_for_command_action
 from ..runtime.command_model import parse_shell_command
+from ..runtime.direct_vitest import direct_local_vitest_execution_context
 from ..runtime.github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
 from ..runtime.jsonc import loads_jsonc
 from ..runtime.kubernetes_commands import kubernetes_secret_read_source
@@ -333,12 +334,20 @@ def _unmodeled_shell_runtime_artifact(
     if canonical_command.confidence == "exact" and execution_context.complete:
         return None
     if canonical_command.confidence == "exact" and not execution_context.complete:
-        home_execution_context = literal_cd_execution_context(
-            command_text,
-            home_dir=home_dir,
-        ) or low_risk_compound_developer_execution_context(
-            command_text,
-            home_dir=home_dir,
+        home_execution_context = (
+            direct_local_vitest_execution_context(
+                command_text,
+                cwd=workspace,
+                home_dir=home_dir,
+            )
+            or literal_cd_execution_context(
+                command_text,
+                home_dir=home_dir,
+            )
+            or low_risk_compound_developer_execution_context(
+                command_text,
+                home_dir=home_dir,
+            )
         )
         if home_execution_context is not None:
             return None
