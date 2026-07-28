@@ -28230,7 +28230,7 @@ function LocalToolApprovalControls(props) {
       /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-xs leading-5 text-muted-foreground", children: [
         "Guard identified this as ",
         localToolReadOnlyReasonLabel(props.options.read_only_reason),
-        ". Arguments may vary, but the tool files and selected capability must still match."
+        ". Argument values may vary, but the tool files, option names, and selected capability must still match."
       ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-describedby": durationDescriptionId, children: [
@@ -28425,7 +28425,7 @@ function ReviewDecisionCard(props) {
           ...includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {},
           ...includeGateFields ? { approval_gate_use_cooldown: useCooldown } : {},
           ...action === "allow" ? buildTemporaryMcpResolutionFields(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration) : {},
-          ...action === "allow" ? buildLocalToolResolutionFields(localToolOptions, localToolGrantTarget, localToolGrantDuration) : {}
+          ...action === "allow" && temporaryMcpOptions === null ? buildLocalToolResolutionFields(localToolOptions, localToolGrantTarget, localToolGrantDuration) : {}
         });
         setResolved(action);
         setApprovalPassword("");

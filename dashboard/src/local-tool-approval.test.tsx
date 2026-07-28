@@ -93,6 +93,7 @@ assert(html.includes("<fieldset"), "duration and coverage use native fieldsets")
 assert(html.includes('type="radio"'), "choices use keyboard-operable native radios");
 assert(html.includes("Until tool changes"), "version-bound duration is visible");
 assert(html.includes("different IDs, filters, and timestamps"), "variable argument behavior is clear");
+assert(html.includes("option names"), "changed option sets are excluded from reusable trust");
 assert(html.includes("Writes, shell chaining"), "hard-risk boundary remains visible");
 assert(html.includes("executable, script, or approved output processor changes"), "digest invalidation is clear");
 assert(html.includes("min-h-11"), "controls preserve 44px touch targets");

@@ -73,6 +73,26 @@ _JQ_SAFE_LONG_OPTIONS: Final = frozenset(
         "--unbuffered",
     }
 )
+_SIDE_EFFECTING_OPTIONS: Final = frozenset(
+    {
+        "--apply",
+        "--create",
+        "--delete",
+        "--download",
+        "--exec",
+        "--execute",
+        "--force",
+        "--out",
+        "--output",
+        "--publish",
+        "--remove",
+        "--save",
+        "--send",
+        "--update",
+        "--upload",
+        "--write",
+    }
+)
 _HARD_RISK_EXCLUSIONS: Final = (
     "shell_chaining",
     "shell_redirection",
@@ -165,6 +185,7 @@ def local_tool_approval_eligibility(
     identity_payload = {
         "version": 1,
         "launch": launch_binding,
+        "argument_shape": _argument_shape(primary),
         "output_processor": processor_binding,
     }
     identity_hash = sha256(_canonical_json(identity_payload)).hexdigest()
@@ -365,6 +386,8 @@ def _local_tool_operation(segment: CommandSegment) -> str | None:
 
 
 def _read_only_reason(arguments: Sequence[str], operation: str) -> str | None:
+    if any(_normalized_option(argument) in _SIDE_EFFECTING_OPTIONS for argument in arguments):
+        return None
     methods: list[str] = []
     for index, argument in enumerate(arguments):
         if argument.startswith("--method="):
@@ -379,6 +402,25 @@ def _read_only_reason(arguments: Sequence[str], operation: str) -> str | None:
     if method is not None:
         return None
     return f"operation_{operation}" if operation in _READ_ONLY_OPERATIONS else None
+
+
+def _argument_shape(segment: CommandSegment) -> list[str]:
+    executable = executable_name(segment.executable)
+    start = 2 if executable in _INTERPRETERS else 1
+    shape: list[str] = []
+    for argument in segment.arguments[start:]:
+        option = _normalized_option(argument)
+        if option is not None:
+            shape.append(option)
+        else:
+            shape.append("<value>")
+    return shape
+
+
+def _normalized_option(argument: str) -> str | None:
+    if not argument.startswith("-") or argument == "-":
+        return None
+    return argument.split("=", 1)[0].lower()
 
 
 def _safe_jq_arguments(arguments: Sequence[str]) -> bool:

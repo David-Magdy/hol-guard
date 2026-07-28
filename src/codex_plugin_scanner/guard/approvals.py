@@ -621,6 +621,8 @@ def apply_approval_resolution(
     temporary_mcp_selection: TemporaryMcpGrantSelection | None = None
     if (mcp_grant_target is None) != (mcp_grant_duration is None):
         raise ValueError("incomplete_temporary_mcp_approval")
+    if mcp_grant_target is not None and local_tool_grant_target is not None:
+        raise ValueError("mixed_temporary_grant_modes")
     if mcp_grant_target is not None:
         if action != "allow" or scope != "artifact":
             raise ValueError("temporary_mcp_approval_requires_artifact_allow")
@@ -636,6 +638,8 @@ def apply_approval_resolution(
     if local_tool_grant_target is not None:
         if action != "allow" or scope != "artifact":
             raise ValueError("local_tool_approval_requires_artifact_allow")
+        if persist_policy is True:
+            raise ValueError("local_tool_approval_cannot_be_remembered")
         local_tool_selection = parse_local_tool_grant_selection(
             request,
             target=local_tool_grant_target,

@@ -92,6 +92,14 @@ def test_local_tool_eligibility_is_digest_bound_and_read_only(
     assert varied is not None
     assert varied.tool_identity_hash == first.tool_identity_hash
 
+    changed_options = local_tool_approval_eligibility(
+        command + " --granularity=TOTAL",
+        cwd=workspace,
+        home_dir=workspace,
+    )
+    assert changed_options is not None
+    assert changed_options.tool_identity_hash != first.tool_identity_hash
+
     _ = tool.write_text("export const version = 2;\n")
     changed = local_tool_approval_eligibility(command, cwd=workspace, home_dir=workspace)
     assert changed is not None
@@ -131,6 +139,8 @@ def test_local_tool_eligibility_supports_verified_jq_output_processing(
         "node xads.mjs delete --method=GET --path=/campaigns/1",
         "node xads.mjs request --method=GET --path=/stats; touch marker",
         "node xads.mjs request --method=GET --path=/stats > result.json",
+        "node xads.mjs request --method=GET --path=/stats --output=result.json",
+        "node xads.mjs request --method=GET --path=/stats --write",
         "TOKEN=value node xads.mjs request --method=GET --path=/stats",
         "node -e 'process.stdout.write(\"safe\")' request --method=GET",
     ),
@@ -208,6 +218,35 @@ def test_local_tool_trust_allows_variable_read_queries_and_invalidates_changed_b
     assert approval["eligible"] is True
     assert approval["capability"] == "request"
     assert approval["allowed_targets"] == ["capability", "version"]
+
+    with pytest.raises(ValueError, match="local_tool_approval_cannot_be_remembered"):
+        apply_approval_resolution(
+            store=store,
+            request_id=str(pending[0]["request_id"]),
+            action="allow",
+            scope="artifact",
+            workspace=str(workspace),
+            reason="invalid mixed approval",
+            now="2026-07-28T21:00:00+00:00",
+            persist_policy=True,
+            local_tool_grant_target="capability",
+            local_tool_grant_duration="version",
+        )
+
+    with pytest.raises(ValueError, match="mixed_temporary_grant_modes"):
+        apply_approval_resolution(
+            store=store,
+            request_id=str(pending[0]["request_id"]),
+            action="allow",
+            scope="artifact",
+            workspace=str(workspace),
+            reason="invalid mixed approval",
+            now="2026-07-28T21:00:00+00:00",
+            mcp_grant_target="server",
+            mcp_grant_duration="1h",
+            local_tool_grant_target="capability",
+            local_tool_grant_duration="version",
+        )
 
     resolved = apply_approval_resolution(
         store=store,

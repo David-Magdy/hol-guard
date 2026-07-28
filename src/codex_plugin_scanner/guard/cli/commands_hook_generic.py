@@ -690,7 +690,8 @@ def _run_hook_generic_payload(
             eligibility=local_tool_eligibility,
             current_action=current_policy_action,
         )
-        if configured_narrow_override is None
+        if configured_override is None
+        and configured_narrow_override is None
         and cli_action_normalization is None
         and (payload_action_normalization is None or ignored_payload_action_reason is not None)
         and daemon_hint_disposition != "tightened_to_block"

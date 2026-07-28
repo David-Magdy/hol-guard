@@ -30,7 +30,7 @@ export function LocalToolApprovalControls(props: Props) {
           Trust read-only calls from {props.options.tool_name}
         </p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          Guard identified this as {localToolReadOnlyReasonLabel(props.options.read_only_reason)}. Arguments may vary, but the tool files and selected capability must still match.
+          Guard identified this as {localToolReadOnlyReasonLabel(props.options.read_only_reason)}. Argument values may vary, but the tool files, option names, and selected capability must still match.
         </p>
       </div>
 

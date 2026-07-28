@@ -205,7 +205,7 @@ export function ReviewDecisionCard(props: {
           ...(action === "allow"
             ? buildTemporaryMcpResolutionFields(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration)
             : {}),
-          ...(action === "allow"
+          ...(action === "allow" && temporaryMcpOptions === null
             ? buildLocalToolResolutionFields(localToolOptions, localToolGrantTarget, localToolGrantDuration)
             : {}),
         });
