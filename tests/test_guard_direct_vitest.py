@@ -15,6 +15,25 @@ from codex_plugin_scanner.guard.runtime.secret_file_requests import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _exclude_workspace_virtualenv_from_path(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = Path().resolve()
+    entries: list[str] = []
+    for raw_entry in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(raw_entry or ".").expanduser()
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
+        try:
+            _ = candidate.resolve().relative_to(workspace)
+        except (OSError, RuntimeError):
+            continue
+        except ValueError:
+            entries.append(raw_entry)
+    monkeypatch.setenv("PATH", os.pathsep.join(entries))
+
+
 def _write_package(root: Path, *, include_lock: bool = True, declares_vitest: bool = True) -> None:
     root.mkdir(parents=True, exist_ok=True)
     dependencies = {"vitest": "^4.1.8"} if declares_vitest else {}

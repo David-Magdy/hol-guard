@@ -125,7 +125,10 @@ def is_low_risk_standalone_git_routine(context: ShellExecutionContext) -> bool:
         return False
     segment = context.segments[0]
     return bool(
-        not segment.control_before and not segment.control_after and is_low_risk_git_inspection_segment(segment)
+        segment.tokens[:1] == ("git",)
+        and not segment.control_before
+        and not segment.control_after
+        and is_low_risk_git_inspection_segment(segment)
     )
 
 
