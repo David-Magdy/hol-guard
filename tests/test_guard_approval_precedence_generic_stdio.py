@@ -401,6 +401,43 @@ def test_generic_hook_saved_allow_never_lowers_new_current_block(
     )
 
 
+@pytest.mark.parametrize("event_name", ["PreToolUse", "PostToolUse", "UserPromptSubmit"])
+def test_generic_hook_observe_mode_records_block_without_enforcing_it(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    event_name: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = GuardStore(tmp_path / "guard-home")
+    config = GuardConfig(
+        guard_home=tmp_path / "guard-home",
+        workspace=workspace,
+        default_action="block",
+        mode="observe",
+    )
+    payload = {**_generic_payload(), "hook_event_name": event_name}
+
+    rc, output = _run_generic_hook(
+        capsys=capsys,
+        config=config,
+        payload=payload,
+        store=store,
+        workspace=workspace,
+    )
+
+    assert rc == 0
+    assert output["policy_action"] == "allow"
+    assert output["policy_composition"]["observed_policy_action"] == "block"
+    assert output["policy_composition"]["authoritative_action"] == "allow"
+    assert {
+        "source": "observe_mode",
+        "observed_policy_action": "block",
+        "authoritative_action": "allow",
+    } in output["scanner_evidence"]
+    assert store.list_receipts(limit=1)[0]["policy_decision"] == "allow"
+
+
 @pytest.mark.parametrize(
     ("saved_action", "expected_action", "expected_reason", "expected_rc"),
     [

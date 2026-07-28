@@ -793,6 +793,10 @@ def _run_hook_generic_payload(
         )
         policy_action = approval_reuse.action
         approval_reuse_source = "claimed_saved_policy_decision"
+    observed_policy_action: GuardAction | None = None
+    if config.mode == "observe" and policy_action not in {"allow", "warn"}:
+        observed_policy_action = policy_action
+        policy_action = "allow"
     policy_composition = {
         "current_config_action": current_config_normalization.action,
         "configured_policy_action": configured_policy_normalization.action,
@@ -815,6 +819,7 @@ def _run_hook_generic_payload(
         "saved_policy_action": stored_policy_action,
         "approval_reuse_source": approval_reuse_source,
         "authoritative_action": policy_action,
+        "observed_policy_action": observed_policy_action,
     }
     scanner_evidence: list[dict[str, object]] = [
         {
@@ -855,6 +860,14 @@ def _run_hook_generic_payload(
                 "status": "monotonic-only",
                 "disposition": daemon_hint_disposition,
                 "reason_code": daemon_hint_reason_code,
+            }
+        )
+    if observed_policy_action is not None:
+        scanner_evidence.append(
+            {
+                "source": "observe_mode",
+                "observed_policy_action": observed_policy_action,
+                "authoritative_action": "allow",
             }
         )
     for input_source, normalization in (

@@ -88,6 +88,18 @@ def test_safe_git_worktree_add_rejects_checkout_hooks(
     )
 
 
+def test_safe_git_worktree_add_rejects_executable_fsmonitor(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    marker = tmp_path / "fsmonitor-ran"
+    helper = tmp_path / "fsmonitor.sh"
+    helper.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    helper.chmod(0o755)
+    _git(repository, "config", "core.fsmonitor", str(helper))
+
+    assert not routine_setup_commands.git_worktree_add_has_execution_free_config(repository)
+    assert not marker.exists()
+
+
 def test_worktree_filter_check_is_scoped_to_selected_ref(tmp_path: Path) -> None:
     repository = _repository(tmp_path)
     git_binary_text = shutil.which("git")
