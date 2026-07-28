@@ -77,7 +77,7 @@ def direct_local_vitest_execution_context(
     ):
         return None
     no_coverage_count = args.count("--no-coverage")
-    if args[0] != "run" or no_coverage_count > 1 or (require_no_coverage and no_coverage_count != 1):
+    if not args or args[0] != "run" or no_coverage_count > 1 or (require_no_coverage and no_coverage_count != 1):
         return None
     targets = [arg for arg in args[1:] if arg != "--no-coverage"]
     if not targets or any(arg.startswith("-") for arg in targets):
@@ -111,11 +111,19 @@ def _vitest_runner_invocation(
         index += 1
     if index >= len(runner_tokens) or runner_tokens[index] != "vitest":
         return None, [], False
+    bin_entry = workspace / "node_modules" / ".bin" / "vitest"
+    package_runner = workspace / "node_modules" / "vitest" / "vitest.mjs"
     try:
-        local_runner = (workspace / "node_modules" / "vitest" / "vitest.mjs").resolve(strict=True)
+        local_runner = package_runner.resolve(strict=True)
+        resolved_bin_entry = bin_entry.resolve(strict=True)
     except (OSError, RuntimeError):
         return None, [], False
-    return local_runner, runner_tokens[index + 1 :], False
+    if not bin_entry.is_symlink() or resolved_bin_entry != local_runner:
+        return None, [], False
+    args = runner_tokens[index + 1 :]
+    if not args:
+        return None, [], False
+    return local_runner, args, False
 
 
 def _literal_leading_cd_target(
@@ -169,6 +177,12 @@ def _verified_vitest_runner(runner: Path, *, cwd: Path, home_dir: Path) -> str |
         return None
     package = _read_package_json(package_dir / "package.json")
     installed_version = package.get("version") if package is not None and package.get("name") == "vitest" else None
+    package_bin = package.get("bin") if package is not None else None
+    if not isinstance(package_bin, Mapping) or cast(Mapping[object, object], package_bin).get("vitest") not in {
+        "vitest.mjs",
+        "./vitest.mjs",
+    }:
+        return None
     if not isinstance(installed_version, str):
         return None
     return (
