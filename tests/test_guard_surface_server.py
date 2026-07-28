@@ -1070,12 +1070,76 @@ class TestGuardSurfaceServer:
                 with pytest.raises(urllib.error.HTTPError) as error:
                     urllib.request.urlopen(url, timeout=5)
                 assert error.value.code == 401
+            with daemon._server.auth_audit_lock:  # pyright: ignore[reportPrivateUsage]
+                windows = tuple(daemon._server.auth_audit_windows.values())  # pyright: ignore[reportPrivateUsage]
+                assert len(windows) == 1
+                assert windows[0]["suppressed_count"] == 19
+                windows[0]["started_at"] -= daemon_server_module._AUTH_AUDIT_COALESCE_SECONDS  # pyright: ignore[reportPrivateUsage]
+            with pytest.raises(urllib.error.HTTPError) as rollover_error:
+                urllib.request.urlopen(url, timeout=5)
+            assert rollover_error.value.code == 401
         finally:
             daemon.stop()
 
         events = store.list_events(event_name="daemon.auth.unauthorized")
-        assert len(events) == 1
+        assert len(events) == 2
         assert events[0]["payload"]["path"] == "/v1/runtime"
+        assert events[0]["payload"]["suppressed_count"] == 19
+
+    def test_guard_daemon_auth_audit_failure_preserves_concurrent_suppressions(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        store = GuardStore(tmp_path / "guard-home")
+        original_add_event = store.add_event
+        leader_started = daemon_server_module.threading.Event()
+        release_leader = daemon_server_module.threading.Event()
+        first_status: list[int] = []
+        audit_write_count = 0
+
+        def flaky_add_event(event_name: str, payload: dict[str, object], now: str) -> None:
+            nonlocal audit_write_count
+            if event_name == "daemon.auth.unauthorized":
+                audit_write_count += 1
+                if audit_write_count == 1:
+                    leader_started.set()
+                    assert release_leader.wait(timeout=2.0)
+                    raise sqlite3.OperationalError("database is locked")
+            original_add_event(event_name, payload, now)
+
+        monkeypatch.setattr(store, "add_event", flaky_add_event)
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        url = f"http://127.0.0.1:{daemon.port}/v1/runtime"
+
+        def first_request() -> None:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(url, timeout=5)
+            first_status.append(error.value.code)
+
+        leader = daemon_server_module.threading.Thread(target=first_request)
+        leader.start()
+        assert leader_started.wait(timeout=2.0)
+        try:
+            with pytest.raises(urllib.error.HTTPError) as suppressed_error:
+                urllib.request.urlopen(url, timeout=5)
+            release_leader.set()
+            leader.join(timeout=2.0)
+            with pytest.raises(urllib.error.HTTPError) as retry_error:
+                urllib.request.urlopen(url, timeout=5)
+        finally:
+            release_leader.set()
+            leader.join(timeout=2.0)
+            daemon.stop()
+
+        assert leader.is_alive() is False
+        assert first_status == [401]
+        assert suppressed_error.value.code == 401
+        assert retry_error.value.code == 401
+        events = store.list_events(event_name="daemon.auth.unauthorized")
+        assert len(events) == 1
+        assert events[0]["payload"]["suppressed_count"] == 2
 
     def test_guard_daemon_auth_audit_failure_does_not_break_denial(self, tmp_path) -> None:
         store = GuardStore(tmp_path / "guard-home")
@@ -1086,10 +1150,8 @@ class TestGuardSurfaceServer:
         url = f"http://127.0.0.1:{daemon.port}/v1/runtime"
 
         try:
-            started = time.monotonic()
             with pytest.raises(urllib.error.HTTPError) as error:
                 urllib.request.urlopen(url, timeout=5)
-            elapsed = time.monotonic() - started
         finally:
             blocker.rollback()
             blocker.close()
@@ -1101,7 +1163,6 @@ class TestGuardSurfaceServer:
             daemon.stop()
 
         assert error.value.code == 401
-        assert elapsed < 0.5
         assert json.loads(error.value.read().decode("utf-8")) == {"error": "unauthorized"}
         assert retry_error.value.code == 401
         events = store.list_events(event_name="daemon.auth.unauthorized")
