@@ -321,15 +321,9 @@ class StoreConnectionSchemaMixin:
             poll_seconds=min(0.05, max(timeout_seconds, 0.001)),
             timeout_message="Timed out waiting for the Guard schema migration lock.",
         ):
-            if daemon_managed:
-                deadline = time.monotonic() + timeout_seconds
-                while True:
-                    if self._schema_is_current():
-                        self._initialize_policy_integrity()
-                        return
-                    if time.monotonic() >= deadline:
-                        break
-                    time.sleep(min(0.025, max(0.0, deadline - time.monotonic())))
+            if daemon_managed and self._schema_is_current():
+                self._initialize_policy_integrity()
+                return
             self._initialize()
 
     def _initialize(self) -> None:

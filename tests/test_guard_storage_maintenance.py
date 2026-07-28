@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -329,6 +330,34 @@ def test_current_schema_probe_treats_lock_contention_as_unknown(
     monkeypatch.setattr(store_connection_schema.sqlite3, "connect", locked_connect)
 
     assert store._schema_is_current() is False  # pyright: ignore[reportPrivateUsage]
+
+
+def test_daemon_managed_schema_does_not_poll_while_holding_migration_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard", prime_policy_integrity=False)
+    schema_checks = 0
+    initializes = 0
+
+    def schema_is_current() -> bool:
+        nonlocal schema_checks
+        schema_checks += 1
+        return False
+
+    def initialize() -> None:
+        nonlocal initializes
+        initializes += 1
+
+    store._daemon_managed_schema = True  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(store, "_schema_is_current", schema_is_current)
+    monkeypatch.setattr(store, "_initialize", initialize)
+    monkeypatch.setattr(store, "_hold_advisory_file_lock", lambda **_kwargs: nullcontext())
+
+    store._initialize_serialized()  # pyright: ignore[reportPrivateUsage]
+
+    assert schema_checks == 2
+    assert initializes == 1
 
 
 def test_version_21_upgrade_adds_workflow_event_index(tmp_path: Path) -> None:

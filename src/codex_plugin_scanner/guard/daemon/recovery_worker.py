@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import cast
 
-from .manager import GuardDaemonHookFailureKind, recover_guard_daemon_after_hook_failure
+from .manager import (
+    GuardDaemonHookFailureKind,
+    clear_guard_daemon_recovery_reservation,
+    recover_guard_daemon_after_hook_failure,
+)
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) != 5:
         return 2
-    guard_home, home_dir, raw_failure_kind = sys.argv[1:]
+    guard_home, home_dir, raw_failure_kind, recovery_token = sys.argv[1:]
     failure_kind: GuardDaemonHookFailureKind
     if raw_failure_kind not in {
         "authenticated-control-plane-failure",
@@ -21,11 +26,19 @@ def main() -> int:
     }:
         return 2
     failure_kind = cast(GuardDaemonHookFailureKind, raw_failure_kind)
-    _ = recover_guard_daemon_after_hook_failure(
-        Path(guard_home),
-        home_dir=Path(home_dir),
-        failure_kind=failure_kind,
-    )
+    guard_home_path = Path(guard_home)
+    try:
+        _ = recover_guard_daemon_after_hook_failure(
+            guard_home_path,
+            home_dir=Path(home_dir),
+            failure_kind=failure_kind,
+        )
+    finally:
+        with suppress(OSError, RuntimeError, ValueError):
+            _ = clear_guard_daemon_recovery_reservation(
+                guard_home_path,
+                token=recovery_token,
+            )
     return 0
 
 

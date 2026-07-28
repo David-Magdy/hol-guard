@@ -11,10 +11,12 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
 from typing import ClassVar, Protocol, TextIO, cast, final
+from unittest.mock import MagicMock
 
 import pytest
 
 from codex_plugin_scanner.guard import codex_hook_windows_job as windows_job_module
+from codex_plugin_scanner.guard import store as guard_store_module
 from codex_plugin_scanner.guard.codex_hook_launch_runtime import (
     BoundedHookProcessResult,
     isolated_daemon_start_command,
@@ -63,6 +65,23 @@ def test_daemon_start_budget_contains_initial_worker_readiness() -> None:
         hook_runner_module._HOOK_PROCESS_READY_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
         > hook_entrypoint_module._HOOK_EVALUATOR_READY_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
     )
+
+
+def test_evaluator_becomes_ready_when_store_prewarm_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = MagicMock()
+    connection.recv.return_value = ("stop", None)
+    monkeypatch.setattr(
+        guard_store_module,
+        "GuardStore",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("migration busy")),
+    )
+
+    hook_entrypoint_module._hook_evaluator_main(connection, str(tmp_path / "guard-home"))  # pyright: ignore[reportPrivateUsage]
+
+    connection.send.assert_called_once_with(("ready", None))
 
 
 def test_windows_taskkill_path_uses_system_directory_api(

@@ -71,7 +71,8 @@ def test_process_tree_rss_includes_nested_worker_descendants(
             "99 1 1000",
         )
     )
-    monkeypatch.setattr(capacity_module.os.path, "isfile", lambda _path: True)
+    monkeypatch.setattr(capacity_module.shutil, "which", lambda _name: "/usr/bin/ps")
+    monkeypatch.setattr(capacity_module, "is_trusted_absolute_command_path", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         capacity_module.subprocess,
         "run",
@@ -84,6 +85,23 @@ def test_process_tree_rss_includes_nested_worker_descendants(
     )
 
     assert process_tree_rss_bytes((10,)) == 175 * 1024
+
+
+def test_process_tree_rss_rejects_path_shadowed_ps(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shadowed_ps = tmp_path / "ps"
+    shadowed_ps.write_text("#!/bin/sh\n", encoding="utf-8")
+    shadowed_ps.chmod(0o755)
+    monkeypatch.setattr(capacity_module.shutil, "which", lambda _name: str(shadowed_ps))
+    monkeypatch.setattr(
+        capacity_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("untrusted ps must not execute"),
+    )
+
+    assert process_tree_rss_bytes((10,)) is None
 
 
 def test_scale_up_requires_ten_continuous_seconds_and_one_second_spacing() -> None:

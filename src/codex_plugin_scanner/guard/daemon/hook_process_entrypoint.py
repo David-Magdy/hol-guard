@@ -128,11 +128,14 @@ def _hook_evaluator_main(connection: Connection, configured_guard_home: str | No
         from ..store import GuardStore
 
         guard_home = Path(configured_guard_home).resolve(strict=False)
-        stores[str(guard_home)] = GuardStore(
-            guard_home,
-            prime_policy_integrity=False,
-            daemon_managed_schema=True,
-        )
+        # The worker can become ready while a concurrent daemon migration
+        # finishes; the first request retries store construction lazily.
+        with suppress(Exception):
+            stores[str(guard_home)] = GuardStore(
+                guard_home,
+                prime_policy_integrity=False,
+                daemon_managed_schema=True,
+            )
     try:
         connection.send(("ready", None))
     except (BrokenPipeError, EOFError, OSError):

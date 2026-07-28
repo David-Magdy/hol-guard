@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TypedDict, final
+
+from ..runtime.shell_command_wrappers import is_trusted_absolute_command_path
 
 _MIN_WORKERS = 2
 _MAX_WORKERS = 16
@@ -56,8 +60,15 @@ def process_tree_rss_bytes(process_ids: tuple[int, ...]) -> int | None:
     root_process_ids = {process_id for process_id in process_ids if process_id > 0}
     if not root_process_ids or os.name == "nt":
         return None
-    ps_path = next((path for path in ("/bin/ps", "/usr/bin/ps") if os.path.isfile(path)), None)
-    if ps_path is None:
+    located_ps = shutil.which("ps")
+    if located_ps is None:
+        return None
+    ps_path = Path(located_ps)
+    if not ps_path.is_absolute() or not is_trusted_absolute_command_path(
+        ps_path,
+        cwd=Path.cwd(),
+        home_dir=Path.home(),
+    ):
         return None
     try:
         result = subprocess.run(

@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import inspect
 import json
+import math
 import mimetypes
 import os
 import platform
@@ -342,6 +343,26 @@ _DAEMON_CRITICAL_PATHS = frozenset(
         "/v1/daemon/identity-challenge",
     }
 )
+
+
+def _runtime_hook_remaining_hint(payload: dict[str, object]) -> float:
+    raw_seconds = payload.pop("guard_remaining_seconds", None)
+    raw_milliseconds = payload.pop("guard_remaining_ms", None)
+    if (
+        isinstance(raw_seconds, (int, float))
+        and not isinstance(raw_seconds, bool)
+        and math.isfinite(float(raw_seconds))
+    ):
+        return float(raw_seconds)
+    if (
+        isinstance(raw_milliseconds, (int, float))
+        and not isinstance(raw_milliseconds, bool)
+        and math.isfinite(float(raw_milliseconds))
+    ):
+        return float(raw_milliseconds) / 1000.0
+    return _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS
+
+
 _PEER_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
 
@@ -5298,13 +5319,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS,
         )
         params = parse_qs(query)
-        remaining_hint = payload.pop("guard_remaining_seconds", None)
-        if remaining_hint is None:
-            remaining_hint_ms = payload.pop("guard_remaining_ms", None)
-            if isinstance(remaining_hint_ms, (int, float)) and not isinstance(remaining_hint_ms, bool):
-                remaining_hint = float(remaining_hint_ms) / 1000.0
-        if remaining_hint is None:
-            remaining_hint = _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS
+        remaining_hint = _runtime_hook_remaining_hint(payload)
         hinted_deadline = RuntimeHookDeadline.from_remaining_hint(remaining_hint)
         hook_deadline = RuntimeHookDeadline(expires_at=min(hinted_deadline.expires_at, transport_deadline))
         hook_env = _runtime_hook_env_overlay_from_payload(payload)
