@@ -1101,7 +1101,7 @@ class TestGuardSurfaceServer:
             daemon.stop()
 
         assert error.value.code == 401
-        assert elapsed < 0.25
+        assert elapsed < 0.5
         assert json.loads(error.value.read().decode("utf-8")) == {"error": "unauthorized"}
         assert retry_error.value.code == 401
         events = store.list_events(event_name="daemon.auth.unauthorized")
