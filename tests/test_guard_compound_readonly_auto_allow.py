@@ -124,12 +124,45 @@ def test_workspace_dependency_symlink_is_explicitly_benign(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
-    "source_kind",
-    ("arbitrary-directory", "secret-file", "symlinked-modules"),
+    "suffix",
+    (
+        "",
+        " 2>/dev/null",
+        " 2>/dev/null; echo linked",
+    ),
 )
+def test_workspace_dependency_symlink_directory_destination_is_explicitly_benign(
+    tmp_path: Path,
+    suffix: str,
+) -> None:
+    home_dir, repository = _repository(tmp_path)
+    dependency_project = home_dir / "projects" / "dependency-source"
+    dependency_modules = dependency_project / "node_modules"
+    dependency_modules.mkdir(parents=True)
+    (dependency_project / "package.json").write_text("{}\n", encoding="utf-8")
+    command = f"cd {repository} && ln -s {dependency_modules} .{suffix}"
+
+    assert _is_benign(command, home_dir=home_dir, repository=repository)
+    assert (
+        extract_sensitive_tool_action_request(
+            "bash",
+            {"command": command},
+            cwd=repository,
+            home_dir=home_dir,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "source_kind",
+    ("arbitrary-directory", "secret-file", "symlinked-modules", "missing-modules", "outside-home"),
+)
+@pytest.mark.parametrize("destination", (".", "./node_modules"))
 def test_workspace_dependency_symlink_rejects_untrusted_sources(
     tmp_path: Path,
     source_kind: str,
+    destination: str,
 ) -> None:
     home_dir, repository = _repository(tmp_path)
     dependency_project = home_dir / "projects" / "dependency-source"
@@ -142,11 +175,16 @@ def test_workspace_dependency_symlink_rejects_untrusted_sources(
     elif source_kind == "secret-file":
         source = dependency_project / ".env"
         source.write_text("TOKEN=fixture\n", encoding="utf-8")
-    else:
+    elif source_kind == "symlinked-modules":
         real_modules = dependency_project / "real-modules"
         real_modules.mkdir()
         source.symlink_to(real_modules, target_is_directory=True)
-    command = f"cd {repository} && ln -s {source} ./node_modules 2>/dev/null; echo linked"
+    elif source_kind == "outside-home":
+        outside_project = tmp_path / "outside-home"
+        source = outside_project / "node_modules"
+        source.mkdir(parents=True)
+        (outside_project / "package.json").write_text("{}\n", encoding="utf-8")
+    command = f"cd {repository} && ln -s {source} {destination} 2>/dev/null; echo linked"
 
     assert not _is_benign(command, home_dir=home_dir, repository=repository)
 
@@ -174,6 +212,32 @@ def test_workspace_dependency_symlink_rejects_widened_effects(
     assert not _is_benign(command, home_dir=home_dir, repository=repository)
 
 
+@pytest.mark.parametrize(
+    "command_template",
+    (
+        "cd {repository} && ln -sf {source} .",
+        "cd {repository} && ln --force -s {source} .",
+        "cd {repository} && ln -s $DEPENDENCY_MODULES .",
+        "cd {repository} && ln -s {source} $DESTINATION",
+        "cd {repository} && ln -s {source} ..",
+        "cd {repository} && ln -s {source} .; echo done",
+        "cd {repository} && ln -s {source} . && echo payload > node_modules/changed.txt",
+    ),
+)
+def test_workspace_dependency_symlink_directory_destination_rejects_widened_effects(
+    tmp_path: Path,
+    command_template: str,
+) -> None:
+    home_dir, repository = _repository(tmp_path)
+    dependency_project = home_dir / "projects" / "dependency-source"
+    source = dependency_project / "node_modules"
+    source.mkdir(parents=True)
+    (dependency_project / "package.json").write_text("{}\n", encoding="utf-8")
+    command = command_template.format(repository=repository, source=source)
+
+    assert not _is_benign(command, home_dir=home_dir, repository=repository)
+
+
 def test_workspace_dependency_symlink_rejects_existing_destination(tmp_path: Path) -> None:
     home_dir, repository = _repository(tmp_path)
     dependency_project = home_dir / "projects" / "dependency-source"
@@ -186,9 +250,25 @@ def test_workspace_dependency_symlink_rejects_existing_destination(tmp_path: Pat
     assert not _is_benign(command, home_dir=home_dir, repository=repository)
 
 
+def test_workspace_dependency_symlink_directory_destination_rejects_existing_destination(
+    tmp_path: Path,
+) -> None:
+    home_dir, repository = _repository(tmp_path)
+    dependency_project = home_dir / "projects" / "dependency-source"
+    source = dependency_project / "node_modules"
+    source.mkdir(parents=True)
+    (dependency_project / "package.json").write_text("{}\n", encoding="utf-8")
+    (repository / "node_modules").mkdir()
+    command = f"cd {repository} && ln -s {source} ."
+
+    assert not _is_benign(command, home_dir=home_dir, repository=repository)
+
+
+@pytest.mark.parametrize("destination", (".", "./node_modules"))
 def test_workspace_dependency_symlink_rejects_shadowed_ln(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    destination: str,
 ) -> None:
     home_dir, repository = _repository(tmp_path)
     dependency_project = home_dir / "projects" / "dependency-source"
@@ -201,7 +281,7 @@ def test_workspace_dependency_symlink_rejects_shadowed_ln(
     shadow_ln.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     shadow_ln.chmod(0o755)
     monkeypatch.setenv("PATH", f"{shadow_bin}:{os.environ.get('PATH', '')}")
-    command = f"cd {repository} && ln -s {source} ./node_modules 2>/dev/null; echo linked"
+    command = f"cd {repository} && ln -s {source} {destination} 2>/dev/null; echo linked"
 
     assert not _is_benign(command, home_dir=home_dir, repository=repository)
 

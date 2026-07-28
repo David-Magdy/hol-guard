@@ -31,8 +31,10 @@ from .command_model import CanonicalCommand, parse_shell_command
 from .compound_git_inspection import (
     is_low_risk_compound_git_inspection,
     is_low_risk_git_inspection_segment,
+    is_low_risk_standalone_git_routine,
 )
 from .data_flow import extract_heredocs
+from .direct_vitest import direct_local_vitest_execution_context
 from .env_wrapper import parse_env_wrapper
 from .extension_control_contract import ExtensionControlLayer
 from .false_positive_rules import (
@@ -1248,6 +1250,20 @@ def is_explicitly_benign_tool_action_request(
         if _looks_like_safe_git_status_command(stripped_command, parts, cwd=cwd):
             found_benign_candidate = True
             continue
+        if _looks_like_safe_standalone_git_routine(stripped_command, cwd=cwd):
+            found_benign_candidate = True
+            continue
+        if (
+            home_dir is not None
+            and direct_local_vitest_execution_context(
+                stripped_command,
+                cwd=cwd,
+                home_dir=home_dir,
+            )
+            is not None
+        ):
+            found_benign_candidate = True
+            continue
         if (
             home_dir is not None
             and _safe_dependency_symlink_execution_context(
@@ -1271,6 +1287,23 @@ def is_explicitly_benign_tool_action_request(
             continue
         return False
     return found_benign_candidate
+
+
+def _looks_like_safe_standalone_git_routine(command_text: str, *, cwd: Path | None) -> bool:
+    if any(marker in command_text for marker in ("$(", "`", "<(", ">(", ";", "|", "\n")):
+        return False
+    if "&" in command_text:
+        return False
+    try:
+        execution_cwd = (cwd or Path.cwd()).resolve()
+    except (OSError, RuntimeError):
+        return False
+    context = model_shell_execution_context(
+        command_text,
+        cwd=execution_cwd,
+        workspace_root=execution_cwd,
+    )
+    return is_low_risk_standalone_git_routine(context)
 
 
 def _looks_like_safe_kubernetes_inventory_command(
@@ -1938,12 +1971,25 @@ def _destructive_shell_tool_action_request(
     ):
         return None
     if not execution_context.complete and home_dir is not None:
-        developer_execution_context = literal_cd_execution_context(
-            detection_command_text,
-            home_dir=home_dir,
-        ) or low_risk_compound_developer_execution_context(detection_command_text, home_dir=home_dir)
+        developer_execution_context = (
+            direct_local_vitest_execution_context(
+                detection_command_text,
+                cwd=cwd,
+                home_dir=home_dir,
+            )
+            or literal_cd_execution_context(
+                detection_command_text,
+                home_dir=home_dir,
+            )
+            or low_risk_compound_developer_execution_context(detection_command_text, home_dir=home_dir)
+        )
         raw_developer_execution_context = (
-            literal_cd_execution_context(raw_command_text, home_dir=home_dir)
+            direct_local_vitest_execution_context(
+                raw_command_text,
+                cwd=cwd,
+                home_dir=home_dir,
+            )
+            or literal_cd_execution_context(raw_command_text, home_dir=home_dir)
             or low_risk_compound_developer_execution_context(raw_command_text, home_dir=home_dir)
             if raw_command_text is not None and raw_command_text != detection_command_text
             else developer_execution_context
@@ -2721,28 +2767,33 @@ def _safe_dependency_symlink_execution_context(
             workspace_root=workspace_root,
             home_dir=home_dir,
         )
-    if _shell_execution_context_validation_reason(context) is not None or len(context.segments) != 3:
+    if _shell_execution_context_validation_reason(context) is not None or len(context.segments) not in {2, 3}:
         return None
-    directory, link, marker = context.segments
-    if (
-        directory.directory_operation != "cd"
-        or directory.control_before
-        or link.control_before != ("&&",)
-        or marker.control_before not in {(";",), ("&&",)}
-    ):
+    directory, link, *marker_segments = context.segments
+    if directory.directory_operation != "cd" or directory.control_before or link.control_before != ("&&",):
         return None
     link_name, link_index = _shell_segment_primary_command(list(link.tokens))
-    marker_name, marker_index = _shell_segment_primary_command(list(marker.tokens))
-    if link_name != "ln" or link_index is None or marker_name != "echo" or marker_index is None:
+    if link_name != "ln" or link_index is None:
         return None
     link_args = _without_safe_inspection_redirections(list(link.tokens[link_index + 1 :]))
-    marker_args = _without_safe_inspection_redirections(list(marker.tokens[marker_index + 1 :]))
-    if link_args is None or link_args[:1] != ["-s"] or len(link_args) != 3 or marker_args != ["linked"]:
+    if link_args is None or link_args[:1] != ["-s"] or len(link_args) != 3:
         return None
+    if marker_segments:
+        marker = marker_segments[0]
+        marker_name, marker_index = _shell_segment_primary_command(list(marker.tokens))
+        if (
+            marker.control_before not in {(";",), ("&&",)}
+            or marker_name != "echo"
+            or marker_index is None
+            or _without_safe_inspection_redirections(list(marker.tokens[marker_index + 1 :])) != ["linked"]
+        ):
+            return None
     source_text, destination_text = link_args[1:]
-    if any(marker in source_text for marker in ("$", "`", "\x00")):
+    if any(marker in source_text for marker in ("$", "`", "\x00")) or any(
+        marker in destination_text for marker in ("$", "`", "\x00")
+    ):
         return None
-    if destination_text not in {"node_modules", "./node_modules"}:
+    if destination_text not in {".", "node_modules", "./node_modules"}:
         return None
     source = Path(source_text).expanduser()
     if not source.is_absolute():
@@ -2750,11 +2801,13 @@ def _safe_dependency_symlink_execution_context(
     destination_root = link.effective_cwd
     if destination_root is None:
         return None
-    destination = destination_root / destination_text
     try:
         resolved_home = home_dir.resolve(strict=True)
         resolved_workspace = (workspace_root or initial_root).resolve(strict=True)
         resolved_source = source.resolve(strict=True)
+        destination = (
+            destination_root / resolved_source.name if destination_text == "." else destination_root / destination_text
+        )
         ln_path = _which_for_execution_cwd("ln", cwd=destination_root)
         if ln_path is None:
             return None

@@ -37,7 +37,21 @@ def _init_repository(path: Path) -> None:
 def test_compound_git_refresh_and_inspection_is_evaluated_as_one_unit(tmp_path: Path) -> None:
     home = tmp_path / "home"
     workspace = home / "projects" / "workspace"
-    (workspace / "repository").mkdir(parents=True)
+    repository = workspace / "repository"
+    repository.mkdir(parents=True)
+    _init_repository(repository)
+    _ = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/project.git",
+        ],
+        check=True,
+    )
 
     command = " ".join(
         (

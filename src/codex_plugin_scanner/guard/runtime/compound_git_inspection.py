@@ -10,6 +10,7 @@ from typing import Final
 
 from .git_execution_safety import (
     git_config_routing_environment_is_clean,
+    git_fetch_origin_has_execution_free_config,
     git_status_has_execution_free_config,
     trusted_git_binary_for_cwd,
 )
@@ -81,7 +82,15 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
     operation = tokens[operation_index]
     args = tokens[operation_index + 1 :]
     if operation == "fetch":
-        return len(args) == 2 and args[0] == "origin" and _safe_ref(args[1])
+        return bool(
+            len(args) == 2
+            and args[0] == "origin"
+            and _safe_ref(args[1])
+            and git_fetch_origin_has_execution_free_config(
+                repository_cwd,
+                git_binary=resolved_git,
+            )
+        )
     if operation == "log":
         return _safe_bounded_log_args(args) and _git_log_has_execution_free_config(
             repository_cwd,
@@ -96,7 +105,7 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
     if operation == "branch":
         return args in {("--show-current",), ("--list",)}
     if operation == "rev-parse":
-        return args in {("--show-toplevel",), ("--show-prefix",), ("--is-inside-work-tree",), ("HEAD",)}
+        return _safe_rev_parse_args(args)
     if operation == "diff":
         return _safe_diff_args(args)
     if operation == "ls-files":
@@ -107,6 +116,23 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
             repository_path=repository_path,
         )
     return False
+
+
+def is_low_risk_standalone_git_routine(context: ShellExecutionContext) -> bool:
+    """Recognize one bounded Git read or configured-origin ref refresh."""
+
+    if not context.complete or len(context.segments) != 1:
+        return False
+    segment = context.segments[0]
+    return bool(
+        not segment.control_before and not segment.control_after and is_low_risk_git_inspection_segment(segment)
+    )
+
+
+def _safe_rev_parse_args(args: tuple[str, ...]) -> bool:
+    return args in {("--show-toplevel",), ("--show-prefix",), ("--is-inside-work-tree",)} or (
+        len(args) == 1 and _safe_ref(args[0])
+    )
 
 
 def _safe_status_arg(value: str) -> bool:
@@ -314,4 +340,8 @@ def _dynamic(value: str) -> bool:
     return any(marker in value for marker in ("$", "`", "<", ">", "|", ";", "&", "\x00"))
 
 
-__all__ = ("is_low_risk_compound_git_inspection", "is_low_risk_git_inspection_segment")
+__all__ = (
+    "is_low_risk_compound_git_inspection",
+    "is_low_risk_git_inspection_segment",
+    "is_low_risk_standalone_git_routine",
+)
