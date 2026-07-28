@@ -231,7 +231,7 @@ def test_local_tool_trust_allows_variable_read_queries_and_invalidates_changed_b
     assert approval["allowed_targets"] == ["capability", "version"]
 
     with pytest.raises(ValueError, match="local_tool_approval_cannot_be_remembered"):
-        apply_approval_resolution(
+        _ = apply_approval_resolution(
             store=store,
             request_id=str(pending[0]["request_id"]),
             action="allow",
@@ -245,7 +245,7 @@ def test_local_tool_trust_allows_variable_read_queries_and_invalidates_changed_b
         )
 
     with pytest.raises(ValueError, match="mixed_temporary_grant_modes"):
-        apply_approval_resolution(
+        _ = apply_approval_resolution(
             store=store,
             request_id=str(pending[0]["request_id"]),
             action="allow",
