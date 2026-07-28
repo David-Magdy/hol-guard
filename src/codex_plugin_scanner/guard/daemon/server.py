@@ -325,6 +325,16 @@ _MAX_CONCURRENT_DAEMON_CONNECTIONS = 128
 _AUTH_AUDIT_COALESCE_SECONDS = 60.0
 _AUTH_AUDIT_KEY_LIMIT = 64
 _AUTH_AUDIT_SQLITE_TIMEOUT_SECONDS = 0.25
+_AuthAuditKey: TypeAlias = tuple[str, str, str | None, str | None, bool, bool, bool]
+
+
+class _AuthAuditWindow(TypedDict):
+    started_at: float
+    suppressed_count: int
+    pending: bool
+    persisted: bool
+
+
 _MAX_CONCURRENT_RUNTIME_HOOKS = 32
 _MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS = 24
 _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS = 3.0
@@ -508,7 +518,7 @@ class _GuardDaemonHttpServer(HTTPServer):
     request_executors_stopped: bool
     diagnostics: DaemonDiagnostics
     auth_audit_lock: threading.Lock
-    auth_audit_windows: dict[tuple[object, ...], tuple[float, int]]
+    auth_audit_windows: dict[_AuthAuditKey, _AuthAuditWindow]
 
     def handle_error(self, request: object, client_address: tuple[str, int]) -> None:
         """Suppress expected peer disconnects without hiding server defects."""
@@ -6105,34 +6115,62 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "has_dashboard_session": isinstance(self.headers.get("X-Guard-Dashboard-Session"), str),
             "has_guard_token": isinstance(self.headers.get("X-Guard-Token"), str),
         }
-        key = tuple(payload.values())
+        key: _AuthAuditKey = (
+            self.command,
+            cast(str, payload["path"]),
+            cast(str | None, payload["origin"]),
+            cast(str | None, payload["origin_header"]),
+            cast(bool, payload["has_authorization"]),
+            cast(bool, payload["has_dashboard_session"]),
+            cast(bool, payload["has_guard_token"]),
+        )
         daemon_server = self._daemon_server()
         now = time.monotonic()
         with daemon_server.auth_audit_lock:
             previous = daemon_server.auth_audit_windows.get(key)
-            if previous is not None and now - previous[0] < _AUTH_AUDIT_COALESCE_SECONDS:
-                daemon_server.auth_audit_windows[key] = (previous[0], previous[1] + 1)
-                return
-            if previous is not None and previous[1]:
-                payload["suppressed_count"] = previous[1]
+            reported_suppressed_count = 0
+            if previous is not None and now - previous["started_at"] < _AUTH_AUDIT_COALESCE_SECONDS:
+                if previous["pending"] or previous["persisted"]:
+                    previous["suppressed_count"] += 1
+                    return
+                reported_suppressed_count = previous["suppressed_count"]
+            elif previous is not None:
+                reported_suppressed_count = previous["suppressed_count"]
+            if reported_suppressed_count:
+                payload["suppressed_count"] = reported_suppressed_count
             if (
                 key not in daemon_server.auth_audit_windows
                 and len(daemon_server.auth_audit_windows) >= _AUTH_AUDIT_KEY_LIMIT
             ):
                 oldest = min(
-                    daemon_server.auth_audit_windows, key=lambda item: daemon_server.auth_audit_windows[item][0]
+                    daemon_server.auth_audit_windows,
+                    key=lambda item: daemon_server.auth_audit_windows[item]["started_at"],
                 )
                 _ = daemon_server.auth_audit_windows.pop(oldest)
-            daemon_server.auth_audit_windows[key] = (now, 0)
+            window: _AuthAuditWindow = {
+                "started_at": now,
+                "suppressed_count": reported_suppressed_count,
+                "pending": True,
+                "persisted": False,
+            }
+            daemon_server.auth_audit_windows[key] = window
         try:
             with sqlite_connect_timeout_override(_AUTH_AUDIT_SQLITE_TIMEOUT_SECONDS):
                 daemon_server.store.add_event("daemon.auth.unauthorized", payload, _now())
         except Exception:
             with daemon_server.auth_audit_lock:
                 current = daemon_server.auth_audit_windows.get(key)
-                if current is not None and current[0] == now:
-                    _ = daemon_server.auth_audit_windows.pop(key)
+                if current is window:
+                    window["pending"] = False
+                    window["suppressed_count"] += 1
             daemon_server.diagnostics.record_exception("auth_audit_persistence_failed")
+        else:
+            with daemon_server.auth_audit_lock:
+                current = daemon_server.auth_audit_windows.get(key)
+                if current is window:
+                    window["pending"] = False
+                    window["persisted"] = True
+                    window["suppressed_count"] -= reported_suppressed_count
 
     def _record_query_token_rejection(self) -> None:
         self._record_bounded_denial_event(
