@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from codex_plugin_scanner.guard.runtime import routine_setup_commands
+from codex_plugin_scanner.guard.runtime import git_execution_safety, routine_setup_commands
 
 
 def _git(repository: Path, *args: str) -> None:
@@ -53,7 +54,7 @@ def test_safe_git_worktree_add_requires_new_bounded_destination(
     monkeypatch.setattr(
         routine_setup_commands,
         "git_worktree_add_has_execution_free_config",
-        lambda _cwd, *, git_binary: git_binary == Path("/usr/bin/git"),
+        lambda _cwd, *, git_binary, ref: git_binary == Path("/usr/bin/git") and ref == "origin/release/2.2",
     )
     monkeypatch.setattr(routine_setup_commands, "_git_ref_exists", lambda *_args: True)
     monkeypatch.setattr(routine_setup_commands, "_git_branch_exists", lambda *_args: False)
@@ -84,6 +85,27 @@ def test_safe_git_worktree_add_rejects_checkout_hooks(
     assert not routine_setup_commands.git_worktree_add_has_execution_free_config(
         repository,
         git_binary=Path("/usr/bin/git"),
+    )
+
+
+def test_worktree_filter_check_is_scoped_to_selected_ref(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    git_binary_text = shutil.which("git")
+    assert git_binary_text is not None
+    git_binary = Path(git_binary_text).resolve()
+    assert not git_execution_safety._git_ref_uses_checkout_filter(
+        git_binary,
+        repository,
+        "HEAD",
+    )
+    (repository / ".gitattributes").write_text("*.txt filter=guard-test\n")
+    _git(repository, "add", ".gitattributes")
+    _git(repository, "commit", "-qm", "add filter")
+
+    assert git_execution_safety._git_ref_uses_checkout_filter(
+        git_binary,
+        repository,
+        "HEAD",
     )
 
 

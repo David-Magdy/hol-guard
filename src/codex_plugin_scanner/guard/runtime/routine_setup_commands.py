@@ -40,7 +40,11 @@ def is_safe_git_worktree_add(command_text: str, *, cwd: Path | None, home_dir: P
     if not _safe_worktree_parent(destination, home_dir=home_dir):
         return False
     git_binary = trusted_git_binary_for_cwd(execution_cwd)
-    if git_binary is None or not git_worktree_add_has_execution_free_config(execution_cwd, git_binary=git_binary):
+    if git_binary is None or not git_worktree_add_has_execution_free_config(
+        execution_cwd,
+        git_binary=git_binary,
+        ref=ref,
+    ):
         return False
     return _git_ref_exists(git_binary, execution_cwd, ref) and not _git_branch_exists(
         git_binary,
@@ -141,7 +145,7 @@ def _safe_worktree_parent(destination: Path, *, home_dir: Path) -> bool:
         allowed_roots = (Path("/tmp").resolve(strict=True), (home_dir / "CascadeProjects").resolve(strict=True))
     except (OSError, RuntimeError):
         return False
-    if parent.is_symlink() or not resolved_parent.is_dir():
+    if not resolved_parent.is_dir():
         return False
     return any(resolved_parent == root or root in resolved_parent.parents for root in allowed_roots)
 

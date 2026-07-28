@@ -292,6 +292,7 @@ def git_worktree_add_has_execution_free_config(
     cwd: Path,
     *,
     git_binary: Path | None = None,
+    ref: str = "HEAD",
 ) -> bool:
     """Reject worktree creation when checkout can invoke configured code."""
 
@@ -326,10 +327,17 @@ def git_worktree_add_has_execution_free_config(
     except (OSError, subprocess.SubprocessError):
         return False
     parsed_config = _parse_null_git_config(config.stdout) if config.returncode == 0 else None
-    if parsed_config is None or any(
-        key.startswith("filter.") and key.endswith((".clean", ".smudge", ".process"))
-        for key, values in parsed_config.items()
-        if any(value.strip() for value in values)
+    configured_filters = (
+        (
+            key.startswith("filter.") and key.endswith((".clean", ".smudge", ".process"))
+            for key, values in parsed_config.items()
+            if any(value.strip() for value in values)
+        )
+        if parsed_config is not None
+        else ()
+    )
+    if parsed_config is None or (
+        any(configured_filters) and _git_ref_uses_checkout_filter(resolved_git, repository_cwd, ref)
     ):
         return False
     if hook_paths.returncode != 0:
@@ -347,6 +355,37 @@ def git_worktree_add_has_execution_free_config(
         except OSError:
             return False
     return True
+
+
+def _git_ref_uses_checkout_filter(git_binary: Path, cwd: Path, ref: str) -> bool:
+    try:
+        files = subprocess.run(
+            [str(git_binary), "ls-tree", "-r", "--name-only", "-z", ref],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+        if files.returncode != 0:
+            return True
+        attributes = subprocess.run(
+            [str(git_binary), "check-attr", "-z", "--stdin", f"--source={ref}", "filter"],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            input=files.stdout,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if attributes.returncode != 0:
+        return True
+    fields = attributes.stdout.split(b"\0")
+    if fields and fields[-1] == b"":
+        fields.pop()
+    if len(fields) % 3 != 0:
+        return True
+    return any(value not in {b"unspecified", b"unset"} for value in fields[2::3])
 
 
 def _parse_null_git_config(output: str) -> dict[str, tuple[str, ...]] | None:
