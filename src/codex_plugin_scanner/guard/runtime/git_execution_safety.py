@@ -32,6 +32,13 @@ _GIT_FETCH_EXECUTION_ENV = frozenset(
         "GIT_ASKPASS",
         "GIT_EXEC_PATH",
         "GIT_PROXY_COMMAND",
+        "GIT_SSL_CAINFO",
+        "GIT_SSL_CAPATH",
+        "GIT_SSL_CERT",
+        "GIT_SSL_CIPHER_LIST",
+        "GIT_SSL_KEY",
+        "GIT_SSL_NO_VERIFY",
+        "GIT_SSL_VERSION",
         "GIT_SSH",
         "GIT_SSH_COMMAND",
         "SSH_ASKPASS",
@@ -301,7 +308,11 @@ def git_push_origin_has_execution_free_config(
     """Verify a configured-origin push cannot redirect execution or change branches."""
 
     resolved_git = git_binary or trusted_git_binary_for_cwd(cwd)
-    if resolved_git is None or not git_fetch_origin_has_execution_free_config(cwd, git_binary=resolved_git):
+    if (
+        resolved_git is None
+        or not _git_global_config_environment_is_stable()
+        or not git_fetch_origin_has_execution_free_config(cwd, git_binary=resolved_git)
+    ):
         return False
     try:
         repository_cwd = cwd.resolve()
@@ -337,16 +348,16 @@ def git_push_origin_has_execution_free_config(
             text=True,
             timeout=_GIT_PROBE_TIMEOUT_SECONDS,
         )
-        local_hooks_path = subprocess.run(
-            [str(resolved_git), "config", "--local", "--get-all", "core.hooksPath"],
+        local_config = subprocess.run(
+            [str(resolved_git), "config", "--local", "--null", "--list"],
             cwd=repository_cwd,
             check=False,
             capture_output=True,
             text=True,
             timeout=_GIT_PROBE_TIMEOUT_SECONDS,
         )
-        worktree_hooks_path = subprocess.run(
-            [str(resolved_git), "config", "--worktree", "--get-all", "core.hooksPath"],
+        worktree_config = subprocess.run(
+            [str(resolved_git), "config", "--worktree", "--null", "--list"],
             cwd=repository_cwd,
             check=False,
             capture_output=True,
@@ -356,18 +367,23 @@ def git_push_origin_has_execution_free_config(
     except (OSError, subprocess.SubprocessError):
         return False
     parsed_config = _parse_null_git_config(config.stdout) if config.returncode == 0 else None
+    parsed_local_config = _parse_optional_scoped_git_config(local_config)
+    parsed_worktree_config = _parse_optional_scoped_git_config(worktree_config)
     if (
         branch_check.returncode != 0
         or branch_check.stdout.strip() != branch
         or current_branch.returncode != 0
         or current_branch.stdout.strip() != branch
         or parsed_config is None
+        or parsed_local_config is None
+        or parsed_worktree_config is None
         or _git_push_config_routes_execution(parsed_config, branch=branch)
+        or _git_push_effective_config_weakens_transport(parsed_config)
+        or _git_push_scoped_config_routes_transport(parsed_local_config)
+        or _git_push_scoped_config_routes_transport(parsed_worktree_config)
         or hook_path.returncode != 0
-        or local_hooks_path.returncode not in {0, 1}
-        or bool(local_hooks_path.stdout.strip())
-        or worktree_hooks_path.returncode not in {0, 1}
-        or bool(worktree_hooks_path.stdout.strip())
+        or bool(parsed_local_config.get("core.hookspath"))
+        or bool(parsed_worktree_config.get("core.hookspath"))
         or len(parsed_config.get("remote.origin.url", ())) != 1
     ):
         return False
@@ -377,10 +393,14 @@ def git_push_origin_has_execution_free_config(
     try:
         if not candidate_hook.exists() or (os.name != "nt" and not os.access(candidate_hook, os.X_OK)):
             return True
+        if not parsed_config.get("core.hookspath") or candidate_hook.is_symlink():
+            return False
         resolved_hook = candidate_hook.resolve(strict=True)
     except OSError:
         return False
-    return _trusted_external_push_hook(resolved_hook, repository_cwd=repository_cwd)
+    if resolved_hook != candidate_hook.absolute():
+        return False
+    return _trusted_global_push_hook(resolved_hook, repository_cwd=repository_cwd)
 
 
 def git_worktree_add_has_execution_free_config(
@@ -501,6 +521,14 @@ def _parse_null_git_config(output: str) -> dict[str, tuple[str, ...]] | None:
     return {key: tuple(values) for key, values in parsed.items()}
 
 
+def _parse_optional_scoped_git_config(
+    completed: subprocess.CompletedProcess[str],
+) -> dict[str, tuple[str, ...]] | None:
+    if completed.returncode not in {0, 1}:
+        return None
+    return _parse_null_git_config(completed.stdout)
+
+
 def _git_fetch_config_routes_execution(config: dict[str, tuple[str, ...]]) -> bool:
     if config.get("remote.origin.uploadpack"):
         return True
@@ -553,9 +581,63 @@ def _git_push_config_routes_execution(config: dict[str, tuple[str, ...]], *, bra
     )
 
 
-def _trusted_external_push_hook(path: Path, *, repository_cwd: Path) -> bool:
-    """Accept a user-installed global hook while rejecting repository-controlled hooks."""
+def _git_push_scoped_config_routes_transport(config: dict[str, tuple[str, ...]]) -> bool:
+    return any(
+        key.startswith(("http.", "credential."))
+        or key
+        in {
+            "core.askpass",
+            "core.gitproxy",
+            "remote.origin.proxy",
+            "remote.origin.proxyauthmethod",
+        }
+        for key in config
+    )
 
+
+def _git_push_effective_config_weakens_transport(config: dict[str, tuple[str, ...]]) -> bool:
+    unsafe_suffixes = (
+        ".cookiefile",
+        ".extraheader",
+        ".followredirects",
+        ".pinnedpubkey",
+        ".proxy",
+        ".proxyauthmethod",
+        ".schannelcheckrevoke",
+        ".schannelusesslcainfo",
+        ".sslbackend",
+        ".sslcainfo",
+        ".sslcapath",
+        ".sslcert",
+        ".sslcipherlist",
+        ".sslkey",
+        ".sslverify",
+        ".sslversion",
+    )
+    return any(key.startswith("http.") and key.endswith(unsafe_suffixes) for key in config)
+
+
+def _git_global_config_environment_is_stable() -> bool:
+    if os.name == "nt" or not hasattr(os, "getuid"):
+        return False
+    try:
+        import pwd
+
+        account_home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve(strict=True)
+        configured_home = Path(os.environ.get("HOME", "")).resolve(strict=True)
+        configured_xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+        return configured_home == account_home and (
+            not configured_xdg or Path(configured_xdg).resolve() == account_home / ".config"
+        )
+    except (KeyError, OSError, RuntimeError):
+        return False
+
+
+def _trusted_global_push_hook(path: Path, *, repository_cwd: Path) -> bool:
+    """Accept a stable global hook while rejecting repository-controlled hooks."""
+
+    if os.name == "nt":
+        return False
     try:
         _ = path.relative_to(repository_cwd)
         return False

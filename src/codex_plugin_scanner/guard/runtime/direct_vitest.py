@@ -1,4 +1,4 @@
-"""Bounded execution-context recovery for verified local Vitest runs."""
+"""Bounded execution-context recovery for verified local JavaScript tools."""
 
 from __future__ import annotations
 
@@ -92,6 +92,128 @@ def direct_local_vitest_execution_context(
     ):
         return None
     return context
+
+
+def direct_local_typescript_execution_context(
+    command_text: str,
+    *,
+    cwd: Path | None,
+    home_dir: Path,
+) -> ShellExecutionContext | None:
+    """Recover a locked local TypeScript no-emit validation pipeline."""
+
+    initial_root = cwd or home_dir
+    initial_context = model_shell_execution_context(
+        command_text,
+        cwd=initial_root,
+        workspace_root=initial_root,
+        home_dir=home_dir,
+    )
+    workspace = _literal_leading_cd_target(initial_context, initial_root=initial_root, home_dir=home_dir)
+    if workspace is None:
+        return None
+    context = model_shell_execution_context(
+        command_text,
+        cwd=workspace,
+        workspace_root=workspace,
+        home_dir=home_dir,
+    )
+    if not context.complete or len(context.segments) != 5:
+        return None
+    directory, compiler, grep, count, marker = context.segments
+    if (
+        directory.directory_operation != "cd"
+        or directory.control_before
+        or compiler.control_before != ("&&",)
+        or compiler.effective_cwd != workspace
+        or grep.control_before != ("|",)
+        or count.control_before != ("|",)
+        or marker.control_before != (";",)
+    ):
+        return None
+    compiler_tokens = list(compiler.tokens)
+    if compiler_tokens[-1:] != ["2>&1"]:
+        return None
+    _ = compiler_tokens.pop()
+    if (
+        len(compiler_tokens) != 5
+        or not _safe_node_heap_assignment(compiler_tokens[0])
+        or compiler_tokens[1:] != ["bun", "--smol", "./node_modules/typescript/bin/tsc", "--noEmit"]
+        or not _trusted_path_command("bun", cwd=workspace, home_dir=home_dir)
+        or _bun_runtime_config_exists(workspace=workspace, home_dir=home_dir)
+        or not _workspace_typescript_is_bound(workspace)
+    ):
+        return None
+    if (
+        grep.tokens != ("grep", "error TS")
+        or count.tokens != ("wc", "-l")
+        or not _trusted_path_command("grep", cwd=workspace, home_dir=home_dir)
+        or not _trusted_path_command("wc", cwd=workspace, home_dir=home_dir)
+    ):
+        return None
+    if marker.tokens != ("echo", "MY_TSC_ERRORS_COUNT_DONE"):
+        return None
+    return context
+
+
+def _safe_node_heap_assignment(token: str) -> bool:
+    match = re.fullmatch(r"NODE_OPTIONS=--max-old-space-size=([1-9][0-9]{2,4})", token)
+    return match is not None and 256 <= int(match.group(1)) <= 32768
+
+
+def _bun_runtime_config_exists(*, workspace: Path, home_dir: Path) -> bool:
+    """Reject implicit Bun config that can preload executable workspace code."""
+
+    if os.environ.get("BUN_OPTIONS", "").strip():
+        return True
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    candidates = [workspace / "bunfig.toml", home_dir / ".bunfig.toml"]
+    if xdg_config_home:
+        candidates.append(Path(xdg_config_home) / ".bunfig.toml")
+    return any(candidate.exists() for candidate in candidates)
+
+
+def _workspace_typescript_is_bound(workspace: Path) -> bool:
+    package_dir = workspace / "node_modules" / "typescript"
+    compiler = package_dir / "bin" / "tsc"
+    package = _read_package_json(package_dir / "package.json")
+    if package is None or package.get("name") != "typescript":
+        return False
+    installed_version = package.get("version")
+    package_bin = package.get("bin")
+    if (
+        not isinstance(installed_version, str)
+        or not isinstance(package_bin, Mapping)
+        or cast(Mapping[object, object], package_bin).get("tsc") not in {"bin/tsc", "./bin/tsc"}
+    ):
+        return False
+    try:
+        resolved_compiler = compiler.resolve(strict=True)
+        _ = resolved_compiler.relative_to(workspace.resolve(strict=True))
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if compiler.is_symlink() or resolved_compiler != compiler.absolute() or not resolved_compiler.is_file():
+        return False
+    declared_version = _declared_dependency_version(workspace, "typescript")
+    lockfiles = [workspace / name for name in _LOCKFILE_NAMES if (workspace / name).exists()]
+    if declared_version is None or len(lockfiles) != 1:
+        return False
+    locked_version = _locked_package_version(lockfiles[0], "typescript")
+    return locked_version == installed_version and _semver_spec_matches(declared_version, installed_version)
+
+
+def _declared_dependency_version(workspace: Path, package_name: str) -> str | None:
+    package = _read_package_json(workspace / "package.json")
+    if package is None:
+        return None
+    for section in _DEPENDENCY_SECTIONS:
+        dependencies = package.get(section)
+        if not isinstance(dependencies, Mapping):
+            continue
+        declared = cast(Mapping[object, object], dependencies).get(package_name)
+        if isinstance(declared, str):
+            return declared
+    return None
 
 
 def _vitest_runner_invocation(
@@ -230,6 +352,10 @@ def _read_package_json(path: Path) -> dict[str, object] | None:
 
 
 def _locked_vitest_version(path: Path) -> str | None:
+    return _locked_package_version(path, "vitest")
+
+
+def _locked_package_version(path: Path, package_name: str) -> str | None:
     try:
         if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_METADATA_BYTES:
             return None
@@ -247,11 +373,15 @@ def _locked_vitest_version(path: Path) -> str | None:
     if not isinstance(packages, dict):
         return None
     typed_packages = cast(dict[object, object], packages)
-    entry = typed_packages.get("vitest") if path.name == "bun.lock" else typed_packages.get("node_modules/vitest")
+    entry = (
+        typed_packages.get(package_name)
+        if path.name == "bun.lock"
+        else typed_packages.get(f"node_modules/{package_name}")
+    )
     if path.name == "bun.lock":
         if not isinstance(entry, list) or not entry or not isinstance(entry[0], str):
             return None
-        prefix = "vitest@"
+        prefix = f"{package_name}@"
         return entry[0][len(prefix) :] if entry[0].startswith(prefix) else None
     if not isinstance(entry, dict):
         return None

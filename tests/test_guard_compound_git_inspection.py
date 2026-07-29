@@ -8,6 +8,7 @@ import pytest
 
 from codex_plugin_scanner.guard.cli.commands_support_runtime_artifacts import _hook_runtime_artifact
 from codex_plugin_scanner.guard.models import GuardArtifact
+from codex_plugin_scanner.guard.runtime import git_execution_safety
 
 
 def _artifact(command: str, *, home: Path) -> GuardArtifact | None:
@@ -105,6 +106,11 @@ def test_compound_push_keeps_widened_or_mismatched_operations_guarded(
         ("push.recurseSubmodules", "on-demand"),
         ("push.followTags", "true"),
         ("hook.guard.command", "./payload"),
+        ("http.proxy", "https://example.invalid"),
+        ("http.sslVerify", "false"),
+        ("http.sslVersion", "sslv3"),
+        ("http.sslCipherList", "insecure"),
+        ("credential.helper", "!payload"),
     ),
 )
 def test_compound_push_rejects_repository_execution_or_routing_config(
@@ -143,6 +149,27 @@ def test_compound_push_rejects_executable_pre_push_hook(tmp_path: Path) -> None:
     hook.parent.mkdir()
     _ = hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     _ = hook.chmod(hook.stat().st_mode | 0o100)
+
+    command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
+
+    assert _artifact(command, home=home) is not None
+
+
+def test_compound_push_rejects_symlinked_repository_pre_push_hook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    workspace.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(git_execution_safety, "_git_global_config_environment_is_stable", lambda: True)
+    _ = (home / ".gitconfig").write_text("[core]\n\thooksPath = .git/hooks\n", encoding="utf-8")
+    _init_push_repository(workspace)
+    payload = home / "payload"
+    _ = payload.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _ = payload.chmod(0o700)
+    (workspace / ".git" / "hooks" / "pre-push").symlink_to(payload)
 
     command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
 
@@ -198,6 +225,31 @@ def test_compound_push_rejects_worktree_configured_external_hook(tmp_path: Path)
     assert _artifact(command, home=home) is not None
 
 
+def test_compound_push_rejects_redirected_global_pre_push_hook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    hooks = home / "global-hooks"
+    workspace.mkdir(parents=True)
+    hooks.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    _ = (home / ".gitconfig").write_text(
+        f"[core]\n\thooksPath = {hooks}\n",
+        encoding="utf-8",
+    )
+    hook = hooks / "pre-push"
+    _ = hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _ = hook.chmod(hook.stat().st_mode | 0o100)
+    _init_push_repository(workspace)
+
+    command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
+
+    assert _artifact(command, home=home) is not None
+
+
 def test_compound_push_rejects_multiple_origin_urls(tmp_path: Path) -> None:
     home = tmp_path / "home"
     workspace = home / "projects" / "hol-guard-partners-fix"
@@ -223,7 +275,19 @@ def test_compound_push_rejects_multiple_origin_urls(tmp_path: Path) -> None:
     assert _artifact(command, home=home) is not None
 
 
-@pytest.mark.parametrize("variable", ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_NAMESPACE"))
+@pytest.mark.parametrize(
+    "variable",
+    (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_SSL_NO_VERIFY",
+        "GIT_SSL_CAINFO",
+        "GIT_SSL_CAPATH",
+        "GIT_SSL_VERSION",
+    ),
+)
 def test_compound_push_rejects_repository_routing_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

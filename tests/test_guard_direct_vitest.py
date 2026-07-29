@@ -1,4 +1,4 @@
-"""Regression coverage for verified direct local Vitest execution."""
+"""Regression coverage for verified direct local JavaScript tool execution."""
 
 from __future__ import annotations
 
@@ -81,7 +81,208 @@ def _command(workspace: Path, runner: Path, *, suffix: str = "--no-coverage 2>&1
 
 def _trust_fixture_command(command: str, *, cwd: Path, home_dir: Path) -> bool:
     del cwd, home_dir
-    return command in {"head", "node", "npx", "tail"}
+    return command in {"bun", "grep", "head", "node", "npx", "tail", "wc"}
+
+
+def _typescript_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+    home = tmp_path / "home"
+    caller = home / "caller"
+    workspace = home / "subject"
+    caller.mkdir(parents=True)
+    package_dir = workspace / "node_modules" / "typescript"
+    compiler = package_dir / "bin" / "tsc"
+    compiler.parent.mkdir(parents=True)
+    _ = compiler.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    _ = (package_dir / "package.json").write_text(
+        json.dumps({"name": "typescript", "version": "5.9.3", "bin": {"tsc": "./bin/tsc"}}),
+        encoding="utf-8",
+    )
+    _ = (workspace / "package.json").write_text(
+        json.dumps({"name": "fixture", "devDependencies": {"typescript": "^5.9.3"}}),
+        encoding="utf-8",
+    )
+    _ = (workspace / "bun.lock").write_text(
+        json.dumps({"packages": {"typescript": ["typescript@5.9.3"]}}),
+        encoding="utf-8",
+    )
+    return home, caller, workspace
+
+
+def _typescript_command(workspace: Path) -> str:
+    return (
+        f'cd {workspace} && NODE_OPTIONS="--max-old-space-size=8192" '
+        "bun --smol ./node_modules/typescript/bin/tsc --noEmit 2>&1 "
+        "| grep 'error TS' | wc -l; echo \"MY_TSC_ERRORS_COUNT_DONE\""
+    )
+
+
+def test_verified_direct_typescript_count_is_explicitly_benign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, caller, workspace = _typescript_fixture(tmp_path)
+    command = _typescript_command(workspace)
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert (
+        extract_sensitive_tool_action_request(
+            "bash",
+            {"command": command},
+            cwd=caller,
+            home_dir=home,
+        )
+        is None
+    )
+    assert is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": command},
+        cwd=caller,
+        home_dir=home,
+    )
+    assert (
+        _hook_runtime_artifact(
+            harness="pi",
+            payload={
+                "hook_event_name": "PreToolUse",
+                "tool_name": "bash",
+                "tool_input": {"command": command},
+            },
+            action_envelope=None,
+            home_dir=home,
+            guard_home=home / ".guard",
+            workspace=caller,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    (
+        'NODE_OPTIONS="--require=payload"',
+        'NODE_OPTIONS="--max-old-space-size=99999"',
+        "bun ./node_modules/typescript/bin/tsc --noEmit",
+        "bun --smol ./node_modules/typescript/bin/tsc",
+        "bun --smol ./node_modules/typescript/bin/tsc --noEmit --outDir output",
+        "grep secret",
+        "wc -c",
+        'echo "DONE"; payload',
+    ),
+)
+def test_direct_typescript_count_rejects_widened_segments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement: str,
+) -> None:
+    home, caller, workspace = _typescript_fixture(tmp_path)
+    command = _typescript_command(workspace)
+    original = {
+        'NODE_OPTIONS="--require=payload"': 'NODE_OPTIONS="--max-old-space-size=8192"',
+        'NODE_OPTIONS="--max-old-space-size=99999"': 'NODE_OPTIONS="--max-old-space-size=8192"',
+        "bun ./node_modules/typescript/bin/tsc --noEmit": "bun --smol ./node_modules/typescript/bin/tsc --noEmit",
+        "bun --smol ./node_modules/typescript/bin/tsc": "bun --smol ./node_modules/typescript/bin/tsc --noEmit",
+        "bun --smol ./node_modules/typescript/bin/tsc --noEmit --outDir output": (
+            "bun --smol ./node_modules/typescript/bin/tsc --noEmit"
+        ),
+        "grep secret": "grep 'error TS'",
+        "wc -c": "wc -l",
+        'echo "DONE"; payload': 'echo "MY_TSC_ERRORS_COUNT_DONE"',
+    }[replacement]
+    command = command.replace(original, replacement)
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert not is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": command},
+        cwd=caller,
+        home_dir=home,
+    )
+
+
+def test_direct_typescript_count_requires_locked_installed_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, caller, workspace = _typescript_fixture(tmp_path)
+    _ = (workspace / "bun.lock").write_text(
+        json.dumps({"packages": {"typescript": ["typescript@5.8.0"]}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert not is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": _typescript_command(workspace)},
+        cwd=caller,
+        home_dir=home,
+    )
+
+
+@pytest.mark.parametrize("config_location", ("workspace", "home", "xdg"))
+def test_direct_typescript_count_rejects_bun_preload_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    config_location: str,
+) -> None:
+    home, caller, workspace = _typescript_fixture(tmp_path)
+    config_root = {
+        "workspace": workspace,
+        "home": home,
+        "xdg": tmp_path / "xdg",
+    }[config_location]
+    config_root.mkdir(exist_ok=True)
+    if config_location == "xdg":
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
+    _ = (config_root / ("bunfig.toml" if config_location == "workspace" else ".bunfig.toml")).write_text(
+        'preload = ["./payload.ts"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert not is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": _typescript_command(workspace)},
+        cwd=caller,
+        home_dir=home,
+    )
+
+
+def test_direct_typescript_count_rejects_inherited_bun_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, caller, workspace = _typescript_fixture(tmp_path)
+    monkeypatch.setenv("BUN_OPTIONS", f"--preload {tmp_path / 'payload.ts'}")
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert not is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": _typescript_command(workspace)},
+        cwd=caller,
+        home_dir=home,
+    )
+
+
+@pytest.mark.parametrize("untrusted_command", ("bun", "grep", "wc"))
+def test_direct_typescript_count_rejects_untrusted_path_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    untrusted_command: str,
+) -> None:
+    home, caller, workspace = _typescript_fixture(tmp_path)
+
+    def trust_other_commands(command: str, *, cwd: Path, home_dir: Path) -> bool:
+        del cwd, home_dir
+        return command != untrusted_command
+
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", trust_other_commands)
+
+    assert not is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": _typescript_command(workspace)},
+        cwd=caller,
+        home_dir=home,
+    )
 
 
 def test_verified_direct_vitest_run_is_explicitly_benign(

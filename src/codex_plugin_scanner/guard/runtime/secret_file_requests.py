@@ -34,7 +34,7 @@ from .compound_git_inspection import (
     is_low_risk_standalone_git_routine,
 )
 from .data_flow import extract_heredocs
-from .direct_vitest import direct_local_vitest_execution_context
+from .direct_vitest import direct_local_typescript_execution_context, direct_local_vitest_execution_context
 from .env_wrapper import parse_env_wrapper
 from .extension_control_contract import ExtensionControlLayer
 from .false_positive_rules import (
@@ -1271,14 +1271,17 @@ def is_explicitly_benign_tool_action_request(
         ):
             found_benign_candidate = True
             continue
-        if (
-            home_dir is not None
-            and direct_local_vitest_execution_context(
+        if home_dir is not None and (
+            direct_local_vitest_execution_context(
                 stripped_command,
                 cwd=cwd,
                 home_dir=home_dir,
             )
-            is not None
+            or direct_local_typescript_execution_context(
+                stripped_command,
+                cwd=cwd,
+                home_dir=home_dir,
+            )
         ):
             found_benign_candidate = True
             continue
@@ -1997,6 +2000,11 @@ def _destructive_shell_tool_action_request(
                 cwd=cwd,
                 home_dir=home_dir,
             )
+            or direct_local_typescript_execution_context(
+                detection_command_text,
+                cwd=cwd,
+                home_dir=home_dir,
+            )
             or literal_cd_execution_context(
                 detection_command_text,
                 home_dir=home_dir,
@@ -2005,6 +2013,11 @@ def _destructive_shell_tool_action_request(
         )
         raw_developer_execution_context = (
             direct_local_vitest_execution_context(
+                raw_command_text,
+                cwd=cwd,
+                home_dir=home_dir,
+            )
+            or direct_local_typescript_execution_context(
                 raw_command_text,
                 cwd=cwd,
                 home_dir=home_dir,
@@ -2893,6 +2906,13 @@ def _low_risk_compound_developer_execution_context(
         return None
     if is_low_risk_compound_git_inspection(context):
         return context
+    typescript_context = direct_local_typescript_execution_context(
+        command_text,
+        cwd=cwd,
+        home_dir=home_dir,
+    )
+    if typescript_context is not None:
+        return typescript_context
     github_assessment = classify_github_shell_capabilities(command_text, home_dir=home_dir)
     github_is_low_risk = github_assessment is not None and not github_capability_requires_confirmation(
         github_assessment
