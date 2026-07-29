@@ -75,7 +75,7 @@ def _existing_shim_harnesses(shim_dir: Path) -> list[str]:
             continue
         if not entry.is_file():
             continue
-        results.append(entry.name[len("guard-"):])
+        results.append(entry.name[len("guard-") :])
     return results
 
 
@@ -108,9 +108,7 @@ def refresh_stale_harness_shims(
     if not launcher_names:
         return ShimRefreshResult(refreshed=(), unchanged=(), errors=())
     launcher_map = _launcher_map()
-    installs_by_harness = {
-        str(install.get("harness")): install for install in (managed_installs or [])
-    }
+    installs_by_harness = {str(install.get("harness")): install for install in (managed_installs or [])}
     # Imported lazily so daemon startup cost stays on this path.
     from .shims import install_guard_shim
 
