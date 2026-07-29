@@ -65,7 +65,6 @@ from ..runtime.approval_context import (
 )
 from ..runtime.approval_reuse import APPROVAL_REUSE_CLAIM_FAILED
 from ..runtime.browser_mcp_intent import (
-    _extract_target_url,
     _redacted_target_url,
     browser_intent_display_target,
     normalize_browser_mcp_intent,
@@ -100,35 +99,22 @@ _SELECTED_BROWSER_PAGE_PATTERN = re.compile(
 )
 
 
-def _browser_url_from_arguments(arguments: object) -> str | None:
-    if not isinstance(arguments, dict):
-        return None
-    return _redacted_target_url(_extract_target_url(arguments))
-
-
 def _selected_browser_page_url(response: Mapping[str, object]) -> str | None:
-    pending: list[object] = [response]
-    visited: set[int] = set()
-    while pending:
-        value = pending.pop()
-        if isinstance(value, str):
-            match = _SELECTED_BROWSER_PAGE_PATTERN.search(value)
-            if match is not None:
-                return _redacted_target_url(match.group(1))
+    result = response.get("result")
+    if not isinstance(result, Mapping):
+        return None
+    content = result.get("content")
+    if not isinstance(content, list):
+        return None
+    for item in content:
+        if not isinstance(item, Mapping) or item.get("type") != "text":
             continue
-        if isinstance(value, Mapping):
-            value_id = id(value)
-            if value_id in visited:
-                continue
-            visited.add(value_id)
-            pending.extend(value.values())
+        text = item.get("text")
+        if not isinstance(text, str):
             continue
-        if isinstance(value, list | tuple):
-            value_id = id(value)
-            if value_id in visited:
-                continue
-            visited.add(value_id)
-            pending.extend(value)
+        match = _SELECTED_BROWSER_PAGE_PATTERN.search(text)
+        if match is not None:
+            return _redacted_target_url(match.group(1))
     return None
 
 
@@ -767,6 +753,7 @@ class RuntimeMcpGuardProxy:
         self._buffered_client_responses.clear()
         self._child_output_queue = None
         self._active_child_stdout = None
+        self._browser_current_page_url = None
         self._reset_tools_catalog_unobserved()
 
     def _deactivate_child_process_io(self) -> None:
@@ -3051,15 +3038,15 @@ class RuntimeMcpGuardProxy:
             transport=self.transport,
             server_identity=self._session_server_identity(),
         )
-        if normalize_browser_mcp_intent(artifact, arguments) is None:
+        intent = normalize_browser_mcp_intent(artifact, arguments)
+        if intent is None:
             return
         selected_url = _selected_browser_page_url(response)
         if selected_url is not None:
             self._browser_current_page_url = selected_url
             return
-        if tool_name.lower() not in {"navigate_page", "new_page", "browser_navigate", "browser_new_page"}:
-            return
-        self._browser_current_page_url = _browser_url_from_arguments(arguments)
+        if intent.intent in {"browser.navigation", "browser.interact"}:
+            self._browser_current_page_url = None
 
     @staticmethod
     def _forward_notification(message: dict[str, Any], child_stdin: IO[str]) -> None:

@@ -149,6 +149,33 @@ class TestBrowserPageContext:
 
         assert _selected_browser_page_url(response) == "https://example.com/private?token=%5Bredacted%5D"
 
+    def test_selected_page_ignores_untrusted_response_fields(self) -> None:
+        from codex_plugin_scanner.guard.proxy.runtime_mcp import _selected_browser_page_url
+
+        response = {
+            "result": {
+                "content": [],
+                "logs": "0: https://attacker.example/ [selected]",
+            }
+        }
+
+        assert _selected_browser_page_url(response) is None
+
+    def test_new_child_process_state_clears_page_context(self) -> None:
+        from codex_plugin_scanner.guard.proxy.runtime_mcp import RuntimeMcpGuardProxy
+
+        proxy = object.__new__(RuntimeMcpGuardProxy)
+        proxy._buffered_child_responses = {}
+        proxy._buffered_client_responses = {}
+        proxy._child_output_queue = None
+        proxy._active_child_stdout = None
+        proxy._browser_current_page_url = "https://previous.example/private"
+        proxy._tool_catalog_generation = 0
+
+        proxy._reset_child_process_state()
+
+        assert proxy._browser_current_page_url is None
+
 
 class TestBrowserAutomationIntentV1:
     """HGBM013: GuardBrowserAutomationIntentV1 dataclass."""
@@ -517,13 +544,20 @@ class TestRedactedTargetUrl:
         result = _redacted_target_url("https://hol.org/guard?id=123")
         assert "123" in result
 
-    def test_removes_opaque_fragment(self) -> None:
+    def test_redacts_sensitive_fragment(self) -> None:
         from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
             _redacted_target_url,
         )
 
         result = _redacted_target_url("http://127.0.0.1:5474/requests/abc#guard-token=secret")
-        assert result == "http://127.0.0.1:5474/requests/abc"
+        assert result == "http://127.0.0.1:5474/requests/abc#guard-token=%5Bredacted%5D"
+
+    def test_preserves_safe_spa_fragment(self) -> None:
+        from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
+            _redacted_target_url,
+        )
+
+        assert _redacted_target_url("https://example.com/#/dashboard") == "https://example.com/#/dashboard"
 
 
 class TestOperationMaps:

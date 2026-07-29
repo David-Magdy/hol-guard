@@ -324,7 +324,7 @@ _SENSITIVE_STORAGE_PATTERNS: tuple[str, ...] = (
 _SENSITIVE_AUTH_PATTERNS: tuple[str, ...] = ("auth_header", "authorization", "auth_token", "authtoken")
 _SENSITIVE_CDP_PATTERNS: tuple[str, ...] = ("cdp", "chrome_devtools_protocol", "raw_cdp")
 _SENSITIVE_SCRIPT_EVAL_PATTERNS: tuple[str, ...] = ("eval", "script", "javascript", "expression")
-_SENSITIVE_UPLOAD_PATTERNS: tuple[str, ...] = ("upload", "file_input")
+_SENSITIVE_UPLOAD_PATTERNS: tuple[str, ...] = ("upload", "file_input", "file_path", "filepath")
 _SENSITIVE_DOWNLOAD_PATTERNS: tuple[str, ...] = ("download", "save_path", "savepath", "download_path", "downloadpath")
 _SENSITIVE_CLIPBOARD_PATTERNS: tuple[str, ...] = ("clipboard",)
 _SENSITIVE_PASSWORD_PATTERNS: tuple[str, ...] = (
@@ -348,18 +348,18 @@ _URL_ARGUMENT_KEYS: tuple[str, ...] = ("url", "href", "target", "uri", "pageUrl"
 _REDACT_QUERY_KEYS: frozenset[str] = frozenset(
     {
         "token",
+        "guardtoken",
         "key",
         "secret",
         "session",
         "code",
-        "access_token",
-        "refresh_token",
+        "accesstoken",
+        "refreshtoken",
         "auth",
         "authorization",
         "password",
         "passwd",
         "credential",
-        "api_key",
         "apikey",
     }
 )
@@ -688,7 +688,7 @@ def _normalize_path_prefix(url: str | None) -> str | None:
 
 
 def _redacted_target_url(url: str | None) -> str | None:
-    """Redact sensitive query values and remove opaque URL fragments."""
+    """Redact sensitive URL values while preserving safe SPA routes."""
     if url is None:
         return None
     try:
@@ -696,22 +696,30 @@ def _redacted_target_url(url: str | None) -> str | None:
     except (ValueError, TypeError):
         return url
 
-    if not parsed.query:
-        return urlunparse(parsed._replace(fragment=""))
-
-    # Parse query params and redact sensitive ones
     from urllib.parse import parse_qsl, urlencode
 
     pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    redacted_pairs: list[tuple[str, str]] = []
-    for key, value in pairs:
-        if _normalize_query_key(key) in _REDACT_QUERY_KEYS:
-            redacted_pairs.append((key, "[redacted]"))
-        else:
-            redacted_pairs.append((key, value))
-
+    redacted_pairs = _redacted_url_pairs(pairs)
     redacted_query = urlencode(redacted_pairs)
-    return urlunparse(parsed._replace(query=redacted_query, fragment=""))
+    redacted_fragment = _redacted_url_fragment(parsed.fragment)
+    return urlunparse(parsed._replace(query=redacted_query, fragment=redacted_fragment))
+
+
+def _redacted_url_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    return [(key, "[redacted]" if _normalize_query_key(key) in _REDACT_QUERY_KEYS else value) for key, value in pairs]
+
+
+def _redacted_url_fragment(fragment: str) -> str:
+    if not fragment:
+        return ""
+    if fragment.startswith(("/", "!/")):
+        return fragment
+    if "=" not in fragment:
+        return ""
+
+    from urllib.parse import parse_qsl, urlencode
+
+    return urlencode(_redacted_url_pairs(parse_qsl(fragment, keep_blank_values=True)))
 
 
 def _normalize_query_key(key: str) -> str:
