@@ -328,7 +328,7 @@ def test_direct_typescript_count_rejects_bun_auto_install_config(
     )
 
 
-@pytest.mark.parametrize("config_location", ("workspace", "home", "xdg"))
+@pytest.mark.parametrize("config_location", ("workspace", "ancestor", "home", "xdg"))
 def test_direct_typescript_count_rejects_bun_preload_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -338,16 +338,44 @@ def test_direct_typescript_count_rejects_bun_preload_config(
     _trust_typescript_fixture(workspace, monkeypatch)
     config_root = {
         "workspace": workspace,
+        "ancestor": workspace.parent,
         "home": home,
         "xdg": tmp_path / "xdg",
     }[config_location]
     config_root.mkdir(exist_ok=True)
     if config_location == "xdg":
         monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
-    _ = (config_root / ("bunfig.toml" if config_location == "workspace" else ".bunfig.toml")).write_text(
+    config_name = "bunfig.toml" if config_location in {"workspace", "ancestor"} else ".bunfig.toml"
+    _ = (config_root / config_name).write_text(
         'preload = ["./payload.ts"]\n',
         encoding="utf-8",
     )
+    monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
+
+    assert not is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": _typescript_command(workspace)},
+        cwd=caller,
+        home_dir=home,
+    )
+
+
+@pytest.mark.parametrize("lock_kind", ("symlink", "oversized"))
+def test_direct_typescript_count_rejects_unbounded_or_indirect_bun_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lock_kind: str,
+) -> None:
+    home, caller, workspace = _typescript_fixture(tmp_path)
+    _trust_typescript_fixture(workspace, monkeypatch)
+    lockfile = workspace / "bun.lock"
+    if lock_kind == "symlink":
+        target = workspace / "indirect-bun.lock"
+        _ = target.write_bytes(lockfile.read_bytes())
+        lockfile.unlink()
+        _ = lockfile.symlink_to(target)
+    else:
+        monkeypatch.setattr(direct_vitest, "_MAX_METADATA_BYTES", lockfile.stat().st_size - 1)
     monkeypatch.setattr(direct_vitest, "_trusted_path_command", _trust_fixture_command)
 
     assert not is_explicitly_benign_tool_action_request(

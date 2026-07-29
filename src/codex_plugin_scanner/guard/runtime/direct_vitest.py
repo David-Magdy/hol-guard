@@ -187,9 +187,10 @@ def _bun_runtime_config_exists(*, workspace: Path, home_dir: Path) -> bool:
     if os.environ.get("BUN_OPTIONS", "").strip():
         return True
     xdg_config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
-    workspace_config = workspace / "bunfig.toml"
-    if workspace_config.exists() and not _bunfig_is_install_only(workspace_config):
-        return True
+    for directory in (workspace, *workspace.parents):
+        candidate = directory / "bunfig.toml"
+        if candidate.exists() and not _bunfig_is_install_only(candidate):
+            return True
     candidates = [home_dir / ".bunfig.toml"]
     if xdg_config_home:
         candidates.append(Path(xdg_config_home) / ".bunfig.toml")
@@ -266,6 +267,8 @@ def _workspace_typescript_is_bound(workspace: Path) -> bool:
 
 def _locked_bun_package_identity(path: Path, package_name: str) -> tuple[str, str] | None:
     try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_METADATA_BYTES:
+            return None
         payload = loads_jsonc(path.read_text(encoding="utf-8"))
         packages = cast(Mapping[object, object], payload).get("packages") if isinstance(payload, Mapping) else None
         raw_entry = cast(Mapping[object, object], packages).get(package_name) if isinstance(packages, Mapping) else None
