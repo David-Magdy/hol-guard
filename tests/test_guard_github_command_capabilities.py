@@ -8,7 +8,9 @@ import pytest
 
 from codex_plugin_scanner.guard.runtime.github_command_capabilities import classify_github_cli
 from codex_plugin_scanner.guard.runtime.github_pr_body_file import static_markdown_pr_edit_body_file_operand
-from codex_plugin_scanner.guard.runtime.secret_file_requests import extract_sensitive_tool_action_request
+from codex_plugin_scanner.guard.runtime.secret_file_requests import (
+    extract_sensitive_tool_action_request,
+)
 
 
 def _text(*parts: str) -> str:
@@ -446,6 +448,41 @@ def test_guard_keeps_github_read_with_stderr_discard_prompt_free(tmp_path: Path)
     match = extract_sensitive_tool_action_request("Bash", {"command": command}, cwd=tmp_path)
 
     assert match is None
+
+
+def test_guard_keeps_nested_same_pr_check_run_reads_prompt_free(tmp_path: Path) -> None:
+    command = (
+        "gh pr view 1999 --json commits --jq '.commits[-1].oid'; "
+        'gh api "repos/hashgraph-online/hol-guard/commits/'
+        '$(gh pr view 1999 --json headRefOid --jq .headRefOid)/check-runs?per_page=50" '
+        "--jq '.check_runs[] | \"\\(.name): \\(.status)/\\(.conclusion)\"' "
+        "2>&1 | sort | uniq -c | sort -rn | head -8"
+    )
+
+    match = extract_sensitive_tool_action_request("Bash", {"command": command}, cwd=tmp_path)
+
+    assert match is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        ('gh api "repos/hashgraph-online/hol-guard/commits/$(gh pr merge 1999 --admin)/check-runs?per_page=50"'),
+        (
+            'gh api "repos/hashgraph-online/hol-guard/commits/'
+            '$(gh pr view 1999 --json headRefOid --jq .headRefOid)/check-runs?per_page=50" '
+            "--method DELETE"
+        ),
+        ('gh api "repos/hashgraph-online/hol-guard/commits/$(cat .env)/check-runs?per_page=50"'),
+    ),
+)
+def test_guard_keeps_unsafe_dynamic_check_run_requests_reviewable(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    match = extract_sensitive_tool_action_request("Bash", {"command": command}, cwd=tmp_path)
+
+    assert match is not None
 
 
 def test_guard_keeps_github_read_output_write_reviewable(tmp_path: Path) -> None:

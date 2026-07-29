@@ -3116,6 +3116,10 @@ def _github_pipeline_companion_is_read_only(
     args = [token for token in segment[command_index + 1 :] if token not in {"2>&1", "1>&2"}]
     if command_name == "jq":
         return _github_jq_filter_args_are_safe(args)
+    if command_name == "sort":
+        return all(re.fullmatch(r"-[nru]+", arg) for arg in args)
+    if command_name == "uniq":
+        return args in ([], ["-c"])
     if command_name in _READ_ONLY_LOOKUP_FILTERS:
         return _read_only_lookup_filter_segment_is_safe(command_name, args, home_dir=home_dir)
     return False

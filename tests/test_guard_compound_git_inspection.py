@@ -34,6 +34,212 @@ def _init_repository(path: Path) -> None:
     )
 
 
+def _init_push_repository(path: Path, *, branch: str = "fix/about-partners-link") -> None:
+    _ = subprocess.run(
+        ["git", "init", "--quiet", "--initial-branch", branch, str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    _ = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(path),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/example/project.git",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_compound_current_branch_push_to_verified_origin_is_routine(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    workspace.mkdir(parents=True)
+    _init_push_repository(workspace)
+
+    command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
+
+    assert _artifact(command, home=home) is None
+
+
+@pytest.mark.parametrize(
+    "push",
+    (
+        "git push --force -u origin fix/about-partners-link",
+        "git push -u origin fix/other-branch",
+        "git push -u upstream fix/about-partners-link",
+        "git push origin --delete fix/about-partners-link",
+        "git push -u origin fix/about-partners-link:main",
+    ),
+)
+def test_compound_push_keeps_widened_or_mismatched_operations_guarded(
+    tmp_path: Path,
+    push: str,
+) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    workspace.mkdir(parents=True)
+    _init_push_repository(workspace)
+
+    assert _artifact(f"cd {workspace} && {push} 2>&1 | tail -2", home=home) is not None
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    (
+        ("remote.origin.push", "refs/heads/main:refs/heads/main"),
+        ("remote.origin.pushurl", "https://github.com/example/other.git"),
+        ("remote.origin.receivepack", "./payload"),
+        ("remote.origin.vcs", "payload"),
+        ("remote.origin.mirror", "true"),
+        ("remote.pushDefault", "upstream"),
+        ("branch.fix/about-partners-link.pushRemote", "upstream"),
+        ("url.https://example.invalid/.pushInsteadOf", "https://github.com/"),
+        ("push.gpgSign", "true"),
+        ("push.recurseSubmodules", "on-demand"),
+        ("push.followTags", "true"),
+        ("hook.guard.command", "./payload"),
+    ),
+)
+def test_compound_push_rejects_repository_execution_or_routing_config(
+    tmp_path: Path,
+    key: str,
+    value: str,
+) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    workspace.mkdir(parents=True)
+    _init_push_repository(workspace)
+    _ = subprocess.run(
+        ["git", "-C", str(workspace), "config", key, value],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
+
+    assert _artifact(command, home=home) is not None
+
+
+def test_compound_push_rejects_executable_pre_push_hook(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    workspace.mkdir(parents=True)
+    _init_push_repository(workspace)
+    _ = subprocess.run(
+        ["git", "-C", str(workspace), "config", "core.hooksPath", "hooks"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    hook = workspace / "hooks" / "pre-push"
+    hook.parent.mkdir()
+    _ = hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _ = hook.chmod(hook.stat().st_mode | 0o100)
+
+    command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
+
+    assert _artifact(command, home=home) is not None
+
+
+def test_compound_push_rejects_repository_configured_external_hook(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    external_hooks = home / "hooks"
+    workspace.mkdir(parents=True)
+    external_hooks.mkdir()
+    _init_push_repository(workspace)
+    _ = subprocess.run(
+        ["git", "-C", str(workspace), "config", "core.hooksPath", str(external_hooks)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    hook = external_hooks / "pre-push"
+    _ = hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _ = hook.chmod(hook.stat().st_mode | 0o100)
+
+    command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
+
+    assert _artifact(command, home=home) is not None
+
+
+def test_compound_push_rejects_worktree_configured_external_hook(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    external_hooks = home / "hooks"
+    workspace.mkdir(parents=True)
+    external_hooks.mkdir()
+    _init_push_repository(workspace)
+    for key, value in (
+        ("extensions.worktreeConfig", "true"),
+        ("core.hooksPath", str(external_hooks)),
+    ):
+        scope = "--local" if key == "extensions.worktreeConfig" else "--worktree"
+        _ = subprocess.run(
+            ["git", "-C", str(workspace), "config", scope, key, value],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    hook = external_hooks / "pre-push"
+    _ = hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _ = hook.chmod(hook.stat().st_mode | 0o100)
+
+    command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
+
+    assert _artifact(command, home=home) is not None
+
+
+def test_compound_push_rejects_multiple_origin_urls(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    workspace.mkdir(parents=True)
+    _init_push_repository(workspace)
+    _ = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "config",
+            "--add",
+            "remote.origin.url",
+            "https://github.com/example/other.git",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
+
+    assert _artifact(command, home=home) is not None
+
+
+@pytest.mark.parametrize("variable", ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_NAMESPACE"))
+def test_compound_push_rejects_repository_routing_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    variable: str,
+) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "hol-guard-partners-fix"
+    workspace.mkdir(parents=True)
+    _init_push_repository(workspace)
+    monkeypatch.setenv(variable, "redirected")
+
+    command = f"cd {workspace} && git push -u origin fix/about-partners-link 2>&1 | tail -2"
+
+    assert _artifact(command, home=home) is not None
+
+
 def test_compound_git_refresh_and_inspection_is_evaluated_as_one_unit(tmp_path: Path) -> None:
     home = tmp_path / "home"
     workspace = home / "projects" / "workspace"

@@ -21,6 +21,10 @@ _GIT_CONFIG_ROUTING_ENV = frozenset(
         "GIT_CONFIG_NOSYSTEM",
         "GIT_CONFIG_PARAMETERS",
         "GIT_CONFIG_SYSTEM",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_NAMESPACE",
+        "GIT_WORK_TREE",
     }
 )
 _GIT_FETCH_EXECUTION_ENV = frozenset(
@@ -288,6 +292,97 @@ def git_fetch_origin_has_execution_free_config(
     return True
 
 
+def git_push_origin_has_execution_free_config(
+    cwd: Path,
+    *,
+    branch: str,
+    git_binary: Path | None = None,
+) -> bool:
+    """Verify a configured-origin push cannot redirect execution or change branches."""
+
+    resolved_git = git_binary or trusted_git_binary_for_cwd(cwd)
+    if resolved_git is None or not git_fetch_origin_has_execution_free_config(cwd, git_binary=resolved_git):
+        return False
+    try:
+        repository_cwd = cwd.resolve()
+        branch_check = subprocess.run(
+            [str(resolved_git), "check-ref-format", "--branch", branch],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+        current_branch = subprocess.run(
+            [str(resolved_git), "symbolic-ref", "--quiet", "--short", "HEAD"],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+        config = subprocess.run(
+            [str(resolved_git), "config", "--null", "--list"],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+        hook_path = subprocess.run(
+            [str(resolved_git), "rev-parse", "--git-path", "hooks/pre-push"],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+        local_hooks_path = subprocess.run(
+            [str(resolved_git), "config", "--local", "--get-all", "core.hooksPath"],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+        worktree_hooks_path = subprocess.run(
+            [str(resolved_git), "config", "--worktree", "--get-all", "core.hooksPath"],
+            cwd=repository_cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    parsed_config = _parse_null_git_config(config.stdout) if config.returncode == 0 else None
+    if (
+        branch_check.returncode != 0
+        or branch_check.stdout.strip() != branch
+        or current_branch.returncode != 0
+        or current_branch.stdout.strip() != branch
+        or parsed_config is None
+        or _git_push_config_routes_execution(parsed_config, branch=branch)
+        or hook_path.returncode != 0
+        or local_hooks_path.returncode not in {0, 1}
+        or bool(local_hooks_path.stdout.strip())
+        or worktree_hooks_path.returncode not in {0, 1}
+        or bool(worktree_hooks_path.stdout.strip())
+        or len(parsed_config.get("remote.origin.url", ())) != 1
+    ):
+        return False
+    candidate_hook = Path(hook_path.stdout.strip())
+    if not candidate_hook.is_absolute():
+        candidate_hook = repository_cwd / candidate_hook
+    try:
+        if not candidate_hook.exists() or (os.name != "nt" and not os.access(candidate_hook, os.X_OK)):
+            return True
+        resolved_hook = candidate_hook.resolve(strict=True)
+    except OSError:
+        return False
+    return _trusted_external_push_hook(resolved_hook, repository_cwd=repository_cwd)
+
+
 def git_worktree_add_has_execution_free_config(
     cwd: Path,
     *,
@@ -388,7 +483,7 @@ def _git_ref_uses_checkout_filter(git_binary: Path, cwd: Path, ref: str) -> bool
         return True
     fields = attributes.stdout.split(b"\0")
     if fields and fields[-1] == b"":
-        fields.pop()
+        _ = fields.pop()
     if len(fields) % 3 != 0:
         return True
     return any(value not in {b"unspecified", b"unset"} for value in fields[2::3])
@@ -428,6 +523,55 @@ def _git_fetch_config_routes_execution(config: dict[str, tuple[str, ...]]) -> bo
     if any(_git_config_values_enable_behavior(config.get(key, ())) for key in boolean_keys):
         return True
     return any(value.strip() != "--no-tags" for value in config.get("remote.origin.tagopt", ()))
+
+
+def _git_push_config_routes_execution(config: dict[str, tuple[str, ...]], *, branch: str) -> bool:
+    if any((key.startswith("url.") and key.endswith(".pushinsteadof")) or key.startswith("hook.") for key in config):
+        return True
+    if any(
+        config.get(key)
+        for key in (
+            "remote.origin.push",
+            "remote.origin.pushurl",
+            "remote.origin.receivepack",
+            "remote.origin.vcs",
+            "remote.pushdefault",
+            f"branch.{branch.casefold()}.pushremote",
+        )
+    ):
+        return True
+    boolean_keys = {
+        "push.followtags",
+        "push.gpgsign",
+        "remote.origin.mirror",
+    }
+    if any(_git_config_values_enable_behavior(config.get(key, ())) for key in boolean_keys):
+        return True
+    return any(
+        value.strip().casefold() not in {"", "0", "false", "no", "off", "check"}
+        for value in config.get("push.recursesubmodules", ())
+    )
+
+
+def _trusted_external_push_hook(path: Path, *, repository_cwd: Path) -> bool:
+    """Accept a user-installed global hook while rejecting repository-controlled hooks."""
+
+    try:
+        _ = path.relative_to(repository_cwd)
+        return False
+    except ValueError:
+        pass
+    try:
+        metadata = path.stat()
+        current_uid = os.getuid() if hasattr(os, "getuid") else -1
+        return bool(
+            path.is_file()
+            and not path.is_symlink()
+            and metadata.st_uid in {0, current_uid}
+            and not metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        )
+    except OSError:
+        return False
 
 
 def _git_config_values_enable_behavior(values: tuple[str, ...]) -> bool:
@@ -506,6 +650,7 @@ __all__ = (
     "git_binary_path_is_trusted",
     "git_config_routing_environment_is_clean",
     "git_fetch_origin_has_execution_free_config",
+    "git_push_origin_has_execution_free_config",
     "git_status_args_are_read_only",
     "git_status_has_execution_free_config",
     "git_worktree_add_has_execution_free_config",
