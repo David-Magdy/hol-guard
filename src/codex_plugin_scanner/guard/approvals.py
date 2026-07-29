@@ -549,6 +549,7 @@ def queue_blocked_approvals(
             action_envelope_json=canonical_decision.action_envelope_json,
             decision_v2_json=canonical_decision.decision_v2_json,
             scanner_evidence=scanner_evidence,
+            browser_intent=_item_browser_intent(item),
             raw_command_text=raw_command_text,
         )
         persisted_request_id = store.add_approval_request(request, timestamp)
@@ -568,6 +569,13 @@ def queue_blocked_approvals(
             raise RuntimeError(f"Persisted approval request not found: {persisted_request_id}")
         queued.append(request_payload)
     return queued
+
+
+def _item_browser_intent(item: Mapping[str, object]) -> dict[str, object] | None:
+    value = item.get("browser_intent")
+    if not isinstance(value, Mapping):
+        return None
+    return {str(key): nested for key, nested in value.items()}
 
 
 def evaluation_has_terminal_policy_action(evaluation: Mapping[str, object]) -> bool:

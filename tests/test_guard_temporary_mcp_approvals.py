@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from codex_plugin_scanner.guard.approvals import apply_approval_resolution
+from codex_plugin_scanner.guard.approvals import apply_approval_resolution, queue_blocked_approvals
 from codex_plugin_scanner.guard.config import GuardConfig
 from codex_plugin_scanner.guard.mcp_tool_calls import (
     build_tool_call_artifact,
@@ -12,7 +12,7 @@ from codex_plugin_scanner.guard.mcp_tool_calls import (
     evaluate_tool_call,
     tool_call_risk_categories,
 )
-from codex_plugin_scanner.guard.models import GuardApprovalRequest, PolicyDecision
+from codex_plugin_scanner.guard.models import GuardApprovalRequest, HarnessDetection, PolicyDecision
 from codex_plugin_scanner.guard.runtime.mcp_protection import build_mcp_server_identity
 from codex_plugin_scanner.guard.store import GuardStore
 from codex_plugin_scanner.guard.temporary_mcp_approvals import (
@@ -129,6 +129,56 @@ def test_interaction_request_exposes_bounded_grant_contract() -> None:
     assert payload is not None
     assert payload["allowed_targets"] == ["exact", "category", "server"]
     assert payload["allowed_durations"] == ["once", "15m", "1h", "5h"]
+
+
+def test_queue_persists_browser_intent_for_bounded_grant_controls(tmp_path) -> None:
+    artifact = _artifact(tool_name="take_screenshot")
+    identity = artifact.metadata["mcp_server_identity"]
+    assert isinstance(identity, dict)
+    browser_intent = {
+        "version": 1,
+        "intent": "browser.inspect",
+        "operation": "take_screenshot",
+        "target_origin": "https://example.com",
+        "target_domain": "example.com",
+        "mcp_server_name": "chrome-devtools",
+        "mcp_server_identity_hash": identity["identity_hash"],
+        "risk_categories": ["browser_inspection"],
+    }
+
+    queued = queue_blocked_approvals(
+        detection=HarnessDetection(
+            harness="codex",
+            installed=True,
+            command_available=True,
+            config_paths=(".mcp.json",),
+            artifacts=(artifact,),
+        ),
+        evaluation={
+            "artifacts": [
+                {
+                    "artifact_id": artifact.artifact_id,
+                    "artifact_hash": "exact-hash",
+                    "artifact_type": "tool_call",
+                    "source_scope": "project",
+                    "config_path": ".mcp.json",
+                    "policy_action": "review",
+                    "changed_fields": ["runtime_browser_tool_call"],
+                    "launch_target": "chrome-devtools take_screenshot example.com",
+                    "browser_intent": browser_intent,
+                }
+            ]
+        },
+        store=GuardStore(tmp_path / "guard-home"),
+        approval_center_url="http://127.0.0.1:5474",
+        now="2026-07-29T12:00:00+00:00",
+    )
+
+    assert len(queued) == 1
+    assert queued[0]["browser_intent"] == browser_intent
+    payload = temporary_mcp_approval_payload(queued[0])
+    assert payload is not None
+    assert payload["target_label"] == "example.com"
 
 
 @pytest.mark.parametrize(
