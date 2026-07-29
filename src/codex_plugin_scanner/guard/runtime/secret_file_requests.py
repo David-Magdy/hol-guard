@@ -3262,6 +3262,27 @@ def _shell_token_has_active_expansion(raw_token: str) -> bool:
     return False
 
 
+def _shell_token_has_active_glob(raw_token: str) -> bool:
+    index = 0
+    quote: str | None = None
+    while index < len(raw_token):
+        character = raw_token[index]
+        if character == "\\":
+            index += 2
+            continue
+        if quote is not None:
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in {"'", '"'}:
+            quote = character
+        elif character in {"*", "?", "["}:
+            return True
+        index += 1
+    return False
+
+
 def _gh_pr_env_split_string_payloads_with_substitution(segment: list[_ShellTokenWithQuoteContext]) -> tuple[str, ...]:
     env_index = _shell_segment_env_index([token.plain for token in segment])
     if env_index is None:
@@ -3481,10 +3502,9 @@ def _gh_pr_create_uses_safe_static_body_file(
 ) -> bool:
     if _shell_command_substitution_payloads(command_text):
         return False
-    segments = _shell_token_segments(_shell_tokens_preserving_quote_context(command_text))
-    if len(segments) != 1:
+    segment = _gh_pr_create_segment_with_bounded_output(command_text)
+    if segment is None:
         return False
-    segment = segments[0]
     args_start_index = _gh_pr_create_body_args_start_index(segment)
     if args_start_index is None:
         return False
@@ -3494,6 +3514,44 @@ def _gh_pr_create_uses_safe_static_body_file(
         cwd=cwd,
         home_dir=home_dir,
     )
+
+
+def _gh_pr_create_segment_with_bounded_output(
+    command_text: str,
+) -> list[_ShellTokenWithQuoteContext] | None:
+    tokens = _shell_tokens_preserving_quote_context(command_text)
+    separators = [index for index, token in enumerate(tokens) if token.plain in {"&&", "||", ";", "&", "|", "|&"}]
+    if not separators:
+        return tokens
+    if len(separators) != 1 or tokens[separators[0]].plain != "|":
+        return None
+    pipe_index = separators[0]
+    producer = tokens[:pipe_index]
+    if producer and producer[-1].plain == "2>&1":
+        producer = producer[:-1]
+    if any(
+        _shell_token_has_active_expansion(token.raw)
+        or _shell_token_has_active_glob(token.raw)
+        or "<" in token.raw
+        or ">" in token.raw
+        for token in producer
+    ):
+        return None
+    consumer = tuple(token.plain for token in tokens[pipe_index + 1 :])
+    if not _bounded_output_consumer(consumer):
+        return None
+    return producer
+
+
+def _bounded_output_consumer(tokens: tuple[str, ...]) -> bool:
+    if len(tokens) == 2 and tokens[0] in {"head", "tail"}:
+        count = tokens[1]
+        return count.startswith("-") and count[1:].isdigit() and 1 <= int(count[1:]) <= 1000
+    elif len(tokens) == 3 and tokens[:2] in {("head", "-n"), ("tail", "-n")}:
+        count = tokens[2]
+    else:
+        return False
+    return count.isdigit() and 1 <= int(count) <= 1000
 
 
 def _gh_pr_edit_uses_safe_static_body_file(
