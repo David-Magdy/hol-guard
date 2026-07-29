@@ -208,6 +208,7 @@ from ..store_evidence import (
     export_evidence_json,
     list_evidence,
 )
+from ..store_storage_maintenance import DEFAULT_GUARD_EVENT_LIMIT, DEFAULT_RECEIPT_DETAIL_LIMIT
 from .command_activity_api import (
     handle_command_activity_analytics,
     handle_command_activity_diagnostics,
@@ -7629,20 +7630,22 @@ class GuardDaemonServer:
         try:
             from ..shim_refresh import refresh_stale_harness_shims
 
+            managed_installs: list[Mapping[str, object]] = list(self._server.store.list_managed_installs())
             result = refresh_stale_harness_shims(
                 home_dir=Path.home(),
                 guard_home=guard_home,
-                managed_installs=self._server.store.list_managed_installs(),
+                managed_installs=managed_installs,
             )
         except Exception as error:
-            self._diagnostics.record("shim_refresh_failed", error=str(error))
+            self._diagnostics.record("shim_refresh_failed", detail=str(error))
             return
         if result.refreshed or result.errors:
-            self._diagnostics.record(
-                "shim_refresh_completed",
-                refreshed=",".join(result.refreshed),
-                errors=";".join(result.errors),
-            )
+            detail_parts = []
+            if result.refreshed:
+                detail_parts.append(f"refreshed={','.join(result.refreshed)}")
+            if result.errors:
+                detail_parts.append(f"errors={';'.join(result.errors)}")
+            self._diagnostics.record("shim_refresh_completed", detail=" ".join(detail_parts))
 
     def _maintain_command_activity_best_effort(self) -> None:
         now = datetime.now(timezone.utc)
@@ -7666,15 +7669,17 @@ class GuardDaemonServer:
             config = load_guard_config(
                 self._server.store.guard_home,
             )
-            maintain_kwargs: dict[str, object] = {}
-            if config.receipt_detail_limit is not None:
-                maintain_kwargs["receipt_detail_limit"] = config.receipt_detail_limit
-            if config.guard_event_limit is not None:
-                maintain_kwargs["guard_event_limit"] = config.guard_event_limit
+            receipt_detail_limit = (
+                config.receipt_detail_limit if config.receipt_detail_limit is not None else DEFAULT_RECEIPT_DETAIL_LIMIT
+            )
+            guard_event_limit = (
+                config.guard_event_limit if config.guard_event_limit is not None else DEFAULT_GUARD_EVENT_LIMIT
+            )
             result = self._server.store.maintain_storage(
                 now=datetime.now(timezone.utc),
                 detail_retain_days=config.evidence_retain_days,
-                **maintain_kwargs,
+                receipt_detail_limit=receipt_detail_limit,
+                guard_event_limit=guard_event_limit,
             )
         except Exception:
             return False
