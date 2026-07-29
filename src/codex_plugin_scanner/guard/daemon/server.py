@@ -109,7 +109,6 @@ from ..config import (
     editable_guard_settings,
     load_guard_config,
     reset_guard_settings,
-    resolve_guard_home_for_user_home,
     update_guard_settings,
     update_guard_update_channel,
 )
@@ -7627,12 +7626,6 @@ class GuardDaemonServer:
         are recorded as diagnostics and never block daemon startup.
         """
         guard_home = self._server.store.guard_home.resolve()
-        default_guard_home = resolve_guard_home_for_user_home(Path.home()).resolve()
-        if guard_home != default_guard_home:
-            # Custom --home / guard-home installs bind paths into their shims
-            # that startup cannot reconstruct reliably; only an explicit
-            # protect/install refresh is safe there.
-            return
         try:
             from ..shim_refresh import refresh_stale_harness_shims
 

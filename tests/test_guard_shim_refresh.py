@@ -71,7 +71,8 @@ class ShimRefreshTest(unittest.TestCase):
 
     def test_stale_shim_is_refreshed_with_current_generator_content(self) -> None:
         path = self._install("kimi")
-        path.write_text("#!/bin/sh\necho old-shim\n", encoding="utf-8")
+        # Drift a real generated shim (keeps base_command parseable).
+        path.write_text(path.read_text(encoding="utf-8") + "\n# drifted\n", encoding="utf-8")
         result = refresh_stale_harness_shims(
             home_dir=self.home_dir,
             guard_home=self.guard_home,
@@ -104,8 +105,11 @@ class ShimRefreshTest(unittest.TestCase):
     def test_legacy_launcher_is_canonicalized_and_removed(self) -> None:
         shim_dir = self.guard_home / "bin"
         shim_dir.mkdir()
+        # Write a real cursor shim under the legacy launcher name.
+        body = _build_python_shim("cursor", self._context(), [])
         legacy = shim_dir / "guard-cursor"
-        legacy.write_text("#!/bin/sh\necho legacy\n", encoding="utf-8")
+        legacy.write_text(body, encoding="utf-8")
+        legacy.chmod(0o755)
         legacy_cmd = shim_dir / "guard-cursor.cmd"
         legacy_cmd.write_text("@echo off\n", encoding="utf-8")
         result = refresh_stale_harness_shims(
@@ -128,6 +132,27 @@ class ShimRefreshTest(unittest.TestCase):
         )
         self.assertEqual(second.refreshed, ())
         self.assertEqual(second.unchanged, ("cursor-agent",))
+
+    def test_custom_home_binding_is_preserved(self) -> None:
+        custom_home = self.home_dir / "custom-root"
+        custom_home.mkdir()
+        context = _Context(self.home_dir, self.guard_home)
+        context.home_override_explicit = True
+        install_guard_shim("kimi", context)
+        path = self.guard_home / "bin" / "guard-kimi"
+        original = path.read_text(encoding="utf-8")
+        self.assertIn("--home", original)
+        path.write_text(original + "\n# drifted\n", encoding="utf-8")
+        result = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[],
+        )
+        self.assertEqual(result.refreshed, ("kimi",))
+        self.assertEqual(result.errors, ())
+        refreshed = path.read_text(encoding="utf-8")
+        self.assertIn("--home", refreshed)
+        self.assertIn(str(self.home_dir), refreshed)
 
     def test_unknown_shim_is_left_alone(self) -> None:
         shim_dir = self.guard_home / "bin"

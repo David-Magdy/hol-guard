@@ -17,6 +17,7 @@ per installed shim.
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,11 +38,43 @@ class ShimRefreshResult:
 class _RefreshContext:
     """HarnessContextLike for shim regeneration at daemon startup."""
 
-    def __init__(self, home_dir: Path, guard_home: Path, workspace_dir: Path | None) -> None:
+    def __init__(
+        self,
+        home_dir: Path,
+        guard_home: Path,
+        workspace_dir: Path | None,
+        *,
+        home_override_explicit: bool,
+    ) -> None:
         self.home_dir = home_dir
         self.workspace_dir = workspace_dir
         self.guard_home = guard_home
-        self.home_override_explicit = False
+        self.home_override_explicit = home_override_explicit
+
+
+def _flag_value(args: list[str], flag: str) -> str | None:
+    """Return the value following ``flag`` in an argument list, if present."""
+
+    for index, arg in enumerate(args[:-1]):
+        if arg == flag:
+            return args[index + 1]
+    return None
+
+
+def _installed_base_command(shim_body: str) -> list[str] | None:
+    """Parse the base_command list out of a generated shim, if recognizable."""
+
+    for line in shim_body.splitlines():
+        if not line.startswith("base_command = "):
+            continue
+        try:
+            value = ast.literal_eval(line[len("base_command = ") :])
+        except (SyntaxError, ValueError):
+            return None
+        if isinstance(value, list) and all(isinstance(item, str) for item in value):
+            return list(value)
+        return None
+    return None
 
 
 def _launcher_map() -> dict[str, tuple[str, str]]:
@@ -124,16 +157,34 @@ def refresh_stale_harness_shims(
             continue
         harness, canonical_launcher = resolved
         try:
-            install = installs_by_harness.get(harness)
-            workspace_dir = _workspace_dir_from_install(install)
-            context: HarnessContextLike = _RefreshContext(home_dir, guard_home, workspace_dir)
-            workspace_args = ["--workspace", str(workspace_dir)] if workspace_dir is not None else []
-            expected = _build_python_shim(harness, context, workspace_args)
             try:
                 current = posix_path.read_text(encoding="utf-8")
             except OSError as error:
                 errors.append(f"{shim_name}: read failed: {error}")
                 continue
+            # Reconstruct the install-time context from the installed shim
+            # itself: --home and --workspace are embedded in base_command, so
+            # custom-home installs refresh faithfully instead of being skipped
+            # or rewritten with default paths.
+            base_command = _installed_base_command(current)
+            if base_command is None:
+                errors.append(f"{shim_name}: unrecognized shim body")
+                continue
+            home_value = _flag_value(base_command, "--home")
+            workspace_value = _flag_value(base_command, "--workspace")
+            if workspace_value is None:
+                install = installs_by_harness.get(harness)
+                workspace_dir = _workspace_dir_from_install(install)
+            else:
+                workspace_dir = Path(workspace_value)
+            context: HarnessContextLike = _RefreshContext(
+                Path(home_value) if home_value else home_dir,
+                guard_home,
+                workspace_dir,
+                home_override_explicit=home_value is not None,
+            )
+            workspace_args = ["--workspace", str(workspace_dir)] if workspace_dir is not None else []
+            expected = _build_python_shim(harness, context, workspace_args)
             stale_content = current != expected
             legacy_name = shim_name != canonical_launcher
             if not stale_content and not legacy_name:
