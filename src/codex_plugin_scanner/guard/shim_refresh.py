@@ -141,7 +141,12 @@ def refresh_stale_harness_shims(
     if not launcher_names:
         return ShimRefreshResult(refreshed=(), unchanged=(), errors=())
     launcher_map = _launcher_map()
-    installs_by_harness = {str(install.get("harness")): install for install in (managed_installs or [])}
+    launcher_name_set = set(launcher_names)
+    # managed_installs has a primary key on harness, so duplicates cannot
+    # occur; the comprehension is a straight index, not a lossy merge.
+    installs_by_harness: dict[str, Mapping[str, object]] = {
+        str(install.get("harness")): install for install in (managed_installs or [])
+    }
     # Imported lazily so daemon startup cost stays on this path.
     from .shims import install_guard_shim
 
@@ -156,6 +161,21 @@ def refresh_stale_harness_shims(
             unchanged.append(shim_name)
             continue
         harness, canonical_launcher = resolved
+        legacy_name = shim_name != canonical_launcher
+        if legacy_name and canonical_launcher in launcher_name_set:
+            # Canonical shim exists on disk independently and owns its own
+            # context via its own loop iteration; only remove the legacy
+            # duplicate instead of letting its embedded context clobber the
+            # canonical shim's content.
+            for suffix in ("", ".cmd"):
+                legacy_path = shim_dir / f"guard-{shim_name}{suffix}"
+                try:
+                    legacy_path.unlink(missing_ok=True)
+                except OSError as error:
+                    errors.append(f"{shim_name}: legacy unlink failed: {error}")
+                    continue
+            refreshed.append(shim_name)
+            continue
         try:
             try:
                 current = posix_path.read_text(encoding="utf-8")
@@ -186,7 +206,6 @@ def refresh_stale_harness_shims(
             workspace_args = ["--workspace", str(workspace_dir)] if workspace_dir is not None else []
             expected = _build_python_shim(harness, context, workspace_args)
             stale_content = current != expected
-            legacy_name = shim_name != canonical_launcher
             if not stale_content and not legacy_name:
                 unchanged.append(shim_name)
                 continue

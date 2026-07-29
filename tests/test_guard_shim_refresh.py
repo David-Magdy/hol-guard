@@ -94,7 +94,9 @@ class ShimRefreshTest(unittest.TestCase):
         result = refresh_stale_harness_shims(
             home_dir=self.home_dir,
             guard_home=self.guard_home,
-            managed_installs=[{"harness": "kimi", "active": True, "workspace": str(workspace), "manifest": {}, "updated_at": ""}],
+            managed_installs=[
+                {"harness": "kimi", "active": True, "workspace": str(workspace), "manifest": {}, "updated_at": ""}
+            ],
         )
         self.assertEqual(result.refreshed, ("kimi",))
         self.assertEqual(result.errors, ())
@@ -134,8 +136,6 @@ class ShimRefreshTest(unittest.TestCase):
         self.assertEqual(second.unchanged, ("cursor-agent",))
 
     def test_custom_home_binding_is_preserved(self) -> None:
-        custom_home = self.home_dir / "custom-root"
-        custom_home.mkdir()
         context = _Context(self.home_dir, self.guard_home)
         context.home_override_explicit = True
         install_guard_shim("kimi", context)
@@ -153,6 +153,31 @@ class ShimRefreshTest(unittest.TestCase):
         refreshed = path.read_text(encoding="utf-8")
         self.assertIn("--home", refreshed)
         self.assertIn(str(self.home_dir), refreshed)
+
+    def test_legacy_canonical_coexistence_keeps_canonical_context(self) -> None:
+        shim_dir = self.guard_home / "bin"
+        shim_dir.mkdir()
+        workspace = self.home_dir / "project"
+        workspace.mkdir()
+        # Canonical shim carries a workspace binding; legacy has none.
+        canonical_body = _build_python_shim("cursor", self._context(workspace), ["--workspace", str(workspace)])
+        canonical = shim_dir / "guard-cursor-agent"
+        canonical.write_text(canonical_body, encoding="utf-8")
+        canonical.chmod(0o755)
+        legacy_body = _build_python_shim("cursor", self._context(), [])
+        legacy = shim_dir / "guard-cursor"
+        legacy.write_text(legacy_body, encoding="utf-8")
+        legacy.chmod(0o755)
+        result = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[],
+        )
+        self.assertEqual(sorted(result.refreshed), ["cursor"])
+        self.assertEqual(result.errors, ())
+        self.assertFalse(legacy.exists())
+        # Canonical content untouched: workspace binding preserved byte-for-byte.
+        self.assertEqual(canonical.read_text(encoding="utf-8"), canonical_body)
 
     def test_unknown_shim_is_left_alone(self) -> None:
         shim_dir = self.guard_home / "bin"

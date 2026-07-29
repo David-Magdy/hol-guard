@@ -137,3 +137,5 @@ def test_retention_row_limits_reject_invalid_values(tmp_path: Path) -> None:
     for invalid in ("0", "-5", "1000001", "\"lots\"", "true"):
         config_path.write_text(f"receipt_detail_limit = {invalid}\n", encoding="utf-8")
         assert load_guard_config(guard_home).receipt_detail_limit is None, invalid
+        config_path.write_text(f"guard_event_limit = {invalid}\n", encoding="utf-8")
+        assert load_guard_config(guard_home).guard_event_limit is None, invalid
