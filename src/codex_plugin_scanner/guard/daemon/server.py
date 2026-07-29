@@ -109,6 +109,7 @@ from ..config import (
     editable_guard_settings,
     load_guard_config,
     reset_guard_settings,
+    resolve_guard_home_for_user_home,
     update_guard_settings,
     update_guard_update_channel,
 )
@@ -7613,9 +7614,42 @@ class GuardDaemonServer:
             self._server.store,
             self._live_request_sync_worker,
         )
+        self._refresh_stale_harness_shims_best_effort()
         self._start_command_activity_maintenance()
         self._record_lifecycle("ready")
         self._diagnostics.record("daemon_ready")
+
+    def _refresh_stale_harness_shims_best_effort(self) -> None:
+        """Regenerate harness shims written by an older Guard generator.
+
+        install_guard_shim only runs on explicit protect/install, so upgraded
+        packages would otherwise leave stale launcher shims on disk. Failures
+        are recorded as diagnostics and never block daemon startup.
+        """
+        guard_home = self._server.store.guard_home.resolve()
+        default_guard_home = resolve_guard_home_for_user_home(Path.home()).resolve()
+        if guard_home != default_guard_home:
+            # Custom --home / guard-home installs bind paths into their shims
+            # that startup cannot reconstruct reliably; only an explicit
+            # protect/install refresh is safe there.
+            return
+        try:
+            from ..shim_refresh import refresh_stale_harness_shims
+
+            result = refresh_stale_harness_shims(
+                home_dir=Path.home(),
+                guard_home=guard_home,
+                managed_installs=self._server.store.list_managed_installs(),
+            )
+        except Exception as error:
+            self._diagnostics.record("shim_refresh_failed", error=str(error))
+            return
+        if result.refreshed or result.errors:
+            self._diagnostics.record(
+                "shim_refresh_completed",
+                refreshed=",".join(result.refreshed),
+                errors=";".join(result.errors),
+            )
 
     def _maintain_command_activity_best_effort(self) -> None:
         now = datetime.now(timezone.utc)
@@ -7639,9 +7673,15 @@ class GuardDaemonServer:
             config = load_guard_config(
                 self._server.store.guard_home,
             )
+            maintain_kwargs: dict[str, object] = {}
+            if config.receipt_detail_limit is not None:
+                maintain_kwargs["receipt_detail_limit"] = config.receipt_detail_limit
+            if config.guard_event_limit is not None:
+                maintain_kwargs["guard_event_limit"] = config.guard_event_limit
             result = self._server.store.maintain_storage(
                 now=datetime.now(timezone.utc),
                 detail_retain_days=config.evidence_retain_days,
+                **maintain_kwargs,
             )
         except Exception:
             return False
