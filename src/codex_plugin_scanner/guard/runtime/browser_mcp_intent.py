@@ -713,7 +713,12 @@ def _redacted_url_fragment(fragment: str) -> str:
     if not fragment:
         return ""
     if fragment.startswith(("/", "!/")):
-        return fragment
+        route, separator, query = fragment.partition("?")
+        if not separator:
+            return route
+        from urllib.parse import parse_qsl, urlencode
+
+        return f"{route}?{urlencode(_redacted_url_pairs(parse_qsl(query, keep_blank_values=True)))}"
     if "=" not in fragment:
         return ""
 

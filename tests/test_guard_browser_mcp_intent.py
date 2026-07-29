@@ -559,6 +559,15 @@ class TestRedactedTargetUrl:
 
         assert _redacted_target_url("https://example.com/#/dashboard") == "https://example.com/#/dashboard"
 
+    def test_redacts_sensitive_spa_fragment_query(self) -> None:
+        from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
+            _redacted_target_url,
+        )
+
+        result = _redacted_target_url("https://example.com/#/dashboard?token=secret&tab=network")
+
+        assert result == "https://example.com/#/dashboard?token=%5Bredacted%5D&tab=network"
+
 
 class TestOperationMaps:
     """HGBM023-HGBM029: Operation maps for browser MCP tools."""
