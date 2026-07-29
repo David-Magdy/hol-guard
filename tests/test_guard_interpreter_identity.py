@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from codex_plugin_scanner.guard.consumer.service import artifact_hash
+from codex_plugin_scanner.guard.runtime import secret_file_requests
 from codex_plugin_scanner.guard.runtime.approval_context import (
     approval_context_validation_reason,
     build_approval_context_token,
@@ -203,10 +204,23 @@ def test_verified_system_interpreter_keeps_normal_read_only_path_prompt_free(tmp
 
 
 @pytest.mark.skipif(not Path("/usr/bin/python3").is_file(), reason="trusted system Python is unavailable")
-def test_bare_interpreter_uses_effective_path_and_keeps_trusted_resolution_prompt_free(tmp_path: Path) -> None:
+def test_bare_interpreter_uses_effective_path_and_keeps_trusted_resolution_prompt_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     command = f"PATH=/usr/bin{os.pathsep}/bin python3 -c \"print('fixture')\""
+
+    def trust_system_python(path: Path, *, cwd: Path | None, home_dir: Path | None) -> bool:
+        del cwd, home_dir
+        return path == Path("/usr/bin/python3")
+
+    monkeypatch.setattr(
+        secret_file_requests,
+        "is_trusted_absolute_command_path",
+        trust_system_python,
+    )
 
     assert _request(command, cwd=workspace) is None
     assert is_explicitly_benign_tool_action_request(
