@@ -601,22 +601,22 @@ def _trusted_path_command(command: str, *, cwd: Path, home_dir: Path) -> bool:
             ),
             path_env=os.environ.get("PATH", ""),
         )
-    except (OSError, RuntimeError, ValueError):
+        details = status.get("manager_details")
+        if not isinstance(details, list):
+            return False
+        for raw_detail in cast(list[object], details):
+            if not isinstance(raw_detail, Mapping):
+                continue
+            detail = cast(Mapping[object, object], raw_detail)
+            if (
+                detail.get("manager") == "bun"
+                and detail.get("integrity") == "ok"
+                and detail.get("path_active") is True
+                and detail.get("shim_path") == str(resolved)
+            ):
+                return True
+    except Exception:
         return False
-    details = status.get("manager_details")
-    if not isinstance(details, list):
-        return False
-    for raw_detail in cast(list[object], details):
-        if not isinstance(raw_detail, Mapping):
-            continue
-        detail = cast(Mapping[object, object], raw_detail)
-        if (
-            detail.get("manager") == "bun"
-            and detail.get("integrity") == "ok"
-            and detail.get("path_active") is True
-            and detail.get("shim_path") == str(resolved)
-        ):
-            return True
     return False
 
 

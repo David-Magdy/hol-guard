@@ -554,6 +554,8 @@ def _git_fetch_config_routes_execution(config: dict[str, tuple[str, ...]]) -> bo
 
 
 def _git_push_config_routes_execution(config: dict[str, tuple[str, ...]], *, branch: str) -> bool:
+    if config.get("core.gitproxy"):
+        return True
     if any((key.startswith("url.") and key.endswith(".pushinsteadof")) or key.startswith("hook.") for key in config):
         return True
     if any(

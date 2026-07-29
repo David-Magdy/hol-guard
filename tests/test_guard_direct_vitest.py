@@ -445,6 +445,39 @@ def test_trusted_path_command_accepts_only_authenticated_active_bun_shims(
     assert direct_vitest._trusted_path_command("bun", cwd=tmp_path, home_dir=tmp_path) is expected  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize("failure", ("invalid-payload", "unexpected-error"))
+def test_trusted_path_command_fails_closed_for_shim_status_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    shim = tmp_path / ".hol-guard" / "package-shims" / "bin" / "bun"
+    shim.parent.mkdir(parents=True)
+    _ = shim.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    def find_shim(_command: str, *, path: str | None = None) -> str:
+        del path
+        return str(shim)
+
+    def reject_system_binary(_path: Path, *, cwd: Path) -> bool:
+        del cwd
+        return False
+
+    def broken_status(_context: object, *, path_env: str | None = None) -> object:
+        del path_env
+        if failure == "unexpected-error":
+            raise TypeError("malformed shim state")
+        return None
+
+    monkeypatch.setattr(shutil, "which", find_shim)
+    monkeypatch.setattr(direct_vitest, "git_binary_path_is_trusted", reject_system_binary)
+    monkeypatch.setattr(direct_vitest, "package_shim_status", broken_status)
+
+    assert not direct_vitest._trusted_path_command(  # pyright: ignore[reportPrivateUsage]
+        "bun", cwd=tmp_path, home_dir=tmp_path
+    )
+
+
 def test_verified_direct_vitest_run_is_explicitly_benign(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

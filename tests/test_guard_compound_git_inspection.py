@@ -106,6 +106,7 @@ def test_compound_push_keeps_widened_or_mismatched_operations_guarded(
         ("push.recurseSubmodules", "on-demand"),
         ("push.followTags", "true"),
         ("hook.guard.command", "./payload"),
+        ("core.gitProxy", "proxy-command"),
         ("http.proxy", "https://example.invalid"),
         ("http.sslVerify", "false"),
         ("http.sslVersion", "sslv3"),
@@ -535,7 +536,7 @@ def test_compound_git_inspection_rejects_path_shadowed_git(
     shadow_bin = workspace / "bin"
     shadow_bin.mkdir()
     shadow_git = shadow_bin / "git"
-    shadow_git.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    _ = shadow_git.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     shadow_git.chmod(0o755)
     monkeypatch.setenv("PATH", f"{shadow_bin}:{os.environ.get('PATH', '')}")
 
@@ -571,7 +572,7 @@ def test_compound_git_c_status_checks_target_repository_fsmonitor(tmp_path: Path
     workspace = home / "workspace"
     repository = workspace / "repository"
     _init_repository(repository)
-    subprocess.run(
+    _ = subprocess.run(
         ["git", "-C", str(repository), "config", "core.fsmonitor", "./payload"],
         check=True,
         capture_output=True,
