@@ -1,4 +1,5 @@
 import { assertSafeAboutExternalUrl, validateAboutExternalLinkOrThrow, AboutExternalLinkError } from "./about-external-links";
+import { ABOUT_PARTNER_CTA_HREF, ABOUT_PATH_CARDS } from "./about-content";
 import type { AboutLinkId } from "./about-types";
 
 function assert(condition: boolean, message: string): void {
@@ -9,7 +10,7 @@ function assert(condition: boolean, message: string): void {
 
 // Allowed links - correct linkId + href pairs
 assert(
-  assertSafeAboutExternalUrl("hol_partners", "https://hol.org/guard/partners").hostname === "hol.org",
+  assertSafeAboutExternalUrl("hol_partners", "https://hol.org").hostname === "hol.org",
   "hol.org partners is allowed with correct linkId"
 );
 assert(
@@ -39,6 +40,15 @@ try {
 }
 assert(threw, "affiliates linkId with wrong path is rejected");
 
+// Regression: /guard/partners is no longer a valid path for hol_partners
+threw = false;
+try {
+  assertSafeAboutExternalUrl("hol_partners", "https://hol.org/guard/partners");
+} catch (e) {
+  threw = true;
+}
+assert(threw, "hol_partners rejects the old /guard/partners path (exactPath)");
+
 // Wrong repo for source linkId
 threw = false;
 try {
@@ -51,7 +61,7 @@ assert(threw, "github.com/other/repo is rejected for hol_guard_source");
 // Must use HTTPS
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "http://hol.org/guard/partners");
+  assertSafeAboutExternalUrl("hol_partners", "http://hol.org");
 } catch (e) {
   threw = true;
   assert(e instanceof AboutExternalLinkError, "http throws AboutExternalLinkError");
@@ -61,7 +71,7 @@ assert(threw, "http is rejected");
 // Must not contain credentials
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://user:pass@hol.org/guard/partners");
+  assertSafeAboutExternalUrl("hol_partners", "https://user:pass@hol.org");
 } catch (e) {
   threw = true;
 }
@@ -70,7 +80,7 @@ assert(threw, "credentials are rejected");
 // Must not point to localhost
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://localhost:3000/guard/partners");
+  assertSafeAboutExternalUrl("hol_partners", "https://localhost:3000");
 } catch (e) {
   threw = true;
 }
@@ -78,7 +88,7 @@ assert(threw, "localhost is rejected");
 
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://127.0.0.1:3000/guard/partners");
+  assertSafeAboutExternalUrl("hol_partners", "https://127.0.0.1:3000");
 } catch (e) {
   threw = true;
 }
@@ -87,7 +97,7 @@ assert(threw, "127.0.0.1 is rejected");
 // Must not have forbidden params
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://hol.org/guard/partners?guard-token=abc");
+  assertSafeAboutExternalUrl("hol_partners", "https://hol.org?guard-token=abc");
 } catch (e) {
   threw = true;
 }
@@ -95,7 +105,7 @@ assert(threw, "guard-token param is rejected");
 
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://hol.org/guard/partners?workspace=test");
+  assertSafeAboutExternalUrl("hol_partners", "https://hol.org?workspace=test");
 } catch (e) {
   threw = true;
 }
@@ -113,7 +123,7 @@ assert(threw, "ref param is rejected");
 // Private IP ranges
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://10.0.0.1/guard/partners");
+  assertSafeAboutExternalUrl("hol_partners", "https://10.0.0.1");
 } catch (e) {
   threw = true;
 }
@@ -121,7 +131,7 @@ assert(threw, "10.x.x.x is rejected");
 
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://192.168.1.1/guard/partners");
+  assertSafeAboutExternalUrl("hol_partners", "https://192.168.1.1");
 } catch (e) {
   threw = true;
 }
@@ -129,7 +139,7 @@ assert(threw, "192.168.x.x is rejected");
 
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://172.16.0.1/guard/partners");
+  assertSafeAboutExternalUrl("hol_partners", "https://172.16.0.1");
 } catch (e) {
   threw = true;
 }
@@ -137,7 +147,7 @@ assert(threw, "172.16.x.x is rejected");
 
 threw = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://172.31.255.255/guard/partners");
+  assertSafeAboutExternalUrl("hol_partners", "https://172.31.255.255");
 } catch (e) {
   threw = true;
 }
@@ -146,7 +156,7 @@ assert(threw, "172.31.x.x is rejected");
 // 172.15 should be allowed (outside 172.16/12)
 let allowed = false;
 try {
-  assertSafeAboutExternalUrl("hol_partners", "https://172.15.0.1/guard/partners");
+  assertSafeAboutExternalUrl("hol_partners", "https://172.15.0.1");
   allowed = true;
 } catch {
   allowed = false;
@@ -154,11 +164,16 @@ try {
 assert(!allowed, "172.15.x.x is outside RFC1918 and should be rejected by host mismatch, not private range");
 
 // Returns correct rel and target
-const result = assertSafeAboutExternalUrl("hol_partners", "https://hol.org/guard/partners");
+const result = assertSafeAboutExternalUrl("hol_partners", "https://hol.org");
 assert(result.rel === "noopener noreferrer", "rel is noopener noreferrer");
 assert(result.target === "_blank", "target is _blank");
 
 // validateAboutExternalLinkOrThrow works
-validateAboutExternalLinkOrThrow("hol_partners", "https://hol.org/guard/partners");
+validateAboutExternalLinkOrThrow("hol_partners", "https://hol.org");
+
+// Content-level: partner CTAs must point to hol.org, not /guard/partners
+assert(ABOUT_PARTNER_CTA_HREF === "https://hol.org", "ABOUT_PARTNER_CTA_HREF is hol.org root");
+const partnerCard = ABOUT_PATH_CARDS.find((c) => c.id === "standards_partner");
+assert(partnerCard?.ctaHref === "https://hol.org", "standards_partner card ctaHref is hol.org root");
 
 console.log("about-external-links.test.ts: all assertions passed");

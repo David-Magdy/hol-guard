@@ -92,9 +92,9 @@ export function assertSafeAboutExternalUrl(
     );
   }
 
-  if (!parsed.pathname.startsWith(allowed.pathPrefix)) {
+  if (allowed.exactPath ? parsed.pathname !== allowed.pathPrefix : !parsed.pathname.startsWith(allowed.pathPrefix)) {
     throw new AboutExternalLinkError(
-      `Path prefix mismatch for ${linkId}: expected ${allowed.pathPrefix}, got ${parsed.pathname}`
+      `Path mismatch for ${linkId}: expected ${allowed.exactPath ? "exact" : "prefix"} ${allowed.pathPrefix}, got ${parsed.pathname}`
     );
   }
 

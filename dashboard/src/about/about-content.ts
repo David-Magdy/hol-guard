@@ -28,7 +28,7 @@ export const ABOUT_PARTNER_SECTION_TITLE = "Standards partner program";
 export const ABOUT_PARTNER_SECTION_BODY =
   "Join teams building on HOL open standards. Partners get early access to protocol drafts, co-marketing, and direct engineering support.";
 export const ABOUT_PARTNER_CTA = "Explore partner programs";
-export const ABOUT_PARTNER_CTA_HREF = "https://hol.org/guard/partners";
+export const ABOUT_PARTNER_CTA_HREF = "https://hol.org";
 
 export const ABOUT_AFFILIATE_SECTION_TITLE = "Affiliate starter kit";
 export const ABOUT_AFFILIATE_SECTION_BODY =
@@ -174,7 +174,7 @@ export const ABOUT_PATH_CARDS: AboutPathCard[] = [
     description:
       "Contribute to open trust standards for agent identity, registries, and receipts.",
     ctaLabel: "Explore partners",
-    ctaHref: "https://hol.org/guard/partners",
+    ctaHref: "https://hol.org",
     ctaId: "path_standards_partner",
     priority: "tertiary",
     tone: "slate",
@@ -215,7 +215,7 @@ export const ABOUT_AFFILIATE_TERMS: AffiliateTerms = {
   qualificationNote: "Qualified paid customers after approval",
 };
 
-export const ALLOWED_LINKS: Record<AboutLinkId, { host: string; pathPrefix: string }> = {
+export const ALLOWED_LINKS: Record<AboutLinkId, { host: string; pathPrefix: string; exactPath?: boolean }> = {
   guard_docs: { host: "hol.org", pathPrefix: "/guard/docs" },
   hol_home: { host: "hol.org", pathPrefix: "/" },
   hol_guard: { host: "hol.org", pathPrefix: "/guard" },
@@ -223,7 +223,7 @@ export const ALLOWED_LINKS: Record<AboutLinkId, { host: string; pathPrefix: stri
   hol_guard_cloud: { host: "hol.org", pathPrefix: "/guard" },
   plugin_scanner_ci_docs: { host: "hol.org", pathPrefix: "/guard/docs/plugin-scanner" },
   standards_sdk_github: { host: "github.com", pathPrefix: "/hashgraph-online/standards-sdk" },
-  hol_partners: { host: "hol.org", pathPrefix: "/guard/partners" },
+  hol_partners: { host: "hol.org", pathPrefix: "/", exactPath: true },
   hol_affiliates: { host: "hol.org", pathPrefix: "/guard/affiliates" },
   hol_guard_source: { host: "github.com", pathPrefix: "/hashgraph-online/hol-guard" },
 };
