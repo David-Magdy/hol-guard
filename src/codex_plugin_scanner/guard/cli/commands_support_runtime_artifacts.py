@@ -6,7 +6,10 @@ from __future__ import annotations
 
 from ..runtime.command_extensions import risk_classes_for_command_action
 from ..runtime.command_model import parse_shell_command
-from ..runtime.direct_vitest import direct_local_vitest_execution_context
+from ..runtime.direct_vitest import (
+    direct_local_typescript_execution_context,
+    direct_local_vitest_execution_context,
+)
 from ..runtime.github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
 from ..runtime.jsonc import loads_jsonc
 from ..runtime.kubernetes_commands import kubernetes_secret_read_source
@@ -340,6 +343,11 @@ def _unmodeled_shell_runtime_artifact(
                 cwd=workspace,
                 home_dir=home_dir,
             )
+            or direct_local_typescript_execution_context(
+                command_text,
+                cwd=workspace,
+                home_dir=home_dir,
+            )
             or literal_cd_execution_context(
                 command_text,
                 home_dir=home_dir,
@@ -643,18 +651,21 @@ def _hook_runtime_artifact(
             home_dir=home_dir,
         )
     runtime_artifacts: list[GuardArtifact] = []
-    verified_local_vitest = (
-        isinstance(raw_command_text, str)
-        and direct_local_vitest_execution_context(
+    verified_local_runner = isinstance(raw_command_text, str) and (
+        direct_local_vitest_execution_context(
             raw_command_text,
             cwd=workspace,
             home_dir=home_dir,
         )
-        is not None
+        or direct_local_typescript_execution_context(
+            raw_command_text,
+            cwd=workspace,
+            home_dir=home_dir,
+        )
     )
     if (
         package_intent is not None
-        and not verified_local_vitest
+        and not verified_local_runner
         and not _routine_local_runner_has_complete_evidence(package_intent)
     ):
         runtime_artifacts.append(

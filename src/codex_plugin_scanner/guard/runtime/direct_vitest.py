@@ -1,15 +1,27 @@
-"""Bounded execution-context recovery for verified local Vitest runs."""
+"""Bounded execution-context recovery for verified local JavaScript tools."""
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
+import importlib
 import json
 import os
 import re
 import shutil
+import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
+if TYPE_CHECKING:
+    import tomllib  # pyright: ignore[reportMissingTypeStubs]
+else:  # pragma: no cover - runtime compatibility
+    tomllib = importlib.import_module("tomllib" if sys.version_info >= (3, 11) else "tomli")
+
+from ..adapters.base import HarnessContext
+from ..shims import package_shim_status
 from .git_execution_safety import git_binary_path_is_trusted
 from .jsonc import loads_jsonc
 from .shell_execution_context import ShellExecutionContext, model_shell_execution_context
@@ -17,6 +29,14 @@ from .shell_execution_context import ShellExecutionContext, model_shell_executio
 _LOCKFILE_NAMES = ("bun.lock", "package-lock.json")
 _DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
 _MAX_METADATA_BYTES = 16 * 1024 * 1024
+_MAX_PACKAGE_TREE_BYTES = 128 * 1024 * 1024
+_MAX_PACKAGE_TREE_FILES = 10_000
+_TRUSTED_TYPESCRIPT_PACKAGES = {
+    (
+        "5.9.3",
+        "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+    ): "e5e331517b5c57cef26c6ed1c1dd2193ed52002a49a276cf7971b499c7f83b0f",
+}
 
 
 def direct_local_vitest_execution_context(
@@ -92,6 +112,234 @@ def direct_local_vitest_execution_context(
     ):
         return None
     return context
+
+
+def direct_local_typescript_execution_context(
+    command_text: str,
+    *,
+    cwd: Path | None,
+    home_dir: Path,
+) -> ShellExecutionContext | None:
+    """Recover a locked local TypeScript no-emit validation pipeline."""
+
+    initial_root = cwd or home_dir
+    initial_context = model_shell_execution_context(
+        command_text,
+        cwd=initial_root,
+        workspace_root=initial_root,
+        home_dir=home_dir,
+    )
+    workspace = _literal_leading_cd_target(initial_context, initial_root=initial_root, home_dir=home_dir)
+    if workspace is None:
+        return None
+    context = model_shell_execution_context(
+        command_text,
+        cwd=workspace,
+        workspace_root=workspace,
+        home_dir=home_dir,
+    )
+    if not context.complete or len(context.segments) != 5:
+        return None
+    directory, compiler, grep, count, marker = context.segments
+    if (
+        directory.directory_operation != "cd"
+        or directory.control_before
+        or compiler.control_before != ("&&",)
+        or compiler.effective_cwd != workspace
+        or grep.control_before != ("|",)
+        or count.control_before != ("|",)
+        or marker.control_before != (";",)
+    ):
+        return None
+    compiler_tokens = list(compiler.tokens)
+    if compiler_tokens[-1:] != ["2>&1"]:
+        return None
+    _ = compiler_tokens.pop()
+    if (
+        len(compiler_tokens) != 5
+        or not _safe_node_heap_assignment(compiler_tokens[0])
+        or compiler_tokens[1:] != ["bun", "--smol", "./node_modules/typescript/bin/tsc", "--noEmit"]
+        or not _trusted_path_command("bun", cwd=workspace, home_dir=home_dir)
+        or _bun_runtime_config_exists(workspace=workspace, home_dir=home_dir)
+        or not _workspace_typescript_is_bound(workspace)
+    ):
+        return None
+    if (
+        grep.tokens != ("grep", "error TS")
+        or count.tokens != ("wc", "-l")
+        or not _trusted_path_command("grep", cwd=workspace, home_dir=home_dir)
+        or not _trusted_path_command("wc", cwd=workspace, home_dir=home_dir)
+    ):
+        return None
+    if marker.tokens != ("echo", "MY_TSC_ERRORS_COUNT_DONE"):
+        return None
+    return context
+
+
+def _safe_node_heap_assignment(token: str) -> bool:
+    match = re.fullmatch(r"NODE_OPTIONS=--max-old-space-size=([1-9][0-9]{2,4})", token)
+    return match is not None and 256 <= int(match.group(1)) <= 32768
+
+
+def _bun_runtime_config_exists(*, workspace: Path, home_dir: Path) -> bool:
+    """Reject Bun configuration that can change runtime execution."""
+
+    if os.environ.get("BUN_OPTIONS", "").strip():
+        return True
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    for directory in (workspace, *workspace.parents):
+        candidate = directory / "bunfig.toml"
+        if candidate.exists() and not _bunfig_is_install_only(candidate):
+            return True
+    candidates = [home_dir / ".bunfig.toml"]
+    if xdg_config_home:
+        candidates.append(Path(xdg_config_home) / ".bunfig.toml")
+    return any(candidate.exists() for candidate in candidates)
+
+
+def _bunfig_is_install_only(path: Path) -> bool:
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_METADATA_BYTES:
+            return False
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return False
+    if set(payload) != {"install"}:
+        return False
+    raw_install = payload.get("install")
+    if not isinstance(raw_install, dict):
+        return False
+    install = cast(dict[object, object], raw_install)
+    if not set(install) <= {"linker", "lockfile", "smol"}:
+        return False
+    linker = install.get("linker")
+    smol = install.get("smol")
+    lockfile = install.get("lockfile")
+    if linker is not None and linker not in {"hoisted", "isolated"}:
+        return False
+    if smol is not None and not isinstance(smol, bool):
+        return False
+    if lockfile is None:
+        return True
+    if not isinstance(lockfile, dict):
+        return False
+    typed_lockfile = cast(dict[object, object], lockfile)
+    return set(typed_lockfile) <= {"save"} and isinstance(typed_lockfile.get("save"), bool)
+
+
+def _workspace_typescript_is_bound(workspace: Path) -> bool:
+    package_dir = workspace / "node_modules" / "typescript"
+    compiler = package_dir / "bin" / "tsc"
+    package = _read_package_json(package_dir / "package.json")
+    if package is None or package.get("name") != "typescript":
+        return False
+    installed_version = package.get("version")
+    package_bin = package.get("bin")
+    if (
+        not isinstance(installed_version, str)
+        or not isinstance(package_bin, Mapping)
+        or cast(Mapping[object, object], package_bin).get("tsc") not in {"bin/tsc", "./bin/tsc"}
+    ):
+        return False
+    try:
+        resolved_compiler = compiler.resolve(strict=True)
+        _ = resolved_compiler.relative_to(workspace.resolve(strict=True))
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if compiler.is_symlink() or resolved_compiler != compiler.absolute() or not resolved_compiler.is_file():
+        return False
+    declared_version = _declared_dependency_version(workspace, "typescript")
+    lockfile = workspace / "bun.lock"
+    if declared_version is None or not lockfile.is_file() or (workspace / "package-lock.json").exists():
+        return False
+    locked_identity = _locked_bun_package_identity(lockfile, "typescript")
+    return bool(
+        locked_identity is not None
+        and locked_identity[0] == installed_version
+        and _semver_spec_matches(declared_version, installed_version)
+        and _typescript_package_has_trusted_identity(
+            package_dir,
+            version=locked_identity[0],
+            integrity=locked_identity[1],
+        )
+    )
+
+
+def _locked_bun_package_identity(path: Path, package_name: str) -> tuple[str, str] | None:
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_METADATA_BYTES:
+            return None
+        payload = loads_jsonc(path.read_text(encoding="utf-8"))
+        packages = cast(Mapping[object, object], payload).get("packages") if isinstance(payload, Mapping) else None
+        raw_entry = cast(Mapping[object, object], packages).get(package_name) if isinstance(packages, Mapping) else None
+        if not isinstance(raw_entry, list):
+            return None
+        entry = cast(list[object], raw_entry)
+        if len(entry) < 4 or not isinstance(entry[0], str):
+            return None
+        prefix = f"{package_name}@"
+        integrity = entry[3]
+        if not entry[0].startswith(prefix) or not isinstance(integrity, str) or not integrity.startswith("sha512-"):
+            return None
+        decoded = base64.b64decode(integrity.removeprefix("sha512-"), validate=True)
+    except (OSError, UnicodeError, ValueError, binascii.Error):
+        return None
+    return (entry[0][len(prefix) :], integrity) if len(decoded) == 64 else None
+
+
+def _typescript_package_has_trusted_identity(
+    package_dir: Path,
+    *,
+    version: str,
+    integrity: str,
+) -> bool:
+    trusted_digest = _TRUSTED_TYPESCRIPT_PACKAGES.get((version, integrity))
+    if trusted_digest is None:
+        return False
+    try:
+        return _package_tree_digest(package_dir) == trusted_digest
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _package_tree_digest(root: Path) -> str:
+    canonical_root = root.resolve(strict=True)
+    if root.is_symlink() or not canonical_root.is_dir():
+        raise ValueError("package tree is not canonical")
+    records: list[tuple[str, str]] = []
+    total_bytes = 0
+    for directory, directory_names, filenames in os.walk(canonical_root, followlinks=False):
+        directory_names.sort()
+        filenames.sort()
+        directory_path = Path(directory)
+        for name in (*directory_names, *filenames):
+            if (directory_path / name).is_symlink():
+                raise ValueError("package tree contains a symlink")
+        for filename in filenames:
+            path = directory_path / filename
+            metadata = path.stat()
+            if not path.is_file():
+                raise ValueError("package tree contains a non-file")
+            total_bytes += metadata.st_size
+            if len(records) >= _MAX_PACKAGE_TREE_FILES or total_bytes > _MAX_PACKAGE_TREE_BYTES:
+                raise ValueError("package tree exceeds identity budget")
+            records.append((path.relative_to(canonical_root).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest()))
+    encoded = json.dumps(records, separators=(",", ":"), ensure_ascii=True).encode()
+    return hashlib.sha256(b"hol-guard:package-tree:v1\0" + len(encoded).to_bytes(8, "big") + encoded).hexdigest()
+
+
+def _declared_dependency_version(workspace: Path, package_name: str) -> str | None:
+    package = _read_package_json(workspace / "package.json")
+    if package is None:
+        return None
+    for section in _DEPENDENCY_SECTIONS:
+        dependencies = package.get(section)
+        if not isinstance(dependencies, Mapping):
+            continue
+        declared = cast(Mapping[object, object], dependencies).get(package_name)
+        if isinstance(declared, str):
+            return declared
+    return None
 
 
 def _vitest_runner_invocation(
@@ -230,6 +478,10 @@ def _read_package_json(path: Path) -> dict[str, object] | None:
 
 
 def _locked_vitest_version(path: Path) -> str | None:
+    return _locked_package_version(path, "vitest")
+
+
+def _locked_package_version(path: Path, package_name: str) -> str | None:
     try:
         if path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_METADATA_BYTES:
             return None
@@ -247,11 +499,15 @@ def _locked_vitest_version(path: Path) -> str | None:
     if not isinstance(packages, dict):
         return None
     typed_packages = cast(dict[object, object], packages)
-    entry = typed_packages.get("vitest") if path.name == "bun.lock" else typed_packages.get("node_modules/vitest")
+    entry = (
+        typed_packages.get(package_name)
+        if path.name == "bun.lock"
+        else typed_packages.get(f"node_modules/{package_name}")
+    )
     if path.name == "bun.lock":
         if not isinstance(entry, list) or not entry or not isinstance(entry[0], str):
             return None
-        prefix = "vitest@"
+        prefix = f"{package_name}@"
         return entry[0][len(prefix) :] if entry[0].startswith(prefix) else None
     if not isinstance(entry, dict):
         return None
@@ -335,8 +591,36 @@ def _trusted_path_command(command: str, *, cwd: Path, home_dir: Path) -> bool:
         resolved = Path(path).resolve(strict=True)
     except (OSError, RuntimeError):
         return False
-    del home_dir
-    return git_binary_path_is_trusted(resolved, cwd=cwd)
+    if git_binary_path_is_trusted(resolved, cwd=cwd):
+        return True
+    if command != "bun":
+        return False
+    try:
+        status = package_shim_status(
+            HarnessContext(
+                home_dir=home_dir,
+                workspace_dir=cwd,
+                guard_home=home_dir / ".hol-guard",
+            ),
+            path_env=os.environ.get("PATH", ""),
+        )
+        details = status.get("manager_details")
+        if not isinstance(details, list):
+            return False
+        for raw_detail in cast(list[object], details):
+            if not isinstance(raw_detail, Mapping):
+                continue
+            detail = cast(Mapping[object, object], raw_detail)
+            if (
+                detail.get("manager") == "bun"
+                and detail.get("integrity") == "ok"
+                and detail.get("path_active") is True
+                and detail.get("shim_path") == str(resolved)
+            ):
+                return True
+    except Exception:
+        return False
+    return False
 
 
 def _has_shell_dynamics(token: str) -> bool:

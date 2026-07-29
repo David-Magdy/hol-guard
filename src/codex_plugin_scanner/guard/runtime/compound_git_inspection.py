@@ -1,4 +1,4 @@
-"""Conservative whole-command recognition for routine Git inspection chains."""
+"""Conservative whole-command recognition for routine Git command chains."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Final
 from .git_execution_safety import (
     git_config_routing_environment_is_clean,
     git_fetch_origin_has_execution_free_config,
+    git_push_origin_has_execution_free_config,
     git_status_has_execution_free_config,
     trusted_git_binary_for_cwd,
 )
@@ -22,7 +23,7 @@ _BOUND: Final = 1000
 
 
 def is_low_risk_compound_git_inspection(context: ShellExecutionContext) -> bool:
-    """Recognize a deterministic leading-cd Git refresh and inspection chain."""
+    """Recognize a deterministic leading-cd Git routine."""
 
     if not context.complete or len(context.segments) < 2:
         return False
@@ -34,7 +35,7 @@ def is_low_risk_compound_git_inspection(context: ShellExecutionContext) -> bool:
             return False
         command = segment.tokens[0] if segment.tokens else ""
         if command == "git":
-            if not is_low_risk_git_inspection_segment(segment):
+            if not (is_low_risk_git_inspection_segment(segment) or is_low_risk_git_push_segment(segment)):
                 return False
             saw_git = True
             continue
@@ -116,6 +117,37 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
             repository_path=repository_path,
         )
     return False
+
+
+def is_low_risk_git_push_segment(segment: ShellExecutionSegment) -> bool:
+    """Recognize one current-branch push to a verified GitHub origin."""
+
+    tokens = _without_stderr_merge(segment.tokens)
+    if (
+        tokens is None
+        or len(tokens) != 5
+        or tokens[:3]
+        not in {
+            ("git", "push", "-u"),
+            ("git", "push", "--set-upstream"),
+        }
+    ):
+        return False
+    if tokens[3] != "origin" or _safe_ref(tokens[4]) is False:
+        return False
+    invocation_cwds = _git_invocation_cwds(segment, repository_path=None)
+    if invocation_cwds is None:
+        return False
+    execution_cwd, repository_cwd = invocation_cwds
+    resolved_git = trusted_git_binary_for_cwd(execution_cwd)
+    return bool(
+        resolved_git is not None
+        and git_push_origin_has_execution_free_config(
+            repository_cwd,
+            branch=tokens[4],
+            git_binary=resolved_git,
+        )
+    )
 
 
 def is_low_risk_standalone_git_routine(context: ShellExecutionContext) -> bool:
@@ -346,5 +378,6 @@ def _dynamic(value: str) -> bool:
 __all__ = (
     "is_low_risk_compound_git_inspection",
     "is_low_risk_git_inspection_segment",
+    "is_low_risk_git_push_segment",
     "is_low_risk_standalone_git_routine",
 )

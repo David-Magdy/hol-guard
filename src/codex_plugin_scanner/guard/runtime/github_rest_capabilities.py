@@ -31,7 +31,16 @@ _API_OPTIONS_WITH_VALUES = frozenset(
 _API_BOOLEAN_OPTIONS = frozenset({"--include", "--paginate", "--silent", "--slurp", "--verbose", "-i"})
 _API_OUTPUT_FORMAT_OPTIONS = frozenset({"--jq", "--template"})
 _METHOD_OVERRIDE_HEADER = re.compile(r"\Ax-http-method-override\s*:", re.IGNORECASE)
-_STATIC_ENDPOINT = re.compile(r"\A[A-Za-z0-9_./{}:+,@=-]+\Z")
+_STATIC_ENDPOINT = re.compile(r"\A[A-Za-z0-9_./{}:+,@=?&-]+\Z")
+_PR_HEAD_OID_ENDPOINT = re.compile(
+    "".join(
+        (
+            r"\Arepos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/commits/",
+            r"\$\(gh pr view [1-9][0-9]* --json headRefOid --jq \.headRefOid\)",
+            r"/check-runs(?:\?[A-Za-z0-9_.=&-]+)?\Z",
+        )
+    )
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +57,9 @@ def classify_github_api(args: Sequence[str]) -> GitHubCommandAssessment:
     parsed = _parse_api_arguments(args)
     if isinstance(parsed, GitHubCommandAssessment):
         return parsed
-    if not _STATIC_ENDPOINT.fullmatch(parsed.endpoint) or parsed.endpoint.startswith("-"):
+    if (
+        not _STATIC_ENDPOINT.fullmatch(parsed.endpoint) and not _PR_HEAD_OID_ENDPOINT.fullmatch(parsed.endpoint)
+    ) or parsed.endpoint.startswith("-"):
         return github_assessment(
             "unknown",
             "github.api.dynamic-endpoint",
