@@ -324,7 +324,7 @@ _SENSITIVE_STORAGE_PATTERNS: tuple[str, ...] = (
 _SENSITIVE_AUTH_PATTERNS: tuple[str, ...] = ("auth_header", "authorization", "auth_token", "authtoken")
 _SENSITIVE_CDP_PATTERNS: tuple[str, ...] = ("cdp", "chrome_devtools_protocol", "raw_cdp")
 _SENSITIVE_SCRIPT_EVAL_PATTERNS: tuple[str, ...] = ("eval", "script", "javascript", "expression")
-_SENSITIVE_UPLOAD_PATTERNS: tuple[str, ...] = ("upload", "file_path", "filepath", "file_input")
+_SENSITIVE_UPLOAD_PATTERNS: tuple[str, ...] = ("upload", "file_input")
 _SENSITIVE_DOWNLOAD_PATTERNS: tuple[str, ...] = ("download", "save_path", "savepath", "download_path", "downloadpath")
 _SENSITIVE_CLIPBOARD_PATTERNS: tuple[str, ...] = ("clipboard",)
 _SENSITIVE_PASSWORD_PATTERNS: tuple[str, ...] = (
@@ -478,6 +478,8 @@ def normalize_browser_mcp_intent(
         return None
 
     target_url = _extract_target_url(mapping) if mapping else None
+    if target_url is None:
+        target_url = _optional_str(artifact.metadata.get("browser_current_page_url"))
     target_origin = _normalize_target_origin(target_url) if target_url else None
     target_domain = _normalize_target_domain(target_url) if target_url else None
     target_path_prefix = _normalize_path_prefix(target_url) if target_url else None
@@ -686,7 +688,7 @@ def _normalize_path_prefix(url: str | None) -> str | None:
 
 
 def _redacted_target_url(url: str | None) -> str | None:
-    """Redact sensitive query parameter values in a URL."""
+    """Redact sensitive query values and remove opaque URL fragments."""
     if url is None:
         return None
     try:
@@ -695,7 +697,7 @@ def _redacted_target_url(url: str | None) -> str | None:
         return url
 
     if not parsed.query:
-        return url
+        return urlunparse(parsed._replace(fragment=""))
 
     # Parse query params and redact sensitive ones
     from urllib.parse import parse_qsl, urlencode
@@ -709,7 +711,7 @@ def _redacted_target_url(url: str | None) -> str | None:
             redacted_pairs.append((key, value))
 
     redacted_query = urlencode(redacted_pairs)
-    return urlunparse(parsed._replace(query=redacted_query))
+    return urlunparse(parsed._replace(query=redacted_query, fragment=""))
 
 
 def _normalize_query_key(key: str) -> str:
@@ -791,7 +793,8 @@ def _detect_sensitive_surfaces(
     arg_keys_lower = " ".join(str(k) for k in arguments).lower()
     schema_keys = _extract_schema_keys(schema)
     schema_combined = " ".join(schema_keys).lower()
-    all_text = f"{combined} {arg_keys_lower} {schema_combined}"
+    active_text = f"{combined} {arg_keys_lower}"
+    all_text = f"{active_text} {schema_combined}"
 
     if any(p in all_text for p in _SENSITIVE_COOKIE_PATTERNS):
         surfaces.append("cookies")
@@ -803,9 +806,9 @@ def _detect_sensitive_surfaces(
         surfaces.append("cdp")
     if any(p in all_text for p in _SENSITIVE_SCRIPT_EVAL_PATTERNS):
         surfaces.append("script_eval")
-    if any(p in all_text for p in _SENSITIVE_UPLOAD_PATTERNS):
+    if any(p in active_text for p in _SENSITIVE_UPLOAD_PATTERNS):
         surfaces.append("upload")
-    if any(p in all_text for p in _SENSITIVE_DOWNLOAD_PATTERNS):
+    if any(p in active_text for p in _SENSITIVE_DOWNLOAD_PATTERNS):
         surfaces.append("download")
     if any(p in all_text for p in _SENSITIVE_CLIPBOARD_PATTERNS):
         surfaces.append("clipboard")

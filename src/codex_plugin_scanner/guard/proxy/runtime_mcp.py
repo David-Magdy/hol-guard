@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import queue
+import re
 import shlex
 import subprocess
 import sys
@@ -63,7 +64,12 @@ from ..runtime.approval_context import (
     runtime_launch_identity_matches,
 )
 from ..runtime.approval_reuse import APPROVAL_REUSE_CLAIM_FAILED
-from ..runtime.browser_mcp_intent import browser_intent_display_target, normalize_browser_mcp_intent
+from ..runtime.browser_mcp_intent import (
+    _extract_target_url,
+    _redacted_target_url,
+    browser_intent_display_target,
+    normalize_browser_mcp_intent,
+)
 from ..runtime.mcp_protection import McpServerIdentity, build_mcp_server_identity
 from ..runtime.package_execution_policy import is_execution_permitted
 from ..runtime.package_intent import build_package_request_artifact, extract_package_intent_request
@@ -88,6 +94,42 @@ def _guard_action(value: object) -> GuardAction:
 
 
 _SHELL_COMMAND_ARGUMENT_KEYS = frozenset({"cmd", "command", "shellCommand", "shell_command"})
+_SELECTED_BROWSER_PAGE_PATTERN = re.compile(
+    r"(?:^|\n)\s*\d+\s*:\s*(https?://[^\s]+)\s+\[selected\]",
+    re.IGNORECASE,
+)
+
+
+def _browser_url_from_arguments(arguments: object) -> str | None:
+    if not isinstance(arguments, dict):
+        return None
+    return _redacted_target_url(_extract_target_url(arguments))
+
+
+def _selected_browser_page_url(response: Mapping[str, object]) -> str | None:
+    pending: list[object] = [response]
+    visited: set[int] = set()
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            match = _SELECTED_BROWSER_PAGE_PATTERN.search(value)
+            if match is not None:
+                return _redacted_target_url(match.group(1))
+            continue
+        if isinstance(value, Mapping):
+            value_id = id(value)
+            if value_id in visited:
+                continue
+            visited.add(value_id)
+            pending.extend(value.values())
+            continue
+        if isinstance(value, list | tuple):
+            value_id = id(value)
+            if value_id in visited:
+                continue
+            visited.add(value_id)
+            pending.extend(value)
+    return None
 
 
 class _ExternalArchiveBindingError(ValueError):
@@ -584,6 +626,7 @@ class RuntimeMcpGuardProxy:
         self._active_executable_identity: dict[str, object] | None = None
         self._active_server_env_values_hash: str | None = None
         self._active_server_identity: McpServerIdentity | None = None
+        self._browser_current_page_url: str | None = None
 
     def _child_response_timeout_seconds(self) -> float:
         configured = getattr(self.config, "approval_wait_timeout_seconds", None)
@@ -1008,6 +1051,14 @@ class RuntimeMcpGuardProxy:
             tool_schema=tool_schema,
             tool_description=tool_description_value if isinstance(tool_description_value, str) else None,
         )
+        if self._browser_current_page_url is not None:
+            artifact = replace(
+                artifact,
+                metadata={
+                    **artifact.metadata,
+                    "browser_current_page_url": self._browser_current_page_url,
+                },
+            )
         artifact_hash = build_tool_call_hash(
             artifact,
             arguments,
@@ -2953,6 +3004,11 @@ class RuntimeMcpGuardProxy:
                 phase="immediately_before_forward",
                 package_request=False,
             )
+        self._observe_browser_page_context(
+            tool_name=str(params.get("name") or artifact.name),
+            arguments=params.get("arguments"),
+            response=response,
+        )
         allow_tool_call(
             store=self.store,
             artifact=artifact,
@@ -2976,6 +3032,34 @@ class RuntimeMcpGuardProxy:
         if scanner_evidence:
             event["scanner_evidence"] = list(scanner_evidence)
         return response, event
+
+    def _observe_browser_page_context(
+        self,
+        *,
+        tool_name: str,
+        arguments: object,
+        response: Mapping[str, object],
+    ) -> None:
+        if _is_timeout_response(response) or "error" in response:
+            return
+        artifact = build_tool_call_artifact(
+            harness=self.harness,
+            server_name=self.server_name,
+            tool_name=tool_name,
+            source_scope=self.source_scope,
+            config_path=self.config_path,
+            transport=self.transport,
+            server_identity=self._session_server_identity(),
+        )
+        if normalize_browser_mcp_intent(artifact, arguments) is None:
+            return
+        selected_url = _selected_browser_page_url(response)
+        if selected_url is not None:
+            self._browser_current_page_url = selected_url
+            return
+        if tool_name.lower() not in {"navigate_page", "new_page", "browser_navigate", "browser_new_page"}:
+            return
+        self._browser_current_page_url = _browser_url_from_arguments(arguments)
 
     @staticmethod
     def _forward_notification(message: dict[str, Any], child_stdin: IO[str]) -> None:

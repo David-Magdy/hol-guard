@@ -130,6 +130,26 @@ class TestBrowserIntentLiterals:
         assert "browser.privileged" in BrowserIntent.__args__  # type: ignore[attr-defined]
 
 
+class TestBrowserPageContext:
+    def test_selected_page_response_extracts_redacted_url(self) -> None:
+        from codex_plugin_scanner.guard.proxy.runtime_mcp import _selected_browser_page_url
+
+        response = {
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "## Pages\n0: https://example.com/private?token=secret [selected]\n1: https://hol.org/"
+                        ),
+                    }
+                ]
+            }
+        }
+
+        assert _selected_browser_page_url(response) == "https://example.com/private?token=%5Bredacted%5D"
+
+
 class TestBrowserAutomationIntentV1:
     """HGBM013: GuardBrowserAutomationIntentV1 dataclass."""
 
@@ -161,6 +181,7 @@ class TestBrowserAutomationIntentV1:
         assert intent.intent == "browser.navigation"
         # Should be serializable
         from dataclasses import asdict
+
         payload = json.dumps(asdict(intent), sort_keys=True)
         assert "browser.navigation" in payload
 
@@ -496,6 +517,14 @@ class TestRedactedTargetUrl:
         result = _redacted_target_url("https://hol.org/guard?id=123")
         assert "123" in result
 
+    def test_removes_opaque_fragment(self) -> None:
+        from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
+            _redacted_target_url,
+        )
+
+        result = _redacted_target_url("http://127.0.0.1:5474/requests/abc#guard-token=secret")
+        assert result == "http://127.0.0.1:5474/requests/abc"
+
 
 class TestOperationMaps:
     """HGBM023-HGBM029: Operation maps for browser MCP tools."""
@@ -739,6 +768,29 @@ class TestFullIntentNormalization:
         assert result.intent == "browser.inspect"
         assert "pageId" in result.volatile_fields_dropped
 
+    def test_screenshot_uses_confirmed_current_page_context(self) -> None:
+        from dataclasses import replace
+
+        from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
+            normalize_browser_mcp_intent,
+        )
+
+        artifact, arguments = _browser_artifact(tool_name="take_screenshot", arguments={})
+        artifact = replace(
+            artifact,
+            metadata={
+                **artifact.metadata,
+                "browser_current_page_url": "https://example.com/private?token=secret",
+            },
+        )
+
+        result = normalize_browser_mcp_intent(artifact, arguments)
+
+        assert result is not None
+        assert result.target_origin == "https://example.com"
+        assert result.target_domain == "example.com"
+        assert result.target_url == "https://example.com/private?token=%5Bredacted%5D"
+
     def test_evaluate_script_is_privileged(self) -> None:
         from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
             normalize_browser_mcp_intent,
@@ -824,6 +876,28 @@ class TestBrowserRiskClassifierIntegration:
         )
         categories = tool_call_risk_categories(artifact, arguments)
         assert "browser_inspection" in categories
+
+    def test_screenshot_optional_file_path_schema_is_not_an_active_file_transfer(self) -> None:
+        artifact, arguments = _browser_artifact(
+            tool_name="take_screenshot",
+            arguments={},
+        )
+        from dataclasses import replace
+
+        artifact = replace(
+            artifact,
+            metadata={
+                **artifact.metadata,
+                "tool_schema": {
+                    "type": "object",
+                    "properties": {"filePath": {"type": "string"}},
+                },
+            },
+        )
+
+        categories = tool_call_risk_categories(artifact, arguments)
+
+        assert categories == ("browser_inspection",)
 
     def test_browser_interaction_category(self) -> None:
         """HGBM039: Click/type has browser_interaction category."""
@@ -991,6 +1065,7 @@ class TestProxyBrowserIntentMetadata:
         artifact, arguments = _browser_artifact(
             arguments={"type": "url", "url": "https://hol.org/guard/integrations/slack"},
         )
+
         # Create a minimal proxy-like object to test the payload builder
         class _FakeProxy:
             _launch_target = staticmethod(lambda tool, args: f"{tool} {args}")
