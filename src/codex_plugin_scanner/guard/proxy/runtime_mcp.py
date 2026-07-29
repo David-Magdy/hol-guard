@@ -3045,7 +3045,7 @@ class RuntimeMcpGuardProxy:
         if selected_url is not None:
             self._browser_current_page_url = selected_url
             return
-        if intent.intent in {"browser.navigation", "browser.interact"}:
+        if intent.intent != "browser.inspect":
             self._browser_current_page_url = None
 
     @staticmethod
