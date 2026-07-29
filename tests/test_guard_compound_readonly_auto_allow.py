@@ -3,16 +3,36 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from codex_plugin_scanner.guard.runtime import secret_file_requests
 from codex_plugin_scanner.guard.runtime.secret_file_requests import (
     extract_sensitive_tool_action_request,
     is_explicitly_benign_tool_action_request,
 )
+
+
+@pytest.fixture(autouse=True)
+def _trust_system_ln_precondition(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = secret_file_requests.is_trusted_absolute_command_path
+    discovered = shutil.which("ln")
+    system_ln = Path(discovered).resolve(strict=True) if discovered is not None else None
+
+    def trust_system_ln(path: Path, *, cwd: Path | None, home_dir: Path | None) -> bool:
+        if system_ln is not None and path.resolve(strict=False) == system_ln:
+            return True
+        return original(path, cwd=cwd, home_dir=home_dir)
+
+    monkeypatch.setattr(
+        secret_file_requests,
+        "is_trusted_absolute_command_path",
+        trust_system_ln,
+    )
 
 
 def _repository(tmp_path: Path) -> tuple[Path, Path]:
