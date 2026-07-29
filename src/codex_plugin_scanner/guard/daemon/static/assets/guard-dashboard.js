@@ -17136,11 +17136,23 @@ function runtimeSnapshotSearchParams(input = {}) {
   }
   return params;
 }
+class GuardSessionUnavailableError extends Error {
+  constructor() {
+    super("Guard dashboard session is not available. Reopen the Guard dashboard from the authenticated URL.");
+    this.name = "GuardSessionUnavailableError";
+  }
+}
+function requireGuardSessionToken() {
+  if (!readGuardToken()) {
+    throw new GuardSessionUnavailableError();
+  }
+}
 async function fetchInboxState(input = {}) {
   if (isGuardDemoMode()) {
     const snapshot = buildDemoRuntimeSnapshot();
     return { snapshot, items: snapshot.items };
   }
+  requireGuardSessionToken();
   const [snapshotPayload, items] = await Promise.all([
     readJson(
       queuePath("/v1/runtime", runtimeSnapshotSearchParams({ ...input, includeItems: false, includeReceipts: false }))
@@ -17163,6 +17175,7 @@ async function fetchApprovalPage(input = {}) {
       status: input.status ?? "pending"
     };
   }
+  requireGuardSessionToken();
   const payload = await readJson(queuePath("/v1/requests", queueSearchParams(input)));
   return normalizeApprovalPage(payload, input.status ?? "pending");
 }
@@ -17170,6 +17183,7 @@ async function fetchRuntimeSnapshot(input = {}) {
   if (isGuardDemoMode()) {
     return buildDemoRuntimeSnapshot();
   }
+  requireGuardSessionToken();
   const params = runtimeSnapshotSearchParams(input);
   const query = params.toString();
   const path = query.length > 0 ? `/v1/runtime?${query}` : "/v1/runtime";
