@@ -330,6 +330,10 @@ class GuardConfig:
     publisher_actions: dict[str, GuardAction] | None = None
     artifact_actions: dict[str, GuardAction] | None = None
     evidence_retain_days: int = 90
+    # Opt-in caps on retained detailed rows. None keeps the store defaults
+    # (250k each); power users can lower these to bound database growth.
+    receipt_detail_limit: int | None = None
+    guard_event_limit: int | None = None
     managed_policy_status: str = "absent"
     managed_policy_hash: str | None = None
     managed_locked_settings: tuple[str, ...] = ()
@@ -482,6 +486,14 @@ def load_guard_config(
             merged.get("evidence_retain_days"),
             default=90,
             maximum=3_650,
+        ),
+        receipt_detail_limit=_coerce_loaded_optional_bounded_positive_int(
+            merged.get("receipt_detail_limit"),
+            maximum=1_000_000,
+        ),
+        guard_event_limit=_coerce_loaded_optional_bounded_positive_int(
+            merged.get("guard_event_limit"),
+            maximum=1_000_000,
         ),
         managed_policy_status=managed_state.status,
         managed_policy_hash=effective_managed_policy.content_hash if effective_managed_policy is not None else None,
@@ -703,6 +715,14 @@ def _coerce_loaded_bounded_positive_int(value: object, *, default: int, maximum:
     if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= maximum:
         return value
     return default
+
+
+def _coerce_loaded_optional_bounded_positive_int(value: object, *, maximum: int) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= maximum:
+        return value
+    return None
 
 
 def _coerce_loaded_approval_surface_policy(value: object) -> str:

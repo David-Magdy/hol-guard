@@ -50,6 +50,7 @@ from codex_plugin_scanner.guard.policy_integrity import PolicyIntegrityVerificat
 from codex_plugin_scanner.guard.proxy import runtime_mcp as runtime_mcp_module
 from codex_plugin_scanner.guard.proxy.runtime_mcp import RuntimeMcpGuardProxy
 from codex_plugin_scanner.guard.runtime import runner as guard_runner_module
+from codex_plugin_scanner.guard.runtime.self_approval import _AGENT_ENV_MARKERS
 from codex_plugin_scanner.guard.store import GuardStore
 from codex_plugin_scanner.guard.totp import TotpSecretStore, _temporary_atomic_path, totp_code_at_counter
 from tests.cloud_exception_bundle_fixtures import build_cloud_exception_policy_bundle
@@ -94,6 +95,22 @@ def _seed_guard_cloud(store, *, workspace_id=None, sync_url=None, token="demo-to
 
 PASSWORD = "correct-password"
 WRONG_PASSWORD = "wrong-password"
+
+
+@pytest.fixture(autouse=True)
+def _clear_agent_env_markers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate approval-gate tests from agent-harness environment markers.
+
+    The approval CLI refuses to mutate approvals when invoked inside a known
+    agent hook context (self-approval defense). When the test suite itself
+    runs under such a harness (CI agent shells, local Claude/Cursor/Codex
+    sessions), those markers leak into os.environ and flip gate tests to the
+    blocked path. Clear them per test; tests that exercise the defense set
+    their own marker via monkeypatch.
+    """
+
+    for marker in _AGENT_ENV_MARKERS:
+        monkeypatch.delenv(marker, raising=False)
 
 
 def _store(tmp_path: Path) -> GuardStore:

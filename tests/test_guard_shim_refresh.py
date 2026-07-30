@@ -1,0 +1,197 @@
+"""Tests for daemon-startup harness shim refresh."""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from codex_plugin_scanner.guard.shim_refresh import (
+    _existing_shim_harnesses,
+    _launcher_map,
+    refresh_stale_harness_shims,
+)
+from codex_plugin_scanner.guard.shims import _build_python_shim, install_guard_shim
+
+
+class _Context:
+    def __init__(self, home_dir: Path, guard_home: Path, workspace_dir: Path | None = None) -> None:
+        self.home_dir = home_dir
+        self.workspace_dir = workspace_dir
+        self.guard_home = guard_home
+        self.home_override_explicit = False
+
+
+class ShimRefreshTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.home_dir = root / "home"
+        self.home_dir.mkdir()
+        self.guard_home = root / "home" / ".hol-guard"
+        self.guard_home.mkdir(parents=True)
+
+    def _context(self, workspace_dir: Path | None = None) -> _Context:
+        return _Context(self.home_dir, self.guard_home, workspace_dir)
+
+    def _install(self, harness: str, workspace_dir: Path | None = None) -> Path:
+        install_guard_shim(harness, self._context(workspace_dir))
+        return self.guard_home / "bin" / f"guard-{harness}"
+
+    def test_launcher_map_resolves_legacy_names(self) -> None:
+        mapping = _launcher_map()
+        self.assertEqual(mapping["claude"], ("claude-code", "claude"))
+        self.assertEqual(mapping["claude-code"], ("claude-code", "claude"))
+        self.assertEqual(mapping["cursor-agent"], ("cursor", "cursor-agent"))
+        self.assertEqual(mapping["cursor"], ("cursor", "cursor-agent"))
+        self.assertEqual(mapping["kimi"], ("kimi", "kimi"))
+
+    def test_existing_shims_skip_cmd_and_non_guard_files(self) -> None:
+        shim_dir = self.guard_home / "bin"
+        shim_dir.mkdir()
+        (shim_dir / "guard-kimi").write_text("x", encoding="utf-8")
+        (shim_dir / "guard-kimi.cmd").write_text("x", encoding="utf-8")
+        (shim_dir / "other").write_text("x", encoding="utf-8")
+        self.assertEqual(_existing_shim_harnesses(shim_dir), ["kimi"])
+
+    def test_current_shim_is_left_unchanged(self) -> None:
+        self._install("kimi")
+        result = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[],
+        )
+        self.assertEqual(result.refreshed, ())
+        self.assertEqual(result.unchanged, ("kimi",))
+        self.assertEqual(result.errors, ())
+
+    def test_stale_shim_is_refreshed_with_current_generator_content(self) -> None:
+        path = self._install("kimi")
+        # Drift a real generated shim (keeps base_command parseable).
+        path.write_text(path.read_text(encoding="utf-8") + "\n# drifted\n", encoding="utf-8")
+        result = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[],
+        )
+        self.assertEqual(result.refreshed, ("kimi",))
+        self.assertEqual(result.errors, ())
+        expected = _build_python_shim("kimi", self._context(), [])
+        self.assertEqual(path.read_text(encoding="utf-8"), expected)
+
+    def test_workspace_binding_is_preserved_from_managed_installs(self) -> None:
+        workspace = self.home_dir / "project"
+        workspace.mkdir()
+        path = self._install("kimi", workspace)
+        original = path.read_text(encoding="utf-8")
+        self.assertIn("--workspace", original)
+        # Force staleness while keeping the workspace binding.
+        path.write_text(original.replace("kimi", "kimi", 1) + "\n# drifted\n", encoding="utf-8")
+        result = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[
+                {"harness": "kimi", "active": True, "workspace": str(workspace), "manifest": {}, "updated_at": ""}
+            ],
+        )
+        self.assertEqual(result.refreshed, ("kimi",))
+        self.assertEqual(result.errors, ())
+        refreshed = path.read_text(encoding="utf-8")
+        self.assertIn("--workspace", refreshed)
+        self.assertIn(str(workspace), refreshed)
+
+    def test_legacy_launcher_is_canonicalized_and_removed(self) -> None:
+        shim_dir = self.guard_home / "bin"
+        shim_dir.mkdir()
+        # Write a real cursor shim under the legacy launcher name.
+        body = _build_python_shim("cursor", self._context(), [])
+        legacy = shim_dir / "guard-cursor"
+        legacy.write_text(body, encoding="utf-8")
+        legacy.chmod(0o755)
+        legacy_cmd = shim_dir / "guard-cursor.cmd"
+        legacy_cmd.write_text("@echo off\n", encoding="utf-8")
+        result = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[],
+        )
+        self.assertEqual(result.refreshed, ("cursor",))
+        self.assertEqual(result.errors, ())
+        canonical = shim_dir / "guard-cursor-agent"
+        self.assertTrue(canonical.is_file())
+        self.assertIn("cursor", canonical.read_text(encoding="utf-8"))
+        self.assertFalse(legacy.exists())
+        self.assertFalse(legacy_cmd.exists())
+        # Second pass: canonical shim is current, nothing left to refresh.
+        second = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[],
+        )
+        self.assertEqual(second.refreshed, ())
+        self.assertEqual(second.unchanged, ("cursor-agent",))
+
+    def test_custom_home_binding_is_preserved(self) -> None:
+        context = _Context(self.home_dir, self.guard_home)
+        context.home_override_explicit = True
+        install_guard_shim("kimi", context)
+        path = self.guard_home / "bin" / "guard-kimi"
+        original = path.read_text(encoding="utf-8")
+        self.assertIn("--home", original)
+        path.write_text(original + "\n# drifted\n", encoding="utf-8")
+        result = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[],
+        )
+        self.assertEqual(result.refreshed, ("kimi",))
+        self.assertEqual(result.errors, ())
+        refreshed = path.read_text(encoding="utf-8")
+        self.assertIn("--home", refreshed)
+        self.assertIn(str(self.home_dir), refreshed)
+
+    def test_legacy_canonical_coexistence_keeps_canonical_context(self) -> None:
+        shim_dir = self.guard_home / "bin"
+        shim_dir.mkdir()
+        workspace = self.home_dir / "project"
+        workspace.mkdir()
+        # Canonical shim carries a workspace binding; legacy has none.
+        canonical_body = _build_python_shim("cursor", self._context(workspace), ["--workspace", str(workspace)])
+        canonical = shim_dir / "guard-cursor-agent"
+        canonical.write_text(canonical_body, encoding="utf-8")
+        canonical.chmod(0o755)
+        legacy_body = _build_python_shim("cursor", self._context(), [])
+        legacy = shim_dir / "guard-cursor"
+        legacy.write_text(legacy_body, encoding="utf-8")
+        legacy.chmod(0o755)
+        result = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[],
+        )
+        self.assertEqual(sorted(result.refreshed), ["cursor"])
+        self.assertEqual(result.errors, ())
+        self.assertFalse(legacy.exists())
+        # Canonical content untouched: workspace binding preserved byte-for-byte.
+        self.assertEqual(canonical.read_text(encoding="utf-8"), canonical_body)
+
+    def test_unknown_shim_is_left_alone(self) -> None:
+        shim_dir = self.guard_home / "bin"
+        shim_dir.mkdir()
+        (shim_dir / "guard-retired-harness").write_text("x", encoding="utf-8")
+        result = refresh_stale_harness_shims(
+            home_dir=self.home_dir,
+            guard_home=self.guard_home,
+            managed_installs=[],
+        )
+        self.assertEqual(result.refreshed, ())
+        self.assertEqual(result.unchanged, ("retired-harness",))
+        self.assertEqual(result.errors, ())
+
+
+if __name__ == "__main__":
+    unittest.main()
