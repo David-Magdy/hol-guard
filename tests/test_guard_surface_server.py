@@ -1242,6 +1242,7 @@ class TestGuardSurfaceServer:
         store = GuardStore(tmp_path / "guard-home")
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
+        events = store.list_events(event_name="daemon.hook.path_rejected")
 
         try:
             request = urllib.request.Request(
@@ -1255,13 +1256,17 @@ class TestGuardSurfaceServer:
             )
             with pytest.raises(urllib.error.HTTPError) as error:
                 urllib.request.urlopen(request, timeout=5)
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline and not events:
+                events = store.list_events(event_name="daemon.hook.path_rejected")
+                if not events:
+                    time.sleep(0.01)
         finally:
             daemon.stop()
 
         assert error.value.code == 400
         payload = json.loads(error.value.read().decode("utf-8"))
         assert payload["error"] == "invalid_hook_workspace_path"
-        events = store.list_events(event_name="daemon.hook.path_rejected")
         assert events[-1]["payload"]["parameter"] == "workspace"
         assert events[-1]["payload"]["reason"] == "relative_path"
 
