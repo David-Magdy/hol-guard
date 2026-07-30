@@ -1242,6 +1242,7 @@ class TestGuardSurfaceServer:
         store = GuardStore(tmp_path / "guard-home")
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
+        events = store.list_events(event_name="daemon.hook.path_rejected")
 
         try:
             request = urllib.request.Request(
@@ -1255,13 +1256,17 @@ class TestGuardSurfaceServer:
             )
             with pytest.raises(urllib.error.HTTPError) as error:
                 urllib.request.urlopen(request, timeout=5)
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline and not events:
+                events = store.list_events(event_name="daemon.hook.path_rejected")
+                if not events:
+                    time.sleep(0.01)
         finally:
             daemon.stop()
 
         assert error.value.code == 400
         payload = json.loads(error.value.read().decode("utf-8"))
         assert payload["error"] == "invalid_hook_workspace_path"
-        events = store.list_events(event_name="daemon.hook.path_rejected")
         assert events[-1]["payload"]["parameter"] == "workspace"
         assert events[-1]["payload"]["reason"] == "relative_path"
 
@@ -2825,14 +2830,38 @@ class TestGuardSurfaceServer:
         assert runtime_state is not None
         assert daemon_thread_alive is True
 
-    def test_guard_daemon_idle_timeout_ignores_invalid_env_value(self, tmp_path, monkeypatch) -> None:
+    @pytest.mark.parametrize("configured_timeout", (None, "ten"))
+    def test_persistent_guard_daemon_keeps_running_without_valid_idle_timeout(
+        self,
+        tmp_path,
+        monkeypatch,
+        configured_timeout: str | None,
+    ) -> None:
         guard_home = tmp_path / "guard-home"
-        monkeypatch.setenv("GUARD_DAEMON_IDLE_TIMEOUT_SECONDS", "ten")
+        if configured_timeout is not None:
+            monkeypatch.setenv("GUARD_DAEMON_IDLE_TIMEOUT_SECONDS", configured_timeout)
+        else:
+            monkeypatch.delenv("GUARD_DAEMON_IDLE_TIMEOUT_SECONDS", raising=False)
         monkeypatch.setattr(daemon_server_module, "_guard_home_is_ephemeral", lambda _guard_home: False)
 
         idle_timeout = daemon_server_module._guard_daemon_idle_timeout_seconds(guard_home)
+        store = GuardStore(guard_home)
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0, idle_timeout_seconds=idle_timeout)
+        daemon.start()
 
-        assert idle_timeout == 30 * 60
+        try:
+            time.sleep(0.75)
+            daemon_thread = daemon._thread
+            daemon_thread_alive = daemon_thread is not None and daemon_thread.is_alive()
+            runtime_state = store.get_runtime_state()
+            effective_timeout = daemon._server.idle_timeout_seconds
+        finally:
+            daemon.stop()
+
+        assert effective_timeout is None
+        assert daemon_thread is not None
+        assert daemon_thread_alive is True
+        assert runtime_state is not None
 
     def test_surface_server_contract_is_exposed_during_initialize(self, tmp_path) -> None:
         contract = build_surface_server_contract()

@@ -928,7 +928,6 @@ def _runtime_hook_env_overlay_from_payload(payload: Mapping[str, object]) -> dic
     return overlay
 
 
-_DEFAULT_GUARD_DAEMON_IDLE_TIMEOUT_SECONDS = 30 * 60
 _DEFAULT_SUPPLY_CHAIN_REFRESH_BACKOFF_SECONDS = 60.0
 _DEFAULT_SUPPLY_CHAIN_REFRESH_INTERVAL_SECONDS = 15 * 60.0
 _EPHEMERAL_GUARD_DAEMON_IDLE_TIMEOUT_SECONDS = 5
@@ -8258,7 +8257,7 @@ def _guard_daemon_idle_timeout_seconds(
             return None
     if _guard_home_is_ephemeral(guard_home):
         return _EPHEMERAL_GUARD_DAEMON_IDLE_TIMEOUT_SECONDS
-    return _DEFAULT_GUARD_DAEMON_IDLE_TIMEOUT_SECONDS
+    return None
 
 
 def _guard_home_is_ephemeral(guard_home: Path) -> bool:
