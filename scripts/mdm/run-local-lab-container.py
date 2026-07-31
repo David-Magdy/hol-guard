@@ -6,12 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Final
 
 _REPOSITORY_ROOT: Final = Path(__file__).resolve().parents[2]
 _DOCKERFILE: Final = _REPOSITORY_ROOT / "scripts" / "mdm" / "Dockerfile.local-lab"
 _DEFAULT_IMAGE: Final = "hol-guard-mdm-local-lab:local"
+_COMMAND_TIMEOUT_SECONDS: Final = 300
+
 
 
 def _docker_build_command(image: str) -> list[str]:
@@ -45,9 +48,16 @@ def main() -> int:
         print(json.dumps({"build": build_command, "run": run_command}, sort_keys=True))
         return 0
 
-    if not args.skip_build:
-        subprocess.run(build_command, check=True)
-    return subprocess.run(run_command, check=False).returncode
+    try:
+        if not args.skip_build:
+            subprocess.run(build_command, check=True, timeout=_COMMAND_TIMEOUT_SECONDS)
+        return subprocess.run(run_command, check=False, timeout=_COMMAND_TIMEOUT_SECONDS).returncode
+    except subprocess.TimeoutExpired as error:
+        print(
+            f"local MDM container command timed out after {_COMMAND_TIMEOUT_SECONDS} seconds: {error.cmd}",
+            file=sys.stderr,
+        )
+        return 124
 
 
 if __name__ == "__main__":
