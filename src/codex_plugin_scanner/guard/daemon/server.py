@@ -3363,6 +3363,9 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             }:
                 self._write_json({"error": "remote_once_wrong_target"}, status=409)
                 return
+            if error_code == "remote_approval_reviewer_not_authorized":
+                self._write_json({"error": "remote_once_reviewer_not_authorized"}, status=403)
+                return
             self._write_json({"error": error_code}, status=400)
             return
         if not self.server.store.claim_remote_once_receipt(  # type: ignore[attr-defined]

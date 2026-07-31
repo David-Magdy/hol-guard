@@ -35,6 +35,7 @@ _LOCAL_REVIEW_REQUEST_CONTRACT_VERSION = "guard.local-review-request.v1"
 _REMOTE_APPROVAL_CONTRACT_VERSION = "guard.remote-approval.v1"
 _DECISION_MEMORY_BUNDLE_CONTRACT_VERSION = "guard.decision-memory-bundle.v1"
 _REMOTE_APPROVAL_ALLOWED_SCOPES = frozenset(DECISION_SCOPE_VALUES)
+_REMOTE_APPROVAL_RESOLVER_ROLES = frozenset({"owner", "admin", "operator"})
 _REMOTE_APPROVAL_SIGNATURE_ALGORITHM = "rsa-pss-sha256"
 _DECISION_MEMORY_SIGNATURE_ALGORITHM = "rsa-pss-sha256"
 _CLAIM_HASH_KEYS = ("claimHash",)
@@ -441,6 +442,10 @@ def validate_remote_approval_request_binding(
         raise GuardReviewContractError("remote_approval_machine_mismatch")
     if _non_empty_string(envelope.get("deviceId")) != oauth.device_id:
         raise GuardReviewContractError("remote_approval_device_mismatch")
+    reviewer_user_id = _non_empty_string(envelope.get("reviewerUserId"))
+    reviewer_role = _non_empty_string(envelope.get("reviewerRole"))
+    if reviewer_user_id is None or reviewer_role not in _REMOTE_APPROVAL_RESOLVER_ROLES:
+        raise GuardReviewContractError("remote_approval_reviewer_not_authorized")
     if _non_empty_string(envelope.get("harnessId")) != _non_empty_string(request_row.get("harness")):
         raise GuardReviewContractError("remote_approval_harness_mismatch")
     if _non_empty_string(envelope.get("actionEnvelopeHash")) != _action_envelope_hash(request_row):

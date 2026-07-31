@@ -228,7 +228,7 @@ def _signed_remote_approval(
         "policyVersion": claim["policyVersion"],
         "projectIdentity": claim["projectIdentity"],
         "receiptId": receipt_id,
-        "reviewerRole": "workspace-owner",
+        "reviewerRole": "owner",
         "reviewerUserId": "user-1",
         "riskCategory": claim["riskCategory"],
         "runtimeGrantId": claim["runtimeGrantId"],
