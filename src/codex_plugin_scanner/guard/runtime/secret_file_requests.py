@@ -6938,6 +6938,8 @@ def _looks_destructive_shell_command(
         return False
     if _looks_like_read_only_shell_pipeline(normalized, parts, cwd=cwd, home_dir=home_dir):
         return False
+    if _looks_like_read_only_interpreter_compound(normalized, parts, home_dir=home_dir):
+        return False
     raw_command_names = list(_shell_command_names(redacted_command_text))
     parsed_command_names = list(_shell_command_names_from_parts(parts))
     if _looks_like_benign_interpreter_wait(normalized, parts, parsed_command_names):
@@ -8863,6 +8865,34 @@ def _looks_like_read_only_shell_pipeline(
     if len(pipeline) < 2:
         return False
     return all(_pipeline_segment_is_read_only(segment, cwd=cwd, home_dir=home_dir) for segment in pipeline)
+
+
+def _looks_like_read_only_interpreter_compound(
+    command_text: str,
+    parts: list[str],
+    *,
+    home_dir: Path | None = None,
+) -> bool:
+    if any(marker in command_text for marker in ("$(", "`", "<(", ">(")):
+        return False
+    segments = _iter_shell_command_segments(parts)
+    if len(segments) < 2:
+        return False
+    saw_interpreter = False
+    for segment in segments:
+        command_name, command_index = _shell_segment_primary_command(segment)
+        if command_name is None or command_index is None:
+            return False
+        if _is_python_interpreter_command(command_name):
+            scripts = list(_script_interpreter_texts(segment))
+            if len(scripts) != 1 or not _script_is_read_only_observer(scripts[0]):
+                return False
+            saw_interpreter = True
+            continue
+        segment_text = " ".join(segment)
+        if not _looks_like_safe_read_only_lookup_command(segment_text, segment, home_dir=home_dir):
+            return False
+    return saw_interpreter
 
 
 def _pipeline_segment_is_read_only(
