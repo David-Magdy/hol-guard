@@ -1,0 +1,24 @@
+FROM python:3.13-slim@sha256:c33f0bc4364a6881bed1ec0cc2665e6c53c87a43e774aaeab88e6f17af105e4f
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/hol-guard-source/src
+
+WORKDIR /hol-guard-source
+
+COPY docker-requirements.txt /tmp/docker-requirements.txt
+RUN python3 -m venv /hol-guard/.venv && \
+    /hol-guard/.venv/bin/python -m pip install --no-deps --require-hashes -r /tmp/docker-requirements.txt && \
+    /hol-guard/.venv/bin/python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'hol_guard_source.pth').write_text('/hol-guard-source/src\n')"
+
+COPY src /hol-guard-source/src
+COPY scripts/mdm/run-local-lab.py /hol-guard-source/scripts/mdm/run-local-lab.py
+RUN groupadd --system guardlab && \
+    useradd --system --gid guardlab --create-home --home-dir /home/guardlab guardlab && \
+    chown -R guardlab:guardlab /hol-guard /home/guardlab
+
+USER guardlab
+
+ENTRYPOINT ["/hol-guard/.venv/bin/python", "/hol-guard-source/scripts/mdm/run-local-lab.py"]
+CMD ["--json"]
