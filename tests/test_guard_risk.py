@@ -3208,6 +3208,31 @@ def test_tool_action_request_classifier_detects_semicolon_chained_interpreter_sc
     assert request.action_class == "destructive shell command"
 
 
+def test_tool_action_request_classifier_allows_read_only_lookup_then_python_observer():
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                "grep maximum ci/test-suite-ratchet-baseline.json; "
+                "python3 -c \"import json; d=json.load(open('test-inventory.json')); "
+                "print('cases field:', [k for k in d if 'case' in k])\""
+            )
+        },
+    )
+
+    assert request is None
+
+
+def test_tool_action_request_classifier_reviews_unknown_command_before_python_observer():
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": "project-tool inspect; python3 -c \"print('safe')\""},
+    )
+
+    assert request is not None
+    assert request.action_class == "destructive shell command"
+
+
 def test_tool_action_request_classifier_detects_newline_chained_interpreter_script():
     request = extract_sensitive_tool_action_request(
         "bash",
