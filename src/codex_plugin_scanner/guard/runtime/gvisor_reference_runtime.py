@@ -226,12 +226,7 @@ class GVisorReferenceRuntime:
             )
         except subprocess.TimeoutExpired:
             delete = None
-        return (
-            kill is not None
-            and delete is not None
-            and kill.returncode in {0, 128}
-            and delete.returncode in {0, 128}
-        )
+        return kill is not None and delete is not None and kill.returncode in {0, 128} and delete.returncode in {0, 128}
 
 
 __all__ = ["GVisorReferenceRuntime", "GVisorRunResult"]
