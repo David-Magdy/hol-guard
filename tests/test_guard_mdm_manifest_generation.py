@@ -110,26 +110,26 @@ def test_generator_rejects_external_symlink_before_materializing_any_link(tmp_pa
     assert not output.exists()
 
 
-def test_generator_rejects_directory_symlink_when_materializing(tmp_path: Path) -> None:
+def test_generator_materializes_internal_directory_symlink_when_enabled(tmp_path: Path) -> None:
     root = Path(__file__).parents[1]
     runtime = tmp_path / "runtime"
     target = runtime / "target"
     target.mkdir(parents=True)
     (target / "file").write_bytes(b"protected")
-    (runtime / "link").symlink_to(target, target_is_directory=True)
+    link = runtime / "link"
+    link.symlink_to(target, target_is_directory=True)
     output = runtime / "release-manifest.json"
 
-    result = subprocess.run(
+    subprocess.run(
         [*_command(root, runtime, output), "--materialize-internal-file-symlinks"],
-        check=False,
+        check=True,
         capture_output=True,
         text=True,
     )
 
-    assert result.returncode == 2
-    assert "runtime symlink target is not a regular file" in result.stderr
-    assert (runtime / "link").is_symlink()
-    assert not output.exists()
+    assert not link.is_symlink()
+    assert (link / "file").read_bytes() == b"protected"
+    assert output.exists()
 
 
 def test_generator_rejects_empty_runtime(tmp_path: Path) -> None:

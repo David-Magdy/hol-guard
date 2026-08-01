@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -74,7 +75,8 @@ def _open_readonly_no_follow(path: Path) -> int:
 
 
 def _materialize_internal_file_symlinks(root: Path) -> None:
-    symlinks: list[tuple[Path, Path, os.stat_result]] = []
+    file_symlinks: list[tuple[Path, Path, os.stat_result]] = []
+    directory_symlinks: list[tuple[Path, Path]] = []
     for directory, directory_names, file_names in os.walk(root, followlinks=False):
         directory_path = Path(directory)
         for name in tuple(directory_names) + tuple(file_names):
@@ -87,13 +89,16 @@ def _materialize_internal_file_symlinks(root: Path) -> None:
             except ValueError as exc:
                 raise ValueError(f"runtime symlink escapes root: {link}") from exc
             target_stat = target.stat()
-            if not stat.S_ISREG(target_stat.st_mode):
-                raise ValueError(f"runtime symlink target is not a regular file: {link}")
-            if target_stat.st_size > MAX_RUNTIME_FILE_BYTES:
-                raise ValueError(f"runtime symlink target exceeds file size limit: {link}")
-            symlinks.append((link, target, target_stat))
+            if stat.S_ISREG(target_stat.st_mode):
+                if target_stat.st_size > MAX_RUNTIME_FILE_BYTES:
+                    raise ValueError(f"runtime symlink target exceeds file size limit: {link}")
+                file_symlinks.append((link, target, target_stat))
+            elif stat.S_ISDIR(target_stat.st_mode):
+                directory_symlinks.append((link, target))
+            else:
+                raise ValueError(f"runtime symlink target is not a regular file or directory: {link}")
 
-    for link, target, expected_stat in symlinks:
+    for link, target, expected_stat in file_symlinks:
         temporary_path: Path | None = None
         try:
             source_fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -131,6 +136,24 @@ def _materialize_internal_file_symlinks(root: Path) -> None:
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
+
+    for link, target in directory_symlinks:
+        temporary_path: Path | None = Path(tempfile.mkdtemp(dir=link.parent, prefix=f".{link.name}."))
+        backup_path = temporary_path.with_name(f"{temporary_path.name}.link")
+        try:
+            shutil.copytree(target, temporary_path, symlinks=False, dirs_exist_ok=True)
+            os.replace(link, backup_path)
+            try:
+                os.replace(temporary_path, link)
+                temporary_path = None
+            except OSError:
+                os.replace(backup_path, link)
+                raise
+            backup_path.unlink()
+        finally:
+            if temporary_path is not None:
+                shutil.rmtree(temporary_path)
+            backup_path.unlink(missing_ok=True)
 
 
 def _manifest_files(root: Path, output: Path) -> list[dict[str, str]]:
