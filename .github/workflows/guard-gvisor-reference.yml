@@ -56,8 +56,11 @@ jobs:
       - name: Diagnose corpus setup failure
         if: steps.corpus.outcome == 'failure'
         run: |
-          sudo /tmp/hol-guard-test/runsc --root /tmp/hol-guard-test/state --network none --platform systrap run --bundle /tmp/hol-guard-test/bundles/guard-breakout guard-diagnostic
-          exit 1
+          set +e
+          sudo /tmp/hol-guard-test/runsc --debug --debug-log=/tmp/runsc-debug.log --root /tmp/hol-guard-test/state --network none --platform systrap run --bundle /tmp/hol-guard-test/bundles/guard-breakout guard-diagnostic
+          code=$?
+          sudo tail -n 80 /tmp/runsc-debug.log
+          exit "$code"
       - name: Verify no residual runsc state
         if: always()
         run: |
