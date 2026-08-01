@@ -1115,6 +1115,16 @@ def _evaluate_runtime_artifact_hook(
             f"HOL Guard {action_phrase} this complete command after combining "
             f"{compound_finding_count} findings. {risk_summary}"
         )
+    if package_evaluation is not None and any(
+        _optional_string(reason.get("code")) == "cloud_auth_error" for reason in package_evaluation.reasons
+    ):
+        reconnect_command = "hol-guard connect"
+        reconnect_instruction = f"Run `{reconnect_command}` to reconnect Guard Cloud, then retry the same install."
+        for copy_field in ("user_body", "harness_message", "dashboard_primary_detail"):
+            existing_copy = str(decision_v2_payload.get(copy_field) or "").strip()
+            if reconnect_command not in existing_copy:
+                decision_v2_payload[copy_field] = f"{existing_copy} {reconnect_instruction}".strip()
+        decision_v2_payload["retry_instruction"] = reconnect_instruction
     incident = build_incident_context(
         harness=args.harness,
         artifact=runtime_artifact,

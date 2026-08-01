@@ -1441,7 +1441,7 @@ def _with_cloud_auth_reconnect_copy(evaluation: PackageRequestEvaluation) -> Pac
             SupplyChainUserCopy(
                 title=evaluation.user_copy.title,
                 summary=summary,
-                next_step=evaluation.user_copy.next_step or reconnect_command,
+                next_step=reconnect_command,
                 dashboard_url=evaluation.user_copy.dashboard_url,
                 harness_message=harness_message,
             ),

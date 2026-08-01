@@ -1805,6 +1805,8 @@ def test_guard_protect_allows_codex_install_with_local_intelligence_when_cloud_a
     assert payload["verdict"]["action"] == "allow"
     assert payload["supply_chain_evaluation"]["policy_action"] == "allow"
     assert any(reason["code"] == "cloud_auth_error" for reason in payload["supply_chain_evaluation"]["reasons"])
+    assert payload["supply_chain_evaluation"]["user_copy"]["next_step"] == "hol-guard connect"
+    assert "hol-guard connect" in payload["supply_chain_evaluation"]["user_copy"]["harness_message"]
     assert store.list_approval_requests(limit=None) == []
 
 
