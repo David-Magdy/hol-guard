@@ -257,6 +257,7 @@ def test_runtime_source_identity_covers_non_runner_modules(tmp_path) -> None:
 
     assert guard_runner_module._hol_guard_runtime_source_sha256(package_root) != initial_digest
 
+
 def test_prepare_guard_cloud_connect_authorization_tolerates_network_errors(tmp_path, monkeypatch) -> None:
     store = _store_with_oauth_credentials(tmp_path)
 

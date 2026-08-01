@@ -61,6 +61,7 @@ def test_generator_rejects_runtime_symlink(tmp_path: Path) -> None:
     assert "runtime contains a symlink" in result.stderr
     assert not output.exists()
 
+
 def test_generator_materializes_internal_file_symlink_when_enabled(tmp_path: Path) -> None:
     root = Path(__file__).parents[1]
     runtime = tmp_path / "runtime"

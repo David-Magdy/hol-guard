@@ -87,6 +87,7 @@ def test_guard_install_codex_ignores_proxy_with_scalar_args(
     assert installed["migrated_proxy_servers"] == []
     assert installed["runtime_restart_required"] is False
 
+
 def test_reauthentication_rejects_incomplete_package_identity() -> None:
     manifest = {
         "schema_version": HOOK_MANIFEST_SCHEMA_VERSION,
