@@ -425,7 +425,7 @@ def _safe_emitted_output_filter(tokens: list[str]) -> bool:
                 return False
             continue
         positional.append(token)
-    return len(positional) == 1 and not any(marker in positional[0] for marker in ("$(", "`", "<(", ">("))
+    return len(positional) == 1 and not any(marker in positional[0] for marker in ("$", "`", "<(", ">("))
 
 
 def _filters_bound_emitted_matches(segments: list[list[str]]) -> bool:
