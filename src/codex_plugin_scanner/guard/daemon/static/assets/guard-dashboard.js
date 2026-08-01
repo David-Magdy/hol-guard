@@ -27970,9 +27970,11 @@ function ReviewCloudRecovery({ item }) {
     try {
       const status = await waitForAuthorizeUrl(await withCloudRequestTimeout(startGuardCloudConnect));
       const flow = status.connect_flow;
-      if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
-        setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
+      if (flow?.authorize_url) {
         setManualConnectUrl(flow.authorize_url);
+        setMessage(
+          openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened) ? "Finish signing in, then retry the install." : PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE
+        );
         return;
       }
       if (status.connect_required && flow?.connect_url) {
