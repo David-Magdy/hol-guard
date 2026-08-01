@@ -3018,7 +3018,7 @@ def test_headless_api_rejects_missing_auth_and_bad_harness(tmp_path: Path) -> No
     assert bad_payload["error"]["retryable"] is False
 
 
-@pytest.mark.parametrize("reviewer_role", ["owner", "admin", "operator"])
+@pytest.mark.parametrize("reviewer_role", ["owner", "workspace-owner", "admin", "operator"])
 def test_headless_remote_once_applies_pending_request_and_records_receipt(tmp_path: Path, reviewer_role: str) -> None:
     store = GuardStore(tmp_path / "guard-home")
     _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")

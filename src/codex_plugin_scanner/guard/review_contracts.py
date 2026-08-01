@@ -35,7 +35,7 @@ _LOCAL_REVIEW_REQUEST_CONTRACT_VERSION = "guard.local-review-request.v1"
 _REMOTE_APPROVAL_CONTRACT_VERSION = "guard.remote-approval.v1"
 _DECISION_MEMORY_BUNDLE_CONTRACT_VERSION = "guard.decision-memory-bundle.v1"
 _REMOTE_APPROVAL_ALLOWED_SCOPES = frozenset(DECISION_SCOPE_VALUES)
-_REMOTE_APPROVAL_RESOLVER_ROLES = frozenset({"owner", "admin", "operator"})
+_REMOTE_APPROVAL_RESOLVER_ROLES = frozenset({"owner", "workspace-owner", "admin", "operator"})
 _REMOTE_APPROVAL_KEY_PURPOSE = "remote_approval"
 _REMOTE_APPROVAL_SIGNATURE_ALGORITHM = "rsa-pss-sha256"
 _DECISION_MEMORY_SIGNATURE_ALGORITHM = "rsa-pss-sha256"
@@ -177,6 +177,8 @@ def _verify_signed_payload(
     *,
     signature_algorithm: str,
     store,
+    expected_key_purpose: str | None = None,
+    expected_workspace_id: str | None = None,
 ) -> None:
     if signature_algorithm not in {_REMOTE_APPROVAL_SIGNATURE_ALGORITHM, _DECISION_MEMORY_SIGNATURE_ALGORITHM}:
         raise GuardReviewContractError("invalid_signature_algorithm")
@@ -193,18 +195,11 @@ def _verify_signed_payload(
         key_id = advertised_keys[0].key_id
     if key_id is None:
         raise GuardReviewContractError("missing_signing_key_id")
-    expected_purpose = None
-    expected_workspace_id = None
-    if signature_algorithm == _REMOTE_APPROVAL_SIGNATURE_ALGORITHM:
-        expected_purpose = _REMOTE_APPROVAL_KEY_PURPOSE
-        expected_workspace_id = _non_empty_string(payload.get("workspaceId"))
-        if expected_workspace_id is None:
-            raise GuardReviewContractError("signing_key_workspace_mismatch")
     signing_key = _resolve_anchored_signing_key(
         advertised_keys=advertised_keys,
         anchored_keys=_anchored_review_verification_keys(store),
         key_id=key_id,
-        expected_purpose=expected_purpose,
+        expected_purpose=expected_key_purpose,
         expected_workspace_id=expected_workspace_id,
     )
     try:
@@ -435,10 +430,15 @@ def validated_remote_approval_envelope(
     payload_hash = _non_empty_string(envelope.get("payloadHash"))
     if payload_hash is None or payload_hash != payload_hash_for_remote_approval_envelope(envelope):
         raise GuardReviewContractError("remote_approval_payload_hash_mismatch")
+    workspace_id = _non_empty_string(envelope.get("workspaceId"))
+    if workspace_id is None:
+        raise GuardReviewContractError("signing_key_workspace_mismatch")
     _verify_signed_payload(
         envelope,
         signature_algorithm=_non_empty_string(envelope.get("signatureAlgorithm")) or "",
         store=store,
+        expected_key_purpose=_REMOTE_APPROVAL_KEY_PURPOSE,
+        expected_workspace_id=workspace_id,
     )
     return envelope
 

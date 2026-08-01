@@ -26,7 +26,7 @@ _REVIEW_PUBLIC_KEY_PEM = (
 
 def review_verification_keys(
     *,
-    workspace_id: str = "workspace-1",
+    workspace_id: str | None = "workspace-1",
     purpose: str = REVIEW_SIGNING_KEY_PURPOSE,
 ) -> list[dict[str, object]]:
     return [
@@ -41,7 +41,7 @@ def review_verification_keys(
 
 def review_trusted_keyring_payload(
     *,
-    workspace_id: str = "workspace-1",
+    workspace_id: str | None = "workspace-1",
     purpose: str = REVIEW_SIGNING_KEY_PURPOSE,
 ) -> list[dict[str, object]]:
     return review_verification_keys(workspace_id=workspace_id, purpose=purpose)
