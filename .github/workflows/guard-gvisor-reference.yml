@@ -50,7 +50,7 @@ jobs:
           HOL_GUARD_RUNSC_PATH: /tmp/runsc
           HOL_GUARD_BUSYBOX_PATH: /usr/bin/busybox
           HOST_SECRET: must-not-cross-runtime-boundary
-        run: sudo --preserve-env=HOL_GUARD_RUNSC_INTEGRATION,HOL_GUARD_RUNSC_PATH,HOL_GUARD_BUSYBOX_PATH,HOST_SECRET \"$(command -v uv)\" run --no-sync pytest -q tests/test_guard_gvisor_reference_runtime.py
+        run: sudo --preserve-env=HOL_GUARD_RUNSC_INTEGRATION,HOL_GUARD_RUNSC_PATH,HOL_GUARD_BUSYBOX_PATH,HOST_SECRET $(command -v uv) run --no-sync pytest -q tests/test_guard_gvisor_reference_runtime.py
       - name: Verify no residual runsc state
         if: always()
         run: |
