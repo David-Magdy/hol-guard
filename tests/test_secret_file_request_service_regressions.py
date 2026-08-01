@@ -1,6 +1,7 @@
 """Regression tests for request-classification service boundaries."""
 
 import os
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -107,6 +108,60 @@ def test_destructive_shell_recursion_is_bounded() -> None:
     command = "echo " + "$(echo " * 8 + "safe" + ")" * 8
 
     assert _looks_destructive_shell_command(command)
+
+
+def test_routine_non_overwriting_move_is_not_destructive(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".next").mkdir()
+    assert not _looks_destructive_shell_command("mv .next guard-next-cache", cwd=workspace, home_dir=tmp_path)
+
+
+def test_routine_move_supports_static_workspace_paths(tmp_path: Path) -> None:
+    source = tmp_path / "app" / ".next"
+    destination = tmp_path / "app" / "guard-next-cache"
+    source.mkdir(parents=True)
+    assert not _looks_destructive_shell_command(f"mv {source} {destination}", cwd=tmp_path / "app", home_dir=tmp_path)
+
+
+def test_routine_generated_directory_move_to_temporary_storage_is_not_destructive(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / ".next"
+    source.mkdir(parents=True)
+    destination = Path(tempfile.gettempdir()) / f"guard-next-cache-{tmp_path.name}"
+    assert not _looks_destructive_shell_command(f"mv {source} {destination}", cwd=workspace, home_dir=tmp_path)
+
+
+def test_routine_move_remains_destructive_when_destination_exists(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    assert _looks_destructive_shell_command("mv source destination", cwd=tmp_path, home_dir=tmp_path)
+
+
+def test_routine_move_remains_destructive_for_unsafe_shapes(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "source").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    commands = (
+        "mv -f source destination",
+        "mv source other destination",
+        "mv source* destination",
+        "mv source $DESTINATION",
+        f"mv source {outside / 'destination'}",
+        "mv source destination && echo moved",
+    )
+    for command in commands:
+        assert _looks_destructive_shell_command(command, cwd=workspace, home_dir=tmp_path), command
+
+
+def test_routine_move_remains_destructive_for_sensitive_home_path(tmp_path: Path) -> None:
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    assert _looks_destructive_shell_command("mv ~/.ssh ~/.ssh-backup", cwd=tmp_path, home_dir=tmp_path)
 
 
 def test_local_read_rejects_symlink_loop_root(tmp_path: Path) -> None:
