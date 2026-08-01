@@ -201,7 +201,10 @@ def _safe_failed_log_filter_pipeline(segments: list[list[str]], *, cwd: Path | N
     return bool(
         _trusted_pipeline_executables(("gh", "rg", "tail"), cwd=execution_cwd)
         and _safe_emitted_output_filter(search)
-        and search[:2] == ["rg", "-n"]
+        and (
+            (len(search) == 3 and search[:2] == ["rg", "-n"])
+            or (len(search) == 4 and search[:3] == ["rg", "--no-config", "-n"])
+        )
         and _safe_emitted_output_filter(tail)
         and tail[0] == "tail"
     )
@@ -419,6 +422,8 @@ def _safe_emitted_output_filter(tokens: list[str]) -> bool:
         return False
     positional: list[str] = []
     for token in tokens[1:]:
+        if token == "--no-config":
+            continue
         if token.startswith("-"):
             flags = token.lstrip("-")
             if not flags or any(flag not in {"i", "n", "o", "q"} for flag in flags):

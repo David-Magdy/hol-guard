@@ -137,6 +137,18 @@ def test_bounded_failed_log_filter_is_explicitly_benign(
     )
 
 
+def test_bounded_failed_log_filter_accepts_explicit_no_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_execution_injection_environment(monkeypatch)
+    monkeypatch.delenv("RIPGREP_CONFIG_PATH", raising=False)
+    _trust_pipeline_executables_for_parser_test(monkeypatch)
+    command = "gh run view 123 --repo example/project --log-failed | rg --no-config -n FAILED | tail -120"
+
+    assert is_nonexecuting_github_actions_read_workflow(command, cwd=tmp_path)
+
+
 def test_bounded_failed_log_filter_rejects_ripgrep_config(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

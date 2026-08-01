@@ -193,6 +193,8 @@ def _github_jq_program_is_safe(program: str) -> bool:
         previous = _previous_nonspace(sanitized, match.start())
         following = _next_nonspace(sanitized, match.end())
         if previous == "." or following == ":" or (previous in {"{", ","} and following in {",", "}"}):
+            if match.group(1) == "env" and following in {",", "}"}:
+                return False
             continue
         return False
     return True
