@@ -900,6 +900,21 @@ def test_destructive_shell_request_models_each_command_context_once(
     assert calls == ["cd project && rm marker"]
 
 
+def test_routine_non_overwriting_move_does_not_request_approval(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".next").mkdir()
+
+    request = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": "mv .next guard-next-cache"},
+        cwd=workspace,
+        home_dir=tmp_path,
+    )
+
+    assert request is None
+
+
 def test_path_hash_changes_when_effective_directory_identity_changes(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()

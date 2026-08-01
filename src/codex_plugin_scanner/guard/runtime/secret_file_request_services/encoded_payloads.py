@@ -64,6 +64,7 @@ from .pytest_binary_safety import (
     _looks_like_safe_python_module_invocation,
 )
 from .request_models import _MAX_DECODED_PAYLOAD_BYTES
+from .routine_move import _looks_like_safe_routine_move
 from .shell_static_safety import (
     _is_python_interpreter_command,
     _script_interpreter_texts,
@@ -331,6 +332,8 @@ def _looks_destructive_shell_command(
         return True
     if _find_or_fd_uses_write_or_exec_action(parts, home_dir=home_dir):
         return True
+    if _looks_like_safe_routine_move(parts, cwd=cwd, home_dir=home_dir):
+        return False
     command_names = list(raw_command_names)
     command_names.extend(_shell_command_names_from_parts(parts))
     if any(command_name in _DESTRUCTIVE_SHELL_COMMANDS for command_name in command_names):
