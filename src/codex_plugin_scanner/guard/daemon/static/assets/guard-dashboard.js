@@ -17733,15 +17733,16 @@ function normalizeGuardCloudConnectStatus(value) {
     connect_flow: normalizePackageFirewallConnectFlow(value.connect_flow)
   };
 }
-async function fetchGuardCloudConnectStatus() {
-  return normalizeGuardCloudConnectStatus(await readJson("/v1/cloud/connect"));
+async function fetchGuardCloudConnectStatus(signal) {
+  return normalizeGuardCloudConnectStatus(await readJson("/v1/cloud/connect", { signal }));
 }
-async function startGuardCloudConnect() {
+async function startGuardCloudConnect(signal) {
   return normalizeGuardCloudConnectStatus(
     await readJson("/v1/cloud/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal
     })
   );
 }
@@ -27972,6 +27973,86 @@ function buildEvidenceItems(item) {
   }
   return items;
 }
+const unavailableEvidencePhrases = [
+  // Queued requests can outlive the daemon version that created their copy.
+  "could not verify registry identity or package intelligence",
+  "cloud evaluation could not validate",
+  "current package safety data was unavailable"
+];
+async function withCloudRequestTimeout(request) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5e3);
+  try {
+    return await request(controller.signal);
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+async function waitForAuthorizeUrl(initialStatus) {
+  let status = initialStatus;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const flow = status.connect_flow;
+    if (!status.connect_required || flow?.authorize_url || !flow || !["starting", "running"].includes(flow.state)) {
+      return status;
+    }
+    const pollDelayMs = Math.max(100, Math.min(5e3, flow.poll_after_ms ?? 1e3));
+    await new Promise((resolve) => window.setTimeout(resolve, pollDelayMs));
+    status = await withCloudRequestTimeout(fetchGuardCloudConnectStatus);
+  }
+  return status;
+}
+function packageReviewNeedsCloudRecovery(item) {
+  const packageRequest = item.artifact_type === "supply_chain" || item.artifact_type === "package_request" || item.artifact_type.endsWith("_package");
+  if (!packageRequest) return false;
+  const evidence = [item.risk_headline, item.risk_summary, ...item.risk_signals ?? []].filter((value) => typeof value === "string").join(" ").toLowerCase();
+  return unavailableEvidencePhrases.some((phrase) => evidence.includes(phrase));
+}
+function ReviewCloudRecovery({ item }) {
+  const [connecting, setConnecting] = reactExports.useState(false);
+  const [message, setMessage] = reactExports.useState(null);
+  const [manualConnectUrl, setManualConnectUrl] = reactExports.useState(null);
+  const handleConnect = reactExports.useCallback(async () => {
+    setConnecting(true);
+    setMessage(null);
+    setManualConnectUrl(null);
+    try {
+      const status = await waitForAuthorizeUrl(await withCloudRequestTimeout(startGuardCloudConnect));
+      const flow = status.connect_flow;
+      if (flow?.authorize_url) {
+        setManualConnectUrl(flow.authorize_url);
+        setMessage(
+          openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened) ? "Finish signing in, then retry the install." : PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE
+        );
+        return;
+      }
+      if (status.connect_required && flow?.connect_url) {
+        setMessage("Guard could not finish starting sign-in. Open sign-in and try again.");
+        setManualConnectUrl(flow.connect_url);
+        return;
+      }
+      setMessage(
+        status.connect_required ? "Finish signing in, then retry the install." : "Guard Cloud is connected. Retry the install for a fresh safety check."
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Guard could not start sign-in. Try again.");
+    } finally {
+      setConnecting(false);
+    }
+  }, []);
+  if (!packageReviewNeedsCloudRecovery(item)) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 rounded-xl border border-brand-blue/20 bg-brand-blue/[0.04] p-4", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: "Get a current package safety check" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-relaxed text-muted-foreground", children: "Guard could not load current safety data for this package. This does not mean the package is unsafe. Connect Guard Cloud and retry, or approve this install once." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(ActionButton, { onClick: handleConnect, disabled: connecting, variant: "outline", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloudArrowUp, { className: "h-4 w-4", "aria-hidden": "true" }),
+        connecting ? "Starting sign-in..." : "Connect Guard Cloud"
+      ] }),
+      manualConnectUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: manualConnectUrl, variant: "quiet", children: "Open sign-in" }) : null,
+      message ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", role: "status", children: message }) : null
+    ] })
+  ] });
+}
 function ReviewScopeControls(props) {
   const showAllowScopes = props.showAllowScopes !== false;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 space-y-2", children: [
@@ -28704,6 +28785,7 @@ function ReviewDecisionCard(props) {
         ] })
       ] }) }),
       topAlertItems.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-xl border border-slate-100 bg-slate-50/50 p-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ConsolidatedEvidenceAlert, { items: topAlertItems }, item.request_id) }),
+      resolutionBlockReason === null ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewCloudRecovery, { item }) : null,
       whatWouldHappen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
