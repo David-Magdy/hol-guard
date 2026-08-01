@@ -191,8 +191,8 @@ class TestRealRunscIsolation:
             ],
             "linux": {
                 "resources": {
-                    "memory": {"limit": 67108864},
-                    "pids": {"limit": 16},
+                    "memory": {"limit": 268435456},
+                    "pids": {"limit": 128},
                     "cpu": {"quota": 50000, "period": 100000},
                 },
                 "namespaces": [
