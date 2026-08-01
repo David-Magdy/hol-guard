@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import shutil
-import stat
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -24,7 +23,7 @@ _STATE = Path("/tmp/hol-guard-test/state")
 def _write_fake_runsc() -> str:
     _RUNSC.parent.mkdir(parents=True, exist_ok=True)
     _RUNSC.write_bytes(b"fake-runsc")
-    _RUNSC.chmod(_RUNSC.stat().st_mode | stat.S_IXUSR)
+    _RUNSC.chmod(0o755)
     return hashlib.sha256(_RUNSC.read_bytes()).hexdigest()
 
 
@@ -149,7 +148,7 @@ class TestRealRunscIsolation:
         root.mkdir(parents=True, exist_ok=True)
         runsc = root / "runsc"
         shutil.copy2(runsc_source, runsc)
-        runsc.chmod(0o700)
+        runsc.chmod(0o755)
         bundle = root / "bundles" / name
         rootfs = bundle / "rootfs"
         (rootfs / "bin").mkdir(parents=True, exist_ok=True)

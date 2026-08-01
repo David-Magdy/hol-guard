@@ -93,8 +93,11 @@ class GVisorReferenceRuntime:
             raise ProviderPlanError("configured runsc binary is unavailable") from exc
         if observed != self._runsc_digest:
             raise ProviderPlanError("configured runsc binary digest mismatch")
-        if not os.access(self._runsc_path, os.X_OK):
-            raise ProviderPlanError("configured runsc binary is not executable")
+        mode = self._runsc_path.stat().st_mode
+        if not os.access(self._runsc_path, os.X_OK) or mode & 0o005 != 0o005:
+            raise ProviderPlanError("configured runsc binary is not executable by its sandbox process")
+        if mode & 0o022:
+            raise ProviderPlanError("configured runsc binary is writable outside its owner")
         return observed
 
     def _bundle_path(self, bundle_name: str) -> Path:
