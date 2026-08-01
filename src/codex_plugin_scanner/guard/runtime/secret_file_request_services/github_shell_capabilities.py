@@ -1,0 +1,341 @@
+"""GitHub CLI shell capability parsing."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+from ..env_wrapper import parse_env_wrapper
+from ..github_capability_contract import GitHubCommandAssessment
+from ..github_shell_capabilities import GitHubShellAnalysis
+from ..github_shell_capabilities import classify_github_shell_capabilities as _classify_github_shell_capabilities
+from ..interpreter_options import shell_interpreter_command_payload as _shell_interpreter_command_payload
+from .constants_core import _READ_ONLY_LOOKUP_FILTERS, _SHELL_COMMAND_STRING_INTERPRETERS
+from .constants_patterns import _SHELL_ASSIGNMENT_PATTERN, _SHELL_COMMAND_SEPARATORS, _SHELL_COMMAND_WRAPPERS
+from .read_only_filters import _read_only_lookup_filter_segment_is_safe
+from .request_artifacts import _normalized_shell_command_name
+from .shell_static_safety import (
+    _github_jq_filter_args_are_safe,
+    _is_python_interpreter_command,
+    _script_interpreter_texts,
+    _script_is_read_only_observer,
+)
+from .shell_tokenization import (
+    _iter_shell_command_segments,
+    _shell_command_token_without_attached_redirection,
+    _shell_segment_primary_command,
+    _split_shell_parts,
+    _wrapper_option_tokens_consumed,
+)
+
+
+def classify_github_shell_capabilities(
+    command_text: str,
+    *,
+    home_dir: Path | None,
+) -> GitHubCommandAssessment | None:
+    """Adapt the shared shell parser to focused GitHub capability composition."""
+
+    return _classify_github_shell_capabilities(
+        command_text,
+        analysis=GitHubShellAnalysis(
+            command_substitution_payloads=_shell_command_substitution_payloads,
+            split_parts=_split_shell_parts,
+            nested_commands=lambda parts: (*_env_split_string_payloads(parts), *_shell_command_scripts(parts)),
+            pipelines=_iter_shell_pipelines,
+            command_builtin_is_lookup=_shell_segment_is_command_builtin_lookup,
+            primary_command=_shell_segment_primary_command,
+            pipeline_companion_is_read_only=lambda segment: _github_pipeline_companion_is_read_only(
+                segment,
+                home_dir=home_dir,
+            ),
+        ),
+    )
+
+
+def _shell_segment_is_command_builtin_lookup(segment: list[str]) -> bool:
+    contextual_segment = [_ShellTokenWithQuoteContext(raw=token, plain=token) for token in segment]
+    for index, token in enumerate(segment):
+        command_name = _normalized_shell_command_name(_shell_command_token_without_attached_redirection(token))
+        if command_name == "command":
+            return _command_builtin_options_are_lookup_only(contextual_segment, index + 1)
+    return False
+
+
+def _github_pipeline_companion_is_read_only(
+    segment: list[str],
+    *,
+    home_dir: Path | None,
+) -> bool:
+    command_name, command_index = _shell_segment_primary_command(segment)
+    if command_name is None or command_index is None:
+        return False
+    if _is_python_interpreter_command(command_name):
+        scripts = list(_script_interpreter_texts(segment))
+        return bool(scripts) and all(_script_is_read_only_observer(script_text) for script_text in scripts)
+    if any(">" in token or "<" in token for token in segment[command_index + 1 :] if token not in {"2>&1", "1>&2"}):
+        return False
+    args = [token for token in segment[command_index + 1 :] if token not in {"2>&1", "1>&2"}]
+    if command_name == "jq":
+        return _github_jq_filter_args_are_safe(args)
+    if command_name == "sort":
+        return all(re.fullmatch(r"-[nru]+", arg) for arg in args)
+    if command_name == "uniq":
+        return args in ([], ["-c"])
+    if command_name in _READ_ONLY_LOOKUP_FILTERS:
+        return _read_only_lookup_filter_segment_is_safe(command_name, args, home_dir=home_dir)
+    return False
+
+
+@dataclass(frozen=True, slots=True)
+class _ShellTokenWithQuoteContext:
+    raw: str
+    plain: str
+
+
+def _command_builtin_options_are_lookup_only(segment: list[_ShellTokenWithQuoteContext], index: int) -> bool:
+    while index < len(segment):
+        plain = segment[index].plain
+        if plain == "--":
+            return False
+        if not plain.startswith("-"):
+            return False
+        if "v" in plain[1:] or "V" in plain[1:]:
+            return True
+        index += 1
+    return False
+
+
+def _shell_command_substitution_payloads(command_text: str) -> tuple[str, ...]:
+    payloads: list[str] = []
+    index = 0
+    single_quoted = False
+    double_quoted = False
+    while index < len(command_text):
+        if single_quoted:
+            if command_text[index] == "'":
+                single_quoted = False
+            index += 1
+            continue
+        if double_quoted:
+            if command_text[index] == "\\" and index + 1 < len(command_text):
+                index += 2
+                continue
+            if command_text[index] == '"':
+                double_quoted = False
+                index += 1
+                continue
+            if command_text[index] == "$" and index + 1 < len(command_text) and command_text[index + 1] == "(":
+                payload, next_index = _read_command_substitution(command_text, index + 2)
+                if payload.strip():
+                    payloads.append(payload)
+                index = next_index
+                continue
+            if command_text[index] == "`":
+                payload, next_index = _read_backtick_command_substitution(command_text, index + 1)
+                if payload.strip():
+                    payloads.append(payload)
+                index = next_index
+                continue
+            index += 1
+            continue
+        if command_text[index] == "\\" and index + 1 < len(command_text):
+            index += 2
+            continue
+        if command_text[index] == "'":
+            single_quoted = True
+            index += 1
+            continue
+        if command_text[index] == '"':
+            double_quoted = True
+            index += 1
+            continue
+        if command_text[index] == "$" and index + 1 < len(command_text) and command_text[index + 1] == "(":
+            payload, next_index = _read_command_substitution(command_text, index + 2)
+            if payload.strip():
+                payloads.append(payload)
+            index = next_index
+            continue
+        if command_text[index] in "<>" and index + 1 < len(command_text) and command_text[index + 1] == "(":
+            payload, next_index = _read_command_substitution(command_text, index + 2)
+            if payload.strip():
+                payloads.append(payload)
+            index = next_index
+            continue
+        if command_text[index] == "`":
+            payload, next_index = _read_backtick_command_substitution(command_text, index + 1)
+            if payload.strip():
+                payloads.append(payload)
+            index = next_index
+            continue
+        index += 1
+    return tuple(payloads)
+
+
+def _read_command_substitution(command_text: str, start_index: int) -> tuple[str, int]:
+    index = start_index
+    depth = 1
+    payload_characters: list[str] = []
+    single_quoted = False
+    double_quoted = False
+    while index < len(command_text):
+        character = command_text[index]
+        if single_quoted:
+            payload_characters.append(character)
+            if character == "'":
+                single_quoted = False
+            index += 1
+            continue
+        if double_quoted:
+            payload_characters.append(character)
+            if character == "\\" and index + 1 < len(command_text):
+                payload_characters.append(command_text[index + 1])
+                index += 2
+                continue
+            if character == '"':
+                double_quoted = False
+            index += 1
+            continue
+        if character == "'":
+            single_quoted = True
+            payload_characters.append(character)
+            index += 1
+            continue
+        if character == '"':
+            double_quoted = True
+            payload_characters.append(character)
+            index += 1
+            continue
+        if character == "$" and index + 1 < len(command_text) and command_text[index + 1] == "(":
+            nested_payload, next_index = _read_command_substitution(command_text, index + 2)
+            payload_characters.append(f"$({nested_payload})")
+            index = next_index
+            continue
+        if character == "(":
+            depth += 1
+            payload_characters.append(character)
+            index += 1
+            continue
+        if character == ")":
+            depth -= 1
+            if depth == 0:
+                return "".join(payload_characters), index + 1
+            payload_characters.append(character)
+            index += 1
+            continue
+        payload_characters.append(character)
+        index += 1
+    return "".join(payload_characters), index
+
+
+def _read_backtick_command_substitution(command_text: str, start_index: int) -> tuple[str, int]:
+    index = start_index
+    payload_characters: list[str] = []
+    while index < len(command_text):
+        character = command_text[index]
+        if character == "\\" and index + 1 < len(command_text):
+            payload_characters.append(character)
+            payload_characters.append(command_text[index + 1])
+            index += 2
+            continue
+        if character == "$" and index + 1 < len(command_text) and command_text[index + 1] == "(":
+            nested_payload, next_index = _read_command_substitution(command_text, index + 2)
+            payload_characters.append(f"$({nested_payload})")
+            index = next_index
+            continue
+        if character == "`":
+            return "".join(payload_characters), index + 1
+        payload_characters.append(character)
+        index += 1
+    return "".join(payload_characters), index
+
+
+def _iter_shell_pipelines(parts: list[str]) -> list[list[list[str]]]:
+    pipelines: list[list[list[str]]] = []
+    current_pipeline: list[list[str]] = []
+    current_segment: list[str] = []
+    for part in parts:
+        token = part.strip()
+        if not token:
+            continue
+        if token in {"|", "|&"}:
+            if current_segment:
+                current_pipeline.append(current_segment)
+                current_segment = []
+            continue
+        if token in _SHELL_COMMAND_SEPARATORS:
+            if current_segment:
+                current_pipeline.append(current_segment)
+                current_segment = []
+            if current_pipeline:
+                pipelines.append(current_pipeline)
+                current_pipeline = []
+            continue
+        current_segment.append(token)
+    if current_segment:
+        current_pipeline.append(current_segment)
+    if current_pipeline:
+        pipelines.append(current_pipeline)
+    return pipelines
+
+
+def _env_split_string_payloads(parts: list[str]) -> tuple[str, ...]:
+    payloads: list[str] = []
+    for segment in _iter_shell_command_segments(parts):
+        env_index = _shell_segment_env_index(segment)
+        if env_index is None:
+            continue
+        parsed = parse_env_wrapper(segment[env_index + 1 :])
+        payloads.extend(expansion.payload for expansion in parsed.split_expansions if expansion.payload.strip())
+    return tuple(payloads)
+
+
+def _shell_segment_env_index(segment: list[str]) -> int | None:
+    index = 0
+    while index < len(segment):
+        normalized_token = segment[index].lstrip("(").rstrip(")")
+        if _SHELL_ASSIGNMENT_PATTERN.match(normalized_token):
+            index += 1
+            continue
+        command_name = _normalized_shell_command_name(normalized_token)
+        if command_name == "env":
+            return index
+        if command_name in _SHELL_COMMAND_WRAPPERS:
+            index += 1
+            while index < len(segment):
+                token = segment[index]
+                if not token.startswith("-"):
+                    break
+                index += _wrapper_option_tokens_consumed(command_name, token)
+            continue
+        return None
+    return None
+
+
+def _shell_command_scripts(parts: list[str]) -> tuple[str, ...]:
+    scripts: list[str] = []
+    for segment in _iter_shell_command_segments(parts):
+        command_name, command_index = _shell_segment_primary_command(segment)
+        if command_name not in _SHELL_COMMAND_STRING_INTERPRETERS or command_index is None:
+            continue
+        flag_payload = _shell_interpreter_command_payload(segment, command_index)
+        if flag_payload is not None:
+            scripts.append(flag_payload.script_text)
+    return tuple(scripts)
+
+
+__all__ = [
+    "_ShellTokenWithQuoteContext",
+    "_command_builtin_options_are_lookup_only",
+    "_env_split_string_payloads",
+    "_github_pipeline_companion_is_read_only",
+    "_iter_shell_pipelines",
+    "_read_backtick_command_substitution",
+    "_read_command_substitution",
+    "_shell_command_scripts",
+    "_shell_command_substitution_payloads",
+    "_shell_segment_env_index",
+    "_shell_segment_is_command_builtin_lookup",
+    "classify_github_shell_capabilities",
+]
