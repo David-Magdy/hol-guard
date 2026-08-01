@@ -89,7 +89,6 @@ class TestConfiguration:
         with pytest.raises(ProviderPlanError, match="writable outside"):
             _ = _runner(digest).verify_binary()
 
-
     def test_bundle_traversal_and_unknown_instances_fail(self) -> None:
         runner = _runner()
         with pytest.raises(ProviderPlanError, match="invalid"):
@@ -159,7 +158,6 @@ class TestExecution:
         run.side_effect = invoke
         result = _runner().run("guard-output")
         assert result.stdout_bytes == 1_048_576
-
 
     @patch("subprocess.run")
     def test_cancel_is_idempotent_and_validated(self, run: MagicMock) -> None:

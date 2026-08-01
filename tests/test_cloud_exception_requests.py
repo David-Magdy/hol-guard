@@ -201,7 +201,16 @@ def test_validate_command_policy_payload_normalizes_valid_input() -> None:
 def test_validate_command_policy_payload_proves_no_command_crosses_boundary() -> None:
     """The single most important test: prove no raw command, regex,
     pattern, graph, or expression key survives validation."""
-    forbidden = ["rawCommand", "command", "commandExpression", "expression", "regex", "pattern", "graph", "proposedGraph"]
+    forbidden = [
+        "rawCommand",
+        "command",
+        "commandExpression",
+        "expression",
+        "regex",
+        "pattern",
+        "graph",
+        "proposedGraph",
+    ]
     normalized = validate_command_policy_exception_payload(
         {
             "kind": "command-policy",

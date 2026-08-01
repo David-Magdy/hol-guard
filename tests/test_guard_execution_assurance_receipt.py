@@ -6,7 +6,6 @@ import sys
 from dataclasses import FrozenInstanceError
 from hashlib import sha256
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -18,8 +17,8 @@ from codex_plugin_scanner.guard.runtime.execution_assurance_contract import (
     GuardExecutionAttestationTrust,
 )
 from codex_plugin_scanner.guard.runtime.execution_assurance_receipt import (
-    ExecutionAssuranceReceipt,
     SCHEMA_VERSION,
+    ExecutionAssuranceReceipt,
     receipt_assurance_payload,
     validate_assurance_receipt_schema_version,
 )
@@ -44,6 +43,7 @@ GOOD = {
 # ---------------------------------------------------------------------------
 # Schema version validation
 # ---------------------------------------------------------------------------
+
 
 class TestSchemaVersionValidation:
     def test_current_version_accepted_str(self) -> None:
@@ -78,13 +78,16 @@ class TestSchemaVersionValidation:
 # Typed boundary / attestation fields
 # ---------------------------------------------------------------------------
 
+
 class TestTypedFields:
     def test_minimal_valid(self) -> None:
-        rec = ExecutionAssuranceReceipt(**{
-            "achieved_boundary": GuardExecutionAssuranceBoundary.OS_ISOLATED,
-            "attestation_trust": GuardExecutionAttestationTrust.SELF_ATTESTED,
-            "execution_context_digest": DIGEST,
-        })
+        rec = ExecutionAssuranceReceipt(
+            **{
+                "achieved_boundary": GuardExecutionAssuranceBoundary.OS_ISOLATED,
+                "attestation_trust": GuardExecutionAttestationTrust.SELF_ATTESTED,
+                "execution_context_digest": DIGEST,
+            }
+        )
         assert rec.achieved_boundary == GuardExecutionAssuranceBoundary.OS_ISOLATED
         assert rec.attestation_trust == GuardExecutionAttestationTrust.SELF_ATTESTED
         assert rec.execution_context_digest == DIGEST
@@ -185,6 +188,7 @@ class TestTypedFields:
 # Absent vs enforced guarantee lists
 # ---------------------------------------------------------------------------
 
+
 class TestAbsentVsEnforced:
     def test_both_lists(self) -> None:
         rec = ExecutionAssuranceReceipt(
@@ -213,6 +217,7 @@ class TestAbsentVsEnforced:
 # ---------------------------------------------------------------------------
 # Privacy-safe to_receipt_fields
 # ---------------------------------------------------------------------------
+
 
 class TestPrivacySafeReceiptFields:
     def _make_receipt_with_sensitive_proof(self) -> ExecutionAssuranceReceipt:
@@ -290,6 +295,7 @@ class TestPrivacySafeReceiptFields:
 # ---------------------------------------------------------------------------
 # Immutability
 # ---------------------------------------------------------------------------
+
 
 class TestImmutability:
     def test_mutation_raises_frozen_instance_error(self) -> None:

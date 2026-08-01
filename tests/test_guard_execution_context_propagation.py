@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from codex_plugin_scanner.guard.runtime.execution_assurance_contract import framed_digest
@@ -11,11 +13,10 @@ from codex_plugin_scanner.guard.runtime.execution_context_propagation import (
     _MAX_FIELD_LENGTH,
     construct_execution_context_link,
     derive_child_link,
-    ExecutionContextLink,
 )
 
-
 # ── Construction ──────────────────────────────────────────────────────────
+
 
 class TestConstructExecutionContextLink:
     """Basic construction and validation of ExecutionContextLink."""
@@ -104,7 +105,7 @@ class TestConstructExecutionContextLink:
             root_id="root-1",
             attempt_nonce="nonce-a",
         )
-        with pytest.raises(Exception):
+        with pytest.raises(FrozenInstanceError):
             link.depth = 99
 
     def test_depth_zero_is_valid(self) -> None:
@@ -137,16 +138,20 @@ class TestConstructExecutionContextLink:
 
 # ── Validation ────────────────────────────────────────────────────────────
 
+
 class TestValidation:
     """Field-level validation on ExecutionContextLink."""
 
-    @pytest.mark.parametrize("label", [
-        "correlation_id",
-        "parent_correlation_id",
-        "retry_of_correlation_id",
-        "attempt_nonce",
-        "root_id",
-    ])
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "correlation_id",
+            "parent_correlation_id",
+            "retry_of_correlation_id",
+            "attempt_nonce",
+            "root_id",
+        ],
+    )
     def test_empty_strings_rejected(self, label: str) -> None:
         kwargs: dict = {
             "correlation_id": "root-1",
@@ -157,13 +162,16 @@ class TestValidation:
         with pytest.raises(ValueError):
             construct_execution_context_link(**kwargs)
 
-    @pytest.mark.parametrize("label", [
-        "correlation_id",
-        "parent_correlation_id",
-        "retry_of_correlation_id",
-        "attempt_nonce",
-        "root_id",
-    ])
+    @pytest.mark.parametrize(
+        "label",
+        [
+            "correlation_id",
+            "parent_correlation_id",
+            "retry_of_correlation_id",
+            "attempt_nonce",
+            "root_id",
+        ],
+    )
     def test_too_long_strings_rejected(self, label: str) -> None:
         long_str = "x" * (_MAX_FIELD_LENGTH + 1)
         kwargs: dict = {
@@ -220,6 +228,7 @@ class TestValidation:
 
 
 # ── derive_child_link ─────────────────────────────────────────────────────
+
 
 class TestDeriveChildLink:
     """Parent → child linkage via derive_child_link."""
@@ -345,6 +354,7 @@ class TestDeriveChildLink:
 
 
 # ── Freeze / immutability ────────────────────────────────────────────────
+
 
 class TestFrozenProperties:
     """ExecutionContextLink is a frozen dataclass with slots."""

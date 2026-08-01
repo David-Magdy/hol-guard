@@ -347,7 +347,6 @@ def test_canonical_object_keys_use_utf16_order() -> None:
     assert canonical.index('"😀"') < canonical.index('"\ue000"')
 
 
-
 def test_command_expression_round_trips_without_flattening_boolean_semantics() -> None:
     value = _basic_mapping()
     spec = value["spec"]

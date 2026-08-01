@@ -27,7 +27,6 @@ def test_hol_guard_routes_policy_export_format_as_a_top_level_command() -> None:
     ) == ["guard", "policy", "export", "--format", "yaml"]
 
 
-
 def test_policy_capabilities_advertise_command_expression_runtime(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -107,6 +106,7 @@ spec:
     assert return_code == 0
     assert payload["action"] == "block"
     assert payload["matching_rule_ids"] == ["block-docker"]
+
 
 def test_policy_export_validate_format_and_diff(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     home = tmp_path / "home"

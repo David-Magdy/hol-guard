@@ -125,8 +125,6 @@ class TestGuardSurfaceServer:
         assert rolled_back_state is not None
         assert rolled_back_state["trust_status"] == degraded
 
-
-
     def test_local_dashboard_session_preserves_reserved_claims(self) -> None:
         token = build_local_dashboard_session_token(
             auth_token="daemon-auth-token",
