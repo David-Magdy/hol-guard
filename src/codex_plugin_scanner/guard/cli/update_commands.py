@@ -1423,7 +1423,7 @@ def _update_command(
         if installer == "pipx":
             command = ["pipx", "install", "--force", package]
             if allow_prerelease:
-                command.extend(["--pip-args", "--pre"])
+                command.append("--pip-args=--pre")
             return command
         command = [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall"]
         if allow_prerelease:
