@@ -151,11 +151,21 @@ def test_routine_move_remains_destructive_for_unsafe_shapes(tmp_path: Path) -> N
         "mv source other destination",
         "mv source* destination",
         "mv source $DESTINATION",
+        "LD_PRELOAD=./payload.so mv source destination",
         f"mv source {outside / 'destination'}",
         "mv source destination && echo moved",
     )
     for command in commands:
         assert _looks_destructive_shell_command(command, cwd=workspace, home_dir=tmp_path), command
+
+
+def test_routine_move_remains_destructive_for_dangling_destination_symlink(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    destination = tmp_path / "destination"
+    destination.symlink_to(tmp_path / "missing-target")
+
+    assert _looks_destructive_shell_command("mv source destination", cwd=tmp_path, home_dir=tmp_path)
 
 
 def test_routine_move_remains_destructive_for_sensitive_home_path(tmp_path: Path) -> None:
