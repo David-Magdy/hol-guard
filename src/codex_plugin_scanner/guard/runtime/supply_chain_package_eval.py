@@ -2739,8 +2739,8 @@ def _unknown_package_result(
     package_name = str(target.get("name") or "this package")
     no_match_message = (
         (
-            f"Guard could not verify registry identity or package intelligence for {package_name}; "
-            "approval is required before install."
+            f"Current package safety data was unavailable for {package_name}. "
+            "Review this install now, or connect Guard Cloud and try again."
         )
         if requires_review
         else "Guard recorded this package request and will keep watching for new intelligence."
@@ -2758,8 +2758,8 @@ def _unknown_package_result(
             {
                 "code": "unidentified_package",
                 "message": (
-                    f"Guard could not resolve registry metadata for {target['name']} "
-                    f"in the {target['ecosystem']} ecosystem; approval is required before install."
+                    f"Guard could not confirm current safety details for {target['name']}. "
+                    "This does not mean the package is unsafe."
                 ),
                 "severity": "medium",
                 "source": "guard-local",

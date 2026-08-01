@@ -809,6 +809,9 @@ def test_evaluate_package_request_artifact_ignores_wildcard_scope_only_confusion
 
     assert result.decision == "ask"
     assert result.packages[0]["reasons"][0]["code"] == "no_cached_match"
+    messages = " ".join(str(reason["message"]) for reason in result.packages[0]["reasons"])
+    assert "This does not mean the package is unsafe" in messages
+    assert "registry identity or package intelligence" not in messages
 
 
 def test_evaluate_package_request_artifact_matches_js_package_names_exactly_for_typosquat_bundle_entries(

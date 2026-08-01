@@ -5,6 +5,8 @@ import type {
   GuardReceipt,
   RiskSignalV2,
 } from "./guard-types";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
 import {
   buildStaleRequestCopy,
   groupDuplicates,
@@ -39,6 +41,7 @@ import {
   deriveSkillRiskSignals,
   deriveSupplyChainRiskSignals,
 } from "./approval-center-utils";
+import { packageReviewNeedsCloudRecovery, ReviewCloudRecovery } from "./review-cloud-recovery";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -1338,6 +1341,35 @@ const largeSearchResults = searchQueue(largeQueueWithNeedle, LARGE_UNIQUE_NEEDLE
 assert(
   largeSearchResults.length === 1,
   "GR224-08: searchQueue can find a single item by unique command text in a 10k queue"
+);
+
+const CLOUD_EVIDENCE_UNAVAILABLE_REQUEST = {
+  ...largeQueue[0],
+  artifact_type: "package_request",
+  risk_summary: "Current package safety data was unavailable for codex. Review this install now.",
+};
+assert(
+  packageReviewNeedsCloudRecovery(CLOUD_EVIDENCE_UNAVAILABLE_REQUEST),
+  "GR224-09: package evidence outage offers Cloud recovery",
+);
+const cloudRecoveryMarkup = renderToStaticMarkup(
+  createElement(ReviewCloudRecovery, { item: CLOUD_EVIDENCE_UNAVAILABLE_REQUEST }),
+);
+assert(
+  cloudRecoveryMarkup.includes("This does not mean the package is unsafe") &&
+    cloudRecoveryMarkup.includes("Connect Guard Cloud"),
+  "GR224-10: recovery UI explains the uncertainty and provides a connect action",
+);
+assert(
+  !packageReviewNeedsCloudRecovery({
+    ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+    risk_summary: "Known malware was found.",
+  }),
+  "GR224-11: confirmed package risk does not offer outage recovery",
+);
+assert(
+  !packageReviewNeedsCloudRecovery({ ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST, artifact_type: "command" }),
+  "GR224-12: unrelated approvals do not offer package recovery",
 );
 
 console.log("phase09-review.test.ts: all tests passed");
