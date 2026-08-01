@@ -16,6 +16,16 @@ const unavailableEvidencePhrases = [
   "current package safety data was unavailable",
 ];
 
+async function withCloudRequestTimeout<T>(request: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5000);
+  try {
+    return await request(controller.signal);
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 async function waitForAuthorizeUrl(
   initialStatus: GuardCloudConnectStatusResponse,
 ): Promise<GuardCloudConnectStatusResponse> {
@@ -27,7 +37,7 @@ async function waitForAuthorizeUrl(
     }
     const pollDelayMs = Math.max(100, Math.min(5000, flow.poll_after_ms ?? 1000));
     await new Promise<void>((resolve) => window.setTimeout(resolve, pollDelayMs));
-    status = await fetchGuardCloudConnectStatus();
+    status = await withCloudRequestTimeout(fetchGuardCloudConnectStatus);
   }
   return status;
 }
@@ -55,7 +65,7 @@ export function ReviewCloudRecovery({ item }: { item: GuardApprovalRequest }) {
     setMessage(null);
     setManualConnectUrl(null);
     try {
-      const status = await waitForAuthorizeUrl(await startGuardCloudConnect());
+      const status = await waitForAuthorizeUrl(await withCloudRequestTimeout(startGuardCloudConnect));
       const flow = status.connect_flow;
       if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
         setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);

@@ -17685,15 +17685,16 @@ function normalizeGuardCloudConnectStatus(value) {
     connect_flow: normalizePackageFirewallConnectFlow(value.connect_flow)
   };
 }
-async function fetchGuardCloudConnectStatus() {
-  return normalizeGuardCloudConnectStatus(await readJson("/v1/cloud/connect"));
+async function fetchGuardCloudConnectStatus(signal) {
+  return normalizeGuardCloudConnectStatus(await readJson("/v1/cloud/connect", { signal }));
 }
-async function startGuardCloudConnect() {
+async function startGuardCloudConnect(signal) {
   return normalizeGuardCloudConnectStatus(
     await readJson("/v1/cloud/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal
     })
   );
 }
@@ -27930,6 +27931,15 @@ const unavailableEvidencePhrases = [
   "cloud evaluation could not validate",
   "current package safety data was unavailable"
 ];
+async function withCloudRequestTimeout(request) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5e3);
+  try {
+    return await request(controller.signal);
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 async function waitForAuthorizeUrl(initialStatus) {
   let status = initialStatus;
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -27939,7 +27949,7 @@ async function waitForAuthorizeUrl(initialStatus) {
     }
     const pollDelayMs = Math.max(100, Math.min(5e3, flow.poll_after_ms ?? 1e3));
     await new Promise((resolve) => window.setTimeout(resolve, pollDelayMs));
-    status = await fetchGuardCloudConnectStatus();
+    status = await withCloudRequestTimeout(fetchGuardCloudConnectStatus);
   }
   return status;
 }
@@ -27958,7 +27968,7 @@ function ReviewCloudRecovery({ item }) {
     setMessage(null);
     setManualConnectUrl(null);
     try {
-      const status = await waitForAuthorizeUrl(await startGuardCloudConnect());
+      const status = await waitForAuthorizeUrl(await withCloudRequestTimeout(startGuardCloudConnect));
       const flow = status.connect_flow;
       if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
         setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
