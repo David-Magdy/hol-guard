@@ -117,6 +117,79 @@ def test_bounded_github_actions_log_metadata_read_is_explicitly_benign(
     )
 
 
+def test_bounded_failed_log_filter_is_explicitly_benign(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_execution_injection_environment(monkeypatch)
+    monkeypatch.delenv("RIPGREP_CONFIG_PATH", raising=False)
+    _trust_pipeline_executables_for_parser_test(monkeypatch)
+    command = (
+        "gh run view 123 --repo example/project --log-failed | rg -n 'FAILURES|FAILED |AssertionError' | tail -120"
+    )
+
+    assert is_nonexecuting_github_actions_read_workflow(command, cwd=tmp_path)
+    assert is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": command},
+        cwd=tmp_path,
+        home_dir=tmp_path,
+    )
+
+
+def test_bounded_failed_log_filter_accepts_explicit_no_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_execution_injection_environment(monkeypatch)
+    monkeypatch.delenv("RIPGREP_CONFIG_PATH", raising=False)
+    _trust_pipeline_executables_for_parser_test(monkeypatch)
+    command = "gh run view 123 --repo example/project --log-failed | rg --no-config -n FAILED | tail -120"
+
+    assert is_nonexecuting_github_actions_read_workflow(command, cwd=tmp_path)
+
+
+def test_bounded_failed_log_filter_rejects_ripgrep_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _clear_execution_injection_environment(monkeypatch)
+    monkeypatch.setenv("RIPGREP_CONFIG_PATH", "workspace/rg.conf")
+    _trust_pipeline_executables_for_parser_test(monkeypatch)
+    command = (
+        "gh run view 123 --repo example/project --log-failed | rg -n 'FAILURES|FAILED |AssertionError' | tail -120"
+    )
+
+    assert not is_nonexecuting_github_actions_read_workflow(command, cwd=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "gh run view 123 --repo example/project --log",
+        "gh run view 123 --repo example/project --log-failed",
+        "gh run view 123 --repo example/project --log-failed | tail -120",
+        "gh run view 123 --repo example/project --log-failed | rg -n FAILED",
+        "gh run view 123 --repo example/project --log-failed | rg -i FAILED | tail -120",
+        "gh run view 123 --repo example/project --log-failed | rg -n $PATTERN | tail -120",
+        "gh run view 123 --repo example/project --log-failed | rg -n ${PATTERN} | tail -120",
+        "gh run view 123 --repo example/project --log-failed | rg -n '$PATTERN' | tail -120",
+        "gh run view 123 --repo example/project --log-failed | rg -n FAILED | tail 120",
+        "gh run view 123 --repo example/project --log-failed | rg -n FAILED | tail -121",
+    ),
+)
+def test_failed_log_filter_rejects_unbounded_variants(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    command: str,
+) -> None:
+    _clear_execution_injection_environment(monkeypatch)
+    monkeypatch.delenv("RIPGREP_CONFIG_PATH", raising=False)
+    _trust_pipeline_executables_for_parser_test(monkeypatch)
+
+    assert not is_nonexecuting_github_actions_read_workflow(command, cwd=tmp_path)
+
+
 @pytest.mark.parametrize(
     "command",
     (

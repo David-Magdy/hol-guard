@@ -134,6 +134,9 @@ def _shell_token_escapes_root(token: str, *, cwd: Path, root: Path) -> bool:
 
 
 def _github_jq_filter_args_are_safe(args: list[str]) -> bool:
+    normalized_args = _collapse_single_quoted_shell_argument(args)
+    if normalized_args is None:
+        return False
     boolean_options = {
         "--ascii-output",
         "--compact-output",
@@ -157,8 +160,8 @@ def _github_jq_filter_args_are_safe(args: list[str]) -> bool:
     }
     value_options = {"--arg": 2, "--argjson": 2}
     index = 0
-    while index < len(args):
-        token = args[index]
+    while index < len(normalized_args):
+        token = normalized_args[index]
         if token in {"2>&1", "1>&2"}:
             index += 1
             continue
@@ -167,13 +170,106 @@ def _github_jq_filter_args_are_safe(args: list[str]) -> bool:
             continue
         if token in value_options:
             index += 1 + value_options[token]
-            if index > len(args):
+            if index > len(normalized_args):
                 return False
             continue
         if token.startswith("-"):
             return False
-        return index == len(args) - 1
+        return index == len(normalized_args) - 1 and _github_jq_program_is_safe(token)
     return False
+
+
+_JQ_EXTERNAL_INPUT = re.compile(r"\$ENV\b|(?<![A-Za-z0-9_$\.])(env|import|include)(?![A-Za-z0-9_])")
+
+
+def _github_jq_program_is_safe(program: str) -> bool:
+    """Reject jq programs that can read process or module data outside stdin."""
+
+    normalized = program[1:-1] if len(program) >= 2 and program.startswith("'") and program.endswith("'") else program
+    sanitized = _strip_jq_strings_and_comments(normalized)
+    for match in _JQ_EXTERNAL_INPUT.finditer(sanitized):
+        if match.group(0).startswith("$"):
+            return False
+        previous = _previous_nonspace(sanitized, match.start())
+        following = _next_nonspace(sanitized, match.end())
+        if previous == "." or following == ":" or (previous in {"{", ","} and following in {",", "}"}):
+            if match.group(1) == "env" and following in {",", "}"}:
+                return False
+            continue
+        return False
+    return True
+
+
+def _previous_nonspace(value: str, end: int) -> str:
+    return next((value[index] for index in range(end - 1, -1, -1) if not value[index].isspace()), "")
+
+
+def _next_nonspace(value: str, start: int) -> str:
+    return next((value[index] for index in range(start, len(value)) if not value[index].isspace()), "")
+
+
+def _strip_jq_strings_and_comments(program: str) -> str:
+    """Mask jq strings and comments while preserving token boundaries."""
+
+    output: list[str] = []
+    in_string = False
+    in_comment = False
+    escaped = False
+    for character in program:
+        if in_comment:
+            in_comment = character != "\n"
+            output.append("\n" if character == "\n" else " ")
+            continue
+        if in_string:
+            output.append(" ")
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+            output.append(" ")
+        elif character == "#":
+            in_comment = True
+            output.append(" ")
+        else:
+            output.append(character)
+    return "".join(output)
+
+
+def _collapse_single_quoted_shell_argument(args: list[str]) -> list[str] | None:
+    """Rejoin one shell-tokenized single-quoted argument without widening operands."""
+
+    normalized: list[str] = []
+    index = 0
+    while index < len(args):
+        token = args[index]
+        if not token.startswith("'"):
+            normalized.append(token)
+            index += 1
+            continue
+        if len(token) > 1 and token.endswith("'"):
+            if "'" in token[1:-1]:
+                return None
+            normalized.append(token)
+            index += 1
+            continue
+        parts = [token]
+        index += 1
+        while index < len(args) and not args[index].endswith("'"):
+            if "'" in args[index]:
+                return None
+            parts.append(args[index])
+            index += 1
+        if index >= len(args) or "'" in args[index][:-1]:
+            return None
+        parts.append(args[index])
+        normalized.append(" ".join(parts))
+        index += 1
+    return normalized
 
 
 def _path_text_is_within_root(path_text: str, root: Path) -> bool:
