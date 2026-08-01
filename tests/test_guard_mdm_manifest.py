@@ -150,6 +150,7 @@ def test_detects_insecure_machine_file_permissions(tmp_path: Path) -> None:
     manifest = _manifest(runtime)
     manifest_path = runtime / "release-manifest.json"
     manifest_path.write_text(json.dumps(manifest))
+    manifest_path.chmod(0o644)
     (runtime / "bin" / "hol-guard").chmod(0o777)
 
     result = verify_release_manifest(manifest_path, runtime, require_signature=False, expected_owner_uid=os.getuid())

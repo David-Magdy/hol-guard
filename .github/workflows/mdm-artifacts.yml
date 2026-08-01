@@ -22,9 +22,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --frozen --extra dev --python ${{ matrix.python }}
-      - run: uv run --no-sync pytest tests/test_guard_mdm_*.py --tb=short
+      - run: uv run --no-sync python -c "import glob, subprocess, sys; raise SystemExit(subprocess.call([sys.executable, '-m', 'pytest', *glob.glob('tests/test_guard_mdm_*.py'), '--tb=short']))"
       - run: uv run --no-sync basedpyright --level error
-      - run: uv run --no-sync ruff check src/ tests/test_guard_mdm_*.py scripts/mdm/generate-release-manifest.py
+      - run: uv run --no-sync python -c "import glob, subprocess, sys; raise SystemExit(subprocess.call([sys.executable, '-m', 'ruff', 'check', 'src/', *glob.glob('tests/test_guard_mdm_*.py'), 'scripts/mdm/generate-release-manifest.py']))"
 
   unsigned-artifact:
     needs: tests
