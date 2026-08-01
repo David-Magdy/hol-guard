@@ -32,6 +32,7 @@ def _managed_policy() -> ManagedPolicyState:
 def _write_activation_marker(home: Path) -> None:
     guard_home = home / ".hol-guard"
     guard_home.mkdir(exist_ok=True)
+    guard_home.chmod(0o700)
     marker = guard_home / "mdm-activation.json"
     marker.write_text("{}")
     marker.chmod(0o600)

@@ -9,8 +9,10 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import stat
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -70,6 +72,97 @@ def _open_readonly_no_follow(path: Path) -> int:
         os.close(descriptor)
         raise OSError("runtime entry is a reparse point")
     return descriptor
+
+
+def _materialize_internal_file_symlinks(root: Path) -> None:
+    file_symlinks: list[tuple[Path, Path, os.stat_result]] = []
+    directory_symlinks: list[tuple[Path, Path, os.stat_result]] = []
+    for directory, directory_names, file_names in os.walk(root, followlinks=False):
+        directory_path = Path(directory)
+        for name in tuple(directory_names) + tuple(file_names):
+            link = directory_path / name
+            if not link.is_symlink():
+                continue
+            target = link.resolve(strict=True)
+            try:
+                target.relative_to(root)
+            except ValueError as exc:
+                raise ValueError(f"runtime symlink escapes root: {link}") from exc
+            target_stat = target.stat()
+            if stat.S_ISREG(target_stat.st_mode):
+                if target_stat.st_size > MAX_RUNTIME_FILE_BYTES:
+                    raise ValueError(f"runtime symlink target exceeds file size limit: {link}")
+                file_symlinks.append((link, target, target_stat))
+            elif stat.S_ISDIR(target_stat.st_mode):
+                directory_symlinks.append((link, target, target_stat))
+            else:
+                raise ValueError(f"runtime symlink target is not a regular file or directory: {link}")
+
+    for link, target, expected_stat in file_symlinks:
+        temporary_path: Path | None = None
+        try:
+            source_fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                source_stat = os.fstat(source_fd)
+                if (
+                    not stat.S_ISREG(source_stat.st_mode)
+                    or source_stat.st_dev != expected_stat.st_dev
+                    or source_stat.st_ino != expected_stat.st_ino
+                    or source_stat.st_size != expected_stat.st_size
+                ):
+                    raise ValueError(f"runtime symlink target changed during materialization: {link}")
+                with tempfile.NamedTemporaryFile(
+                    dir=link.parent,
+                    prefix=f".{link.name}.",
+                    delete=False,
+                ) as destination:
+                    temporary_path = Path(destination.name)
+                    remaining = source_stat.st_size
+                    while remaining:
+                        chunk = os.read(source_fd, min(remaining, 1024 * 1024))
+                        if not chunk:
+                            raise ValueError(f"runtime symlink target changed during materialization: {link}")
+                        destination.write(chunk)
+                        remaining -= len(chunk)
+                    if os.read(source_fd, 1):
+                        raise ValueError(f"runtime symlink target changed during materialization: {link}")
+                    destination.flush()
+                    os.fsync(destination.fileno())
+                os.chmod(temporary_path, stat.S_IMODE(source_stat.st_mode))
+                os.replace(temporary_path, link)
+                temporary_path = None
+            finally:
+                os.close(source_fd)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+    for link, target, expected_stat in directory_symlinks:
+        temporary_path: Path | None = Path(tempfile.mkdtemp(dir=link.parent, prefix=f".{link.name}."))
+        backup_path = temporary_path.with_name(f"{temporary_path.name}.link")
+        try:
+            if not link.is_symlink() or link.resolve(strict=True) != target:
+                raise ValueError(f"runtime symlink target changed during materialization: {link}")
+            shutil.copytree(target, temporary_path, symlinks=False, dirs_exist_ok=True)
+            copied_stat = target.stat()
+            if (
+                copied_stat.st_dev != expected_stat.st_dev
+                or copied_stat.st_ino != expected_stat.st_ino
+                or copied_stat.st_mtime_ns != expected_stat.st_mtime_ns
+            ):
+                raise ValueError(f"runtime symlink target changed during materialization: {link}")
+            os.replace(link, backup_path)
+            try:
+                os.replace(temporary_path, link)
+                temporary_path = None
+            except OSError:
+                os.replace(backup_path, link)
+                raise
+            backup_path.unlink()
+        finally:
+            if temporary_path is not None:
+                shutil.rmtree(temporary_path)
+            backup_path.unlink(missing_ok=True)
 
 
 def _manifest_files(root: Path, output: Path) -> list[dict[str, str]]:
@@ -150,12 +243,19 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--signing-key", type=Path)
     parser.add_argument("--key-id")
+    parser.add_argument(
+        "--materialize-internal-file-symlinks",
+        action="store_true",
+        help="Replace internal regular-file symlinks before generating the manifest",
+    )
     args = parser.parse_args()
     root = args.runtime_root.resolve(strict=True)
     output = args.output.resolve()
     if not output.is_relative_to(root):
         parser.error("--output must be inside --runtime-root")
     try:
+        if args.materialize_internal_file_symlinks:
+            _materialize_internal_file_symlinks(root)
         files = _manifest_files(root, output)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))

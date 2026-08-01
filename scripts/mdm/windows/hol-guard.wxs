@@ -35,7 +35,6 @@
           Value="&quot;[InstallFolder]hol-guard\hol-guard.exe&quot; mdm repair --home &quot;%USERPROFILE%&quot; --user &quot;%USERNAME%&quot; --json" />
       </RegistryKey>
     </Component>
-    <Files Include="$(RuntimeRoot)\**" Directory="InstallFolder" />
     <CustomAction Id="InstallMachineHealthTask" Directory="InstallFolder"
       ExeCommand="&quot;[InstallFolder]hol-guard\hol-guard.exe&quot; mdm supervisor-install --json"
       Execute="deferred" Impersonate="no" Return="check" />
@@ -69,6 +68,12 @@
       <ComponentRef Id="MachineState" />
       <ComponentRef Id="MachineLogs" />
       <ComponentRef Id="UserActivation" />
+      <ComponentGroupRef Id="RuntimeFiles" />
     </Feature>
   </Package>
+  <Fragment>
+    <ComponentGroup Id="RuntimeFiles" Directory="InstallFolder">
+      <Files Include="$(RuntimeRoot)\**" />
+    </ComponentGroup>
+  </Fragment>
 </Wix>
