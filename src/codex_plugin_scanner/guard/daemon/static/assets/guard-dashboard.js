@@ -27930,6 +27930,18 @@ const unavailableEvidencePhrases = [
   "cloud evaluation could not validate",
   "current package safety data was unavailable"
 ];
+async function waitForAuthorizeUrl(initialStatus) {
+  let status = initialStatus;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const flow = status.connect_flow;
+    if (!status.connect_required || flow?.authorize_url || !flow || !["starting", "running"].includes(flow.state)) {
+      return status;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, flow.poll_after_ms ?? 1e3));
+    status = await fetchGuardCloudConnectStatus();
+  }
+  return status;
+}
 function packageReviewNeedsCloudRecovery(item) {
   const packageRequest = item.artifact_type === "supply_chain" || item.artifact_type === "package_request" || item.artifact_type.endsWith("_package");
   if (!packageRequest) return false;
@@ -27945,12 +27957,16 @@ function ReviewCloudRecovery({ item }) {
     setMessage(null);
     setManualConnectUrl(null);
     try {
-      const status = await startGuardCloudConnect();
+      const status = await waitForAuthorizeUrl(await startGuardCloudConnect());
       const flow = status.connect_flow;
-      const connectUrl = flow?.authorize_url ?? flow?.connect_url ?? null;
-      if (connectUrl && !openPackageFirewallAuthorizeFallback(connectUrl, flow?.browser_opened ?? null)) {
+      if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
         setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
-        setManualConnectUrl(connectUrl);
+        setManualConnectUrl(flow.authorize_url);
+        return;
+      }
+      if (status.connect_required && flow?.connect_url) {
+        setMessage("Guard could not finish starting sign-in. Open sign-in and try again.");
+        setManualConnectUrl(flow.connect_url);
         return;
       }
       setMessage(

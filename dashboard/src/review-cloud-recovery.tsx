@@ -2,7 +2,8 @@ import { useCallback, useState } from "react";
 import { HiMiniCloudArrowUp } from "react-icons/hi2";
 import { ActionButton } from "./approval-center-primitives";
 import type { GuardApprovalRequest } from "./guard-types";
-import { startGuardCloudConnect } from "./guard-api";
+import type { GuardCloudConnectStatusResponse } from "./guard-types";
+import { fetchGuardCloudConnectStatus, startGuardCloudConnect } from "./guard-api";
 import {
   openPackageFirewallAuthorizeFallback,
   PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE,
@@ -14,6 +15,21 @@ const unavailableEvidencePhrases = [
   "cloud evaluation could not validate",
   "current package safety data was unavailable",
 ];
+
+async function waitForAuthorizeUrl(
+  initialStatus: GuardCloudConnectStatusResponse,
+): Promise<GuardCloudConnectStatusResponse> {
+  let status = initialStatus;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const flow = status.connect_flow;
+    if (!status.connect_required || flow?.authorize_url || !flow || !["starting", "running"].includes(flow.state)) {
+      return status;
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, flow.poll_after_ms ?? 1000));
+    status = await fetchGuardCloudConnectStatus();
+  }
+  return status;
+}
 
 export function packageReviewNeedsCloudRecovery(item: GuardApprovalRequest): boolean {
   const packageRequest =
@@ -38,12 +54,16 @@ export function ReviewCloudRecovery({ item }: { item: GuardApprovalRequest }) {
     setMessage(null);
     setManualConnectUrl(null);
     try {
-      const status = await startGuardCloudConnect();
+      const status = await waitForAuthorizeUrl(await startGuardCloudConnect());
       const flow = status.connect_flow;
-      const connectUrl = flow?.authorize_url ?? flow?.connect_url ?? null;
-      if (connectUrl && !openPackageFirewallAuthorizeFallback(connectUrl, flow?.browser_opened ?? null)) {
+      if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
         setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
-        setManualConnectUrl(connectUrl);
+        setManualConnectUrl(flow.authorize_url);
+        return;
+      }
+      if (status.connect_required && flow?.connect_url) {
+        setMessage("Guard could not finish starting sign-in. Open sign-in and try again.");
+        setManualConnectUrl(flow.connect_url);
         return;
       }
       setMessage(
