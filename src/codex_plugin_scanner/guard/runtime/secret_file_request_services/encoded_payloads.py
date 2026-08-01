@@ -54,6 +54,7 @@ from .node_heredoc_safety import (
     _looks_like_safe_node_generated_file_heredoc,
     _looks_like_safe_node_read_only_http_heredoc,
 )
+from .perl_read_only import _looks_like_read_only_perl_filter
 from .pytest_binary_safety import (
     _contains_prior_pytest_state_mutation,
     _contains_pytest_process_substitution,
@@ -311,6 +312,8 @@ def _looks_destructive_shell_command(
     if _looks_like_benign_interpreter_wait_chain(normalized, parts):
         return False
     if _looks_like_read_only_interpreter_command(normalized, parts, parsed_command_names):
+        return False
+    if _looks_like_read_only_perl_filter(normalized, cwd=cwd, home_dir=home_dir):
         return False
     if _looks_like_safe_pytest_binary_invocation(parts, cwd=cwd):
         return False

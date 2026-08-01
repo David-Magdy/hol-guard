@@ -30,6 +30,7 @@ from .secret_file_request_services import local_read_operands as _local_read_ope
 from .secret_file_request_services import network_upload_detection as _network_upload_detection
 from .secret_file_request_services import node_generated_workflows as _node_generated_workflows
 from .secret_file_request_services import node_heredoc_safety as _node_heredoc_safety
+from .secret_file_request_services import perl_read_only as _perl_read_only
 from .secret_file_request_services import pytest_binary_safety as _pytest_binary_safety
 from .secret_file_request_services import pytest_config_safety as _pytest_config_safety
 from .secret_file_request_services import pytest_target_detection as _pytest_target_detection
@@ -150,6 +151,7 @@ _SERVICE_MODULES = (
     _typescript_graphql_safety,
     _node_generated_workflows,
     _node_heredoc_safety,
+    _perl_read_only,
     _encoded_payloads,
     _upload_arguments,
     _network_upload_detection,
