@@ -20,6 +20,9 @@ async function withCloudRequestTimeout<T>(
   request: (signal: AbortSignal) => Promise<T>,
   parentSignal?: AbortSignal,
 ): Promise<T> {
+  if (parentSignal?.aborted) {
+    throw new DOMException("Cloud connection request stopped", "AbortError");
+  }
   const controller = new AbortController();
   const abort = () => controller.abort();
   parentSignal?.addEventListener("abort", abort, { once: true });
@@ -33,6 +36,9 @@ async function withCloudRequestTimeout<T>(
 }
 
 function waitForPoll(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Cloud connection polling stopped", "AbortError"));
+  }
   return new Promise<void>((resolve, reject) => {
     const finish = () => {
       signal.removeEventListener("abort", abort);
@@ -51,6 +57,9 @@ async function waitForAuthorizeUrl(
   initialStatus: GuardCloudConnectStatusResponse,
   signal: AbortSignal,
 ): Promise<GuardCloudConnectStatusResponse> {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
   let status = initialStatus;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const flow = status.connect_flow;
@@ -80,6 +89,9 @@ export async function waitForCloudConnection(
     maxAttempts = 300,
   }: CloudConnectionPollOptions,
 ): Promise<GuardCloudConnectStatusResponse> {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
   let status = initialStatus;
   for (let attempt = 0; attempt < maxAttempts && status.connect_required; attempt += 1) {
     if (status.connect_flow?.state === "failed") return status;
@@ -123,7 +135,14 @@ export function ReviewCloudRecovery({ item }: { item: GuardApprovalRequest }) {
   const [manualConnectUrl, setManualConnectUrl] = useState<string | null>(null);
   const connectControllerRef = useRef<AbortController | null>(null);
 
-  useEffect(() => () => connectControllerRef.current?.abort(), []);
+  useEffect(() => {
+    connectControllerRef.current?.abort();
+    setConnecting(false);
+    setConnected(false);
+    setMessage(null);
+    setManualConnectUrl(null);
+    return () => connectControllerRef.current?.abort();
+  }, [item.request_id]);
 
   const handleConnect = useCallback(async () => {
     connectControllerRef.current?.abort();
@@ -176,7 +195,7 @@ export function ReviewCloudRecovery({ item }: { item: GuardApprovalRequest }) {
       );
       setConnected(!status.connect_required);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (controller.signal.aborted) return;
       setMessage(error instanceof Error ? error.message : "Guard could not start sign-in. Try again.");
     } finally {
       if (!controller.signal.aborted) setConnecting(false);

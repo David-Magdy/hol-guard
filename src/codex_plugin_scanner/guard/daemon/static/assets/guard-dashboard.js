@@ -27968,6 +27968,9 @@ const unavailableEvidencePhrases = [
   "current package safety data was unavailable"
 ];
 async function withCloudRequestTimeout(request, parentSignal) {
+  if (parentSignal?.aborted) {
+    throw new DOMException("Cloud connection request stopped", "AbortError");
+  }
   const controller = new AbortController();
   const abort = () => controller.abort();
   parentSignal?.addEventListener("abort", abort, { once: true });
@@ -27980,6 +27983,9 @@ async function withCloudRequestTimeout(request, parentSignal) {
   }
 }
 function waitForPoll(delayMs, signal) {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Cloud connection polling stopped", "AbortError"));
+  }
   return new Promise((resolve, reject) => {
     const finish = () => {
       signal.removeEventListener("abort", abort);
@@ -27994,6 +28000,9 @@ function waitForPoll(delayMs, signal) {
   });
 }
 async function waitForAuthorizeUrl(initialStatus, signal) {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
   let status = initialStatus;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const flow = status.connect_flow;
@@ -28012,6 +28021,9 @@ async function waitForCloudConnection(initialStatus, {
   wait = waitForPoll,
   maxAttempts = 300
 }) {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
   let status = initialStatus;
   for (let attempt = 0; attempt < maxAttempts && status.connect_required; attempt += 1) {
     if (status.connect_flow?.state === "failed") return status;
@@ -28042,7 +28054,14 @@ function ReviewCloudRecovery({ item }) {
   const [message, setMessage] = reactExports.useState(null);
   const [manualConnectUrl, setManualConnectUrl] = reactExports.useState(null);
   const connectControllerRef = reactExports.useRef(null);
-  reactExports.useEffect(() => () => connectControllerRef.current?.abort(), []);
+  reactExports.useEffect(() => {
+    connectControllerRef.current?.abort();
+    setConnecting(false);
+    setConnected(false);
+    setMessage(null);
+    setManualConnectUrl(null);
+    return () => connectControllerRef.current?.abort();
+  }, [item.request_id]);
   const handleConnect = reactExports.useCallback(async () => {
     connectControllerRef.current?.abort();
     const controller = new AbortController();
@@ -28090,7 +28109,7 @@ function ReviewCloudRecovery({ item }) {
       );
       setConnected(!status.connect_required);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (controller.signal.aborted) return;
       setMessage(error instanceof Error ? error.message : "Guard could not start sign-in. Try again.");
     } finally {
       if (!controller.signal.aborted) setConnecting(false);
@@ -28851,7 +28870,7 @@ function ReviewDecisionCard(props) {
         ] })
       ] }) }),
       topAlertItems.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-xl border border-slate-100 bg-slate-50/50 p-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ConsolidatedEvidenceAlert, { items: topAlertItems }, item.request_id) }),
-      resolutionBlockReason === null ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewCloudRecovery, { item }) : null,
+      resolutionBlockReason === null ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewCloudRecovery, { item }, item.request_id) : null,
       whatWouldHappen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",

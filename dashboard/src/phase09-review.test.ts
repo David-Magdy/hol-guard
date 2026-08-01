@@ -1412,5 +1412,26 @@ assert(
     connectedRecoveryContent.detail.includes("Run the install command again"),
   "GR224-14: completed Cloud sign-in replaces stale authorization guidance",
 );
+let canceledPollWaits = 0;
+const canceledPollController = new AbortController();
+canceledPollController.abort();
+const canceledPollRejected = await waitForCloudConnection(
+  { connect_required: true, connect_flow: null },
+  {
+    signal: canceledPollController.signal,
+    wait: async () => {
+      canceledPollWaits += 1;
+    },
+    maxAttempts: 1,
+  },
+).then(
+  () => false,
+  (error: unknown) =>
+    typeof error === "object" && error !== null && "name" in error && error.name === "AbortError",
+);
+assert(
+  canceledPollRejected && canceledPollWaits === 0,
+  "GR224-15: canceled recovery polling schedules no additional work",
+);
 
 console.log("phase09-review.test.ts: all tests passed");
