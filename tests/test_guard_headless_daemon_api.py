@@ -1632,7 +1632,10 @@ def test_supply_chain_package_firewall_paid_install_and_test_roundtrip(
     ]
 
 
-def test_supply_chain_audit_scans_workspace_manifests(tmp_path: Path) -> None:
+def test_supply_chain_audit_scans_workspace_manifests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()
     audit_now = "2026-05-27T16:00:00.000Z"
@@ -1653,6 +1656,11 @@ def test_supply_chain_audit_scans_workspace_manifests(tmp_path: Path) -> None:
     )
     store = GuardStore(tmp_path / "guard-home")
     _seed_guard_cloud(store, workspace_id=WORKSPACE_ID)
+    monkeypatch.setattr(
+        local_supply_chain_module,
+        "_run_cloud_workspace_audit",
+        lambda **_kwargs: (None, {"code": "cloud_timeout", "message": "Cloud unavailable."}),
+    )
     bundle_response = _bundle_response(
         packages=[
             _package(
