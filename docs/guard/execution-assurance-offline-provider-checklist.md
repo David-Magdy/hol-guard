@@ -38,4 +38,4 @@ Use this checklist before accepting evidence from a provider running without con
 
 ## Verification record
 
-Record the candidate commit, provider/runtime digests, host platform, policy and lease versions, test corpus, pass/fail counts, cleanup inventory, and reviewer. Never record secrets or raw workload content. Portable contract evidence must not be described as native platform certification.
+Record the candidate commit, provider/runtime digests, host platform and architecture, policy and lease versions, migration version, feature-flag state, exact commands, CI run URLs, browser viewport, test corpus, pass/fail counts, cleanup inventory and teardown result, and reviewer through the launch runbook's Evidence record. Never record secrets or raw workload content. Portable contract evidence must not be described as native platform certification.

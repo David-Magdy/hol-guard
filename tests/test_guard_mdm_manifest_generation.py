@@ -129,7 +129,8 @@ def test_generator_materializes_internal_directory_symlink_when_enabled(tmp_path
 
     assert not link.is_symlink()
     assert (link / "file").read_bytes() == b"protected"
-    assert output.exists()
+    payload = json.loads(output.read_text())
+    assert {entry["path"] for entry in payload["files"]} == {"link/file", "target/file"}
 
 
 def test_generator_rejects_empty_runtime(tmp_path: Path) -> None:
