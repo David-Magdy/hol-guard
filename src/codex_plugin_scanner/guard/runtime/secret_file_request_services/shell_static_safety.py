@@ -179,14 +179,31 @@ def _github_jq_filter_args_are_safe(args: list[str]) -> bool:
     return False
 
 
-_JQ_EXTERNAL_INPUT = re.compile(r"(?<![A-Za-z0-9_$\.])(env|import|include)(?![A-Za-z0-9_])|\$ENV\b")
+_JQ_EXTERNAL_INPUT = re.compile(r"\$ENV\b|(?<![A-Za-z0-9_$\.])(env|import|include)(?![A-Za-z0-9_])")
 
 
 def _github_jq_program_is_safe(program: str) -> bool:
     """Reject jq programs that can read process or module data outside stdin."""
 
     normalized = program[1:-1] if len(program) >= 2 and program.startswith("'") and program.endswith("'") else program
-    return _JQ_EXTERNAL_INPUT.search(_strip_jq_strings_and_comments(normalized)) is None
+    sanitized = _strip_jq_strings_and_comments(normalized)
+    for match in _JQ_EXTERNAL_INPUT.finditer(sanitized):
+        if match.group(0).startswith("$"):
+            return False
+        previous = _previous_nonspace(sanitized, match.start())
+        following = _next_nonspace(sanitized, match.end())
+        if previous == "." or following == ":" or (previous in {"{", ","} and following in {",", "}"}):
+            continue
+        return False
+    return True
+
+
+def _previous_nonspace(value: str, end: int) -> str:
+    return next((value[index] for index in range(end - 1, -1, -1) if not value[index].isspace()), "")
+
+
+def _next_nonspace(value: str, start: int) -> str:
+    return next((value[index] for index in range(start, len(value)) if not value[index].isspace()), "")
 
 
 def _strip_jq_strings_and_comments(program: str) -> str:
@@ -228,7 +245,13 @@ def _collapse_single_quoted_shell_argument(args: list[str]) -> list[str] | None:
     index = 0
     while index < len(args):
         token = args[index]
-        if not token.startswith("'") or (len(token) > 1 and token.endswith("'")):
+        if not token.startswith("'"):
+            normalized.append(token)
+            index += 1
+            continue
+        if len(token) > 1 and token.endswith("'"):
+            if "'" in token[1:-1]:
+                return None
             normalized.append(token)
             index += 1
             continue

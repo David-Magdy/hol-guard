@@ -24,6 +24,7 @@ _ACTIONS_ENDPOINT: Final = re.compile(
 _JOB_ID_QUERY: Final = re.compile(r"\.jobs\[\]\.id")
 _FILTERED_JOB_ID_QUERY: Final = re.compile(r'\.jobs\[\]\|select\(\.name\|test\("(?:[^"\\]|\\.){1,200}"\)\)\|\.id')
 _MAX_FILTER_LINES: Final = 100
+_MAX_FAILED_LOG_TAIL_LINES: Final = 120
 _ACTIONS_LOG_METADATA_FIELDS: Final = frozenset(
     {
         "UV_PYTHON_INSTALL_DIR",
@@ -147,6 +148,8 @@ def _safe_github_read_pipeline(
         return None
     if _safe_actions_log_metadata_pipeline(segments, cwd=execution_cwd):
         return "text"
+    if _safe_failed_log_filter_pipeline(segments, cwd=execution_cwd):
+        return "text"
     if not _trusted_pipeline_executables(tuple(segment[0] for segment in segments), cwd=execution_cwd):
         return None
     substituted = _substitute_number_variables(segments[0], values)
@@ -178,6 +181,29 @@ def _safe_actions_log_metadata_pipeline(segments: list[list[str]], *, cwd: Path 
         and len(head) == 2
         and head[0] == "head"
         and _bounded_count(head[1])
+    )
+
+
+def _safe_failed_log_filter_pipeline(segments: list[list[str]], *, cwd: Path | None) -> bool:
+    if len(segments) != 3:
+        return False
+    github, search, tail = segments
+    if not (
+        len(github) == 7
+        and github[:3] == ["gh", "run", "view"]
+        and re.fullmatch(r"[1-9][0-9]*", github[3]) is not None
+        and github[4] == "--repo"
+        and re.fullmatch(_REPOSITORY, github[5]) is not None
+        and github[6] == "--log-failed"
+    ):
+        return False
+    execution_cwd = cwd or Path.cwd()
+    return bool(
+        _trusted_pipeline_executables(("gh", "rg", "tail"), cwd=execution_cwd)
+        and _safe_emitted_output_filter(search)
+        and search[:2] == ["rg", "-n"]
+        and _safe_emitted_output_filter(tail)
+        and tail[0] == "tail"
     )
 
 
@@ -387,13 +413,15 @@ def _safe_emitted_output_filter(tokens: list[str]) -> bool:
         return False
     if tokens[0] == "head":
         return len(tokens) == 2 and _bounded_count(tokens[1])
+    if tokens[0] == "tail":
+        return len(tokens) == 2 and _bounded_count(tokens[1], maximum=_MAX_FAILED_LOG_TAIL_LINES)
     if tokens[0] not in {"grep", "rg"}:
         return False
     positional: list[str] = []
     for token in tokens[1:]:
         if token.startswith("-"):
             flags = token.lstrip("-")
-            if not flags or any(flag not in {"i", "o", "q"} for flag in flags):
+            if not flags or any(flag not in {"i", "n", "o", "q"} for flag in flags):
                 return False
             continue
         positional.append(token)
@@ -402,14 +430,16 @@ def _safe_emitted_output_filter(tokens: list[str]) -> bool:
 
 def _filters_bound_emitted_matches(segments: list[list[str]]) -> bool:
     final = segments[-1]
-    if final[0] == "head":
+    if final[0] in {"head", "tail"}:
         return True
     return final[0] in {"grep", "rg"} and any("q" in token.lstrip("-") for token in final[1:] if token.startswith("-"))
 
 
-def _bounded_count(value: str) -> bool:
-    normalized = value[1:] if value.startswith("-") else value
-    return normalized.isdigit() and 1 <= int(normalized) <= _MAX_FILTER_LINES
+def _bounded_count(value: str, *, maximum: int = _MAX_FILTER_LINES) -> bool:
+    if not value.startswith("-"):
+        return False
+    normalized = value[1:]
+    return normalized.isdigit() and 1 <= int(normalized) <= maximum
 
 
 def _safe_text_filter_pipeline(command_text: str, values: dict[str, _ValueKind]) -> bool:

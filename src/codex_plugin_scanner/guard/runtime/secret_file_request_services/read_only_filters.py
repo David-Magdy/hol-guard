@@ -266,6 +266,7 @@ _RG_FILTER_BOOLEAN_OPTIONS = frozenset(
         "--ignore-case",
         "--invert-match",
         "--line-number",
+        "--no-config",
         "--only-matching",
         "--quiet",
         "--smart-case",
@@ -285,6 +286,7 @@ def _read_only_lookup_filter_rg_args_are_safe(args: list[str]) -> bool:
     saw_pattern = False
     expect_pattern = False
     after_options = False
+    saw_no_config = False
     for arg in args:
         if _read_only_lookup_arg_is_redirection(arg):
             return False
@@ -301,6 +303,11 @@ def _read_only_lookup_filter_rg_args_are_safe(args: list[str]) -> bool:
             continue
         if arg == "--":
             after_options = True
+            continue
+        if arg == "--no-config":
+            if saw_no_config:
+                return False
+            saw_no_config = True
             continue
         if arg in _RG_FILTER_PATTERN_OPTIONS:
             if saw_pattern:
@@ -321,7 +328,7 @@ def _read_only_lookup_filter_rg_args_are_safe(args: list[str]) -> bool:
         if saw_pattern:
             return False
         saw_pattern = bool(arg)
-    return saw_pattern and not expect_pattern
+    return saw_pattern and saw_no_config and not expect_pattern
 
 
 def _read_only_lookup_arg_is_redirection(arg: str) -> bool:
