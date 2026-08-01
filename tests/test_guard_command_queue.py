@@ -356,6 +356,33 @@ def test_remote_approval_rejects_queue_admission_after_expiry(tmp_path: Path) ->
         )
 
 
+@pytest.mark.parametrize(
+    ("trusted_keyring", "expected_error"),
+    [
+        (
+            review_trusted_keyring_payload(purpose="policy_bundle"),
+            "signing_key_purpose_mismatch",
+        ),
+        (
+            review_trusted_keyring_payload(workspace_id="workspace-2"),
+            "signing_key_workspace_mismatch",
+        ),
+    ],
+)
+def test_remote_approval_rejects_signing_key_outside_its_authority(
+    tmp_path: Path,
+    trusted_keyring: list[dict[str, object]],
+    expected_error: str,
+) -> None:
+    store = FakeStore(tmp_path / "guard-home")
+    request_row = _approval_request_row("request-wrong-key-authority")
+    envelope = _signed_remote_approval(store, request_row)
+    store.payloads["policy_bundle_keyring"] = trusted_keyring
+
+    with pytest.raises(GuardReviewContractError, match=expected_error):
+        validated_remote_approval_envelope(envelope, store=store)
+
+
 def test_guard_review_oauth_metadata_prefers_explicit_device_id(tmp_path: Path) -> None:
     class DeviceStore(FakeStore):
         def get_oauth_local_credentials(self, *, allow_primary: bool = False) -> dict[str, object]:

@@ -36,6 +36,7 @@ _REMOTE_APPROVAL_CONTRACT_VERSION = "guard.remote-approval.v1"
 _DECISION_MEMORY_BUNDLE_CONTRACT_VERSION = "guard.decision-memory-bundle.v1"
 _REMOTE_APPROVAL_ALLOWED_SCOPES = frozenset(DECISION_SCOPE_VALUES)
 _REMOTE_APPROVAL_RESOLVER_ROLES = frozenset({"owner", "admin", "operator"})
+_REMOTE_APPROVAL_KEY_PURPOSE = "remote_approval"
 _REMOTE_APPROVAL_SIGNATURE_ALGORITHM = "rsa-pss-sha256"
 _DECISION_MEMORY_SIGNATURE_ALGORITHM = "rsa-pss-sha256"
 _CLAIM_HASH_KEYS = ("claimHash",)
@@ -147,6 +148,8 @@ def _resolve_anchored_signing_key(
     advertised_keys: tuple[PolicyBundleVerificationKey, ...],
     anchored_keys: tuple[PolicyBundleVerificationKey, ...],
     key_id: str,
+    expected_purpose: str | None = None,
+    expected_workspace_id: str | None = None,
 ) -> PolicyBundleVerificationKey:
     signing_key = resolve_policy_bundle_signing_key(key_id, anchored_keys)
     if signing_key is None:
@@ -156,6 +159,14 @@ def _resolve_anchored_signing_key(
         raise GuardReviewContractError("missing_signing_key")
     if advertised_key.fingerprint_sha256 != signing_key.fingerprint_sha256:
         raise GuardReviewContractError("untrusted_signing_key")
+    if expected_purpose is not None and (
+        signing_key.purpose != expected_purpose or advertised_key.purpose != expected_purpose
+    ):
+        raise GuardReviewContractError("signing_key_purpose_mismatch")
+    if expected_workspace_id is not None and (
+        signing_key.workspace_id != expected_workspace_id or advertised_key.workspace_id != expected_workspace_id
+    ):
+        raise GuardReviewContractError("signing_key_workspace_mismatch")
     if not signing_key_is_current(signing_key):
         raise GuardReviewContractError("expired_signing_key")
     return signing_key
@@ -182,10 +193,19 @@ def _verify_signed_payload(
         key_id = advertised_keys[0].key_id
     if key_id is None:
         raise GuardReviewContractError("missing_signing_key_id")
+    expected_purpose = None
+    expected_workspace_id = None
+    if signature_algorithm == _REMOTE_APPROVAL_SIGNATURE_ALGORITHM:
+        expected_purpose = _REMOTE_APPROVAL_KEY_PURPOSE
+        expected_workspace_id = _non_empty_string(payload.get("workspaceId"))
+        if expected_workspace_id is None:
+            raise GuardReviewContractError("signing_key_workspace_mismatch")
     signing_key = _resolve_anchored_signing_key(
         advertised_keys=advertised_keys,
         anchored_keys=_anchored_review_verification_keys(store),
         key_id=key_id,
+        expected_purpose=expected_purpose,
+        expected_workspace_id=expected_workspace_id,
     )
     try:
         public_key = serialization.load_pem_public_key(signing_key.public_key_pem.encode("utf-8"))
