@@ -6,13 +6,13 @@ Status: decisions recorded. Audience: gate reviewers. Date: 2026-08-01. These ar
 
 **Question.** Specify a KVM/Firecracker MicroVM adapter (trust, jailer, kernel/rootfs, device model, networking, secrets, attestation, cleanup).
 
-**Decision.** DEFER pending an approved threat model. The wave-five scope selects ONE reference runtime for 3.1 alpha (the OCI/Kubernetes RuntimeClass path). A MicroVM adapter is a separate, larger trust surface (jailer confinement, kernel/rootfs provenance, device model, KVM-specific attestation) that requires its own approved threat model before any specification or implementation. No MicroVM adapter is specified or implemented. Re-open only with an approved MicroVM threat model.
+**Decision.** DEFER pending an approved threat model. The wave-five scope selects ONE reference runtime for 3.1 alpha: pinned gVisor `runsc` with `systrap`, reached directly or through the OCI/Kubernetes RuntimeClass path. A MicroVM adapter is a separate, larger trust surface (jailer confinement, kernel/rootfs provenance, device model, KVM-specific attestation) that requires its own approved threat model before any specification or implementation. No MicroVM adapter is specified or implemented. Re-open only with an approved MicroVM threat model.
 
 ## Windows isolation research spike (define) — DEFER (go/no-go before code)
 
 **Question.** Evaluate supported Windows isolation primitives without promising parity.
 
-**Decision.** DEFER pending a written threat model and an explicit go/no-go gate. The 3.1 alpha reference runtime targets Linux (OCI/gVisor-or-Kata via RuntimeClass). Windows isolation primitives (e.g. job objects, silos, Hyper-V containers, restricted tokens) differ substantially and must be evaluated in a dedicated threat model with a go/no-go decision before any code. No Windows isolation code is written and no parity is promised.
+**Decision.** DEFER pending a written threat model and an explicit go/no-go gate. The 3.1 alpha reference runtime targets Linux with pinned gVisor `runsc`; OCI and Kubernetes RuntimeClass provide the plan and orchestration boundaries. Windows isolation primitives (e.g. job objects, silos, Hyper-V containers, restricted tokens) differ substantially and must be evaluated in a dedicated threat model with a go/no-go decision before any code. No Windows isolation code is written and no parity is promised.
 
 ## Environment materializer (define) — DEFER
 
