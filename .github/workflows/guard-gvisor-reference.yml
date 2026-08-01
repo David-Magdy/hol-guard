@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - name: Install Python dependencies
-        run: uv sync --frozen
+        run: uv sync --extra dev --frozen
       - name: Install pinned gVisor and static BusyBox
         env:
           RUNSC_URL: https://storage.googleapis.com/gvisor/releases/release/20260727.0/x86_64/runsc
@@ -50,7 +50,7 @@ jobs:
           HOL_GUARD_RUNSC_PATH: /tmp/runsc
           HOL_GUARD_BUSYBOX_PATH: /usr/bin/busybox
           HOST_SECRET: must-not-cross-runtime-boundary
-        run: sudo --preserve-env=HOL_GUARD_RUNSC_INTEGRATION,HOL_GUARD_RUNSC_PATH,HOL_GUARD_BUSYBOX_PATH,HOST_SECRET .venv/bin/pytest -q tests/test_guard_gvisor_reference_runtime.py
+        run: sudo --preserve-env=HOL_GUARD_RUNSC_INTEGRATION,HOL_GUARD_RUNSC_PATH,HOL_GUARD_BUSYBOX_PATH,HOST_SECRET .venv/bin/python -m pytest -q tests/test_guard_gvisor_reference_runtime.py
       - name: Verify no residual runsc state
         if: always()
         run: |
