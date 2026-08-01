@@ -174,6 +174,20 @@ def temporary_mcp_exact_grant_selector(artifact_id: str, artifact_hash: str) -> 
     return f"{_SELECTOR_PREFIX}:exact:{digest}"
 
 
+def temporary_mcp_grant_covers_request(
+    selection: TemporaryMcpGrantSelection,
+    request: Mapping[str, object],
+) -> bool:
+    """Return whether a broad grant makes a pending routine request obsolete."""
+
+    if selection.target == "exact":
+        return False
+    eligibility = eligibility_from_browser_intent(request.get("browser_intent"))
+    if eligibility is None or eligibility.server_identity_hash != selection.eligibility.server_identity_hash:
+        return False
+    return selection.target == "server" or eligibility.category == selection.eligibility.category
+
+
 def runtime_grant_selectors(
     browser_intent: GuardBrowserAutomationIntentV1 | None,
     risk_categories: Sequence[str],

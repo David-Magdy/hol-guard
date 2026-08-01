@@ -747,7 +747,7 @@ def apply_approval_resolution(
                 harness=str(request["harness"]),
                 created_at=resolved_at,
             )
-    elif persist_policy is None and scope == "artifact":
+    elif persist_policy is None and scope == "artifact" and temporary_mcp_selection is None:
         once_decision = replace(
             decision,
             expires_at=(
@@ -775,6 +775,8 @@ def apply_approval_resolution(
                 created_at=resolved_at,
             )
 
+    temporary_mcp_result: dict[str, object] | None = None
+    temporary_mcp_resolved_ids: list[str] = []
     if temporary_mcp_selection is not None:
         temporary_decision = temporary_mcp_grant_decision(
             harness=str(request["harness"]),
@@ -788,11 +790,22 @@ def apply_approval_resolution(
             approval_gate_grant=resolved_gate_grant,
             now=resolved_at,
         )
-        store.upsert_policy(
-            temporary_decision,
-            resolved_at,
+        temporary_mcp_result, temporary_mcp_resolved_ids = store.apply_temporary_mcp_grant_resolution(
+            request_id=request_id,
+            decisions=[temporary_decision],
+            selection=temporary_mcp_selection,
+            reason=reason,
+            resolved_at=resolved_at,
             approval_gate_grant=resolved_gate_grant,
         )
+        if temporary_mcp_result.get("resolved") is not True:
+            error = temporary_mcp_result.get("error")
+            if error == "already_resolved":
+                raise ApprovalRequestAlreadyResolvedError(f"Approval request already resolved: {request_id}")
+            if error == "not_found":
+                raise ApprovalRequestNotFoundError(f"Unknown approval request: {request_id}")
+            if isinstance(error, str) and error:
+                raise ValueError(error)
     if local_tool_selection is not None:
         local_tool_decision = local_tool_grant_decision(
             harness=str(request["harness"]),
@@ -813,13 +826,17 @@ def apply_approval_resolution(
     resolution_harness = None if scope == "global" else str(request["harness"])
     resolve_matching_scope_requests = resolve_scope_matches and not (action == "allow" and scope != "artifact")
     if return_queue_result:
-        result = store.resolve_request_with_queue_result(
-            request_id,
-            resolution_action=action,
-            resolution_scope=scope,
-            reason=reason,
-            resolved_at=resolved_at,
-            approval_gate_grant=resolved_gate_grant,
+        result = (
+            temporary_mcp_result
+            if temporary_mcp_result is not None
+            else store.resolve_request_with_queue_result(
+                request_id,
+                resolution_action=action,
+                resolution_scope=scope,
+                reason=reason,
+                resolved_at=resolved_at,
+                approval_gate_grant=resolved_gate_grant,
+            )
         )
         if result.get("resolved") is not True:
             error = result.get("error")
@@ -865,6 +882,8 @@ def apply_approval_resolution(
             result["scope_warning"] = selection.warning
         if temporary_mcp_selection is not None:
             result["temporary_mcp_grant"] = _temporary_mcp_grant_result(temporary_mcp_selection)
+            if temporary_mcp_resolved_ids:
+                _refresh_queue_result(store, result, temporary_mcp_resolved_ids)
         return result
     resolved_ids: list[str] = []
     if resolve_matching_scope_requests and not exact_context_allow:
@@ -884,7 +903,7 @@ def apply_approval_resolution(
             resolved_at=resolved_at,
             approval_gate_grant=resolved_gate_grant,
         )
-    if request_id not in resolved_ids:
+    if request_id not in resolved_ids and temporary_mcp_result is None:
         store.resolve_approval_request(
             request_id,
             resolution_action=action,
@@ -1201,7 +1220,12 @@ def _refresh_queue_result(
     result["remaining_pending_count"] = remaining_count
     result["next_selectable_request_id"] = next_request["request_id"] if next_request is not None else None
     result["remaining_pending_summaries"] = page["items"]
-    result["resolved_scope_ids"] = resolved_scope_ids
+    previous_ids = result.get("resolved_scope_ids")
+    existing_ids = (
+        [str(value) for value in previous_ids if isinstance(value, str)] if isinstance(previous_ids, list) else []
+    )
+    combined_ids = [*existing_ids, *resolved_scope_ids]
+    result["resolved_scope_ids"] = list(dict.fromkeys(combined_ids))
     if remaining_count == 0:
         result["resolution_summary"] = "Decision saved. No actions are awaiting a decision."
     elif remaining_count == 1:

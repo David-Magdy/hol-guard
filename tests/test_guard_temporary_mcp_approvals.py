@@ -456,6 +456,68 @@ def test_resolution_persists_integrity_protected_category_grant(tmp_path) -> Non
     assert decision["integrity_status"] == "valid"
 
 
+def test_server_grant_resolves_existing_routine_requests_but_keeps_sensitive_requests(tmp_path) -> None:
+    click = _artifact(tool_name="click")
+    screenshot = _artifact(tool_name="take_screenshot")
+    privileged = _artifact(tool_name="evaluate_script")
+
+    def intent_for(artifact, categories: tuple[str, ...], intent: str) -> dict[str, object]:
+        value = _browser_request(artifact, categories)["browser_intent"]
+        assert isinstance(value, dict)
+        return {**value, "intent": intent}
+
+    click_intent = intent_for(click, ("browser_interaction",), "browser.interact")
+    screenshot_intent = intent_for(screenshot, ("browser_inspection",), "browser.inspect")
+    privileged_intent = intent_for(privileged, ("browser_privileged",), "browser.privileged")
+    store = GuardStore(tmp_path / "guard-home")
+    for request_id, artifact, browser_intent in (
+        ("grant-source", click, click_intent),
+        ("routine-pending", screenshot, screenshot_intent),
+        ("sensitive-pending", privileged, privileged_intent),
+    ):
+        assert isinstance(browser_intent, dict)
+        store.add_approval_request(
+            GuardApprovalRequest(
+                request_id=request_id,
+                harness="codex",
+                artifact_id=artifact.artifact_id,
+                artifact_name=artifact.name,
+                artifact_type="tool_call",
+                artifact_hash=f"{request_id}-hash",
+                policy_action="review",
+                recommended_scope="artifact",
+                changed_fields=("runtime_browser_tool_call",),
+                source_scope="project",
+                config_path=".mcp.json",
+                review_command=f"hol-guard approvals approve {request_id}",
+                approval_url=f"http://127.0.0.1/requests/{request_id}",
+                browser_intent=browser_intent,
+            ),
+            "2026-07-21T12:00:00+00:00",
+        )
+
+    result = apply_approval_resolution(
+        store=store,
+        request_id="grant-source",
+        action="allow",
+        scope="artifact",
+        workspace=None,
+        reason="temporary browser QA",
+        now="2026-07-21T12:01:00+00:00",
+        mcp_grant_target="server",
+        mcp_grant_duration="5h",
+        return_queue_result=True,
+    )
+
+    assert result["resolved_scope_ids"] == ["routine-pending"]
+    routine_request = store.get_approval_request("routine-pending")
+    sensitive_request = store.get_approval_request("sensitive-pending")
+    assert routine_request is not None
+    assert sensitive_request is not None
+    assert routine_request["status"] == "resolved"
+    assert sensitive_request["status"] == "pending"
+
+
 def test_invalid_temporary_grant_does_not_resolve_request(tmp_path) -> None:
     artifact = _artifact(tool_name="click")
     browser_intent = _browser_request(artifact, ("browser_interaction",))["browser_intent"]
