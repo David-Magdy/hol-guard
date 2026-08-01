@@ -27947,9 +27947,10 @@ function ReviewCloudRecovery({ item }) {
     try {
       const status = await startGuardCloudConnect();
       const flow = status.connect_flow;
-      if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
+      const connectUrl = flow?.authorize_url ?? flow?.connect_url ?? null;
+      if (connectUrl && !openPackageFirewallAuthorizeFallback(connectUrl, flow?.browser_opened ?? null)) {
         setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
-        setManualConnectUrl(flow.authorize_url ?? flow.connect_url);
+        setManualConnectUrl(connectUrl);
         return;
       }
       setMessage(
