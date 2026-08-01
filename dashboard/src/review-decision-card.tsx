@@ -443,7 +443,7 @@ export function ReviewDecisionCard(props: {
           </div>
         )}
 
-        <ReviewCloudRecovery item={item} />
+        {resolutionBlockReason === null ? <ReviewCloudRecovery item={item} /> : null}
 
         {whatWouldHappen && (
           <div className="mt-5">
