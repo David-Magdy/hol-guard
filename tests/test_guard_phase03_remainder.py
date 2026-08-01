@@ -96,8 +96,7 @@ def test_update_alpha_pins_latest_alpha_in_installed_major(monkeypatch: pytest.M
         "install",
         "--force",
         "hol-guard==2.1.0a35",
-        "--pip-args",
-        "--pre",
+        "--pip-args=--pre",
     ]
     assert payload["retry_command"] == "hol-guard update --alpha"
     assert payload["release_channel"] == "alpha"
@@ -114,7 +113,7 @@ def test_update_command_allows_prerelease_for_alpha_pins() -> None:
         "pipx",
         use_pypi=True,
         target_version="2.1.0a51",
-    ) == ["pipx", "install", "--force", "hol-guard==2.1.0a51", "--pip-args", "--pre"]
+    ) == ["pipx", "install", "--force", "hol-guard==2.1.0a51", "--pip-args=--pre"]
     assert update_commands._update_command(
         "pip",
         use_pypi=True,
