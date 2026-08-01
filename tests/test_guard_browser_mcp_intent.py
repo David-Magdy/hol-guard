@@ -811,6 +811,54 @@ class TestFullIntentNormalization:
         assert result.intent == "browser.inspect"
         assert "pageId" in result.volatile_fields_dropped
 
+    def test_current_chrome_devtools_quality_tools_are_routine(self) -> None:
+        from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
+            normalize_browser_mcp_intent,
+        )
+
+        expected_intents = {
+            "emulate": "browser.interact",
+            "lighthouse_audit": "browser.inspect",
+            "list_console_messages": "browser.inspect",
+            "list_network_requests": "browser.inspect",
+            "performance_start_trace": "browser.inspect",
+            "performance_stop_trace": "browser.inspect",
+            "resize_page": "browser.interact",
+        }
+
+        for tool_name, expected_intent in expected_intents.items():
+            artifact, arguments = _browser_artifact(tool_name=tool_name, arguments={})
+            result = normalize_browser_mcp_intent(artifact, arguments)
+            assert result is not None, tool_name
+            assert result.intent == expected_intent, tool_name
+
+    def test_network_response_body_access_is_privileged(self) -> None:
+        from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
+            normalize_browser_mcp_intent,
+        )
+
+        artifact, arguments = _browser_artifact(
+            tool_name="get_network_request",
+            arguments={"reqid": "request-1"},
+        )
+        result = normalize_browser_mcp_intent(artifact, arguments)
+        assert result is not None
+        assert result.intent == "browser.privileged"
+
+    def test_emulation_with_custom_headers_is_sensitive(self) -> None:
+        from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
+            normalize_browser_mcp_intent,
+        )
+
+        artifact, arguments = _browser_artifact(
+            tool_name="emulate",
+            arguments={"extraHttpHeaders": {"X-Test": "value"}},
+        )
+        result = normalize_browser_mcp_intent(artifact, arguments)
+        assert result is not None
+        assert result.intent == "browser.interact"
+        assert "auth_headers" in result.sensitive_surface_flags
+
     def test_screenshot_uses_confirmed_current_page_context(self) -> None:
         from dataclasses import replace
 

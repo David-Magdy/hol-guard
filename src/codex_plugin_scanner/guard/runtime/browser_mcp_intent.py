@@ -68,6 +68,13 @@ _CHROME_DEVTOOLS_NAVIGATION: frozenset[str] = frozenset(
 
 _CHROME_DEVTOOLS_INSPECT: frozenset[str] = frozenset(
     {
+        "get_console_message",
+        "lighthouse_audit",
+        "list_console_messages",
+        "list_network_requests",
+        "performance_analyze_insight",
+        "performance_start_trace",
+        "performance_stop_trace",
         "take_screenshot",
         "take_snapshot",
         "get_snapshot",
@@ -87,6 +94,8 @@ _CHROME_DEVTOOLS_INSPECT: frozenset[str] = frozenset(
 _CHROME_DEVTOOLS_INTERACT: frozenset[str] = frozenset(
     {
         "click",
+        "drag",
+        "emulate",
         "hover",
         "press_key",
         "type_text",
@@ -99,6 +108,7 @@ _CHROME_DEVTOOLS_INTERACT: frozenset[str] = frozenset(
         "dismiss_dialog",
         "scroll",
         "focus_element",
+        "resize_page",
     }
 )
 
@@ -116,6 +126,7 @@ _CHROME_DEVTOOLS_TRANSFER: frozenset[str] = frozenset(
 _CHROME_DEVTOOLS_PRIVILEGED: frozenset[str] = frozenset(
     {
         "evaluate_script",
+        "get_network_request",
         "raw_cdp",
         "read_cookies",
         "get_cookies",
@@ -808,6 +819,9 @@ def _detect_sensitive_surfaces(
     schema_combined = " ".join(schema_keys).lower()
     active_text = f"{combined} {arg_keys_lower}"
     all_text = f"{active_text} {schema_combined}"
+
+    if operation.lower() == "emulate" and any(key.lower().replace("_", "") == "extrahttpheaders" for key in arguments):
+        surfaces.append("auth_headers")
 
     if any(p in all_text for p in _SENSITIVE_COOKIE_PATTERNS):
         surfaces.append("cookies")
