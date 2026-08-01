@@ -12,6 +12,7 @@ import hashlib
 import os
 import re
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,13 @@ def _sha256_file(path: Path) -> str:
         while chunk := stream.read(1_048_576):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _limit_output_files() -> None:
+    """Hard-limit each inherited output file before executing runsc."""
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_FSIZE, (_MAX_CAPTURE_BYTES, _MAX_CAPTURE_BYTES))
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,31 +153,38 @@ class GVisorReferenceRuntime:
         exit_code = 125
         cleanup_complete = False
         try:
+            with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+                try:
+                    completed = subprocess.run(
+                        command,
+                        check=False,
+                        stdout=stdout_file,
+                        stderr=stderr_file,
+                        timeout=timeout_seconds,
+                        env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
+                        preexec_fn=_limit_output_files,
+                    )
+                    exit_code = completed.returncode
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    exit_code = 124
+                _ = stdout_file.seek(0)
+                _ = stderr_file.seek(0)
+                stdout = stdout_file.read(_MAX_CAPTURE_BYTES)
+                stderr = stderr_file.read(_MAX_CAPTURE_BYTES)
+        finally:
             try:
-                completed = subprocess.run(
-                    command,
+                cleanup = subprocess.run(
+                    (*self._base_command(), "delete", "--force", execution_instance),
                     check=False,
-                    capture_output=True,
-                    timeout=timeout_seconds,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
                     env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
                 )
-                stdout = completed.stdout[:_MAX_CAPTURE_BYTES]
-                stderr = completed.stderr[:_MAX_CAPTURE_BYTES]
-                exit_code = completed.returncode
-            except subprocess.TimeoutExpired as exc:
-                timed_out = True
-                stdout = (exc.stdout or b"")[:_MAX_CAPTURE_BYTES]
-                stderr = (exc.stderr or b"")[:_MAX_CAPTURE_BYTES]
-                exit_code = 124
-        finally:
-            cleanup = subprocess.run(
-                (*self._base_command(), "delete", "--force", execution_instance),
-                check=False,
-                capture_output=True,
-                timeout=10,
-                env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
-            )
-            cleanup_complete = cleanup.returncode in {0, 128}
+                cleanup_complete = cleanup.returncode in {0, 128}
+            except subprocess.TimeoutExpired:
+                cleanup_complete = False
 
         duration_ms = (time.monotonic_ns() - started) // 1_000_000
         return GVisorRunResult(
@@ -189,21 +204,34 @@ class GVisorReferenceRuntime:
         if not _CONTAINER_ID.fullmatch(execution_instance):
             raise ProviderPlanError("invalid Guard execution instance")
         _ = self.verify_binary()
-        kill = subprocess.run(
-            (*self._base_command(), "kill", execution_instance, "KILL"),
-            check=False,
-            capture_output=True,
-            timeout=10,
-            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
+        try:
+            kill = subprocess.run(
+                (*self._base_command(), "kill", execution_instance, "KILL"),
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
+            )
+        except subprocess.TimeoutExpired:
+            kill = None
+        try:
+            delete = subprocess.run(
+                (*self._base_command(), "delete", "--force", execution_instance),
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
+            )
+        except subprocess.TimeoutExpired:
+            delete = None
+        return (
+            kill is not None
+            and delete is not None
+            and kill.returncode in {0, 128}
+            and delete.returncode in {0, 128}
         )
-        delete = subprocess.run(
-            (*self._base_command(), "delete", "--force", execution_instance),
-            check=False,
-            capture_output=True,
-            timeout=10,
-            env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
-        )
-        return kill.returncode in {0, 128} and delete.returncode in {0, 128}
 
 
 __all__ = ["GVisorReferenceRuntime", "GVisorRunResult"]

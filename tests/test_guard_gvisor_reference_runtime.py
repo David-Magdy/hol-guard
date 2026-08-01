@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -79,6 +80,16 @@ class TestConfiguration:
         with pytest.raises(ProviderPlanError, match="digest mismatch"):
             runner.verify_binary()
 
+    def test_binary_permissions_fail_closed(self) -> None:
+        digest = _write_fake_runsc()
+        _RUNSC.chmod(0o700)
+        with pytest.raises(ProviderPlanError, match="sandbox process"):
+            _ = _runner(digest).verify_binary()
+        _RUNSC.chmod(0o775)
+        with pytest.raises(ProviderPlanError, match="writable outside"):
+            _ = _runner(digest).verify_binary()
+
+
     def test_bundle_traversal_and_unknown_instances_fail(self) -> None:
         runner = _runner()
         with pytest.raises(ProviderPlanError, match="invalid"):
@@ -91,10 +102,15 @@ class TestExecution:
     @patch("subprocess.run")
     def test_command_pins_network_platform_and_forces_cleanup(self, run: MagicMock) -> None:
         _bundle("guard-unit")
-        run.side_effect = (
-            MagicMock(returncode=0, stdout=b"ok\n", stderr=b""),
-            MagicMock(returncode=0, stdout=b"", stderr=b""),
-        )
+
+        def invoke(command: tuple[str, ...], **kwargs: object) -> MagicMock:
+            if "run" in command:
+                output = kwargs["stdout"]
+                assert isinstance(output, io.BufferedIOBase)
+                output.write(b"ok\n")
+            return MagicMock(returncode=0)
+
+        run.side_effect = invoke
         result = _runner().run("guard-unit")
         command = run.call_args_list[0].args[0]
         assert command[command.index("--network") + 1] == "none"
@@ -113,15 +129,37 @@ class TestExecution:
     @patch("subprocess.run")
     def test_timeout_is_terminal_and_cleanup_runs(self, run: MagicMock) -> None:
         _bundle("guard-timeout")
-        run.side_effect = (
-            __import__("subprocess").TimeoutExpired(("runsc",), 1, output=b"partial"),
-            MagicMock(returncode=0, stdout=b"", stderr=b""),
-        )
+
+        def invoke(command: tuple[str, ...], **kwargs: object) -> MagicMock:
+            if "run" in command:
+                output = kwargs["stdout"]
+                assert isinstance(output, io.BufferedIOBase)
+                output.write(b"partial")
+                raise __import__("subprocess").TimeoutExpired(("runsc",), 1)
+            return MagicMock(returncode=0)
+
+        run.side_effect = invoke
         result = _runner().run("guard-timeout", timeout_seconds=1)
         assert result.timed_out is True
         assert result.exit_code == 124
         assert result.cleanup_complete is True
         assert run.call_count == 2
+
+    @patch("subprocess.run")
+    def test_output_capture_is_hard_bounded(self, run: MagicMock) -> None:
+        _bundle("guard-output")
+
+        def invoke(command: tuple[str, ...], **kwargs: object) -> MagicMock:
+            if "run" in command:
+                output = kwargs["stdout"]
+                assert isinstance(output, io.BufferedIOBase)
+                output.write(b"x" * 2_097_152)
+            return MagicMock(returncode=0)
+
+        run.side_effect = invoke
+        result = _runner().run("guard-output")
+        assert result.stdout_bytes == 1_048_576
+
 
     @patch("subprocess.run")
     def test_cancel_is_idempotent_and_validated(self, run: MagicMock) -> None:
