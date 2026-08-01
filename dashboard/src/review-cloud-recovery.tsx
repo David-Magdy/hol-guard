@@ -25,7 +25,8 @@ async function waitForAuthorizeUrl(
     if (!status.connect_required || flow?.authorize_url || !flow || !["starting", "running"].includes(flow.state)) {
       return status;
     }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, flow.poll_after_ms ?? 1000));
+    const pollDelayMs = Math.max(100, Math.min(5000, flow.poll_after_ms ?? 1000));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, pollDelayMs));
     status = await fetchGuardCloudConnectStatus();
   }
   return status;

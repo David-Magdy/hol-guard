@@ -27937,7 +27937,8 @@ async function waitForAuthorizeUrl(initialStatus) {
     if (!status.connect_required || flow?.authorize_url || !flow || !["starting", "running"].includes(flow.state)) {
       return status;
     }
-    await new Promise((resolve) => window.setTimeout(resolve, flow.poll_after_ms ?? 1e3));
+    const pollDelayMs = Math.max(100, Math.min(5e3, flow.poll_after_ms ?? 1e3));
+    await new Promise((resolve) => window.setTimeout(resolve, pollDelayMs));
     status = await fetchGuardCloudConnectStatus();
   }
   return status;
