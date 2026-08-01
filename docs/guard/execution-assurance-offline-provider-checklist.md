@@ -1,5 +1,7 @@
 # Execution assurance offline provider checklist
 
+Status: required acceptance checklist. Complete every applicable item before release acceptance; record an explicit non-applicable rationale for platform-specific controls.
+
 Use this checklist before accepting evidence from a provider running without continuous Guard Cloud connectivity.
 
 ## Host and provider assumptions

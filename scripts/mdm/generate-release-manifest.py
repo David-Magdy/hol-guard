@@ -76,7 +76,7 @@ def _open_readonly_no_follow(path: Path) -> int:
 
 def _materialize_internal_file_symlinks(root: Path) -> None:
     file_symlinks: list[tuple[Path, Path, os.stat_result]] = []
-    directory_symlinks: list[tuple[Path, Path]] = []
+    directory_symlinks: list[tuple[Path, Path, os.stat_result]] = []
     for directory, directory_names, file_names in os.walk(root, followlinks=False):
         directory_path = Path(directory)
         for name in tuple(directory_names) + tuple(file_names):
@@ -94,7 +94,7 @@ def _materialize_internal_file_symlinks(root: Path) -> None:
                     raise ValueError(f"runtime symlink target exceeds file size limit: {link}")
                 file_symlinks.append((link, target, target_stat))
             elif stat.S_ISDIR(target_stat.st_mode):
-                directory_symlinks.append((link, target))
+                directory_symlinks.append((link, target, target_stat))
             else:
                 raise ValueError(f"runtime symlink target is not a regular file or directory: {link}")
 
@@ -137,11 +137,20 @@ def _materialize_internal_file_symlinks(root: Path) -> None:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
 
-    for link, target in directory_symlinks:
+    for link, target, expected_stat in directory_symlinks:
         temporary_path: Path | None = Path(tempfile.mkdtemp(dir=link.parent, prefix=f".{link.name}."))
         backup_path = temporary_path.with_name(f"{temporary_path.name}.link")
         try:
+            if not link.is_symlink() or link.resolve(strict=True) != target:
+                raise ValueError(f"runtime symlink target changed during materialization: {link}")
             shutil.copytree(target, temporary_path, symlinks=False, dirs_exist_ok=True)
+            copied_stat = target.stat()
+            if (
+                copied_stat.st_dev != expected_stat.st_dev
+                or copied_stat.st_ino != expected_stat.st_ino
+                or copied_stat.st_mtime_ns != expected_stat.st_mtime_ns
+            ):
+                raise ValueError(f"runtime symlink target changed during materialization: {link}")
             os.replace(link, backup_path)
             try:
                 os.replace(temporary_path, link)

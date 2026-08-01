@@ -16,6 +16,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: ubuntu-22.04
+            suites: ""
+          - os: ubuntu-24.04
+            suites: ""
           - os: macos-14
             suites: ""
           - os: macos-15

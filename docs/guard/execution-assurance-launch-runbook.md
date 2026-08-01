@@ -30,6 +30,25 @@ Then install the produced wheel in a clean virtual environment and execute `hol-
 1. Run provider contract and adversarial tests for local OS containment, OCI planning/evidence, Kubernetes RuntimeClass orchestration, provider recovery, and the pinned gVisor reference runtime.
 2. Run policy and receipt tests covering requirement monotonicity, deny precedence, evidence framing, redaction, persistence, replay, revocation, fencing, idempotency, terminal-state conflict, and cleanup.
 3. Run the all-harness hook/CLI matrix for Codex, Claude Code, Copilot CLI, Cursor, Gemini CLI, Hermes, OpenClaw, Antigravity, OpenCode, Kimi, Grok CLI, Pi, and ZCode.
+
+Reference commands:
+
+```bash
+# hol-guard
+uv run --no-sync pytest -q tests/test_guard_provider_*.py tests/test_guard_policy_*.py tests/test_guard_receipt_*.py tests/test_guard_evidence_*.py
+uv run --no-sync pytest -q tests/test_guard_harness_*.py
+gh workflow run guard-gvisor-reference.yml --ref <candidate-branch>
+gh workflow run mdm-artifacts.yml --ref <candidate-branch> -f build_id=<candidate-sha>
+
+# hol-points-portal
+bun run test -- __tests__/guard-execution-assurance-*.test.ts __tests__/guard-execution-assurance-*.test.tsx
+bun run guard:test:mdm
+bun run lint
+bun run typecheck
+NODE_OPTIONS=--max-old-space-size=12288 bun run build
+```
+
+The `mdm-artifacts.yml` run is blocking only when its Ubuntu 22.04/24.04, macOS 14/15, and Windows Server 2022/2025 test jobs pass and both unsigned package smoke jobs pass. The gVisor run is blocking only when it executes the real `runsc` corpus; characterization of unavailable optional runtimes remains non-blocking and must be recorded as such.
 4. Run the real Linux gVisor isolation corpus. Unit-test skips on unsupported hosts are not a substitute for its passing CI evidence.
 5. Run the portable MDM contract matrix. Record native macOS, Windows, and Linux certification independently; portable contract evidence must not be relabeled as native certification.
 6. Run the dashboard assurance contract tests, lint, typecheck, production build, migrations, APIs, and browser proof under an isolated Guard test project. Tear down containers with volumes and orphans before completion.
