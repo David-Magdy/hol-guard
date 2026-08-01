@@ -42,7 +42,7 @@ export function ReviewCloudRecovery({ item }: { item: GuardApprovalRequest }) {
       const flow = status.connect_flow;
       if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
         setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
-        setManualConnectUrl(flow.connect_url ?? flow.authorize_url);
+        setManualConnectUrl(flow.authorize_url ?? flow.connect_url);
         return;
       }
       setMessage(
