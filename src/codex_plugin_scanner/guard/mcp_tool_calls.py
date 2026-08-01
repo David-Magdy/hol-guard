@@ -307,8 +307,13 @@ def build_tool_call_hash(
             "sensitive_surface_flags": list(browser_intent.sensitive_surface_flags),
         }
         if browser_intent.sensitive_surface_flags:
+            sensitive_arguments = arguments
+            if isinstance(arguments, Mapping):
+                sensitive_arguments = {
+                    key: value for key, value in arguments.items() if key not in browser_intent.volatile_fields_dropped
+                }
             content_arguments["sensitive_arguments_hash"] = sha256(
-                json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode()
+                json.dumps(sensitive_arguments, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
     legacy_material: dict[str, object] = {
         "artifact_id": artifact.artifact_id,
