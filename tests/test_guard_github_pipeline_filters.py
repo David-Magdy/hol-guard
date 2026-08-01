@@ -17,6 +17,7 @@ from codex_plugin_scanner.guard.runtime.secret_file_requests import extract_sens
             "gh api graphql -f 'query=query { viewer { login name } }' | "
             "jq '[.data.viewer | {login, name}] | map(select(.login != null))'"
         ),
+        "gh api user | jq '[.env, .import, .include, \"env\"]'",
     ),
 )
 def test_proven_github_reads_with_safe_output_filters_are_prompt_free(tmp_path: Path, command: str) -> None:
@@ -29,6 +30,7 @@ def test_proven_github_reads_with_safe_output_filters_are_prompt_free(tmp_path: 
     "command",
     (
         "gh run view 123 --repo example/project --log-failed | rg --pre ./payload FAILURES",
+        "gh run view 123 --repo example/project --log-failed | rg 'FAILURES>result.log'",
         "gh run view 123 --repo example/project --log-failed | rg FAILURES workspace.log",
         "gh api graphql -f 'query=query { viewer { login } }' | jq --slurpfile secrets private.json '.'",
         "gh api user | jq 'env | to_entries'",

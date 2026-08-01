@@ -286,6 +286,8 @@ def _read_only_lookup_filter_rg_args_are_safe(args: list[str]) -> bool:
     expect_pattern = False
     after_options = False
     for arg in args:
+        if _read_only_lookup_arg_is_redirection(arg):
+            return False
         if expect_pattern:
             expect_pattern = False
             if not arg:
