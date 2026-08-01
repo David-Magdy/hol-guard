@@ -254,7 +254,7 @@ def _read_only_lookup_filter_grep_args_are_safe(
         else:
             if not _read_only_lookup_target_is_safe(arg, allow_dirs=False, home_dir=home_dir):
                 return False
-    return True
+    return not (skip_next_is_pattern or skip_next_is_file or skip_next_is_value)
 
 
 def _read_only_lookup_arg_is_redirection(arg: str) -> bool:

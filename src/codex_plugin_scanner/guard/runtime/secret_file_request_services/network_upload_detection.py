@@ -194,6 +194,7 @@ def _curl_segment_uses_file_upload(
             clustered_config_value,
             cwd=cwd,
             home_dir=home_dir,
+            allowed_roots=allowed_roots,
             visited_config_paths=visited_config_paths,
             stdin_config_payloads=stdin_config_payloads,
         ):

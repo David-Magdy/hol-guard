@@ -6,7 +6,11 @@ import ast
 
 from ..false_positive_rules import fd_arg_requests_exec
 from ..interpreter_options import shell_interpreter_command_payload as _shell_interpreter_command_payload
-from .constants_core import _FIND_EXEC_ACTION_FLAGS, _SHELL_COMMAND_STRING_INTERPRETERS
+from .constants_core import (
+    _FIND_EXEC_ACTION_FLAGS,
+    _PYTHON_INTERPRETER_OPTIONS_WITH_VALUES,
+    _SHELL_COMMAND_STRING_INTERPRETERS,
+)
 from .constants_patterns import (
     _PYTEST_COMMAND_NAMES,
     _PYTEST_COMMAND_RUNNER_SUBCOMMANDS,
@@ -177,15 +181,21 @@ def _pytest_args_from_command_position(args: list[str], index: int) -> list[str]
 
 
 def _python_inline_script_runs_pytest(args: list[str]) -> bool:
-    for index, token in enumerate(args):
+    index = 0
+    while index < len(args):
+        token = args[index]
         if token in {"-c", "--command"} and index + 1 < len(args):
             return _inline_python_payload_runs_pytest(args[index + 1])
         if token.startswith("--command="):
             return _inline_python_payload_runs_pytest(token.split("=", 1)[1])
         if token.startswith("-c") and token != "-c":
             return _inline_python_payload_runs_pytest(token[2:])
+        if token in _PYTHON_INTERPRETER_OPTIONS_WITH_VALUES:
+            index += 2
+            continue
         if not token.startswith("-"):
             return False
+        index += 1
     return False
 
 

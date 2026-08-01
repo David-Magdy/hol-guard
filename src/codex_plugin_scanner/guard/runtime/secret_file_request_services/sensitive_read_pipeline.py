@@ -177,9 +177,14 @@ def _curl_value_consumes_stdin(value: str) -> bool:
 def _wget_segment_consumes_stdin(args: list[str]) -> bool:
     for index, arg in enumerate(args):
         if arg in _WGET_UPLOAD_FLAGS_WITH_VALUE:
-            return index + 1 < len(args) and args[index + 1].strip("'\"") == "-"
-        if any(arg.startswith(f"{flag}=") for flag in _WGET_UPLOAD_FLAGS_WITH_VALUE):
-            return arg.split("=", 1)[1].strip("'\"") == "-"
+            if index + 1 < len(args) and args[index + 1].strip("'\"") == "-":
+                return True
+            continue
+        if (
+            any(arg.startswith(f"{flag}=") for flag in _WGET_UPLOAD_FLAGS_WITH_VALUE)
+            and arg.split("=", 1)[1].strip("'\"") == "-"
+        ):
+            return True
     return False
 
 

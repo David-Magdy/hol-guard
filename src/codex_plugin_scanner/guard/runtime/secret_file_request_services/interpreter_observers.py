@@ -89,6 +89,8 @@ def _read_only_lookup_segments(parts: list[str]) -> list[list[str]]:
             continue
         if _read_only_lookup_token_is_safe_stderr_discard(normalized_token):
             continue
+        if _split_attached_redirection_token(normalized_token) is not None:
+            return []
         segments[-1].append(normalized_token)
     return [segment for segment in segments if segment]
 
@@ -214,9 +216,11 @@ def _looks_like_read_only_interpreter_command(command_text: str, parts: list[str
 
 
 def _shell_env_assignment_key(token: str) -> str | None:
-    if "+=" in token:
+    append_index = token.find("+=")
+    assignment_index = token.find("=")
+    if append_index >= 0 and append_index < assignment_index:
         key = token.split("+=", 1)[0]
-    elif "=" in token:
+    elif assignment_index >= 0:
         key = token.split("=", 1)[0]
     else:
         return None
@@ -292,6 +296,11 @@ def _python_args_use_module_mode(args: list[str]) -> bool:
         if any(arg.startswith(option) and len(arg) > len(option) for option in _PYTHON_INTERPRETER_OPTIONS_WITH_VALUES):
             index += 1
             continue
+        if arg.startswith("-") and not arg.startswith("--"):
+            module_index = arg.find("m", 1)
+            clusterable_flags = frozenset("bBdEhiIOPqRsSuvV")
+            if module_index >= 1 and all(flag in clusterable_flags for flag in arg[1:module_index]):
+                return True
         if not arg.startswith("-"):
             return False
         index += 1

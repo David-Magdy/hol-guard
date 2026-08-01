@@ -35,6 +35,10 @@ def _local_read_operands_resolve_safely(
     """Reject local read operands redirected through symlink path components."""
 
     allow_dirs = command_name in {"grep", "egrep", "fgrep", "rg"}
+    try:
+        resolved_root = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
     for operand in _shell_segment_file_operand_tokens([command_name, *args]):
         stripped = operand.strip().strip("'\"")
         if not stripped or stripped == "-":
@@ -54,7 +58,7 @@ def _local_read_operands_resolve_safely(
         try:
             lexical = Path(os.path.abspath(os.fspath(candidate)))
             resolved = candidate.resolve(strict=True)
-            relative = resolved.relative_to(root.resolve(strict=True))
+            relative = resolved.relative_to(resolved_root)
         except FileNotFoundError:
             continue
         except (OSError, RuntimeError, ValueError):

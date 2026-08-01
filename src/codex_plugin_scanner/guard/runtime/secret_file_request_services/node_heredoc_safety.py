@@ -41,7 +41,7 @@ def _single_node_heredoc_delimiter_is_quoted(command_text: str) -> bool:
 
 
 def _looks_like_safe_node_generated_file_heredoc(command_text: str, script_text: str) -> bool:
-    if _single_node_heredoc_script(command_text) is None:
+    if _single_node_heredoc_script(command_text) is None or not _single_node_heredoc_delimiter_is_quoted(command_text):
         return False
     if _node_script_contains_non_file_generation_risk(script_text):
         return False

@@ -319,13 +319,17 @@ def _read_small_runtime_text_file(path: Path, *, allowed_roots: tuple[Path, ...]
         if not stat.S_ISREG(stat_result.st_mode) or stat_result.st_size > _MAX_DECODED_PAYLOAD_BYTES:
             os.close(descriptor)
             return None
-        with os.fdopen(descriptor, encoding="utf-8") as runtime_file:
-            content = runtime_file.read(_MAX_DECODED_PAYLOAD_BYTES + 1)
-            return content if len(content) <= _MAX_DECODED_PAYLOAD_BYTES else None
-    except (OSError, UnicodeDecodeError):
+        runtime_file = os.fdopen(descriptor, encoding="utf-8")
+    except OSError:
         with contextlib.suppress(OSError):
             os.close(descriptor)
         return None
+    with runtime_file:
+        try:
+            content = runtime_file.read(_MAX_DECODED_PAYLOAD_BYTES + 1)
+        except (OSError, UnicodeDecodeError):
+            return None
+    return content if len(content) <= _MAX_DECODED_PAYLOAD_BYTES else None
 
 
 __all__ = [

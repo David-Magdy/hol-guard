@@ -245,7 +245,7 @@ def _git_status_has_execution_free_config(
 ) -> bool:
     try:
         execution_cwd = (cwd or Path.cwd()).resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return False
     return git_status_has_execution_free_config(execution_cwd, git_binary=git_binary)
 

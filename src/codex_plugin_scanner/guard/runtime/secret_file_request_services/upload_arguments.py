@@ -110,16 +110,16 @@ def _wget_segment_uses_file_upload(segment_args: list[str], *, stdin_uses_local_
             return False
         if token in _WGET_UPLOAD_FLAGS_WITH_VALUE:
             value = segment_args[index + 1] if index + 1 < len(segment_args) else ""
-            if _direct_file_operand_uses_local_file(value, stdin_uses_local_file=False):
+            if _direct_file_operand_uses_local_file(value, stdin_uses_local_file=stdin_uses_local_file):
                 return True
             index += 2
             continue
         if token.startswith("--body-file=") and _direct_file_operand_uses_local_file(
-            token.split("=", 1)[1], stdin_uses_local_file=False
+            token.split("=", 1)[1], stdin_uses_local_file=stdin_uses_local_file
         ):
             return True
         if token.startswith("--post-file=") and _direct_file_operand_uses_local_file(
-            token.split("=", 1)[1], stdin_uses_local_file=False
+            token.split("=", 1)[1], stdin_uses_local_file=stdin_uses_local_file
         ):
             return True
         index += 1

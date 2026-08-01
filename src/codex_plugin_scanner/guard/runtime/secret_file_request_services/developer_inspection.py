@@ -303,10 +303,15 @@ def _read_only_lookup_find_args_are_safe(args: list[str], *, home_dir: Path | No
         return False
     if _find_args_use_write_or_unsafe_exec_action(args):
         return False
-    targets = [arg for arg in args if arg and not arg.startswith("-")]
-    if not targets:
+    leading_paths: list[str] = []
+    for arg in args:
+        if arg.startswith("-"):
+            break
+        if arg:
+            leading_paths.append(arg)
+    if not leading_paths:
         return False
-    return _read_only_lookup_target_is_safe(targets[0], allow_dirs=True, home_dir=home_dir)
+    return all(_read_only_lookup_target_is_safe(target, allow_dirs=True, home_dir=home_dir) for target in leading_paths)
 
 
 def _find_args_use_write_or_unsafe_exec_action(args: list[str]) -> bool:

@@ -199,7 +199,10 @@ def _looks_destructive_shell_command(
     home_dir: Path | None = None,
     execution_context: ShellExecutionContext | None = None,
     _execution_context_applied: bool = False,
+    depth: int = 0,
 ) -> bool:
+    if depth > 4:
+        return True
     normalized = command_text.strip()
     if not normalized:
         return False
@@ -246,6 +249,7 @@ def _looks_destructive_shell_command(
                     cwd=segment_cwd,
                     home_dir=home_dir,
                     _execution_context_applied=True,
+                    depth=depth + 1,
                 ):
                     return True
             if has_heredoc:
@@ -256,6 +260,7 @@ def _looks_destructive_shell_command(
                     cwd=heredoc_segment_cwds[0],
                     home_dir=home_dir,
                     _execution_context_applied=True,
+                    depth=depth + 1,
                 )
             contextual_parts = _split_shell_parts(normalized)
             return _contains_prior_pytest_state_mutation(contextual_parts) or _contains_pytest_env_shell_script_wrapper(
@@ -264,7 +269,7 @@ def _looks_destructive_shell_command(
     if _is_literal_cat_heredoc_to_stdout(normalized):
         return False
     for substitution_payload in _shell_command_substitution_payloads(normalized):
-        if _looks_destructive_shell_command(substitution_payload, cwd=cwd, home_dir=home_dir):
+        if _looks_destructive_shell_command(substitution_payload, cwd=cwd, home_dir=home_dir, depth=depth + 1):
             return True
     node_heredoc_script = _single_node_heredoc_script(normalized)
     if node_heredoc_script is not None:
@@ -330,10 +335,10 @@ def _looks_destructive_shell_command(
     if _find_command_uses_delete(parts):
         return True
     for env_split_string in _env_split_string_payloads(parts):
-        if _looks_destructive_shell_command(env_split_string, cwd=cwd, home_dir=home_dir):
+        if _looks_destructive_shell_command(env_split_string, cwd=cwd, home_dir=home_dir, depth=depth + 1):
             return True
     for shell_script in _shell_command_scripts(parts):
-        if _looks_destructive_shell_command(shell_script, cwd=cwd, home_dir=home_dir):
+        if _looks_destructive_shell_command(shell_script, cwd=cwd, home_dir=home_dir, depth=depth + 1):
             return True
     return any(
         Path(segment[0]).name.lower() == "sed" and any(part == "-i" or part.startswith("-i") for part in segment[1:])

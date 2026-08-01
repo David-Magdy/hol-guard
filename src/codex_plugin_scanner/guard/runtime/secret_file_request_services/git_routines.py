@@ -55,7 +55,7 @@ def _looks_like_safe_git_status_command(
     saw_status = False
     try:
         effective_cwd = (cwd or Path.cwd()).resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return False
     for segment in segments:
         command_name, command_index = _shell_segment_primary_command(segment)
@@ -92,7 +92,7 @@ def _looks_like_safe_git_branch_switch_command(
         return False
     try:
         effective_cwd = (cwd or Path.cwd()).resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return False
     saw_switch = False
     for segment in segments:
@@ -260,7 +260,7 @@ def _git_log_has_execution_free_config(
         return False
     try:
         execution_cwd = cwd.resolve()
-    except OSError:
+    except (OSError, RuntimeError):
         return False
     resolved_git = git_binary or trusted_git_binary_for_cwd(execution_cwd)
     if resolved_git is None:
