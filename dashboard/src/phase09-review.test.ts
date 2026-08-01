@@ -41,7 +41,12 @@ import {
   deriveSkillRiskSignals,
   deriveSupplyChainRiskSignals,
 } from "./approval-center-utils";
-import { packageReviewNeedsCloudRecovery, ReviewCloudRecovery } from "./review-cloud-recovery";
+import {
+  cloudRecoveryContent,
+  packageReviewNeedsCloudRecovery,
+  ReviewCloudRecovery,
+  waitForCloudConnection,
+} from "./review-cloud-recovery";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -1370,6 +1375,63 @@ assert(
 assert(
   !packageReviewNeedsCloudRecovery({ ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST, artifact_type: "command" }),
   "GR224-12: unrelated approvals do not offer package recovery",
+);
+
+let cloudStatusChecks = 0;
+const connectedCloudStatus = await waitForCloudConnection(
+  {
+    connect_required: true,
+    connect_flow: {
+      state: "running",
+      title: "Connect Guard Cloud",
+      detail: "Waiting for sign-in",
+      action_label: "Open sign-in",
+      connect_url: "https://example.com/connect",
+      authorize_url: "https://example.com/authorize",
+      browser_opened: true,
+      request_id: "cloud-connect-request",
+      poll_after_ms: 1000,
+    },
+  },
+  {
+    signal: new AbortController().signal,
+    wait: async () => undefined,
+    fetchStatus: async () => {
+      cloudStatusChecks += 1;
+      return { connect_required: false, connect_flow: null };
+    },
+  },
+);
+assert(
+  !connectedCloudStatus.connect_required && cloudStatusChecks === 1,
+  "GR224-13: recovery polling observes completed Cloud sign-in",
+);
+const connectedRecoveryContent = cloudRecoveryContent(true);
+assert(
+  connectedRecoveryContent.title === "Guard Cloud connected" &&
+    connectedRecoveryContent.detail.includes("Run the install command again"),
+  "GR224-14: completed Cloud sign-in replaces stale authorization guidance",
+);
+let canceledPollWaits = 0;
+const canceledPollController = new AbortController();
+canceledPollController.abort();
+const canceledPollRejected = await waitForCloudConnection(
+  { connect_required: true, connect_flow: null },
+  {
+    signal: canceledPollController.signal,
+    wait: async () => {
+      canceledPollWaits += 1;
+    },
+    maxAttempts: 1,
+  },
+).then(
+  () => false,
+  (error: unknown) =>
+    typeof error === "object" && error !== null && "name" in error && error.name === "AbortError",
+);
+assert(
+  canceledPollRejected && canceledPollWaits === 0,
+  "GR224-15: canceled recovery polling schedules no additional work",
 );
 
 console.log("phase09-review.test.ts: all tests passed");
