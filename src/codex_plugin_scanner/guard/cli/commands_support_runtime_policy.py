@@ -198,7 +198,12 @@ def _localize_decision_v2_review_copy(decision_v2: dict[str, object], review_con
         decision_v2["harness_message"] = _approval_center_routed_message(harness_message, review_context)
     action = _optional_string(decision_v2.get("action"))
     if action in {"ask", "block"}:
-        decision_v2["retry_instruction"] = review_context
+        retry_instruction = _optional_string(decision_v2.get("retry_instruction"))
+        decision_v2["retry_instruction"] = (
+            _approval_center_routed_message(retry_instruction, review_context)
+            if retry_instruction is not None and "hol-guard connect" in retry_instruction
+            else review_context
+        )
 
 def _approval_center_routed_message(message: str, review_context: str) -> str:
     normalized = _strip_cloud_inbox_urls(message)

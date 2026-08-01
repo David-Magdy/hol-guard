@@ -1805,7 +1805,38 @@ def test_guard_protect_allows_codex_install_with_local_intelligence_when_cloud_a
     assert payload["verdict"]["action"] == "allow"
     assert payload["supply_chain_evaluation"]["policy_action"] == "allow"
     assert any(reason["code"] == "cloud_auth_error" for reason in payload["supply_chain_evaluation"]["reasons"])
+    assert payload["supply_chain_evaluation"]["user_copy"]["next_step"] == "hol-guard connect"
+    assert "hol-guard connect" in payload["supply_chain_evaluation"]["user_copy"]["harness_message"]
     assert store.list_approval_requests(limit=None) == []
+
+
+def test_cloud_reconnect_copy_preserves_existing_package_remediation() -> None:
+    evaluation = supply_chain_package_eval_module.PackageRequestEvaluation(
+        decision="ask",
+        policy_action="require-reapproval",
+        enforcement="premium_cloud",
+        entitlement_state="premium",
+        cache_status="cloud-error",
+        package_intent_hash="a" * 64,
+        policy_version="local:none",
+        bundle_version=None,
+        workspace_fingerprint=None,
+        reasons=(),
+        packages=(),
+        risk_summary="Guard paused the package request for review.",
+        user_copy=supply_chain_package_eval_module.SupplyChainUserCopy(
+            title="Review required",
+            summary="A safer package version is required.",
+            next_step="npm install example@2.0.0",
+            dashboard_url=None,
+            harness_message="Install the safer package version.",
+        ),
+    )
+
+    updated = supply_chain_package_eval_module._with_cloud_auth_reconnect_copy(evaluation)
+
+    assert updated.user_copy.next_step == "npm install example@2.0.0"
+    assert "hol-guard connect" in updated.user_copy.harness_message
 
 
 def test_guard_protect_probe_skips_local_approval_queue_on_block(
