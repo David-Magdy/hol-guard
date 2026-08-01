@@ -41,7 +41,7 @@ cp "${ROOT}/scripts/mdm/macos/activate-current-user.sh" "${RUNTIME}/activate-cur
 typeset -a manifest_args
 manifest_args=(--runtime-root "${RUNTIME}" --version "${VERSION}" --build-id "${BUILD_ID}" \
   --platform macos --architecture "${ARCH}" --installer-identity "${PACKAGE_ID}" \
-  --output "${RUNTIME}/release-manifest.json")
+  --output "${RUNTIME}/release-manifest.json" --materialize-internal-file-symlinks)
 if [[ -n "${HOL_GUARD_MANIFEST_SIGNING_KEY:-}" ]]; then
   [[ -n "${HOL_GUARD_MANIFEST_KEY_ID:-}" ]] || exit 2
   manifest_args+=(--signing-key "${HOL_GUARD_MANIFEST_SIGNING_KEY}" --key-id "${HOL_GUARD_MANIFEST_KEY_ID}")
