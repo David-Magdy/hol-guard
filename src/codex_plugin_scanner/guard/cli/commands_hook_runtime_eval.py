@@ -1115,8 +1115,10 @@ def _evaluate_runtime_artifact_hook(
             f"HOL Guard {action_phrase} this complete command after combining "
             f"{compound_finding_count} findings. {risk_summary}"
         )
-    if package_evaluation is not None and any(
-        _optional_string(reason.get("code")) == "cloud_auth_error" for reason in package_evaluation.reasons
+    if (
+        package_evaluation is not None
+        and policy_action in {"review", "require-reapproval"}
+        and any(_optional_string(reason.get("code")) == "cloud_auth_error" for reason in package_evaluation.reasons)
     ):
         reconnect_command = "hol-guard connect"
         reconnect_instruction = f"Run `{reconnect_command}` to reconnect Guard Cloud, then retry the same install."

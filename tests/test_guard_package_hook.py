@@ -782,3 +782,69 @@ def test_guard_hook_preserves_cloud_reconnect_guidance_for_compound_package_inst
     assert instruction in decision["dashboard_primary_detail"]
     assert instruction in decision["retry_instruction"]
     assert "Open HOL Guard" in decision["retry_instruction"]
+
+
+def test_guard_hook_does_not_tell_allowed_package_install_to_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home_dir = tmp_path / "home"
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    payload_path = workspace_dir / "hook-event.json"
+    _write_codex_pre_tool_payload(payload_path, workspace_dir, "npm install @example/plugin")
+    evaluation = PackageRequestEvaluation(
+        decision="allow",
+        policy_action="allow",
+        enforcement="local_bundle",
+        entitlement_state="premium",
+        cache_status="cloud-error",
+        package_intent_hash="a" * 64,
+        policy_version="local:test",
+        bundle_version="bundle-test",
+        workspace_fingerprint=None,
+        reasons=(
+            {
+                "code": "cloud_auth_error",
+                "message": "Guard Cloud authorization expired.",
+                "severity": "medium",
+            },
+        ),
+        packages=(),
+        risk_summary="Guard allowed the package request using local intelligence.",
+        user_copy=SupplyChainUserCopy(
+            title="Allowed by policy",
+            summary="Local package intelligence allowed this install.",
+            next_step="hol-guard connect",
+            dashboard_url=None,
+            harness_message="Reconnect Guard Cloud to restore shared review.",
+        ),
+    )
+    monkeypatch.setattr(
+        guard_commands_module,
+        "evaluate_package_request_artifact",
+        lambda *_args, **_kwargs: evaluation,
+    )
+
+    rc = main(
+        [
+            "guard",
+            "hook",
+            "--harness",
+            "codex",
+            "--home",
+            str(home_dir),
+            "--workspace",
+            str(workspace_dir),
+            "--event-file",
+            str(payload_path),
+            "--json",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert output["policy_action"] in {"allow", "warn"}
+    decision_copy = json.dumps(output["decision_v2_json"])
+    assert "retry the same install" not in decision_copy
