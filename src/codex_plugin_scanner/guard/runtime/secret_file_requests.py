@@ -120,6 +120,7 @@ from .secret_file_request_services.source_edit_context import (
 from .secret_file_request_services.tool_action_requests import (
     extract_sensitive_tool_action_request as _extract_tool_action_request,
 )
+from .shell_command_wrappers import is_trusted_absolute_command_path
 from .shell_execution_context import model_shell_execution_context
 
 _SERVICE_MODULES = (
@@ -174,6 +175,7 @@ def _sync_compatibility_overrides() -> None:
     overrides = {
         "BUILT_IN_COMMAND_EXTENSION_REGISTRY": BUILT_IN_COMMAND_EXTENSION_REGISTRY,
         "evaluate_command": evaluate_command,
+        "is_trusted_absolute_command_path": is_trusted_absolute_command_path,
         "model_shell_execution_context": model_shell_execution_context,
     }
     for service_module in _SERVICE_MODULES:
