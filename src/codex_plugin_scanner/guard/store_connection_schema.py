@@ -927,7 +927,7 @@ class StoreConnectionSchemaMixin:
     def _schema_is_current(self) -> bool:
         if not self.path.is_file():
             return False
-        timeout_seconds = min(sqlite_connect_timeout_seconds(), 0.1)
+        timeout_seconds = sqlite_connect_timeout_seconds()
         try:
             connection = sqlite3.connect(self.path, timeout=timeout_seconds)
             try:
