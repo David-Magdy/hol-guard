@@ -27967,16 +27967,42 @@ const unavailableEvidencePhrases = [
   "cloud evaluation could not validate",
   "current package safety data was unavailable"
 ];
-async function withCloudRequestTimeout(request) {
+async function withCloudRequestTimeout(request, parentSignal) {
+  if (parentSignal?.aborted) {
+    throw new DOMException("Cloud connection request stopped", "AbortError");
+  }
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 5e3);
+  const abort = () => controller.abort();
+  parentSignal?.addEventListener("abort", abort, { once: true });
+  const timeout = globalThis.setTimeout(() => controller.abort(), 5e3);
   try {
     return await request(controller.signal);
   } finally {
-    window.clearTimeout(timeout);
+    globalThis.clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abort);
   }
 }
-async function waitForAuthorizeUrl(initialStatus) {
+function waitForPoll(delayMs, signal) {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Cloud connection polling stopped", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timeout = globalThis.setTimeout(finish, delayMs);
+    const abort = () => {
+      globalThis.clearTimeout(timeout);
+      reject(new DOMException("Cloud connection polling stopped", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+async function waitForAuthorizeUrl(initialStatus, signal) {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
   let status = initialStatus;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const flow = status.connect_flow;
@@ -27984,8 +28010,26 @@ async function waitForAuthorizeUrl(initialStatus) {
       return status;
     }
     const pollDelayMs = Math.max(100, Math.min(5e3, flow.poll_after_ms ?? 1e3));
-    await new Promise((resolve) => window.setTimeout(resolve, pollDelayMs));
-    status = await withCloudRequestTimeout(fetchGuardCloudConnectStatus);
+    await waitForPoll(pollDelayMs, signal);
+    status = await withCloudRequestTimeout(fetchGuardCloudConnectStatus, signal);
+  }
+  return status;
+}
+async function waitForCloudConnection(initialStatus, {
+  signal,
+  fetchStatus = fetchGuardCloudConnectStatus,
+  wait = waitForPoll,
+  maxAttempts = 300
+}) {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
+  let status = initialStatus;
+  for (let attempt = 0; attempt < maxAttempts && status.connect_required; attempt += 1) {
+    if (status.connect_flow?.state === "failed") return status;
+    const pollDelayMs = Math.max(250, Math.min(5e3, status.connect_flow?.poll_after_ms ?? 1e3));
+    await wait(pollDelayMs, signal);
+    status = await withCloudRequestTimeout(fetchStatus, signal);
   }
   return status;
 }
@@ -27995,50 +28039,95 @@ function packageReviewNeedsCloudRecovery(item) {
   const evidence = [item.risk_headline, item.risk_summary, ...item.risk_signals ?? []].filter((value) => typeof value === "string").join(" ").toLowerCase();
   return unavailableEvidencePhrases.some((phrase) => evidence.includes(phrase));
 }
+function cloudRecoveryContent(connected) {
+  return connected ? {
+    title: "Guard Cloud connected",
+    detail: "Run the install command again for a current package safety check."
+  } : {
+    title: "Check this package with Guard Cloud",
+    detail: "Guard could not load current safety data for this package. This does not mean the package is unsafe."
+  };
+}
 function ReviewCloudRecovery({ item }) {
   const [connecting, setConnecting] = reactExports.useState(false);
+  const [connected, setConnected] = reactExports.useState(false);
   const [message, setMessage] = reactExports.useState(null);
   const [manualConnectUrl, setManualConnectUrl] = reactExports.useState(null);
+  const connectControllerRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    connectControllerRef.current?.abort();
+    setConnecting(false);
+    setConnected(false);
+    setMessage(null);
+    setManualConnectUrl(null);
+    return () => connectControllerRef.current?.abort();
+  }, [item.request_id]);
   const handleConnect = reactExports.useCallback(async () => {
+    connectControllerRef.current?.abort();
+    const controller = new AbortController();
+    connectControllerRef.current = controller;
     setConnecting(true);
+    setConnected(false);
     setMessage(null);
     setManualConnectUrl(null);
     try {
-      const status = await waitForAuthorizeUrl(await withCloudRequestTimeout(startGuardCloudConnect));
+      const status = await waitForAuthorizeUrl(
+        await withCloudRequestTimeout(startGuardCloudConnect, controller.signal),
+        controller.signal
+      );
       const flow = status.connect_flow;
       if (flow?.authorize_url) {
         setManualConnectUrl(flow.authorize_url);
         setMessage(
-          openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened) ? "Finish signing in, then retry the install." : PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE
+          openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened) ? "Complete sign-in in the opened window. This page will update automatically." : PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE
         );
+        const connectedStatus = await waitForCloudConnection(status, { signal: controller.signal });
+        if (!connectedStatus.connect_required) {
+          setConnected(true);
+          setManualConnectUrl(null);
+          setMessage(null);
+          return;
+        }
+        setMessage("Sign-in is still pending. Complete it in the opened window, or open sign-in again.");
         return;
       }
       if (status.connect_required && flow?.connect_url) {
-        setMessage("Guard could not finish starting sign-in. Open sign-in and try again.");
+        setMessage("Open sign-in to continue. This page will update automatically.");
         setManualConnectUrl(flow.connect_url);
+        const connectedStatus = await waitForCloudConnection(status, { signal: controller.signal });
+        if (!connectedStatus.connect_required) {
+          setConnected(true);
+          setManualConnectUrl(null);
+          setMessage(null);
+          return;
+        }
+        setMessage("Sign-in is still pending. Complete it in the opened window, or open sign-in again.");
         return;
       }
       setMessage(
-        status.connect_required ? "Finish signing in, then retry the install." : "Guard Cloud is connected. Retry the install for a fresh safety check."
+        status.connect_required ? "Guard could not finish starting sign-in. Try again." : null
       );
+      setConnected(!status.connect_required);
     } catch (error) {
+      if (controller.signal.aborted) return;
       setMessage(error instanceof Error ? error.message : "Guard could not start sign-in. Try again.");
     } finally {
-      setConnecting(false);
+      if (!controller.signal.aborted) setConnecting(false);
     }
   }, []);
   if (!packageReviewNeedsCloudRecovery(item)) return null;
+  const content = cloudRecoveryContent(connected);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 rounded-xl border border-brand-blue/20 bg-brand-blue/[0.04] p-4", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: "Get a current package safety check" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-relaxed text-muted-foreground", children: "Guard could not load current safety data for this package. This does not mean the package is unsafe. Connect Guard Cloud and retry, or approve this install once." }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-3", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: content.title }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-relaxed text-muted-foreground", children: content.detail }),
+    !connected ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-3", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs(ActionButton, { onClick: handleConnect, disabled: connecting, variant: "outline", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloudArrowUp, { className: "h-4 w-4", "aria-hidden": "true" }),
-        connecting ? "Starting sign-in..." : "Connect Guard Cloud"
+        connecting ? "Waiting for sign-in..." : "Connect Guard Cloud"
       ] }),
       manualConnectUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: manualConnectUrl, variant: "quiet", children: "Open sign-in" }) : null,
       message ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", role: "status", children: message }) : null
-    ] })
+    ] }) : null
   ] });
 }
 function ReviewScopeControls(props) {
@@ -28781,7 +28870,7 @@ function ReviewDecisionCard(props) {
         ] })
       ] }) }),
       topAlertItems.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-xl border border-slate-100 bg-slate-50/50 p-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ConsolidatedEvidenceAlert, { items: topAlertItems }, item.request_id) }),
-      resolutionBlockReason === null ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewCloudRecovery, { item }) : null,
+      resolutionBlockReason === null ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewCloudRecovery, { item }, item.request_id) : null,
       whatWouldHappen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
