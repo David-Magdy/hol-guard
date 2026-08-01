@@ -929,11 +929,17 @@ class TestGuardSurfaceServer:
         assert "protect your local secrets" in hook_payload["hookSpecificOutput"]["permissionDecisionReason"].lower()
         assert store.list_guard_sessions() == []
 
-    def test_guard_daemon_pi_hook_endpoint_returns_blocked_runtime_review_payload(self, tmp_path) -> None:
+    def test_guard_daemon_pi_hook_endpoint_returns_blocked_runtime_review_payload(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         home_dir = tmp_path / "home"
         workspace_dir = tmp_path / "workspace"
         workspace_dir.mkdir(parents=True, exist_ok=True)
         store = GuardStore(home_dir)
+        # This test owns response-shape coverage; latency budgets have dedicated tests.
+        monkeypatch.setattr(daemon_server_module, "_RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS", 8.0)
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
 
@@ -962,7 +968,7 @@ class TestGuardSurfaceServer:
                 },
                 method="POST",
             )
-            with urllib.request.urlopen(hook_request, timeout=5) as response:
+            with urllib.request.urlopen(hook_request, timeout=10) as response:
                 hook_payload = json.loads(response.read().decode("utf-8"))
         finally:
             daemon.stop()
