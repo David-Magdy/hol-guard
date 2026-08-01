@@ -74,6 +74,7 @@ from .synced_policy import synced_policy_bundle_validation
 from .temporary_mcp_approvals import (
     TemporaryMcpGrantSelection,
     parse_temporary_mcp_grant_selection,
+    temporary_mcp_grant_covers_request,
     temporary_mcp_grant_decision,
 )
 from .trusted_local_tools import (
@@ -810,6 +811,27 @@ def apply_approval_resolution(
             approval_gate_grant=resolved_gate_grant,
         )
 
+    temporary_mcp_resolved_ids: list[str] = []
+    if temporary_mcp_selection is not None and temporary_mcp_selection.target != "exact":
+        temporary_mcp_resolved_ids = [
+            str(item["request_id"])
+            for item in store.list_approval_requests(
+                status="pending",
+                harness=str(request["harness"]),
+                limit=None,
+            )
+            if item.get("request_id") != request_id
+            and temporary_mcp_grant_covers_request(temporary_mcp_selection, item)
+        ]
+        store.bulk_resolve_approval_requests(
+            temporary_mcp_resolved_ids,
+            resolution_action="allow",
+            resolution_scope="artifact",
+            reason=reason,
+            resolved_at=resolved_at,
+            approval_gate_grant=resolved_gate_grant,
+        )
+
     resolution_harness = None if scope == "global" else str(request["harness"])
     resolve_matching_scope_requests = resolve_scope_matches and not (action == "allow" and scope != "artifact")
     if return_queue_result:
@@ -865,6 +887,8 @@ def apply_approval_resolution(
             result["scope_warning"] = selection.warning
         if temporary_mcp_selection is not None:
             result["temporary_mcp_grant"] = _temporary_mcp_grant_result(temporary_mcp_selection)
+            if temporary_mcp_resolved_ids:
+                _refresh_queue_result(store, result, temporary_mcp_resolved_ids)
         return result
     resolved_ids: list[str] = []
     if resolve_matching_scope_requests and not exact_context_allow:
