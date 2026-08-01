@@ -278,6 +278,12 @@ def test_sensitive_browser_argument_values_have_distinct_exact_identities(tmp_pa
 
     assert first_hash != second_hash
     assert first_hash == retry_hash
+    assert first_hash == build_tool_call_hash(
+        artifact,
+        {"extraHttpHeaders": {"Authorization": "Bearer first"}},
+        workspace=config.workspace,
+        config=config,
+    )
 
 
 def test_category_grant_does_not_cover_another_routine_category(tmp_path) -> None:
