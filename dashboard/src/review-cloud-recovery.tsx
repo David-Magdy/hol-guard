@@ -9,6 +9,7 @@ import {
 } from "./package-firewall-connect-browser";
 
 const unavailableEvidencePhrases = [
+  // Queued requests can outlive the daemon version that created their copy.
   "could not verify registry identity or package intelligence",
   "cloud evaluation could not validate",
   "current package safety data was unavailable",
@@ -30,15 +31,18 @@ export function packageReviewNeedsCloudRecovery(item: GuardApprovalRequest): boo
 export function ReviewCloudRecovery({ item }: { item: GuardApprovalRequest }) {
   const [connecting, setConnecting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [manualConnectUrl, setManualConnectUrl] = useState<string | null>(null);
 
   const handleConnect = useCallback(async () => {
     setConnecting(true);
     setMessage(null);
+    setManualConnectUrl(null);
     try {
       const status = await startGuardCloudConnect();
       const flow = status.connect_flow;
       if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
         setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
+        setManualConnectUrl(flow.connect_url ?? flow.authorize_url);
         return;
       }
       setMessage(
@@ -67,6 +71,11 @@ export function ReviewCloudRecovery({ item }: { item: GuardApprovalRequest }) {
           <HiMiniCloudArrowUp className="h-4 w-4" aria-hidden="true" />
           {connecting ? "Starting sign-in..." : "Connect Guard Cloud"}
         </ActionButton>
+        {manualConnectUrl ? (
+          <ActionButton href={manualConnectUrl} variant="quiet">
+            Open sign-in
+          </ActionButton>
+        ) : null}
         {message ? <p className="text-sm text-muted-foreground" role="status">{message}</p> : null}
       </div>
     </div>

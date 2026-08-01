@@ -27925,6 +27925,7 @@ function buildEvidenceItems(item) {
   return items;
 }
 const unavailableEvidencePhrases = [
+  // Queued requests can outlive the daemon version that created their copy.
   "could not verify registry identity or package intelligence",
   "cloud evaluation could not validate",
   "current package safety data was unavailable"
@@ -27938,14 +27939,17 @@ function packageReviewNeedsCloudRecovery(item) {
 function ReviewCloudRecovery({ item }) {
   const [connecting, setConnecting] = reactExports.useState(false);
   const [message, setMessage] = reactExports.useState(null);
+  const [manualConnectUrl, setManualConnectUrl] = reactExports.useState(null);
   const handleConnect = reactExports.useCallback(async () => {
     setConnecting(true);
     setMessage(null);
+    setManualConnectUrl(null);
     try {
       const status = await startGuardCloudConnect();
       const flow = status.connect_flow;
       if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
         setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
+        setManualConnectUrl(flow.connect_url ?? flow.authorize_url);
         return;
       }
       setMessage(
@@ -27966,6 +27970,7 @@ function ReviewCloudRecovery({ item }) {
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloudArrowUp, { className: "h-4 w-4", "aria-hidden": "true" }),
         connecting ? "Starting sign-in..." : "Connect Guard Cloud"
       ] }),
+      manualConnectUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: manualConnectUrl, variant: "quiet", children: "Open sign-in" }) : null,
       message ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", role: "status", children: message }) : null
     ] })
   ] });
