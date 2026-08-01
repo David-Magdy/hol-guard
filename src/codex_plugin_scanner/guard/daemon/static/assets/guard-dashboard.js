@@ -27924,6 +27924,52 @@ function buildEvidenceItems(item) {
   }
   return items;
 }
+const unavailableEvidencePhrases = [
+  "could not verify registry identity or package intelligence",
+  "cloud evaluation could not validate",
+  "current package safety data was unavailable"
+];
+function packageReviewNeedsCloudRecovery(item) {
+  const packageRequest = item.artifact_type === "supply_chain" || item.artifact_type === "package_request" || item.artifact_type.endsWith("_package");
+  if (!packageRequest) return false;
+  const evidence = [item.risk_headline, item.risk_summary, ...item.risk_signals ?? []].filter((value) => typeof value === "string").join(" ").toLowerCase();
+  return unavailableEvidencePhrases.some((phrase) => evidence.includes(phrase));
+}
+function ReviewCloudRecovery({ item }) {
+  const [connecting, setConnecting] = reactExports.useState(false);
+  const [message, setMessage] = reactExports.useState(null);
+  const handleConnect = reactExports.useCallback(async () => {
+    setConnecting(true);
+    setMessage(null);
+    try {
+      const status = await startGuardCloudConnect();
+      const flow = status.connect_flow;
+      if (flow?.authorize_url && !openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened)) {
+        setMessage(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
+        return;
+      }
+      setMessage(
+        status.connect_required ? "Finish signing in, then retry the install." : "Guard Cloud is connected. Retry the install for a fresh safety check."
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Guard could not start sign-in. Try again.");
+    } finally {
+      setConnecting(false);
+    }
+  }, []);
+  if (!packageReviewNeedsCloudRecovery(item)) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 rounded-xl border border-brand-blue/20 bg-brand-blue/[0.04] p-4", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: "Get a current package safety check" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-relaxed text-muted-foreground", children: "Guard could not load current safety data for this package. This does not mean the package is unsafe. Connect Guard Cloud and retry, or approve this install once." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(ActionButton, { onClick: handleConnect, disabled: connecting, variant: "outline", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloudArrowUp, { className: "h-4 w-4", "aria-hidden": "true" }),
+        connecting ? "Starting sign-in..." : "Connect Guard Cloud"
+      ] }),
+      message ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", role: "status", children: message }) : null
+    ] })
+  ] });
+}
 function ReviewScopeControls(props) {
   const showAllowScopes = props.showAllowScopes !== false;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 space-y-2", children: [
@@ -28664,6 +28710,7 @@ function ReviewDecisionCard(props) {
         ] })
       ] }) }),
       topAlertItems.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-xl border border-slate-100 bg-slate-50/50 p-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ConsolidatedEvidenceAlert, { items: topAlertItems }, item.request_id) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewCloudRecovery, { item }),
       whatWouldHappen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",

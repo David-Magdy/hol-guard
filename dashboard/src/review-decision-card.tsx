@@ -34,6 +34,7 @@ import { guardActionPresentation } from "./guard-action";
 import { guardAwareHref } from "./guard-api";
 import { requiresApprovalPasswordPrompt } from "./approval-gate-utils";
 import { buildEvidenceItems, buildTopAlertItems } from "./review-evidence";
+import { ReviewCloudRecovery } from "./review-cloud-recovery";
 import {
   allowButtonLabel,
   blockButtonLabel,
@@ -441,6 +442,8 @@ export function ReviewDecisionCard(props: {
             <ConsolidatedEvidenceAlert key={item.request_id} items={topAlertItems} />
           </div>
         )}
+
+        <ReviewCloudRecovery item={item} />
 
         {whatWouldHappen && (
           <div className="mt-5">
