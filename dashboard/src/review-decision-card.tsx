@@ -31,7 +31,6 @@ import type { DecisionScope, GuardApprovalGatePublicConfig, GuardApprovalRequest
 import type { GuardTemporaryMcpGrantDuration, GuardTemporaryMcpGrantTarget } from "./guard-types";
 import type { GuardLocalToolGrantDuration, GuardLocalToolGrantTarget } from "./guard-types";
 import { guardActionPresentation } from "./guard-action";
-import { guardAwareHref } from "./guard-api";
 import { requiresApprovalPasswordPrompt } from "./approval-gate-utils";
 import { buildEvidenceItems, buildTopAlertItems } from "./review-evidence";
 import { ReviewCloudRecovery } from "./review-cloud-recovery";
@@ -44,7 +43,7 @@ import { buildWhatWouldHappen, pastDecisionVerb, PrimaryActionCard } from "./rev
 import type { ReviewViewModel, ReviewWorkspaceProps } from "./review-workspace";
 import {
   TemporaryMcpApprovalControls,
-  TemporaryMcpIdentityRefreshNotice,
+  TemporaryMcpRetryNotice,
 } from "./temporary-mcp-approval-controls";
 import {
   defaultTemporaryMcpDuration,
@@ -52,7 +51,7 @@ import {
   buildTemporaryMcpResolutionFields,
   temporaryMcpAllowButtonLabel,
   temporaryMcpApprovalOptions,
-  temporaryMcpApprovalNeedsIdentityRefresh,
+  temporaryMcpApprovalNeedsRetry,
   validTemporaryMcpSelection,
 } from "./temporary-mcp-approval";
 import { LocalToolApprovalControls } from "./local-tool-approval-controls";
@@ -126,7 +125,7 @@ export function ReviewDecisionCard(props: {
     () => (item ? temporaryMcpApprovalOptions(item) : null),
     [item],
   );
-  const temporaryMcpIdentityRefreshRequired = item !== null && temporaryMcpApprovalNeedsIdentityRefresh(item);
+  const temporaryMcpRetryRequired = item !== null && temporaryMcpApprovalNeedsRetry(item);
   const localToolOptions = useMemo(
     () => (item ? localToolApprovalOptions(item) : null),
     [item],
@@ -480,8 +479,8 @@ export function ReviewDecisionCard(props: {
                 onDurationChange={setMcpGrantDuration}
               />
             )}
-            {temporaryMcpIdentityRefreshRequired && (
-              <TemporaryMcpIdentityRefreshNotice settingsHref={guardAwareHref("/settings")} />
+            {temporaryMcpRetryRequired && (
+              <TemporaryMcpRetryNotice />
             )}
             {temporaryMcpOptions === null && localToolOptions !== null && (
               <LocalToolApprovalControls

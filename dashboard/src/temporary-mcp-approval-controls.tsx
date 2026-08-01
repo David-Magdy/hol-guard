@@ -19,19 +19,14 @@ type Props = {
 const EXCLUSION_COPY =
   "Privileged browser access, file transfer, secrets, command execution, destructive actions, and shared-profile access still require review.";
 
-export function TemporaryMcpIdentityRefreshNotice(props: { settingsHref: string }) {
+export function TemporaryMcpRetryNotice() {
   return (
-    <div className="mt-5 border-l-2 border-brand-blue bg-brand-blue/[0.04] px-4 py-3">
-      <p className="text-sm font-medium text-brand-dark">Timed tool access needs a current identity check.</p>
+    <div className="mt-5 border-l-2 border-brand-blue bg-brand-blue/[0.04] px-4 py-3" role="status">
+      <p className="text-sm font-medium text-brand-dark">Timed access is not available for this request.</p>
       <p className="mt-1 text-sm text-brand-dark/70">
-        Update Guard, then retry this action to choose capability or server access and an expiry.
+        You can approve this browser action once below. Routine browser actions also show time and access choices
+        when Guard can safely verify them.
       </p>
-      <a
-        href={props.settingsHref}
-        className="mt-3 inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-brand-dark transition-colors hover:bg-slate-50"
-      >
-        Open settings
-      </a>
     </div>
   );
 }

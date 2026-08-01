@@ -15407,6 +15407,53 @@ function protectionHealthFor(snapshot, harness = null) {
 }
 const TARGETS$1 = /* @__PURE__ */ new Set(["exact", "category", "server"]);
 const DURATIONS$1 = /* @__PURE__ */ new Set(["once", "15m", "1h", "5h"]);
+const ROUTINE_BROWSER_OPERATIONS = /* @__PURE__ */ new Set([
+  "accept_dialog",
+  "accessibility_snapshot",
+  "click",
+  "close_page",
+  "dismiss_dialog",
+  "drag",
+  "emulate",
+  "fill_form",
+  "fill_input",
+  "focus_element",
+  "get_console",
+  "get_console_message",
+  "get_dom",
+  "get_html",
+  "get_network",
+  "get_performance",
+  "get_snapshot",
+  "go_back",
+  "go_forward",
+  "handle_dialog",
+  "hover",
+  "lighthouse_audit",
+  "list_console_messages",
+  "list_network_requests",
+  "list_pages",
+  "list_resources",
+  "navigate_page",
+  "new_page",
+  "performance_analyze_insight",
+  "performance_start_trace",
+  "performance_stop_trace",
+  "performance_trace",
+  "press_key",
+  "read_console",
+  "read_network",
+  "reload_page",
+  "resize_page",
+  "scroll",
+  "select_dropdown",
+  "select_page",
+  "submit_form",
+  "take_screenshot",
+  "take_snapshot",
+  "type_text",
+  "wait_for"
+]);
 function nonEmpty$1(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
@@ -15444,11 +15491,12 @@ function temporaryMcpApprovalOptions(item) {
   const { eligible: _, ...options } = value;
   return options;
 }
-function temporaryMcpApprovalNeedsIdentityRefresh(item) {
+function temporaryMcpApprovalNeedsRetry(item) {
   if (temporaryMcpApprovalOptions(item) !== null || item.artifact_type !== "tool_call") {
     return false;
   }
-  return /^[^:]+:runtime:(?:global|project):[^:]+:[^:]+$/.test(item.artifact_id) && /^[^:]+:[^:]+$/.test(item.artifact_name);
+  const operation = item.artifact_name?.split(":", 2)[1] ?? "";
+  return /^[^:]+:runtime:(?:global|project):[^:]+:[^:]+$/.test(item.artifact_id) && ROUTINE_BROWSER_OPERATIONS.has(operation);
 }
 function defaultTemporaryMcpTarget(options) {
   if (options.allowed_targets.includes("category")) return "category";
@@ -28377,18 +28425,10 @@ function pastDecisionVerb(decision) {
   }
 }
 const EXCLUSION_COPY$1 = "Privileged browser access, file transfer, secrets, command execution, destructive actions, and shared-profile access still require review.";
-function TemporaryMcpIdentityRefreshNotice(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 border-l-2 border-brand-blue bg-brand-blue/[0.04] px-4 py-3", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-medium text-brand-dark", children: "Timed tool access needs a current identity check." }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-brand-dark/70", children: "Update Guard, then retry this action to choose capability or server access and an expiry." }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "a",
-      {
-        href: props.settingsHref,
-        className: "mt-3 inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-brand-dark transition-colors hover:bg-slate-50",
-        children: "Open settings"
-      }
-    )
+function TemporaryMcpRetryNotice() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 border-l-2 border-brand-blue bg-brand-blue/[0.04] px-4 py-3", role: "status", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-medium text-brand-dark", children: "Timed access is not available for this request." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-brand-dark/70", children: "You can approve this browser action once below. Routine browser actions also show time and access choices when Guard can safely verify them." })
   ] });
 }
 function TemporaryMcpApprovalControls(props) {
@@ -28593,7 +28633,7 @@ function ReviewDecisionCard(props) {
     () => item ? temporaryMcpApprovalOptions(item) : null,
     [item]
   );
-  const temporaryMcpIdentityRefreshRequired = item !== null && temporaryMcpApprovalNeedsIdentityRefresh(item);
+  const temporaryMcpRetryRequired = item !== null && temporaryMcpApprovalNeedsRetry(item);
   const localToolOptions = reactExports.useMemo(
     () => item ? localToolApprovalOptions(item) : null,
     [item]
@@ -28899,7 +28939,7 @@ function ReviewDecisionCard(props) {
             onDurationChange: setMcpGrantDuration
           }
         ),
-        temporaryMcpIdentityRefreshRequired && /* @__PURE__ */ jsxRuntimeExports.jsx(TemporaryMcpIdentityRefreshNotice, { settingsHref: guardAwareHref("/settings") }),
+        temporaryMcpRetryRequired && /* @__PURE__ */ jsxRuntimeExports.jsx(TemporaryMcpRetryNotice, {}),
         temporaryMcpOptions === null && localToolOptions !== null && /* @__PURE__ */ jsxRuntimeExports.jsx(
           LocalToolApprovalControls,
           {

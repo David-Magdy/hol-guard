@@ -220,9 +220,17 @@ def test_server_grant_allows_routine_interaction_until_expiry(tmp_path) -> None:
     assert decision.source == "temporary-mcp-grant"
 
 
-def test_server_grant_never_covers_privileged_browser_call(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("evaluate_script", {"function": "() => document.cookie"}),
+        ("get_network_request", {"reqid": "request-1"}),
+        ("emulate", {"extraHttpHeaders": {"Authorization": "redacted"}}),
+    ],
+)
+def test_server_grant_never_covers_sensitive_browser_call(tmp_path, tool_name, arguments) -> None:
     routine_artifact = _artifact(tool_name="click")
-    privileged_artifact = _artifact(tool_name="evaluate_script")
+    sensitive_artifact = _artifact(tool_name=tool_name)
     identity = routine_artifact.metadata["mcp_server_identity"]
     assert isinstance(identity, dict)
     store = GuardStore(tmp_path / "guard-home")
@@ -239,10 +247,43 @@ def test_server_grant_never_covers_privileged_browser_call(tmp_path) -> None:
         now.isoformat(),
     )
 
-    decision = _evaluate(tmp_path, store, privileged_artifact, {"function": "() => document.cookie"})
+    decision = _evaluate(tmp_path, store, sensitive_artifact, arguments)
 
     assert decision.action == "review"
-    assert "browser_privileged" in decision.risk_categories
+    assert {"browser_privileged", "browser_sensitive_surface"}.intersection(decision.risk_categories)
+
+
+def test_sensitive_browser_argument_values_have_distinct_exact_identities(tmp_path) -> None:
+    artifact = _artifact(tool_name="emulate")
+    config = _config(tmp_path)
+
+    first_hash = build_tool_call_hash(
+        artifact,
+        {"extraHttpHeaders": {"Authorization": "Bearer first"}},
+        workspace=config.workspace,
+        config=config,
+    )
+    second_hash = build_tool_call_hash(
+        artifact,
+        {"extraHttpHeaders": {"Authorization": "Bearer second"}},
+        workspace=config.workspace,
+        config=config,
+    )
+    retry_hash = build_tool_call_hash(
+        artifact,
+        {"extraHttpHeaders": {"Authorization": "Bearer first"}, "timeout": 30_000},
+        workspace=config.workspace,
+        config=config,
+    )
+
+    assert first_hash != second_hash
+    assert first_hash == retry_hash
+    assert first_hash == build_tool_call_hash(
+        artifact,
+        {"extraHttpHeaders": {"Authorization": "Bearer first"}},
+        workspace=config.workspace,
+        config=config,
+    )
 
 
 def test_category_grant_does_not_cover_another_routine_category(tmp_path) -> None:
