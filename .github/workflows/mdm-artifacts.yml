@@ -70,9 +70,11 @@ jobs:
         run: |
           $binary = 'dist/mdm/windows/runtime/hol-guard/hol-guard.exe'
           & $binary --version
-          $PSNativeCommandUseErrorActionPreference = $false
-          & $binary mdm status --scope machine --machine-root 'dist/mdm/windows/runtime' --json
-          if ($LASTEXITCODE -eq 0) { throw 'Unsigned fixture must not report healthy.' }
+          $status = Start-Process -FilePath $binary -ArgumentList @(
+            'mdm', 'status', '--scope', 'machine',
+            '--machine-root', 'dist/mdm/windows/runtime', '--json'
+          ) -Wait -PassThru -NoNewWindow
+          if ($status.ExitCode -eq 0) { throw 'Unsigned fixture must not report healthy.' }
       - uses: actions/upload-artifact@v4
         with:
           name: hol-guard-${{ matrix.platform }}-unsigned-${{ inputs.build_id }}
