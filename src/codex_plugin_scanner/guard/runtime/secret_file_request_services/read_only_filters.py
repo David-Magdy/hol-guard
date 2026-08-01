@@ -29,6 +29,8 @@ def _read_only_lookup_filter_segment_is_safe(
         return _read_only_lookup_head_tail_args_are_safe(args, require_target=False)
     if command in {"grep", "egrep", "fgrep"}:
         return _read_only_lookup_filter_grep_args_are_safe(args, home_dir=home_dir)
+    if command == "rg":
+        return _read_only_lookup_filter_rg_args_are_safe(args)
     return False
 
 
@@ -257,6 +259,69 @@ def _read_only_lookup_filter_grep_args_are_safe(
     return not (skip_next_is_pattern or skip_next_is_file or skip_next_is_value)
 
 
+_RG_FILTER_BOOLEAN_OPTIONS = frozenset(
+    {
+        "--case-sensitive",
+        "--fixed-strings",
+        "--ignore-case",
+        "--invert-match",
+        "--line-number",
+        "--only-matching",
+        "--quiet",
+        "--smart-case",
+        "--word-regexp",
+        "--line-regexp",
+    }
+)
+_RG_FILTER_BOOLEAN_SHORT_OPTIONS = frozenset("FiInNoqSsvwx")
+_RG_FILTER_PATTERN_OPTIONS = frozenset({"-e", "--regexp"})
+
+
+def _read_only_lookup_filter_rg_args_are_safe(args: list[str]) -> bool:
+    """Accept ripgrep only as a bounded stdin filter with one inline pattern."""
+
+    if not args:
+        return False
+    saw_pattern = False
+    expect_pattern = False
+    after_options = False
+    for arg in args:
+        if expect_pattern:
+            expect_pattern = False
+            if not arg:
+                return False
+            saw_pattern = True
+            continue
+        if after_options:
+            if saw_pattern:
+                return False
+            saw_pattern = bool(arg)
+            continue
+        if arg == "--":
+            after_options = True
+            continue
+        if arg in _RG_FILTER_PATTERN_OPTIONS:
+            if saw_pattern:
+                return False
+            expect_pattern = True
+            continue
+        if arg.startswith("--regexp="):
+            if saw_pattern or not arg.partition("=")[2]:
+                return False
+            saw_pattern = True
+            continue
+        if arg in _RG_FILTER_BOOLEAN_OPTIONS:
+            continue
+        if arg.startswith("-") and arg != "-":
+            if not arg.startswith("--") and set(arg[1:]) <= _RG_FILTER_BOOLEAN_SHORT_OPTIONS:
+                continue
+            return False
+        if saw_pattern:
+            return False
+        saw_pattern = bool(arg)
+    return saw_pattern and not expect_pattern
+
+
 def _read_only_lookup_arg_is_redirection(arg: str) -> bool:
     if arg in {">", ">>", ">|", "1>", "1>>", "1>|", "2>", "2>>", "2>|", "<", "0<"}:
         return True
@@ -324,6 +389,7 @@ __all__ = [
     "_attached_redirection_operator",
     "_read_only_lookup_arg_is_redirection",
     "_read_only_lookup_filter_grep_args_are_safe",
+    "_read_only_lookup_filter_rg_args_are_safe",
     "_read_only_lookup_filter_segment_is_safe",
     "_read_only_lookup_head_tail_args_are_safe",
     "_read_only_lookup_sed_args_are_safe",

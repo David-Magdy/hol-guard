@@ -321,7 +321,7 @@ _READ_ONLY_LOOKUP_COMMANDS = frozenset(
     {"cat", "date", "fd", "find", "grep", "egrep", "fgrep", "head", "ls", "pwd", "rg", "sed", "tail"}
 )
 
-_READ_ONLY_LOOKUP_FILTERS = frozenset({"cat", "grep", "egrep", "fgrep", "head", "sed", "tail"})
+_READ_ONLY_LOOKUP_FILTERS = frozenset({"cat", "grep", "egrep", "fgrep", "head", "rg", "sed", "tail"})
 
 _READ_ONLY_SEARCH_EXECUTION_FLAGS = {
     "rg": frozenset({"--config-path", "--hostname-bin", "--pre", "--pre-glob"}),
