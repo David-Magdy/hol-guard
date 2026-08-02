@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import urllib.error
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
 import codex_plugin_scanner.guard.runtime.runner as runner
+from codex_plugin_scanner.guard import policy_bundle_trusted_keys as trusted_keys_module
 from codex_plugin_scanner.guard.config import update_guard_settings
 from codex_plugin_scanner.guard.models import GuardReceipt
 from codex_plugin_scanner.guard.policy_bundle_parser import (
     computed_policy_bundle_hash,
     payload_hash_for_policy_bundle,
+)
+from codex_plugin_scanner.guard.policy_bundle_trusted_keys import (
+    load_policy_bundle_verification_keys,
+    migrate_legacy_policy_bundle_anchors,
 )
 from codex_plugin_scanner.guard.runtime.actions import GuardActionEnvelope
 from codex_plugin_scanner.guard.runtime.local_request_snapshots import (
@@ -26,7 +32,11 @@ from codex_plugin_scanner.guard.runtime.runner import (
     _resolve_cloud_receipt_redaction_level,
 )
 from codex_plugin_scanner.guard.store import GuardStore
-from tests.policy_bundle_signing_helpers import policy_bundle_test_keyring, sign_policy_bundle
+from tests.policy_bundle_signing_helpers import (
+    policy_bundle_test_keyring,
+    policy_bundle_test_verification_key,
+    sign_policy_bundle,
+)
 
 
 def _store_blocked_command_receipt(store: GuardStore, receipt_id: str = "guard-receipt-sync-auth") -> None:
@@ -163,6 +173,68 @@ def test_valid_signed_bundle_can_relax_receipt_redaction(tmp_path) -> None:
 
     assert _resolve_cloud_receipt_redaction_level(store) == "none"
     assert _resolve_snapshot_redaction_level(store) == "none"
+
+
+def test_sync_migrates_legacy_anchor_and_restores_cloud_redaction_choice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_policy_bundle_trust(store)
+    policy_key = policy_bundle_test_verification_key(workspace_id="workspace-1")
+    legacy_key = policy_key.to_dict()
+    for field in ("purpose", "workspaceId", "validFrom"):
+        legacy_key.pop(field)
+    store.set_sync_payload(
+        "policy_bundle_keyring",
+        {"keys": [legacy_key], "workspace_id": "workspace-1"},
+        "2026-07-01T00:00:00Z",
+    )
+    assert migrate_legacy_policy_bundle_anchors(
+        stored_keyring={"keys": [legacy_key], "workspace_id": "workspace-1"},
+        sync_keys=(policy_key,),
+        expected_workspace_id="workspace-1",
+    ) == (policy_key,)
+    monkeypatch.setattr(
+        trusted_keys_module,
+        "managed_policy_bundle_verification_keys",
+        lambda: (False, ()),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_urlopen_json_with_timeout_retry",
+        lambda **_kwargs: {
+            "syncedAt": "2026-07-01T00:00:01Z",
+            "receiptsStored": 0,
+            "policyBundle": _signed_redaction_policy_bundle(level="none"),
+            "policyBundleVerificationKeys": [policy_key.to_dict()],
+        },
+    )
+    monkeypatch.setattr(runner, "sync_pain_signals", lambda _store, auth_context=None: 0)
+    monkeypatch.setattr(
+        runner,
+        "sync_guard_events",
+        lambda _store, auth_context=None: {"accepted": 0, "statuses": []},
+    )
+
+    auth_context: dict[str, object] = {
+        "sync_url": "https://hol.org/api/guard/receipts/sync",
+        "access_token": "test-access-token",
+        "dpop_key_material": None,
+    }
+    runner.sync_receipts(store, auth_context=auth_context)
+
+    assert store.get_sync_payload("policy_bundle_last_error") == {}
+    assert _resolve_cloud_receipt_redaction_level(store) == "none"
+    persisted_keyring = store.get_sync_payload("policy_bundle_keyring")
+    assert isinstance(persisted_keyring, dict)
+    assert persisted_keyring["contractVersion"] == "guard-policy-keyring.v1"
+    assert persisted_keyring["purpose"] == "policy_bundle"
+    assert persisted_keyring["workspaceId"] == "workspace-1"
+    assert load_policy_bundle_verification_keys(
+        persisted_keyring,
+        require_keyring_contract=True,
+    ) == (policy_key,)
 
 
 def test_signed_receipt_redaction_authority_can_clear_and_relax_again(
