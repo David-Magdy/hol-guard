@@ -2770,9 +2770,15 @@ def sync_receipts(
     remote_policies_stored = 0
     remote_policy_sync_blocked = False
     if effective_policy_bundle is not None:
+        activation_keyring = store.get_sync_payload("policy_bundle_keyring")
+        if effective_policy_bundle is validated_policy_bundle and trusted_policy_bundle_keys:
+            activation_keyring = policy_bundle_keyring_payload(
+                trusted_policy_bundle_keys,
+                workspace_id=store.get_cloud_workspace_id(),
+            )
         activation_bundle, activation_reason, activation_keys = validate_synced_policy_bundle(
             effective_policy_bundle,
-            stored_keyring=store.get_sync_payload("policy_bundle_keyring"),
+            stored_keyring=activation_keyring,
             supply_chain_keyring=store.get_sync_payload("supply_chain_bundle_keyring"),
             managed_keyring_provenance=store.get_sync_payload(MANAGED_POLICY_BUNDLE_KEYRING_PROVENANCE_STATE_KEY),
             expected_workspace_id=store.get_cloud_workspace_id(),
