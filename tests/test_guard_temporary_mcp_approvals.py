@@ -16,6 +16,7 @@ from codex_plugin_scanner.guard.models import GuardApprovalRequest, HarnessDetec
 from codex_plugin_scanner.guard.runtime.mcp_protection import build_mcp_server_identity
 from codex_plugin_scanner.guard.store import GuardStore
 from codex_plugin_scanner.guard.temporary_mcp_approvals import (
+    eligibility_for_runtime_call,
     parse_temporary_mcp_grant_selection,
     temporary_mcp_approval_payload,
     temporary_mcp_grant_selector,
@@ -89,6 +90,31 @@ def test_navigation_url_schema_is_routine_without_false_mismatch(tmp_path) -> No
 
     assert categories == ("browser_navigation", "browser_external_domain")
     assert _evaluate(tmp_path, GuardStore(tmp_path / "guard-home"), artifact, arguments).action != "review"
+
+
+def test_navigation_with_unused_script_schema_exposes_timed_access() -> None:
+    from codex_plugin_scanner.guard.runtime.browser_mcp_intent import normalize_browser_mcp_intent
+
+    artifact = _artifact(
+        tool_name="navigate_page",
+        schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "initScript": {"type": "string"},
+            },
+        },
+    )
+    arguments = {"type": "url", "url": "http://localhost:3000/guard"}
+    browser_intent = normalize_browser_mcp_intent(artifact, arguments)
+    categories = tool_call_risk_categories(artifact, arguments)
+
+    eligibility = eligibility_for_runtime_call(browser_intent, categories)
+
+    assert categories == ("browser_navigation",)
+    assert eligibility is not None
+    assert eligibility.category == "browser_navigation"
+    assert eligibility.target_label == "localhost"
 
 
 def test_explicit_dangerous_tool_review_policy_overrides_routine_browser_default(tmp_path) -> None:
@@ -226,6 +252,13 @@ def test_server_grant_allows_routine_interaction_until_expiry(tmp_path) -> None:
         ("evaluate_script", {"function": "() => document.cookie"}),
         ("get_network_request", {"reqid": "request-1"}),
         ("emulate", {"extraHttpHeaders": {"Authorization": "redacted"}}),
+        (
+            "navigate_page",
+            {
+                "url": "http://localhost:3000/guard",
+                "initScript": "document.title",
+            },
+        ),
     ],
 )
 def test_server_grant_never_covers_sensitive_browser_call(tmp_path, tool_name, arguments) -> None:
