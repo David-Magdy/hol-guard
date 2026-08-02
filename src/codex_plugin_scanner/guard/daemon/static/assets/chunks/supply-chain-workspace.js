@@ -800,7 +800,7 @@ function SupplyChainRecovery({ issues, state, onFixAll }) {
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: onFixAll, disabled: pending, "aria-busy": pending, children: supplyChainFixAllButtonLabel(state.phase) })
         ] }),
-        showResult ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3", "aria-live": "polite", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: showResult ? "mt-3" : "", "aria-live": "polite", children: showResult ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "p",
             {
@@ -818,7 +818,7 @@ function SupplyChainRecovery({ issues, state, onFixAll }) {
             }
           ),
           state.failedSteps.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 space-y-1 text-xs text-red-600", children: state.failedSteps.map((failure) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: failure }, failure)) }) : null
-        ] }) : null,
+        ] }) : null }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {

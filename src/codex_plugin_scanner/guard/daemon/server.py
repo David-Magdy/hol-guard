@@ -6661,7 +6661,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         if path == "/v1/supply-chain/bundle":
             return "supply_chain_bundle"
         if path == "/v1/supply-chain/repair":
-            return "package_shims_repair"
+            return "package_shims_repair_all"
         if len(path_parts) == 4 and path_parts[:3] == ["v1", "supply-chain", "package-shims"]:
             action = "remove" if path_parts[3] == "uninstall" else path_parts[3]
             if action in {"activate", "install", "repair", "test", "remove", "open-shell"}:

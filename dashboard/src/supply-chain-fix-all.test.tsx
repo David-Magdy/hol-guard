@@ -45,6 +45,7 @@ assert(markup.includes("Fix all"), "one aggregate repair action is visible");
 assert(markup.includes("Fix 2 open issues"), "summary reports the bounded repair scope");
 assert(markup.includes("View issue details"), "issues remain available through progressive disclosure");
 assert(!markup.includes("Package installs are not protected yet"), "details start collapsed");
+assert(markup.includes('aria-live="polite"'), "the result live region exists before repair starts");
 assert(supplyChainFixAllButtonLabel("incomplete") === "Retry fixes", "partial repair remains actionable");
 assert(supplyChainFixAllIsPending("approval"), "approval phase prevents duplicate submissions");
 

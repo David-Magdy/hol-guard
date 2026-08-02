@@ -57,8 +57,9 @@ export function SupplyChainRecovery({ issues, state, onFixAll }: SupplyChainReco
         </ActionButton>
       </div>
 
-      {showResult ? (
-        <div className="mt-3" aria-live="polite">
+      <div className={showResult ? "mt-3" : ""} aria-live="polite">
+        {showResult ? (
+          <>
           <p
             className={`flex items-start gap-2 text-sm ${
               state.phase === "error" || state.phase === "incomplete"
@@ -81,8 +82,9 @@ export function SupplyChainRecovery({ issues, state, onFixAll }: SupplyChainReco
               ))}
             </ul>
           ) : null}
-        </div>
-      ) : null}
+          </>
+        ) : null}
+      </div>
 
       <button
         type="button"

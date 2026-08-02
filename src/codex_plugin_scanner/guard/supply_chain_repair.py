@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
+
+_LOGGER = logging.getLogger(__name__)
 
 RepairStep = Callable[[], object]
 ActivationStep = Callable[[], tuple[int, Mapping[str, object]]]
@@ -23,6 +26,7 @@ def coordinate_supply_chain_repair(
         _ = repair_package_shims()
         completed_steps.append("package_shims")
     except Exception:
+        _LOGGER.exception("Supply-chain repair step failed: package_shims")
         failed_steps.append(
             {
                 "step": "package_shims",
@@ -37,6 +41,7 @@ def coordinate_supply_chain_repair(
             raise RuntimeError(message if isinstance(message, str) else "activation failed")
         completed_steps.append("runtime_activation")
     except Exception:
+        _LOGGER.exception("Supply-chain repair step failed: runtime_activation")
         failed_steps.append(
             {
                 "step": "runtime_activation",
@@ -48,6 +53,7 @@ def coordinate_supply_chain_repair(
         _ = sync_intelligence()
         completed_steps.append("intelligence_sync")
     except Exception:
+        _LOGGER.exception("Supply-chain repair step failed: intelligence_sync")
         failed_steps.append(
             {
                 "step": "intelligence_sync",

@@ -451,18 +451,19 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
     setActivationAssistError(null);
     try {
       const connectFlow = await startPackageFirewallConnect();
-      if (
+      const popupBlocked = Boolean(
         connectFlow?.authorize_url &&
         !openPackageFirewallAuthorizeFallback(
           connectFlow.authorize_url,
           connectFlow.browser_opened,
         )
-      ) {
+      );
+      if (popupBlocked) {
         setConnectError(PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE);
       }
       await refreshAfterOp();
       await onStateChanged?.();
-      return true;
+      return !popupBlocked;
     } catch (error) {
       setConnectError(
         error instanceof Error ? error.message : "Unable to start Guard Cloud connect.",
@@ -473,28 +474,31 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
     }
   }, [onStateChanged, refreshAfterOp]);
 
+  const beginFixAllConnectRecovery = useCallback(async () => {
+    setResumeFixAllAfterConnect(true);
+    onFixAllStateChange?.({
+      phase: "connecting",
+      message: "Finish Guard Cloud sign-in. Repair will resume here automatically.",
+      completedSteps: [],
+      failedSteps: [],
+    });
+    const started = await handleStartConnect();
+    if (started) return;
+    setResumeFixAllAfterConnect(false);
+    onFixAllStateChange?.({
+      phase: "error",
+      message: "Guard Cloud sign-in could not start. Retry fixes to try again.",
+      completedSteps: [],
+      failedSteps: ["Guard Cloud sign-in could not start."],
+    });
+  }, [handleStartConnect, onFixAllStateChange]);
+
   const handleFixAll = useCallback(
     async (credentials?: { approval_password?: string; approval_totp_code?: string }) => {
       const requiresConnection =
         panelLoad.phase === "loaded" && supplyChainFixAllRequiresConnection(panelLoad.data);
       if (requiresConnection) {
-        setResumeFixAllAfterConnect(true);
-        onFixAllStateChange?.({
-          phase: "connecting",
-          message: "Finish Guard Cloud sign-in. Repair will resume here automatically.",
-          completedSteps: [],
-          failedSteps: [],
-        });
-        const started = await handleStartConnect();
-        if (!started) {
-          setResumeFixAllAfterConnect(false);
-          onFixAllStateChange?.({
-            phase: "error",
-            message: "Guard Cloud sign-in could not start. Retry fixes to try again.",
-            completedSteps: [],
-            failedSteps: ["Guard Cloud sign-in could not start."],
-          });
-        }
+        await beginFixAllConnectRecovery();
         return;
       }
       onFixAllStateChange?.({
@@ -503,6 +507,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
         completedSteps: [],
         failedSteps: [],
       });
+      setPendingOp({ op: "fix_all", manager: null });
       try {
         const result = await repairSupplyChainProtection(credentials);
         await refreshAfterOp();
@@ -526,23 +531,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
           return;
         }
         if (isSupplyChainSyncConnectError(error)) {
-          setResumeFixAllAfterConnect(true);
-          onFixAllStateChange?.({
-            phase: "connecting",
-            message: "Finish Guard Cloud sign-in. Repair will resume here automatically.",
-            completedSteps: [],
-            failedSteps: [],
-          });
-          const started = await handleStartConnect();
-          if (!started) {
-            setResumeFixAllAfterConnect(false);
-            onFixAllStateChange?.({
-              phase: "error",
-              message: "Guard Cloud sign-in could not start. Retry fixes to try again.",
-              completedSteps: [],
-              failedSteps: ["Guard Cloud sign-in could not start."],
-            });
-          }
+          await beginFixAllConnectRecovery();
           return;
         }
         const message = readHarnessActionUserMessage(
@@ -555,10 +544,12 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
           completedSteps: [],
           failedSteps: [message],
         });
+      } finally {
+        setPendingOp(null);
       }
     },
     [
-      handleStartConnect,
+      beginFixAllConnectRecovery,
       onFixAllStateChange,
       onStateChanged,
       panelLoad,
@@ -571,27 +562,26 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
     if (!resumeFixAllAfterConnect || panelLoad.phase !== "loaded") {
       return;
     }
-    if (panelLoad.data.connect_flow?.state === "failed") {
-      setResumeFixAllAfterConnect(false);
-      onFixAllStateChange?.({
-        phase: "error",
-        message: panelLoad.data.connect_flow.detail || "Guard Cloud sign-in did not finish. Retry fixes.",
-        completedSteps: [],
-        failedSteps: ["Guard Cloud sign-in did not finish."],
-      });
-      return;
-    }
     if (
-      panelLoad.data.connect_flow?.state === "idle" &&
       !startingConnect &&
-      !panelLoad.data.entitlement.allowed
+      !panelLoad.data.entitlement.allowed &&
+      (panelLoad.data.connect_flow === null ||
+        panelLoad.data.connect_flow.state === "idle" ||
+        panelLoad.data.connect_flow.state === "failed")
     ) {
+      const connectFailed = panelLoad.data.connect_flow?.state === "failed";
       setResumeFixAllAfterConnect(false);
       onFixAllStateChange?.({
         phase: "error",
-        message: "Guard Cloud sign-in did not grant package protection access. Retry or review plan access.",
+        message: connectFailed
+          ? panelLoad.data.connect_flow?.detail || "Guard Cloud sign-in did not finish. Retry fixes."
+          : "Guard Cloud sign-in did not grant package protection access. Retry or review plan access.",
         completedSteps: [],
-        failedSteps: ["Package protection access is still unavailable."],
+        failedSteps: [
+          connectFailed
+            ? "Guard Cloud sign-in did not finish."
+            : "Package protection access is still unavailable.",
+        ],
       });
       return;
     }
