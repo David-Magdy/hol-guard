@@ -2337,6 +2337,39 @@ def _bulk_queue_category_text(request: Mapping[str, object]) -> str:
     )
 
 
+def _bulk_action_text(request: Mapping[str, object]) -> str:
+    """Return user-supplied action text, excluding generated risk prose."""
+
+    envelope = request.get("action_envelope_json")
+    envelope_fields: list[str] = []
+    if isinstance(envelope, dict):
+        for key in (
+            "command",
+            "prompt_text",
+            "prompt_excerpt",
+            "mcp_server",
+            "mcp_tool",
+            "package_manager",
+            "package_name",
+            "script_name",
+        ):
+            value = envelope.get(key)
+            if isinstance(value, str) and value:
+                envelope_fields.append(value)
+        target_paths = envelope.get("target_paths")
+        if isinstance(target_paths, list):
+            envelope_fields.extend(str(path) for path in target_paths if isinstance(path, str))
+    return " ".join(
+        [
+            str(request.get("artifact_name") or ""),
+            str(request.get("artifact_type") or ""),
+            str(request.get("raw_command_text") or ""),
+            str(request.get("launch_target") or ""),
+            *envelope_fields,
+        ]
+    )
+
+
 def _bulk_decision_v2_categories(request: Mapping[str, object]) -> tuple[str, ...]:
     decision_v2 = request.get("decision_v2_json")
     if not isinstance(decision_v2, dict):
@@ -2357,7 +2390,7 @@ def _bulk_has_secret_signal(request: Mapping[str, object]) -> bool:
     categories = _bulk_decision_v2_categories(request)
     if "secret" in categories:
         return True
-    lowered = _bulk_queue_category_text(request).lower()
+    lowered = _bulk_action_text(request).lower()
     return any(hint in lowered for hint in _BULK_SECRET_TEXT_HINTS)
 
 
@@ -2462,7 +2495,10 @@ def _bulk_request_is_bulk_blocked(request: Mapping[str, object]) -> bool:
     categories = _bulk_decision_v2_categories(request)
     if any(category in _BULK_BLOCKED_DECISION_CATEGORIES for category in categories):
         return True
-    text = _bulk_queue_category_text(request).lower()
+    # Generated risk summaries commonly describe what remote execution could
+    # do. Treating that explanatory prose as action content makes the server
+    # reject requests the dashboard correctly classified as bulk-eligible.
+    text = _bulk_action_text(request).lower()
     return any(hint in text for hint in _BULK_BLOCKED_COMMAND_HINTS)
 
 
@@ -2500,18 +2536,9 @@ def bulk_allow_read_only_once(
 
     bulk_resolution_action = "allow"
     bulk_resolution_scope = "artifact"
-    bulk_subject = f"approval-request-batch:{uuid.uuid5(uuid.NAMESPACE_URL, chr(0).join(sorted(request_ids))).hex}"
     resolved_count = 0
     failed: list[dict[str, str]] = []
-    bulk_gate_grant = require_approval_decision(
-        store.guard_home,
-        action=bulk_resolution_action,
-        scope=bulk_resolution_scope,
-        subject=bulk_subject,
-        approval_gate_input=approval_gate_input,
-        now=resolved_at,
-    )
-
+    eligible_ids: list[str] = []
     for request_id in request_ids:
         if not isinstance(request_id, str) or not request_id.strip():
             failed.append({"request_id": str(request_id), "error": "invalid_request_id"})
@@ -2521,6 +2548,26 @@ def bulk_allow_read_only_once(
         if request is None or not is_bulk_allow_once_eligible(request):
             failed.append({"request_id": normalized_id, "error": "ineligible"})
             continue
+        eligible_ids.append(normalized_id)
+
+    if not eligible_ids:
+        return {
+            "resolved_count": 0,
+            "failed": failed,
+            "resolution_summary": "0 actions approved once.",
+        }
+
+    bulk_subject = f"approval-request-batch:{uuid.uuid5(uuid.NAMESPACE_URL, chr(0).join(sorted(eligible_ids))).hex}"
+    bulk_gate_grant = require_approval_decision(
+        store.guard_home,
+        action=bulk_resolution_action,
+        scope=bulk_resolution_scope,
+        subject=bulk_subject,
+        approval_gate_input=approval_gate_input,
+        now=resolved_at,
+    )
+
+    for normalized_id in eligible_ids:
         try:
             apply_approval_resolution(
                 store=store,
@@ -2531,7 +2578,7 @@ def bulk_allow_read_only_once(
                 reason="bulk approve once",
                 now=resolved_at,
                 return_queue_result=False,
-                resolve_scope_matches=True,
+                resolve_scope_matches=False,
                 approval_gate_grant=bulk_gate_grant,
                 approval_gate_subject=bulk_subject,
                 persist_policy=False,
