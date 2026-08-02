@@ -90,6 +90,7 @@ class _DaemonHandler(BaseHTTPRequestHandler):
                     pid=os.getpid(),
                     state_id="replacement-state",
                 )
+                type(self).challenge_mode = "valid"
             self._write_json(response, keep_alive=True)
             return
         type(self).captured_guard_token = self.headers.get("X-Guard-Token")
@@ -294,7 +295,6 @@ def test_main_posts_to_authenticated_daemon(
         pytest.param("wrong-proof", id="stale-port-reused-by-unproven-process"),
         pytest.param("expired", id="stale-expired-challenge"),
         pytest.param("redirect", id="redirect-refused"),
-        pytest.param("replace-state", id="concurrent-restart-replaces-state"),
     ],
 )
 def test_failed_daemon_identity_never_receives_token_or_hook_payload(
@@ -322,6 +322,53 @@ def test_failed_daemon_identity_never_receives_token_or_hook_payload(
     assert _DaemonHandler.captured_guard_token is None
     assert _DaemonHandler.captured_hook_body is None
     assert json.loads(capsys.readouterr().out) == {}
+
+
+def test_authenticated_generation_rollover_is_rediscovered_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    daemon = HTTPServer(("127.0.0.1", 0), _DaemonHandler)
+    daemon_thread = threading.Thread(target=daemon.serve_forever, daemon=True)
+    daemon_thread.start()
+    _write_authenticated_daemon_files(guard_home, daemon.server_address[1])
+    _DaemonHandler.challenge_mode = "replace-state"
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"hook_event_name": "UserPromptSubmit"})))
+
+    try:
+        exit_code = bridge.main(**_bridge_config(guard_home, daemon.server_address[1]))
+    finally:
+        daemon.shutdown()
+        daemon_thread.join(timeout=5)
+
+    assert exit_code == 0
+    assert _DaemonHandler.challenge_count == 2
+    assert _DaemonHandler.captured_guard_token == "fixture-token"
+    assert json.loads(str(_DaemonHandler.captured_hook_body))["hook_event_name"] == "UserPromptSubmit"
+    assert json.loads(capsys.readouterr().out) == {}
+
+
+def test_repeated_generation_rollover_stays_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+
+    def changed_generation(**_kwargs: object) -> dict[str, object]:
+        nonlocal attempts
+        attempts += 1
+        raise bridge._DaemonGenerationChangedError("fixture rollover")
+
+    monkeypatch.setattr(bridge, "_daemon_response_once", changed_generation)
+
+    with pytest.raises(bridge._DaemonGenerationChangedError):
+        bridge._daemon_response(
+            state_path="unused",
+            query="",
+            data='{"hook_event_name":"UserPromptSubmit"}',
+            timeout_seconds=1,
+        )
+
+    assert attempts == 2
 
 
 def test_tampered_state_is_rejected_before_candidate_contact(

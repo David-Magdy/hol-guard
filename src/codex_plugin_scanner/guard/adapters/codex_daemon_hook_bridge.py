@@ -76,6 +76,10 @@ class _DaemonResponseError(ValueError):
         self.authenticated = authenticated
 
 
+class _DaemonGenerationChangedError(ValueError):
+    """The authenticated daemon generation rotated during one hook request."""
+
+
 def _assert_loopback_http_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme != "http":
@@ -416,7 +420,11 @@ def _run_local_fallback(
     return _json_object(result.stdout.strip())
 
 
-def _daemon_response(
+def _daemon_generation_identity(state: Mapping[str, object]) -> tuple[object, ...]:
+    return tuple(state.get(field) for field in ("state_id", "auth_token_id", "host", "port", "pid", "started_at"))
+
+
+def _daemon_response_once(
     *,
     state_path: str | Path,
     query: str,
@@ -468,8 +476,14 @@ def _daemon_response(
         )
         current_state, current_key = _authenticated_state(state_path)
         if current_state != state or not secrets.compare_digest(current_key, discovery_key):
-            raise ValueError("daemon state changed during identity verification")
-        auth_token = _daemon_auth_token(state_path, state)
+            raise _DaemonGenerationChangedError("daemon state changed during identity verification")
+        try:
+            auth_token = _daemon_auth_token(state_path, state)
+        except ValueError as error:
+            current_state, current_key = _authenticated_state(state_path)
+            if current_state != state or not secrets.compare_digest(current_key, discovery_key):
+                raise _DaemonGenerationChangedError("daemon state changed before token authentication") from error
+            raise
         remaining = _remaining_seconds(deadline)
         if remaining < _MINIMUM_OPERATION_SECONDS:
             raise TimeoutError("daemon identity challenge exhausted the hook deadline")
@@ -490,15 +504,46 @@ def _daemon_response(
                 "X-Guard-Daemon-Proof": proof,
             },
         )
-        return _http_json_response(
-            connection.getresponse(),
-            label="daemon hook",
-            connection=connection,
-            deadline=deadline,
-            authenticated=True,
-        )
+        try:
+            return _http_json_response(
+                connection.getresponse(),
+                label="daemon hook",
+                connection=connection,
+                deadline=deadline,
+                authenticated=True,
+            )
+        except _DaemonResponseError as error:
+            if error.status in {401, 403}:
+                current_state, current_key = _authenticated_state(state_path)
+                if _daemon_generation_identity(current_state) != _daemon_generation_identity(
+                    state
+                ) or not secrets.compare_digest(current_key, discovery_key):
+                    raise _DaemonGenerationChangedError("daemon state changed before hook authentication") from error
+            raise
     finally:
         connection.close()
+
+
+def _daemon_response(
+    *,
+    state_path: str | Path,
+    query: str,
+    data: str,
+    timeout_seconds: float,
+) -> dict[str, object] | None:
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    for attempt in range(2):
+        try:
+            return _daemon_response_once(
+                state_path=state_path,
+                query=query,
+                data=data,
+                timeout_seconds=_remaining_seconds(deadline),
+            )
+        except _DaemonGenerationChangedError:
+            if attempt > 0 or _remaining_seconds(deadline) < _MINIMUM_OPERATION_SECONDS:
+                raise
+    raise AssertionError("unreachable")
 
 
 def _daemon_process_failed(response: Mapping[str, object]) -> bool:
