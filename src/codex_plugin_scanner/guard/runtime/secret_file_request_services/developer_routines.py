@@ -8,7 +8,7 @@ from ..git_execution_safety import trusted_git_binary_for_cwd
 from ..kubernetes_commands import kubernetes_read_only_inventory_args
 from ..shell_command_wrappers import is_trusted_absolute_command_path
 from ..shell_execution_context import ShellExecutionContext, model_shell_execution_context
-from .developer_inspection import _compound_developer_effect_graph
+from .developer_inspection import DeveloperShellEffect, _compound_developer_effect_graph
 from .docker_requests import (
     _shell_execution_context_validation_reason,
     _which_for_execution_cwd,
@@ -69,6 +69,16 @@ def _looks_like_safe_compound_developer_inspection(
 
     graph = _compound_developer_effect_graph(command_text, cwd=cwd, home_dir=home_dir)
     if graph is None or not graph.context.complete:
+        return False
+    silently_verified_effects = {
+        DeveloperShellEffect.DIRECTORY,
+        DeveloperShellEffect.LOCAL_READ,
+        DeveloperShellEffect.REMOTE_READ,
+        DeveloperShellEffect.STREAM_FILTER,
+        DeveloperShellEffect.STATIC_OUTPUT,
+        DeveloperShellEffect.SYNTAX_CHECK,
+    }
+    if any(segment.effect not in silently_verified_effects for segment in graph.segments):
         return False
     for segment in graph.context.segments:
         command_name, command_index = _shell_segment_primary_command(list(segment.tokens))
