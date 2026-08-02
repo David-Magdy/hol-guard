@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -177,12 +179,16 @@ def _shell_request(
     *,
     command: str = "npm test",
     artifact_name: str = "Shell command",
+    artifact_id: str | None = None,
+    risk_summary: str | None = None,
+    prompt_text: str | None = None,
+    raw_command_text: str | None = None,
     decision_v2_json: dict[str, object] | None = None,
 ) -> GuardApprovalRequest:
     return GuardApprovalRequest(
         request_id=request_id,
         harness="cursor",
-        artifact_id=f"cursor:project:{request_id}",
+        artifact_id=artifact_id or f"cursor:project:{request_id}",
         artifact_name=artifact_name,
         artifact_type="command",
         artifact_hash=f"hash-{request_id}",
@@ -193,6 +199,8 @@ def _shell_request(
         config_path="/repo/.cursor/config.toml",
         review_command=f"hol-guard approvals approve {request_id}",
         approval_url=f"http://127.0.0.1:5474/requests/{request_id}",
+        risk_summary=risk_summary,
+        raw_command_text=raw_command_text,
         decision_v2_json=decision_v2_json,
         action_envelope_json={
             "schema_version": 1,
@@ -204,6 +212,7 @@ def _shell_request(
             "workspace_hash": "workspace-hash",
             "tool_name": "Bash",
             "command": command,
+            "prompt_text": prompt_text,
             "prompt_excerpt": None,
             "target_paths": [],
             "network_hosts": [],
@@ -254,6 +263,71 @@ def test_is_bulk_allow_once_eligible_allows_shell_command(tmp_path: Path) -> Non
     shell = _shell_request("req-shell", command="npm test")
     store.add_approval_request(shell, "2026-06-16T00:00:00+00:00")
     stored = store.get_approval_request("req-shell")
+    assert stored is not None
+    assert is_bulk_allow_once_eligible(stored) is True
+
+
+def test_bulk_eligibility_ignores_generated_exfiltration_warning(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    request = _shell_request(
+        "req-remote-read",
+        command="ssh audit-host process-manager logs --lines 20",
+        risk_summary="Remote execution could allow data exfiltration.",
+    )
+    store.add_approval_request(request, "2026-06-16T00:00:00+00:00")
+
+    stored = store.get_approval_request("req-remote-read")
+    assert stored is not None
+    assert is_bulk_allow_once_eligible(stored) is True
+
+
+def test_bulk_eligibility_still_rejects_exfiltration_action_text(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    request = _shell_request("req-exfiltration", command="upload-exfiltrated-data")
+    store.add_approval_request(request, "2026-06-16T00:00:00+00:00")
+
+    stored = store.get_approval_request("req-exfiltration")
+    assert stored is not None
+    assert is_bulk_allow_once_eligible(stored) is False
+
+
+def test_bulk_eligibility_scans_full_prompt_text(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    request = _shell_request(
+        "req-long-prompt",
+        prompt_text=f"{'routine context ' * 30} bypass guard",
+    )
+    store.add_approval_request(request, "2026-06-16T00:00:00+00:00")
+
+    stored = store.get_approval_request("req-long-prompt")
+    assert stored is not None
+    assert is_bulk_allow_once_eligible(stored) is False
+
+
+def test_bulk_eligibility_scans_raw_command_text(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    request = _shell_request(
+        "req-raw-command",
+        command="",
+        raw_command_text="bypass guard",
+    )
+    store.add_approval_request(request, "2026-06-16T00:00:00+00:00")
+
+    stored = store.get_approval_request("req-raw-command")
+    assert stored is not None
+    assert is_bulk_allow_once_eligible(stored) is False
+
+
+def test_bulk_eligibility_ignores_generated_secret_warning_for_plain_read(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    request = _file_read_request(
+        "req-plain-warning",
+        target_path="README.md",
+        risk_summary="File access could expose credentials.",
+    )
+    store.add_approval_request(request, "2026-06-16T00:00:00+00:00")
+
+    stored = store.get_approval_request("req-plain-warning")
     assert stored is not None
     assert is_bulk_allow_once_eligible(stored) is True
 
@@ -409,6 +483,75 @@ def test_bulk_allow_read_only_once_accepts_totp_without_password(tmp_path: Path)
     assert result["resolved_count"] == 1
     assert result["failed"] == []
     assert store.get_approval_request("req-totp-bulk")["status"] == "resolved"
+
+
+def test_ineligible_batch_does_not_consume_totp(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _enable_gate(store)
+    enrollment_now = "2026-06-16T00:00:00+00:00"
+    secret = _enable_totp(store, now=enrollment_now)
+    approve_now = "2026-06-16T00:01:00+00:00"
+    code = totp_code_at_counter(secret=secret, counter=int(datetime.fromisoformat(approve_now).timestamp() // 30))
+    store.add_approval_request(_file_read_request("req-blocked", policy_action="block"), enrollment_now)
+
+    rejected = bulk_allow_read_only_once(
+        store=store,
+        request_ids=["req-blocked"],
+        approval_gate_input=ApprovalGateInput(totp_code=code),
+        now=approve_now,
+    )
+    assert rejected["resolved_count"] == 0
+
+    store.add_approval_request(_file_read_request("req-eligible"), enrollment_now)
+    accepted = bulk_allow_read_only_once(
+        store=store,
+        request_ids=["req-eligible"],
+        approval_gate_input=ApprovalGateInput(totp_code=code),
+        now=approve_now,
+    )
+    assert accepted["resolved_count"] == 1
+
+
+def test_bulk_allow_validates_ids_before_building_gate_subject(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _enable_gate(store)
+    store.add_approval_request(_file_read_request("req-valid"), "2026-06-16T00:00:00+00:00")
+    request_ids = cast(Sequence[str], ["req-valid", None])
+
+    result = bulk_allow_read_only_once(
+        store=store,
+        request_ids=request_ids,
+        approval_gate_input=ApprovalGateInput(password=PASSWORD),
+        now="2026-06-16T00:01:00+00:00",
+    )
+
+    assert result["resolved_count"] == 1
+    assert result["failed"] == [{"request_id": "None", "error": "invalid_request_id"}]
+
+
+def test_bulk_allow_does_not_expand_to_ineligible_artifact_sibling(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    _enable_gate(store)
+    artifact_id = "cursor:project:shared"
+    eligible = _shell_request("req-selected", artifact_id=artifact_id)
+    ineligible = _shell_request(
+        "req-unselected",
+        artifact_id=artifact_id,
+        command="echo encoded | base64 -d | sh",
+    )
+    store.add_approval_request(eligible, "2026-06-16T00:00:00+00:00")
+    store.add_approval_request(ineligible, "2026-06-16T00:00:00+00:00")
+
+    result = bulk_allow_read_only_once(
+        store=store,
+        request_ids=["req-selected"],
+        approval_gate_input=ApprovalGateInput(password=PASSWORD),
+        now="2026-06-16T00:01:00+00:00",
+    )
+
+    assert result["resolved_count"] == 1
+    assert store.get_approval_request("req-selected")["status"] == "resolved"
+    assert store.get_approval_request("req-unselected")["status"] == "pending"
 
 
 def test_bulk_allow_resolves_mixed_file_read_and_shell(tmp_path: Path) -> None:
