@@ -14,7 +14,10 @@ from codex_plugin_scanner.guard.policy_bundle_parser import (
     computed_policy_bundle_hash,
     payload_hash_for_policy_bundle,
 )
-from codex_plugin_scanner.guard.policy_bundle_trusted_keys import migrate_legacy_policy_bundle_anchors
+from codex_plugin_scanner.guard.policy_bundle_trusted_keys import (
+    load_policy_bundle_verification_keys,
+    migrate_legacy_policy_bundle_anchors,
+)
 from codex_plugin_scanner.guard.runtime.actions import GuardActionEnvelope
 from codex_plugin_scanner.guard.runtime.local_request_snapshots import (
     _resolve_cloud_receipt_redaction_level as _resolve_snapshot_redaction_level,
@@ -228,6 +231,10 @@ def test_sync_migrates_legacy_anchor_and_restores_cloud_redaction_choice(
     assert persisted_keyring["contractVersion"] == "guard-policy-keyring.v1"
     assert persisted_keyring["purpose"] == "policy_bundle"
     assert persisted_keyring["workspaceId"] == "workspace-1"
+    assert load_policy_bundle_verification_keys(
+        persisted_keyring,
+        require_keyring_contract=True,
+    ) == (policy_key,)
 
 
 def test_signed_receipt_redaction_authority_can_clear_and_relax_again(
