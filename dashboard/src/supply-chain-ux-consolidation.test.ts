@@ -23,8 +23,12 @@ assert(supplyChainCloudTagTone("paired_waiting") === "blue", "cloud tag tone for
 assert(supplyChainCloudTagTone("local_only") === "attention", "cloud tag tone for local only");
 
 assert(
-  workspaceSource.includes("SupplyChainStatusHeader"),
-  "workspace uses unified status header",
+  workspaceSource.includes("SupplyChainRecovery"),
+  "workspace uses one aggregate recovery surface for open issues",
+);
+assert(
+  workspaceSource.includes("SupplyChainWorkspaceHero"),
+  "workspace keeps the healthy-state status hero",
 );
 assert(
   workspaceSource.includes("SupplyChainAuditTeaser"),

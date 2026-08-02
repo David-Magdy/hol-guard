@@ -1958,6 +1958,23 @@ def test_supply_chain_dashboard_session_claims_scope_action_and_managers(tmp_pat
                 payload={"managers": ["pip"], "workspace_id": "workspace-1"},
             ),
         )
+        manager_repair_token = _dashboard_token_with_claims(
+            auth_token,
+            {
+                "action_path": "package_shims_repair",
+                "allowed_action_paths": ["package_shims_repair"],
+                "managers": ["npm"],
+                "workspace_id": "workspace-1",
+            },
+        )
+        repair_all_status, repair_all_payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/supply-chain/repair",
+                dashboard_session_token=manager_repair_token,
+                payload={"workspace_id": "workspace-1"},
+            ),
+        )
     finally:
         daemon.stop()
 
@@ -1965,6 +1982,8 @@ def test_supply_chain_dashboard_session_claims_scope_action_and_managers(tmp_pat
     assert allowed_payload["operation"] == "install"
     assert denied_status == 401
     assert denied_payload["error"] == "unauthorized"
+    assert repair_all_status == 401
+    assert repair_all_payload["error"] == "unauthorized"
 
 
 def test_action_scoped_dashboard_session_requires_exact_read_paths_and_matching_nonce(tmp_path: Path) -> None:
