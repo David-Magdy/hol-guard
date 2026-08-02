@@ -306,6 +306,51 @@ def test_legacy_policy_anchor_migration_preserves_restrictive_lifecycle(
 
 
 @pytest.mark.parametrize(
+    ("state", "valid_from", "valid_until", "expected_reason"),
+    [
+        ("revoked", None, None, "signing_key_revoked"),
+        ("active", "2027-01-01T00:00:00Z", None, "signing_key_not_current"),
+        ("active", None, "2026-01-01T00:00:00Z", "signing_key_not_current"),
+    ],
+)
+def test_legacy_policy_anchor_migration_honors_stricter_synced_lifecycle(
+    state: str,
+    valid_from: str | None,
+    valid_until: str | None,
+    expected_reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        trusted_keys_module,
+        "managed_policy_bundle_verification_keys",
+        lambda: (False, ()),
+    )
+    policy_key = policy_bundle_test_verification_key()
+    legacy_key = policy_key.to_dict()
+    for field in ("purpose", "workspaceId", "validFrom"):
+        legacy_key.pop(field)
+    advertised_key = policy_key.to_dict()
+    advertised_key["state"] = state
+    advertised_key["validFrom"] = valid_from
+    advertised_key["validUntil"] = valid_until
+    signed_bundle = sign_policy_bundle(_unsigned_policy_bundle(), key=policy_key)
+
+    validated, reason, _ = validate_synced_policy_bundle(
+        signed_bundle,
+        stored_keyring={
+            "keys": [legacy_key],
+            "workspace_id": TEST_POLICY_BUNDLE_WORKSPACE_ID,
+        },
+        sync_payload={"policyBundleVerificationKeys": [advertised_key]},
+        expected_workspace_id=TEST_POLICY_BUNDLE_WORKSPACE_ID,
+        now=_VALIDATION_NOW,
+    )
+
+    assert validated is None
+    assert reason == expected_reason
+
+
+@pytest.mark.parametrize(
     ("accepted_issued_at", "candidate_issued_at"),
     [
         ("2026-07-18T12:00:00Z", "2026-07-18T11:59:59"),

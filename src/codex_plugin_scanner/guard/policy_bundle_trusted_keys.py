@@ -444,16 +444,36 @@ def migrate_legacy_policy_bundle_anchors(
             None,
         )
         if advertised_key is not None:
+            states = {legacy_key.state, advertised_key.state}
+            restrictive_state = "active"
+            if "revoked" in states:
+                restrictive_state = "revoked"
+            elif "grace" in states:
+                restrictive_state = "grace"
+            valid_from_candidates = [
+                value for value in (legacy_key.valid_from, advertised_key.valid_from) if value is not None
+            ]
+            valid_until_candidates = [
+                value for value in (legacy_key.valid_until, advertised_key.valid_until) if value is not None
+            ]
             migrated.append(
                 PolicyBundleVerificationKey(
                     key_id=legacy_key.key_id,
                     public_key_pem=legacy_key.public_key_pem,
                     fingerprint_sha256=legacy_key.fingerprint_sha256,
-                    state=legacy_key.state,
+                    state=restrictive_state,
                     purpose=POLICY_BUNDLE_KEY_PURPOSE,
                     workspace_id=expected_workspace_id,
-                    valid_from=legacy_key.valid_from,
-                    valid_until=legacy_key.valid_until,
+                    valid_from=max(
+                        valid_from_candidates,
+                        key=lambda value: _parse_iso_timestamp(value, field_name="validFrom"),
+                        default=None,
+                    ),
+                    valid_until=min(
+                        valid_until_candidates,
+                        key=lambda value: _parse_iso_timestamp(value, field_name="validUntil"),
+                        default=None,
+                    ),
                 )
             )
     return tuple(migrated)
