@@ -82,9 +82,17 @@ def _looks_like_safe_compound_developer_inspection(
         return False
     for segment in graph.context.segments:
         command_name, command_index = _shell_segment_primary_command(list(segment.tokens))
-        if command_name != "git" or command_index is None:
-            continue
+        if command_index is None:
+            return False
         args = _without_safe_inspection_redirections(list(segment.tokens[command_index + 1 :]))
+        if args is not None and _safe_cli_metadata_segment_is_safe(
+            command_name or "",
+            args,
+            cwd=segment.effective_cwd or home_dir,
+        ):
+            continue
+        if command_name != "git":
+            continue
         if args is None or not _git_segment_is_silently_verified(args, cwd=segment.effective_cwd or home_dir):
             return False
     return True
