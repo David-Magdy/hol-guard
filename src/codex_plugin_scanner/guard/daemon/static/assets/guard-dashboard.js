@@ -14479,7 +14479,7 @@ function isPackageDependencyMutationRequest(request) {
   if (command && /(?:&&|[;|]|\r?\n)/.test(command)) {
     return false;
   }
-  const intentKind = envelope?.package_intent_kind?.trim().toLowerCase();
+  const intentKind = (envelope?.package_intent_kind ?? "").trim().toLowerCase();
   if (intentKind === "install" || intentKind === "sync") {
     return true;
   }

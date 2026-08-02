@@ -2370,6 +2370,35 @@ function SettingsToggleRow({
     )
   ] });
 }
+function SettingsSelectRow({
+  label,
+  description,
+  value,
+  options,
+  onChange,
+  disabled = false
+}) {
+  const selectId = reactExports.useId();
+  const descriptionId = reactExports.useId();
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_200px] md:items-center", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: selectId, className: "guard-settings-body font-medium text-brand-dark", children: label }),
+      description ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: descriptionId, className: "guard-settings-caption mt-0.5 text-slate-500", children: description }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "select",
+      {
+        id: selectId,
+        value,
+        onChange,
+        disabled,
+        "aria-describedby": description ? descriptionId : void 0,
+        className: "min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue/20 disabled:cursor-not-allowed disabled:opacity-60",
+        children: options.map((option) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: option.value, children: option.label }, option.value))
+      }
+    )
+  ] });
+}
 const resolveSecurityLevelDescription = resolveProtectionLevelCopy;
 function resolveInitialSettingsTab(search) {
   const section = new URLSearchParams(search).get("section");
@@ -3610,24 +3639,20 @@ function SettingsWorkspace({ onApprovalGateChange }) {
                   onChange: handleSyncToggle
                 }
               ),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "receipt-redaction-level", className: "guard-settings-body font-medium text-brand-dark", children: "Cloud receipt privacy" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "guard-settings-caption text-slate-500", children: "Choose how much command detail Guard includes when syncing receipts. Secrets are always removed." }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                  "select",
-                  {
-                    id: "receipt-redaction-level",
-                    value: draft.receipt_redaction_level,
-                    onChange: handleStringChange("receipt_redaction_level"),
-                    className: "mt-2 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue/20",
-                    children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "full", children: "Fully redacted - metadata only" }),
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "partial", children: "Partially redacted - hide paths and package names" }),
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "none", children: "Detailed - include commands, paths, hosts, and packages" })
-                    ]
-                  }
-                )
-              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                SettingsSelectRow,
+                {
+                  label: "Cloud receipt privacy",
+                  description: "Choose how much command detail Guard includes when syncing receipts. Secrets are always removed.",
+                  value: draft.receipt_redaction_level,
+                  onChange: handleStringChange("receipt_redaction_level"),
+                  options: [
+                    { value: "full", label: "Fully redacted - metadata only" },
+                    { value: "partial", label: "Partially redacted - hide paths and package names" },
+                    { value: "none", label: "Detailed - include commands, paths, hosts, and packages" }
+                  ]
+                }
+              ),
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 SettingsToggleRow,
                 {
