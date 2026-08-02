@@ -4,28 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..git_execution_safety import trusted_git_binary_for_cwd
 from ..kubernetes_commands import kubernetes_read_only_inventory_args
 from ..shell_command_wrappers import is_trusted_absolute_command_path
 from ..shell_execution_context import ShellExecutionContext, model_shell_execution_context
-from .constants_core import _READ_ONLY_LOOKUP_COMMANDS, _READ_ONLY_LOOKUP_FILTERS, _SAFE_STATIC_SHELL_COMMANDS
-from .developer_inspection import _read_only_lookup_primary_segment_is_safe, _static_shell_segment_is_safe
+from .developer_inspection import _compound_developer_effect_graph
 from .docker_requests import (
     _shell_execution_context_validation_reason,
     _which_for_execution_cwd,
-    shell_execution_context_starts_with_literal_cd,
 )
-from .git_routines import _git_log_has_execution_free_config, _read_only_git_invocation
-from .local_read_operands import _local_read_operands_resolve_safely
-from .read_only_filters import _read_only_lookup_filter_segment_is_safe
 from .shell_static_safety import (
     _leading_literal_cd_workspace_root,
     _safe_cli_metadata_segment_is_safe,
     _without_safe_inspection_redirections,
 )
 from .shell_tokenization import _iter_shell_command_segments, _shell_segment_primary_command
-from .source_edit_context import low_risk_compound_developer_execution_context
-from .tool_action_requests import _git_status_has_execution_free_config, _safe_git_status_cd_target
+from .tool_action_requests import _safe_git_status_cd_target
 
 
 def _looks_like_safe_kubernetes_inventory_command(
@@ -70,78 +63,16 @@ def _looks_like_safe_compound_developer_inspection(
     cwd: Path | None,
     home_dir: Path,
 ) -> bool:
-    """Auto-relax only whole commands composed of bounded local observers."""
+    """Auto-relax only a command with a complete bounded-observer effect graph."""
 
-    if any(marker in command_text for marker in ("$(", "`", "<(", ">(")):
-        return False
-    context = low_risk_compound_developer_execution_context(
-        command_text,
-        cwd=cwd,
-        home_dir=home_dir,
+    return (
+        _compound_developer_effect_graph(
+            command_text,
+            cwd=cwd,
+            home_dir=home_dir,
+        )
+        is not None
     )
-    if context is None or not context.complete:
-        return False
-    first_inspection_segment = 1 if shell_execution_context_starts_with_literal_cd(context) else 0
-    saw_inspection = False
-    for segment in context.segments[first_inspection_segment:]:
-        if any(
-            control not in {"&&", "||", "|", ";", "\n"} for control in (*segment.control_before, *segment.control_after)
-        ):
-            return False
-        command_name, command_index = _shell_segment_primary_command(list(segment.tokens))
-        if command_name is None or command_index is None:
-            return False
-        args = _without_safe_inspection_redirections(list(segment.tokens[command_index + 1 :]))
-        if args is None:
-            return False
-        segment_root = segment.effective_cwd or home_dir
-        if _safe_cli_metadata_segment_is_safe(command_name, args, cwd=segment_root):
-            saw_inspection = True
-            continue
-        if command_name == "git":
-            invocation = _read_only_git_invocation(args, cwd=segment_root)
-            if invocation is None:
-                return False
-            operation, git_cwd = invocation
-            git_binary = trusted_git_binary_for_cwd(segment_root)
-            if git_binary is None:
-                return False
-            if operation == "status":
-                if not _git_status_has_execution_free_config(git_cwd, git_binary=git_binary):
-                    return False
-            elif operation == "log":
-                if not _git_log_has_execution_free_config(git_cwd, git_binary=git_binary):
-                    return False
-            elif operation not in {"ls-files", "rev-parse"}:
-                return False
-            saw_inspection = True
-            continue
-        if (
-            command_name in _READ_ONLY_LOOKUP_FILTERS
-            and segment.control_before == ("|",)
-            and _read_only_lookup_filter_segment_is_safe(command_name, args, home_dir=segment_root)
-        ):
-            continue
-        if (
-            command_name in _READ_ONLY_LOOKUP_COMMANDS
-            and _read_only_lookup_primary_segment_is_safe(
-                command_name,
-                args,
-                home_dir=segment_root,
-            )
-            and _local_read_operands_resolve_safely(
-                command_name,
-                args,
-                cwd=segment_root,
-                root=context.workspace_root or home_dir,
-            )
-        ):
-            saw_inspection = True
-            continue
-        if command_name in _SAFE_STATIC_SHELL_COMMANDS and _static_shell_segment_is_safe(args):
-            continue
-        return False
-    return saw_inspection
 
 
 def _looks_like_safe_cli_metadata_command(command_text: str, parts: list[str], *, cwd: Path | None) -> bool:
