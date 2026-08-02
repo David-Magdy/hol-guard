@@ -4,7 +4,9 @@ import {
   IDLE_SUPPLY_CHAIN_FIX_ALL_STATE,
   supplyChainFixAllButtonLabel,
   supplyChainFixAllIsPending,
+  supplyChainFixAllRequiresConnection,
 } from "./supply-chain-fix-all";
+import type { PackageFirewallStatusResponse } from "./guard-types";
 import type { SupplyChainIssue } from "./supply-chain-issues";
 
 function assert(condition: boolean, message: string): void {
@@ -45,5 +47,75 @@ assert(markup.includes("View issue details"), "issues remain available through p
 assert(!markup.includes("Package installs are not protected yet"), "details start collapsed");
 assert(supplyChainFixAllButtonLabel("incomplete") === "Retry fixes", "partial repair remains actionable");
 assert(supplyChainFixAllIsPending("approval"), "approval phase prevents duplicate submissions");
+
+function firewallStatus(
+  reason: string,
+  options: { allowed?: boolean; installed?: boolean } = {},
+): PackageFirewallStatusResponse {
+  return {
+    operation: "status",
+    status: "ready",
+    supported_managers: ["npm"],
+    detected_managers: ["npm"],
+    last_audit_proof_at: null,
+    protection: null,
+    package_shims: [
+      {
+        active: options.installed === true,
+        activation_state: options.installed === true ? "repair_required" : "uninstalled",
+        detected: true,
+        installed: options.installed === true,
+        integrity: "ok",
+        last_intercept_proof_at: null,
+        manager: "npm",
+        path_broken: false,
+        path_index: null,
+        path_summary: null,
+        real_binary_found: true,
+        real_binary_path: null,
+        real_binary_path_index: null,
+        shim_path: null,
+        tested: false,
+      },
+    ],
+    entitlement: {
+      allowed: options.allowed === true,
+      reason,
+      tier: "local",
+      upgrade_cta: null,
+      upgrade_url: null,
+    },
+    actions: {},
+    cli_fallback: null,
+    connect_flow: null,
+  };
+}
+
+assert(
+  !supplyChainFixAllRequiresConnection(firewallStatus("paid_guard_cloud_required")),
+  "paid access does not enter a dead-end connect flow",
+);
+assert(
+  !supplyChainFixAllRequiresConnection(
+    firewallStatus("guard_cloud_connect_required", { installed: true }),
+  ),
+  "installed shims remain locally repairable before initial cloud connect",
+);
+assert(
+  supplyChainFixAllRequiresConnection(firewallStatus("guard_cloud_connect_required")),
+  "new shim installation requests cloud connect",
+);
+assert(
+  supplyChainFixAllRequiresConnection(
+    firewallStatus("guard_cloud_reconnect_required", { installed: true }),
+  ),
+  "expired authorization requires reconnect",
+);
+assert(
+  !supplyChainFixAllRequiresConnection(
+    firewallStatus("paid_entitlement_active", { allowed: true }),
+  ),
+  "active access runs repair immediately",
+);
 
 console.log("supply-chain-fix-all.test.tsx: all assertions passed");

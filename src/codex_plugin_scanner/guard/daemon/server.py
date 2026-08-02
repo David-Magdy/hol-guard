@@ -1512,6 +1512,41 @@ def _activate_package_firewall_runtime(context: HarnessContext) -> tuple[int, di
     )
 
 
+def _repair_detected_package_shims(context: HarnessContext) -> dict[str, object]:
+    current = package_shim_status(context)
+    installed_values = current.get("installed_managers")
+    detected_values = current.get("detected_managers")
+    current_installed = installed_values if isinstance(installed_values, list) else []
+    current_detected = detected_values if isinstance(detected_values, list) else []
+    managers = tuple(
+        dict.fromkeys(
+            [
+                *[str(value) for value in current_installed],
+                *[str(value) for value in current_detected],
+            ]
+        )
+    )
+    if not managers:
+        raise RuntimeError("no detected package managers")
+    result = activate_package_shims(context, managers=managers, repair=False)
+    verified = package_shim_status(context)
+    verified_installed_values = verified.get("installed_managers")
+    verified_detected_values = verified.get("detected_managers")
+    verified_installed = verified_installed_values if isinstance(verified_installed_values, list) else []
+    verified_detected = verified_detected_values if isinstance(verified_detected_values, list) else []
+    installed = {str(value) for value in verified_installed}
+    detected = {str(value) for value in verified_detected}
+    manager_details = verified.get("manager_details")
+    invalid_integrity = (
+        [detail for detail in manager_details if isinstance(detail, dict) and detail.get("integrity") != "ok"]
+        if isinstance(manager_details, list)
+        else ["missing manager details"]
+    )
+    if not detected.issubset(installed) or verified.get("missing_managers") or invalid_integrity:
+        raise RuntimeError("package shim verification failed")
+    return result
+
+
 def _resolve_package_firewall_connect_flow(
     *,
     server: _GuardDaemonHttpServer,
@@ -3591,7 +3626,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             return
 
         result = coordinate_supply_chain_repair(
-            repair_package_shims=lambda: activate_package_shims(context, managers=None, repair=True),
+            repair_package_shims=lambda: _repair_detected_package_shims(context),
             activate_runtime=lambda: _activate_package_firewall_runtime(context),
             sync_intelligence=lambda: _sync_supply_chain_cloud_state_with_optional_auth_context(
                 self.server.store,  # type: ignore[attr-defined]

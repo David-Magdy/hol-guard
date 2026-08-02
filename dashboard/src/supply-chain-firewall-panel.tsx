@@ -55,7 +55,10 @@ import {
   AuditRecoveryModal,
   type AuditRecoveryModalPhase,
 } from "./supply-chain-audit-recovery-modal";
-import type { SupplyChainFixAllState } from "./supply-chain-fix-all";
+import {
+  supplyChainFixAllRequiresConnection,
+  type SupplyChainFixAllState,
+} from "./supply-chain-fix-all";
 
 type PanelLoadState =
   | { phase: "loading" }
@@ -472,7 +475,9 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
 
   const handleFixAll = useCallback(
     async (credentials?: { approval_password?: string; approval_totp_code?: string }) => {
-      if (panelLoad.phase === "loaded" && !panelLoad.data.entitlement.allowed) {
+      const requiresConnection =
+        panelLoad.phase === "loaded" && supplyChainFixAllRequiresConnection(panelLoad.data);
+      if (requiresConnection) {
         setResumeFixAllAfterConnect(true);
         onFixAllStateChange?.({
           phase: "connecting",
@@ -576,10 +581,30 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
       });
       return;
     }
+    if (
+      panelLoad.data.connect_flow?.state === "idle" &&
+      !startingConnect &&
+      !panelLoad.data.entitlement.allowed
+    ) {
+      setResumeFixAllAfterConnect(false);
+      onFixAllStateChange?.({
+        phase: "error",
+        message: "Guard Cloud sign-in did not grant package protection access. Retry or review plan access.",
+        completedSteps: [],
+        failedSteps: ["Package protection access is still unavailable."],
+      });
+      return;
+    }
     if (!panelLoad.data.entitlement.allowed) return;
     setResumeFixAllAfterConnect(false);
     void handleFixAll();
-  }, [handleFixAll, onFixAllStateChange, panelLoad, resumeFixAllAfterConnect]);
+  }, [
+    handleFixAll,
+    onFixAllStateChange,
+    panelLoad,
+    resumeFixAllAfterConnect,
+    startingConnect,
+  ]);
 
   const handleRecoveryPrimary = useCallback(() => {
     if (

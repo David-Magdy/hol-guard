@@ -1526,6 +1526,28 @@ function AuditRecoveryModal({
     ] })
   ] }) });
 }
+const IDLE_SUPPLY_CHAIN_FIX_ALL_STATE = {
+  phase: "idle",
+  message: null,
+  completedSteps: [],
+  failedSteps: []
+};
+function supplyChainFixAllButtonLabel(phase) {
+  if (phase === "working") return "Fixing…";
+  if (phase === "approval") return "Approval required";
+  if (phase === "connecting") return "Connecting…";
+  if (phase === "incomplete" || phase === "error") return "Retry fixes";
+  return "Fix all";
+}
+function supplyChainFixAllIsPending(phase) {
+  return phase === "working" || phase === "approval" || phase === "connecting";
+}
+function supplyChainFixAllRequiresConnection(data) {
+  if (data.entitlement.allowed) return false;
+  if (data.entitlement.reason === "guard_cloud_reconnect_required") return true;
+  if (data.entitlement.reason !== "guard_cloud_connect_required") return false;
+  return !data.package_shims.some((entry) => entry.installed);
+}
 function actionLabel(op) {
   return op.charAt(0).toUpperCase() + op.slice(1);
 }
@@ -1856,7 +1878,8 @@ const PackageFirewallPanel = reactExports.forwardRef(function PackageFirewallPan
   }, [onStateChanged, refreshAfterOp]);
   const handleFixAll = reactExports.useCallback(
     async (credentials) => {
-      if (panelLoad.phase === "loaded" && !panelLoad.data.entitlement.allowed) {
+      const requiresConnection = panelLoad.phase === "loaded" && supplyChainFixAllRequiresConnection(panelLoad.data);
+      if (requiresConnection) {
         setResumeFixAllAfterConnect(true);
         onFixAllStateChange?.({
           phase: "connecting",
@@ -1959,10 +1982,26 @@ const PackageFirewallPanel = reactExports.forwardRef(function PackageFirewallPan
       });
       return;
     }
+    if (panelLoad.data.connect_flow?.state === "idle" && !startingConnect && !panelLoad.data.entitlement.allowed) {
+      setResumeFixAllAfterConnect(false);
+      onFixAllStateChange?.({
+        phase: "error",
+        message: "Guard Cloud sign-in did not grant package protection access. Retry or review plan access.",
+        completedSteps: [],
+        failedSteps: ["Package protection access is still unavailable."]
+      });
+      return;
+    }
     if (!panelLoad.data.entitlement.allowed) return;
     setResumeFixAllAfterConnect(false);
     void handleFixAll();
-  }, [handleFixAll, onFixAllStateChange, panelLoad, resumeFixAllAfterConnect]);
+  }, [
+    handleFixAll,
+    onFixAllStateChange,
+    panelLoad,
+    resumeFixAllAfterConnect,
+    startingConnect
+  ]);
   const handleRecoveryPrimary = reactExports.useCallback(() => {
     if (auditRecoveryGate === null || auditRecoveryPhase !== "ready" && auditRecoveryPhase !== "failed") {
       return;
@@ -2474,22 +2513,6 @@ function useSupplyChainAuditSession({
     handleAuditRunningChange,
     handleRunAudit
   };
-}
-const IDLE_SUPPLY_CHAIN_FIX_ALL_STATE = {
-  phase: "idle",
-  message: null,
-  completedSteps: [],
-  failedSteps: []
-};
-function supplyChainFixAllButtonLabel(phase) {
-  if (phase === "working") return "Fixing…";
-  if (phase === "approval") return "Approval required";
-  if (phase === "connecting") return "Connecting…";
-  if (phase === "incomplete" || phase === "error") return "Retry fixes";
-  return "Fix all";
-}
-function supplyChainFixAllIsPending(phase) {
-  return phase === "working" || phase === "approval" || phase === "connecting";
 }
 const SupplyChainWorkspace = reactExports.lazy(
   () => __vitePreload(() => import("./supply-chain-workspace.js"), true ? __vite__mapDeps([0,1,2,3,4,5]) : void 0).then((m) => ({ default: m.SupplyChainWorkspace }))

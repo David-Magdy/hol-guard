@@ -32,3 +32,11 @@ export function supplyChainFixAllButtonLabel(phase: SupplyChainFixAllPhase): str
 export function supplyChainFixAllIsPending(phase: SupplyChainFixAllPhase): boolean {
   return phase === "working" || phase === "approval" || phase === "connecting";
 }
+
+export function supplyChainFixAllRequiresConnection(data: PackageFirewallStatusResponse): boolean {
+  if (data.entitlement.allowed) return false;
+  if (data.entitlement.reason === "guard_cloud_reconnect_required") return true;
+  if (data.entitlement.reason !== "guard_cloud_connect_required") return false;
+  return !data.package_shims.some((entry) => entry.installed);
+}
+import type { PackageFirewallStatusResponse } from "./guard-types";
