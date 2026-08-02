@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from ..runtime.command_decision_adapter import effect_decision_to_dict
-from ..runtime.command_evaluation import evaluate_command
 from ..runtime.command_extensions import risk_classes_for_command_action
 from ..runtime.command_model import parse_shell_command
 from ..runtime.direct_vitest import (
@@ -64,6 +62,7 @@ from .commands_support_codex_tool_output_messages import (
     _codex_tool_output_runtime_reason,
     _codex_tool_output_runtime_summary,
 )
+from .commands_support_compound_decision import compound_command_decision_metadata
 from .commands_support_hook_payload import _coalesce_string
 from .commands_support_runtime_policy import _runtime_data_flow_summary
 from .commands_support_runtime_resolution import _canonical_harness_name, _runtime_policy_path
@@ -515,14 +514,14 @@ def _compound_runtime_artifact(
         }
     )
     if command_text is not None and canonical_command is not None:
-        evaluation = evaluate_command(
-            command_text,
-            canonical_command=canonical_command,
-            cwd=workspace,
-            home_dir=home_dir,
+        metadata.update(
+            compound_command_decision_metadata(
+                command_text,
+                canonical_command=canonical_command,
+                workspace=workspace,
+                home_dir=home_dir,
+            )
         )
-        metadata["command_action_floor"] = evaluation.decision_plane.action
-        metadata["command_decision_plane"] = effect_decision_to_dict(evaluation.decision_plane)
     if command_text is not None:
         execution_context = model_shell_execution_context(command_text, cwd=workspace, workspace_root=workspace)
         if not execution_context.complete:

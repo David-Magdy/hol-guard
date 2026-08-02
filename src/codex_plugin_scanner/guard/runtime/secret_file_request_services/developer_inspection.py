@@ -129,6 +129,8 @@ def _compound_developer_effect_graph(
     starts_with_literal_cd = shell_execution_context_starts_with_literal_cd(context)
     if not starts_with_literal_cd and cwd is None:
         return None
+    if not context.complete:
+        return None
     if is_low_risk_compound_git_inspection(context):
         return _known_context_effect_graph(context, DeveloperShellEffect.LOCAL_READ)
     typescript_context = direct_local_typescript_execution_context(
@@ -136,7 +138,7 @@ def _compound_developer_effect_graph(
         cwd=cwd,
         home_dir=home_dir,
     )
-    if typescript_context is not None:
+    if typescript_context is not None and typescript_context.complete:
         return _known_context_effect_graph(typescript_context, DeveloperShellEffect.SYNTAX_CHECK)
     github_assessment = classify_github_shell_capabilities(command_text, home_dir=home_dir)
     github_is_low_risk = github_assessment is not None and not github_capability_requires_confirmation(

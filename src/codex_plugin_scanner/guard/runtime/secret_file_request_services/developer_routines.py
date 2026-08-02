@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..git_execution_safety import trusted_git_binary_for_cwd
 from ..kubernetes_commands import kubernetes_read_only_inventory_args
 from ..shell_command_wrappers import is_trusted_absolute_command_path
 from ..shell_execution_context import ShellExecutionContext, model_shell_execution_context
@@ -12,13 +13,14 @@ from .docker_requests import (
     _shell_execution_context_validation_reason,
     _which_for_execution_cwd,
 )
+from .git_routines import _git_log_has_execution_free_config, _read_only_git_invocation
 from .shell_static_safety import (
     _leading_literal_cd_workspace_root,
     _safe_cli_metadata_segment_is_safe,
     _without_safe_inspection_redirections,
 )
 from .shell_tokenization import _iter_shell_command_segments, _shell_segment_primary_command
-from .tool_action_requests import _safe_git_status_cd_target
+from .tool_action_requests import _git_status_has_execution_free_config, _safe_git_status_cd_target
 
 
 def _looks_like_safe_kubernetes_inventory_command(
@@ -65,14 +67,30 @@ def _looks_like_safe_compound_developer_inspection(
 ) -> bool:
     """Auto-relax only a command with a complete bounded-observer effect graph."""
 
-    return (
-        _compound_developer_effect_graph(
-            command_text,
-            cwd=cwd,
-            home_dir=home_dir,
-        )
-        is not None
-    )
+    graph = _compound_developer_effect_graph(command_text, cwd=cwd, home_dir=home_dir)
+    if graph is None or not graph.context.complete:
+        return False
+    for segment in graph.context.segments:
+        command_name, command_index = _shell_segment_primary_command(list(segment.tokens))
+        if command_name != "git" or command_index is None:
+            continue
+        args = _without_safe_inspection_redirections(list(segment.tokens[command_index + 1 :]))
+        if args is None or not _git_segment_is_silently_verified(args, cwd=segment.effective_cwd or home_dir):
+            return False
+    return True
+
+
+def _git_segment_is_silently_verified(args: list[str], *, cwd: Path) -> bool:
+    invocation = _read_only_git_invocation(args, cwd=cwd)
+    git_binary = trusted_git_binary_for_cwd(cwd)
+    if invocation is None or git_binary is None:
+        return False
+    operation, git_cwd = invocation
+    if operation == "status":
+        return _git_status_has_execution_free_config(git_cwd, git_binary=git_binary)
+    if operation == "log":
+        return _git_log_has_execution_free_config(git_cwd, git_binary=git_binary)
+    return operation in {"ls-files", "rev-parse"}
 
 
 def _looks_like_safe_cli_metadata_command(command_text: str, parts: list[str], *, cwd: Path | None) -> bool:

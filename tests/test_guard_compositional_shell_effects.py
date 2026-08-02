@@ -58,6 +58,14 @@ def test_compound_effect_graph_rejects_unproven_or_mutating_segment(tmp_path: Pa
     assert _compound_developer_effect_graph(f"cd {workspace} && {suffix}", home_dir=home) is None
 
 
+def test_compound_effect_graph_rejects_incomplete_directory_proof(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "projects" / "workspace"
+    workspace.mkdir(parents=True)
+
+    assert _compound_developer_effect_graph(f"cd {workspace} && cd missing && pwd", home_dir=home) is None
+
+
 def test_compound_action_floor_applies_to_non_tool_action_primary() -> None:
     artifact = GuardArtifact(
         artifact_id="test:package",
