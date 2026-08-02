@@ -8,7 +8,12 @@ from ..git_execution_safety import trusted_git_binary_for_cwd
 from ..kubernetes_commands import kubernetes_read_only_inventory_args
 from ..shell_command_wrappers import is_trusted_absolute_command_path
 from ..shell_execution_context import ShellExecutionContext, model_shell_execution_context
-from .developer_inspection import DeveloperShellEffect, _compound_developer_effect_graph
+from .constants_core import _READ_ONLY_LOOKUP_COMMANDS, _READ_ONLY_LOOKUP_FILTERS, _SAFE_STATIC_SHELL_COMMANDS
+from .developer_inspection import (
+    DeveloperShellEffect,
+    _compound_developer_effect_graph,
+    _is_read_only_observer_interpreter_command,
+)
 from .docker_requests import (
     _shell_execution_context_validation_reason,
     _which_for_execution_cwd,
@@ -80,7 +85,8 @@ def _looks_like_safe_compound_developer_inspection(
     }
     if any(segment.effect not in silently_verified_effects for segment in graph.segments):
         return False
-    for segment in graph.context.segments:
+    effects_by_index = {segment.index: segment.effect for segment in graph.segments}
+    for index, segment in enumerate(graph.context.segments):
         command_name, command_index = _shell_segment_primary_command(list(segment.tokens))
         if command_index is None:
             return False
@@ -92,8 +98,31 @@ def _looks_like_safe_compound_developer_inspection(
         ):
             continue
         if command_name != "git":
-            continue
-        if args is None or not _git_segment_is_silently_verified(args, cwd=segment.effective_cwd or home_dir):
+            effect = effects_by_index.get(index)
+            if effect is DeveloperShellEffect.DIRECTORY and segment.directory_operation is not None:
+                continue
+            if effect is DeveloperShellEffect.REMOTE_READ and command_name == "gh":
+                continue
+            if effect is DeveloperShellEffect.LOCAL_READ and (
+                command_name in _READ_ONLY_LOOKUP_COMMANDS
+                or command_name == "wc"
+                or _is_read_only_observer_interpreter_command(command_name or "")
+            ):
+                continue
+            if effect is DeveloperShellEffect.STREAM_FILTER and command_name in {
+                *_READ_ONLY_LOOKUP_FILTERS,
+                "sort",
+            }:
+                continue
+            if effect is DeveloperShellEffect.STATIC_OUTPUT and command_name in _SAFE_STATIC_SHELL_COMMANDS:
+                continue
+            if effect is DeveloperShellEffect.SYNTAX_CHECK:
+                continue
+            return False
+        if args is None or not _git_segment_is_silently_verified(
+            args,
+            cwd=segment.effective_cwd or home_dir,
+        ):
             return False
     return True
 
