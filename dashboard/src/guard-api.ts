@@ -66,6 +66,8 @@ import type {
   GuardRuntimeSnapshot,
   GuardCloudConnectStatusResponse,
   SupplyChainBundle,
+  SupplyChainRepairResult,
+  SupplyChainRepairStepFailure,
   SupplyChainSnapshot,
   GuardSettingsPayload,
   GuardSettingsExport,
@@ -3909,6 +3911,70 @@ export async function runPackageSync(credentials?: {
     );
   }
   return normalizePackageFirewallAction(payloadBody);
+}
+
+export async function repairSupplyChainProtection(credentials?: {
+  approval_password?: string;
+  approval_totp_code?: string;
+}): Promise<SupplyChainRepairResult> {
+  if (isGuardDemoMode()) {
+    return {
+      repaired: true,
+      completed_steps: ["package_shims", "runtime_activation", "intelligence_sync"],
+      failed_steps: [],
+      message: "Supply-chain protection restored and refreshed.",
+    };
+  }
+  const response = await fetchGuardApi("/v1/supply-chain/repair", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...guardAuthHeaders(),
+    },
+    body: JSON.stringify({
+      ...(credentials?.approval_password !== undefined
+        ? { approval_password: credentials.approval_password }
+        : {}),
+      ...(credentials?.approval_totp_code !== undefined
+        ? { approval_totp_code: credentials.approval_totp_code }
+        : {}),
+    }),
+  });
+  const payloadBody = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) {
+    throw new GuardHarnessActionError(
+      response.status,
+      isGuardHarnessActionErrorPayload(payloadBody) ? payloadBody : null,
+    );
+  }
+  if (!isRecord(payloadBody) || !isRecord(payloadBody.result)) {
+    throw new Error("Guard returned an invalid supply-chain repair result.");
+  }
+  const result = payloadBody.result;
+  const failures: SupplyChainRepairStepFailure[] = [];
+  if (Array.isArray(result.failed_steps)) {
+    for (const candidate of result.failed_steps) {
+      if (!isRecord(candidate)) continue;
+      const step = stringValue(candidate.step);
+      const message = stringValue(candidate.message);
+      if (
+        (step === "package_shims" ||
+          step === "runtime_activation" ||
+          step === "intelligence_sync") &&
+        message !== null
+      ) {
+        failures.push({ step, message });
+      }
+    }
+  }
+  return {
+    repaired: result.repaired === true,
+    completed_steps: Array.isArray(result.completed_steps)
+      ? result.completed_steps.filter((value): value is string => typeof value === "string")
+      : [],
+    failed_steps: failures,
+    message: stringValue(result.message) ?? "Supply-chain repair finished.",
+  };
 }
 
 export type EvidencePageData = {

@@ -14,6 +14,7 @@ import {
   runPackageFirewallAction,
   runPackageAudit,
   runPackageSync,
+  repairSupplyChainProtection,
   startPackageFirewallConnect,
 } from "./guard-api";
 import {
@@ -54,6 +55,7 @@ import {
   AuditRecoveryModal,
   type AuditRecoveryModalPhase,
 } from "./supply-chain-audit-recovery-modal";
+import type { SupplyChainFixAllState } from "./supply-chain-fix-all";
 
 type PanelLoadState =
   | { phase: "loading" }
@@ -64,8 +66,8 @@ type PendingOp = FirewallPendingOp;
 type FailedOp = FirewallFailedOp;
 
 type ApprovalOp = {
-  op: PackageFirewallActionType;
-  manager: string;
+  op: PackageFirewallActionType | "fix_all";
+  manager: string | null;
 };
 
 type StatusFilter = FirewallStatusFilter;
@@ -77,6 +79,7 @@ export type PackageFirewallPanelHandle = {
   runAudit: () => void;
   startConnect: () => Promise<void>;
   activateRuntime: () => Promise<void>;
+  fixAll: () => void;
 };
 
 function actionLabel(op: PackageFirewallActionType): string {
@@ -167,6 +170,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
   onAuditCompleted?: (resultDetail: Record<string, unknown>) => void;
   onAuditStarted?: () => void;
   onAuditRunningChange?: (running: boolean) => void;
+  onFixAllStateChange?: (state: SupplyChainFixAllState) => void;
   runAuditRef?: MutableRefObject<(() => void) | null>;
 },
   ref,
@@ -180,6 +184,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
     onAuditCompleted,
     onAuditStarted,
     onAuditRunningChange,
+    onFixAllStateChange,
     runAuditRef,
   } = props;
   const rootRef = useRef<HTMLDivElement>(null);
@@ -203,6 +208,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
   const [auditRecoveryGate, setAuditRecoveryGate] = useState<SupplyChainAuditRecoveryGate | null>(null);
   const [auditRecoveryPhase, setAuditRecoveryPhase] = useState<AuditRecoveryModalPhase>("ready");
   const [auditRecoveryError, setAuditRecoveryError] = useState<string | null>(null);
+  const [resumeFixAllAfterConnect, setResumeFixAllAfterConnect] = useState(false);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(approvalGate);
 
   const openSyncApprovalRecovery = useCallback(
@@ -453,14 +459,127 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
       }
       await refreshAfterOp();
       await onStateChanged?.();
+      return true;
     } catch (error) {
       setConnectError(
         error instanceof Error ? error.message : "Unable to start Guard Cloud connect.",
       );
+      return false;
     } finally {
       setStartingConnect(false);
     }
   }, [onStateChanged, refreshAfterOp]);
+
+  const handleFixAll = useCallback(
+    async (credentials?: { approval_password?: string; approval_totp_code?: string }) => {
+      if (panelLoad.phase === "loaded" && !panelLoad.data.entitlement.allowed) {
+        setResumeFixAllAfterConnect(true);
+        onFixAllStateChange?.({
+          phase: "connecting",
+          message: "Finish Guard Cloud sign-in. Repair will resume here automatically.",
+          completedSteps: [],
+          failedSteps: [],
+        });
+        const started = await handleStartConnect();
+        if (!started) {
+          setResumeFixAllAfterConnect(false);
+          onFixAllStateChange?.({
+            phase: "error",
+            message: "Guard Cloud sign-in could not start. Retry fixes to try again.",
+            completedSteps: [],
+            failedSteps: ["Guard Cloud sign-in could not start."],
+          });
+        }
+        return;
+      }
+      onFixAllStateChange?.({
+        phase: "working",
+        message: "Repairing package tools, activation, and safety intelligence…",
+        completedSteps: [],
+        failedSteps: [],
+      });
+      try {
+        const result = await repairSupplyChainProtection(credentials);
+        await refreshAfterOp();
+        await onStateChanged?.();
+        onFixAllStateChange?.({
+          phase: result.repaired ? "success" : "incomplete",
+          message: result.message,
+          completedSteps: result.completed_steps,
+          failedSteps: result.failed_steps.map((failure) => failure.message),
+        });
+      } catch (error) {
+        if (credentials === undefined && isApprovalGateRequiredError(error)) {
+          await resolveApprovalGate();
+          setPendingApprovalOp({ op: "fix_all", manager: null });
+          onFixAllStateChange?.({
+            phase: "approval",
+            message: "Confirm once before Guard repairs supply-chain protection.",
+            completedSteps: [],
+            failedSteps: [],
+          });
+          return;
+        }
+        if (isSupplyChainSyncConnectError(error)) {
+          setResumeFixAllAfterConnect(true);
+          onFixAllStateChange?.({
+            phase: "connecting",
+            message: "Finish Guard Cloud sign-in. Repair will resume here automatically.",
+            completedSteps: [],
+            failedSteps: [],
+          });
+          const started = await handleStartConnect();
+          if (!started) {
+            setResumeFixAllAfterConnect(false);
+            onFixAllStateChange?.({
+              phase: "error",
+              message: "Guard Cloud sign-in could not start. Retry fixes to try again.",
+              completedSteps: [],
+              failedSteps: ["Guard Cloud sign-in could not start."],
+            });
+          }
+          return;
+        }
+        const message = readHarnessActionUserMessage(
+          error,
+          "Guard could not complete supply-chain repair. Retry here to continue safely.",
+        );
+        onFixAllStateChange?.({
+          phase: "error",
+          message,
+          completedSteps: [],
+          failedSteps: [message],
+        });
+      }
+    },
+    [
+      handleStartConnect,
+      onFixAllStateChange,
+      onStateChanged,
+      panelLoad,
+      refreshAfterOp,
+      resolveApprovalGate,
+    ],
+  );
+
+  useEffect(() => {
+    if (!resumeFixAllAfterConnect || panelLoad.phase !== "loaded") {
+      return;
+    }
+    if (panelLoad.data.connect_flow?.state === "failed") {
+      setResumeFixAllAfterConnect(false);
+      onFixAllStateChange?.({
+        phase: "error",
+        message: panelLoad.data.connect_flow.detail || "Guard Cloud sign-in did not finish. Retry fixes.",
+        completedSteps: [],
+        failedSteps: ["Guard Cloud sign-in did not finish."],
+      });
+      return;
+    }
+    if (!panelLoad.data.entitlement.allowed) return;
+    setResumeFixAllAfterConnect(false);
+    void handleFixAll();
+  }, [handleFixAll, onFixAllStateChange, panelLoad, resumeFixAllAfterConnect]);
 
   const handleRecoveryPrimary = useCallback(() => {
     if (
@@ -703,15 +822,29 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
       setActivatingRuntime(false);
     }
   }, [onStateChanged, refreshAfterOp]);
-  const handleApprovalCancel = useCallback(() => setPendingApprovalOp(null), []);
+  const handleApprovalCancel = useCallback(() => {
+    if (pendingApprovalOp?.op === "fix_all") {
+      onFixAllStateChange?.({
+        phase: "error",
+        message: "Repair was cancelled. No additional supply-chain changes were made.",
+        completedSteps: [],
+        failedSteps: [],
+      });
+    }
+    setPendingApprovalOp(null);
+  }, [onFixAllStateChange, pendingApprovalOp]);
   const handleApprovalConfirm = useCallback(
     (credentials: { approval_password?: string; approval_totp_code?: string }) => {
       const pendingApproval = pendingApprovalOp;
       if (pendingApproval === null) return;
       setPendingApprovalOp(null);
+      if (pendingApproval.op === "fix_all") {
+        void handleFixAll(credentials);
+        return;
+      }
       void handleAction(pendingApproval.op, pendingApproval.manager, credentials);
     },
-    [handleAction, pendingApprovalOp],
+    [handleAction, handleFixAll, pendingApprovalOp],
   );
 
   const handleStatusFilterChange = useCallback((filter: StatusFilter) => {
@@ -751,10 +884,15 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
       runAudit: () => {
         handleAudit();
       },
-      startConnect: handleStartConnect,
+      startConnect: async () => {
+        await handleStartConnect();
+      },
       activateRuntime: handleActivateRuntime,
+      fixAll: () => {
+        void handleFixAll();
+      },
     }),
-    [handleActivateRuntime, handleAudit, handleStartConnect],
+    [handleActivateRuntime, handleAudit, handleFixAll, handleStartConnect],
   );
 
 
@@ -835,9 +973,13 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
 
       {pendingApprovalOp !== null && (
         <ApprovalProofModal
-          title={`${actionLabel(pendingApprovalOp.op)} ${pendingApprovalOp.manager}`}
+          title={
+            pendingApprovalOp.op === "fix_all"
+              ? "Fix all supply-chain issues"
+              : `${actionLabel(pendingApprovalOp.op)} ${pendingApprovalOp.manager}`
+          }
           detail="Enter local approval proof before Guard changes package-manager protection on this device."
-          confirmLabel={actionLabel(pendingApprovalOp.op)}
+          confirmLabel={pendingApprovalOp.op === "fix_all" ? "Fix all" : actionLabel(pendingApprovalOp.op)}
           approvalGate={resolvedApprovalGate}
           onCancel={handleApprovalCancel}
           onConfirm={handleApprovalConfirm}

@@ -1019,6 +1019,18 @@ export type PackageFirewallActionResponse = {
   entitlement: PackageFirewallEntitlement;
 };
 
+export type SupplyChainRepairStepFailure = {
+  step: "package_shims" | "runtime_activation" | "intelligence_sync";
+  message: string;
+};
+
+export type SupplyChainRepairResult = {
+  repaired: boolean;
+  completed_steps: string[];
+  failed_steps: SupplyChainRepairStepFailure[];
+  message: string;
+};
+
 export type SupplyChainAuditDecision = "allow" | "monitor" | "warn" | "ask" | "block";
 
 export type SupplyChainAuditSeverity = "critical" | "high" | "medium" | "low" | "unknown";

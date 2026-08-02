@@ -18745,6 +18745,55 @@ async function runPackageSync(credentials) {
   }
   return normalizePackageFirewallAction(payloadBody);
 }
+async function repairSupplyChainProtection(credentials) {
+  if (isGuardDemoMode()) {
+    return {
+      repaired: true,
+      completed_steps: ["package_shims", "runtime_activation", "intelligence_sync"],
+      failed_steps: [],
+      message: "Supply-chain protection restored and refreshed."
+    };
+  }
+  const response = await fetchGuardApi("/v1/supply-chain/repair", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...guardAuthHeaders()
+    },
+    body: JSON.stringify({
+      ...credentials?.approval_password !== void 0 ? { approval_password: credentials.approval_password } : {},
+      ...credentials?.approval_totp_code !== void 0 ? { approval_totp_code: credentials.approval_totp_code } : {}
+    })
+  });
+  const payloadBody = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new GuardHarnessActionError(
+      response.status,
+      isGuardHarnessActionErrorPayload(payloadBody) ? payloadBody : null
+    );
+  }
+  if (!isRecord$1(payloadBody) || !isRecord$1(payloadBody.result)) {
+    throw new Error("Guard returned an invalid supply-chain repair result.");
+  }
+  const result = payloadBody.result;
+  const failures = [];
+  if (Array.isArray(result.failed_steps)) {
+    for (const candidate of result.failed_steps) {
+      if (!isRecord$1(candidate)) continue;
+      const step = stringValue$1(candidate.step);
+      const message = stringValue$1(candidate.message);
+      if ((step === "package_shims" || step === "runtime_activation" || step === "intelligence_sync") && message !== null) {
+        failures.push({ step, message });
+      }
+    }
+  }
+  return {
+    repaired: result.repaired === true,
+    completed_steps: Array.isArray(result.completed_steps) ? result.completed_steps.filter((value) => typeof value === "string") : [],
+    failed_steps: failures,
+    message: stringValue$1(result.message) ?? "Supply-chain repair finished."
+  };
+}
 const GITHUB_ISSUE_BASE_URL = "https://github.com/hashgraph-online/hol-guard/issues/new";
 const DEFAULT_ISSUE_BODY = [
   "## What happened?",
@@ -30166,7 +30215,7 @@ const SettingsWorkspace = reactExports.lazy(() => __vitePreload(() => import("./
 const AppDetailWorkspace = reactExports.lazy(() => __vitePreload(() => import("./chunks/app-detail-workspace.js"), true ? [] : void 0).then((m) => ({ default: m.AppDetailWorkspace })));
 const HelpModal = reactExports.lazy(() => __vitePreload(() => import("./chunks/help-modal.js"), true ? [] : void 0).then((m) => ({ default: m.HelpModal })));
 const SupplyChainHubWorkspace = reactExports.lazy(
-  () => __vitePreload(() => import("./chunks/supply-chain-hub-workspace.js").then((n) => n.a), true ? [] : void 0).then((m) => ({ default: m.SupplyChainHubWorkspace }))
+  () => __vitePreload(() => import("./chunks/supply-chain-hub-workspace.js").then((n) => n.c), true ? [] : void 0).then((m) => ({ default: m.SupplyChainHubWorkspace }))
 );
 const PolicyWorkspacePage = reactExports.lazy(
   () => __vitePreload(() => import("./chunks/policy-workspace-page.js"), true ? [] : void 0).then((m) => ({ default: m.PolicyWorkspacePage }))
@@ -31037,52 +31086,53 @@ export {
   startPackageFirewallConnect as b6,
   openPackageFirewallAuthorizeFallback as b7,
   PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b8,
-  runPackageFirewallAction as b9,
-  PaginationControls as bA,
-  HiMiniNoSymbol as bB,
-  HiMiniCube as bC,
-  HiMiniArrowDownTray as bD,
-  HiMiniQueueList as bE,
-  Surface as bF,
-  HiMiniCheckBadge as bG,
-  fetchSupplyChainBundle as bH,
-  isSupplyChainScannerEvidence as bI,
-  isBlockedGuardAction as bJ,
-  HiMiniDocumentMagnifyingGlass as bK,
-  HiMiniShieldExclamation as bL,
-  HiMiniComputerDesktop as bM,
-  HiMiniChevronLeft as bN,
-  HiMiniFunnel as bO,
-  HiMiniArrowDown as bP,
-  HiMiniArrowUp as bQ,
-  runAuditRemediation as bR,
-  HiMiniSignal as bS,
-  parseInterceptProofSnapshot as ba,
-  activatePackageFirewallRuntime as bb,
-  EntitlementNotice as bc,
-  fetchReceipts as bd,
-  WorkspacePageHeader as be,
-  __vitePreload as bf,
-  scopeLabel as bg,
-  guardAwareHref as bh,
-  HiMiniDocumentText as bi,
-  HiMiniCloudArrowUp as bj,
-  HiMiniCheck as bk,
-  HiMiniCodeBracket as bl,
-  HiMiniClipboardDocument as bm,
-  HiMiniUsers as bn,
-  HiMiniFolder as bo,
-  HiMiniInformationCircle as bp,
-  HiMiniIdentification as bq,
-  policyActionLabel as br,
-  createCloudExceptionRequest as bs,
-  HiMiniArrowRight as bt,
-  HiMiniPuzzlePiece as bu,
-  HiMiniGlobeAlt as bv,
-  fetchCloudExceptions as bw,
-  fetchCloudExceptionRequests as bx,
-  downloadBlob as by,
-  PolicyStatField as bz,
+  repairSupplyChainProtection as b9,
+  PolicyStatField as bA,
+  PaginationControls as bB,
+  HiMiniNoSymbol as bC,
+  HiMiniCube as bD,
+  HiMiniArrowDownTray as bE,
+  HiMiniQueueList as bF,
+  Surface as bG,
+  HiMiniCheckBadge as bH,
+  fetchSupplyChainBundle as bI,
+  isSupplyChainScannerEvidence as bJ,
+  isBlockedGuardAction as bK,
+  HiMiniDocumentMagnifyingGlass as bL,
+  HiMiniShieldExclamation as bM,
+  HiMiniComputerDesktop as bN,
+  HiMiniChevronLeft as bO,
+  HiMiniFunnel as bP,
+  HiMiniArrowDown as bQ,
+  HiMiniArrowUp as bR,
+  runAuditRemediation as bS,
+  HiMiniSignal as bT,
+  runPackageFirewallAction as ba,
+  parseInterceptProofSnapshot as bb,
+  activatePackageFirewallRuntime as bc,
+  EntitlementNotice as bd,
+  fetchReceipts as be,
+  WorkspacePageHeader as bf,
+  __vitePreload as bg,
+  scopeLabel as bh,
+  guardAwareHref as bi,
+  HiMiniDocumentText as bj,
+  HiMiniCloudArrowUp as bk,
+  HiMiniCheck as bl,
+  HiMiniCodeBracket as bm,
+  HiMiniClipboardDocument as bn,
+  HiMiniUsers as bo,
+  HiMiniFolder as bp,
+  HiMiniInformationCircle as bq,
+  HiMiniIdentification as br,
+  policyActionLabel as bs,
+  createCloudExceptionRequest as bt,
+  HiMiniArrowRight as bu,
+  HiMiniPuzzlePiece as bv,
+  HiMiniGlobeAlt as bw,
+  fetchCloudExceptions as bx,
+  fetchCloudExceptionRequests as by,
+  downloadBlob as bz,
   HiMiniChevronRight as c,
   createCommandActivityClient as d,
   harnessDisplayName as e,

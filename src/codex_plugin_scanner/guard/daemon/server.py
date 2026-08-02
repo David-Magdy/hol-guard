@@ -209,6 +209,7 @@ from ..store_evidence import (
     list_evidence,
 )
 from ..store_storage_maintenance import DEFAULT_GUARD_EVENT_LIMIT, DEFAULT_RECEIPT_DETAIL_LIMIT
+from ..supply_chain_repair import coordinate_supply_chain_repair
 from .command_activity_api import (
     handle_command_activity_analytics,
     handle_command_activity_diagnostics,
@@ -2505,6 +2506,9 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/protection/repair":
             self._handle_protection_repair(payload)
             return
+        if parsed.path == "/v1/supply-chain/repair":
+            self._handle_supply_chain_repair(payload)
+            return
         if parsed.path == "/v1/insights/share":
             self._handle_insights_share_publish(payload)
             return
@@ -3551,6 +3555,65 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "status": "completed",
                 "supported_managers": list(package_shim_supported_managers()),
                 "package_shims": status,
+            }
+        )
+
+    def _handle_supply_chain_repair(self, payload: dict[str, object]) -> None:
+        if not self._enforce_package_firewall_rate_limit("repair", payload):
+            return
+        entitlement = self._supply_chain_entitlement()
+        context = self._supply_chain_context(payload)
+        current_status = package_shim_status(context)
+        if not package_firewall_operation_allowed(
+            entitlement,
+            "repair",
+            has_installed_managers=bool(current_status.get("installed_managers")),
+        ):
+            status, error_code, message = package_firewall_block_details(entitlement)
+            self._write_json(
+                {
+                    "entitlement": entitlement,
+                    "error": error_code,
+                    "message": message,
+                    "operation": "repair_all",
+                },
+                status=status,
+            )
+            return
+        try:
+            require_high_risk(
+                self.server.store.guard_home,  # type: ignore[attr-defined]
+                purpose="supply_chain_firewall",
+                approval_gate_input=approval_gate_input_from_mapping(payload),
+            )
+        except ApprovalGateError as error:
+            self._write_approval_gate_error(error)
+            return
+
+        result = coordinate_supply_chain_repair(
+            repair_package_shims=lambda: activate_package_shims(context, managers=None, repair=True),
+            activate_runtime=lambda: _activate_package_firewall_runtime(context),
+            sync_intelligence=lambda: _sync_supply_chain_cloud_state_with_optional_auth_context(
+                self.server.store,  # type: ignore[attr-defined]
+                None,
+                workspace_dir=context.workspace_dir,
+            ),
+        )
+        receipt = self._record_headless_receipt(
+            harness="package-firewall",
+            operation="repair_all",
+            payload=payload,
+            result=result,
+            workspace_id=self._optional_string(payload.get("workspace_id"))
+            or self.server.store.get_cloud_workspace_id(),  # type: ignore[attr-defined]
+        )
+        self._write_json(
+            {
+                "entitlement": entitlement,
+                "operation": "repair_all",
+                "receipt": receipt,
+                "result": result,
+                "status": "completed" if result["repaired"] is True else "incomplete",
             }
         )
 
@@ -6562,6 +6625,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             return "supply_chain_entitlement"
         if path == "/v1/supply-chain/bundle":
             return "supply_chain_bundle"
+        if path == "/v1/supply-chain/repair":
+            return "package_shims_repair"
         if len(path_parts) == 4 and path_parts[:3] == ["v1", "supply-chain", "package-shims"]:
             action = "remove" if path_parts[3] == "uninstall" else path_parts[3]
             if action in {"activate", "install", "repair", "test", "remove", "open-shell"}:
