@@ -46,6 +46,8 @@ def safe_jq_arguments(arguments: Sequence[str]) -> bool:
             and all(character in _SAFE_SHORT_OPTION_CHARACTERS for character in argument[1:])
         ):
             continue
+        if argument.startswith("-"):
+            return False
         if filter_seen:
             return False
         filter_seen = True

@@ -165,7 +165,7 @@ def _safe_local_path(
     if classify_sensitive_path(str(resolved), cwd=cwd, home_dir=home_dir) is not None:
         return False
     in_workspace = resolved == cwd or cwd in resolved.parents
-    in_home = home_dir is None or resolved == home_dir or home_dir in resolved.parents
+    in_home = home_dir is not None and (resolved == home_dir or home_dir in resolved.parents)
     return in_workspace or in_home
 
 

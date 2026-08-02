@@ -11,6 +11,7 @@ from codex_plugin_scanner.cli import main
 from codex_plugin_scanner.guard.approvals import apply_approval_resolution
 from codex_plugin_scanner.guard.cli import commands as guard_commands_module
 from codex_plugin_scanner.guard.store import GuardStore
+from codex_plugin_scanner.guard.trusted_local_tool_jq import safe_jq_arguments
 from codex_plugin_scanner.guard.trusted_local_tools import (
     local_tool_approval_eligibility,
     parse_local_tool_grant_selection,
@@ -142,6 +143,10 @@ def test_local_tool_eligibility_supports_verified_jq_output_processing(
     assert changed_filter.tool_identity_hash != eligibility.tool_identity_hash
 
 
+def test_jq_trust_rejects_unknown_options() -> None:
+    assert safe_jq_arguments(["--indent"]) is False
+
+
 def test_impeccable_local_scan_can_receive_conditional_package_trust(tmp_path: Path) -> None:
     source = tmp_path / "src"
     source.mkdir()
@@ -177,6 +182,22 @@ def test_impeccable_local_scan_can_receive_conditional_package_trust(tmp_path: P
     )
     assert latest is not None
     assert latest.tool_identity_hash != eligibility.tool_identity_hash
+
+
+def test_impeccable_package_trust_without_home_stays_in_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.tsx"
+    _ = outside.write_text("export const Outside = () => null;\n")
+
+    assert (
+        local_tool_approval_eligibility(
+            f"npx impeccable@3.3.1 --json {outside}",
+            cwd=workspace,
+            home_dir=None,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
