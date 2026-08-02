@@ -173,6 +173,7 @@ def _script_payload_has_list_operators(script: str) -> bool:
             quote = character
         elif (
             character == "`"
+            or character in {"\n", "\r"}
             or character in _SHELL_LIST_OPERATOR_CHARS
             or (character == "$" and index + 1 < len(script) and script[index + 1] == "(")
         ):

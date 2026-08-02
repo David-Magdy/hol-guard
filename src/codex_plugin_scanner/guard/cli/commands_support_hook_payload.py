@@ -42,11 +42,18 @@ def _hook_event_name(payload: dict[str, object]) -> str | None:
 
     return resolve(payload)
 
+
+def _write_json_line(payload: dict[str, object], *, output_stream: TextIO | None = None) -> None:
+    """Resolve hook output lazily without reintroducing the prompt import cycle."""
+
+    from .commands_support_prompts import _write_json_line as resolve
+
+    resolve(payload, output_stream=output_stream)
+
 if TYPE_CHECKING:
     from ..store import GuardStore
     from ._commands_shared import _GUARD_CLIENT_VERSION, _HOOK_DAEMON_UNREACHABLE_REASON_MARKER, _now
     from .commands_support_interaction import _attach_primary_approval_link, _preferred_approval_review_url
-    from .commands_support_prompts import _write_json_line
     from .commands_support_runtime_policy import _approval_delivery_payload, _localize_pending_approval_copy
 
 

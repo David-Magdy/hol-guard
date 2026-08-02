@@ -2,12 +2,9 @@
 
 # pyright: reportImportCycles=false
 
-# ruff: noqa: E402, F403, F405, I001
+# ruff: noqa: E402, F403, F405
 
 from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 
 _CODEX_TOOL_RESPONSE_MAX_DEPTH = 5
 _CODEX_TOOL_RESPONSE_TEXT_LIMIT = 5 * 1024 * 1024
@@ -38,15 +35,22 @@ def _truncate_codex_display_text(value: str, *, limit: int) -> str:
     return resolve(value, limit=limit)
 
 
-if TYPE_CHECKING:
-    from .commands_support_codex_commands import (
-        _CODEX_SEARCH_OPTION_VALUE_FLAGS,
-        _CODEX_SEARCH_OPTION_VALUE_FLAGS_BY_EXECUTABLE,
-        _CODEX_SEARCH_PATTERN_VALUE_FLAGS,
-        _CODEX_SEARCH_UNSAFE_FLAGS,
-        _CODEX_SEARCH_UNSAFE_SHORT_FLAGS_BY_EXECUTABLE,
+def _codex_search_constants():
+    from . import commands_support_codex_commands as commands
+
+    return (
+        commands._CODEX_SEARCH_OPTION_VALUE_FLAGS,
+        commands._CODEX_SEARCH_OPTION_VALUE_FLAGS_BY_EXECUTABLE,
+        commands._CODEX_SEARCH_PATTERN_VALUE_FLAGS,
+        commands._CODEX_SEARCH_UNSAFE_FLAGS,
+        commands._CODEX_SEARCH_UNSAFE_SHORT_FLAGS_BY_EXECUTABLE,
     )
-    from .commands_support_codex_reads import _codex_sed_args_are_bounded_filter
+
+
+def _codex_sed_args_are_bounded_filter(args: list[str]) -> bool:
+    from .commands_support_codex_reads import _codex_sed_args_are_bounded_filter as resolve
+
+    return resolve(args)
 
 
 from ._commands_shared import *
@@ -219,6 +223,7 @@ def _codex_fd_exec_is_bounded_read_only(args: list[str]) -> bool:
 
 
 def _codex_grep_args_request_recursive_search(args: list[str]) -> bool:
+    _, _, pattern_value_flags, _, _ = _codex_search_constants()
     skip_next = False
     for index, arg in enumerate(args):
         if skip_next:
@@ -226,7 +231,7 @@ def _codex_grep_args_request_recursive_search(args: list[str]) -> bool:
             continue
         if arg == "--":
             return False
-        if arg in _CODEX_SEARCH_PATTERN_VALUE_FLAGS:
+        if arg in pattern_value_flags:
             skip_next = True
             continue
         if any(arg.startswith(flag) and len(arg) > len(flag) for flag in ("-e", "-f")):
@@ -257,13 +262,12 @@ def _codex_grep_args_request_recursive_search(args: list[str]) -> bool:
 
 
 def _codex_search_targets(args: list[str], *, executable: str) -> tuple[str, ...]:
+    option_flags, option_flags_by_executable, pattern_value_flags, _, _ = _codex_search_constants()
     positional: list[str] = []
     skip_next = False
     pattern_from_option = False
     after_option_terminator = False
-    option_value_flags = _CODEX_SEARCH_OPTION_VALUE_FLAGS | _CODEX_SEARCH_OPTION_VALUE_FLAGS_BY_EXECUTABLE.get(
-        executable, frozenset()
-    )
+    option_value_flags = option_flags | option_flags_by_executable.get(executable, frozenset())
     for arg in args:
         if skip_next:
             skip_next = False
@@ -276,7 +280,7 @@ def _codex_search_targets(args: list[str], *, executable: str) -> tuple[str, ...
             continue
         if _codex_search_arg_is_unsafe(arg, executable=executable, option_value_flags=option_value_flags):
             return ()
-        if arg in _CODEX_SEARCH_PATTERN_VALUE_FLAGS:
+        if arg in pattern_value_flags:
             pattern_from_option = True
             skip_next = True
             continue
@@ -286,7 +290,7 @@ def _codex_search_targets(args: list[str], *, executable: str) -> tuple[str, ...
         if arg in option_value_flags:
             skip_next = True
             continue
-        if any(arg.startswith(f"{flag}=") for flag in _CODEX_SEARCH_PATTERN_VALUE_FLAGS):
+        if any(arg.startswith(f"{flag}=") for flag in pattern_value_flags):
             pattern_from_option = True
             continue
         if any(arg.startswith(f"{flag}=") for flag in option_value_flags):
@@ -302,13 +306,14 @@ def _codex_search_targets(args: list[str], *, executable: str) -> tuple[str, ...
 
 
 def _codex_search_arg_is_unsafe(arg: str, *, executable: str, option_value_flags: frozenset[str]) -> bool:
-    if arg in _CODEX_SEARCH_UNSAFE_FLAGS:
+    _, _, _, unsafe_flags, unsafe_short_flags_by_executable = _codex_search_constants()
+    if arg in unsafe_flags:
         return True
-    if any(arg.startswith(f"{flag}=") for flag in _CODEX_SEARCH_UNSAFE_FLAGS):
+    if any(arg.startswith(f"{flag}=") for flag in unsafe_flags):
         return True
     if not arg.startswith("-") or arg.startswith("--"):
         return False
-    unsafe_short_flags = _CODEX_SEARCH_UNSAFE_SHORT_FLAGS_BY_EXECUTABLE.get(executable, frozenset())
+    unsafe_short_flags = unsafe_short_flags_by_executable.get(executable, frozenset())
     for flag in arg[1:]:
         if flag in unsafe_short_flags:
             return True

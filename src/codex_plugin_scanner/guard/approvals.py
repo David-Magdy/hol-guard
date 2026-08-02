@@ -763,11 +763,7 @@ def apply_approval_resolution(
     elif persist_policy is None and scope == "artifact" and temporary_mcp_selection is None:
         once_decision = replace(
             decision,
-            expires_at=(
-                temporary_mcp_selection.expires_at
-                if temporary_mcp_selection is not None and temporary_mcp_selection.target == "exact"
-                else _approval_once_policy_expires_at(resolved_at)
-            ),
+            expires_at=_approval_once_policy_expires_at(resolved_at),
         )
         store.ensure_policy_integrity_ready_for_write(
             harness=once_decision.harness if once_decision.harness != "*" else None,

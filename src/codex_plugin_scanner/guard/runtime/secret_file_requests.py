@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from .command_evaluation import evaluate_command
 from .command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
@@ -167,23 +168,54 @@ _SERVICE_MODULES = (
     _shell_environment,
 )
 for _service_module in _SERVICE_MODULES:
-    for _service_name in _service_module.__all__:
+    _service_exports = getattr(_service_module, "__all__", None)
+    if not isinstance(_service_exports, (list, tuple)) or not all(isinstance(name, str) for name in _service_exports):
+        raise RuntimeError(f"invalid service export contract: {_service_module.__name__}")
+    for _service_name in cast("tuple[str, ...] | list[str]", _service_exports):
+        if not hasattr(_service_module, _service_name):
+            raise RuntimeError(f"missing service export: {_service_module.__name__}.{_service_name}")
         globals().setdefault(_service_name, getattr(_service_module, _service_name))
+
+
+_COMPATIBILITY_OVERRIDE_TARGETS = {
+    "BUILT_IN_COMMAND_EXTENSION_REGISTRY": (_shell_request_classifier,),
+    "evaluate_command": (_benign_requests,),
+    "is_trusted_absolute_command_path": (_developer_routines, _interpreter_trust),
+    "model_shell_execution_context": (
+        _developer_routines,
+        _shell_request_classifier,
+        _tool_action_requests,
+        _source_edit_context,
+        _encoded_payloads,
+        _interpreter_identity,
+        _shell_quote_parsing,
+        _developer_inspection,
+        _git_routines,
+    ),
+}
+_compatibility_override_state: tuple[object, ...] | None = None
 
 
 def _sync_compatibility_overrides() -> None:
     """Forward legacy monkeypatch points into their owning services."""
 
+    global _compatibility_override_state
     overrides = {
         "BUILT_IN_COMMAND_EXTENSION_REGISTRY": BUILT_IN_COMMAND_EXTENSION_REGISTRY,
         "evaluate_command": evaluate_command,
         "is_trusted_absolute_command_path": is_trusted_absolute_command_path,
         "model_shell_execution_context": model_shell_execution_context,
     }
-    for service_module in _SERVICE_MODULES:
-        for name, value in overrides.items():
-            if hasattr(service_module, name):
+    state = tuple(overrides.values())
+    if _compatibility_override_state is not None and all(
+        previous is current for previous, current in zip(_compatibility_override_state, state, strict=True)
+    ):
+        return
+    for name, value in overrides.items():
+        for service_module in _COMPATIBILITY_OVERRIDE_TARGETS[name]:
+            if getattr(service_module, name, None) is not value:
                 setattr(service_module, name, value)
+    _compatibility_override_state = state
 
 
 def extract_sensitive_tool_action_request(

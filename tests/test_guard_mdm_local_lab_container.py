@@ -22,8 +22,6 @@ def _load_launcher() -> ModuleType:
     return module
 
 
-
-
 def test_local_mdm_container_launcher_disables_network() -> None:
     completed = subprocess.run(
         [sys.executable, str(_LAUNCHER), "--dry-run"],
@@ -90,3 +88,35 @@ def test_local_mdm_container_launcher_reports_timeout(
 
     assert launcher.main() == 124
     assert capsys.readouterr().err.startswith("local MDM container command timed out after 300 seconds:")
+
+
+def test_local_mdm_container_launcher_reports_failed_build(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launcher = _load_launcher()
+
+    def failed_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(9, command)
+
+    monkeypatch.setattr(sys, "argv", [str(_LAUNCHER)])
+    monkeypatch.setattr(launcher.subprocess, "run", failed_run)
+
+    assert launcher.main() == 9
+    assert "failed with exit code 9" in capsys.readouterr().err
+
+
+def test_local_mdm_container_launcher_reports_missing_docker(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launcher = _load_launcher()
+
+    def missing_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("docker")
+
+    monkeypatch.setattr(sys, "argv", [str(_LAUNCHER)])
+    monkeypatch.setattr(launcher.subprocess, "run", missing_run)
+
+    assert launcher.main() == 127
+    assert "could not start: docker" in capsys.readouterr().err

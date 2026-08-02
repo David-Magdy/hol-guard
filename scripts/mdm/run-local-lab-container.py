@@ -16,7 +16,6 @@ _DEFAULT_IMAGE: Final = "hol-guard-mdm-local-lab:local"
 _COMMAND_TIMEOUT_SECONDS: Final = 300
 
 
-
 def _docker_build_command(image: str) -> list[str]:
     return ["docker", "build", "--tag", image, "--file", str(_DOCKERFILE), str(_REPOSITORY_ROOT)]
 
@@ -58,6 +57,12 @@ def main() -> int:
             file=sys.stderr,
         )
         return 124
+    except subprocess.CalledProcessError as error:
+        print(f"local MDM container command failed with exit code {error.returncode}: {error.cmd}", file=sys.stderr)
+        return error.returncode
+    except OSError as error:
+        print(f"local MDM container command could not start: {error}", file=sys.stderr)
+        return 127
 
 
 if __name__ == "__main__":

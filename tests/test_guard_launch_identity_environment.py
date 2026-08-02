@@ -235,6 +235,11 @@ def test_script_payload_scanner_detects_adjacent_list_operators(operator: str) -
     assert _script_payload_has_list_operators(f"echo one{operator}tool")
 
 
+@pytest.mark.parametrize("separator", ("\n", "\r"))
+def test_script_payload_scanner_detects_line_separators(separator: str) -> None:
+    assert _script_payload_has_list_operators(f"echo one{separator}tool")
+
+
 @pytest.mark.parametrize(
     "payload",
     (
