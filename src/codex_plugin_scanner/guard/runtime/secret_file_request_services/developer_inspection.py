@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from ..compound_git_inspection import is_low_risk_compound_git_inspection, is_low_risk_git_inspection_segment
@@ -51,6 +53,44 @@ from .shell_static_safety import (
 from .shell_tokenization import _shell_segment_primary_command
 
 
+class DeveloperShellEffect(str, Enum):
+    """Effects that may participate in a silently verified inspection chain."""
+
+    DIRECTORY = "directory"
+    LOCAL_READ = "local-read"
+    REMOTE_READ = "remote-read"
+    STREAM_FILTER = "stream-filter"
+    STATIC_OUTPUT = "static-output"
+    SYNTAX_CHECK = "syntax-check"
+
+
+@dataclass(frozen=True, slots=True)
+class DeveloperShellSegmentEffect:
+    index: int
+    command_name: str
+    effect: DeveloperShellEffect
+
+
+@dataclass(frozen=True, slots=True)
+class DeveloperShellEffectGraph:
+    """Complete, ordered proof that every shell segment is a bounded observer."""
+
+    context: ShellExecutionContext
+    segments: tuple[DeveloperShellSegmentEffect, ...]
+
+    @property
+    def has_observation(self) -> bool:
+        return any(
+            segment.effect
+            in {
+                DeveloperShellEffect.LOCAL_READ,
+                DeveloperShellEffect.REMOTE_READ,
+                DeveloperShellEffect.SYNTAX_CHECK,
+            }
+            for segment in self.segments
+        )
+
+
 def _low_risk_compound_developer_execution_context(
     command_text: str,
     *,
@@ -58,6 +98,18 @@ def _low_risk_compound_developer_execution_context(
     home_dir: Path,
 ) -> ShellExecutionContext | None:
     """Recognize one inspection chain after optional delay handling."""
+
+    graph = _compound_developer_effect_graph(command_text, cwd=cwd, home_dir=home_dir)
+    return graph.context if graph is not None else None
+
+
+def _compound_developer_effect_graph(
+    command_text: str,
+    *,
+    cwd: Path | None = None,
+    home_dir: Path,
+) -> DeveloperShellEffectGraph | None:
+    """Prove a compound developer command by composing each segment's effect."""
 
     initial_root = cwd or home_dir
     context = model_shell_execution_context(
@@ -77,23 +129,27 @@ def _low_risk_compound_developer_execution_context(
     starts_with_literal_cd = shell_execution_context_starts_with_literal_cd(context)
     if not starts_with_literal_cd and cwd is None:
         return None
+    if not context.complete:
+        return None
     if is_low_risk_compound_git_inspection(context):
-        return context
+        return _known_context_effect_graph(context, DeveloperShellEffect.LOCAL_READ)
     typescript_context = direct_local_typescript_execution_context(
         command_text,
         cwd=cwd,
         home_dir=home_dir,
     )
-    if typescript_context is not None:
-        return typescript_context
+    if typescript_context is not None and typescript_context.complete:
+        return _known_context_effect_graph(typescript_context, DeveloperShellEffect.SYNTAX_CHECK)
     github_assessment = classify_github_shell_capabilities(command_text, home_dir=home_dir)
     github_is_low_risk = github_assessment is not None and not github_capability_requires_confirmation(
         github_assessment
     )
     inspection_root = context.workspace_root or home_dir
-    saw_inspection = False
+    effects: list[DeveloperShellSegmentEffect] = []
     first_inspection_segment = 1 if starts_with_literal_cd else 0
-    for segment in context.segments[first_inspection_segment:]:
+    if starts_with_literal_cd:
+        effects.append(DeveloperShellSegmentEffect(0, "cd", DeveloperShellEffect.DIRECTORY))
+    for index, segment in enumerate(context.segments[first_inspection_segment:], start=first_inspection_segment):
         if any(
             control not in {"&&", "||", "|", ";", "\n"} for control in (*segment.control_before, *segment.control_after)
         ):
@@ -120,15 +176,16 @@ def _low_risk_compound_developer_execution_context(
         if any(_shell_token_escapes_root(arg, cwd=segment_root, root=inspection_root) for arg in root_checked_args):
             return None
         if segment.directory_operation is not None:
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.DIRECTORY))
             continue
         if command_name == "git" and is_low_risk_git_inspection_segment(segment):
-            saw_inspection = True
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.LOCAL_READ))
             continue
         if command_name == "gh" and github_is_low_risk:
-            saw_inspection = True
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.REMOTE_READ))
             continue
         if _safe_cli_metadata_segment_is_safe(command_name, args, cwd=segment_root):
-            saw_inspection = True
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.LOCAL_READ))
             continue
         if (
             command_name in _READ_ONLY_LOOKUP_COMMANDS
@@ -144,9 +201,10 @@ def _low_risk_compound_developer_execution_context(
                 root=inspection_root,
             )
         ):
-            saw_inspection = True
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.LOCAL_READ))
             continue
         if safe_pipe_filter:
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.STREAM_FILTER))
             continue
         if (
             command_name == "wc"
@@ -157,26 +215,44 @@ def _low_risk_compound_developer_execution_context(
                 for arg in args
             )
         ):
-            saw_inspection = True
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.LOCAL_READ))
             continue
         if (
             command_name == "sort"
             and segment.control_before == ("|",)
             and all(arg in {"-n", "-r", "-u"} for arg in args)
         ):
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.STREAM_FILTER))
             continue
         if command_name in _SAFE_STATIC_SHELL_COMMANDS and _static_shell_segment_is_safe(args):
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.STATIC_OUTPUT))
             continue
         if _shell_syntax_check_segment_is_safe(command_name, args):
-            saw_inspection = True
+            effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.SYNTAX_CHECK))
             continue
         if _is_read_only_observer_interpreter_command(command_name):
             scripts = list(_script_interpreter_texts(list(segment.tokens)))
             if scripts and all(_script_is_read_only_observer(script) for script in scripts):
-                saw_inspection = True
+                effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.LOCAL_READ))
                 continue
         return None
-    return context if saw_inspection else None
+    graph = DeveloperShellEffectGraph(context=context, segments=tuple(effects))
+    return graph if graph.has_observation else None
+
+
+def _known_context_effect_graph(
+    context: ShellExecutionContext,
+    observation_effect: DeveloperShellEffect,
+) -> DeveloperShellEffectGraph:
+    effects = tuple(
+        DeveloperShellSegmentEffect(
+            index,
+            _shell_segment_primary_command(list(segment.tokens))[0] or "unknown",
+            DeveloperShellEffect.DIRECTORY if segment.directory_operation is not None else observation_effect,
+        )
+        for index, segment in enumerate(context.segments)
+    )
+    return DeveloperShellEffectGraph(context=context, segments=effects)
 
 
 def _read_only_lookup_primary_segment_is_safe(command: str, args: list[str], *, home_dir: Path | None) -> bool:
@@ -362,6 +438,10 @@ def _is_read_only_observer_interpreter_command(command_name: str) -> bool:
 
 
 __all__ = [
+    "DeveloperShellEffect",
+    "DeveloperShellEffectGraph",
+    "DeveloperShellSegmentEffect",
+    "_compound_developer_effect_graph",
     "_fd_exec_sed_read_only_args_are_safe",
     "_find_args_use_write_or_unsafe_exec_action",
     "_find_exec_sed_args_are_read_only",

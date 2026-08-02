@@ -62,6 +62,7 @@ from .commands_support_codex_tool_output_messages import (
     _codex_tool_output_runtime_reason,
     _codex_tool_output_runtime_summary,
 )
+from .commands_support_compound_decision import compound_command_decision_metadata
 from .commands_support_hook_payload import _coalesce_string
 from .commands_support_runtime_policy import _runtime_data_flow_summary
 from .commands_support_runtime_resolution import _canonical_harness_name, _runtime_policy_path
@@ -512,6 +513,15 @@ def _compound_runtime_artifact(
             ),
         }
     )
+    if command_text is not None and canonical_command is not None:
+        metadata.update(
+            compound_command_decision_metadata(
+                command_text,
+                canonical_command=canonical_command,
+                workspace=workspace,
+                home_dir=home_dir,
+            )
+        )
     if command_text is not None:
         execution_context = model_shell_execution_context(command_text, cwd=workspace, workspace_root=workspace)
         if not execution_context.complete:
