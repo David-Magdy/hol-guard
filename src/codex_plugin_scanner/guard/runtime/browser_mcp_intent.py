@@ -831,7 +831,10 @@ def _detect_sensitive_surfaces(
         surfaces.append("auth_headers")
     if any(p in all_text for p in _SENSITIVE_CDP_PATTERNS):
         surfaces.append("cdp")
-    if any(p in all_text for p in _SENSITIVE_SCRIPT_EVAL_PATTERNS):
+    # Optional schema capabilities are not active effects. Browser servers may
+    # describe script-related options on otherwise routine tools; only the
+    # operation or supplied argument keys prove script execution for this call.
+    if any(p in active_text for p in _SENSITIVE_SCRIPT_EVAL_PATTERNS):
         surfaces.append("script_eval")
     if any(p in active_text for p in _SENSITIVE_UPLOAD_PATTERNS):
         surfaces.append("upload")

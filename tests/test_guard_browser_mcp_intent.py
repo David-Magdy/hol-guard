@@ -896,6 +896,56 @@ class TestFullIntentNormalization:
         assert result.intent == "browser.privileged"
         assert "script_eval" in result.sensitive_surface_flags
 
+    def test_navigate_page_ignores_unused_script_schema_capability(self) -> None:
+        from dataclasses import replace
+
+        from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
+            normalize_browser_mcp_intent,
+        )
+
+        artifact, arguments = _browser_artifact(
+            tool_name="navigate_page",
+            arguments={"type": "url", "url": "http://localhost:3000/guard"},
+        )
+        artifact = replace(
+            artifact,
+            metadata={
+                **artifact.metadata,
+                "tool_schema": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string"},
+                        "initScript": {"type": "string"},
+                    },
+                },
+            },
+        )
+
+        result = normalize_browser_mcp_intent(artifact, arguments)
+
+        assert result is not None
+        assert result.intent == "browser.navigation"
+        assert result.sensitive_surface_flags == ()
+
+    def test_supplied_script_argument_remains_sensitive(self) -> None:
+        from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
+            normalize_browser_mcp_intent,
+        )
+
+        artifact, arguments = _browser_artifact(
+            tool_name="navigate_page",
+            arguments={
+                "type": "url",
+                "url": "http://localhost:3000/guard",
+                "initScript": "document.title",
+            },
+        )
+
+        result = normalize_browser_mcp_intent(artifact, arguments)
+
+        assert result is not None
+        assert "script_eval" in result.sensitive_surface_flags
+
     def test_fill_form_is_interact(self) -> None:
         from codex_plugin_scanner.guard.runtime.browser_mcp_intent import (
             normalize_browser_mcp_intent,
