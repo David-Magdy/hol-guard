@@ -43,6 +43,7 @@ import {
 } from "./approval-center-utils";
 import {
   cloudRecoveryContent,
+  packageReviewCloudRecoveryKind,
   packageReviewNeedsCloudRecovery,
   ReviewCloudRecovery,
   waitForCloudConnection,
@@ -1361,9 +1362,25 @@ const cloudRecoveryMarkup = renderToStaticMarkup(
   createElement(ReviewCloudRecovery, { item: CLOUD_EVIDENCE_UNAVAILABLE_REQUEST }),
 );
 assert(
-  cloudRecoveryMarkup.includes("This does not mean the package is unsafe") &&
-    cloudRecoveryMarkup.includes("Connect Guard Cloud"),
-  "GR224-10: recovery UI explains the uncertainty and provides a connect action",
+  cloudRecoveryMarkup.includes("This is not a sign-in error") &&
+    !cloudRecoveryMarkup.includes("Connect Guard Cloud"),
+  "GR224-10: validation failures do not misrepresent a healthy Cloud connection",
+);
+assert(
+  packageReviewCloudRecoveryKind(CLOUD_EVIDENCE_UNAVAILABLE_REQUEST) === "validation",
+  "GR224-10a: package validation failures are distinct from authorization failures",
+);
+const CLOUD_AUTHORIZATION_REQUEST = {
+  ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+  risk_summary: "Guard cloud evaluation was not authorized, so this package request needs review.",
+};
+const cloudAuthorizationMarkup = renderToStaticMarkup(
+  createElement(ReviewCloudRecovery, { item: CLOUD_AUTHORIZATION_REQUEST }),
+);
+assert(
+  packageReviewCloudRecoveryKind(CLOUD_AUTHORIZATION_REQUEST) === "authorization" &&
+    cloudAuthorizationMarkup.includes("Connect Guard Cloud"),
+  "GR224-10b: authorization failures retain the sign-in recovery action",
 );
 assert(
   !packageReviewNeedsCloudRecovery({

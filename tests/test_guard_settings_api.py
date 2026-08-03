@@ -11,7 +11,7 @@ from typing import Any
 from codex_plugin_scanner.guard.config import load_guard_config, resolve_risk_action, update_guard_settings
 from codex_plugin_scanner.guard.daemon import GuardDaemonServer
 from codex_plugin_scanner.guard.daemon import server as daemon_server_module
-from codex_plugin_scanner.guard.models import PolicyDecision
+from codex_plugin_scanner.guard.models import GuardApprovalRequest, PolicyDecision
 from codex_plugin_scanner.guard.store import GuardStore
 
 
@@ -42,6 +42,65 @@ def _with_daemon(guard_home: Path) -> tuple[GuardStore, GuardDaemonServer]:
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
     daemon.start()
     return store, daemon
+
+
+def _pending_request(request_id: str) -> GuardApprovalRequest:
+    return GuardApprovalRequest(
+        request_id=request_id,
+        harness="codex",
+        artifact_id=f"codex:tool:{request_id}",
+        artifact_name="bash",
+        artifact_type="tool_action",
+        artifact_hash="hash",
+        publisher=None,
+        policy_action="require-reapproval",
+        recommended_scope="once",
+        changed_fields=frozenset({"command"}),
+        source_scope="project",
+        config_path="config.toml",
+        workspace="workspace",
+        launch_target="echo safe",
+        transport="native",
+        risk_summary="review",
+        risk_signals=[],
+        artifact_label=None,
+        source_label=None,
+        trigger_summary=None,
+        why_now=None,
+        launch_summary=None,
+        risk_headline=None,
+        action_envelope_json={"command": "echo safe"},
+        decision_v2_json=None,
+        fallback_cli_command=None,
+        review_command=f"hol-guard approvals show {request_id}",
+        approval_url=f"http://127.0.0.1/requests/{request_id}",
+    )
+
+
+def test_relaxing_receipt_privacy_requeues_pending_cloud_projection(tmp_path: Path) -> None:
+    store, daemon = _with_daemon(tmp_path / "guard-home")
+    request_id = store.add_approval_request(_pending_request("privacy-refresh"), "2026-08-03T00:00:00Z")
+    with store._connect() as connection:
+        connection.execute("delete from guard_live_request_outbox")
+    try:
+        status, payload = _json_request(
+            daemon.port,
+            daemon._server.auth_token,
+            "/v1/settings",
+            method="POST",
+            payload={"settings": {"receipt_redaction_level": "none"}},
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 200
+    assert payload["settings"]["receipt_redaction_level"] == "none"
+    with store._connect() as connection:
+        rows = connection.execute(
+            "select local_request_id from guard_live_request_outbox where local_request_id = ?",
+            (request_id,),
+        ).fetchall()
+    assert [str(row["local_request_id"]) for row in rows] == [request_id]
 
 
 def test_relaxed_security_level_persists_granular_risk_settings(tmp_path: Path) -> None:

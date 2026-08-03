@@ -4870,6 +4870,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             self._write_json({"error": "invalid_settings"}, status=400)
             return
         guard_home = self.server.store.guard_home  # type: ignore[attr-defined]
+        previous_redaction_level = load_guard_config(guard_home).receipt_redaction_level
         gate_payload = settings.get("approval_gate")
         gate_input = (
             approval_gate_input_from_mapping({"approval_gate": gate_payload})
@@ -4907,6 +4908,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     approval_gate_grant=approval_gate_grant,
                 )
                 config = load_guard_config(guard_home)
+            if config.receipt_redaction_level != previous_redaction_level:
+                self.server.store.requeue_pending_live_requests(changed_at=_now())  # type: ignore[attr-defined]
         except ApprovalGateError as error:
             self._write_approval_gate_error(error)
             return
@@ -4945,6 +4948,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             self._write_json({"error": "invalid_settings_import"}, status=400)
             return
         guard_home = self.server.store.guard_home  # type: ignore[attr-defined]
+        previous_redaction_level = load_guard_config(guard_home).receipt_redaction_level
         gate_payload = settings.get("approval_gate")
         gate_input = (
             approval_gate_input_from_mapping({"approval_gate": gate_payload})
@@ -4982,6 +4986,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     approval_gate_grant=approval_gate_grant,
                 )
                 config = load_guard_config(guard_home)
+            if config.receipt_redaction_level != previous_redaction_level:
+                self.server.store.requeue_pending_live_requests(changed_at=_now())  # type: ignore[attr-defined]
         except ApprovalGateError as error:
             self._write_approval_gate_error(error)
             return
@@ -4996,6 +5002,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             self._write_json({"error": "confirmation_required", "confirm": "reset-local-settings"}, status=400)
             return
         guard_home = self.server.store.guard_home  # type: ignore[attr-defined]
+        previous_redaction_level = load_guard_config(guard_home).receipt_redaction_level
         try:
             approval_gate_grant = require_high_risk(
                 guard_home,
@@ -5003,6 +5010,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 approval_gate_input=approval_gate_input_from_mapping(payload),
             )
             config = reset_guard_settings(guard_home, approval_gate_grant=approval_gate_grant)
+            if config.receipt_redaction_level != previous_redaction_level:
+                self.server.store.requeue_pending_live_requests(changed_at=_now())  # type: ignore[attr-defined]
         except ApprovalGateError as error:
             self._write_approval_gate_error(error)
             return

@@ -5526,6 +5526,8 @@ def _persist_cloud_receipt_redaction_level(store: GuardStore, *, level: str, syn
         {"level": level, "updated_at": synced_at},
         synced_at,
     )
+    if level != previous_level:
+        store.requeue_pending_live_requests(changed_at=synced_at)
     if _receipt_redaction_level_rank(level) > _receipt_redaction_level_rank("full"):
         store.set_sync_payload(
             _RELAXED_RECEIPT_REDACTION_RESYNC_MARKER,
@@ -5537,11 +5539,15 @@ def _persist_cloud_receipt_redaction_level(store: GuardStore, *, level: str, syn
 def _reset_cloud_receipt_redaction_authority(store: GuardStore, *, synced_at: str) -> None:
     """Reset relaxation bookkeeping when no signed override is effective."""
 
+    previous_level = _stored_cloud_receipt_redaction_level(store)
+    local_level = _local_receipt_redaction_level(store)
     store.set_sync_payload(
         "cloud_receipt_redaction_level",
-        {"level": _local_receipt_redaction_level(store), "updated_at": synced_at},
+        {"level": local_level, "updated_at": synced_at},
         synced_at,
     )
+    if previous_level is not None and previous_level != local_level:
+        store.requeue_pending_live_requests(changed_at=synced_at)
     store.delete_sync_payload(_RELAXED_RECEIPT_REDACTION_RESYNC_MARKER)
     store.delete_sync_payload(_RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER)
 

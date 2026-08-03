@@ -464,6 +464,36 @@ def test_evaluate_package_request_artifact_posts_cloud_request_and_maps_block_re
     assert "Review this request in HOL Guard, then retry." not in result.user_copy.harness_message
 
 
+def test_lockfile_only_install_does_not_send_empty_cloud_package_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(
+        store,
+        workspace_id=WORKSPACE_ID,
+        sync_url="https://guard.example.com/api/guard/receipts/sync",
+        token="demo-token",
+    )
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    (workspace_dir / "package-lock.json").write_text('{"packages":{}}', encoding="utf-8")
+
+    def fail_cloud(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("zero-package cloud evaluation must not be sent")
+
+    monkeypatch.setattr(evaluator_module, "_urlopen_json_with_timeout_retry", fail_cloud)
+
+    result = evaluate_package_request_artifact(
+        artifact=_artifact_for_targets(lockfile_paths=("package-lock.json",)),
+        store=store,
+        workspace_dir=workspace_dir,
+        now="2026-05-19T00:00:00Z",
+    )
+
+    assert all(reason.get("code") != "cloud_validation_error" for reason in result.reasons)
+
+
 def test_evaluate_package_request_artifact_posts_latest_range_for_unversioned_scoped_npm_request(
     tmp_path: Path,
 ) -> None:
@@ -1040,6 +1070,55 @@ def test_evaluate_package_request_artifact_distinguishes_auth_from_validation_ht
         assert result.decision == "ask"
         assert result.policy_action == "require-reapproval"
         assert result.enforcement == "premium_cloud"
+
+
+def test_evaluate_package_request_artifact_refreshes_expired_cloud_access_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id=WORKSPACE_ID)
+    calls: list[bool] = []
+
+    def resolve_auth(_store: GuardStore, **kwargs: object) -> dict[str, object]:
+        force_refresh = kwargs.get("force_refresh") is True
+        calls.append(force_refresh)
+        return {
+            "sync_url": "https://guard.example.com/api/guard/receipts/sync",
+            "access_token": "fresh-token" if force_refresh else "expired-token",
+            "dpop_key_material": None,
+        }
+
+    attempts = 0
+
+    def open_cloud(**kwargs: object) -> dict[str, object]:
+        nonlocal attempts
+        attempts += 1
+        request = kwargs["request"]
+        assert isinstance(request, urllib.request.Request)
+        if attempts == 1:
+            raise urllib.error.HTTPError(request.full_url, 401, "expired", {}, None)
+        return _cloud_response(
+            decision="monitor",
+            enforcement="premium_cloud",
+            entitlement_state="premium",
+            package_name="left-pad",
+        )
+
+    monkeypatch.setattr(evaluator_module, "_resolve_guard_sync_auth_context", resolve_auth)
+    monkeypatch.setattr(evaluator_module, "_urlopen_json_with_timeout_retry", open_cloud)
+
+    result = evaluate_package_request_artifact(
+        artifact=_artifact_for_targets("left-pad@1.0.0"),
+        store=store,
+        workspace_dir=tmp_path / "workspace",
+        now="2026-05-19T00:00:00Z",
+    )
+
+    assert calls == [False, True]
+    assert attempts == 2
+    assert result.policy_action == "allow"
+    assert not any(reason["code"] == "cloud_auth_error" for reason in result.reasons)
 
 
 def test_evaluate_package_request_artifact_strict_mode_blocks_on_cloud_unreachable(

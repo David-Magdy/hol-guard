@@ -28065,12 +28065,26 @@ function buildEvidenceItems(item) {
   }
   return items;
 }
-const unavailableEvidencePhrases = [
+const validationEvidencePhrases = [
   // Queued requests can outlive the daemon version that created their copy.
   "could not verify registry identity or package intelligence",
   "cloud evaluation could not validate",
   "current package safety data was unavailable"
 ];
+const authorizationEvidencePhrases = [
+  "cloud evaluation was not authorized",
+  "cloud authorization expired",
+  "cloud sign-in is missing or stale"
+];
+function packageReviewCloudRecoveryKind(item) {
+  const packageRequest = item.artifact_type === "supply_chain" || item.artifact_type === "package_request" || item.artifact_type.endsWith("_package");
+  if (!packageRequest) return null;
+  const evidence = [item.risk_headline, item.risk_summary, ...item.risk_signals ?? []].filter((value) => typeof value === "string").join(" ").toLowerCase();
+  if (authorizationEvidencePhrases.some((phrase) => evidence.includes(phrase))) {
+    return "authorization";
+  }
+  return validationEvidencePhrases.some((phrase) => evidence.includes(phrase)) ? "validation" : null;
+}
 async function withCloudRequestTimeout(request, parentSignal) {
   if (parentSignal?.aborted) {
     throw new DOMException("Cloud connection request stopped", "AbortError");
@@ -28137,13 +28151,13 @@ async function waitForCloudConnection(initialStatus, {
   }
   return status;
 }
-function packageReviewNeedsCloudRecovery(item) {
-  const packageRequest = item.artifact_type === "supply_chain" || item.artifact_type === "package_request" || item.artifact_type.endsWith("_package");
-  if (!packageRequest) return false;
-  const evidence = [item.risk_headline, item.risk_summary, ...item.risk_signals ?? []].filter((value) => typeof value === "string").join(" ").toLowerCase();
-  return unavailableEvidencePhrases.some((phrase) => evidence.includes(phrase));
-}
-function cloudRecoveryContent(connected) {
+function cloudRecoveryContent(connected, kind = "authorization") {
+  if (kind === "validation") {
+    return {
+      title: "Guard Cloud could not check this package request",
+      detail: "This is not a sign-in error. Retry the install, or approve it once if you trust the package."
+    };
+  }
   return connected ? {
     title: "Guard Cloud connected",
     detail: "Run the install command again for a current package safety check."
@@ -28153,6 +28167,7 @@ function cloudRecoveryContent(connected) {
   };
 }
 function ReviewCloudRecovery({ item }) {
+  const recoveryKind = packageReviewCloudRecoveryKind(item);
   const [connecting, setConnecting] = reactExports.useState(false);
   const [connected, setConnected] = reactExports.useState(false);
   const [message, setMessage] = reactExports.useState(null);
@@ -28219,12 +28234,12 @@ function ReviewCloudRecovery({ item }) {
       if (!controller.signal.aborted) setConnecting(false);
     }
   }, []);
-  if (!packageReviewNeedsCloudRecovery(item)) return null;
-  const content = cloudRecoveryContent(connected);
+  if (recoveryKind === null) return null;
+  const content = cloudRecoveryContent(connected, recoveryKind);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 rounded-xl border border-brand-blue/20 bg-brand-blue/[0.04] p-4", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: content.title }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-relaxed text-muted-foreground", children: content.detail }),
-    !connected ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-3", children: [
+    !connected && recoveryKind === "authorization" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-3", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs(ActionButton, { onClick: handleConnect, disabled: connecting, variant: "outline", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloudArrowUp, { className: "h-4 w-4", "aria-hidden": "true" }),
         connecting ? "Waiting for sign-in..." : "Connect Guard Cloud"

@@ -339,6 +339,56 @@ def _normalized_delivery_binding(
 
 
 class StoreLiveRequestOutboxMixin:
+    def requeue_pending_live_requests(self, *, changed_at: str) -> int:
+        """Republish pending requests after a cloud-visible privacy change."""
+
+        with self._connect() as connection:
+            binding = _live_request_oauth_binding(connection, self._guard_source)
+            connection.execute(
+                """
+                delete from guard_live_request_outbox
+                where local_request_id in (
+                  select request_id
+                  from approval_requests
+                  where status = 'pending' and oauth_source = ?
+                )
+                """,
+                (self._guard_source,),
+            )
+            values = binding or {
+                "oauth_subject_hash": None,
+                "workspace_id": None,
+                "machine_id": None,
+                "machine_installation_id": None,
+            }
+            cursor = connection.execute(
+                """
+                insert into guard_live_request_outbox (
+                  local_request_id,
+                  changed_at,
+                  oauth_source,
+                  oauth_subject_hash,
+                  workspace_id,
+                  machine_id,
+                  machine_installation_id
+                )
+                select request_id, ?, ?, ?, ?, ?, ?
+                from approval_requests
+                where status = 'pending' and oauth_source = ?
+                order by coalesce(last_seen_at, created_at), request_id
+                """,
+                (
+                    changed_at,
+                    self._guard_source,
+                    values["oauth_subject_hash"],
+                    values["workspace_id"],
+                    values["machine_id"],
+                    values["machine_installation_id"],
+                    self._guard_source,
+                ),
+            )
+            return max(0, int(cursor.rowcount if cursor.rowcount is not None else 0))
+
     def get_live_request_oauth_binding(self) -> dict[str, str] | None:
         """Return the complete non-secret binding for this store source."""
         with self._connect() as connection:
