@@ -3967,11 +3967,17 @@ export async function repairSupplyChainProtection(credentials?: {
       }
     }
   }
+  const completedSteps = Array.isArray(result.completed_steps)
+    ? result.completed_steps.filter((value): value is string => typeof value === "string")
+    : [];
+  const requiredSteps = ["package_shims", "runtime_activation", "intelligence_sync"];
+  const completedWithoutFailures =
+    Array.isArray(result.failed_steps) &&
+    result.failed_steps.length === 0 &&
+    requiredSteps.every((step) => completedSteps.includes(step));
   return {
-    repaired: result.repaired === true,
-    completed_steps: Array.isArray(result.completed_steps)
-      ? result.completed_steps.filter((value): value is string => typeof value === "string")
-      : [],
+    repaired: result.repaired === true || (!("repaired" in result) && completedWithoutFailures),
+    completed_steps: completedSteps,
     failed_steps: failures,
     message: stringValue(result.message) ?? "Supply-chain repair finished.",
   };

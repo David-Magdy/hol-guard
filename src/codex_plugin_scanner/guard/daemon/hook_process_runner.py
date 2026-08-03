@@ -258,6 +258,9 @@ class HookProcessRunner:
                     _ = self._active_reviews.pop(generation, None)
             self._recovery_event.set()
 
+        if time.monotonic() >= review_deadline:
+            self._replace_slot_async(slot)
+            return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
         if not is_pair(raw_message):
             self._increment_metric("failures")
             self._replace_slot_async(slot)

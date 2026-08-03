@@ -11,10 +11,10 @@ import {
   GuardSessionUnavailableError,
   fetchQueueSummary,
   fetchRuntimeSnapshot,
-	  fetchResumeStatus,
-	  formatHarnessCommand,
-	  normalizeRuntimeSnapshot,
-	  normalizeApprovalRequest,
+  fetchResumeStatus,
+  formatHarnessCommand,
+  normalizeRuntimeSnapshot,
+  normalizeApprovalRequest,
   parseActionEnvelope,
   parseDecisionV2,
   readGuardToken,
@@ -24,9 +24,10 @@ import {
   runPackageSync,
   setGuardUpdateChannel,
   startPackageFirewallConnect,
-	  runAuditRemediation,
-	  resolveRequestWithQueueResult,
-	  retryResume,
+  runAuditRemediation,
+  repairSupplyChainProtection,
+  resolveRequestWithQueueResult,
+  retryResume,
 } from "./guard-api";
 import { recommendedScopeForAction } from "./approval-scopes";
 import { resolveCloudSyncHealthCopy } from "./runtime-overview";
@@ -2016,5 +2017,40 @@ try {
 }
 assert(hostileCommandActivityError instanceof Error, "command activity path traversal is rejected");
 assert(hostileCommandActivityFetches === 0, "path traversal cannot receive the dashboard session token");
+
+installGuardWindow("?guard-token=supply-chain-repair-token&guardDaemon=http%3A%2F%2F127.0.0.1%3A4781");
+globalThis.fetch = async (): Promise<Response> =>
+  Response.json({
+    result: {
+      completed_steps: ["intelligence_sync", "package_shims", "runtime_activation"],
+      failed_steps: [],
+      message: "Supply-chain repair finished.",
+    },
+  });
+const compatibleRepair = await repairSupplyChainProtection();
+assert(compatibleRepair.repaired, "complete legacy repair responses are successful");
+
+globalThis.fetch = async (): Promise<Response> =>
+  Response.json({
+    result: {
+      repaired: false,
+      completed_steps: ["intelligence_sync", "package_shims", "runtime_activation"],
+      failed_steps: [],
+      message: "Supply-chain repair incomplete.",
+    },
+  });
+const explicitlyIncompleteRepair = await repairSupplyChainProtection();
+assert(!explicitlyIncompleteRepair.repaired, "explicit incomplete repair state remains authoritative");
+
+globalThis.fetch = async (): Promise<Response> =>
+  Response.json({
+    result: {
+      completed_steps: ["package_shims", "runtime_activation"],
+      failed_steps: [],
+      message: "Supply-chain repair incomplete.",
+    },
+  });
+const partialLegacyRepair = await repairSupplyChainProtection();
+assert(!partialLegacyRepair.repaired, "partial legacy repair responses remain incomplete");
 
 console.log("guard-api.test.ts: all tests passed");

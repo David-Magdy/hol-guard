@@ -5,6 +5,7 @@ from __future__ import annotations
 import codecs
 import hashlib
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -26,6 +27,9 @@ _ATTACHMENT_SCAN_CHUNK_BYTES = 128 * 1024
 _ATTACHMENT_SCAN_MAX_BYTES = 8 * 1024 * 1024
 _ATTACHMENT_SCAN_OVERLAP_CHARS = 4 * 1024
 _OPEN_SUPPORTS_DIR_FD = os.open in os.supports_dir_fd
+_CODEX_ATTACHMENT_PATH_TOKEN_PATTERN = re.compile(
+    r"(?<![\w/.-])(?:\./)?\.codex/attachments/[^\s'\"`<>|;(){}\[\]]{1,512}|" + _PROMPT_PATH_TOKEN_PATTERN.pattern
+)
 _GUARDED_ATTACHMENT_CLASSES = frozenset(
     {"prompt_injection_intent", "guard_bypass_intent", "exfil_intent", "secret_read"}
 )
@@ -41,10 +45,12 @@ def _codex_prompt_attachment_artifact(*, prompt_text: str, home_dir: Path, confi
         resolved_root = attachment_root.resolve(strict=True)
     except OSError:
         return None
-    for match in _PROMPT_PATH_TOKEN_PATTERN.finditer(prompt_text):
+    for match in _CODEX_ATTACHMENT_PATH_TOKEN_PATTERN.finditer(prompt_text):
         requested_path = match.group(0).rstrip(".,:!?")
         candidate = Path(requested_path).expanduser()
-        if not candidate.is_absolute() or not candidate.is_relative_to(attachment_root):
+        if not candidate.is_absolute():
+            candidate = home_dir / candidate
+        if not candidate.is_relative_to(attachment_root):
             continue
         if _path_contains_symlink(candidate, base_dir=attachment_root):
             return _scan_failure(requested_path, "Guard could not verify the Codex attachment path.", config_path)
