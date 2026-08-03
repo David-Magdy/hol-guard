@@ -548,6 +548,32 @@ def test_create_require_configuration_remains_reviewable(
     assert eligibility is None
 
 
+def test_aliased_create_require_configuration_remains_reviewable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, active, workspace = _workspace(tmp_path, "next")
+    _write(
+        workspace / "next.config.mjs",
+        "".join(
+            (
+                "import { createRequire as makeRequire } from 'node:module'; ",
+                "const load = makeRequire(import.meta.url); export default load('./config.js')\n",
+            )
+        ),
+    )
+    _write(workspace / "config.js", "export default {}\n")
+    _trust_fixture_package(monkeypatch, workspace, "next")
+
+    eligibility = local_tool_approval_eligibility(
+        f"cd {workspace} && ./node_modules/.bin/next build --webpack",
+        cwd=active,
+        home_dir=home,
+    )
+
+    assert eligibility is None
+
+
 def test_comment_separated_create_require_remains_reviewable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
