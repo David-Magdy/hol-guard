@@ -298,6 +298,8 @@ class HookProcessRunner:
         if time.monotonic() >= review_deadline:
             return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
         self._record_response_metrics(typed_response)
+        if time.monotonic() >= review_deadline:
+            return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
         return HookProcessReview(typed_response, None)
 
     def wait_for_capacity(self, *, minimum_workers: int, timeout_seconds: float) -> bool:
@@ -592,9 +594,13 @@ class HookProcessRunner:
     def _record_response_metrics(self, response: Mapping[str, object]) -> None:
         decision = response.get("decision")
         reason_code = response.get("reason_code")
-        with self._metrics_lock:
+        if not self._metrics_lock.acquire(blocking=False):
+            return
+        try:
             increment_bounded_metric(self._decisions, decision)
             increment_bounded_metric(self._reason_codes, reason_code)
+        finally:
+            self._metrics_lock.release()
 
     def _retire_slot(self, slot: HookWorkerSlot, *, graceful: bool = False) -> bool:
         contained = retire_worker_slot(slot, graceful=graceful)

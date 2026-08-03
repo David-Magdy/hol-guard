@@ -388,6 +388,47 @@ def test_response_processed_after_caller_deadline_is_rejected(
     assert runner._slots.qsize() == 1  # pyright: ignore[reportPrivateUsage]
 
 
+def test_response_metrics_contention_does_not_outlive_caller_deadline(
+    tmp_path,
+) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=1)
+    runner._started = True  # pyright: ignore[reportPrivateUsage]
+    process = _FakeProcess(1)
+    slot = HookWorkerSlot(
+        process=process,
+        connection=_LateResultConnection(),
+        pre_isolation_contained=True,
+    )
+    runner._all_slots[process.pid] = slot  # pyright: ignore[reportPrivateUsage]
+    runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
+    lock_held = threading.Event()
+
+    def hold_metrics_lock() -> None:
+        with runner._metrics_lock:  # pyright: ignore[reportPrivateUsage]
+            lock_held.set()
+            time.sleep(0.15)
+
+    holder = threading.Thread(target=hold_metrics_lock)
+    holder.start()
+    assert lock_held.wait(timeout=0.5)
+    started_at = time.monotonic()
+    result = runner.review(
+        payload={"hook_event_name": "PreToolUse"},
+        harness="pi",
+        home_dir=tmp_path,
+        guard_home=tmp_path,
+        workspace=tmp_path,
+        hook_env={},
+        deadline=started_at + 0.08,
+    )
+    elapsed = time.monotonic() - started_at
+    holder.join(timeout=0.5)
+
+    assert result.payload == {"decision": "allow"}
+    assert result.reason_code is None
+    assert elapsed < 0.08
+
+
 def test_retirement_thread_exhaustion_fails_pool_closed_without_delaying_review(
     tmp_path,
     monkeypatch,
