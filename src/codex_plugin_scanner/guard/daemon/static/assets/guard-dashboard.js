@@ -16742,9 +16742,10 @@ function parseDecisionV2(raw) {
   const dashboardPrimaryDetail = raw["dashboard_primary_detail"];
   const approvalScopes = raw["approval_scopes"];
   const retryInstruction = raw["retry_instruction"];
+  const packageReviewCloudReasonCode = raw["package_review_cloud_reason_code"];
   const signals = raw["signals"];
   const confidence = raw["confidence"];
-  if (!isGuardAction(guardAction) || !isDecisionV2Action(action) || action !== guardDecisionV2Action(guardAction) || !isNonEmptyString(reason) || !isNonEmptyString(userTitle) || !isNonEmptyString(userBody) || !isNonEmptyString(harnessMessage) || !isNonEmptyString(dashboardPrimaryDetail) || !isStringArray(approvalScopes) || !isStringOrNull(retryInstruction) || !isRiskSignalV2Array(signals) || !isDecisionV2Confidence(confidence)) {
+  if (!isGuardAction(guardAction) || !isDecisionV2Action(action) || action !== guardDecisionV2Action(guardAction) || !isNonEmptyString(reason) || !isNonEmptyString(userTitle) || !isNonEmptyString(userBody) || !isNonEmptyString(harnessMessage) || !isNonEmptyString(dashboardPrimaryDetail) || !isStringArray(approvalScopes) || !isStringOrNull(retryInstruction) || !(packageReviewCloudReasonCode === void 0 || isStringOrNull(packageReviewCloudReasonCode)) || !isRiskSignalV2Array(signals) || !isDecisionV2Confidence(confidence)) {
     return null;
   }
   return {
@@ -16757,6 +16758,7 @@ function parseDecisionV2(raw) {
     dashboard_primary_detail: dashboardPrimaryDetail,
     approval_scopes: approvalScopes,
     retry_instruction: retryInstruction,
+    package_review_cloud_reason_code: packageReviewCloudReasonCode,
     signals,
     confidence
   };
@@ -28076,9 +28078,17 @@ const authorizationEvidencePhrases = [
   "cloud authorization expired",
   "cloud sign-in is missing or stale"
 ];
+const validationReasonCodes = /* @__PURE__ */ new Set([
+  "cloud_validation_error",
+  "cloud_http_error",
+  "cloud_timeout"
+]);
 function packageReviewCloudRecoveryKind(item) {
   const packageRequest = item.artifact_type === "supply_chain" || item.artifact_type === "package_request" || item.artifact_type.endsWith("_package");
   if (!packageRequest) return null;
+  const reasonCode = item.decision_v2_json?.package_review_cloud_reason_code;
+  if (reasonCode === "cloud_auth_error") return "authorization";
+  if (typeof reasonCode === "string" && validationReasonCodes.has(reasonCode)) return "validation";
   const evidence = [item.risk_headline, item.risk_summary, ...item.risk_signals ?? []].filter((value) => typeof value === "string").join(" ").toLowerCase();
   if (authorizationEvidencePhrases.some((phrase) => evidence.includes(phrase))) {
     return "authorization";

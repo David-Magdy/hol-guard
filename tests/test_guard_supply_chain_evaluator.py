@@ -1084,7 +1084,7 @@ def test_evaluate_package_request_artifact_refreshes_expired_cloud_access_token(
         force_refresh = kwargs.get("force_refresh") is True
         calls.append(force_refresh)
         return {
-            "sync_url": "https://guard.example.com/api/guard/receipts/sync",
+            "sync_url": "http://127.0.0.1:8042/api/guard/receipts/sync",
             "access_token": "fresh-token" if force_refresh else "expired-token",
             "dpop_key_material": None,
         }

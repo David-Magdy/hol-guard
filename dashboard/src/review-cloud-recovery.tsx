@@ -23,6 +23,12 @@ const authorizationEvidencePhrases = [
 
 type PackageCloudRecoveryKind = "authorization" | "validation";
 
+const validationReasonCodes = new Set([
+  "cloud_validation_error",
+  "cloud_http_error",
+  "cloud_timeout",
+]);
+
 export function packageReviewCloudRecoveryKind(
   item: GuardApprovalRequest,
 ): PackageCloudRecoveryKind | null {
@@ -31,6 +37,11 @@ export function packageReviewCloudRecoveryKind(
     item.artifact_type === "package_request" ||
     item.artifact_type.endsWith("_package");
   if (!packageRequest) return null;
+  const reasonCode = item.decision_v2_json?.package_review_cloud_reason_code;
+  if (reasonCode === "cloud_auth_error") return "authorization";
+  if (typeof reasonCode === "string" && validationReasonCodes.has(reasonCode)) return "validation";
+
+  // Legacy queued requests predate the structured recovery reason code.
   const evidence = [item.risk_headline, item.risk_summary, ...(item.risk_signals ?? [])]
     .filter((value): value is string => typeof value === "string")
     .join(" ")

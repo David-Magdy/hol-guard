@@ -1382,6 +1382,18 @@ assert(
     cloudAuthorizationMarkup.includes("Connect Guard Cloud"),
   "GR224-10b: authorization failures retain the sign-in recovery action",
 );
+const STRUCTURED_CLOUD_VALIDATION_REQUEST = {
+  ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+  risk_summary: "Package review needs attention.",
+  decision_v2_json: {
+    ...HIGH_SIGNAL_ITEM.decision_v2_json!,
+    package_review_cloud_reason_code: "cloud_timeout",
+  },
+};
+assert(
+  packageReviewCloudRecoveryKind(STRUCTURED_CLOUD_VALIDATION_REQUEST) === "validation",
+  "GR224-10c: structured reason codes classify recovery independently of copy",
+);
 assert(
   !packageReviewNeedsCloudRecovery({
     ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,

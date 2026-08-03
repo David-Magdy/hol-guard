@@ -1100,6 +1100,18 @@ def _evaluate_runtime_artifact_hook(
         decision_v2_payload["user_body"] = package_evaluation.user_copy.summary
         decision_v2_payload["harness_message"] = package_evaluation.user_copy.harness_message
         decision_v2_payload["dashboard_primary_detail"] = package_evaluation.user_copy.summary
+        cloud_reason_codes = {
+            str(reason.get("code") or "") for reason in package_evaluation.reasons if isinstance(reason, Mapping)
+        }
+        for cloud_reason_code in (
+            "cloud_auth_error",
+            "cloud_validation_error",
+            "cloud_http_error",
+            "cloud_timeout",
+        ):
+            if cloud_reason_code in cloud_reason_codes:
+                decision_v2_payload["package_review_cloud_reason_code"] = cloud_reason_code
+                break
     if has_compound_findings:
         action_phrase = {
             "allow": "allowed",
