@@ -35,13 +35,14 @@ def evaluation_targets(
     workspace_dir: Path | None,
     *,
     explicit_targets: tuple[dict[str, object], ...],
+    include_locked: bool = False,
 ) -> tuple[dict[str, object], ...]:
     if explicit_targets:
         return explicit_targets
     intent_kind = _supply_chain_package_eval_module()._optional_string(artifact.metadata.get("intent_kind"))
     if intent_kind not in {None, "install", "sync"}:
         return ()
-    return _manifest_dependency_targets(artifact, workspace_dir, include_locked=True)
+    return _manifest_dependency_targets(artifact, workspace_dir, include_locked=include_locked)
 
 
 def unsynced_manifest_dependency_targets(

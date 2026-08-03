@@ -306,6 +306,7 @@ def evaluate_package_request_artifact(
     now_value = now or datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     now_timestamp = _parse_evaluation_timestamp(now_value)
     targets = _evaluation_targets(artifact, workspace_dir)
+    cloud_targets = _cloud_evaluation_targets(artifact, workspace_dir)
     package_intent_hash = artifact.artifact_id.rsplit(":", 1)[-1]
     external_archive_targets = tuple(target for target in targets if _target_is_external_https_archive(target))
     external_archive_source_hashes = tuple(
@@ -561,7 +562,7 @@ def evaluate_package_request_artifact(
     )
     cloud_result, cloud_fallback_reason = _evaluate_with_cloud(
         artifact=artifact,
-        targets=targets,
+        targets=cloud_targets,
         workspace_dir=workspace_dir,
         workspace_id=workspace_id,
         workspace_fingerprint=workspace_fingerprint,
@@ -2001,6 +2002,18 @@ def _evaluation_targets(
         artifact,
         workspace_dir,
         explicit_targets=_targets_from_artifact(artifact),
+    )
+
+
+def _cloud_evaluation_targets(
+    artifact: GuardArtifact,
+    workspace_dir: Path | None,
+) -> tuple[dict[str, object], ...]:
+    return _manifest_evaluation_targets(
+        artifact,
+        workspace_dir,
+        explicit_targets=_targets_from_artifact(artifact),
+        include_locked=True,
     )
 
 
