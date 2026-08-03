@@ -483,6 +483,54 @@ def test_enable_wal_mode_uses_bounded_busy_timeout(monkeypatch: pytest.MonkeyPat
     assert sleep_calls == [guard_store_module._SQLITE_LOCK_RETRY_DELAY_SECONDS]
 
 
+def test_enable_wal_mode_shrinks_attempt_timeout_to_remaining_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = 0.0
+
+    class _Cursor:
+        def __init__(self, row):
+            self._row = row
+
+        def fetchone(self):
+            return self._row
+
+    class _Connection:
+        def __init__(self) -> None:
+            self.busy_timeout_ms = 1_500
+            self.wal_attempts = 0
+            self.attempt_timeouts: list[int] = []
+
+        def execute(self, sql: str):
+            nonlocal clock
+            if sql == "pragma busy_timeout":
+                return _Cursor((self.busy_timeout_ms,))
+            if sql.startswith("pragma busy_timeout="):
+                self.busy_timeout_ms = int(sql.split("=", 1)[1])
+                return _Cursor(None)
+            if sql == "pragma journal_mode=WAL":
+                self.wal_attempts += 1
+                self.attempt_timeouts.append(self.busy_timeout_ms)
+                if self.wal_attempts == 1:
+                    clock += 0.8
+                    raise sqlite3.OperationalError("database is locked")
+                return _Cursor(("wal",))
+            raise AssertionError(f"unexpected SQL: {sql}")
+
+    monkeypatch.setattr(guard_store_module.time, "monotonic", lambda: clock)
+
+    def advance_clock(seconds: float) -> None:
+        nonlocal clock
+        clock += seconds
+
+    monkeypatch.setattr(guard_store_module.time, "sleep", advance_clock)
+    connection = _Connection()
+
+    guard_store_module.GuardStore._enable_wal_mode(connection)
+
+    assert connection.attempt_timeouts[0] == guard_store_module.SQLITE_WAL_BUSY_TIMEOUT_MS
+    assert 0 < connection.attempt_timeouts[1] < guard_store_module.SQLITE_WAL_BUSY_TIMEOUT_MS
+    assert connection.busy_timeout_ms == 1_500
+
+
 def test_guard_protect_does_not_prime_policy_integrity_or_hold_sqlite_writer(tmp_path: Path) -> None:
     home_dir = tmp_path / "guard-home"
     workspace_dir = tmp_path / "workspace"

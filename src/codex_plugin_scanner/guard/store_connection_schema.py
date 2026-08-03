@@ -1146,17 +1146,22 @@ class StoreConnectionSchemaMixin:
     def _enable_wal_mode(connection: sqlite3.Connection) -> None:
         original_busy_timeout_row = connection.execute("pragma busy_timeout").fetchone()
         original_busy_timeout_ms = int(original_busy_timeout_row[0]) if original_busy_timeout_row else 0
-        wal_busy_timeout_ms = min(original_busy_timeout_ms, SQLITE_WAL_BUSY_TIMEOUT_MS)
-        connection.execute(f"pragma busy_timeout={wal_busy_timeout_ms}")
         retry_deadline = time.monotonic() + (original_busy_timeout_ms / 1000)
+        lock_error: sqlite3.OperationalError | None = None
         try:
             while True:
+                remaining_timeout_ms = max(0, int((retry_deadline - time.monotonic()) * 1000))
+                if lock_error is not None and remaining_timeout_ms <= 0:
+                    raise lock_error
+                wal_busy_timeout_ms = min(remaining_timeout_ms, SQLITE_WAL_BUSY_TIMEOUT_MS)
+                connection.execute(f"pragma busy_timeout={wal_busy_timeout_ms}")
                 try:
                     connection.execute("pragma journal_mode=WAL")
                     return
                 except sqlite3.OperationalError as exc:
                     if "database is locked" not in str(exc).lower():
                         raise
+                    lock_error = exc
                     remaining_seconds = retry_deadline - time.monotonic()
                     if remaining_seconds <= 0:
                         raise
