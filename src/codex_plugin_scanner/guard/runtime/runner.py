@@ -3983,7 +3983,7 @@ def clear_revoked_guard_oauth_sign_in(store: GuardStore) -> bool:
                 _resolve_guard_sync_auth_context_from_oauth_credentials(store, credentials)
             except GuardSyncAuthorizationExpiredError as error:
                 if _oauth_authorization_error_requires_fresh_sign_in(error):
-                    store.clear_oauth_local_credentials()
+                    store._clear_oauth_local_credentials_locked()
                     return True
                 return False
     except (RuntimeError, OSError, TimeoutError):
@@ -4455,11 +4455,26 @@ def _resolve_guard_sync_auth_context(
         oauth_health = store.get_oauth_local_credential_health()
         oauth_credentials = store.get_oauth_local_credentials(allow_primary=allow_primary_repair)
         if oauth_credentials is not None:
-            return _resolve_guard_sync_auth_context_from_oauth_credentials(
-                store,
-                oauth_credentials,
-                force_refresh=force_refresh,
-            )
+            try:
+                return _resolve_guard_sync_auth_context_from_oauth_credentials(
+                    store,
+                    oauth_credentials,
+                    force_refresh=force_refresh,
+                )
+            except GuardSyncAuthorizationExpiredError as error:
+                if not _oauth_authorization_error_requires_fresh_sign_in(error):
+                    raise
+                store._clear_oauth_secret_payload_cache()
+                refreshed_credentials = store.get_oauth_local_credentials(allow_primary=allow_primary_repair)
+                if refreshed_credentials is None or _optional_string(
+                    refreshed_credentials.get("refresh_token")
+                ) == _optional_string(oauth_credentials.get("refresh_token")):
+                    raise
+                return _resolve_guard_sync_auth_context_from_oauth_credentials(
+                    store,
+                    refreshed_credentials,
+                    force_refresh=force_refresh,
+                )
         if bool(oauth_health.get("configured")):
             recoverable_credentials = store.get_recoverable_oauth_local_credentials()
             if recoverable_credentials is not None:
