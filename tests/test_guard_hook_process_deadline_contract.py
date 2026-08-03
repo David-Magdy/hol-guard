@@ -429,6 +429,43 @@ def test_response_metrics_contention_does_not_outlive_caller_deadline(
     assert elapsed < 0.08
 
 
+def test_successful_review_is_constructed_before_final_deadline_check(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=1)
+    runner._started = True  # pyright: ignore[reportPrivateUsage]
+    process = _FakeProcess(1)
+    slot = HookWorkerSlot(
+        process=process,
+        connection=_LateResultConnection(),
+        pre_isolation_contained=True,
+    )
+    runner._all_slots[process.pid] = slot  # pyright: ignore[reportPrivateUsage]
+    runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
+    review_type = hook_runner_module.HookProcessReview
+
+    def slow_success(payload: dict[str, object] | None, reason_code: str | None) -> HookProcessReview:
+        if payload is not None:
+            time.sleep(0.06)
+        return review_type(payload, reason_code)
+
+    monkeypatch.setattr(hook_runner_module, "HookProcessReview", slow_success)
+
+    result = runner.review(
+        payload={"hook_event_name": "PreToolUse"},
+        harness="pi",
+        home_dir=tmp_path,
+        guard_home=tmp_path,
+        workspace=tmp_path,
+        hook_env={},
+        deadline=time.monotonic() + 0.05,
+    )
+
+    assert result.payload is None
+    assert result.reason_code == "daemon_hook_process_deadline_exhausted"
+
+
 def test_retirement_thread_exhaustion_fails_pool_closed_without_delaying_review(
     tmp_path,
     monkeypatch,
