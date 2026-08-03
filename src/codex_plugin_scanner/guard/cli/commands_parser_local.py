@@ -310,6 +310,11 @@ def _configure_guard_local_parsers(
     history_sub = history_parser.add_subparsers(dest="history_command", metavar="COMMAND")
     history_explain_parser = history_sub.add_parser("explain", help="Show insight and evidence for a receipt ID")
     history_explain_parser.add_argument("receipt_id", help="Receipt ID to explain")
+    history_explain_parser.add_argument(
+        "--script",
+        action="store_true",
+        help="Show only inline script bodies (heredocs) recorded with the receipt",
+    )
     history_explain_parser.add_argument("--json", action="store_true")
 
     inventory_parser = guard_subparsers.add_parser("inventory", help="List the local Guard artifact inventory")
