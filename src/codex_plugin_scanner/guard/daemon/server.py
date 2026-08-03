@@ -5950,10 +5950,14 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             queue_p95_ms=scheduler_stats["queue_wait_p95_ms"],
             queued=scheduler_stats["queued"],
         )
-        if review.payload is not None:
+        if review.payload is not None and time.monotonic() < process_deadline:
             self._write_json(review.payload)
             return
-        reason_code = review.reason_code or "daemon_hook_process_failed"
+        reason_code = (
+            "daemon_hook_process_deadline_exhausted"
+            if review.payload is not None
+            else review.reason_code or "daemon_hook_process_failed"
+        )
         self._write_json(
             self._runtime_hook_fail_safe_response(
                 payload,
