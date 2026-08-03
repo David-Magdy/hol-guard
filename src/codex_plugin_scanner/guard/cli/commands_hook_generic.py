@@ -32,6 +32,30 @@ def _hook_event_name(payload: dict[str, object]) -> str | None:
     return resolve(payload)
 
 
+_GUIDED_POLICY_ACTIONS = frozenset({"block", "review", "require-reapproval", "sandbox-required"})
+
+
+def _embedded_script_evidence(command_text: str | None) -> list[dict[str, object]]:
+    """Hash-addressed audit entries for heredoc script bodies (lazy import)."""
+
+    from ..runtime.embedded_script_evidence import embedded_script_evidence_entries
+
+    return embedded_script_evidence_entries(command_text)
+
+
+def _embedded_script_remediation(command_text: str | None) -> str | None:
+    """Guidance for agents whose command carries an inline script body."""
+
+    from ..runtime.embedded_script_evidence import (
+        EMBEDDED_SCRIPT_REMEDIATION_GUIDANCE,
+        command_has_embedded_script,
+    )
+
+    if command_has_embedded_script(command_text):
+        return EMBEDDED_SCRIPT_REMEDIATION_GUIDANCE
+    return None
+
+
 def _optional_string(value: object | None) -> str | None:
     """Return a non-empty string value without depending on aggregator imports."""
 
@@ -877,6 +901,7 @@ def _run_hook_generic_payload(
             **policy_composition,
         },
     ]
+    scanner_evidence.extend(_embedded_script_evidence(command_text))
     if local_tool_eligibility is not None:
         scanner_evidence.append(local_tool_eligibility.to_evidence())
     if local_tool_grant is not None and local_tool_eligibility is not None:
@@ -1100,6 +1125,7 @@ def _run_hook_generic_payload(
             args.harness,
             incoming_reason,
             approval_context,
+            _embedded_script_remediation(command_text),
         )
         if _canonical_harness_name(args.harness) == "kimi":
             _emit_native_hook_response(
@@ -1145,12 +1171,14 @@ def _run_hook_generic_payload(
         reason = _native_hook_reason(
             incoming_reason,
             approval_context,
+            _embedded_script_remediation(command_text) if policy_action in _GUIDED_POLICY_ACTIONS else None,
         )
     else:
         reason = _native_hook_reason_for_harness(
             args.harness,
             incoming_reason,
             approval_context,
+            _embedded_script_remediation(command_text) if policy_action in _GUIDED_POLICY_ACTIONS else None,
         )
     if _should_emit_claude_native_pretooluse_notice(
         args,
