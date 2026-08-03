@@ -69,6 +69,10 @@ def _looks_like_safe_read_only_lookup_command(
         if index == 0:
             if command not in _READ_ONLY_LOOKUP_COMMANDS:
                 return False
+            if command == "rg" and any(
+                arg in {"--hidden", "-.", "-u", "-uu", "-uuu", "--unrestricted"} for arg in segment[1:]
+            ):
+                return False
             if not _read_only_lookup_primary_segment_is_safe(command, segment[1:], home_dir=home_dir):
                 return False
         elif not _read_only_lookup_filter_segment_is_safe(command, segment[1:], home_dir=home_dir):
