@@ -441,6 +441,13 @@ def test_evaluate_package_request_artifact_posts_cloud_request_and_maps_block_re
     assert request_payload["commandShape"]["packageManager"] == "npm"
     assert request_payload["commandShape"]["verb"] == "install"
     assert request_payload["lockfileContext"]["fileName"] == "package-lock.json"
+    assert set(request_payload["lockfileContext"]) == {
+        "dependencyCount",
+        "fileName",
+        "lockfileHash",
+        "manifestHash",
+        "repository",
+    }
     assert request_payload["packages"][0]["name"] == "minimist"
     assert request_payload["packages"][0]["direct"] is True
     assert set(request_payload["packages"][0]) == {

@@ -2354,7 +2354,11 @@ def _build_request_payload(
         "workspaceFingerprint": workspace_fingerprint,
     }
     if lockfile_context is not None:
-        payload["lockfileContext"] = lockfile_context
+        payload["lockfileContext"] = {
+            key: lockfile_context[key]
+            for key in ("dependencyCount", "fileName", "lockfileHash", "manifestHash", "repository")
+            if key in lockfile_context
+        }
     return payload
 
 
