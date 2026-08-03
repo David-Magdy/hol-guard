@@ -38,6 +38,8 @@ _SCRIPT_EXECUTING_EXECUTABLES = frozenset(
     }
 )
 
+_HEREDOC_DATA_EXECUTABLES = frozenset({"cat", "tee"})
+
 EMBEDDED_SCRIPT_REMEDIATION_GUIDANCE = (
     "Put the script in a workspace file and run it by path so HOL Guard can audit it."
 )
@@ -76,6 +78,15 @@ def embedded_script_evidence_entries(command_text: str | None) -> list[dict[str,
             (executable for start, end, executable in segment_owners if start <= heredoc.operator_start <= end),
             None,
         )
+        if owner_executable in _SCRIPT_EXECUTING_EXECUTABLES:
+            executed: bool | None = True
+            execution_status = "executed"
+        elif owner_executable in _HEREDOC_DATA_EXECUTABLES:
+            executed = False
+            execution_status = "not_executed"
+        else:
+            executed = None
+            execution_status = "indeterminate"
         entries.append(
             {
                 "source": EMBEDDED_SCRIPT_EVIDENCE_SOURCE,
@@ -84,7 +95,8 @@ def embedded_script_evidence_entries(command_text: str | None) -> list[dict[str,
                 "delimiter": heredoc.delimiter,
                 "quoted": heredoc.quoted,
                 "executable": owner_executable,
-                "executed": owner_executable in _SCRIPT_EXECUTING_EXECUTABLES,
+                "executed": executed,
+                "execution_status": execution_status,
                 "sha256": hashlib.sha256(body_bytes).hexdigest(),
                 "bytes": len(body_bytes),
                 "lines": body.count("\n") + (1 if body and not body.endswith("\n") else 0),

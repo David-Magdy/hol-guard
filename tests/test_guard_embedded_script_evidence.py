@@ -69,6 +69,7 @@ def test_interpreter_heredoc_is_marked_executed() -> None:
     entry = entries[0]
     assert entry["kind"] == "heredoc"
     assert entry["executed"] is True
+    assert entry["execution_status"] == "executed"
     assert entry["executable"] == "python3"
     assert entry["quoted"] is True
     body = "import os\nprint(os.name)\n"
@@ -83,7 +84,18 @@ def test_write_then_run_heredoc_is_marked_not_executed() -> None:
     assert len(entries) == 1
     entry = entries[0]
     assert entry["executed"] is False
+    assert entry["execution_status"] == "not_executed"
     assert entry["executable"] == "cat"
+
+
+def test_opaque_wrapper_heredoc_execution_is_indeterminate() -> None:
+    command = "python-stdin-wrapper <<'EOF'\nprint('wrapped')\nEOF"
+    entries = embedded_script_evidence_entries(command)
+
+    assert len(entries) == 1
+    assert entries[0]["executable"] == "python-stdin-wrapper"
+    assert entries[0]["executed"] is None
+    assert entries[0]["execution_status"] == "indeterminate"
 
 
 def test_multiple_heredocs_are_each_indexed() -> None:
@@ -149,7 +161,7 @@ def test_embedded_scripts_for_receipt_recovers_from_whitespace_shifted_command()
     body = "echo shifted\n"
     stripped = f"cat << 'EOF'\n{body}EOF"
     shifted = f" {stripped}\n"
-    receipt = {
+    receipt: dict[str, object] = {
         "receipt_id": "guard-receipt-shifted",
         "scanner_evidence": embedded_script_evidence_entries(stripped),
         "action_envelope_json": {"command": shifted},
@@ -165,7 +177,7 @@ def test_embedded_scripts_for_receipt_recovers_with_non_ascii_prefix() -> None:
     recovery must not confuse the two for multibyte text before the body."""
     body = "print('héllo wörld')\n"
     stripped = f"echo '日本語のパス' > /tmp/ñame.txt && python3 - <<'EOF'\n{body}EOF"
-    receipt = {
+    receipt: dict[str, object] = {
         "receipt_id": "guard-receipt-unicode",
         "scanner_evidence": embedded_script_evidence_entries(stripped),
         "action_envelope_json": {"command": f" {stripped}"},
@@ -195,6 +207,20 @@ def test_history_explain_includes_embedded_scripts(tmp_path: Path, capsys: Any) 
     assert len(scripts) == 1
     assert scripts[0]["body"] == body
     assert scripts[0]["sha256_verified"] is True
+
+
+def test_history_explain_preserves_indeterminate_wrapper_execution(tmp_path: Path, capsys: Any) -> None:
+    command = "python-stdin-wrapper <<'EOF'\nprint('wrapped')\nEOF"
+    receipt_id = str(uuid.uuid4())
+    store = _store_with_command_receipt(tmp_path, command, receipt_id)
+    args = argparse.Namespace(receipt_id=receipt_id, json=True, script=False, history_command="explain")
+
+    result = _run_guard_history_command(args, store=store)
+
+    assert result == 0
+    script = json.loads(capsys.readouterr().out)["embedded_scripts"][0]
+    assert script["executed"] is None
+    assert script["execution_status"] == "indeterminate"
 
 
 def test_history_explain_script_flag_emits_only_scripts(tmp_path: Path, capsys: Any) -> None:

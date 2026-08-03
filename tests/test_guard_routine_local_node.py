@@ -329,6 +329,32 @@ def test_module_require_change_invalidates_existing_approval_identity(
     assert after.tool_identity_hash != before.tool_identity_hash
 
 
+@pytest.mark.parametrize(
+    "config_text",
+    (
+        "const load = require; module.exports = load('./config/build.js')\n",
+        "const load = module.require; module.exports = load('./config/build.js')\n",
+    ),
+)
+def test_aliased_require_configuration_remains_reviewable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    config_text: str,
+) -> None:
+    home, active, workspace = _workspace(tmp_path, "next")
+    _write(workspace / "next.config.js", config_text)
+    _write(workspace / "config" / "build.js", "module.exports = {}\n")
+    _trust_fixture_package(monkeypatch, workspace, "next")
+
+    eligibility = local_tool_approval_eligibility(
+        f"cd {workspace} && ./node_modules/.bin/next build --webpack",
+        cwd=active,
+        home_dir=home,
+    )
+
+    assert eligibility is None
+
+
 def test_configuration_package_change_invalidates_existing_approval_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

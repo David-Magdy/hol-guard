@@ -26,6 +26,7 @@ _LITERAL_MODULE_ARGUMENT = re.compile(r"(?P<quote>['\"])(?:\\.|(?!\1).)*(?P=quot
 _COMMENTED_LOADER_PATTERN = re.compile(
     r"\b(?:createRequire|(?:module\.)?require|import)\s*(?:/\*.*?\*/|//[^\n]*(?:\n|$))", re.DOTALL
 )
+_NON_CALL_REQUIRE_REFERENCE_PATTERN = re.compile(r"\brequire\b(?!\s*\()")
 _MODULE_SUFFIXES = ("", ".js", ".cjs", ".mjs", ".ts", ".cts", ".mts", ".json")
 _NODE_BUILTINS = frozenset(
     {
@@ -210,6 +211,7 @@ def _script_configuration_modules(
         )
         or re.search(r"\bcreateRequire\s*\(", text)
         or _COMMENTED_LOADER_PATTERN.search(text)
+        or _NON_CALL_REQUIRE_REFERENCE_PATTERN.search(text)
     ):
         raise ValueError("configuration contains computed module loading")
     resolved: list[Path] = []

@@ -164,7 +164,18 @@ def _embedded_scripts_for_receipt(match: dict[str, object]) -> list[dict[str, ob
     for marker in markers:
         item: dict[str, object] = {
             key: marker.get(key)
-            for key in ("index", "delimiter", "quoted", "executable", "executed", "sha256", "bytes", "lines", "span")
+            for key in (
+                "index",
+                "delimiter",
+                "quoted",
+                "executable",
+                "executed",
+                "execution_status",
+                "sha256",
+                "bytes",
+                "lines",
+                "span",
+            )
         }
         if command_text is not None:
             body, verified = _recover_embedded_body(command_text, marker)
