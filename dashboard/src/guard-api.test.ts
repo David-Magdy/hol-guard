@@ -6,22 +6,28 @@ import {
   fetchCommandActivityApi,
   fetchAllPendingRequests,
   fetchApprovalPage,
+  fetchGuardUpdateStatus,
   GuardHarnessActionError,
+  GuardSessionUnavailableError,
   fetchQueueSummary,
-	  fetchResumeStatus,
-	  formatHarnessCommand,
-	  normalizeRuntimeSnapshot,
-	  normalizeApprovalRequest,
+  fetchRuntimeSnapshot,
+  fetchResumeStatus,
+  formatHarnessCommand,
+  normalizeRuntimeSnapshot,
+  normalizeApprovalRequest,
   parseActionEnvelope,
   parseDecisionV2,
   readGuardToken,
+  readRememberedGuardUpdateChannel,
   runHarnessAction,
   runPackageFirewallAction,
   runPackageSync,
+  setGuardUpdateChannel,
   startPackageFirewallConnect,
-	  runAuditRemediation,
-	  resolveRequestWithQueueResult,
-	  retryResume,
+  runAuditRemediation,
+  repairSupplyChainProtection,
+  resolveRequestWithQueueResult,
+  retryResume,
 } from "./guard-api";
 import { recommendedScopeForAction } from "./approval-scopes";
 import { resolveCloudSyncHealthCopy } from "./runtime-overview";
@@ -1213,6 +1219,57 @@ assert(
   "L078ad: fetchApprovalPage falls back to sessionStorage when localStorage is unavailable"
 );
 
+installGuardWindow("?guardDaemon=http%3A%2F%2F127.0.0.1%3A4781");
+{
+  const noTokenCalls = installFetchStub({});
+  const approvalPageError = await fetchApprovalPage().then(
+    () => null,
+    (error: unknown) => error
+  );
+  assert(
+    approvalPageError instanceof GuardSessionUnavailableError,
+    "L078ae-no-token: fetchApprovalPage rejects with GuardSessionUnavailableError when no session token is available"
+  );
+  const snapshotError = await fetchRuntimeSnapshot().then(
+    () => null,
+    (error: unknown) => error
+  );
+  assert(
+    snapshotError instanceof GuardSessionUnavailableError,
+    "L078af-no-token: fetchRuntimeSnapshot rejects with GuardSessionUnavailableError when no session token is available"
+  );
+  assert(
+    noTokenCalls.length === 0,
+    "L078ag-no-token: auth-required fetches issue no HTTP requests when the dashboard session token is missing"
+  );
+}
+
+const updateChannelStorage = new Map<string, string>();
+installGuardWindow("?guardDaemon=http%3A%2F%2F127.0.0.1%3A4781", { localStorage: updateChannelStorage });
+installFetchStub({
+  "/v1/update/channel": { release_channel: "alpha" },
+});
+const selectedUpdateChannel = await setGuardUpdateChannel("alpha");
+assert(selectedUpdateChannel.release_channel === "alpha", "L078ae: update channel save returns alpha");
+assert(readRememberedGuardUpdateChannel() === "alpha", "L078af: successful channel save is remembered");
+
+installGuardWindow("?guardDaemon=http%3A%2F%2F127.0.0.1%3A4781", { localStorage: updateChannelStorage });
+installFetchStub({
+  "/v1/update/status": { current_version: "2.2.0a68" },
+});
+const reloadedUpdateChannel = await fetchGuardUpdateStatus();
+assert(
+  reloadedUpdateChannel.release_channel === "alpha",
+  "L078ag: remembered alpha channel survives a reload when status omits the channel",
+);
+
+installFetchStub({
+  "/v1/update/status": { current_version: "2.2.0a68", release_channel: "stable" },
+});
+const authoritativeStableChannel = await fetchGuardUpdateStatus();
+assert(authoritativeStableChannel.release_channel === "stable", "L078ah: daemon status remains authoritative");
+assert(readRememberedGuardUpdateChannel() === "stable", "L078ai: daemon status reconciles remembered channel");
+
 installGuardWindow("?guard-token=token-pending-pages&guardDaemon=http%3A%2F%2F127.0.0.1%3A4781");
 const codexPageItem: GuardApprovalRequest = {
   ...BASE_REQUEST,
@@ -1603,6 +1660,8 @@ const resolution = await resolveRequestWithQueueResult({
   scope_contract_digest: "scope-digest",
   mcp_grant_target: "category",
   mcp_grant_duration: "5h",
+  local_tool_grant_target: "capability",
+  local_tool_grant_duration: "1h",
 });
 const resolveBody = JSON.parse(String(fetchResolveCalls[0].init?.body)) as Record<string, unknown>;
 
@@ -1622,6 +1681,11 @@ assert(
 assert(
   resolveBody["mcp_grant_target"] === "category" && resolveBody["mcp_grant_duration"] === "5h",
   "L077: resolveRequestWithQueueResult binds the selected temporary MCP grant",
+);
+assert(
+  resolveBody["local_tool_grant_target"] === "capability" &&
+    resolveBody["local_tool_grant_duration"] === "1h",
+  "L077: resolveRequestWithQueueResult binds the selected trusted local tool grant",
 );
 assert(resolution.remaining_pending_count === 1, "L077: resolveRequestWithQueueResult returns remaining count");
 assert(resolution.next_selectable_request_id === "req-next", "L077: resolveRequestWithQueueResult returns next selectable id");
@@ -1953,5 +2017,40 @@ try {
 }
 assert(hostileCommandActivityError instanceof Error, "command activity path traversal is rejected");
 assert(hostileCommandActivityFetches === 0, "path traversal cannot receive the dashboard session token");
+
+installGuardWindow("?guard-token=supply-chain-repair-token&guardDaemon=http%3A%2F%2F127.0.0.1%3A4781");
+globalThis.fetch = async (): Promise<Response> =>
+  Response.json({
+    result: {
+      completed_steps: ["intelligence_sync", "package_shims", "runtime_activation"],
+      failed_steps: [],
+      message: "Supply-chain repair finished.",
+    },
+  });
+const compatibleRepair = await repairSupplyChainProtection();
+assert(compatibleRepair.repaired, "complete legacy repair responses are successful");
+
+globalThis.fetch = async (): Promise<Response> =>
+  Response.json({
+    result: {
+      repaired: false,
+      completed_steps: ["intelligence_sync", "package_shims", "runtime_activation"],
+      failed_steps: [],
+      message: "Supply-chain repair incomplete.",
+    },
+  });
+const explicitlyIncompleteRepair = await repairSupplyChainProtection();
+assert(!explicitlyIncompleteRepair.repaired, "explicit incomplete repair state remains authoritative");
+
+globalThis.fetch = async (): Promise<Response> =>
+  Response.json({
+    result: {
+      completed_steps: ["package_shims", "runtime_activation"],
+      failed_steps: [],
+      message: "Supply-chain repair incomplete.",
+    },
+  });
+const partialLegacyRepair = await repairSupplyChainProtection();
+assert(!partialLegacyRepair.repaired, "partial legacy repair responses remain incomplete");
 
 console.log("guard-api.test.ts: all tests passed");

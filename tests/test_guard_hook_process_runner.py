@@ -7,13 +7,16 @@ import subprocess
 import threading
 import time
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
 from typing import ClassVar, Protocol, TextIO, cast, final
+from unittest.mock import MagicMock
 
 import pytest
 
 from codex_plugin_scanner.guard import codex_hook_windows_job as windows_job_module
+from codex_plugin_scanner.guard import store as guard_store_module
 from codex_plugin_scanner.guard.codex_hook_launch_runtime import (
     BoundedHookProcessResult,
     isolated_daemon_start_command,
@@ -27,11 +30,13 @@ from codex_plugin_scanner.guard.codex_hook_windows_job import (
 )
 from codex_plugin_scanner.guard.daemon import hook_process_entrypoint as hook_entrypoint_module
 from codex_plugin_scanner.guard.daemon import hook_process_runner as hook_runner_module
+from codex_plugin_scanner.guard.daemon import hook_process_spawner as hook_spawner_module
 from codex_plugin_scanner.guard.daemon import hook_process_worker as hook_worker_module
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager_module
 from codex_plugin_scanner.guard.daemon.hook_process_protocol import capture_hook_command
 from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessRunner
-from codex_plugin_scanner.guard.daemon.hook_process_worker import HookWorkerSlot
+from codex_plugin_scanner.guard.daemon.hook_process_worker import HookProcessReview, HookWorkerSlot
+from codex_plugin_scanner.guard.daemon.runtime_hook_scheduler import RuntimeHookScheduler
 from codex_plugin_scanner.guard.models import GuardApprovalRequest
 from codex_plugin_scanner.guard.store import GuardStore
 
@@ -47,9 +52,7 @@ def test_default_review_deadline_stays_inside_pi_host_budget() -> None:
 
     assert pi_daemon_timeout_seconds > hook_runner_module._HOOK_PROCESS_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
     assert (
-        pi_host_timeout_seconds - pi_deadline_reserve_seconds
-        > hook_runner_module._HOOK_PROCESS_ACQUIRE_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
-        + hook_runner_module._HOOK_PROCESS_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
+        pi_host_timeout_seconds - pi_deadline_reserve_seconds > hook_runner_module._HOOK_PROCESS_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -62,6 +65,23 @@ def test_daemon_start_budget_contains_initial_worker_readiness() -> None:
         hook_runner_module._HOOK_PROCESS_READY_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
         > hook_entrypoint_module._HOOK_EVALUATOR_READY_TIMEOUT_SECONDS  # pyright: ignore[reportPrivateUsage]
     )
+
+
+def test_evaluator_becomes_ready_when_store_prewarm_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = MagicMock()
+    connection.recv.return_value = ("stop", None)
+    monkeypatch.setattr(
+        guard_store_module,
+        "GuardStore",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("migration busy")),
+    )
+
+    hook_entrypoint_module._hook_evaluator_main(connection, str(tmp_path / "guard-home"))  # pyright: ignore[reportPrivateUsage]
+
+    connection.send.assert_called_once_with(("ready", None))
 
 
 def test_windows_taskkill_path_uses_system_directory_api(
@@ -333,38 +353,151 @@ def test_prewarmed_runner_handles_real_hook_and_closes(tmp_path: Path) -> None:
             workspace=tmp_path,
             hook_env={},
         )
+        stats = runner.stats()
     finally:
         runner.close()
         runner.close()
 
     assert result.reason_code is None
     assert result.payload is not None
+    assert sum(stats["decisions"].values()) == 1
+    assert sum(stats["reason_codes"].values()) == 1
 
 
-def test_deferred_runner_serves_first_worker_before_backfilling(tmp_path: Path) -> None:
-    runner = HookProcessRunner(guard_home=tmp_path, process_limit=2, timeout_seconds=2)
+def test_prewarmed_runner_does_not_hide_a_second_worker_queue(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=4, timeout_seconds=1.8)
+    barrier = threading.Barrier(24)
+
+    def review(index: int) -> HookProcessReview:
+        barrier.wait(timeout=2)
+        return runner.review(
+            payload={
+                "hook_event_name": "PreToolUse",
+                "tool_call_id": f"multi-pi-{index}",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git status --short"},
+            },
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+        )
+
+    try:
+        runner.start()
+        started_at = time.monotonic()
+        with ThreadPoolExecutor(max_workers=24) as executor:
+            results = list(executor.map(review, range(24)))
+        elapsed = time.monotonic() - started_at
+    finally:
+        runner.close()
+
+    assert any(result.reason_code is None for result in results)
+    assert {result.reason_code for result in results if result.reason_code is not None} <= {
+        "daemon_hook_process_not_ready"
+    }
+    assert elapsed < 1.0
+
+
+def test_scheduler_and_runner_complete_48_routine_reviews_without_capacity_denial(
+    tmp_path: Path,
+) -> None:
+    scheduler = RuntimeHookScheduler(
+        active_limit=0,
+        queued_limit=64,
+        per_harness_queued_limit=64,
+        per_client_queued_limit=16,
+    )
+    runner = HookProcessRunner(
+        guard_home=tmp_path,
+        process_limit=8,
+        timeout_seconds=2.8,
+        capacity_listener=scheduler.set_active_limit,
+    )
+    barrier = threading.Barrier(48)
+
+    def review(index: int) -> HookProcessReview:
+        barrier.wait(timeout=3)
+        admission = scheduler.acquire(
+            harness="pi",
+            client_key=f"client-{index % 6}",
+            lane="decision",
+            payload_bytes=1,
+            deadline=time.monotonic() + 10,
+        )
+        assert admission.permit is not None
+        with admission.permit:
+            return runner.review(
+                payload={
+                    "hook_event_name": "PreToolUse",
+                    "tool_call_id": f"scheduled-pi-{index}",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "git status --short"},
+                },
+                harness="pi",
+                home_dir=tmp_path,
+                guard_home=tmp_path,
+                workspace=tmp_path,
+                hook_env={},
+                deadline=time.monotonic() + 4,
+            )
+
+    try:
+        runner.start()
+        with ThreadPoolExecutor(max_workers=48) as executor:
+            results = list(executor.map(review, range(48)))
+    finally:
+        runner.close()
+
+    failures = [result.reason_code for result in results if result.payload is None]
+    assert failures == [], runner.stats()
+    assert all(result.reason_code is None for result in results)
+    assert scheduler.stats()["completed"] == 48
+    assert scheduler.stats()["rejected"] == {}
+
+
+def test_deferred_runner_serves_startup_floor_before_backfilling(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=4, timeout_seconds=2)
     ready_workers = 0
     try:
         runner.start(defer_backfill=True)
-        assert runner.stats()["ready"] == 1
+        assert runner.stats()["ready"] == 2
 
         runner.enable_full_capacity(delay_seconds=0)
-        deadline = time.monotonic() + 3
-        while runner.stats()["ready"] != 2 and time.monotonic() < deadline:
-            time.sleep(0.02)
+        assert runner.wait_for_capacity(minimum_workers=4, timeout_seconds=8)
         ready_workers = runner.stats()["ready"]
     finally:
         runner.close()
 
-    assert ready_workers == 2
+    assert ready_workers == 4
     assert runner.stats()["workers"] == 0
+
+
+def test_deferred_runner_does_not_adapt_before_backfill_is_enabled(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path)
+    adaptive_capacity = runner._adaptive_capacity  # pyright: ignore[reportPrivateUsage]
+    assert adaptive_capacity is not None
+
+    try:
+        runner.start(defer_backfill=True)
+        deferred_target = runner._capacity_target  # pyright: ignore[reportPrivateUsage]
+        runner._refresh_capacity_policy()  # pyright: ignore[reportPrivateUsage]
+
+        assert deferred_target == 2
+        assert runner._capacity_target == deferred_target  # pyright: ignore[reportPrivateUsage]
+
+        runner.enable_full_capacity(delay_seconds=0)
+        assert runner._adaptive_refresh_enabled  # pyright: ignore[reportPrivateUsage]
+    finally:
+        runner.close()
 
 
 def test_deferred_runner_bounds_backfill_deferral_during_active_reviews(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runner = HookProcessRunner(guard_home=tmp_path, process_limit=2)
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=3)
     original_start = runner._start_slot  # pyright: ignore[reportPrivateUsage]
     attempts = 0
 
@@ -382,8 +515,8 @@ def test_deferred_runner_bounds_backfill_deferral_during_active_reviews(
             runner._active_reviews[generation] = 1  # pyright: ignore[reportPrivateUsage]
         runner.enable_full_capacity(delay_seconds=0)
         time.sleep(0.1)
-        assert attempts == 1
-        assert runner.wait_for_capacity(minimum_workers=2, timeout_seconds=5)
+        assert attempts == 2
+        assert runner.wait_for_capacity(minimum_workers=3, timeout_seconds=5)
     finally:
         with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
             runner._active_reviews.clear()  # pyright: ignore[reportPrivateUsage]
@@ -424,6 +557,178 @@ def test_prewarmed_runner_scans_post_tool_output_in_isolated_worker(tmp_path: Pa
     assert runner.stats()["workers"] == 0
 
 
+def test_idempotent_review_retries_once_after_worker_death(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=2, timeout_seconds=2)
+    try:
+        runner.start()
+        first_slot = next(iter(runner._all_slots.values()))  # pyright: ignore[reportPrivateUsage]
+        first_slot.process.kill()
+        first_slot.process.join(timeout=1)
+        queued_slots = [
+            runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+            for _index in range(runner._slots.qsize())  # pyright: ignore[reportPrivateUsage]
+        ]
+        runner._slots.put_nowait(first_slot)  # pyright: ignore[reportPrivateUsage]
+        for queued_slot in queued_slots:
+            if queued_slot is not first_slot:
+                runner._slots.put_nowait(queued_slot)  # pyright: ignore[reportPrivateUsage]
+
+        result = runner.review(
+            payload={
+                "hook_event_name": "PostToolUse",
+                "tool_call_id": "retryable-review",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo hello"},
+                "tool_response": [{"type": "text", "text": "hello\n"}],
+            },
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+            deadline=time.monotonic() + 2,
+        )
+    finally:
+        runner.close()
+
+    assert result.reason_code is None
+    assert result.payload is not None
+    assert result.payload["decision"] == "allow"
+
+
+def test_worker_retry_withdraws_scheduler_capacity_before_reusing_slot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler = RuntimeHookScheduler(active_limit=0, queued_limit=4)
+    runner = HookProcessRunner(
+        guard_home=tmp_path,
+        process_limit=2,
+        timeout_seconds=2,
+        capacity_listener=scheduler.set_active_limit,
+    )
+    permits = []
+    try:
+        runner.start()
+        monkeypatch.setattr(
+            runner,
+            "_replace_slot_async",
+            lambda slot: runner._withdraw_slot_capacity(slot),  # pyright: ignore[reportPrivateUsage]
+        )
+        first_slot = next(iter(runner._all_slots.values()))  # pyright: ignore[reportPrivateUsage]
+        first_slot.process.kill()
+        first_slot.process.join(timeout=1)
+        queued_slots = [
+            runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+            for _index in range(runner._slots.qsize())  # pyright: ignore[reportPrivateUsage]
+        ]
+        runner._slots.put_nowait(first_slot)  # pyright: ignore[reportPrivateUsage]
+        for queued_slot in queued_slots:
+            if queued_slot is not first_slot:
+                runner._slots.put_nowait(queued_slot)  # pyright: ignore[reportPrivateUsage]
+
+        for index in range(2):
+            admission = scheduler.acquire(
+                harness="pi",
+                client_key=f"active-{index}",
+                lane="decision",
+                payload_bytes=1,
+                deadline=time.monotonic() + 2,
+            )
+            assert admission.permit is not None
+            permits.append(admission.permit)
+
+        result = runner.review(
+            payload={
+                "hook_event_name": "PostToolUse",
+                "tool_call_id": "scheduler-retry",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo hello"},
+                "tool_response": [{"type": "text", "text": "hello\n"}],
+            },
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+            deadline=time.monotonic() + 2,
+        )
+        assert result.payload is not None
+        assert scheduler.stats()["active_limit"] == 1
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            queued = executor.submit(
+                scheduler.acquire,
+                harness="pi",
+                client_key="queued",
+                lane="decision",
+                payload_bytes=1,
+                deadline=time.monotonic() + 1,
+            )
+            time.sleep(0.05)
+            permits.pop().release()
+            time.sleep(0.05)
+            assert not queued.done()
+            permits.pop().release()
+            queued_admission = queued.result(timeout=1)
+        assert queued_admission.permit is not None
+        queued_admission.permit.release()
+    finally:
+        for permit in permits:
+            permit.release()
+        runner.close()
+
+
+def test_every_async_worker_replacement_withdraws_scheduler_capacity_first(
+    tmp_path: Path,
+) -> None:
+    scheduler = RuntimeHookScheduler(active_limit=0, queued_limit=4)
+    runner = HookProcessRunner(
+        guard_home=tmp_path,
+        process_limit=2,
+        capacity_listener=scheduler.set_active_limit,
+    )
+    permits = []
+    try:
+        runner.start()
+        slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+        for index in range(2):
+            admission = scheduler.acquire(
+                harness="pi",
+                client_key=f"replacement-active-{index}",
+                lane="decision",
+                payload_bytes=1,
+                deadline=time.monotonic() + 2,
+            )
+            assert admission.permit is not None
+            permits.append(admission.permit)
+
+        runner._replace_slot_async(slot)  # pyright: ignore[reportPrivateUsage]
+        assert scheduler.stats()["active_limit"] == 1
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            queued = executor.submit(
+                scheduler.acquire,
+                harness="pi",
+                client_key="replacement-queued",
+                lane="decision",
+                payload_bytes=1,
+                deadline=time.monotonic() + 1,
+            )
+            time.sleep(0.05)
+            permits.pop().release()
+            time.sleep(0.05)
+            assert not queued.done()
+            permits.pop().release()
+            queued_admission = queued.result(timeout=1)
+        assert queued_admission.permit is not None
+        queued_admission.permit.release()
+    finally:
+        for permit in permits:
+            permit.release()
+        runner.close()
+
+
 def test_worker_prewarm_does_not_create_approval_request(tmp_path: Path) -> None:
     store = GuardStore(tmp_path)
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1)
@@ -440,7 +745,7 @@ def test_transient_initial_worker_failure_replenishes_capacity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = HookProcessRunner(guard_home=tmp_path, process_limit=1)
-    original_ready = runner._slot_became_ready  # pyright: ignore[reportPrivateUsage]
+    original_ready = hook_spawner_module.hook_worker_became_ready
     attempts = 0
 
     def transient_ready(slot: HookWorkerSlot, timeout: float) -> bool:
@@ -449,7 +754,7 @@ def test_transient_initial_worker_failure_replenishes_capacity(
         ready = original_ready(slot, timeout)
         return attempts > 1 and ready
 
-    monkeypatch.setattr(runner, "_slot_became_ready", transient_ready)
+    monkeypatch.setattr(hook_runner_module, "hook_worker_became_ready", transient_ready)
     ready_workers = 0
     review_payload: dict[str, object] | None = None
     try:
@@ -628,12 +933,10 @@ def test_crashed_guardian_fails_closed_without_stale_group_cleanup(tmp_path: Pat
     assert retry.reason_code == "daemon_hook_process_closed"
 
 
-def test_review_waits_briefly_for_prepared_worker_capacity(tmp_path: Path) -> None:
-    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=0.5)
+def test_review_returns_immediately_without_prepared_worker_capacity(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=1.0)
     runner.start()
     slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
-    release = threading.Timer(0.05, lambda: runner._slots.put_nowait(slot))  # pyright: ignore[reportPrivateUsage]
-    release.start()
     try:
         started = time.monotonic()
         result = runner.review(
@@ -646,11 +949,37 @@ def test_review_waits_briefly_for_prepared_worker_capacity(tmp_path: Path) -> No
         )
         elapsed = time.monotonic() - started
     finally:
-        release.join(timeout=1)
+        runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
         runner.close()
 
-    assert elapsed >= 0.04
-    assert result.payload is not None
+    assert elapsed < 0.04
+    assert result.payload is None
+    assert result.reason_code == "daemon_hook_process_not_ready"
+
+
+def test_review_worker_wait_respects_outer_deadline(tmp_path: Path) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=1.0)
+    runner.start()
+    slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+    try:
+        started = time.monotonic()
+        result = runner.review(
+            payload={"hook_event_name": "SessionStart"},
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+            deadline=time.monotonic() + 0.02,
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
+        runner.close()
+
+    assert elapsed < 0.2
+    assert result.payload is None
+    assert result.reason_code == "daemon_hook_process_not_ready"
 
 
 def test_close_retains_worker_when_guardian_identity_is_lost(tmp_path: Path) -> None:
@@ -716,6 +1045,8 @@ def test_runner_rejects_invalid_limits() -> None:
         _ = HookProcessRunner(process_limit=0)
     with pytest.raises(ValueError, match="timeout_seconds"):
         _ = HookProcessRunner(timeout_seconds=0)
+    with pytest.raises(ValueError, match="must not exceed 16"):
+        _ = HookProcessRunner(process_limit=17)
 
 
 def test_recovery_failure_kind_is_tightly_allowlisted(tmp_path: Path) -> None:

@@ -278,7 +278,7 @@ def test_bridge_timeouts_stay_under_harness_budget() -> None:
     ) + bridge._RECOVERY_TIMEOUT_SECONDS + bridge._FALLBACK_TIMEOUT_SECONDS < bridge._HARNESS_TIMEOUT_BUDGET_SECONDS
 
 
-def test_main_recovers_missing_daemon_and_retries_hook(
+def test_main_falls_back_before_scheduling_missing_daemon_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -296,16 +296,7 @@ def test_main_recovers_missing_daemon_and_retries_hook(
         del endpoint, data, state_path, deadline
         nonlocal attempts
         attempts += 1
-        if attempts == 1:
-            raise urllib.error.URLError("daemon unavailable")
-        return json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "allow",
-                }
-            }
-        )
+        raise urllib.error.URLError("daemon unavailable")
 
     def fake_recover(
         command: tuple[str, ...],
@@ -330,11 +321,63 @@ def test_main_recovers_missing_daemon_and_retries_hook(
     )
 
     assert result == 0
-    assert attempts == 2
+    assert attempts == 1
     assert len(recovery_commands) == 1
     assert recovery_commands[0][1:3] == ("-I", "-c")
-    assert "recover_guard_daemon_after_hook_failure" in recovery_commands[0][3]
-    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "allow"
+    assert "schedule_guard_daemon_recovery" in recovery_commands[0][3]
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_local_package_review_precedes_daemon_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [2.0]
+    call_order: list[str] = []
+    recovery_deadlines: list[float | None] = []
+
+    monkeypatch.setattr(bridge.time, "monotonic", lambda: now[0])
+
+    def fake_recover(
+        command: tuple[str, ...],
+        *,
+        deadline: float | None = None,
+        failure_kind: str,
+    ) -> bool:
+        del command, failure_kind
+        call_order.append("recover")
+        recovery_deadlines.append(deadline)
+        assert deadline is not None
+        now[0] = min(deadline, now[0] + bridge._RECOVERY_TIMEOUT_SECONDS)
+        return True
+
+    def fake_fallback(
+        reason: str,
+        data: str,
+        command: tuple[str, ...],
+        *,
+        deadline: float | None = None,
+    ) -> str:
+        del reason, data, command
+        call_order.append("fallback")
+        assert deadline == 8.0
+        return '{"review":true}'
+
+    monkeypatch.setattr(bridge, "_run_recovery_command", fake_recover)
+    monkeypatch.setattr(bridge, "_run_local_fallback", fake_fallback)
+
+    response = bridge._recover_retry_or_fallback(
+        "daemon unavailable",
+        json.dumps({"hook_event_name": "PreToolUse"}),
+        fallback_command=(
+            sys.executable,
+            "-c",
+            "import time;time.sleep(1.25);print('{\"review\":true}')",
+        ),
+        recovery_command=(sys.executable, "-c", "pass"),
+        deadline=8.0,
+    )
+
+    assert json.loads(response) == {"review": True}
+    assert call_order == ["fallback", "recover"]
+    assert recovery_deadlines == [2.25]
 
 
 def test_recovery_only_restarts_for_transport_auth_and_server_failures() -> None:
@@ -354,6 +397,40 @@ def test_recovery_only_restarts_for_transport_auth_and_server_failures() -> None
     )
     assert not bridge._daemon_failure_is_recoverable(bridge._DaemonHTTPError(503, '{"error":"daemon_overloaded"}'))
     assert bridge._daemon_failure_kind(bridge._DaemonHTTPError(429, "busy")) == "overload"
+
+
+def test_typed_transient_overload_retries_once_without_recovery_or_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    attempts = 0
+
+    def fake_post(*_args: object, **_kwargs: object) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise bridge._DaemonHTTPError(
+                503,
+                '{"reason_code":"transient_overload","retry_after_ms":25,"estimated_service_ms":100}',
+            )
+        return '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
+
+    monkeypatch.setattr(bridge, "_post_to_loopback_daemon", fake_post)
+    monkeypatch.setattr(bridge.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr("sys.stdin", io.StringIO('{"hook_event_name":"PreToolUse"}'))
+
+    assert (
+        bridge.main(
+            state_path=tmp_path / "guard-home" / "daemon-state.json",
+            fallback_daemon_url="http://127.0.0.1:5474",
+            fallback_command=("should-not-run",),
+            query="guard-home=%2Ftmp",
+        )
+        == 0
+    )
+    assert attempts == 2
+    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "allow"
     assert bridge._daemon_failure_kind(TimeoutError("deadline")) == "transport-failure"
     assert bridge._daemon_failure_kind(ValueError("bad state")) == "authenticated-control-plane-failure"
 
@@ -387,7 +464,7 @@ def test_recovery_command_preserves_custom_home_and_guard_home(tmp_path: Path) -
     )
 
     assert command[1:3] == ("-I", "-c")
-    assert "recover_guard_daemon_after_hook_failure" in command[3]
+    assert "schedule_guard_daemon_recovery" in command[3]
     assert str(guard_home) in command[3]
     assert str(home_dir) in command[3]
 

@@ -273,6 +273,7 @@ class TestPiInstall:
         assert "if (details.kind === 'input') void openApprovalUrl(response, openedApprovalCenters)" in text
         assert "trySpawnOpen(command, args)" in text
         assert "child.once('error', () => settle(false))" in text
+
         assert "pollApprovalResolution" in text
         assert "GUARD_APPROVAL_RESUME_FETCH_TIMEOUT_MS" in text
         assert "controller?.abort()" in text
@@ -316,6 +317,28 @@ class TestPiInstall:
         assert omp_extension_path.is_file()
         assert str(omp_extension_path) in json.loads(omp_settings_path.read_text(encoding="utf-8"))["extensions"]
 
+    def test_reinstall_migrates_existing_extension_to_deadline_retry_contract(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        ctx = _ctx(tmp_path)
+        monkeypatch.setattr(
+            "codex_plugin_scanner.guard.adapters.pi.install_guard_shim",
+            lambda *args, **kwargs: {"shim_path": str(ctx.guard_home / "bin" / "guard-pi"), "notes": []},
+        )
+        adapter = get_adapter("pi")
+        first = adapter.install(ctx)
+        extension_path = Path(str(first["config_path"]))
+        extension_path.write_text("// stale managed Pi extension\n", encoding="utf-8")
+
+        adapter.install(ctx)
+
+        migrated = extension_path.read_text(encoding="utf-8")
+        assert "guard_remaining_ms" in migrated
+        assert "transient_overload" in migrated
+        assert "25 + Math.floor(Math.random() * 51)" in migrated
+
     def test_install_writes_managed_extension_that_denies_on_hook_errors(self, tmp_path: Path, monkeypatch) -> None:
         ctx = _ctx(tmp_path)
         monkeypatch.setattr(
@@ -331,7 +354,7 @@ class TestPiInstall:
         assert "[...GUARD_CLI_WRAPPER_ARGS, JSON.stringify(args)]" in text
         assert "async function daemonGuardResponse(" in text
         assert "await fetch(`http://127.0.0.1:${connection.port}/v1/hooks/pi?" in text
-        assert "let daemonAttempt = await daemonGuardResponse(serializedPayload, cwd);" in text
+        assert "serializedPayload, cwd, GUARD_DAEMON_TIMEOUT_MS, deadlineAt," in text
         assert "const response = await runGuard(" in text
         assert "if (result.error) {" in text
         assert "const errorMessage = result.error.message;" in text
@@ -419,11 +442,20 @@ class TestPiInstall:
         assert "guard_source_ref" in text
         assert "digestOutputText" in text
         assert "sourceFileRefForPostToolUse" in text
+        assert "isVirtualSourcePath" in text
+        assert "isAbsoluteSourcePath" not in text
+        assert "if (!path || isVirtualSourcePath(path)) return null;" in text
+        assert "text_excerpt: toolOutput" in text
         assert "GUARD_SOURCE_REF_MAX_OUTPUT_CHARS" in text
         assert "GUARD_SOURCE_REF_ALLOWED_TOOL_NAMES" in text
         assert "reviewed_output_sha256" in text
         assert 'response.model_output_action === "allow_original"' in text
         assert "response.reviewed_output_sha256 === digest.sha256" in text
+        assert "observe_mode?: boolean;" in text
+        assert "if (response.observe_mode === true) return undefined;" in text
+        assert text.index("if (response.observe_mode === true) return undefined;") < text.index(
+            "if (outputTruncated) {"
+        )
         # digestOutputText must only hash text-bearing fields, not metadata
         # like {type: "text"} — otherwise structured source reads never match
         assert "record.type === 'text'" in text

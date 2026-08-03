@@ -878,7 +878,26 @@ class TestGuardCli:
             main([])
 
         assert exc_info.value.code == 2
-        assert "Run `hol-guard guard --help` to inspect available Guard commands." in capsys.readouterr().err
+        assert "Run `hol-guard --help` to inspect available Guard commands." in capsys.readouterr().err
+
+    def test_hol_guard_routes_flat_commands_without_nested_guard_alias(self, monkeypatch, capsys) -> None:
+        called: dict[str, object] = {}
+
+        def _fake_run_guard_command(args):
+            called["guard_command"] = args.guard_command
+            return 7
+
+        monkeypatch.setattr(sys, "argv", ["hol-guard"])
+        monkeypatch.setattr("codex_plugin_scanner.cli.run_guard_command", _fake_run_guard_command)
+
+        assert main(["status"]) == 7
+        assert called == {"guard_command": "status"}
+
+        with pytest.raises(SystemExit) as exc_info:
+            main(["guard", "status"])
+
+        assert exc_info.value.code == 2
+        assert "invalid choice: 'guard'" in capsys.readouterr().err
 
     def test_plugin_guard_program_routes_directly_to_guard_mode(self, monkeypatch) -> None:
         called: dict[str, object] = {}
@@ -4073,7 +4092,9 @@ args = ["workspace-skill.js", "--changed"]
 
         assert rc == 0
         assert output["installer"] == "uv"
-        assert commands == [["uv", "tool", "install", "--force", "hol-guard==2.0.1092"]]
+        assert commands == [
+            ["uv", "tool", "install", "--force", "--refresh-package", "hol-guard", "hol-guard==2.0.1092"]
+        ]
         assert output["resulting_version"] == "2.0.1092"
         assert output["status"] == "updated"
 
@@ -4199,16 +4220,21 @@ args = ["workspace-skill.js", "--changed"]
     def test_guard_update_ignores_malformed_guard_config(self, tmp_path, monkeypatch, capsys):
         home_dir = tmp_path / "home"
         _write_text(home_dir / "config.toml", "[broken\n")
+        captured_alpha: list[object] = []
         monkeypatch.setattr(
             guard_commands_module,
             "run_guard_update",
-            lambda **_: ({"status": "updated", "message": "ok"}, 0),
+            lambda **kwargs: (
+                captured_alpha.append(kwargs.get("include_alpha")) or {"status": "updated", "message": "ok"},
+                0,
+            ),
         )
 
         rc = main(["guard", "update", "--home", str(home_dir), "--json"])
         output = json.loads(capsys.readouterr().out)
 
         assert rc == 0
+        assert captured_alpha == [False]
         assert output["status"] == "updated"
         assert output["message"] == "ok"
 
@@ -4272,6 +4298,27 @@ args = ["workspace-skill.js", "--changed"]
         )
 
         rc = main(["guard", "update", "--home", str(home_dir), "--alpha", "--json"])
+        output = json.loads(capsys.readouterr().out)
+
+        assert rc == 0
+        assert captured_alpha == [True]
+        assert output["status"] == "planned"
+
+    def test_guard_update_uses_persisted_alpha_channel(self, tmp_path, monkeypatch, capsys):
+        home_dir = tmp_path / "home"
+        _write_text(home_dir / "config.toml", 'update_channel = "alpha"\n')
+        captured_alpha: list[object] = []
+
+        monkeypatch.setattr(
+            guard_commands_module,
+            "run_guard_update",
+            lambda **kwargs: (
+                captured_alpha.append(kwargs.get("include_alpha")) or {"status": "planned", "message": "ok"},
+                0,
+            ),
+        )
+
+        rc = main(["guard", "update", "--home", str(home_dir), "--json"])
         output = json.loads(capsys.readouterr().out)
 
         assert rc == 0
@@ -5441,8 +5488,7 @@ curl --data-binary @"$1" http://127.0.0.1:8787/guard-canary
         assert rc == 0
         assert captured.out == ""
         pending = store.list_approval_requests(limit=5)
-        assert len(pending) == 1
-        assert pending[0]["policy_action"] == "require-reapproval"
+        assert pending == []
 
     def test_guard_codex_pretooluse_returns_without_browser_wait_for_secret_exfil(self, tmp_path, monkeypatch, capsys):
         home_dir = tmp_path / "home"

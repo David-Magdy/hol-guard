@@ -77,7 +77,7 @@ _COMMAND_KEYS = (
 )
 _EXPLICIT_COMMAND_KEYS = ("command", "cmd", "shell_command", "shellCommand")
 _SEARCH_PATTERN_KEYS = ("pattern", "query", "search", "regex")
-_PATCH_INPUT_KEYS = ("patch", "input")
+_PATCH_INPUT_KEYS = ("patch", "input", "command")
 _PATCH_FILE_HEADER_PATTERN = re.compile(r"^\*\*\* (?:Add|Delete|Update) File: (?P<path>.+)$", re.MULTILINE)
 _SENSITIVE_RAW_KEYS = frozenset(
     {
@@ -499,6 +499,51 @@ def normalize_pi_payload(
     )
 
 
+def normalize_kimi_payload(
+    payload: Mapping[str, object],
+    *,
+    workspace: Path | str | None = None,
+    home_dir: Path | str | None = None,
+) -> GuardActionEnvelope:
+    """Normalize a Kimi Code native-hook payload into a typed action envelope."""
+
+    from ..adapters.kimi_hooks import normalize_kimi_prompt
+
+    normalized_payload = dict(payload)
+    normalized_payload["prompt"] = normalize_kimi_prompt(normalized_payload.get("prompt"))
+    return _normalize_action_payload(
+        normalized_payload,
+        harness="kimi",
+        default_event_name=None,
+        workspace=workspace,
+        home_dir=home_dir,
+    )
+
+
+_ACTION_PAYLOAD_NORMALIZERS = {
+    "codex": normalize_codex_hook_payload,
+    "claude": normalize_claude_hook_payload,
+    "claude-code": normalize_claude_hook_payload,
+    "opencode": normalize_opencode_payload,
+    "copilot": normalize_copilot_payload,
+    "gemini": normalize_gemini_payload,
+    "hermes": normalize_hermes_payload,
+    "openclaw": normalize_openclaw_payload,
+    "cursor": normalize_cursor_hook_payload,
+    "grok": normalize_grok_hook_payload,
+    "kimi": normalize_kimi_payload,
+    "pi": normalize_pi_payload,
+    "zcode": normalize_zcode_hook_payload,
+    "zai": normalize_zcode_hook_payload,
+}
+
+
+def action_envelope_harnesses() -> tuple[str, ...]:
+    """Return every harness name accepted by the shared action-envelope boundary."""
+
+    return tuple(_ACTION_PAYLOAD_NORMALIZERS)
+
+
 def normalize_harness_payload(
     harness: str,
     event_name: str,
@@ -510,22 +555,7 @@ def normalize_harness_payload(
     """Normalize any supported Guard harness payload into a typed action envelope."""
 
     normalized_harness = harness.strip().lower()
-    normalizers = {
-        "codex": normalize_codex_hook_payload,
-        "claude": normalize_claude_hook_payload,
-        "claude-code": normalize_claude_hook_payload,
-        "opencode": normalize_opencode_payload,
-        "copilot": normalize_copilot_payload,
-        "gemini": normalize_gemini_payload,
-        "hermes": normalize_hermes_payload,
-        "openclaw": normalize_openclaw_payload,
-        "cursor": normalize_cursor_hook_payload,
-        "grok": normalize_grok_hook_payload,
-        "pi": normalize_pi_payload,
-        "zcode": normalize_zcode_hook_payload,
-        "zai": normalize_zcode_hook_payload,
-    }
-    normalizer = normalizers.get(normalized_harness)
+    normalizer = _ACTION_PAYLOAD_NORMALIZERS.get(normalized_harness)
     if normalizer is None:
         raise ValueError(f"Unsupported Guard harness for action normalization: {harness}")
     normalized_payload = _payload_with_default_event(payload, event_name)
@@ -1114,6 +1144,7 @@ def _normalized_command(command: str | None) -> str | None:
 __all__ = [
     "GuardActionEnvelope",
     "GuardActionType",
+    "action_envelope_harnesses",
     "normalize_claude_hook_payload",
     "normalize_codex_hook_payload",
     "normalize_copilot_payload",

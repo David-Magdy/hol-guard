@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import threading
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, final
 
 if TYPE_CHECKING:
     from ..store import GuardStore
@@ -22,6 +22,25 @@ SIZE_BUCKETS = (
     (1024 * 1024, "256k-1m"),
     (5 * 1024 * 1024, "1m-5m"),
 )
+_MAX_COUNTER_KEYS = 256
+_HARNESSES = {"pi", "codex", "claude-code", "cursor", "opencode"}
+_DECISIONS = {"allow", "deny", "ask", "block", "warn", "error"}
+_CACHE_STATUSES = {"hit", "miss", "bypass", "disabled", "error"}
+_FALLBACK_KINDS = {"none", "fail_closed", "local", "cache", "error"}
+_EVENTS = {"pretooluse", "posttooluse", "permissionrequest", "userpromptsubmit"}
+
+
+def _bounded_dimension(value: str, allowed: set[str]) -> str:
+    normalized = value.strip().lower()
+    return normalized if normalized in allowed else "other"
+
+
+def _reason_category(reason_code: str) -> str:
+    normalized = reason_code.strip().lower()
+    for category in ("secret", "policy", "deadline", "capacity", "worker", "store", "auth"):
+        if category in normalized:
+            return category
+    return "other"
 
 
 def _latency_bucket(latency_ms: float) -> str:
@@ -38,6 +57,7 @@ def _size_bucket(output_size: int) -> str:
     return "over"
 
 
+@final
 class HookMetricsRecorder:
     """Thread-safe in-memory metrics recorder.
 
@@ -50,6 +70,14 @@ class HookMetricsRecorder:
         self._counters: dict[str, int] = defaultdict(int)
         self._latencies: list[float] = []
         self._max_items = 10_000
+
+    def _increment(self, key: str) -> None:
+        if key in self._counters:
+            self._counters[key] += 1
+        elif len(self._counters) < _MAX_COUNTER_KEYS - 1:
+            self._counters[key] = 1
+        else:
+            self._counters["metrics:overflow"] += 1
 
     def record(
         self,
@@ -72,15 +100,22 @@ class HookMetricsRecorder:
         with self._lock:
             if len(self._latencies) < self._max_items:
                 self._latencies.append(latency_ms)
-            key = (
-                f"{harness}:{event_name}:{route}:{payload_kind}:{decision}:{reason_code}:{cache_status}:{fallback_kind}"
+            safe_harness = _bounded_dimension(harness, _HARNESSES)
+            safe_event = _bounded_dimension(event_name.replace("_", "").replace("-", ""), _EVENTS)
+            safe_decision = _bounded_dimension(decision, _DECISIONS)
+            safe_cache = _bounded_dimension(cache_status, _CACHE_STATUSES)
+            safe_fallback = _bounded_dimension(fallback_kind, _FALLBACK_KINDS)
+            safe_reason = _reason_category(reason_code)
+            self._increment(
+                f"decision:{safe_harness}:{safe_event}:{safe_decision}:{safe_reason}:{safe_cache}:{safe_fallback}"
             )
-            self._counters[key] += 1
-            self._counters[f"latency:{_latency_bucket(latency_ms)}"] += 1
-            self._counters[f"size:{_size_bucket(output_size)}"] += 1
-            self._counters[f"model_output_action:{model_output_action}"] += 1
+            self._increment(f"latency:{_latency_bucket(latency_ms)}")
+            self._increment(f"size:{_size_bucket(output_size)}")
+            self._increment(f"scanner_size:{_size_bucket(scanner_bytes)}")
+            self._increment(f"model_output_action:{_bounded_dimension(model_output_action, _DECISIONS)}")
+            _ = route, payload_kind
             if policy_action:
-                self._counters[f"policy_action:{policy_action}"] += 1
+                self._increment(f"policy_action:{_bounded_dimension(policy_action, _DECISIONS)}")
 
     def snapshot(self) -> dict[str, object]:
         """Return a snapshot of current metrics."""
@@ -96,6 +131,13 @@ class HookMetricsRecorder:
                 "latency_p99_ms": round(p99, 2),
                 "total_decisions": len(self._latencies),
             }
+
+    def record_failure(self, *, stage: str, exception_type: str) -> None:
+        """Record only a bounded failure stage and exception class."""
+        safe_stage = stage if stage in {"engine", "metrics", "server"} else "unknown"
+        safe_exception = exception_type if exception_type.isidentifier() else "UnknownError"
+        with self._lock:
+            self._increment(f"failure:{safe_stage}:{safe_exception[:80]}")
 
     def maybe_flush_to_store(self, store: GuardStore, *, force: bool = False) -> None:
         """Flush metrics to store as a rollup event.

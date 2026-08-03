@@ -1,10 +1,14 @@
-import { lazy, Suspense, useCallback, useMemo, useRef } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import type { GuardApprovalGatePublicConfig, GuardPolicyDecision, GuardReceipt, GuardRuntimeSnapshot } from "./guard-types";
 import { WorkspacePageHeader } from "./workspace-page-header";
 import { SUPPLY_CHAIN_WORKSPACE_SHELL_CLASS } from "./supply-chain-workspace-layout";
 import { PackageFirewallPanel, type PackageFirewallPanelHandle } from "./supply-chain-firewall-panel";
 import { useSupplyChainAuditSession } from "./use-supply-chain-audit-session";
 import { resolveSupplyChainAuditWorkspaceDir } from "./supply-chain-audit-workspace";
+import {
+  IDLE_SUPPLY_CHAIN_FIX_ALL_STATE,
+  type SupplyChainFixAllState,
+} from "./supply-chain-fix-all";
 
 const SupplyChainWorkspace = lazy(() =>
   import("./supply-chain-workspace").then((m) => ({ default: m.SupplyChainWorkspace }))
@@ -49,6 +53,9 @@ export function SupplyChainHubWorkspace(props: {
 }) {
   const tab = viewToTab(props.activeView);
   const firewallPanelRef = useRef<PackageFirewallPanelHandle>(null);
+  const [fixAllState, setFixAllState] = useState<SupplyChainFixAllState>(
+    IDLE_SUPPLY_CHAIN_FIX_ALL_STATE,
+  );
   const auditSession = useSupplyChainAuditSession({
     snapshot: props.snapshot,
     onNavigate: props.onNavigate,
@@ -66,6 +73,9 @@ export function SupplyChainHubWorkspace(props: {
     },
     [props.onNavigate]
   );
+  const handleFixAll = useCallback(() => {
+    firewallPanelRef.current?.fixAll();
+  }, []);
 
   return (
     <div className={SUPPLY_CHAIN_WORKSPACE_SHELL_CLASS}>
@@ -81,11 +91,11 @@ export function SupplyChainHubWorkspace(props: {
           <SupplyChainWorkspace
             snapshot={props.snapshot}
             onGoHome={props.onGoHome}
-            onRuntimeRefresh={props.onRuntimeRefresh}
-            firewallPanelRef={firewallPanelRef}
             onAuditNavigate={() => props.onNavigate("/audit")}
             auditSnapshot={auditSession.auditSnapshot}
             auditRunning={auditSession.auditRunning}
+            fixAllState={fixAllState}
+            onFixAll={handleFixAll}
           />
         )}
         {tab === "audit" && (
@@ -111,6 +121,7 @@ export function SupplyChainHubWorkspace(props: {
           onAuditStarted={auditSession.handleAuditStarted}
           onAuditCompleted={auditSession.handleAuditCompleted}
           onAuditRunningChange={auditSession.handleAuditRunningChange}
+          onFixAllStateChange={setFixAllState}
           runAuditRef={auditSession.runAuditRef}
         />
       </div>

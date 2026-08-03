@@ -58,6 +58,11 @@ from ..runtime.approval_reuse import (
 from ..runtime.github_workflow_runtime import resolved_github_workflow_capability_preflight
 from ..runtime.signals import GuardRiskSignalV3
 from ..shims import package_shim_status
+from ..trusted_local_tools import (
+    LocalToolApprovalEligibility,
+    local_tool_approval_eligibility,
+    matching_local_tool_grant,
+)
 from ._commands_shared import *
 from .commands_hook_github_workflow import (
     claimed_approval_request_id,
@@ -194,6 +199,14 @@ def _runtime_external_archive_has_digest_binding_sink(
     return resolved_executable == shim_path
 
 
+def _embedded_script_evidence(command_text: str) -> list[dict[str, object]]:
+    """Hash-addressed audit entries for heredoc script bodies (lazy import)."""
+
+    from ..runtime.embedded_script_evidence import embedded_script_evidence_entries
+
+    return embedded_script_evidence_entries(command_text)
+
+
 def _runtime_cisco_scanner_evidence(
     action_envelope: GuardActionEnvelope,
     *,
@@ -240,9 +253,12 @@ def _evaluate_runtime_artifact_hook(
     runtime_workspace: Path | None,
     store: GuardStore,
     trusted_request_override_hash: str | None = None,
-    post_claim_revalidator: (Callable[[str, bool, str | None], int | RuntimeArtifactHookState | None] | None) = None,
+    post_claim_revalidator: (
+        Callable[[str, bool, str | None, bool], int | RuntimeArtifactHookState | None] | None
+    ) = None,
     _claimed_saved_allow_hash: str | None = None,
     _claimed_trusted_request_override: bool = False,
+    _claimed_package_approval_consumed: bool = False,
     _claimed_approval_request_id: str | None = None,
     _claim_saved_approval: bool = True,
     _post_claim_refresh_failed: bool = False,
@@ -272,6 +288,7 @@ def _evaluate_runtime_artifact_hook(
         claimed_hash: str,
         *,
         trusted_request_override: bool,
+        package_approval_consumed: bool = False,
         approval_request_id: str | None = None,
     ) -> int | RuntimeArtifactHookState:
         refresh_failed = False
@@ -281,6 +298,7 @@ def _evaluate_runtime_artifact_hook(
                     claimed_hash,
                     trusted_request_override,
                     approval_request_id,
+                    package_approval_consumed,
                 )
             except Exception:
                 refreshed_result = None
@@ -301,6 +319,7 @@ def _evaluate_runtime_artifact_hook(
             post_claim_revalidator=None,
             _claimed_saved_allow_hash=claimed_hash,
             _claimed_trusted_request_override=trusted_request_override,
+            _claimed_package_approval_consumed=package_approval_consumed,
             _claimed_approval_request_id=approval_request_id,
             _claim_saved_approval=False,
             _post_claim_refresh_failed=refresh_failed,
@@ -438,6 +457,8 @@ def _evaluate_runtime_artifact_hook(
         else ()
     )
     scanner_evidence_payload = [signal.to_dict() for signal in scanner_evidence]
+    if action_envelope is not None and isinstance(action_envelope.command, str):
+        scanner_evidence_payload.extend(_embedded_script_evidence(action_envelope.command))
     if workflow_state.approval_record is not None:
         scanner_evidence_payload.append(github_workflow_approval_evidence(workflow_state.approval_record))
     for input_source, normalization in (
@@ -561,6 +582,47 @@ def _evaluate_runtime_artifact_hook(
                 else scanner_risk_signals[0]
             )
     current_policy_action = policy_action
+    local_tool_eligibility: LocalToolApprovalEligibility | None = None
+    raw_runtime_command = _runtime_package_raw_command(payload_map, action_envelope)
+    if (
+        event_name == "PreToolUse"
+        and runtime_artifact.artifact_type in {"tool_action_request", "package_request"}
+        and raw_runtime_command is not None
+    ):
+        local_tool_eligibility = local_tool_approval_eligibility(
+            raw_runtime_command,
+            cwd=runtime_workspace or Path.cwd(),
+            home_dir=context.home_dir,
+        )
+    local_tool_grant = (
+        matching_local_tool_grant(
+            store=store,
+            harness=policy_harness,
+            eligibility=local_tool_eligibility,
+            current_action=current_policy_action,
+        )
+        if current_action_override is None
+        and cli_action_normalization is None
+        and payload_action_normalization is None
+        and not data_flow_signals
+        and not scanner_evidence
+        and (package_evaluation is None or package_policy_action != "block")
+        else None
+    )
+    if local_tool_eligibility is not None:
+        scanner_evidence_payload.append(local_tool_eligibility.to_evidence())
+    if local_tool_grant is not None and local_tool_eligibility is not None:
+        scanner_evidence_payload.append(
+            {
+                "source": "trusted_local_tool_grant",
+                "applied": True,
+                "tool_identity_hash": local_tool_eligibility.tool_identity_hash,
+                "capability": local_tool_eligibility.capability,
+            }
+        )
+        current_policy_action = "allow"
+        policy_action = "allow"
+        approval_context_policy_action = "allow"
     runtime_artifact_hash = _runtime_hook_approval_context_token(
         artifact=approval_context_artifact,
         content_hash=artifact_content_hash,
@@ -743,12 +805,16 @@ def _evaluate_runtime_artifact_hook(
         )
         package_reuse_applied = False
         package_saved_allow_applied = False
+        package_approval_claim_disposition: str | None = None
         for reason in package_evaluation.reasons:
             if reason.get("code") in {"saved_package_approval", "saved_package_block"}:
                 package_reuse_applied = True
                 approval_reuse_source = "saved_package_policy"
             if reason.get("code") == "saved_package_approval":
                 package_saved_allow_applied = True
+                raw_claim_disposition = reason.get("approval_claim_disposition")
+                if raw_claim_disposition in {"consumed", "retained"}:
+                    package_approval_claim_disposition = str(raw_claim_disposition)
             raw_reuse = reason.get("approval_reuse")
             if isinstance(raw_reuse, Mapping):
                 package_reuse_applied = True
@@ -766,6 +832,7 @@ def _evaluate_runtime_artifact_hook(
             return revalidate_claimed_allow(
                 runtime_artifact_hash,
                 trusted_request_override=False,
+                package_approval_consumed=package_approval_claim_disposition == "consumed",
             )
         policy_action = (
             _resolved_guard_action(package_evaluation.policy_action, current_policy_action)
@@ -985,6 +1052,7 @@ def _evaluate_runtime_artifact_hook(
             "allow",
             saved_decision_present=True,
             validation_reason=claimed_validation_reason,
+            fresh_local_approval=_claimed_package_approval_consumed,
         )
         policy_action = approval_reuse.action
         approval_reuse_source = (
@@ -1036,6 +1104,19 @@ def _evaluate_runtime_artifact_hook(
         action_envelope = action_envelope.with_pre_execution_result(policy_action)
     decision_v2 = build_decision_v2(policy_action, reason=policy_action, signals=decision_signals)
     decision_v2_payload = decision_v2.to_dict()
+    if package_evaluation is not None:
+        cloud_reason_codes = {
+            str(reason.get("code") or "") for reason in package_evaluation.reasons if isinstance(reason, Mapping)
+        }
+        for cloud_reason_code in (
+            "cloud_auth_error",
+            "cloud_validation_error",
+            "cloud_http_error",
+            "cloud_timeout",
+        ):
+            if cloud_reason_code in cloud_reason_codes:
+                decision_v2_payload["package_review_cloud_reason_code"] = cloud_reason_code
+                break
     package_only_decision = not has_compound_findings
     if package_evaluation is not None and package_policy_action == policy_action and package_only_decision:
         decision_v2_payload["user_title"] = package_evaluation.user_copy.title
@@ -1057,6 +1138,18 @@ def _evaluate_runtime_artifact_hook(
             f"HOL Guard {action_phrase} this complete command after combining "
             f"{compound_finding_count} findings. {risk_summary}"
         )
+    if (
+        package_evaluation is not None
+        and policy_action in {"review", "require-reapproval"}
+        and any(_optional_string(reason.get("code")) == "cloud_auth_error" for reason in package_evaluation.reasons)
+    ):
+        reconnect_command = "hol-guard connect"
+        reconnect_instruction = f"Run `{reconnect_command}` to reconnect Guard Cloud, then retry the same install."
+        for copy_field in ("user_body", "harness_message", "dashboard_primary_detail"):
+            existing_copy = str(decision_v2_payload.get(copy_field) or "").strip()
+            if reconnect_command not in existing_copy:
+                decision_v2_payload[copy_field] = f"{existing_copy} {reconnect_instruction}".strip()
+        decision_v2_payload["retry_instruction"] = reconnect_instruction
     incident = build_incident_context(
         harness=args.harness,
         artifact=runtime_artifact,

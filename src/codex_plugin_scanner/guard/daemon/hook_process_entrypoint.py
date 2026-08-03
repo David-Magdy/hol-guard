@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, cast
 
 from ..codex_hook_windows_job import assign_current_process_to_windows_hook_job
+from ..sqlite_profile import sqlite_error_is_busy_locked
 from .hook_process_protocol import (
     applied_hook_environment,
     as_string_object_dict,
@@ -123,21 +124,42 @@ def _hook_evaluator_main(connection: Connection, configured_guard_home: str | No
         _ = importlib.import_module(module_name)
     stores: dict[str, GuardStore] = {}
     hook_workers: dict[str, HookWorker] = {}
-    connection.send(("ready", None))
+    if configured_guard_home is not None:
+        from ..store import GuardStore
+
+        guard_home = Path(configured_guard_home).resolve(strict=False)
+        # The worker can become ready while a concurrent daemon migration
+        # finishes; the first request retries store construction lazily.
+        with suppress(Exception):
+            stores[str(guard_home)] = GuardStore(
+                guard_home,
+                prime_policy_integrity=False,
+                daemon_managed_schema=True,
+            )
+    try:
+        connection.send(("ready", None))
+    except (BrokenPipeError, EOFError, OSError):
+        return
     while True:
         try:
             raw_message = cast(object, connection.recv())
         except EOFError:
             return
         if not is_pair(raw_message):
-            connection.send(("result", {"payload": None, "reason_code": "daemon_hook_process_invalid_request"}))
+            try:
+                connection.send(("result", {"payload": None, "reason_code": "daemon_hook_process_invalid_request"}))
+            except (BrokenPipeError, EOFError, OSError):
+                return
             continue
         message_type, raw_request = raw_message
         if message_type == "stop":
             return
         typed_request = as_string_object_dict(raw_request)
         if message_type != "review" or typed_request is None:
-            connection.send(("result", {"payload": None, "reason_code": "daemon_hook_process_invalid_request"}))
+            try:
+                connection.send(("result", {"payload": None, "reason_code": "daemon_hook_process_invalid_request"}))
+            except (BrokenPipeError, EOFError, OSError):
+                return
             continue
         try:
             response = _run_resident_hook_request(
@@ -146,9 +168,15 @@ def _hook_evaluator_main(connection: Connection, configured_guard_home: str | No
                 hook_workers=hook_workers,
                 configured_guard_home=configured_guard_home,
             )
-        except BaseException:
-            response = {"payload": None, "reason_code": "daemon_hook_process_failed"}
-        connection.send(("result", response))
+        except BaseException as error:
+            reason_code = (
+                "daemon_hook_process_not_ready" if sqlite_error_is_busy_locked(error) else "daemon_hook_process_failed"
+            )
+            response = {"payload": None, "reason_code": reason_code}
+        try:
+            connection.send(("result", response))
+        except (BrokenPipeError, EOFError, OSError):
+            return
 
 
 def _run_resident_hook_request(

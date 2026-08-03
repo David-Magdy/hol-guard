@@ -34,7 +34,7 @@ from ..adapters.opencode_pretool import (
     pretool_plugin_source,
 )
 from ..codex_hook_integrity import CodexHookIntegrityError, load_authenticated_hook_manifest
-from ..config import resolve_guard_home
+from ..config import load_guard_config, resolve_guard_home
 from ..mdm.contracts import ManagedNetworkPolicy, ManagedPolicy
 from ..mdm.network import ManagedNetworkError, managed_urlopen
 from ..mdm.policy import load_managed_policy
@@ -1415,7 +1415,7 @@ def _update_command(
     allow_prerelease = _target_version_is_prerelease(target_version)
     if use_pypi:
         if installer == "uv":
-            command = ["uv", "tool", "install", "--force"]
+            command = ["uv", "tool", "install", "--force", "--refresh-package", "hol-guard"]
             if allow_prerelease:
                 command.append("--prerelease=allow")
             command.append(package)
@@ -2313,7 +2313,10 @@ def _codex_backup_repair_contexts(context: HarnessContext) -> tuple[HarnessConte
     return (context,)
 
 
-def build_guard_update_status_payload() -> dict[str, object]:
+def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict[str, object]:
+    resolved_guard_home = guard_home or resolve_guard_home()
+    update_channel = load_guard_config(resolved_guard_home).update_channel
+    include_alpha = update_channel == "alpha"
     install_surface = build_guard_install_surface_payload()
     installer = str(install_surface.get("installer") or "")
     binary_diagnostics = install_surface.get("binary_diagnostics")
@@ -2348,6 +2351,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
             installed_distribution = _status_installed_distribution(
                 installer=installer,
                 managed_policy=managed_policy,
+                guard_home=resolved_guard_home,
             )
         except UpdateSubprocessError as error:
             auto_updatable = False
@@ -2360,7 +2364,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
     local_archive_install = _recover_local_archive_install(
         _local_archive_install_payload(direct_url),
         direct_url=direct_url,
-        guard_home=resolve_guard_home(),
+        guard_home=resolved_guard_home,
         installed_version=current_version,
     )
     version_check = (
@@ -2368,6 +2372,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
             current_version,
             source_kind=source_kind,
             network_policy=(managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()),
+            include_alpha=include_alpha,
         )
         if installed_distribution is not None
         else {
@@ -2428,6 +2433,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
         "python_update_required": _python_runtime_blocks_update(version_check),
         "recovery_reinstall_available": recovery_reinstall_available,
         "recovery_reinstall_command": recovery_reinstall_command,
+        "release_channel": update_channel,
     }
     if trusted_failure_reason is not None:
         payload["reason_code"] = trusted_failure_reason
@@ -2438,11 +2444,12 @@ def _status_installed_distribution(
     *,
     installer: str,
     managed_policy: ManagedPolicy | None,
+    guard_home: Path,
 ) -> InstalledDistribution:
     network = managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()
     index_url = managed_policy.update.index_url if managed_policy is not None else None
     context = build_trusted_update_context(
-        guard_home=resolve_guard_home(),
+        guard_home=guard_home,
         workspace_dir=None,
         installer_kind=installer,
         source_url=index_url,

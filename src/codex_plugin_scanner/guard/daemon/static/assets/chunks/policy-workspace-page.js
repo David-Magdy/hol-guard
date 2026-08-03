@@ -1,4 +1,4 @@
-import { j as jsxRuntimeExports, S as SectionLabel, x as HiMiniXMark, M as Badge, aj as Tag, b as HiMiniCommandLine, K as HiMiniExclamationTriangle, bf as scopeLabel, e as harnessDisplayName, A as ActionButton, bg as guardAwareHref, t as formatRelativeTime$1, bh as HiMiniDocumentText, m as HiMiniCheckCircle, bi as HiMiniCloudArrowUp, bj as HiMiniCheck, bk as HiMiniCodeBracket, bl as HiMiniClipboardDocument, bm as HiMiniUsers, aU as HiMiniBeaker, bn as HiMiniFolder, Z as HiMiniLockClosed, q as HiMiniShieldCheck, bo as HiMiniInformationCircle, b0 as HiMiniCloudArrowDown, a$ as HiMiniArrowTopRightOnSquare, bp as HiMiniIdentification, bq as policyActionLabel, r as reactExports, br as createCloudExceptionRequest, bs as HiMiniArrowRight, k as EmptyState, ak as HiMiniMagnifyingGlass, y as HiMiniChevronUp, z as HiMiniChevronDown, c as HiMiniChevronRight, bt as HiMiniPuzzlePiece, bu as HiMiniGlobeAlt, aS as HiMiniClock, bv as fetchCloudExceptions, bw as fetchCloudExceptionRequests, bx as downloadBlob, by as PolicyStatField, bz as PaginationControls, bA as HiMiniNoSymbol, bB as HiMiniCube, aH as HiMiniArrowPath, C as HiMiniCloud, $ as HiMiniAdjustmentsHorizontal, bC as HiMiniArrowDownTray, bD as HiMiniQueueList, bd as WorkspacePageHeader, be as __vitePreload } from "../guard-dashboard.js";
+import { j as jsxRuntimeExports, S as SectionLabel, x as HiMiniXMark, M as Badge, ak as Tag, b as HiMiniCommandLine, K as HiMiniExclamationTriangle, bh as scopeLabel, e as harnessDisplayName, A as ActionButton, bi as guardAwareHref, t as formatRelativeTime$1, bj as HiMiniDocumentText, m as HiMiniCheckCircle, bk as HiMiniCloudArrowUp, bl as HiMiniCheck, bm as HiMiniCodeBracket, bn as HiMiniClipboardDocument, bo as HiMiniUsers, aV as HiMiniBeaker, bp as HiMiniFolder, _ as HiMiniLockClosed, q as HiMiniShieldCheck, bq as HiMiniInformationCircle, b1 as HiMiniCloudArrowDown, b0 as HiMiniArrowTopRightOnSquare, br as HiMiniIdentification, bs as policyActionLabel, r as reactExports, bt as createCloudExceptionRequest, bu as HiMiniArrowRight, k as EmptyState, al as HiMiniMagnifyingGlass, y as HiMiniChevronUp, z as HiMiniChevronDown, c as HiMiniChevronRight, bv as HiMiniPuzzlePiece, bw as HiMiniGlobeAlt, aT as HiMiniClock, bx as fetchCloudExceptions, by as fetchCloudExceptionRequests, bz as downloadBlob, bA as PolicyStatField, bB as PaginationControls, bC as HiMiniNoSymbol, bD as HiMiniCube, aI as HiMiniArrowPath, C as HiMiniCloud, a0 as HiMiniAdjustmentsHorizontal, bE as HiMiniArrowDownTray, bF as HiMiniQueueList, bf as WorkspacePageHeader, bg as __vitePreload } from "../guard-dashboard.js";
 const CLOUD_EXCEPTION_EXPIRING_SOON_DAYS = 7;
 function parseCloudExceptionTimestamp(value) {
   if (!value || !value.trim()) {
@@ -1744,6 +1744,9 @@ function resolvePolicySourceLabel(source) {
   if (isCloudManagedPolicy(source)) {
     return "Guard Cloud";
   }
+  if (source === "trusted-local-tool") {
+    return "Trusted local tool";
+  }
   if (source === "manual" || source === "local") {
     return "Local";
   }
@@ -3355,9 +3358,9 @@ function PolicyRuleRow({ policy, cloudControlsUrl, onClear, onNavigate, cloudVar
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(EvidenceTableCell, { className: "hidden w-[88px] lg:table-cell", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm text-brand-dark", children: resolvePolicyRowSourceLabel(policy) }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(EvidenceTableCell, { className: "hidden w-[104px] lg:table-cell", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-medium text-brand-blue", children: scopeTag }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(EvidenceTableCell, { className: "hidden w-[96px] lg:table-cell", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-brand-blue", children: harnessDisplayName(policy.harness) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(EvidenceTableCell, { className: "hidden w-[88px] whitespace-nowrap lg:table-cell", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm text-brand-dark", children: resolvePolicyRowSourceLabel(policy) }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(EvidenceTableCell, { className: "hidden w-[104px] whitespace-nowrap lg:table-cell", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-medium text-brand-blue", children: scopeTag }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(EvidenceTableCell, { className: "hidden w-[96px] whitespace-nowrap lg:table-cell", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-brand-blue", children: harnessDisplayName(policy.harness) }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(EvidenceTableCell, { className: "hidden w-[104px] whitespace-nowrap text-xs text-slate-500 lg:table-cell", children: policy.updated_at ? formatRelativeTime$1(policy.updated_at) : "—" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs(EvidenceTableCell, { className: "hidden min-w-[132px] lg:table-cell", children: [
       !cloudManaged ? /* @__PURE__ */ jsxRuntimeExports.jsx(PolicyEvidenceLink, { policy, onNavigate }) : null,
@@ -3376,13 +3379,13 @@ function PolicyRuleRow({ policy, cloudControlsUrl, onClear, onNavigate, cloudVar
       ) : null
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(EvidenceTableCell, { className: "hidden w-[108px] text-right lg:table-cell", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-end gap-2", children: [
-      cloudManaged ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-medium text-slate-500", children: "Read-only" }) : null,
+      cloudManaged ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "whitespace-nowrap text-xs font-medium text-slate-500", children: "Read-only" }) : null,
       canClear ? /* @__PURE__ */ jsxRuntimeExports.jsx(
         "button",
         {
           type: "button",
           onClick: handleClear,
-          className: "inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:text-rose-700",
+          className: "inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-rose-600 hover:text-rose-700",
           children: "Remove rule"
         }
       ) : null

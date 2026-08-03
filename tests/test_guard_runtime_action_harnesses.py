@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from codex_plugin_scanner.guard.runtime.actions import (
+    action_envelope_harnesses,
     normalize_claude_hook_payload,
     normalize_copilot_payload,
     normalize_gemini_payload,
     normalize_harness_payload,
+    normalize_kimi_payload,
     normalize_opencode_payload,
 )
 
@@ -288,21 +292,75 @@ def test_normalize_gemini_prompt_payload(tmp_path: Path) -> None:
     assert envelope.target_paths == ("~/.npmrc",)
 
 
-def test_normalize_harness_payload_dispatches_supported_harnesses(tmp_path: Path) -> None:
-    payload = {"tool_name": "Bash", "tool_input": {"command": "cat ~/.npmrc"}}
-
-    envelope = normalize_harness_payload(
-        "claude-code",
-        "PreToolUse",
-        payload,
+def test_normalize_kimi_prompt_payload_flattens_content_parts(tmp_path: Path) -> None:
+    envelope = normalize_kimi_payload(
+        {
+            "event": "UserPromptSubmit",
+            "prompt": [{"text": "Inspect ~/.npmrc"}, {"text": "then explain the risk."}],
+        },
         workspace=tmp_path / "workspace",
         home_dir=tmp_path,
     )
 
-    assert envelope.harness == "claude-code"
-    assert envelope.event_name == "PreToolUse"
-    assert envelope.action_type == "shell_command"
+    assert envelope.harness == "kimi"
+    assert envelope.event_name == "UserPromptSubmit"
+    assert envelope.action_type == "prompt"
+    assert envelope.prompt_excerpt == "Inspect ~/.npmrc then explain the risk."
     assert envelope.target_paths == ("~/.npmrc",)
+
+
+def test_shared_action_envelope_contract_covers_every_registered_harness(tmp_path: Path) -> None:
+    """Every registered native-hook harness preserves the safe common shell shape."""
+
+    payload = {"tool_name": "Bash", "tool_input": {"command": "cat ~/.npmrc"}}
+    expected_harnesses = {"claude": "claude-code", "zai": "zcode"}
+    for harness in action_envelope_harnesses():
+        envelope = normalize_harness_payload(
+            harness,
+            "PreToolUse",
+            payload,
+            workspace=tmp_path / "workspace",
+            home_dir=tmp_path,
+        )
+        case_id = f"ADAPTER-ENVELOPE-001:{harness}"
+        expected = {
+            "harness": expected_harnesses.get(harness, harness),
+            "event_name": "PreToolUse",
+            "action_type": "shell_command",
+            "target_paths": ("~/.npmrc",),
+        }
+        actual = {
+            "harness": envelope.harness,
+            "event_name": envelope.event_name,
+            "action_type": envelope.action_type,
+            "target_paths": envelope.target_paths,
+        }
+        assert actual == expected, f"{case_id}: input={payload!r} expected={expected!r} actual={actual!r}"
+
+
+def test_hook_runtime_helpers_survive_action_normalizer_first_import(tmp_path: Path) -> None:
+    """A native hook cannot lose runtime helpers because another hook loads first."""
+
+    script = "\n".join(
+        (
+            "from codex_plugin_scanner.guard.runtime.actions import normalize_harness_payload",
+            "normalize_harness_payload('kimi', 'PreToolUse', "
+            "{'tool_name': 'Bash', 'tool_input': {'command': 'printf safe'}})",
+            "from codex_plugin_scanner.guard.cli.commands_hook_generic import _artifact_id_from_event",
+            "from codex_plugin_scanner.guard.cli.commands_support_codex_paths import _collect_codex_tool_response_text",
+            "assert _artifact_id_from_event('pi', {'tool_name': 'Bash'}).endswith(':Bash')",
+            "assert _collect_codex_tool_response_text({'stdout': 'safe'}) == 'safe'",
+        )
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_normalize_harness_payload_dispatches_grok(tmp_path: Path) -> None:

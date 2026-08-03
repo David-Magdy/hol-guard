@@ -17,10 +17,10 @@ from .pi_extension_content_source import CONTENT_REVIEW_HELPERS_SOURCE
 # recovery/fallback paths below that host deadline so a fail-safe result returns.
 GUARD_HOOK_TIMEOUT_MS = 4_250
 GUARD_HOOK_DEADLINE_RESERVE_MS = 250
-GUARD_DAEMON_HOOK_TIMEOUT_MS = 3_100
+GUARD_DAEMON_HOOK_TIMEOUT_MS = 1_700
 GUARD_DAEMON_RECOVERY_TIMEOUT_MS = 250
 GUARD_DAEMON_RETRY_TIMEOUT_MS = 150
-GUARD_CLI_HOOK_TIMEOUT_MS = 300
+GUARD_CLI_HOOK_TIMEOUT_MS = 1_400
 GUARD_HOOK_TEXT_LIMIT_CHARS = 12_000
 GUARD_HOOK_CONTENT_ITEM_LIMIT = 24
 GUARD_HOOK_OBJECT_KEY_LIMIT = 24
@@ -67,8 +67,8 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "sys.stderr.write('HOL_GUARD_WINDOWS_JOB_CONTAINED\\n') if _windows_job is not None else None;"
         "sys.stderr.flush() if _windows_job is not None else None;"
         "from pathlib import Path;"
-        "from codex_plugin_scanner.guard.daemon.manager import recover_guard_daemon_after_hook_failure;"
-        f"recover_guard_daemon_after_hook_failure(Path({str(guard_home)!r}),"
+        "from codex_plugin_scanner.guard.daemon import schedule_guard_daemon_recovery;"
+        f"schedule_guard_daemon_recovery(Path({str(guard_home)!r}),"
         f"home_dir=Path({str(home_dir)!r}),failure_kind=sys.argv[1])"
     )
     recovery_command_json = json.dumps(str(Path(sys.executable).expanduser().absolute()))
@@ -125,6 +125,8 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "  resume_poll_path?: string;\n"
         '  model_output_action?: "allow_original" | "replace_with_reviewed_excerpt" | "block" | "not_applicable";\n'
         "  reviewed_output_sha256?: string;\n"
+        "  observed_policy_action?: string;\n"
+        "  observe_mode?: boolean;\n"
         '  notice?: "none" | "excerpt" | "warning";\n'
         "  reason_code?: string;\n"
         "};\n"
@@ -134,6 +136,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         + "type GuardDaemonAttempt = {\n"  # pyright: ignore[reportImplicitStringConcatenation]
         "  response: GuardResponse | null;\n"
         "  recoveryKind: GuardDaemonRecoveryKind | null;\n"
+        "  transientOverload?: { retryAfterMs: number; estimatedServiceMs: number };\n"
         "};\n"
         "\n"
         "function loadGuardDaemonConnection(): GuardDaemonConnection | null {\n"
@@ -159,6 +162,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "  serializedPayload: string,\n"
         "  cwd?: string,\n"
         "  timeoutMs: number = GUARD_DAEMON_TIMEOUT_MS,\n"
+        "  deadlineAt?: number,\n"
         "): Promise<GuardDaemonAttempt> {\n"
         '  if (typeof fetch !== "function") {\n'
         '    return { response: null, recoveryKind: "transport-failure" };\n'
@@ -172,13 +176,20 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "  const controller = typeof AbortController === 'function' ? new AbortController() : undefined;\n"
         "  const timeoutHandle = setTimeout(() => controller?.abort(), timeoutMs);\n"
         "  try {\n"
+        "    let daemonPayload = serializedPayload;\n"
+        "    try {\n"
+        "      const parsedPayload = JSON.parse(serializedPayload) as Record<string, unknown>;\n"
+        "      const remainingMs = deadlineAt === undefined ? timeoutMs : deadlineAt - Date.now();\n"
+        "      parsedPayload.guard_remaining_ms = Math.min(60_000, Math.max(1, Math.min(timeoutMs, remainingMs)));\n"
+        "      daemonPayload = JSON.stringify(parsedPayload);\n"
+        "    } catch {}\n"
         "    const response = await fetch(`http://127.0.0.1:${connection.port}/v1/hooks/pi?${params.toString()}`, {\n"
         "      method: 'POST',\n"
         "      headers: {\n"
         "        'Content-Type': 'application/json',\n"
         "        'X-Guard-Token': connection.authToken,\n"
         "      },\n"
-        "      body: serializedPayload,\n"
+        "      body: daemonPayload,\n"
         "      signal: controller?.signal,\n"
         "    });\n"
         "    if (!response.ok) {\n"
@@ -186,7 +197,21 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "      try {\n"
         "        const errorPayload = JSON.parse((await response.text()).slice(0, GUARD_TEXT_LIMIT_CHARS)) as {\n"
         "          error?: unknown;\n"
+        "          reason_code?: unknown;\n"
+        "          retry_after_ms?: unknown;\n"
+        "          estimated_service_ms?: unknown;\n"
         "        };\n"
+        "        if (errorPayload.reason_code === 'transient_overload') {\n"
+        "          const retryAfterMs = typeof errorPayload.retry_after_ms === 'number'\n"
+        "            ? Math.min(75, Math.max(25, Math.floor(errorPayload.retry_after_ms))) : 25;\n"
+        "          const estimatedServiceMs = typeof errorPayload.estimated_service_ms === 'number'\n"
+        "            ? Math.min(2800, Math.max(100, Math.floor(errorPayload.estimated_service_ms))) : 750;\n"
+        "          return {\n"
+        "            response: null,\n"
+        "            recoveryKind: null,\n"
+        "            transientOverload: { retryAfterMs, estimatedServiceMs },\n"
+        "          };\n"
+        "        }\n"
         "        if (typeof errorPayload.error === 'string' && errorPayload.error) {\n"
         "          reasonCode = errorPayload.error;\n"
         "        }\n"
@@ -224,8 +249,9 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "    };\n"
         "  } catch (error) {\n"
         "    if (error instanceof Error && error.name === 'AbortError') {\n"
-        "      // Classified transport recovery preserves a live overloaded daemon.\n"
-        '      return { response: null, recoveryKind: "transport-failure" };\n'
+        "      // A request timeout does not prove the live daemon is unhealthy. Preserve the\n"
+        "      // remaining host deadline for fail-safe review instead of restarting it.\n"
+        "      return { response: null, recoveryKind: null };\n"
         "    }\n"
         '    return { response: null, recoveryKind: "transport-failure" };\n'
         "  } finally {\n"
@@ -285,7 +311,34 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         '        + "the safe size limit.",\n'
         "    };\n"
         "  }\n"
-        "  let daemonAttempt = await daemonGuardResponse(serializedPayload, cwd);\n"
+        "  let daemonAttempt = await daemonGuardResponse(\n"
+        "    serializedPayload, cwd, GUARD_DAEMON_TIMEOUT_MS, deadlineAt,\n"
+        "  );\n"
+        "  if (daemonAttempt.transientOverload) {\n"
+        "    const jitterMs = Math.max(\n"
+        "      daemonAttempt.transientOverload.retryAfterMs,\n"
+        "      25 + Math.floor(Math.random() * 51),\n"
+        "    );\n"
+        "    const requiredMs = jitterMs + daemonAttempt.transientOverload.estimatedServiceMs + 100;\n"
+        "    if (deadlineAt - Date.now() >= requiredMs) {\n"
+        "      await new Promise((resolve) => setTimeout(resolve, jitterMs));\n"
+        "      daemonAttempt = await daemonGuardResponse(\n"
+        "        serializedPayload,\n"
+        "        cwd,\n"
+        "        Math.max(deadlineAt - Date.now(), 1),\n"
+        "        deadlineAt,\n"
+        "      );\n"
+        "    }\n"
+        "    if (daemonAttempt.transientOverload) {\n"
+        "      cleanupPayloadReference();\n"
+        "      return {\n"
+        '        decision: "deny",\n'
+        '        reason: "HOL Guard is temporarily saturated and kept this action blocked. "\n'
+        '          + "No approval was requested; retry the action.",\n'
+        '        reason_code: "transient_overload",\n'
+        "      };\n"
+        "    }\n"
+        "  }\n"
         "  if (daemonAttempt.response) {\n"
         "    cleanupPayloadReference();\n"
         "    return daemonAttempt.response;\n"
@@ -300,6 +353,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "        serializedPayload,\n"
         "        cwd,\n"
         "        Math.min(GUARD_DAEMON_RETRY_TIMEOUT_MS, Math.max(deadlineAt - Date.now(), 1)),\n"
+        "        deadlineAt,\n"
         "      );\n"
         "      if (daemonAttempt.response) {\n"
         "        cleanupPayloadReference();\n"
@@ -531,6 +585,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "      guardPayload.guard_source_ref = sourceRef;\n"
         "      guardPayload.tool_response_summary = {\n"
         "        kind: 'text',\n"
+        "        text_excerpt: toolOutput,\n"
         "        excerpt_chars: toolOutput.length,\n"
         "        output_chars: digest.chars,\n"
         "        output_sha256: digest.sha256,\n"
@@ -552,6 +607,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         '      ctx.ui.notify(reason, "warning");\n'
         "      return blockedToolResult(modelReason, event.details);\n"
         "    }\n"
+        "    if (response.observe_mode === true) return undefined;\n"
         "    if (outputTruncated) {\n"
         '      if (response.model_output_action === "allow_original" &&\n'
         "          typeof response.reviewed_output_sha256 === 'string' &&\n"

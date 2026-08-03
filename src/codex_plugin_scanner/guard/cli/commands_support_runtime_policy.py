@@ -198,7 +198,12 @@ def _localize_decision_v2_review_copy(decision_v2: dict[str, object], review_con
         decision_v2["harness_message"] = _approval_center_routed_message(harness_message, review_context)
     action = _optional_string(decision_v2.get("action"))
     if action in {"ask", "block"}:
-        decision_v2["retry_instruction"] = review_context
+        retry_instruction = _optional_string(decision_v2.get("retry_instruction"))
+        decision_v2["retry_instruction"] = (
+            _approval_center_routed_message(retry_instruction, review_context)
+            if retry_instruction is not None and "hol-guard connect" in retry_instruction
+            else review_context
+        )
 
 def _approval_center_routed_message(message: str, review_context: str) -> str:
     normalized = _strip_cloud_inbox_urls(message)
@@ -839,8 +844,6 @@ def _runtime_artifact_guard_default_action(artifact: GuardArtifact) -> GuardActi
     return normalize_guard_action(value, unknown_action="require-reapproval") if value is not None else None
 
 def _runtime_artifact_command_action_floor(artifact: GuardArtifact) -> GuardAction | None:
-    if artifact.artifact_type != "tool_action_request":
-        return None
     if "command_action_floor" not in artifact.metadata:
         return None
     return normalize_guard_action(artifact.metadata.get("command_action_floor"), unknown_action="block")

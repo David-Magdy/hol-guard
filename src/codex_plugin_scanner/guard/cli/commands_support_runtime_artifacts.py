@@ -6,6 +6,10 @@ from __future__ import annotations
 
 from ..runtime.command_extensions import risk_classes_for_command_action
 from ..runtime.command_model import parse_shell_command
+from ..runtime.direct_vitest import (
+    direct_local_typescript_execution_context,
+    direct_local_vitest_execution_context,
+)
 from ..runtime.github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
 from ..runtime.jsonc import loads_jsonc
 from ..runtime.kubernetes_commands import kubernetes_secret_read_source
@@ -30,10 +34,14 @@ from .commands_support_codex_commands import (
 )
 from .commands_support_codex_git import _codex_git_diff_selection_identity
 from .commands_support_codex_paths import (
+    _CODEX_PROMPT_FILE_FINGERPRINT_LENGTH,
+    _CODEX_TOOL_RESPONSE_MAX_DEPTH,
+    _CODEX_TOOL_RESPONSE_TEXT_LIMIT,
     _codex_prompt_credential_file_artifact,
     _collect_codex_tool_response_text,
     _with_codex_prompt_display_metadata,
 )
+from .commands_support_codex_prompt_attachments import _codex_prompt_attachment_artifact
 from .commands_support_codex_reads import _split_codex_safe_read_only_pipeline
 from .commands_support_codex_tool_output import (
     _codex_command_captures_combined_shell_output,
@@ -54,6 +62,7 @@ from .commands_support_codex_tool_output_messages import (
     _codex_tool_output_runtime_reason,
     _codex_tool_output_runtime_summary,
 )
+from .commands_support_compound_decision import compound_command_decision_metadata
 from .commands_support_hook_payload import _coalesce_string
 from .commands_support_runtime_policy import _runtime_data_flow_summary
 from .commands_support_runtime_resolution import _canonical_harness_name, _runtime_policy_path
@@ -330,12 +339,25 @@ def _unmodeled_shell_runtime_artifact(
     if canonical_command.confidence == "exact" and execution_context.complete:
         return None
     if canonical_command.confidence == "exact" and not execution_context.complete:
-        home_execution_context = literal_cd_execution_context(
-            command_text,
-            home_dir=home_dir,
-        ) or low_risk_compound_developer_execution_context(
-            command_text,
-            home_dir=home_dir,
+        home_execution_context = (
+            direct_local_vitest_execution_context(
+                command_text,
+                cwd=workspace,
+                home_dir=home_dir,
+            )
+            or direct_local_typescript_execution_context(
+                command_text,
+                cwd=workspace,
+                home_dir=home_dir,
+            )
+            or literal_cd_execution_context(
+                command_text,
+                home_dir=home_dir,
+            )
+            or low_risk_compound_developer_execution_context(
+                command_text,
+                home_dir=home_dir,
+            )
         )
         if home_execution_context is not None:
             return None
@@ -491,6 +513,15 @@ def _compound_runtime_artifact(
             ),
         }
     )
+    if command_text is not None and canonical_command is not None:
+        metadata.update(
+            compound_command_decision_metadata(
+                command_text,
+                canonical_command=canonical_command,
+                workspace=workspace,
+                home_dir=home_dir,
+            )
+        )
     if command_text is not None:
         execution_context = model_shell_execution_context(command_text, cwd=workspace, workspace_root=workspace)
         if not execution_context.complete:
@@ -579,6 +610,14 @@ def _hook_runtime_artifact(
             )
             if prompt_file_artifact is not None:
                 return prompt_file_artifact
+            if harness == "codex":
+                attachment_artifact = _codex_prompt_attachment_artifact(
+                    prompt_text=prompt_text,
+                    home_dir=home_dir,
+                    config_path=config_path,
+                )
+                if attachment_artifact is not None:
+                    return attachment_artifact
     tool_name = _runtime_hook_tool_name(payload)
     tool_arguments = _runtime_hook_tool_arguments(payload)
     raw_command_text = _runtime_hook_raw_command_text(payload, action_envelope)
@@ -631,7 +670,23 @@ def _hook_runtime_artifact(
             home_dir=home_dir,
         )
     runtime_artifacts: list[GuardArtifact] = []
-    if package_intent is not None and not _routine_local_runner_has_complete_evidence(package_intent):
+    verified_local_runner = isinstance(raw_command_text, str) and (
+        direct_local_vitest_execution_context(
+            raw_command_text,
+            cwd=workspace,
+            home_dir=home_dir,
+        )
+        or direct_local_typescript_execution_context(
+            raw_command_text,
+            cwd=workspace,
+            home_dir=home_dir,
+        )
+    )
+    if (
+        package_intent is not None
+        and not verified_local_runner
+        and not _routine_local_runner_has_complete_evidence(package_intent)
+    ):
         runtime_artifacts.append(
             build_package_request_artifact(
                 harness=harness,
@@ -655,7 +710,7 @@ def _hook_runtime_artifact(
                 source_scope=source_scope,
             )
         )
-    if raw_command_text is not None:
+    if raw_command_text is not None and (action_envelope is None or action_envelope.action_type == "shell_command"):
         unmodeled_artifact = _unmodeled_shell_runtime_artifact(
             harness=harness,
             command_text=raw_command_text,
@@ -743,12 +798,6 @@ def _runtime_data_flow_artifact(
 
 
 _CODEX_PROMPT_SECRET_KEY_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASS", "API_KEY", "API-KEY", "AUTH", "CREDENTIAL")
-
-_CODEX_TOOL_RESPONSE_MAX_DEPTH = 5
-
-_CODEX_TOOL_RESPONSE_TEXT_LIMIT = 5 * 1024 * 1024
-
-_CODEX_PROMPT_FILE_FINGERPRINT_LENGTH = 24
 
 
 def _direct_codex_git_pathspec_identity(command_text: str, *, cwd: Path | None) -> str | None:

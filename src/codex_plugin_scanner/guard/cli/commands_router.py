@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 
 from ._commands_shared import *
+from .commands_lifecycle_gate import enforce_lifecycle_gate
 from .commands_parser_helpers import *
 
 _EARLY_HANDLERS = {
@@ -135,6 +136,15 @@ def run_guard_command(
         home_override_explicit=bool(home_override),
         workspace_override_explicit=bool(getattr(args, "workspace", None)),
     )
+    try:
+        enforce_lifecycle_gate(args, guard_home=guard_home)
+    except ApprovalGateError as error:
+        payload = approval_gate_cli_payload(error)
+        if bool(getattr(args, "json", False)):
+            print(json.dumps(payload, sort_keys=True), file=output_stream or sys.stdout)
+        else:
+            print(f"Error: {error}", file=sys.stderr)
+        return 4
 
     handler = _resolve_guard_handler(_PRESTORE_HANDLERS, args.guard_command)
     if callable(handler):

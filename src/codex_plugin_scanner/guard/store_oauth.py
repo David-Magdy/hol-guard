@@ -273,21 +273,26 @@ class StoreOAuthConnectMixin:
         return self._build_oauth_local_credentials_result(metadata=metadata, secret_payload=secret_payload)
 
     def clear_oauth_local_credentials(self) -> None:
-        self._clear_oauth_secret_payload_cache()
-        payload = self.get_sync_payload(self._oauth_local_credentials_state_key)
-        if isinstance(payload, dict):
-            secret_ref = payload.get(_OAUTH_LOCAL_CREDENTIALS_REF_KEY)
-            if isinstance(secret_ref, str) and secret_ref:
-                self._oauth_secret_store.delete_secret(secret_ref)
-                if sys.platform == "darwin":
-                    legacy_fallback = EncryptedFileSecretStore(self.guard_home)
-                    legacy_path = legacy_fallback._path_for(secret_ref)
-                    with suppress(OSError):
-                        legacy_path.unlink()
-        self.delete_sync_payload(self._oauth_local_credentials_state_key)
-        # A capability is bound to one exact OAuth device/workspace grant. It
-        # must never survive disconnect and silently authorize a later grant.
-        self.delete_sync_payloads(list(_GUARD_CLOUD_COMMAND_STATE_KEYS))
+        with self.hold_oauth_refresh_lock():
+            self._clear_oauth_local_credentials_locked()
+
+    def _clear_oauth_local_credentials_locked(self) -> None:
+        with self.hold_oauth_credential_lock():
+            self._clear_oauth_secret_payload_cache()
+            payload = self.get_sync_payload(self._oauth_local_credentials_state_key)
+            if isinstance(payload, dict):
+                secret_ref = payload.get(_OAUTH_LOCAL_CREDENTIALS_REF_KEY)
+                if isinstance(secret_ref, str) and secret_ref:
+                    self._oauth_secret_store.delete_secret(secret_ref)
+                    if sys.platform == "darwin":
+                        legacy_fallback = EncryptedFileSecretStore(self.guard_home)
+                        legacy_path = legacy_fallback._path_for(secret_ref)
+                        with suppress(OSError):
+                            legacy_path.unlink()
+            self.delete_sync_payload(self._oauth_local_credentials_state_key)
+            # A capability is bound to one exact OAuth device/workspace grant. It
+            # must never survive disconnect and silently authorize a later grant.
+            self.delete_sync_payloads(list(_GUARD_CLOUD_COMMAND_STATE_KEYS))
 
     def get_oauth_local_credential_health(self) -> dict[str, object]:
         payload = self.get_sync_payload(self._oauth_local_credentials_state_key)

@@ -875,6 +875,10 @@ class GuardSyncNotConfiguredError(RuntimeError):
     """Raised when Guard Cloud sync is requested before the machine is paired."""
 
 
+class GuardSyncEndpointUntrustedError(GuardSyncNotConfiguredError):
+    """Raised when a configured Guard Cloud endpoint fails trust validation."""
+
+
 class GuardSyncNotAvailableError(RuntimeError):
     """Raised when Guard Cloud sync is blocked by plan limits or temporary outages."""
 
@@ -2502,6 +2506,7 @@ def sync_receipts(
     sync_url = _normalized_receipts_sync_url(_validate_guard_sync_url(_auth_context_sync_url(resolved_auth_context)))
     local_guard_online_at = _now()
     redaction_level = _resolve_cloud_receipt_redaction_level(store)
+    _ensure_live_request_privacy_projection(store, level=redaction_level, synced_at=local_guard_online_at)
     _ensure_relaxed_receipt_redaction_resync(store, level=redaction_level, synced_at=local_guard_online_at)
     prior_receipt_cursor = _receipt_sync_cursor_rowid(store)
     receipts = _receipt_sync_rows_for_upload(store, cursor_rowid=prior_receipt_cursor)
@@ -2770,9 +2775,15 @@ def sync_receipts(
     remote_policies_stored = 0
     remote_policy_sync_blocked = False
     if effective_policy_bundle is not None:
+        activation_keyring = store.get_sync_payload("policy_bundle_keyring")
+        if effective_policy_bundle is validated_policy_bundle and trusted_policy_bundle_keys:
+            activation_keyring = policy_bundle_keyring_payload(
+                trusted_policy_bundle_keys,
+                workspace_id=store.get_cloud_workspace_id(),
+            )
         activation_bundle, activation_reason, activation_keys = validate_synced_policy_bundle(
             effective_policy_bundle,
-            stored_keyring=store.get_sync_payload("policy_bundle_keyring"),
+            stored_keyring=activation_keyring,
             supply_chain_keyring=store.get_sync_payload("supply_chain_bundle_keyring"),
             managed_keyring_provenance=store.get_sync_payload(MANAGED_POLICY_BUNDLE_KEYRING_PROVENANCE_STATE_KEY),
             expected_workspace_id=store.get_cloud_workspace_id(),
@@ -2943,7 +2954,7 @@ def sync_receipts(
             "reason": "background_deferred",
             "message": (
                 "AIBOM inventory refresh is deferred to the Guard daemon background lane; "
-                "run hol-guard guard sync --deep to refresh now."
+                "run hol-guard sync --deep to refresh now."
             ),
         }
     if persist_sync_summary:
@@ -3976,7 +3987,7 @@ def clear_revoked_guard_oauth_sign_in(store: GuardStore) -> bool:
                 _resolve_guard_sync_auth_context_from_oauth_credentials(store, credentials)
             except GuardSyncAuthorizationExpiredError as error:
                 if _oauth_authorization_error_requires_fresh_sign_in(error):
-                    store.clear_oauth_local_credentials()
+                    store._clear_oauth_local_credentials_locked()
                     return True
                 return False
     except (RuntimeError, OSError, TimeoutError):
@@ -4030,9 +4041,7 @@ def _validate_guard_sync_url(sync_url: str, *, issuer: str | None = None) -> str
     try:
         return validate_guard_sync_endpoint(sync_url, issuer=issuer)
     except ValueError as error:
-        if issuer is not None:
-            raise GuardSyncAuthorizationExpiredError(f"{_guard_oauth_reauthorization_message()} {error}") from error
-        raise GuardSyncNotConfiguredError(f"{_guard_sync_reconnect_message()} {error}") from error
+        raise GuardSyncEndpointUntrustedError(f"{_guard_sync_reconnect_message()} {error}") from error
 
 
 def _refresh_guard_oauth_access_token(
@@ -4331,7 +4340,7 @@ def _resolve_guard_sync_auth_context_from_oauth_credentials(
     try:
         oauth_client = resolve_guard_oauth_client_config(issuer)
     except ValueError as error:
-        raise GuardSyncAuthorizationExpiredError(f"{_guard_oauth_reauthorization_message()} {error}") from error
+        raise GuardSyncEndpointUntrustedError(f"{_guard_sync_reconnect_message()} {error}") from error
     cached_access_token = (
         None if force_refresh else _cached_oauth_access_token(oauth_credentials, now=datetime.now(timezone.utc))
     )
@@ -4448,11 +4457,26 @@ def _resolve_guard_sync_auth_context(
         oauth_health = store.get_oauth_local_credential_health()
         oauth_credentials = store.get_oauth_local_credentials(allow_primary=allow_primary_repair)
         if oauth_credentials is not None:
-            return _resolve_guard_sync_auth_context_from_oauth_credentials(
-                store,
-                oauth_credentials,
-                force_refresh=force_refresh,
-            )
+            try:
+                return _resolve_guard_sync_auth_context_from_oauth_credentials(
+                    store,
+                    oauth_credentials,
+                    force_refresh=force_refresh,
+                )
+            except GuardSyncAuthorizationExpiredError as error:
+                if not _oauth_authorization_error_requires_fresh_sign_in(error):
+                    raise
+                store._clear_oauth_secret_payload_cache()
+                refreshed_credentials = store.get_oauth_local_credentials(allow_primary=allow_primary_repair)
+                if refreshed_credentials is None or _optional_string(
+                    refreshed_credentials.get("refresh_token")
+                ) == _optional_string(oauth_credentials.get("refresh_token")):
+                    raise
+                return _resolve_guard_sync_auth_context_from_oauth_credentials(
+                    store,
+                    refreshed_credentials,
+                    force_refresh=force_refresh,
+                )
         if bool(oauth_health.get("configured")):
             recoverable_credentials = store.get_recoverable_oauth_local_credentials()
             if recoverable_credentials is not None:
@@ -5474,6 +5498,7 @@ _RECEIPT_REDACTION_LEVEL_RANK: dict[str, int] = {
     "none": 2,
 }
 _RELAXED_RECEIPT_REDACTION_RESYNC_MARKER = "cloud_receipt_redaction_relaxed_resync_v1"
+_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER = "cloud_live_request_privacy_projection_v1"
 _RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER = "cloud_receipt_command_detail_backfill_v2"
 _RECEIPT_COMMAND_DETAIL_BACKFILL_FLAG = "__command_detail_backfill"
 
@@ -5520,6 +5545,8 @@ def _persist_cloud_receipt_redaction_level(store: GuardStore, *, level: str, syn
         {"level": level, "updated_at": synced_at},
         synced_at,
     )
+    if level != previous_level:
+        _requeue_live_request_privacy_projection(store, level=level, changed_at=synced_at)
     if _receipt_redaction_level_rank(level) > _receipt_redaction_level_rank("full"):
         store.set_sync_payload(
             _RELAXED_RECEIPT_REDACTION_RESYNC_MARKER,
@@ -5531,13 +5558,42 @@ def _persist_cloud_receipt_redaction_level(store: GuardStore, *, level: str, syn
 def _reset_cloud_receipt_redaction_authority(store: GuardStore, *, synced_at: str) -> None:
     """Reset relaxation bookkeeping when no signed override is effective."""
 
+    previous_level = _stored_cloud_receipt_redaction_level(store)
+    local_level = _local_receipt_redaction_level(store)
     store.set_sync_payload(
         "cloud_receipt_redaction_level",
-        {"level": _local_receipt_redaction_level(store), "updated_at": synced_at},
+        {"level": local_level, "updated_at": synced_at},
         synced_at,
     )
+    if previous_level is not None and previous_level != local_level:
+        _requeue_live_request_privacy_projection(store, level=local_level, changed_at=synced_at)
     store.delete_sync_payload(_RELAXED_RECEIPT_REDACTION_RESYNC_MARKER)
     store.delete_sync_payload(_RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER)
+
+
+def _ensure_live_request_privacy_projection(
+    store: GuardStore,
+    *,
+    level: str,
+    synced_at: str,
+) -> None:
+    marker = store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER)
+    if isinstance(marker, dict) and marker.get("level") == level:
+        return
+    _requeue_live_request_privacy_projection(store, level=level, changed_at=synced_at)
+
+
+def _requeue_live_request_privacy_projection(
+    store: GuardStore,
+    *,
+    level: str,
+    changed_at: str,
+) -> int:
+    return store.requeue_pending_live_requests_with_marker(
+        changed_at=changed_at,
+        marker_key=_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER,
+        marker_payload={"level": level, "updated_at": changed_at},
+    )
 
 
 def _ensure_relaxed_receipt_redaction_resync(

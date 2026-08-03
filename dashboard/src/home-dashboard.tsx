@@ -22,7 +22,7 @@ import {
 } from "./approval-center-primitives";
 import { harnessDisplayName, formatRelativeTime, formatNumber } from "./approval-center-utils";
 import { useFocusTrap } from "./use-focus-trap";
-import { DeviceProofCard, resolveCloudIntelCopy } from "./runtime-overview";
+import { DeviceProofCard, OperatorHealthCard, resolveCloudIntelCopy } from "./runtime-overview";
 import { HomeProtectionModule } from "./home-protection-module";
 import { approvalProofRequiresPassword } from "./approval-proof-inline";
 import { EvidenceInsightsHomePreview } from "./evidence/evidence-insights-home-preview";
@@ -322,6 +322,8 @@ export function HomeWorkspace(props: {
           </ActionButton>
         }
       />
+
+      {snapshot.operator_health ? <OperatorHealthCard health={snapshot.operator_health} /> : null}
 
       <EvidenceInsightsHomePreview
         overviewStats={[

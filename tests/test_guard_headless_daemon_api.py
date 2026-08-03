@@ -259,6 +259,9 @@ def _signed_remote_approval_for_request(
     device_id: str | None = None,
     workspace_id: str | None = None,
     scope: str | None = None,
+    nonce: str | None = None,
+    reviewer_role: str = "owner",
+    reviewer_user_id: str = "user-1",
 ) -> dict[str, object]:
     request_row = store.get_approval_request(request_id)
     assert isinstance(request_row, dict)
@@ -285,12 +288,12 @@ def _signed_remote_approval_for_request(
         "localRequestId": claim["localRequestId"],
         "machineId": machine_id or claim["machineId"],
         "machineInstallationId": machine_installation_id or claim["machineInstallationId"],
-        "nonce": f"{claim['nonce']}:{receipt_id}",
+        "nonce": nonce or f"{claim['nonce']}:{receipt_id}",
         "policyVersion": claim["policyVersion"],
         "projectIdentity": claim["projectIdentity"],
         "receiptId": receipt_id,
-        "reviewerRole": "workspace-owner",
-        "reviewerUserId": "user-1",
+        "reviewerRole": reviewer_role,
+        "reviewerUserId": reviewer_user_id,
         "riskCategory": claim["riskCategory"],
         "runtimeGrantId": claim["runtimeGrantId"],
         "scope": scope or claim["recommendedScope"],
@@ -1629,7 +1632,10 @@ def test_supply_chain_package_firewall_paid_install_and_test_roundtrip(
     ]
 
 
-def test_supply_chain_audit_scans_workspace_manifests(tmp_path: Path) -> None:
+def test_supply_chain_audit_scans_workspace_manifests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()
     audit_now = "2026-05-27T16:00:00.000Z"
@@ -1650,6 +1656,11 @@ def test_supply_chain_audit_scans_workspace_manifests(tmp_path: Path) -> None:
     )
     store = GuardStore(tmp_path / "guard-home")
     _seed_guard_cloud(store, workspace_id=WORKSPACE_ID)
+    monkeypatch.setattr(
+        local_supply_chain_module,
+        "_run_cloud_workspace_audit",
+        lambda **_kwargs: (None, {"code": "cloud_timeout", "message": "Cloud unavailable."}),
+    )
     bundle_response = _bundle_response(
         packages=[
             _package(
@@ -1947,6 +1958,23 @@ def test_supply_chain_dashboard_session_claims_scope_action_and_managers(tmp_pat
                 payload={"managers": ["pip"], "workspace_id": "workspace-1"},
             ),
         )
+        manager_repair_token = _dashboard_token_with_claims(
+            auth_token,
+            {
+                "action_path": "package_shims_repair",
+                "allowed_action_paths": ["package_shims_repair"],
+                "managers": ["npm"],
+                "workspace_id": "workspace-1",
+            },
+        )
+        repair_all_status, repair_all_payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/supply-chain/repair",
+                dashboard_session_token=manager_repair_token,
+                payload={"workspace_id": "workspace-1"},
+            ),
+        )
     finally:
         daemon.stop()
 
@@ -1954,6 +1982,8 @@ def test_supply_chain_dashboard_session_claims_scope_action_and_managers(tmp_pat
     assert allowed_payload["operation"] == "install"
     assert denied_status == 401
     assert denied_payload["error"] == "unauthorized"
+    assert repair_all_status == 401
+    assert repair_all_payload["error"] == "unauthorized"
 
 
 def test_action_scoped_dashboard_session_requires_exact_read_paths_and_matching_nonce(tmp_path: Path) -> None:
@@ -3007,7 +3037,8 @@ def test_headless_api_rejects_missing_auth_and_bad_harness(tmp_path: Path) -> No
     assert bad_payload["error"]["retryable"] is False
 
 
-def test_headless_remote_once_applies_pending_request_and_records_receipt(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reviewer_role", ["owner", "workspace-owner", "admin", "operator"])
+def test_headless_remote_once_applies_pending_request_and_records_receipt(tmp_path: Path, reviewer_role: str) -> None:
     store = GuardStore(tmp_path / "guard-home")
     _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
     request = _remote_once_request(
@@ -3024,6 +3055,8 @@ def test_headless_remote_once_applies_pending_request_and_records_receipt(tmp_pa
             store,
             "req-remote-once",
             receipt_id="cloud-receipt-1",
+            reviewer_role=reviewer_role,
+            reviewer_user_id=f"{reviewer_role}-user",
         )
         status, payload = _read_json_response(
             _request(
@@ -3542,6 +3575,180 @@ def test_headless_remote_once_rejects_wrong_target_and_does_not_apply(
 
     assert status == 409
     assert payload["error"] == "remote_once_wrong_target"
+
+
+def test_headless_remote_once_rejects_a_validly_signed_unauthorized_reviewer(
+    tmp_path: Path,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
+    request = _remote_once_request("req-remote-viewer")
+    store.add_approval_request(request, "2026-05-14T11:59:00+00:00")
+    remote_approval = _signed_remote_approval_for_request(
+        store,
+        "req-remote-viewer",
+        receipt_id="cloud-receipt-viewer",
+        reviewer_role="viewer",
+        reviewer_user_id="viewer-user",
+    )
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        status, payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 403
+    assert payload["error"] == "remote_once_reviewer_not_authorized"
+    assert store.has_remote_once_receipt("cloud-receipt-viewer") is False
+    request_row = store.get_approval_request("req-remote-viewer")
+    assert isinstance(request_row, dict)
+    assert request_row["status"] == "pending"
+
+
+def test_headless_remote_once_rejects_a_nonce_for_another_request(
+    tmp_path: Path,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
+    request = _remote_once_request("req-remote-nonce")
+    store.add_approval_request(request, "2026-05-14T11:59:00+00:00")
+    remote_approval = _signed_remote_approval_for_request(
+        store,
+        "req-remote-nonce",
+        receipt_id="cloud-receipt-nonce",
+        nonce="nonce-for-another-request:cloud-receipt-nonce",
+    )
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        status, payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 409
+    assert payload["error"] == "remote_once_request_stale"
+    assert store.has_remote_once_receipt("cloud-receipt-nonce") is False
+    request_row = store.get_approval_request("req-remote-nonce")
+    assert isinstance(request_row, dict)
+    assert request_row["status"] == "pending"
+
+
+def test_headless_remote_once_rejects_a_wrong_device_id(
+    tmp_path: Path,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
+    request = _remote_once_request("req-remote-device")
+    store.add_approval_request(request, "2026-05-14T11:59:00+00:00")
+    remote_approval = _signed_remote_approval_for_request(
+        store,
+        "req-remote-device",
+        receipt_id="cloud-receipt-device",
+        device_id="device-not-bound-to-this-request",
+    )
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        status, payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 409
+    assert payload["error"] == "remote_once_wrong_target"
+    assert store.has_remote_once_receipt("cloud-receipt-device") is False
+    request_row = store.get_approval_request("req-remote-device")
+    assert isinstance(request_row, dict)
+    assert request_row["status"] == "pending"
+
+
+def test_headless_remote_once_rejects_a_replayed_receipt_after_daemon_restart(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "guard-home"
+    store = GuardStore(home)
+    _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
+    request = _remote_once_request("req-remote-restart")
+    store.add_approval_request(request, "2026-05-14T11:59:00+00:00")
+    remote_approval = _signed_remote_approval_for_request(
+        store,
+        "req-remote-restart",
+        receipt_id="cloud-receipt-restart",
+    )
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        first_status, _first_payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        daemon.stop()
+
+    restarted_store = GuardStore(home)
+    restarted_daemon = GuardDaemonServer(restarted_store, host="127.0.0.1", port=0)
+    restarted_daemon.start()
+    try:
+        replay_status, replay_payload = _read_json_response(
+            _request(
+                restarted_daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(restarted_store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        restarted_daemon.stop()
+
+    assert first_status == 200
+    assert store.has_remote_once_receipt("cloud-receipt-restart") is True
+    assert replay_status == 409
+    assert replay_payload["error"] == "remote_once_replayed"
 
 
 def test_headless_remote_once_releases_claimed_receipts_after_apply_failure(

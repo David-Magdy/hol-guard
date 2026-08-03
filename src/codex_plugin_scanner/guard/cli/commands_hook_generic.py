@@ -1,10 +1,74 @@
 """Guard CLI generic hook fallback flow."""
 
-# ruff: noqa: F403, F405
+# ruff: noqa: E402, F403, F405
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
+
+
+def _coalesce_string(*values: object | None) -> str:
+    """Return a display-safe fallback while CLI helper modules are importing."""
+
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "unknown-artifact"
+
+
+def _artifact_id_from_event(harness: str, payload: dict[str, object]) -> str:
+    """Resolve runtime-artifact identity after the CLI support graph is loaded."""
+
+    from .commands_support_runtime_artifacts import _artifact_id_from_event as resolve
+
+    return resolve(harness, payload)
+
+
+def _hook_event_name(payload: dict[str, object]) -> str | None:
+    """Resolve event names lazily to keep hook startup independent of import order."""
+
+    from .commands_support_runtime_artifacts import _hook_event_name as resolve
+
+    return resolve(payload)
+
+
+_GUIDED_POLICY_ACTIONS = frozenset({"block", "review", "require-reapproval", "sandbox-required"})
+
+
+def _embedded_script_evidence(command_text: str | None) -> list[dict[str, object]]:
+    """Hash-addressed audit entries for heredoc script bodies (lazy import)."""
+
+    from ..runtime.embedded_script_evidence import embedded_script_evidence_entries
+
+    return embedded_script_evidence_entries(command_text)
+
+
+def _embedded_script_remediation(command_text: str | None) -> str | None:
+    """Guidance for agents whose command carries an inline script body."""
+
+    from ..runtime.embedded_script_evidence import (
+        EMBEDDED_SCRIPT_REMEDIATION_GUIDANCE,
+        command_has_embedded_script,
+    )
+
+    if command_has_embedded_script(command_text):
+        return EMBEDDED_SCRIPT_REMEDIATION_GUIDANCE
+    return None
+
+
+def _optional_string(value: object | None) -> str | None:
+    """Return a non-empty string value without depending on aggregator imports."""
+
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _string_list(value: object | None) -> list[str]:
+    """Normalize a payload list without depending on aggregator imports."""
+
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
 
 if TYPE_CHECKING:
     from ._commands_shared import (
@@ -12,6 +76,8 @@ if TYPE_CHECKING:
         _HOOK_DAEMON_FAILURE_STATUSES,
         _HOOK_DAEMON_PRESERVED_DENY_REASON,
         _HOOK_DAEMON_STRICT_REASON,
+        _hook_command_text,
+        _now,
     )
     from .commands_support_claude_approval import _claude_native_pretooluse_terminal_notice
     from .commands_support_hook_payload import (
@@ -35,12 +101,6 @@ if TYPE_CHECKING:
         _decision_v2_harness_message,
         _emit_copilot_hook_response,
     )
-    from .commands_support_runtime_artifacts import (
-        _artifact_id_from_event,
-        _hook_event_name,
-        _optional_string,
-        _string_list,
-    )
     from .commands_support_runtime_policy import (
         _ensure_terminal_punctuation,
         _localize_pending_approval_copy,
@@ -56,7 +116,8 @@ from ..action_lattice import (
     most_restrictive_guard_action,
     normalize_guard_action_result,
 )
-from ..models import GuardAction
+from ..models import GuardAction, GuardArtifact, HarnessDetection
+from ..runtime.actions import _command_detail
 from ..runtime.approval_context import (
     approval_context_tokens_validation_reason,
     build_approval_context_token,
@@ -70,9 +131,15 @@ from ..runtime.approval_reuse import (
     evaluate_approval_reuse,
 )
 from ..runtime.command_activity_contract import ActivityApprovalReuseStatus
+from ..trusted_local_tools import (
+    LocalToolApprovalEligibility,
+    local_tool_approval_eligibility,
+    matching_local_tool_grant,
+)
 from ._commands_shared import *
 from .commands_parser_helpers import *
 from .commands_support_codex_paths import _codex_prompt_credential_file_artifact
+from .commands_support_codex_prompt_attachments import _codex_prompt_attachment_artifact
 from .commands_support_command_activity import (
     command_activity_was_prompted,
     hook_is_post_event,
@@ -84,7 +151,7 @@ from .commands_support_command_activity import (
 from .commands_support_runtime_policy import _runtime_hook_effective_policy_config
 
 # Bump when generic-hook classification or action-composition semantics change.
-_GENERIC_HOOK_EVALUATOR_POLICY_VERSION = "generic-hook-evaluation-v1"
+_GENERIC_HOOK_EVALUATOR_POLICY_VERSION = "generic-hook-evaluation-v2"
 
 _GENERIC_HOOK_EXPLICIT_POSIX_SHELL_TOOLS = frozenset({"ash", "bash", "dash", "sh", "zsh"})
 
@@ -204,6 +271,14 @@ def _generic_hook_workspace_identity(runtime_workspace: Path | None) -> str:
         return str(workspace.expanduser().resolve(strict=False))
     except (OSError, RuntimeError):
         return str(workspace.expanduser().absolute())
+
+
+def _generic_hook_memory_command(payload: Mapping[str, object]) -> str:
+    command = command_text_from_tool_payload(
+        payload.get("tool_name"),
+        payload.get("tool_input", payload.get("arguments")),
+    )
+    return _coalesce_string(command, payload.get("command"), payload.get("tool_name"))
 
 
 def _generic_hook_action_capabilities(
@@ -383,7 +458,7 @@ def _generic_hook_saved_decision(
         artifact_hash=artifact_hash,
         workspace=workspace,
         publisher=publisher,
-        memory_command=_coalesce_string(payload.get("command"), payload.get("tool_name")),
+        memory_command=_generic_hook_memory_command(payload),
         memory_artifact_type=_coalesce_string(payload.get("artifact_type"), payload.get("tool_type")),
         memory_artifact_name=artifact_name,
         consume_one_shot=False,
@@ -397,7 +472,7 @@ def _generic_hook_saved_decision(
             artifact_hash=legacy_artifact_hash,
             workspace=workspace,
             publisher=publisher,
-            memory_command=_coalesce_string(payload.get("command"), payload.get("tool_name")),
+            memory_command=_generic_hook_memory_command(payload),
             memory_artifact_type=_coalesce_string(payload.get("artifact_type"), payload.get("tool_type")),
             memory_artifact_name=artifact_name,
             consume_one_shot=False,
@@ -462,9 +537,11 @@ def _generic_hook_approval_reuse(
 def _should_relax_configured_default(
     *,
     configured_action: GuardAction,
+    harness: str = "codex",
     has_narrow_override: bool,
     home_dir: Path | None,
     payload: Mapping[str, object],
+    runtime_artifact_checked: bool = False,
     runtime_workspace: Path | None,
 ) -> bool:
     if has_narrow_override or configured_action not in {"review", "require-reapproval"}:
@@ -476,13 +553,31 @@ def _should_relax_configured_default(
             return False
         if extract_prompt_requests(prompt_text):
             return False
-        return (
+        if (
             _codex_prompt_credential_file_artifact(
                 prompt_text=prompt_text,
                 cwd=runtime_workspace,
                 config_path="<runtime>",
             )
+            is not None
+        ):
+            return False
+        return (
+            home_dir is None
+            or _codex_prompt_attachment_artifact(
+                prompt_text=prompt_text,
+                home_dir=home_dir,
+                config_path="<runtime>",
+            )
             is None
+        )
+    if event_name == "PostToolUse" and runtime_artifact_checked and _canonical_harness_name(harness) == "codex":
+        from .commands_support_codex_commands import _codex_post_tool_command_is_read_only_source_inspection
+
+        return _codex_post_tool_command_is_read_only_source_inspection(
+            payload=dict(payload),
+            cwd=runtime_workspace,
+            home_dir=home_dir,
         )
     return event_name == "PreToolUse" and is_explicitly_benign_tool_action_request(
         payload.get("tool_name"),
@@ -503,6 +598,7 @@ def _run_hook_generic_payload(
     runtime_workspace: Path | None,
     store: GuardStore,
     post_claim_revalidator: Callable[[str], int | None] | None = None,
+    runtime_artifact_checked: bool = False,
     _claimed_saved_allow_hash: str | None = None,
     _claim_saved_approval: bool = True,
     _post_claim_refresh_failed: bool = False,
@@ -534,11 +630,26 @@ def _run_hook_generic_payload(
         unknown_action="require-reapproval",
     )
     hook_event_name = _hook_event_name(payload_map)
+    command_text = _hook_command_text(payload_map)
+    local_tool_eligibility: LocalToolApprovalEligibility | None = None
+    if hook_event_name == "PreToolUse" and isinstance(command_text, str) and command_text.strip():
+        local_tool_eligibility = local_tool_approval_eligibility(
+            command_text,
+            cwd=runtime_workspace or Path.cwd(),
+            home_dir=home_dir,
+        )
+    verified_benign_classifier = (
+        "_codex_post_tool_command_is_read_only_source_inspection"
+        if hook_event_name == "PostToolUse"
+        else "is_explicitly_benign_tool_action_request"
+    )
     verified_benign_default = _should_relax_configured_default(
         configured_action=configured_policy_normalization.action,
+        harness=args.harness,
         has_narrow_override=configured_narrow_override is not None,
         home_dir=home_dir,
         payload=payload_map,
+        runtime_artifact_checked=runtime_artifact_checked,
         runtime_workspace=runtime_workspace,
     )
     current_config_normalization = (
@@ -607,6 +718,23 @@ def _run_hook_generic_payload(
                 daemon_failure_reason = _UNTRUSTED_DAEMON_PERMISSIVE_REASON
                 payload_map["permission_decision_reason"] = daemon_failure_reason
     current_policy_action = policy_action
+    local_tool_grant = (
+        matching_local_tool_grant(
+            store=store,
+            harness=args.harness,
+            eligibility=local_tool_eligibility,
+            current_action=current_policy_action,
+        )
+        if configured_override is None
+        and configured_narrow_override is None
+        and cli_action_normalization is None
+        and (payload_action_normalization is None or ignored_payload_action_reason is not None)
+        and daemon_hint_disposition != "tightened_to_block"
+        else None
+    )
+    if local_tool_grant is not None and local_tool_eligibility is not None:
+        current_policy_action = "allow"
+        policy_action = "allow"
     runtime_artifact_hash = _generic_hook_approval_context_token(
         action_envelope=action_envelope,
         artifact_id=artifact_id,
@@ -683,6 +811,7 @@ def _run_hook_generic_payload(
                 runtime_workspace=runtime_workspace,
                 store=store,
                 post_claim_revalidator=None,
+                runtime_artifact_checked=runtime_artifact_checked,
                 _claimed_saved_allow_hash=runtime_artifact_hash,
                 _claim_saved_approval=False,
                 _post_claim_refresh_failed=_post_claim_refresh_failed,
@@ -732,6 +861,10 @@ def _run_hook_generic_payload(
         )
         policy_action = approval_reuse.action
         approval_reuse_source = "claimed_saved_policy_decision"
+    observed_policy_action: GuardAction | None = None
+    if config.mode == "observe" and policy_action not in {"allow", "warn"}:
+        observed_policy_action = policy_action
+        policy_action = "allow"
     policy_composition = {
         "current_config_action": current_config_normalization.action,
         "configured_policy_action": configured_policy_normalization.action,
@@ -753,7 +886,9 @@ def _run_hook_generic_payload(
         "current_composed_action": current_policy_action,
         "saved_policy_action": stored_policy_action,
         "approval_reuse_source": approval_reuse_source,
+        "local_tool_grant": local_tool_grant is not None,
         "authoritative_action": policy_action,
+        "observed_policy_action": observed_policy_action,
     }
     scanner_evidence: list[dict[str, object]] = [
         {
@@ -766,6 +901,18 @@ def _run_hook_generic_payload(
             **policy_composition,
         },
     ]
+    scanner_evidence.extend(_embedded_script_evidence(command_text))
+    if local_tool_eligibility is not None:
+        scanner_evidence.append(local_tool_eligibility.to_evidence())
+    if local_tool_grant is not None and local_tool_eligibility is not None:
+        scanner_evidence.append(
+            {
+                "source": "trusted_local_tool_grant",
+                "applied": True,
+                "tool_identity_hash": local_tool_eligibility.tool_identity_hash,
+                "capability": local_tool_eligibility.capability,
+            }
+        )
     if ignored_payload_action_reason is not None:
         scanner_evidence.append(
             {
@@ -783,7 +930,7 @@ def _run_hook_generic_payload(
                 "input_source": "local_config",
                 "status": "relaxed_verified_benign",
                 "reason_code": _VERIFIED_BENIGN_DEFAULT_DISPOSITION_REASON,
-                "classifier": "is_explicitly_benign_tool_action_request",
+                "classifier": verified_benign_classifier,
             }
         )
     if daemon_hint_disposition is not None:
@@ -794,6 +941,14 @@ def _run_hook_generic_payload(
                 "status": "monotonic-only",
                 "disposition": daemon_hint_disposition,
                 "reason_code": daemon_hint_reason_code,
+            }
+        )
+    if observed_policy_action is not None:
+        scanner_evidence.append(
+            {
+                "source": "observe_mode",
+                "observed_policy_action": observed_policy_action,
+                "authoritative_action": "allow",
             }
         )
     for input_source, normalization in (
@@ -820,6 +975,7 @@ def _run_hook_generic_payload(
         args.harness == "codex"
         and hook_event_name == "PreToolUse"
         and policy_action not in {"review", "require-reapproval", "sandbox-required", "block"}
+        and observed_policy_action is None
     )
     effective_action_envelope = (
         action_envelope.with_pre_execution_result(policy_action) if action_envelope is not None else None
@@ -878,13 +1034,20 @@ def _run_hook_generic_payload(
             policy_action=cast(GuardAction, policy_action),
             receipt_id=command_activity_receipt_id,
             prompted=command_activity_was_prompted(
-                cast(GuardAction, current_policy_action),
+                cast(GuardAction, policy_action),
                 command_activity_reuse_status,
             ),
             approval_reuse_status=command_activity_reuse_status,
             cwd=runtime_workspace,
             home_dir=home_dir,
         )
+    if (
+        _canonical_harness_name(args.harness) == "codex"
+        and hook_event_name == "PostToolUse"
+        and not getattr(args, "json", False)
+        and policy_action not in {"review", "require-reapproval", "sandbox-required", "block"}
+    ):
+        return 0
     if _should_emit_copilot_hook_response(args):
         _emit_copilot_hook_response(
             policy_action=policy_action,
@@ -892,6 +1055,64 @@ def _run_hook_generic_payload(
             output_stream=output_stream,
         )
         return 0
+    if (
+        hook_is_pre_event(hook_event_name)
+        and policy_action in {"review", "require-reapproval"}
+        and not isinstance(payload_map.get("approval_requests"), list)
+    ):
+        approval_center_url = schedule_guard_daemon_ensure(
+            store.guard_home,
+            home_dir=home_dir,
+        )
+        redacted_command_text = _command_detail(command_text, home_dir=home_dir)
+        config_path = str(runtime_workspace) if runtime_workspace is not None else ""
+        artifact = GuardArtifact(
+            artifact_id=artifact_id,
+            name=artifact_name,
+            harness=args.harness,
+            artifact_type="tool_action_request",
+            source_scope="project",
+            config_path=config_path,
+            command=redacted_command_text,
+            metadata={
+                "action_class": "unmatched tool action",
+                "request_summary": "Guard requires approval because no command rule matched this tool action.",
+            },
+        )
+        queued = queue_blocked_approvals(
+            detection=HarnessDetection(
+                harness=args.harness,
+                installed=True,
+                command_available=True,
+                config_paths=(config_path,),
+                artifacts=(artifact,),
+            ),
+            evaluation={
+                "artifacts": [
+                    {
+                        "artifact_id": artifact_id,
+                        "artifact_name": artifact_name,
+                        "artifact_hash": runtime_artifact_hash,
+                        "artifact_type": artifact.artifact_type,
+                        "source_scope": artifact.source_scope,
+                        "config_path": config_path,
+                        "policy_action": policy_action,
+                        "changed_fields": changed_capabilities or ["tool_action"],
+                        "launch_target": redacted_command_text,
+                        "risk_summary": "No command rule matched this tool action.",
+                        "scanner_evidence": (
+                            [local_tool_eligibility.to_evidence()] if local_tool_eligibility is not None else []
+                        ),
+                    }
+                ]
+            },
+            store=store,
+            approval_center_url=approval_center_url,
+            now=_now(),
+            redaction_level=config.receipt_redaction_level,
+        )
+        payload_map["approval_requests"] = queued
+        payload_map["approval_center_url"] = approval_center_url
     _localize_pending_approval_copy(payload_map, harness=args.harness)
     incoming_reason = (
         daemon_failure_reason
@@ -904,6 +1125,7 @@ def _run_hook_generic_payload(
             args.harness,
             incoming_reason,
             approval_context,
+            _embedded_script_remediation(command_text),
         )
         if _canonical_harness_name(args.harness) == "kimi":
             _emit_native_hook_response(
@@ -949,12 +1171,14 @@ def _run_hook_generic_payload(
         reason = _native_hook_reason(
             incoming_reason,
             approval_context,
+            _embedded_script_remediation(command_text) if policy_action in _GUIDED_POLICY_ACTIONS else None,
         )
     else:
         reason = _native_hook_reason_for_harness(
             args.harness,
             incoming_reason,
             approval_context,
+            _embedded_script_remediation(command_text) if policy_action in _GUIDED_POLICY_ACTIONS else None,
         )
     if _should_emit_claude_native_pretooluse_notice(
         args,

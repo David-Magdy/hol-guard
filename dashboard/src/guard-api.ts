@@ -20,6 +20,7 @@ import {
   normalizeGuardAction,
 } from "./guard-action";
 import { parseTemporaryMcpApproval } from "./temporary-mcp-approval";
+import { parseLocalToolApproval } from "./local-tool-approval";
 import { isConnectableAppHarness } from "./apps/harness-setup-target";
 import type {
   GuardActionEnvelope,
@@ -65,6 +66,8 @@ import type {
   GuardRuntimeSnapshot,
   GuardCloudConnectStatusResponse,
   SupplyChainBundle,
+  SupplyChainRepairResult,
+  SupplyChainRepairStepFailure,
   SupplyChainSnapshot,
   GuardSettingsPayload,
   GuardSettingsExport,
@@ -92,6 +95,7 @@ import {
 
 const GUARD_TOKEN_PARAM = "guard-token";
 const GUARD_DAEMON_PARAM = "guardDaemon";
+const GUARD_UPDATE_CHANNEL_STORAGE_KEY = "guard-update-channel";
 const GUARD_SURFACE_PROTOCOL_VERSIONS = ["1.1", "1.0"] as const;
 const DEFAULT_GUARD_DAEMON_PORT = 4781;
 const GUARD_DAEMON_PORT_RANGE = 1000;
@@ -121,6 +125,7 @@ type RawGuardApprovalRequest = Omit<
   | "scope_restrictions"
   | "task_capability_eligibility"
   | "temporary_mcp_approval"
+  | "local_tool_approval"
 > & {
   action_envelope_json?: unknown;
   decision_v2_json?: unknown;
@@ -135,6 +140,7 @@ type RawGuardApprovalRequest = Omit<
   scope_restrictions?: unknown;
   task_capability_eligibility?: unknown;
   temporary_mcp_approval?: unknown;
+  local_tool_approval?: unknown;
 };
 
 type RawGuardReceipt = Omit<GuardReceipt, "action_envelope_json" | "policy_decision"> & {
@@ -162,6 +168,7 @@ type RuntimeSnapshotPayload = Omit<
   | "managed_installs"
   | "cloud_command_capability"
   | "protection_health"
+  | "operator_health"
   | "runtime_state"
   | "latest_receipts"
   | "inventory"
@@ -174,6 +181,7 @@ type RuntimeSnapshotPayload = Omit<
   managed_installs?: unknown;
   cloud_command_capability?: unknown;
   protection_health?: unknown;
+  operator_health?: unknown;
   runtime_state?: unknown;
 };
 
@@ -272,6 +280,24 @@ function saveBrowserStorage(getStorage: () => Storage, name: string, value: stri
 function saveGuardStorage(name: string, value: string): void {
   saveBrowserStorage(() => window.sessionStorage, name, value);
   saveBrowserStorage(() => window.localStorage, name, value);
+}
+
+function isGuardUpdateChannel(value: unknown): value is "stable" | "alpha" {
+  return value === "stable" || value === "alpha";
+}
+
+export function readRememberedGuardUpdateChannel(): "stable" | "alpha" | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const value = readGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY);
+  return isGuardUpdateChannel(value) ? value : null;
+}
+
+function rememberGuardUpdateChannel(channel: "stable" | "alpha"): void {
+  if (typeof window !== "undefined") {
+    saveGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY, channel);
+  }
 }
 
 export function readGuardToken(): string | null {
@@ -760,6 +786,7 @@ export async function fetchGuardUpdateStatusAtOrigin(
   }
   const { response, payload } = await fetchGuardDaemonCandidateJson(`${candidateOrigin}/v1/update/status`, {
     headers: guardToken ? { "X-Guard-Dashboard-Session": guardToken } : {},
+    cache: "no-store",
     redirect: "error",
   });
   if (!response.ok) {
@@ -1256,6 +1283,7 @@ export function parseDecisionV2(raw: unknown): GuardDecisionV2 | null {
   const dashboardPrimaryDetail = raw["dashboard_primary_detail"];
   const approvalScopes = raw["approval_scopes"];
   const retryInstruction = raw["retry_instruction"];
+  const packageReviewCloudReasonCode = raw["package_review_cloud_reason_code"];
   const signals = raw["signals"];
   const confidence = raw["confidence"];
   if (
@@ -1269,6 +1297,7 @@ export function parseDecisionV2(raw: unknown): GuardDecisionV2 | null {
     !isNonEmptyString(dashboardPrimaryDetail) ||
     !isStringArray(approvalScopes) ||
     !isStringOrNull(retryInstruction) ||
+    !(packageReviewCloudReasonCode === undefined || isStringOrNull(packageReviewCloudReasonCode)) ||
     !isRiskSignalV2Array(signals) ||
     !isDecisionV2Confidence(confidence)
   ) {
@@ -1284,6 +1313,7 @@ export function parseDecisionV2(raw: unknown): GuardDecisionV2 | null {
     dashboard_primary_detail: dashboardPrimaryDetail,
     approval_scopes: approvalScopes,
     retry_instruction: retryInstruction,
+    package_review_cloud_reason_code: packageReviewCloudReasonCode,
     signals,
     confidence
   };
@@ -1437,6 +1467,7 @@ export function normalizeApprovalRequest(item: RawGuardApprovalRequest): GuardAp
     scope_restrictions: hasScopeContract ? scopeRestrictions ?? [] : undefined,
     task_capability_eligibility: hasScopeContract ? taskCapabilityEligibility : undefined,
     temporary_mcp_approval: parseTemporaryMcpApproval(item.temporary_mcp_approval),
+    local_tool_approval: parseLocalToolApproval(item.local_tool_approval),
     action_envelope_json: hasDecisionContractError ? null : actionEnvelope,
     decision_v2_json: hasDecisionContractError ? null : decisionV2,
     ...(hasDecisionContractError
@@ -1611,6 +1642,38 @@ function normalizeCloudCommandCapability(raw: unknown): GuardRuntimeSnapshot["cl
   };
 }
 
+function nonNegativeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+export function normalizeOperatorHealth(raw: unknown): GuardRuntimeSnapshot["operator_health"] {
+  if (!isRecord(raw)) {
+    return undefined;
+  }
+  const state = raw["state"];
+  const cause = raw["cause"];
+  const automaticRecovery = raw["automatic_recovery"];
+  if (
+    !["healthy", "backlogged", "saturated", "store-contended"].includes(String(state))
+    || typeof cause !== "string"
+    || typeof automaticRecovery !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    state: state as "healthy" | "backlogged" | "saturated" | "store-contended",
+    cause,
+    automatic_recovery: automaticRecovery,
+    repairable: raw["repairable"] === true,
+    queue_depth: nonNegativeNumber(raw["queue_depth"]),
+    queue_limit: nonNegativeNumber(raw["queue_limit"]),
+    oldest_wait_ms: nonNegativeNumber(raw["oldest_wait_ms"]),
+    workers_busy: nonNegativeNumber(raw["workers_busy"]),
+    workers_ready: nonNegativeNumber(raw["workers_ready"]),
+    workers_configured: nonNegativeNumber(raw["workers_configured"]),
+  };
+}
+
 export function normalizeRuntimeSnapshot(snapshot: RuntimeSnapshotPayload): GuardRuntimeSnapshot {
   const protectionHealth = normalizeProtectionHealth(snapshot.protection_health);
   const runtimeState = normalizeRuntimeState(snapshot.runtime_state);
@@ -1630,6 +1693,7 @@ export function normalizeRuntimeSnapshot(snapshot: RuntimeSnapshotPayload): Guar
     supply_chain: normalizeSupplyChainSnapshot(snapshot.supply_chain),
     managed_installs: normalizeManagedInstalls(snapshot.managed_installs),
     cloud_command_capability: normalizeCloudCommandCapability(snapshot.cloud_command_capability),
+    operator_health: normalizeOperatorHealth(snapshot.operator_health),
     protection_health: protectionHealth,
   };
 }
@@ -1852,6 +1916,24 @@ function runtimeSnapshotSearchParams(
   return params;
 }
 
+export class GuardSessionUnavailableError extends Error {
+  constructor() {
+    super("Guard dashboard session is not available. Reopen the Guard dashboard from the authenticated URL.");
+    this.name = "GuardSessionUnavailableError";
+  }
+}
+
+/**
+ * Fail fast when the dashboard has no session token. Without this gate,
+ * auth-required polling loops keep issuing requests that the daemon rejects
+ * with 401s, generating a steady stream of unauthorized audit events.
+ */
+function requireGuardSessionToken(): void {
+  if (!readGuardToken()) {
+    throw new GuardSessionUnavailableError();
+  }
+}
+
 export async function fetchInboxState(input: { activeRequestId?: string } = {}): Promise<{
   snapshot: GuardRuntimeSnapshot;
   items: GuardApprovalRequest[];
@@ -1860,6 +1942,7 @@ export async function fetchInboxState(input: { activeRequestId?: string } = {}):
     const snapshot = buildDemoRuntimeSnapshot();
     return { snapshot, items: snapshot.items };
   }
+  requireGuardSessionToken();
   const [snapshotPayload, items] = await Promise.all([
     readJson<RuntimeSnapshotPayload>(
       queuePath("/v1/runtime", runtimeSnapshotSearchParams({ ...input, includeItems: false, includeReceipts: false })),
@@ -1887,6 +1970,7 @@ export async function fetchApprovalPage(input: GuardApprovalPageFilters = {}): P
       status: input.status ?? "pending"
     };
   }
+  requireGuardSessionToken();
   const payload = await readJson<ApprovalRequestListPayload>(queuePath("/v1/requests", queueSearchParams(input)));
   return normalizeApprovalPage(payload, input.status ?? "pending");
 }
@@ -1897,6 +1981,7 @@ export async function fetchRuntimeSnapshot(
   if (isGuardDemoMode()) {
     return buildDemoRuntimeSnapshot();
   }
+  requireGuardSessionToken();
   const params = runtimeSnapshotSearchParams(input);
   const query = params.toString();
   const path = query.length > 0 ? `/v1/runtime?${query}` : "/v1/runtime";
@@ -1908,6 +1993,7 @@ export async function fetchQueueSummary(input: { activeRequestId?: string } = {}
   if (isGuardDemoMode()) {
     return buildDemoRuntimeSnapshot().queue_summary ?? normalizeQueueSummary(null, getDemoRequests().length);
   }
+  requireGuardSessionToken();
   const params = new URLSearchParams();
   if (input.activeRequestId) {
     params.set("active_request_id", input.activeRequestId);
@@ -1981,6 +2067,18 @@ export function buildDemoRuntimeSnapshot(): GuardRuntimeSnapshot {
       started_at: now,
       last_heartbeat_at: now,
       approval_center_url: "http://127.0.0.1:4455"
+    },
+    operator_health: {
+      state: "healthy",
+      cause: "Local reviews are processing within available capacity.",
+      automatic_recovery: "Guard drains queued work and adjusts ready workers automatically.",
+      repairable: false,
+      queue_depth: 0,
+      queue_limit: 256,
+      oldest_wait_ms: 0,
+      workers_busy: 1,
+      workers_ready: 3,
+      workers_configured: 4,
     },
     device: {
       installation_id: "demo-device-7f4a9c2d",
@@ -2114,6 +2212,7 @@ export async function fetchSettings(): Promise<GuardSettingsPayload> {
         approval_browser_immediate_severity: "critical",
         telemetry: false,
         sync: false,
+        receipt_redaction_level: "full",
         billing: false
       }
     };
@@ -2473,16 +2572,17 @@ function normalizeGuardCloudConnectStatus(value: unknown): GuardCloudConnectStat
   };
 }
 
-export async function fetchGuardCloudConnectStatus(): Promise<GuardCloudConnectStatusResponse> {
-  return normalizeGuardCloudConnectStatus(await readJson<unknown>("/v1/cloud/connect"));
+export async function fetchGuardCloudConnectStatus(signal?: AbortSignal): Promise<GuardCloudConnectStatusResponse> {
+  return normalizeGuardCloudConnectStatus(await readJson<unknown>("/v1/cloud/connect", { signal }));
 }
 
-export async function startGuardCloudConnect(): Promise<GuardCloudConnectStatusResponse> {
+export async function startGuardCloudConnect(signal?: AbortSignal): Promise<GuardCloudConnectStatusResponse> {
   return normalizeGuardCloudConnectStatus(
     await readJson<unknown>("/v1/cloud/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
+      signal,
     }),
   );
 }
@@ -2925,6 +3025,12 @@ export async function resolveRequestWithQueueResult(input: GuardApprovalResoluti
         : {}),
       ...(input.mcp_grant_target !== undefined ? { mcp_grant_target: input.mcp_grant_target } : {}),
       ...(input.mcp_grant_duration !== undefined ? { mcp_grant_duration: input.mcp_grant_duration } : {}),
+      ...(input.local_tool_grant_target !== undefined
+        ? { local_tool_grant_target: input.local_tool_grant_target }
+        : {}),
+      ...(input.local_tool_grant_duration !== undefined
+        ? { local_tool_grant_duration: input.local_tool_grant_duration }
+        : {}),
       ...(input.approval_password !== undefined ? { approval_password: input.approval_password } : {}),
       ...(input.approval_totp_code !== undefined ? { approval_totp_code: input.approval_totp_code } : {}),
       ...(input.approval_gate_use_cooldown !== undefined ? { approval_gate_use_cooldown: input.approval_gate_use_cooldown } : {})
@@ -3051,7 +3157,10 @@ function normalizeGuardUpdateVersionCheck(raw: unknown): GuardUpdateVersionCheck
   };
 }
 
-export function normalizeGuardUpdateStatus(raw: unknown): GuardUpdateStatus {
+export function normalizeGuardUpdateStatus(
+  raw: unknown,
+  fallbackReleaseChannel: "stable" | "alpha" | null = null,
+): GuardUpdateStatus {
   const value = isRecord(raw) ? raw : {};
   const versionCheck = normalizeGuardUpdateVersionCheck(value.version_check);
   const currentVersion = stringValue(value.current_version) ?? versionCheck.current_version ?? "unknown";
@@ -3076,6 +3185,9 @@ export function normalizeGuardUpdateStatus(raw: unknown): GuardUpdateStatus {
     retry_command: typeof value.retry_command === "string" ? value.retry_command : undefined,
     update_attempt_message:
       typeof value.update_attempt_message === "string" ? value.update_attempt_message : undefined,
+    release_channel: isGuardUpdateChannel(value.release_channel)
+      ? value.release_channel
+      : (fallbackReleaseChannel ?? "stable"),
   };
 }
 
@@ -3097,8 +3209,15 @@ export async function fetchGuardUpdateStatus(): Promise<GuardUpdateStatus> {
       blocked_reason: null,
     });
   }
-  const payload = await readJson<unknown>("/v1/update/status");
-  return normalizeGuardUpdateStatus(payload);
+  const payload = await readJson<unknown>("/v1/update/status", { cache: "no-store" });
+  const declaredChannel = isRecord(payload) && isGuardUpdateChannel(payload.release_channel)
+    ? payload.release_channel
+    : null;
+  const status = normalizeGuardUpdateStatus(payload, readRememberedGuardUpdateChannel());
+  if (declaredChannel) {
+    rememberGuardUpdateChannel(declaredChannel);
+  }
+  return status;
 }
 
 export async function scheduleGuardUpdate(
@@ -3134,6 +3253,38 @@ export async function scheduleGuardUpdate(
     message: stringValue(payload.message) ?? undefined,
     error: stringValue(payload.error) ?? undefined,
   };
+}
+
+export type GuardUpdateChannelProof = {
+  approval_password?: string;
+  approval_totp_code?: string;
+};
+
+export async function setGuardUpdateChannel(
+  channel: "stable" | "alpha",
+  proof?: GuardUpdateChannelProof,
+): Promise<GuardUpdateStatus> {
+  if (isGuardDemoMode()) {
+    return normalizeGuardUpdateStatus({
+      ...(await fetchGuardUpdateStatus()),
+      release_channel: channel,
+    });
+  }
+  const response = await fetchWithGuardAuth("/v1/update/channel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ update_channel: channel, ...proof }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const value = isRecord(payload) ? payload : {};
+    throw new Error(stringValue(value.message) ?? `Update channel failed with ${response.status}`);
+  }
+  const declaredChannel = isRecord(payload) && isGuardUpdateChannel(payload.release_channel)
+    ? payload.release_channel
+    : channel;
+  rememberGuardUpdateChannel(declaredChannel);
+  return normalizeGuardUpdateStatus(payload, declaredChannel);
 }
 
 export async function setupDesktopNotifications(): Promise<GuardNotificationSetupResult> {
@@ -3763,6 +3914,76 @@ export async function runPackageSync(credentials?: {
     );
   }
   return normalizePackageFirewallAction(payloadBody);
+}
+
+export async function repairSupplyChainProtection(credentials?: {
+  approval_password?: string;
+  approval_totp_code?: string;
+}): Promise<SupplyChainRepairResult> {
+  if (isGuardDemoMode()) {
+    return {
+      repaired: true,
+      completed_steps: ["package_shims", "runtime_activation", "intelligence_sync"],
+      failed_steps: [],
+      message: "Supply-chain protection restored and refreshed.",
+    };
+  }
+  const response = await fetchGuardApi("/v1/supply-chain/repair", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...guardAuthHeaders(),
+    },
+    body: JSON.stringify({
+      ...(credentials?.approval_password !== undefined
+        ? { approval_password: credentials.approval_password }
+        : {}),
+      ...(credentials?.approval_totp_code !== undefined
+        ? { approval_totp_code: credentials.approval_totp_code }
+        : {}),
+    }),
+  });
+  const payloadBody = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) {
+    throw new GuardHarnessActionError(
+      response.status,
+      isGuardHarnessActionErrorPayload(payloadBody) ? payloadBody : null,
+    );
+  }
+  if (!isRecord(payloadBody) || !isRecord(payloadBody.result)) {
+    throw new Error("Guard returned an invalid supply-chain repair result.");
+  }
+  const result = payloadBody.result;
+  const failures: SupplyChainRepairStepFailure[] = [];
+  if (Array.isArray(result.failed_steps)) {
+    for (const candidate of result.failed_steps) {
+      if (!isRecord(candidate)) continue;
+      const step = stringValue(candidate.step);
+      const message = stringValue(candidate.message);
+      if (
+        (step === "package_shims" ||
+          step === "runtime_activation" ||
+          step === "intelligence_sync") &&
+        message !== null
+      ) {
+        failures.push({ step, message });
+      }
+    }
+  }
+  const completedSteps = Array.isArray(result.completed_steps)
+    ? result.completed_steps.filter((value): value is string => typeof value === "string")
+    : [];
+  const requiredSteps = ["package_shims", "runtime_activation", "intelligence_sync"];
+  const completedWithoutFailures =
+    Array.isArray(result.failed_steps) &&
+    result.failed_steps.length === 0 &&
+    requiredSteps.every((step) => completedSteps.includes(step));
+  return {
+    repaired: result.repaired === true || (!("repaired" in result) && completedWithoutFailures),
+    completed_steps: completedSteps,
+    failed_steps: failures,
+    message: stringValue(result.message) ?? "Supply-chain repair finished.",
+  };
 }
 
 export type EvidencePageData = {

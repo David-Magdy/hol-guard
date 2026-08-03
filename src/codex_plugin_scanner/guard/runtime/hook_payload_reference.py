@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import tempfile
+import os
+import stat
 from base64 import urlsafe_b64decode
 from collections.abc import Mapping
 from pathlib import Path
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from .local_temp_paths import trusted_temporary_root_for_path
 
 HOOK_PAYLOAD_REFERENCE_KEY = "guard_payload_ref"
 MAX_HOOK_PAYLOAD_REFERENCE_BYTES = 5 * 1024 * 1024
@@ -24,24 +28,24 @@ def hydrate_hook_payload_reference(payload: Mapping[str, object]) -> dict[str, o
     ref = payload.get(HOOK_PAYLOAD_REFERENCE_KEY)
     if not isinstance(ref, Mapping):
         return dict(payload)
-    path_value = ref.get("path")
-    sha256_value = ref.get("sha256")
-    if ref.get("version") != 1 or not isinstance(path_value, str) or not isinstance(sha256_value, str):
-        raise HookPayloadReferenceError("Invalid HOL Guard hook payload reference metadata.")
-    expected_sha256 = sha256_value.strip().lower()
-    if len(expected_sha256) != 64 or any(char not in "0123456789abcdef" for char in expected_sha256):
-        raise HookPayloadReferenceError("Invalid HOL Guard hook payload reference digest.")
-    path = _safe_reference_path(path_value)
+    path, expected_sha256 = _validated_reference(ref)
+    descriptor = -1
     try:
-        size = path.stat().st_size
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        descriptor_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(descriptor_stat.st_mode):
+            raise HookPayloadReferenceError("HOL Guard hook payload reference must be a file.")
+        if descriptor_stat.st_size > MAX_HOOK_PAYLOAD_REFERENCE_BYTES:
+            raise HookPayloadReferenceError("HOL Guard hook payload reference exceeds the safe local size limit.")
+        raw = _bounded_descriptor_read(descriptor)
     except OSError as error:
         raise HookPayloadReferenceError("HOL Guard hook payload reference is not readable.") from error
-    if size > MAX_HOOK_PAYLOAD_REFERENCE_BYTES:
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(raw) > MAX_HOOK_PAYLOAD_REFERENCE_BYTES:
         raise HookPayloadReferenceError("HOL Guard hook payload reference exceeds the safe local size limit.")
-    try:
-        raw = path.read_bytes()
-    except OSError as error:
-        raise HookPayloadReferenceError("HOL Guard hook payload reference is not readable.") from error
     actual_sha256 = hashlib.sha256(raw).hexdigest()
     if actual_sha256 != expected_sha256:
         raise HookPayloadReferenceError("HOL Guard hook payload reference digest mismatch.")
@@ -56,12 +60,46 @@ def hydrate_hook_payload_reference(payload: Mapping[str, object]) -> dict[str, o
     return loaded
 
 
+def _bounded_descriptor_read(descriptor: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = MAX_HOOK_PAYLOAD_REFERENCE_BYTES + 1
+    while remaining:
+        chunk = os.read(descriptor, remaining)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def hook_payload_reference_size(payload: Mapping[str, object]) -> int | None:
+    """Return the conservative reservation required before reading a reference."""
+
+    ref = payload.get(HOOK_PAYLOAD_REFERENCE_KEY)
+    if not isinstance(ref, Mapping):
+        return None
+    _ = _validated_reference(ref)
+    return MAX_HOOK_PAYLOAD_REFERENCE_BYTES
+
+
+def _validated_reference(ref: Mapping[str, object]) -> tuple[Path, str]:
+    path_value = ref.get("path")
+    sha256_value = ref.get("sha256")
+    if ref.get("version") != 1 or not isinstance(path_value, str) or not isinstance(sha256_value, str):
+        raise HookPayloadReferenceError("Invalid HOL Guard hook payload reference metadata.")
+    expected_sha256 = sha256_value.strip().lower()
+    if len(expected_sha256) != 64 or any(char not in "0123456789abcdef" for char in expected_sha256):
+        raise HookPayloadReferenceError("Invalid HOL Guard hook payload reference digest.")
+    path = _safe_reference_path(path_value)
+    return path, expected_sha256
+
+
 def _decrypt_payload_reference(raw: bytes, ref: Mapping[str, object]) -> bytes:
     key = _base64url_bytes(ref.get("key"), expected_length=32, label="key")
     nonce = _base64url_bytes(ref.get("nonce"), expected_length=12, label="nonce")
     try:
         return AESGCM(key).decrypt(nonce, raw, None)
-    except ValueError as error:
+    except (InvalidTag, ValueError) as error:
         raise HookPayloadReferenceError("HOL Guard hook payload reference could not be decrypted.") from error
 
 
@@ -81,11 +119,11 @@ def _base64url_bytes(value: object, *, expected_length: int, label: str) -> byte
 def _safe_reference_path(path_value: str) -> Path:
     try:
         path = Path(path_value).resolve(strict=True)
-        temp_root = Path(tempfile.gettempdir()).resolve(strict=True)
+        temp_root = trusted_temporary_root_for_path(path)
     except OSError as error:
         raise HookPayloadReferenceError("HOL Guard hook payload reference path is invalid.") from error
     parent = path.parent
-    if parent.parent != temp_root or not parent.name.startswith(_REFERENCE_DIR_PREFIX):
+    if temp_root is None or parent.parent != temp_root or not parent.name.startswith(_REFERENCE_DIR_PREFIX):
         raise HookPayloadReferenceError("HOL Guard hook payload reference must be in a Guard-owned temp directory.")
     if not path.is_file():
         raise HookPayloadReferenceError("HOL Guard hook payload reference must be a file.")

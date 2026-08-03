@@ -67,7 +67,7 @@ import type {
   GuardSettingsPayload,
 } from "./guard-types";
 import { SettingsSectionShell } from "./settings/settings-section-shell";
-import { SettingsFormSection, SettingsToggleRow } from "./settings/settings-row-primitives";
+import { SettingsFormSection, SettingsSelectRow, SettingsToggleRow } from "./settings/settings-row-primitives";
 import { isLocalSettingsTabKey, type LocalSettingsTabKey } from "./settings/settings-ia";
 
 export const resolveSecurityLevelDescription = resolveProtectionLevelCopy;
@@ -1483,6 +1483,17 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
                   checked={draft.sync}
                   onChange={handleSyncToggle}
                 />
+                <SettingsSelectRow
+                  label="Cloud receipt privacy"
+                  description="Choose how much command detail Guard includes when syncing receipts. Secrets are always removed."
+                  value={draft.receipt_redaction_level}
+                  onChange={handleStringChange("receipt_redaction_level")}
+                  options={[
+                    { value: "full", label: "Fully redacted - metadata only" },
+                    { value: "partial", label: "Partially redacted - hide paths and package names" },
+                    { value: "none", label: "Detailed - include commands, paths, hosts, and packages" },
+                  ]}
+                />
                 <SettingsToggleRow
                   label="Billing features"
                   description="Enable paid supply-chain and blocked-install analytics."
@@ -1721,7 +1732,7 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
                         </ActionButton>
                       </div>
                     </div>
-                    <div>
+                    <div id="approval-center-repair">
                       <p className="text-sm font-semibold text-brand-dark">Repair approval center</p>
                       <p className="text-xs text-slate-500">Use when the approval link fails after Guard restarts.</p>
                       <div className="mt-2">

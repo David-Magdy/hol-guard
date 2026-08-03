@@ -64,8 +64,9 @@ from .restricted_archive_download import (
 )
 from .runner import (
     GuardSyncAuthorizationExpiredError,
+    GuardSyncEndpointUntrustedError,
     GuardSyncNotConfiguredError,
-    _guard_sync_headers,
+    _guard_sync_request,
     _normalized_receipts_sync_url,
     _resolve_guard_sync_auth_context,
     _urlopen_json_with_timeout_retry,
@@ -306,6 +307,7 @@ def evaluate_package_request_artifact(
     now_value = now or datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     now_timestamp = _parse_evaluation_timestamp(now_value)
     targets = _evaluation_targets(artifact, workspace_dir)
+    cloud_targets = _cloud_evaluation_targets(artifact, workspace_dir)
     package_intent_hash = artifact.artifact_id.rsplit(":", 1)[-1]
     external_archive_targets = tuple(target for target in targets if _target_is_external_https_archive(target))
     external_archive_source_hashes = tuple(
@@ -561,7 +563,7 @@ def evaluate_package_request_artifact(
     )
     cloud_result, cloud_fallback_reason = _evaluate_with_cloud(
         artifact=artifact,
-        targets=targets,
+        targets=cloud_targets,
         workspace_dir=workspace_dir,
         workspace_id=workspace_id,
         workspace_fingerprint=workspace_fingerprint,
@@ -1044,7 +1046,7 @@ def _evaluate_with_cloud(
     bundle_decision: str | None,
     store: GuardStore,
 ) -> tuple[PackageRequestEvaluation | None, dict[str, object] | None]:
-    if workspace_id is None or workspace_fingerprint is None:
+    if not targets or workspace_id is None or workspace_fingerprint is None:
         return None, None
     fail_closed_decision: str | None = None
 
@@ -1081,12 +1083,31 @@ def _evaluate_with_cloud(
             ),
             None,
         )
+    except GuardSyncEndpointUntrustedError:
+        return (
+            _cloud_fail_closed_evaluation(
+                code="cloud_validation_error",
+                message="Guard cloud evaluation endpoint was not trusted, so this package request needs review.",
+                artifact=artifact,
+                targets=targets,
+                workspace_dir=workspace_dir,
+                workspace_fingerprint=workspace_fingerprint,
+                bundle_meta=bundle_meta,
+                fail_closed_decision=resolve_fail_closed_decision(),
+            ),
+            None,
+        )
     except GuardSyncNotConfiguredError:
         if bool(store.get_oauth_local_credential_health().get("configured")):
+            if can_fallback_from_auth_failure():
+                return None, _cloud_fallback_reason(
+                    code="cloud_auth_error",
+                    message="Guard Cloud credentials were unavailable, so Guard used local package intelligence.",
+                )
             return (
                 _cloud_fail_closed_evaluation(
-                    code="cloud_validation_error",
-                    message="Guard cloud evaluation endpoint was not trusted, so this package request needs review.",
+                    code="cloud_auth_error",
+                    message="Guard Cloud credentials were unavailable, so this package request needs review.",
                     artifact=artifact,
                     targets=targets,
                     workspace_dir=workspace_dir,
@@ -1100,7 +1121,7 @@ def _evaluate_with_cloud(
     except RuntimeError:
         return (
             _cloud_fail_closed_evaluation(
-                code="cloud_validation_error",
+                code="cloud_auth_error",
                 message=(
                     "Guard cloud evaluation could not establish a trusted session, "
                     "so this package request needs review."
@@ -1116,7 +1137,19 @@ def _evaluate_with_cloud(
         )
     sync_url = _optional_string(auth_context.get("sync_url"))
     if sync_url is None:
-        return None, None
+        return (
+            _cloud_fail_closed_evaluation(
+                code="cloud_validation_error",
+                message="Guard cloud evaluation session was invalid, so this package request needs review.",
+                artifact=artifact,
+                targets=targets,
+                workspace_dir=workspace_dir,
+                workspace_fingerprint=workspace_fingerprint,
+                bundle_meta=bundle_meta,
+                fail_closed_decision=resolve_fail_closed_decision(),
+            ),
+            None,
+        )
     try:
         sync_url = _validate_guard_sync_url(sync_url, issuer=_optional_string(auth_context.get("issuer")))
     except GuardSyncNotConfiguredError:
@@ -1141,12 +1174,18 @@ def _evaluate_with_cloud(
         workspace_fingerprint=workspace_fingerprint,
         policy_version=bundle_meta["policy_hash"] if bundle_meta is not None else "local:none",
     )
-    request = urllib.request.Request(
-        evaluate_url,
-        data=json.dumps(request_payload).encode("utf-8"),
-        headers=_guard_sync_headers(auth_context, request_url=evaluate_url, method="POST"),
-        method="POST",
-    )
+    request_data = json.dumps(request_payload).encode("utf-8")
+
+    def evaluation_request(context: dict[str, object]) -> urllib.request.Request:
+        return _guard_sync_request(
+            context,
+            request_url=evaluate_url,
+            method="POST",
+            data=request_data,
+        )
+
+    request = evaluation_request(auth_context)
+    response_payload: object | None = None
     try:
         response_payload = _urlopen_json_with_timeout_retry(
             request=request,
@@ -1154,26 +1193,83 @@ def _evaluate_with_cloud(
             retry_timeout_seconds=_RETRY_TIMEOUT_SECONDS,
         )
     except urllib.error.HTTPError as error:
-        fail_closed = _cloud_http_fail_closed_evaluation(
-            status_code=error.code,
-            artifact=artifact,
-            targets=targets,
-            workspace_dir=workspace_dir,
-            workspace_fingerprint=workspace_fingerprint,
-            bundle_meta=bundle_meta,
-            fail_closed_decision=resolve_fail_closed_decision(),
-        )
-        if fail_closed is not None:
-            return fail_closed, None
-        if error.code == 401:
-            return None, _cloud_fallback_reason(
-                code="cloud_auth_error",
-                message="Guard cloud evaluation was not authorized, so Guard used local package intelligence.",
+        status_code: int | None = error.code
+        if status_code == 401:
+            try:
+                refreshed_auth_context = _resolve_guard_sync_auth_context(
+                    store,
+                    allow_primary_repair=False,
+                    force_refresh=True,
+                )
+                response_payload = _urlopen_json_with_timeout_retry(
+                    request=evaluation_request(refreshed_auth_context),
+                    timeout_seconds=_TIMEOUT_SECONDS,
+                    retry_timeout_seconds=_RETRY_TIMEOUT_SECONDS,
+                )
+            except (GuardSyncAuthorizationExpiredError, GuardSyncNotConfiguredError, RuntimeError):
+                response_payload = None
+            except urllib.error.HTTPError as refreshed_error:
+                status_code = refreshed_error.code
+            except OSError:
+                if resolve_fail_closed_decision() == "block":
+                    return (
+                        _cloud_fail_closed_evaluation(
+                            code="cloud_validation_error",
+                            message="Guard cloud evaluation timed out, so strict mode blocked this package request.",
+                            artifact=artifact,
+                            targets=targets,
+                            workspace_dir=workspace_dir,
+                            workspace_fingerprint=workspace_fingerprint,
+                            bundle_meta=bundle_meta,
+                            fail_closed_decision=resolve_fail_closed_decision(),
+                        ),
+                        None,
+                    )
+                return None, _cloud_fallback_reason(
+                    code="cloud_timeout",
+                    message="Guard cloud evaluation timed out, so Guard fell back to local intelligence.",
+                )
+            except ValueError:
+                return (
+                    _cloud_fail_closed_evaluation(
+                        code="cloud_validation_error",
+                        message=(
+                            "Guard cloud evaluation returned an invalid response, so this package request needs review."
+                        ),
+                        artifact=artifact,
+                        targets=targets,
+                        workspace_dir=workspace_dir,
+                        workspace_fingerprint=workspace_fingerprint,
+                        bundle_meta=bundle_meta,
+                        fail_closed_decision=resolve_fail_closed_decision(),
+                    ),
+                    None,
+                )
+            else:
+                status_code = None
+        if status_code is not None:
+            fail_closed = _cloud_http_fail_closed_evaluation(
+                status_code=status_code,
+                artifact=artifact,
+                targets=targets,
+                workspace_dir=workspace_dir,
+                workspace_fingerprint=workspace_fingerprint,
+                bundle_meta=bundle_meta,
+                fail_closed_decision=resolve_fail_closed_decision(),
             )
-        return None, _cloud_fallback_reason(
-            code="cloud_http_error",
-            message=(f"Guard cloud evaluation returned HTTP {error.code}, so Guard fell back to local intelligence."),
-        )
+            if fail_closed is not None:
+                return fail_closed, None
+            if status_code == 401:
+                return None, _cloud_fallback_reason(
+                    code="cloud_auth_error",
+                    message="Guard cloud evaluation was not authorized, so Guard used local package intelligence.",
+                )
+            return None, _cloud_fallback_reason(
+                code="cloud_http_error",
+                message=(
+                    f"Guard cloud evaluation returned HTTP {status_code}, so Guard fell back to local intelligence."
+                ),
+            )
     except OSError:
         if resolve_fail_closed_decision() == "block":
             return (
@@ -1941,6 +2037,18 @@ def _evaluation_targets(
     )
 
 
+def _cloud_evaluation_targets(
+    artifact: GuardArtifact,
+    workspace_dir: Path | None,
+) -> tuple[dict[str, object], ...]:
+    return _manifest_evaluation_targets(
+        artifact,
+        workspace_dir,
+        explicit_targets=_targets_from_artifact(artifact),
+        include_locked=True,
+    )
+
+
 def _targets_from_artifact(artifact: GuardArtifact) -> tuple[dict[str, object], ...]:
     public_targets = artifact.metadata.get("targets")
     if not isinstance(public_targets, list):
@@ -2246,7 +2354,11 @@ def _build_request_payload(
         "workspaceFingerprint": workspace_fingerprint,
     }
     if lockfile_context is not None:
-        payload["lockfileContext"] = lockfile_context
+        payload["lockfileContext"] = {
+            key: lockfile_context[key]
+            for key in ("dependencyCount", "fileName", "lockfileHash", "manifestHash", "repository")
+            if key in lockfile_context
+        }
     return payload
 
 
@@ -2739,8 +2851,8 @@ def _unknown_package_result(
     package_name = str(target.get("name") or "this package")
     no_match_message = (
         (
-            f"Guard could not verify registry identity or package intelligence for {package_name}; "
-            "approval is required before install."
+            f"Current package safety data was unavailable for {package_name}. "
+            "Review this install now, or connect Guard Cloud and try again."
         )
         if requires_review
         else "Guard recorded this package request and will keep watching for new intelligence."
@@ -2758,8 +2870,8 @@ def _unknown_package_result(
             {
                 "code": "unidentified_package",
                 "message": (
-                    f"Guard could not resolve registry metadata for {target['name']} "
-                    f"in the {target['ecosystem']} ecosystem; approval is required before install."
+                    f"Guard could not confirm current safety details for {target['name']}. "
+                    "This does not mean the package is unsafe."
                 ),
                 "severity": "medium",
                 "source": "guard-local",
@@ -4726,8 +4838,6 @@ def _cloud_result_should_defer_to_bundle(
         return False
     reason_codes = {str(reason.get("code") or "") for reason in evaluation.reasons if isinstance(reason, dict)}
     if evaluation.decision == "block" and evaluation.policy_action == "block":
-        if "cloud_validation_error" in reason_codes and "cloud_timeout" not in reason_codes:
-            return False
         return False
     defer_codes = {"cloud_auth_error", "cloud_http_error", "cloud_timeout"}
     if not any(code in defer_codes for code in reason_codes):

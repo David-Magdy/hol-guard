@@ -67,6 +67,9 @@ export function resolvePolicySourceLabel(source: string): string {
   if (isCloudManagedPolicy(source)) {
     return "Guard Cloud";
   }
+  if (source === "trusted-local-tool") {
+    return "Trusted local tool";
+  }
   if (source === "manual" || source === "local") {
     return "Local";
   }

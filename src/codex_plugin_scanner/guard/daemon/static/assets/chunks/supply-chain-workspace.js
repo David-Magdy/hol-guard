@@ -1,8 +1,8 @@
-import { r as reactExports, bG as fetchSupplyChainBundle, j as jsxRuntimeExports, S as SectionLabel, k as EmptyState, a$ as HiMiniArrowTopRightOnSquare, aj as Tag, t as formatRelativeTime, M as Badge, K as HiMiniExclamationTriangle, aX as HiMiniBugAnt, as as guardActionPresentation, bH as isSupplyChainScannerEvidence, bI as isBlockedGuardAction, aH as HiMiniArrowPath, bJ as HiMiniDocumentMagnifyingGlass, bK as HiMiniShieldExclamation, bL as HiMiniComputerDesktop, C as HiMiniCloud, m as HiMiniCheckCircle, ap as HiMiniArrowLeft, bs as HiMiniArrowRight, A as ActionButton, bi as HiMiniCloudArrowUp, bo as HiMiniInformationCircle, O as HiMiniWrenchScrewdriver, bc as fetchReceipts, T as HiMiniXCircle, e as harnessDisplayName, y as HiMiniChevronUp, z as HiMiniChevronDown } from "../guard-dashboard.js";
+import { r as reactExports, bI as fetchSupplyChainBundle, j as jsxRuntimeExports, S as SectionLabel, k as EmptyState, b0 as HiMiniArrowTopRightOnSquare, ak as Tag, t as formatRelativeTime, M as Badge, K as HiMiniExclamationTriangle, aY as HiMiniBugAnt, at as guardActionPresentation, bJ as isSupplyChainScannerEvidence, bK as isBlockedGuardAction, aI as HiMiniArrowPath, bL as HiMiniDocumentMagnifyingGlass, bM as HiMiniShieldExclamation, bN as HiMiniComputerDesktop, C as HiMiniCloud, m as HiMiniCheckCircle, P as HiMiniWrenchScrewdriver, A as ActionButton, z as HiMiniChevronDown, Q as HiMiniExclamationCircle, be as fetchReceipts, U as HiMiniXCircle, e as harnessDisplayName, y as HiMiniChevronUp } from "../guard-dashboard.js";
 import { resolveFeedStaleness } from "./feed-health-workspace.js";
 import { r as resolveHomeProtectionStatus } from "./home-protection-module.js";
 import { b as buildSupplyChainStats } from "./supply-chain-protection-stats.js";
-import { S as SUPPLY_CHAIN_WORKSPACE_SHELL_CLASS } from "./supply-chain-hub-workspace.js";
+import { s as supplyChainFixAllIsPending, a as supplyChainFixAllButtonLabel, S as SUPPLY_CHAIN_WORKSPACE_SHELL_CLASS } from "./supply-chain-hub-workspace.js";
 function SeverityBadge({ severity }) {
   const tone = severity === "critical" || severity === "high" ? "destructive" : severity === "medium" ? "attention" : "default";
   return /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone, children: severity });
@@ -703,150 +703,6 @@ function supplyChainCloudTagTone(mode) {
   }
   return "attention";
 }
-function issueSurfaceClass(tone) {
-  if (tone === "blue") {
-    return "border-brand-blue/20 bg-brand-blue/[0.04]";
-  }
-  if (tone === "attention") {
-    return "border-brand-attention/20 bg-brand-attention/[0.04]";
-  }
-  return "border-slate-200 bg-slate-50/80";
-}
-function issueIcon(issue) {
-  if (issue.id.startsWith("cloud")) {
-    return HiMiniCloudArrowUp;
-  }
-  if (issue.id.startsWith("path")) {
-    return issue.tone === "blue" ? HiMiniInformationCircle : HiMiniWrenchScrewdriver;
-  }
-  if (issue.id === "stale_intel") {
-    return HiMiniArrowPath;
-  }
-  if (issue.id.includes("protection") || issue.id.includes("unprotected")) {
-    return HiMiniShieldExclamation;
-  }
-  return HiMiniExclamationTriangle;
-}
-function issueIconClass(tone) {
-  if (tone === "blue") {
-    return "text-brand-blue";
-  }
-  if (tone === "attention") {
-    return "text-brand-attention";
-  }
-  return "text-slate-500";
-}
-function SupplyChainIssueFocus({
-  hero,
-  issues,
-  onIssueAction,
-  actionPending = false
-}) {
-  const [activeIndex, setActiveIndex] = reactExports.useState(0);
-  reactExports.useEffect(() => {
-    if (activeIndex >= issues.length) {
-      setActiveIndex(Math.max(0, issues.length - 1));
-    }
-  }, [activeIndex, issues.length]);
-  const goPrevious = reactExports.useCallback(() => {
-    setActiveIndex((index) => index <= 0 ? issues.length - 1 : index - 1);
-  }, [issues.length]);
-  const goNext = reactExports.useCallback(() => {
-    setActiveIndex((index) => index >= issues.length - 1 ? 0 : index + 1);
-  }, [issues.length]);
-  if (issues.length === 0) {
-    return null;
-  }
-  const issue = issues[activeIndex] ?? issues[0];
-  const Icon = issueIcon(issue);
-  const titleClass = "text-brand-dark";
-  const detailClass = "text-slate-600";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-    "section",
-    {
-      className: `overflow-hidden rounded-2xl border shadow-sm ${issueSurfaceClass(issue.tone)}`,
-      "aria-label": "Supply chain status",
-      "data-testid": "supply-chain-issue-focus",
-      children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-3 border-b border-slate-100/80 px-4 py-3 sm:px-5", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-w-0 flex-wrap items-center gap-2", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs(Tag, { tone: supplyChainCloudTagTone(hero.cloudMode), children: [
-              hero.cloudMode === "local_only" ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniComputerDesktop, { className: "mr-1 inline h-3.5 w-3.5", "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { className: "mr-1 inline h-3.5 w-3.5", "aria-hidden": "true" }),
-              hero.cloudLabel
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-slate-500", children: hero.statLine })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.18em] text-slate-500", children: issues.length === 1 ? "Next step" : `Step ${activeIndex + 1} of ${issues.length}` }),
-          issues.length > 1 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                type: "button",
-                onClick: goPrevious,
-                className: "inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200/80 bg-white/80 text-slate-600 transition-colors hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue",
-                "aria-label": "Previous issue",
-                children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowLeft, { className: "h-4 w-4", "aria-hidden": "true" })
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                type: "button",
-                onClick: goNext,
-                className: "inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200/80 bg-white/80 text-slate-600 transition-colors hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue",
-                "aria-label": "Next issue",
-                children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowRight, { className: "h-4 w-4", "aria-hidden": "true" })
-              }
-            )
-          ] }) : null
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "px-4 py-5 sm:px-6 sm:py-6", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "span",
-              {
-                className: `inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/90 ring-1 ring-black/[0.05] ${issueIconClass(issue.tone)}`,
-                "aria-hidden": "true",
-                children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { className: "h-5 w-5" })
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: `text-lg font-semibold tracking-tight sm:text-xl ${titleClass}`, children: issue.title }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-2 max-w-2xl text-sm leading-relaxed ${detailClass}`, children: issue.detail })
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              ActionButton,
-              {
-                variant: "primary",
-                onClick: () => onIssueAction(issue.action),
-                disabled: actionPending,
-                "aria-busy": actionPending,
-                children: issue.actionLabel
-              }
-            ),
-            issues.length > 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center gap-2", role: "tablist", "aria-label": "Issue progress", children: issues.map((entry, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "button",
-              {
-                type: "button",
-                role: "tab",
-                "aria-selected": index === activeIndex,
-                "aria-label": `Issue ${index + 1}: ${entry.title}`,
-                onClick: () => setActiveIndex(index),
-                className: [
-                  "h-2.5 rounded-full transition-all",
-                  index === activeIndex ? "w-7 bg-brand-blue" : "w-2.5 bg-slate-300/80"
-                ].join(" ")
-              },
-              entry.id
-            )) }) : null
-          ] })
-        ] })
-      ]
-    }
-  );
-}
 function heroSurfaceClass(tone) {
   if (tone === "green") {
     return "border-brand-green/20 bg-brand-green/[0.04]";
@@ -911,22 +767,98 @@ function SupplyChainWorkspaceHero({ hero, compact = false }) {
     }
   );
 }
-function SupplyChainStatusHeader({
-  hero,
-  issues,
-  onIssueAction,
-  actionPending = false
-}) {
-  if (issues.length === 0) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx(SupplyChainWorkspaceHero, { hero });
-  }
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(
-    SupplyChainIssueFocus,
+function recoverySummary(issueCount) {
+  return `Fix ${issueCount} open issue${issueCount === 1 ? "" : "s"} in one guided pass. Guard repairs package tools, activates routing, refreshes safety intelligence, and rechecks status.`;
+}
+function SupplyChainRecovery({ issues, state, onFixAll }) {
+  const [detailsOpen, setDetailsOpen] = reactExports.useState(false);
+  const handleDetailsToggle = reactExports.useCallback(() => {
+    setDetailsOpen((open) => !open);
+  }, []);
+  const pending = supplyChainFixAllIsPending(state.phase);
+  const showResult = state.message !== null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "section",
     {
-      hero,
-      issues,
-      onIssueAction,
-      actionPending
+      className: "border-y border-brand-attention/20 bg-brand-attention/[0.04] px-4 py-4 sm:px-5",
+      "aria-label": "Supply-chain recovery",
+      "data-testid": "supply-chain-recovery",
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                HiMiniWrenchScrewdriver,
+                {
+                  className: "h-4 w-4 shrink-0 text-brand-attention",
+                  "aria-hidden": "true"
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-sm font-semibold text-brand-dark", children: "Restore supply-chain protection" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-3xl text-sm text-slate-600", children: recoverySummary(issues.length) })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: onFixAll, disabled: pending, "aria-busy": pending, children: supplyChainFixAllButtonLabel(state.phase) })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: showResult ? "mt-3" : "", "aria-live": "polite", children: showResult ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "p",
+            {
+              className: `flex items-start gap-2 text-sm ${state.phase === "error" || state.phase === "incomplete" ? "text-red-600" : "text-slate-600"}`,
+              children: [
+                state.phase === "success" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  HiMiniCheckCircle,
+                  {
+                    className: "mt-0.5 h-4 w-4 shrink-0 text-emerald-500",
+                    "aria-hidden": "true"
+                  }
+                ) : null,
+                state.message
+              ]
+            }
+          ),
+          state.failedSteps.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 space-y-1 text-xs text-red-600", children: state.failedSteps.map((failure, index) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: failure }, `${index}:${failure}`)) }) : null
+        ] }) : null }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            type: "button",
+            onClick: handleDetailsToggle,
+            "aria-expanded": detailsOpen,
+            className: "mt-3 inline-flex items-center gap-1 text-xs font-medium text-brand-primary hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2",
+            children: [
+              "View issue details",
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                HiMiniChevronDown,
+                {
+                  className: `h-4 w-4 transition-transform ${detailsOpen ? "rotate-180" : ""}`,
+                  "aria-hidden": "true"
+                }
+              )
+            ]
+          }
+        ),
+        detailsOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 border-t border-brand-attention/10", children: issues.map((issue) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "li",
+          {
+            className: "flex items-start gap-2 border-t border-brand-attention/10 py-3 first:border-t-0",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                HiMiniExclamationCircle,
+                {
+                  className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-attention",
+                  "aria-hidden": "true"
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs text-slate-600", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "block font-semibold text-brand-dark", children: issue.title }),
+                issue.detail
+              ] })
+            ]
+          },
+          issue.id
+        )) }) : null
+      ]
     }
   );
 }
@@ -1003,11 +935,11 @@ function SupplyChainAuditTeaser({ auditSnapshot, auditRunning, onOpenAudit }) {
 function SupplyChainWorkspace({
   snapshot,
   onGoHome,
-  onRuntimeRefresh,
-  firewallPanelRef,
   onAuditNavigate,
   auditSnapshot,
-  auditRunning
+  auditRunning,
+  fixAllState,
+  onFixAll
 }) {
   const protection = snapshot.supply_chain?.package_manager_protection;
   const managedInstalls = reactExports.useMemo(
@@ -1015,45 +947,6 @@ function SupplyChainWorkspace({
     [snapshot.managed_installs]
   );
   const [evidenceRail, setEvidenceRail] = reactExports.useState(null);
-  const [issueActionPending, setIssueActionPending] = reactExports.useState(false);
-  const handleIssueAction = reactExports.useCallback(
-    async (action) => {
-      const panel = firewallPanelRef.current;
-      if (panel === null) {
-        return;
-      }
-      if (action.kind === "firewall_unprotected") {
-        panel.focusUnprotected();
-        panel.scrollIntoView();
-        return;
-      }
-      if (action.kind === "firewall_repair") {
-        panel.focusActionable();
-        panel.scrollIntoView();
-        return;
-      }
-      if (action.kind === "firewall_audit") {
-        onAuditNavigate();
-        panel.runAudit();
-        return;
-      }
-      setIssueActionPending(true);
-      try {
-        if (action.kind === "connect") {
-          await panel.startConnect();
-          await onRuntimeRefresh?.();
-          return;
-        }
-        if (action.kind === "activate_runtime") {
-          await panel.activateRuntime();
-          await onRuntimeRefresh?.();
-        }
-      } finally {
-        setIssueActionPending(false);
-      }
-    },
-    [firewallPanelRef, onAuditNavigate, onRuntimeRefresh]
-  );
   const supplyChainIssues = reactExports.useMemo(() => resolveSupplyChainIssues(snapshot), [snapshot]);
   const workspaceHero = reactExports.useMemo(
     () => resolveSupplyChainWorkspaceHero(snapshot, { openIssueCount: supplyChainIssues.length }),
@@ -1085,17 +978,14 @@ function SupplyChainWorkspace({
   }, [snapshot.generated_at, snapshot.receipt_count]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: SUPPLY_CHAIN_WORKSPACE_SHELL_CLASS, "data-testid": "supply-chain-workspace", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-wrap items-start justify-end gap-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { variant: "ghost", onClick: onGoHome, children: "Back to Home" }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      SupplyChainStatusHeader,
+    supplyChainIssues.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      SupplyChainRecovery,
       {
-        hero: workspaceHero,
         issues: supplyChainIssues,
-        onIssueAction: (action) => {
-          void handleIssueAction(action);
-        },
-        actionPending: issueActionPending
+        state: fixAllState,
+        onFixAll
       }
-    ),
+    ) : /* @__PURE__ */ jsxRuntimeExports.jsx(SupplyChainWorkspaceHero, { hero: workspaceHero }),
     supplyChainIssues.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(SupplyChainCloudCapabilitiesPanel, { state: cloudCapabilities }) : null,
     evidenceRail !== null ? /* @__PURE__ */ jsxRuntimeExports.jsx(SupplyChainEvidenceRail, { rail: evidenceRail }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsx(

@@ -1,4 +1,4 @@
-import { W as getDefaultExportFromCjs, r as reactExports, X as React, j as jsxRuntimeExports, I as useFocusTrap, Y as HiMiniKey, S as SectionLabel, A as ActionButton, q as HiMiniShieldCheck, Z as HiMiniLockClosed, _ as HiMiniBellAlert, $ as HiMiniAdjustmentsHorizontal, a0 as HiMiniCircleStack, a1 as TabBar, c as HiMiniChevronRight, a2 as resolveProtectionLevelCopy, a3 as fetchSettings, a4 as fetchRuntimeSnapshot, a5 as updateSettings, a6 as clearPolicy, a7 as clearReviewQueue, a8 as revokeApprovalGateCooldown, a9 as disableApprovalGateTotp, aa as importSettings, ab as resetSettings, ac as enrollApprovalGateTotp, ad as verifyApprovalGateTotp, ae as clearEvidence, af as exportDiagnostics, ag as repairApprovalCenter, ah as exportSettings, ai as setupDesktopNotifications, k as EmptyState, n as GuardHero, aj as Tag, ak as HiMiniMagnifyingGlass, al as HiMiniCog6Tooth, z as HiMiniChevronDown, m as HiMiniCheckCircle, K as HiMiniExclamationTriangle, am as approvalGateCooldownLabel, x as HiMiniXMark } from "../guard-dashboard.js";
+import { X as getDefaultExportFromCjs, r as reactExports, Y as React, j as jsxRuntimeExports, I as useFocusTrap, Z as HiMiniKey, S as SectionLabel, A as ActionButton, q as HiMiniShieldCheck, _ as HiMiniLockClosed, $ as HiMiniBellAlert, a0 as HiMiniAdjustmentsHorizontal, a1 as HiMiniCircleStack, a2 as TabBar, c as HiMiniChevronRight, a3 as resolveProtectionLevelCopy, a4 as fetchSettings, a5 as fetchRuntimeSnapshot, a6 as updateSettings, a7 as clearPolicy, a8 as clearReviewQueue, a9 as revokeApprovalGateCooldown, aa as disableApprovalGateTotp, ab as importSettings, ac as resetSettings, ad as enrollApprovalGateTotp, ae as verifyApprovalGateTotp, af as clearEvidence, ag as exportDiagnostics, ah as repairApprovalCenter, ai as exportSettings, aj as setupDesktopNotifications, k as EmptyState, n as GuardHero, ak as Tag, al as HiMiniMagnifyingGlass, am as HiMiniCog6Tooth, z as HiMiniChevronDown, m as HiMiniCheckCircle, K as HiMiniExclamationTriangle, an as approvalGateCooldownLabel, x as HiMiniXMark } from "../guard-dashboard.js";
 import { f as filterSettingsBySearch, R as RISK_CONTROL_CONSEQUENCES, s as securityLevelLabel } from "./app-catalog.js";
 var propTypes$2 = { exports: {} };
 var ReactPropTypesSecret_1;
@@ -2370,6 +2370,35 @@ function SettingsToggleRow({
     )
   ] });
 }
+function SettingsSelectRow({
+  label,
+  description,
+  value,
+  options,
+  onChange,
+  disabled = false
+}) {
+  const selectId = reactExports.useId();
+  const descriptionId = reactExports.useId();
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-2 py-3 md:grid-cols-[minmax(0,1fr)_200px] md:items-center", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: selectId, className: "guard-settings-body font-medium text-brand-dark", children: label }),
+      description ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: descriptionId, className: "guard-settings-caption mt-0.5 text-slate-500", children: description }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "select",
+      {
+        id: selectId,
+        value,
+        onChange,
+        disabled,
+        "aria-describedby": description ? descriptionId : void 0,
+        className: "min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-1 focus:ring-brand-blue/20 disabled:cursor-not-allowed disabled:opacity-60",
+        children: options.map((option) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: option.value, children: option.label }, option.value))
+      }
+    )
+  ] });
+}
 const resolveSecurityLevelDescription = resolveProtectionLevelCopy;
 function resolveInitialSettingsTab(search) {
   const section = new URLSearchParams(search).get("section");
@@ -3611,6 +3640,20 @@ function SettingsWorkspace({ onApprovalGateChange }) {
                 }
               ),
               /* @__PURE__ */ jsxRuntimeExports.jsx(
+                SettingsSelectRow,
+                {
+                  label: "Cloud receipt privacy",
+                  description: "Choose how much command detail Guard includes when syncing receipts. Secrets are always removed.",
+                  value: draft.receipt_redaction_level,
+                  onChange: handleStringChange("receipt_redaction_level"),
+                  options: [
+                    { value: "full", label: "Fully redacted - metadata only" },
+                    { value: "partial", label: "Partially redacted - hide paths and package names" },
+                    { value: "none", label: "Detailed - include commands, paths, hosts, and packages" }
+                  ]
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
                 SettingsToggleRow,
                 {
                   label: "Billing features",
@@ -3807,7 +3850,7 @@ function SettingsWorkspace({ onApprovalGateChange }) {
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-slate-500", children: "Restore factory local settings on this machine." }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: handleResetSettings, disabled: resettingSettings, variant: "outline", children: resettingSettings ? "Resetting…" : "Reset settings" }) })
                 ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { id: "approval-center-repair", children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: "Repair approval center" }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-slate-500", children: "Use when the approval link fails after Guard restarts." }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: handleRepairApprovalCenter, disabled: repairing, variant: "secondary", children: repairing ? "Repairing…" : "Repair" }) })

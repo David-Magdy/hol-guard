@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import sys
 import time
@@ -32,7 +33,13 @@ def _install_evaluator_packages() -> None:
     for name, path in packages:
         package = sys.modules.get(name)
         if package is None:
-            package = types.ModuleType(name)
+            init_path = path / "__init__.py"
+            spec = importlib.util.spec_from_file_location(
+                name,
+                init_path if init_path.is_file() else None,
+                submodule_search_locations=[str(path)],
+            )
+            package = importlib.util.module_from_spec(spec) if spec is not None else types.ModuleType(name)
             package.__dict__["__path__"] = [str(path)]
             sys.modules[name] = package
         parent_name, separator, child_name = name.rpartition(".")

@@ -14473,6 +14473,23 @@ function isShellCommandRequest(request) {
   const actionType = (request.action_envelope_json?.action_type ?? "").toLowerCase();
   return actionType === "shell_command" || artifactType.includes("shell") || artifactType.includes("command");
 }
+function isPackageDependencyMutationRequest(request) {
+  const envelope = request.action_envelope_json;
+  const command = [envelope?.command, request.raw_command_text, request.launch_target].find((value) => value?.trim())?.trim();
+  if (command && /(?:&&|[;|]|\r?\n)/.test(command)) {
+    return false;
+  }
+  const intentKind = (envelope?.package_intent_kind ?? "").trim().toLowerCase();
+  if (intentKind === "install" || intentKind === "sync") {
+    return true;
+  }
+  if (!command) {
+    return false;
+  }
+  return /\b(?:npm|pnpm|yarn|bun|pip|pipx|uv|poetry|brew|cargo|gem|go)\s+(?:add|i|install|remove|uninstall|update|upgrade)\b/i.test(
+    command
+  );
+}
 function plainEnglishRequestTitle(request) {
   const category = detectCategory({
     ...request,
@@ -14523,6 +14540,9 @@ function whyPaused(request) {
     case "tool-call":
       return "This uses an outside tool. Guard stops new tools by default.";
     default:
+      if (isPackageDependencyMutationRequest(request)) {
+        return "This package install mutates project dependencies and installed packages. Guard pauses dependency changes so you can review them before running.";
+      }
       if (isShellCommandRequest(request)) {
         return "This shell command has parts Guard could not fully inspect. Guard pauses these so you can review before running.";
       }
@@ -14581,7 +14601,13 @@ function buildRetryAfterApprovalCopy(item, action) {
   }
   return `Blocked. Return to ${harness} to continue with a different action, or ask it to try something else.`;
 }
+function isApplyPatchEnvelope(envelope) {
+  return envelope.action_type === "file_write" && envelope.tool_name?.trim().toLowerCase() === "apply_patch" && envelope.command?.trim().startsWith("*** Begin Patch") === true;
+}
 function resolveEnvelopeDisplayText(envelope) {
+  if (isApplyPatchEnvelope(envelope) && envelope.command !== null && envelope.command.length > 0) {
+    return envelope.command;
+  }
   if (envelope.action_type === "shell_command" && envelope.command !== null && envelope.command.length > 0) {
     return envelope.command;
   }
@@ -14601,6 +14627,9 @@ function resolveEnvelopeDisplayText(envelope) {
   return envelope.action_type === "harness_start" ? null : envelope.action_type;
 }
 function resolveActionEnvelopeDetailText(envelope, options = {}) {
+  if (isApplyPatchEnvelope(envelope) && envelope.command !== null && envelope.command.length > 0) {
+    return envelope.command;
+  }
   if (envelope.action_type === "shell_command") {
     return envelope.command !== null && envelope.command.length > 0 ? envelope.command : null;
   }
@@ -14858,6 +14887,20 @@ function resolveStoppedCommandText(item) {
   }
   return item.artifact_name.trim() || item.artifact_id;
 }
+function resolveRequestWorkingDirectory(item) {
+  const actionType = item.action_envelope_json?.action_type;
+  const artifactType = item.artifact_type.toLowerCase();
+  const isExecutableAction = actionType === "shell_command" || actionType === "package_script" || artifactType.includes("command") || artifactType.includes("shell") || artifactType.includes("package");
+  if (!isExecutableAction) {
+    return null;
+  }
+  const envelopeWorkspace = item.action_envelope_json?.workspace?.trim();
+  if (envelopeWorkspace) {
+    return envelopeWorkspace;
+  }
+  const requestWorkspace = item.workspace?.trim();
+  return requestWorkspace || null;
+}
 function resolvePrimaryReviewText(item) {
   const envelope = item.action_envelope_json;
   if (envelope) {
@@ -14966,7 +15009,9 @@ function resolveFileReadPath(item) {
   return item.launch_target ?? null;
 }
 function resolveTerminalLabel(item) {
-  const actionType = item.action_envelope_json?.action_type;
+  const envelope = item.action_envelope_json;
+  if (envelope && isApplyPatchEnvelope(envelope)) return "Patch";
+  const actionType = envelope?.action_type;
   if (actionType === "shell_command") return "Command";
   if (actionType === "prompt") return "Prompt excerpt";
   if (actionType === "file_read" || actionType === "file_write") return "File path";
@@ -15374,37 +15419,84 @@ function protectionHealthFor(snapshot, harness = null) {
   const fallback = healthFromChecks(fallbackChecks());
   return { harness: STABLE_ID$1.test(harness) && harness.length <= 64 ? harness : "unknown", ...fallback };
 }
-const TARGETS = /* @__PURE__ */ new Set(["exact", "category", "server"]);
-const DURATIONS = /* @__PURE__ */ new Set(["once", "15m", "1h", "5h"]);
-function nonEmpty(value) {
+const TARGETS$1 = /* @__PURE__ */ new Set(["exact", "category", "server"]);
+const DURATIONS$1 = /* @__PURE__ */ new Set(["once", "15m", "1h", "5h"]);
+const ROUTINE_BROWSER_OPERATIONS = /* @__PURE__ */ new Set([
+  "accept_dialog",
+  "accessibility_snapshot",
+  "click",
+  "close_page",
+  "dismiss_dialog",
+  "drag",
+  "emulate",
+  "fill_form",
+  "fill_input",
+  "focus_element",
+  "get_console",
+  "get_console_message",
+  "get_dom",
+  "get_html",
+  "get_network",
+  "get_performance",
+  "get_snapshot",
+  "go_back",
+  "go_forward",
+  "handle_dialog",
+  "hover",
+  "lighthouse_audit",
+  "list_console_messages",
+  "list_network_requests",
+  "list_pages",
+  "list_resources",
+  "navigate_page",
+  "new_page",
+  "performance_analyze_insight",
+  "performance_start_trace",
+  "performance_stop_trace",
+  "performance_trace",
+  "press_key",
+  "read_console",
+  "read_network",
+  "reload_page",
+  "resize_page",
+  "scroll",
+  "select_dropdown",
+  "select_page",
+  "submit_form",
+  "take_screenshot",
+  "take_snapshot",
+  "type_text",
+  "wait_for"
+]);
+function nonEmpty$1(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
-function validTargets(value) {
+function validTargets$1(value) {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item) => TARGETS.has(item)))];
+  return [...new Set(value.filter((item) => TARGETS$1.has(item)))];
 }
-function validDurations(value) {
+function validDurations$1(value) {
   if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item) => DURATIONS.has(item)))];
+  return [...new Set(value.filter((item) => DURATIONS$1.has(item)))];
 }
 function parseTemporaryMcpApproval(value) {
   if (typeof value !== "object" || value === null) return void 0;
   const raw = value;
-  if (raw.eligible !== true || !nonEmpty(raw.server_name) || !nonEmpty(raw.server_identity_hash) || !nonEmpty(raw.category)) {
+  if (raw.eligible !== true || !nonEmpty$1(raw.server_name) || !nonEmpty$1(raw.server_identity_hash) || !nonEmpty$1(raw.category)) {
     return void 0;
   }
-  const allowedTargets = validTargets(raw.allowed_targets);
-  const allowedDurations = validDurations(raw.allowed_durations);
+  const allowedTargets = validTargets$1(raw.allowed_targets);
+  const allowedDurations = validDurations$1(raw.allowed_durations);
   if (allowedTargets.length === 0 || allowedDurations.length === 0) return void 0;
   return {
     eligible: true,
     server_name: raw.server_name.trim(),
     server_identity_hash: raw.server_identity_hash,
     category: raw.category.trim(),
-    target_label: nonEmpty(raw.target_label) ? raw.target_label.trim() : null,
+    target_label: nonEmpty$1(raw.target_label) ? raw.target_label.trim() : null,
     allowed_targets: allowedTargets,
     allowed_durations: allowedDurations,
-    hard_risk_exclusions: Array.isArray(raw.hard_risk_exclusions) ? raw.hard_risk_exclusions.filter(nonEmpty).map((entry) => entry.trim()) : []
+    hard_risk_exclusions: Array.isArray(raw.hard_risk_exclusions) ? raw.hard_risk_exclusions.filter(nonEmpty$1).map((entry) => entry.trim()) : []
   };
 }
 function temporaryMcpApprovalOptions(item) {
@@ -15412,6 +15504,13 @@ function temporaryMcpApprovalOptions(item) {
   if (value === void 0) return null;
   const { eligible: _, ...options } = value;
   return options;
+}
+function temporaryMcpApprovalNeedsRetry(item) {
+  if (temporaryMcpApprovalOptions(item) !== null || item.artifact_type !== "tool_call") {
+    return false;
+  }
+  const operation = item.artifact_name?.split(":", 2)[1] ?? "";
+  return /^[^:]+:runtime:(?:global|project):[^:]+:[^:]+$/.test(item.artifact_id) && ROUTINE_BROWSER_OPERATIONS.has(operation);
 }
 function defaultTemporaryMcpTarget(options) {
   if (options.allowed_targets.includes("category")) return "category";
@@ -15457,13 +15556,127 @@ function temporaryMcpExpiryLabel(duration, now2 = /* @__PURE__ */ new Date()) {
 }
 function temporaryMcpSummary(options, target, duration) {
   const coverage = target === "server" ? "Routine tools" : browserCapabilityLabel(options.category);
-  return ["Allow", options.server_name, coverage, options.target_label, temporaryMcpDurationLabel(duration)].filter(nonEmpty).join(" · ");
+  return ["Allow", options.server_name, coverage, options.target_label, temporaryMcpDurationLabel(duration)].filter(nonEmpty$1).join(" · ");
 }
 function buildTemporaryMcpResolutionFields(options, target, duration) {
   if (options === null || duration === "once" || !options.allowed_targets.includes(target) || !options.allowed_durations.includes(duration)) {
     return {};
   }
   return { mcp_grant_target: target, mcp_grant_duration: duration };
+}
+const TARGETS = /* @__PURE__ */ new Set(["capability", "version"]);
+const DURATIONS = /* @__PURE__ */ new Set(["once", "15m", "1h", "5h", "version", "always"]);
+function nonEmpty(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function validTargets(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(
+    value.filter(
+      (item) => TARGETS.has(item)
+    )
+  )];
+}
+function validDurations(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(
+    value.filter(
+      (item) => DURATIONS.has(item)
+    )
+  )];
+}
+function parseLocalToolApproval(value) {
+  if (typeof value !== "object" || value === null) return void 0;
+  const raw = value;
+  if (raw.eligible !== true || !nonEmpty(raw.tool_name) || !nonEmpty(raw.tool_identity_hash) || !nonEmpty(raw.capability) || !nonEmpty(raw.read_only_reason)) {
+    return void 0;
+  }
+  const allowedTargets = validTargets(raw.allowed_targets);
+  const allowedDurations = validDurations(raw.allowed_durations);
+  if (allowedTargets.length === 0 || allowedDurations.length === 0) return void 0;
+  return {
+    eligible: true,
+    tool_name: raw.tool_name.trim(),
+    tool_identity_hash: raw.tool_identity_hash,
+    capability: raw.capability.trim(),
+    read_only_reason: raw.read_only_reason.trim(),
+    trust_basis: raw.trust_basis === "package-profile" ? "package-profile" : "verified-files",
+    indefinite_allowed: raw.indefinite_allowed === true,
+    allowed_targets: allowedTargets,
+    allowed_durations: allowedDurations,
+    hard_risk_exclusions: Array.isArray(raw.hard_risk_exclusions) ? raw.hard_risk_exclusions.filter(nonEmpty).map((entry) => entry.trim()) : []
+  };
+}
+function localToolApprovalOptions(item) {
+  const value = parseLocalToolApproval(item.local_tool_approval);
+  if (value === void 0) return null;
+  const { eligible: _, ...options } = value;
+  return options;
+}
+function defaultLocalToolTarget(options) {
+  if (options.allowed_targets.includes("capability")) return "capability";
+  return options.allowed_targets[0];
+}
+function defaultLocalToolDuration(options) {
+  if (options.allowed_durations.includes("once")) return "once";
+  return options.allowed_durations[0];
+}
+function validLocalToolSelection(options, target, duration) {
+  if (options === null) return { target: "capability", duration: "once" };
+  return {
+    target: options.allowed_targets.includes(target) ? target : defaultLocalToolTarget(options),
+    duration: options.allowed_durations.includes(duration) ? duration : defaultLocalToolDuration(options)
+  };
+}
+function localToolTargetLabel(target, options) {
+  return target === "capability" ? `Only ${options.capability} calls` : "All recognized read-only calls";
+}
+function localToolDurationLabel(duration) {
+  const labels = {
+    once: "Once",
+    "15m": "15 min",
+    "1h": "1 hour",
+    "5h": "5 hours",
+    version: "Until tool changes",
+    always: "Always"
+  };
+  return labels[duration];
+}
+function localToolReadOnlyReasonLabel(reason) {
+  if (reason.startsWith("http_")) {
+    return `an HTTP ${reason.slice(5).toUpperCase()} request`;
+  }
+  if (reason.startsWith("operation_")) {
+    return `the read-only ${reason.slice(10)} operation`;
+  }
+  return "a recognized read-only operation";
+}
+function localToolAllowButtonLabel(duration) {
+  if (duration === "once") return "Approve once";
+  if (duration === "version") return "Trust this version";
+  if (duration === "always") return "Always trust safe calls";
+  return `Allow for ${localToolDurationLabel(duration)}`;
+}
+function localToolExpiryLabel(duration, now2 = /* @__PURE__ */ new Date()) {
+  if (duration === "once" || duration === "version" || duration === "always") return null;
+  const milliseconds = { "15m": 15 * 6e4, "1h": 60 * 6e4, "5h": 5 * 60 * 6e4 }[duration];
+  return new Intl.DateTimeFormat(void 0, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(now2.getTime() + milliseconds));
+}
+function localToolSummary(options, target, duration) {
+  const coverage = target === "capability" ? options.capability : "recognized read-only calls";
+  return ["Allow", options.tool_name, coverage, localToolDurationLabel(duration)].join(" · ");
+}
+function buildLocalToolResolutionFields(options, target, duration) {
+  if (options === null || duration === "once" || !options.allowed_targets.includes(target) || !options.allowed_durations.includes(duration)) {
+    return {};
+  }
+  return {
+    local_tool_grant_target: target,
+    local_tool_grant_duration: duration
+  };
 }
 const CONNECTABLE_HARNESS_ALIASES = /* @__PURE__ */ new Set([
   "codex",
@@ -15695,6 +15908,7 @@ function resolveSupplyChainAuditFailure(detail) {
 }
 const GUARD_TOKEN_PARAM = "guard-token";
 const GUARD_DAEMON_PARAM = "guardDaemon";
+const GUARD_UPDATE_CHANNEL_STORAGE_KEY = "guard-update-channel";
 const GUARD_SURFACE_PROTOCOL_VERSIONS = ["1.1", "1.0"];
 const DEFAULT_GUARD_DAEMON_PORT = 4781;
 const GUARD_DAEMON_PORT_RANGE = 1e3;
@@ -15774,6 +15988,21 @@ function saveBrowserStorage(getStorage, name, value) {
 function saveGuardStorage(name, value) {
   saveBrowserStorage(() => window.sessionStorage, name, value);
   saveBrowserStorage(() => window.localStorage, name, value);
+}
+function isGuardUpdateChannel(value) {
+  return value === "stable" || value === "alpha";
+}
+function readRememberedGuardUpdateChannel() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const value = readGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY);
+  return isGuardUpdateChannel(value) ? value : null;
+}
+function rememberGuardUpdateChannel(channel) {
+  if (typeof window !== "undefined") {
+    saveGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY, channel);
+  }
 }
 function readGuardToken() {
   const locationKey = `${window.location.origin}${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -16136,6 +16365,7 @@ async function fetchGuardUpdateStatusAtOrigin(origin, guardToken) {
   }
   const { response, payload } = await fetchGuardDaemonCandidateJson(`${candidateOrigin}/v1/update/status`, {
     headers: guardToken ? { "X-Guard-Dashboard-Session": guardToken } : {},
+    cache: "no-store",
     redirect: "error"
   });
   if (!response.ok) {
@@ -16526,9 +16756,10 @@ function parseDecisionV2(raw) {
   const dashboardPrimaryDetail = raw["dashboard_primary_detail"];
   const approvalScopes = raw["approval_scopes"];
   const retryInstruction = raw["retry_instruction"];
+  const packageReviewCloudReasonCode = raw["package_review_cloud_reason_code"];
   const signals = raw["signals"];
   const confidence = raw["confidence"];
-  if (!isGuardAction(guardAction) || !isDecisionV2Action(action) || action !== guardDecisionV2Action(guardAction) || !isNonEmptyString(reason) || !isNonEmptyString(userTitle) || !isNonEmptyString(userBody) || !isNonEmptyString(harnessMessage) || !isNonEmptyString(dashboardPrimaryDetail) || !isStringArray(approvalScopes) || !isStringOrNull(retryInstruction) || !isRiskSignalV2Array(signals) || !isDecisionV2Confidence(confidence)) {
+  if (!isGuardAction(guardAction) || !isDecisionV2Action(action) || action !== guardDecisionV2Action(guardAction) || !isNonEmptyString(reason) || !isNonEmptyString(userTitle) || !isNonEmptyString(userBody) || !isNonEmptyString(harnessMessage) || !isNonEmptyString(dashboardPrimaryDetail) || !isStringArray(approvalScopes) || !isStringOrNull(retryInstruction) || !(packageReviewCloudReasonCode === void 0 || isStringOrNull(packageReviewCloudReasonCode)) || !isRiskSignalV2Array(signals) || !isDecisionV2Confidence(confidence)) {
     return null;
   }
   return {
@@ -16541,6 +16772,7 @@ function parseDecisionV2(raw) {
     dashboard_primary_detail: dashboardPrimaryDetail,
     approval_scopes: approvalScopes,
     retry_instruction: retryInstruction,
+    package_review_cloud_reason_code: packageReviewCloudReasonCode,
     signals,
     confidence
   };
@@ -16639,6 +16871,7 @@ function normalizeApprovalRequest(item) {
     scope_restrictions: hasScopeContract ? scopeRestrictions ?? [] : void 0,
     task_capability_eligibility: hasScopeContract ? taskCapabilityEligibility : void 0,
     temporary_mcp_approval: parseTemporaryMcpApproval(item.temporary_mcp_approval),
+    local_tool_approval: parseLocalToolApproval(item.local_tool_approval),
     action_envelope_json: hasDecisionContractError ? null : actionEnvelope,
     decision_v2_json: hasDecisionContractError ? null : decisionV2,
     ...hasDecisionContractError ? { decision_contract_error: AUTHORITATIVE_DECISION_INCONSISTENT } : {}
@@ -16777,6 +17010,32 @@ function normalizeCloudCommandCapability(raw) {
     revoke_command: typeof raw["revoke_command"] === "string" ? raw["revoke_command"] : "hol-guard commands revoke --confirm revoke"
   };
 }
+function nonNegativeNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+function normalizeOperatorHealth(raw) {
+  if (!isRecord$1(raw)) {
+    return void 0;
+  }
+  const state = raw["state"];
+  const cause = raw["cause"];
+  const automaticRecovery = raw["automatic_recovery"];
+  if (!["healthy", "backlogged", "saturated", "store-contended"].includes(String(state)) || typeof cause !== "string" || typeof automaticRecovery !== "string") {
+    return void 0;
+  }
+  return {
+    state,
+    cause,
+    automatic_recovery: automaticRecovery,
+    repairable: raw["repairable"] === true,
+    queue_depth: nonNegativeNumber(raw["queue_depth"]),
+    queue_limit: nonNegativeNumber(raw["queue_limit"]),
+    oldest_wait_ms: nonNegativeNumber(raw["oldest_wait_ms"]),
+    workers_busy: nonNegativeNumber(raw["workers_busy"]),
+    workers_ready: nonNegativeNumber(raw["workers_ready"]),
+    workers_configured: nonNegativeNumber(raw["workers_configured"])
+  };
+}
 function normalizeRuntimeSnapshot(snapshot) {
   const protectionHealth = normalizeProtectionHealth(snapshot.protection_health);
   const runtimeState = normalizeRuntimeState(snapshot.runtime_state);
@@ -16796,6 +17055,7 @@ function normalizeRuntimeSnapshot(snapshot) {
     supply_chain: normalizeSupplyChainSnapshot(snapshot.supply_chain),
     managed_installs: normalizeManagedInstalls(snapshot.managed_installs),
     cloud_command_capability: normalizeCloudCommandCapability(snapshot.cloud_command_capability),
+    operator_health: normalizeOperatorHealth(snapshot.operator_health),
     protection_health: protectionHealth
   };
 }
@@ -16970,11 +17230,23 @@ function runtimeSnapshotSearchParams(input = {}) {
   }
   return params;
 }
+class GuardSessionUnavailableError extends Error {
+  constructor() {
+    super("Guard dashboard session is not available. Reopen the Guard dashboard from the authenticated URL.");
+    this.name = "GuardSessionUnavailableError";
+  }
+}
+function requireGuardSessionToken() {
+  if (!readGuardToken()) {
+    throw new GuardSessionUnavailableError();
+  }
+}
 async function fetchInboxState(input = {}) {
   if (isGuardDemoMode()) {
     const snapshot = buildDemoRuntimeSnapshot();
     return { snapshot, items: snapshot.items };
   }
+  requireGuardSessionToken();
   const [snapshotPayload, items] = await Promise.all([
     readJson(
       queuePath("/v1/runtime", runtimeSnapshotSearchParams({ ...input, includeItems: false, includeReceipts: false }))
@@ -16997,6 +17269,7 @@ async function fetchApprovalPage(input = {}) {
       status: input.status ?? "pending"
     };
   }
+  requireGuardSessionToken();
   const payload = await readJson(queuePath("/v1/requests", queueSearchParams(input)));
   return normalizeApprovalPage(payload, input.status ?? "pending");
 }
@@ -17004,6 +17277,7 @@ async function fetchRuntimeSnapshot(input = {}) {
   if (isGuardDemoMode()) {
     return buildDemoRuntimeSnapshot();
   }
+  requireGuardSessionToken();
   const params = runtimeSnapshotSearchParams(input);
   const query = params.toString();
   const path = query.length > 0 ? `/v1/runtime?${query}` : "/v1/runtime";
@@ -17067,6 +17341,18 @@ function buildDemoRuntimeSnapshot() {
       started_at: now2,
       last_heartbeat_at: now2,
       approval_center_url: "http://127.0.0.1:4455"
+    },
+    operator_health: {
+      state: "healthy",
+      cause: "Local reviews are processing within available capacity.",
+      automatic_recovery: "Guard drains queued work and adjusts ready workers automatically.",
+      repairable: false,
+      queue_depth: 0,
+      queue_limit: 256,
+      oldest_wait_ms: 0,
+      workers_busy: 1,
+      workers_ready: 3,
+      workers_configured: 4
     },
     device: {
       installation_id: "demo-device-7f4a9c2d",
@@ -17195,6 +17481,7 @@ async function fetchSettings() {
         approval_browser_immediate_severity: "critical",
         telemetry: false,
         sync: false,
+        receipt_redaction_level: "full",
         billing: false
       }
     };
@@ -17486,15 +17773,16 @@ function normalizeGuardCloudConnectStatus(value) {
     connect_flow: normalizePackageFirewallConnectFlow(value.connect_flow)
   };
 }
-async function fetchGuardCloudConnectStatus() {
-  return normalizeGuardCloudConnectStatus(await readJson("/v1/cloud/connect"));
+async function fetchGuardCloudConnectStatus(signal) {
+  return normalizeGuardCloudConnectStatus(await readJson("/v1/cloud/connect", { signal }));
 }
-async function startGuardCloudConnect() {
+async function startGuardCloudConnect(signal) {
   return normalizeGuardCloudConnectStatus(
     await readJson("/v1/cloud/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal
     })
   );
 }
@@ -17795,6 +18083,8 @@ async function resolveRequestWithQueueResult(input) {
       ...input.scope_contract_digest !== void 0 ? { scope_contract_digest: input.scope_contract_digest } : {},
       ...input.mcp_grant_target !== void 0 ? { mcp_grant_target: input.mcp_grant_target } : {},
       ...input.mcp_grant_duration !== void 0 ? { mcp_grant_duration: input.mcp_grant_duration } : {},
+      ...input.local_tool_grant_target !== void 0 ? { local_tool_grant_target: input.local_tool_grant_target } : {},
+      ...input.local_tool_grant_duration !== void 0 ? { local_tool_grant_duration: input.local_tool_grant_duration } : {},
       ...input.approval_password !== void 0 ? { approval_password: input.approval_password } : {},
       ...input.approval_totp_code !== void 0 ? { approval_totp_code: input.approval_totp_code } : {},
       ...input.approval_gate_use_cooldown !== void 0 ? { approval_gate_use_cooldown: input.approval_gate_use_cooldown } : {}
@@ -17896,7 +18186,7 @@ function normalizeGuardUpdateVersionCheck(raw) {
     update_available: typeof value.update_available === "boolean" ? value.update_available : null
   };
 }
-function normalizeGuardUpdateStatus(raw) {
+function normalizeGuardUpdateStatus(raw, fallbackReleaseChannel = null) {
   const value = isRecord$1(raw) ? raw : {};
   const versionCheck = normalizeGuardUpdateVersionCheck(value.version_check);
   const currentVersion = stringValue$1(value.current_version) ?? versionCheck.current_version ?? "unknown";
@@ -17914,7 +18204,8 @@ function normalizeGuardUpdateStatus(raw) {
     update_in_progress: typeof value.update_in_progress === "boolean" ? value.update_in_progress : void 0,
     update_suppressed: value.update_suppressed === true ? true : void 0,
     retry_command: typeof value.retry_command === "string" ? value.retry_command : void 0,
-    update_attempt_message: typeof value.update_attempt_message === "string" ? value.update_attempt_message : void 0
+    update_attempt_message: typeof value.update_attempt_message === "string" ? value.update_attempt_message : void 0,
+    release_channel: isGuardUpdateChannel(value.release_channel) ? value.release_channel : fallbackReleaseChannel ?? "stable"
   };
 }
 async function fetchGuardUpdateStatus() {
@@ -17935,8 +18226,13 @@ async function fetchGuardUpdateStatus() {
       blocked_reason: null
     });
   }
-  const payload = await readJson("/v1/update/status");
-  return normalizeGuardUpdateStatus(payload);
+  const payload = await readJson("/v1/update/status", { cache: "no-store" });
+  const declaredChannel = isRecord$1(payload) && isGuardUpdateChannel(payload.release_channel) ? payload.release_channel : null;
+  const status = normalizeGuardUpdateStatus(payload, readRememberedGuardUpdateChannel());
+  if (declaredChannel) {
+    rememberGuardUpdateChannel(declaredChannel);
+  }
+  return status;
 }
 async function scheduleGuardUpdate(options) {
   if (isGuardDemoMode()) {
@@ -17961,6 +18257,27 @@ async function scheduleGuardUpdate(options) {
     message: stringValue$1(payload.message) ?? void 0,
     error: stringValue$1(payload.error) ?? void 0
   };
+}
+async function setGuardUpdateChannel(channel, proof) {
+  if (isGuardDemoMode()) {
+    return normalizeGuardUpdateStatus({
+      ...await fetchGuardUpdateStatus(),
+      release_channel: channel
+    });
+  }
+  const response = await fetchWithGuardAuth("/v1/update/channel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ update_channel: channel, ...proof })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const value = isRecord$1(payload) ? payload : {};
+    throw new Error(stringValue$1(value.message) ?? `Update channel failed with ${response.status}`);
+  }
+  const declaredChannel = isRecord$1(payload) && isGuardUpdateChannel(payload.release_channel) ? payload.release_channel : channel;
+  rememberGuardUpdateChannel(declaredChannel);
+  return normalizeGuardUpdateStatus(payload, declaredChannel);
 }
 async function setupDesktopNotifications() {
   if (isGuardDemoMode()) {
@@ -18444,6 +18761,58 @@ async function runPackageSync(credentials) {
   }
   return normalizePackageFirewallAction(payloadBody);
 }
+async function repairSupplyChainProtection(credentials) {
+  if (isGuardDemoMode()) {
+    return {
+      repaired: true,
+      completed_steps: ["package_shims", "runtime_activation", "intelligence_sync"],
+      failed_steps: [],
+      message: "Supply-chain protection restored and refreshed."
+    };
+  }
+  const response = await fetchGuardApi("/v1/supply-chain/repair", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...guardAuthHeaders()
+    },
+    body: JSON.stringify({
+      ...credentials?.approval_password !== void 0 ? { approval_password: credentials.approval_password } : {},
+      ...credentials?.approval_totp_code !== void 0 ? { approval_totp_code: credentials.approval_totp_code } : {}
+    })
+  });
+  const payloadBody = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new GuardHarnessActionError(
+      response.status,
+      isGuardHarnessActionErrorPayload(payloadBody) ? payloadBody : null
+    );
+  }
+  if (!isRecord$1(payloadBody) || !isRecord$1(payloadBody.result)) {
+    throw new Error("Guard returned an invalid supply-chain repair result.");
+  }
+  const result = payloadBody.result;
+  const failures = [];
+  if (Array.isArray(result.failed_steps)) {
+    for (const candidate of result.failed_steps) {
+      if (!isRecord$1(candidate)) continue;
+      const step = stringValue$1(candidate.step);
+      const message = stringValue$1(candidate.message);
+      if ((step === "package_shims" || step === "runtime_activation" || step === "intelligence_sync") && message !== null) {
+        failures.push({ step, message });
+      }
+    }
+  }
+  const completedSteps = Array.isArray(result.completed_steps) ? result.completed_steps.filter((value) => typeof value === "string") : [];
+  const requiredSteps = ["package_shims", "runtime_activation", "intelligence_sync"];
+  const completedWithoutFailures = Array.isArray(result.failed_steps) && result.failed_steps.length === 0 && requiredSteps.every((step) => completedSteps.includes(step));
+  return {
+    repaired: result.repaired === true || !("repaired" in result) && completedWithoutFailures,
+    completed_steps: completedSteps,
+    failed_steps: failures,
+    message: stringValue$1(result.message) ?? "Supply-chain repair finished."
+  };
+}
 const GITHUB_ISSUE_BASE_URL = "https://github.com/hashgraph-online/hol-guard/issues/new";
 const DEFAULT_ISSUE_BODY = [
   "## What happened?",
@@ -18511,6 +18880,308 @@ function ShellFooter() {
     )) })
   ] }) });
 }
+function approvalProofRequiresPassword(gate) {
+  return gate?.totp_enabled !== true;
+}
+function isApprovalProofSubmitDisabled(gate, credentials, busy) {
+  if (busy) {
+    return true;
+  }
+  if (approvalProofRequiresPassword(gate)) {
+    return credentials.approvalPassword.trim() === "";
+  }
+  return credentials.approvalTotpCode.trim() === "";
+}
+function buildApprovalProofCredentials(gate, credentials) {
+  if (approvalProofRequiresPassword(gate)) {
+    return { approval_password: credentials.approvalPassword };
+  }
+  return { approval_totp_code: credentials.approvalTotpCode };
+}
+function ApprovalProofFieldInputs(props) {
+  const needsPassword = approvalProofRequiresPassword(props.approvalGate);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-3", children: needsPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-brand-dark", children: "Approval password" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        ref: props.passwordRef,
+        type: "password",
+        autoComplete: "current-password",
+        value: props.approvalPassword,
+        onChange: props.onApprovalPasswordChange,
+        className: "mt-1 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+      }
+    )
+  ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-brand-dark", children: "Authenticator code" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        type: "text",
+        inputMode: "numeric",
+        pattern: "[0-9]*",
+        autoComplete: "one-time-code",
+        value: props.approvalTotpCode,
+        onChange: props.onApprovalTotpCodeChange,
+        className: "mt-1 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+      }
+    )
+  ] }) });
+}
+function ApprovalProofInline(props) {
+  const passwordRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      passwordRef.current?.focus();
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const submitDisabled = isApprovalProofSubmitDisabled(
+    props.approvalGate,
+    {
+      approvalPassword: props.approvalPassword,
+      approvalTotpCode: props.approvalTotpCode
+    },
+    props.submitBusy
+  );
+  const handleKeyDown = reactExports.useCallback(
+    (event) => {
+      if (event.key === "Enter" && !submitDisabled) {
+        event.preventDefault();
+        props.onSubmit();
+      }
+    },
+    [props.onSubmit, submitDisabled]
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-5", onKeyDown: handleKeyDown, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "rounded-xl border border-brand-blue/20 bg-brand-blue/[0.04] px-4 py-4", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-blue/10", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniKey, { className: "h-5 w-5 text-brand-blue", "aria-hidden": "true" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "text-sm font-semibold text-brand-dark", children: "Approval proof required" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-relaxed text-slate-600", children: "Enter your local approval proof before Guard syncs supply-chain intel on this device." })
+      ] })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      ApprovalProofFieldInputs,
+      {
+        approvalGate: props.approvalGate,
+        approvalPassword: props.approvalPassword,
+        approvalTotpCode: props.approvalTotpCode,
+        passwordRef,
+        onApprovalPasswordChange: props.onApprovalPasswordChange,
+        onApprovalTotpCodeChange: props.onApprovalTotpCodeChange
+      }
+    ),
+    props.error !== null ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-brand-attention", role: "alert", children: props.error }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:items-center", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { variant: "primary", onClick: props.onSubmit, disabled: submitDisabled, children: props.submitLabel }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { variant: "outline", onClick: props.onBack, disabled: props.submitBusy, children: "Go back" })
+    ] })
+  ] });
+}
+function AlphaChannelDialog({
+  useAlpha,
+  pending,
+  error,
+  approvalGate,
+  approvalPassword,
+  approvalTotpCode,
+  onClose,
+  onConfirm,
+  onApprovalPasswordChange,
+  onApprovalTotpCodeChange
+}) {
+  const title = useAlpha ? "Return to stable updates" : "Try alpha updates";
+  const description = useAlpha ? "Stable updates receive the most thoroughly tested Guard releases. You can enable alpha updates again whenever you need early access." : "Alpha releases arrive before stable builds. They can include unfinished changes and may require a restart.";
+  const confirmLabel = useAlpha ? "Use stable updates" : "Enable alpha updates";
+  const confirmDisabled = pending || approvalGate?.enabled === true && isApprovalProofSubmitDisabled(approvalGate, { approvalPassword, approvalTotpCode }, false);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-lg bg-white shadow-xl", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-base font-semibold text-brand-dark", children: title }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-relaxed text-brand-dark/70", children: description })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: onClose,
+          disabled: pending,
+          "aria-label": "Close update channel dialog",
+          className: "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-brand-dark/55 transition-colors hover:bg-slate-100 hover:text-brand-dark disabled:cursor-not-allowed disabled:opacity-50",
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniXMark, { className: "h-5 w-5", "aria-hidden": "true" })
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3 px-5 py-4 text-sm leading-relaxed text-brand-dark/75", children: [
+      !useAlpha ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Guard will keep stable updates until you confirm this change. This does not install an update immediately." }) : null,
+      approvalGate?.enabled ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-lg border border-brand-blue/20 bg-brand-blue/[0.04] p-3", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mb-3 text-sm font-semibold text-brand-dark", children: "Confirm this channel change" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          ApprovalProofFieldInputs,
+          {
+            approvalGate,
+            approvalPassword,
+            approvalTotpCode,
+            onApprovalPasswordChange,
+            onApprovalTotpCodeChange
+          }
+        )
+      ] }) : null,
+      error ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "rounded-md bg-red-50 px-3 py-2 text-sm text-red-700", children: error }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col-reverse gap-2 border-t border-slate-100 px-5 py-4 sm:flex-row sm:justify-end", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: onClose,
+          disabled: pending,
+          className: "min-h-10 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-brand-dark transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50",
+          children: "Cancel"
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: onConfirm,
+          disabled: confirmDisabled,
+          className: "min-h-10 rounded-lg bg-brand-blue px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-blue/90 disabled:cursor-not-allowed disabled:opacity-60",
+          children: pending ? "Saving…" : confirmLabel
+        }
+      )
+    ] })
+  ] });
+}
+var reactDomExports = requireReactDom();
+function getFocusableElements(container2) {
+  const selector = [
+    "button:not([disabled])",
+    "a[href]",
+    "input:not([disabled])",
+    "select:not([disabled])",
+    "textarea:not([disabled])",
+    '[tabindex]:not([tabindex="-1"])',
+    "[contenteditable]"
+  ].join(",");
+  return Array.from(container2.querySelectorAll(selector)).filter(
+    (el) => el instanceof HTMLElement && el.offsetParent !== null
+  );
+}
+function useFocusTrap(active, containerRef) {
+  const previouslyFocusedRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (!active) return;
+    const container2 = containerRef.current;
+    if (!container2) return;
+    previouslyFocusedRef.current = document.activeElement;
+    const focusable = getFocusableElements(container2);
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (first) {
+      first.focus();
+    }
+    function handleKeyDown(event) {
+      if (event.key !== "Tab") return;
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      if (event.shiftKey) {
+        if (document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    }
+    container2.addEventListener("keydown", handleKeyDown);
+    return () => {
+      container2.removeEventListener("keydown", handleKeyDown);
+      if (previouslyFocusedRef.current && previouslyFocusedRef.current.isConnected) {
+        previouslyFocusedRef.current.focus();
+      }
+    };
+  }, [active, containerRef]);
+}
+function GuardModalLayer({
+  ariaLabel,
+  children,
+  onClose,
+  panelClassName = "w-full max-w-2xl"
+}) {
+  const [mounted, setMounted] = reactExports.useState(false);
+  const panelRef = reactExports.useRef(null);
+  const onCloseRef = reactExports.useRef(onClose);
+  onCloseRef.current = onClose;
+  useFocusTrap(mounted, panelRef);
+  reactExports.useEffect(() => {
+    setMounted(true);
+  }, []);
+  reactExports.useEffect(() => {
+    if (!mounted) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const previousCount = Number(document.documentElement.dataset.guardModalOpen ?? 0);
+    document.documentElement.dataset.guardModalOpen = String(previousCount + 1);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      const nextCount = Number(document.documentElement.dataset.guardModalOpen ?? 1) - 1;
+      if (nextCount <= 0) {
+        delete document.documentElement.dataset.guardModalOpen;
+      } else {
+        document.documentElement.dataset.guardModalOpen = String(nextCount);
+      }
+    };
+  }, [mounted]);
+  reactExports.useEffect(() => {
+    if (!mounted) return;
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [mounted]);
+  const handleBackdropClick = (event) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  };
+  if (!mounted) {
+    return null;
+  }
+  return reactDomExports.createPortal(
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: "fixed inset-0 z-[200] flex items-end justify-center bg-slate-950/45 p-4 backdrop-blur-[2px] sm:items-center",
+        onClick: handleBackdropClick,
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-label": ariaLabel,
+        children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "div",
+          {
+            ref: panelRef,
+            className: `relative ${panelClassName}`,
+            onClick: (event) => event.stopPropagation(),
+            children
+          }
+        )
+      }
+    ),
+    document.body
+  );
+}
 const UPDATE_STATUS_POLL_MS = 6e4;
 const RECONNECT_POLL_MS = 1500;
 const RECONNECT_TIMEOUT_MS = 18e4;
@@ -18576,6 +19247,54 @@ function GuardUpdatePanel(props) {
   const showUpdateButton = props.updateStatus?.update_available === true && props.updateStatus.auto_updatable && props.updateStatus.update_suppressed !== true && phase !== "updating" && phase !== "reconnecting";
   const showReinstallButton = shouldPromptRecoveryReinstall(props.updateStatus) && phase !== "updating" && phase !== "reconnecting";
   const busy = phase === "updating" || phase === "reconnecting";
+  const useAlpha = props.updateStatus?.release_channel === "alpha" || props.updateStatus == null && readRememberedGuardUpdateChannel() === "alpha";
+  const [alphaModalOpen, setAlphaModalOpen] = reactExports.useState(false);
+  const [alphaSavePending, setAlphaSavePending] = reactExports.useState(false);
+  const [alphaSaveError, setAlphaSaveError] = reactExports.useState(null);
+  const [alphaApprovalPassword, setAlphaApprovalPassword] = reactExports.useState("");
+  const [alphaApprovalTotpCode, setAlphaApprovalTotpCode] = reactExports.useState("");
+  const targetChannel = useAlpha ? "stable" : "alpha";
+  const modalTitle = useAlpha ? "Return to stable updates" : "Try alpha updates";
+  const handleOpenAlphaModal = reactExports.useCallback(() => {
+    setAlphaSaveError(null);
+    setAlphaApprovalPassword("");
+    setAlphaApprovalTotpCode("");
+    setAlphaModalOpen(true);
+  }, []);
+  const handleCloseAlphaModal = reactExports.useCallback(() => {
+    if (alphaSavePending) {
+      return;
+    }
+    setAlphaModalOpen(false);
+    setAlphaSaveError(null);
+    setAlphaApprovalPassword("");
+    setAlphaApprovalTotpCode("");
+  }, [alphaSavePending]);
+  const handleConfirmAlphaChannel = reactExports.useCallback(async () => {
+    if (!props.onSetUpdateChannel) {
+      return;
+    }
+    setAlphaSavePending(true);
+    setAlphaSaveError(null);
+    try {
+      const proof = props.approvalGate?.enabled ? buildApprovalProofCredentials(props.approvalGate, {
+        approvalPassword: alphaApprovalPassword,
+        approvalTotpCode: alphaApprovalTotpCode
+      }) : void 0;
+      await props.onSetUpdateChannel(targetChannel, proof);
+      setAlphaModalOpen(false);
+    } catch (error) {
+      setAlphaSaveError(error instanceof Error ? error.message : "Guard could not change the update channel. Try again.");
+    } finally {
+      setAlphaSavePending(false);
+    }
+  }, [alphaApprovalPassword, alphaApprovalTotpCode, props.approvalGate, props.onSetUpdateChannel, targetChannel]);
+  const handleApprovalPasswordChange = reactExports.useCallback((event) => {
+    setAlphaApprovalPassword(event.target.value);
+  }, []);
+  const handleApprovalTotpCodeChange = reactExports.useCallback((event) => {
+    setAlphaApprovalTotpCode(event.target.value);
+  }, []);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: props.compact ? "space-y-1" : "space-y-2", children: [
     version ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "font-mono text-[10px] text-brand-dark/60", "aria-label": `Guard version ${version}`, children: [
       "v",
@@ -18583,6 +19302,41 @@ function GuardUpdatePanel(props) {
     ] }) : null,
     props.updateStatus?.update_available ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[11px] leading-relaxed text-brand-dark/75", children: updateStatusLabel(props.updateStatus) }) : null,
     helpCopy ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[11px] leading-relaxed text-brand-dark/70", children: helpCopy }) : null,
+    props.onSetUpdateChannel && useAlpha ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: "flex items-center justify-between gap-2 rounded-md border border-brand-blue/20 bg-brand-blue/[0.06] px-2 py-1.5",
+        role: "status",
+        "aria-label": "Alpha updates enabled",
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-brand-blue", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniBeaker, { className: "h-3.5 w-3.5 shrink-0", "aria-hidden": "true" }),
+            "Alpha updates"
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              type: "button",
+              onClick: handleOpenAlphaModal,
+              disabled: busy,
+              "aria-label": "Manage alpha updates",
+              title: "Manage alpha updates",
+              className: "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-brand-blue transition-colors hover:bg-brand-blue/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40 disabled:cursor-not-allowed disabled:opacity-60",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniAdjustmentsHorizontal, { className: "h-4 w-4", "aria-hidden": "true" })
+            }
+          )
+        ]
+      }
+    ) : props.onSetUpdateChannel ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        type: "button",
+        onClick: handleOpenAlphaModal,
+        disabled: busy,
+        className: "inline-flex min-h-9 w-full items-center justify-center rounded-lg border border-brand-blue/25 bg-white px-3 py-2 text-xs font-semibold text-brand-blue transition-colors hover:bg-brand-blue/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40 disabled:cursor-not-allowed disabled:opacity-60",
+        children: "Try alpha updates"
+      }
+    ) : null,
     showUpdateButton && props.onUpdateGuard ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "button",
       {
@@ -18610,7 +19364,22 @@ function GuardUpdatePanel(props) {
     busy && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "inline-flex min-h-11 items-center gap-2 text-[11px] font-medium text-brand-blue", role: "status", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "h-4 w-4 animate-spin", "aria-hidden": "true" }),
       phase === "updating" ? "Updating Guard…" : "Reconnecting…"
-    ] })
+    ] }),
+    alphaModalOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx(GuardModalLayer, { ariaLabel: modalTitle, onClose: handleCloseAlphaModal, panelClassName: "w-full max-w-md", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AlphaChannelDialog,
+      {
+        useAlpha,
+        pending: alphaSavePending,
+        error: alphaSaveError,
+        approvalGate: props.approvalGate ?? null,
+        approvalPassword: alphaApprovalPassword,
+        approvalTotpCode: alphaApprovalTotpCode,
+        onClose: handleCloseAlphaModal,
+        onConfirm: handleConfirmAlphaChannel,
+        onApprovalPasswordChange: handleApprovalPasswordChange,
+        onApprovalTotpCodeChange: handleApprovalTotpCodeChange
+      }
+    ) }) : null
   ] });
 }
 function useGuardUpdate(options) {
@@ -18619,21 +19388,36 @@ function useGuardUpdate(options) {
   const [updatePhase, setUpdatePhase] = reactExports.useState(enabled ? "checking" : "idle");
   const reconnectStartedAt = reactExports.useRef(null);
   const updatePhaseRef = reactExports.useRef("checking");
+  const updateStatusEpoch = reactExports.useRef(0);
+  const channelMutationId = reactExports.useRef(0);
+  const channelMutationPending = reactExports.useRef(false);
+  const isMounted = reactExports.useRef(false);
   reactExports.useEffect(() => {
     updatePhaseRef.current = updatePhase;
   }, [updatePhase]);
+  reactExports.useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
   const refreshUpdateStatus = reactExports.useCallback(async () => {
-    if (!enabled) {
+    if (!enabled || !isMounted.current || channelMutationPending.current) {
       return;
     }
+    const epoch = updateStatusEpoch.current;
+    const mutationId = channelMutationId.current;
     try {
       const status = await fetchGuardUpdateStatus();
+      if (!isMounted.current || epoch !== updateStatusEpoch.current || mutationId !== channelMutationId.current || channelMutationPending.current) {
+        return;
+      }
       setUpdateStatus(status);
       if (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle") {
         setUpdatePhase("idle");
       }
     } catch {
-      if (updatePhaseRef.current === "checking") {
+      if (isMounted.current && updatePhaseRef.current === "checking") {
         setUpdatePhase("idle");
       }
     }
@@ -18644,9 +19428,14 @@ function useGuardUpdate(options) {
       return;
     }
     let cancelled = false;
+    const epoch = updateStatusEpoch.current;
+    const mutationId = channelMutationId.current;
     void fetchGuardUpdateStatus().then((status) => {
-      if (!cancelled && (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle")) {
-        setUpdateStatus(status);
+      if (cancelled || epoch !== updateStatusEpoch.current || mutationId !== channelMutationId.current || channelMutationPending.current) {
+        return;
+      }
+      setUpdateStatus(status);
+      if (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle") {
         setUpdatePhase("idle");
       }
     }).catch(() => {
@@ -18689,6 +19478,7 @@ function useGuardUpdate(options) {
             redirectToGuardDaemonOrigin(origin, readGuardToken());
             return true;
           }
+          updateStatusEpoch.current += 1;
           setUpdateStatus(reconnectResult.status);
           setUpdatePhase("idle");
           options?.onReconnected?.();
@@ -18759,12 +19549,32 @@ function useGuardUpdate(options) {
       expectedLatestVersion: null
     });
   }, [scheduleAndWait, updateStatus]);
+  const onSetUpdateChannel = reactExports.useCallback(async (channel, proof) => {
+    const mutationId = ++channelMutationId.current;
+    updateStatusEpoch.current += 1;
+    channelMutationPending.current = true;
+    try {
+      const status = await setGuardUpdateChannel(channel, proof);
+      if (mutationId === channelMutationId.current) {
+        updateStatusEpoch.current += 1;
+        setUpdateStatus(status);
+        if (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle") {
+          setUpdatePhase("idle");
+        }
+      }
+    } finally {
+      if (mutationId === channelMutationId.current) {
+        channelMutationPending.current = false;
+      }
+    }
+  }, []);
   return {
     guardVersion: updateStatus?.current_version ?? null,
     updateStatus,
     updatePhase,
     onUpdateGuard,
     onReinstallGuard,
+    onSetUpdateChannel,
     refreshUpdateStatus
   };
 }
@@ -19124,7 +19934,9 @@ function ShellSidebar(props) {
               updateStatus: props.updateStatus,
               updatePhase: props.updatePhase,
               onUpdateGuard: props.onUpdateGuard,
-              onReinstallGuard: props.onReinstallGuard
+              onReinstallGuard: props.onReinstallGuard,
+              onSetUpdateChannel: props.onSetUpdateChannel,
+              approvalGate: props.approvalGate
             }
           )
         ] }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center gap-2", children: [
@@ -20831,7 +21643,6 @@ function EvidenceInsightStrip({ metrics }) {
     }
   );
 }
-var reactDomExports = requireReactDom();
 function intensityClass(total, peak) {
   if (total <= 0) return "evidence-heatmap-0";
   const ratio = peak > 0 ? total / peak : 0;
@@ -21280,132 +22091,6 @@ function HomeInsightsMetrics({ analytics }) {
   const items = buildInsightMetrics(analytics, "compact");
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-4", children: items.map((item, index) => renderInsightMetric(item, index, true)) });
 }
-function getFocusableElements(container2) {
-  const selector = [
-    "button:not([disabled])",
-    "a[href]",
-    "input:not([disabled])",
-    "select:not([disabled])",
-    "textarea:not([disabled])",
-    '[tabindex]:not([tabindex="-1"])',
-    "[contenteditable]"
-  ].join(",");
-  return Array.from(container2.querySelectorAll(selector)).filter(
-    (el) => el instanceof HTMLElement && el.offsetParent !== null
-  );
-}
-function useFocusTrap(active, containerRef) {
-  const previouslyFocusedRef = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    if (!active) return;
-    const container2 = containerRef.current;
-    if (!container2) return;
-    previouslyFocusedRef.current = document.activeElement;
-    const focusable = getFocusableElements(container2);
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (first) {
-      first.focus();
-    }
-    function handleKeyDown(event) {
-      if (event.key !== "Tab") return;
-      if (focusable.length === 0) {
-        event.preventDefault();
-        return;
-      }
-      if (event.shiftKey) {
-        if (document.activeElement === first) {
-          event.preventDefault();
-          last?.focus();
-        }
-      } else {
-        if (document.activeElement === last) {
-          event.preventDefault();
-          first?.focus();
-        }
-      }
-    }
-    container2.addEventListener("keydown", handleKeyDown);
-    return () => {
-      container2.removeEventListener("keydown", handleKeyDown);
-      if (previouslyFocusedRef.current && previouslyFocusedRef.current.isConnected) {
-        previouslyFocusedRef.current.focus();
-      }
-    };
-  }, [active, containerRef]);
-}
-function GuardModalLayer({
-  ariaLabel,
-  children,
-  onClose,
-  panelClassName = "w-full max-w-2xl"
-}) {
-  const [mounted, setMounted] = reactExports.useState(false);
-  const panelRef = reactExports.useRef(null);
-  const onCloseRef = reactExports.useRef(onClose);
-  onCloseRef.current = onClose;
-  useFocusTrap(mounted, panelRef);
-  reactExports.useEffect(() => {
-    setMounted(true);
-  }, []);
-  reactExports.useEffect(() => {
-    if (!mounted) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const previousCount = Number(document.documentElement.dataset.guardModalOpen ?? 0);
-    document.documentElement.dataset.guardModalOpen = String(previousCount + 1);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      const nextCount = Number(document.documentElement.dataset.guardModalOpen ?? 1) - 1;
-      if (nextCount <= 0) {
-        delete document.documentElement.dataset.guardModalOpen;
-      } else {
-        document.documentElement.dataset.guardModalOpen = String(nextCount);
-      }
-    };
-  }, [mounted]);
-  reactExports.useEffect(() => {
-    if (!mounted) return;
-    function handleKeyDown(event) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCloseRef.current();
-      }
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [mounted]);
-  const handleBackdropClick = (event) => {
-    if (event.target === event.currentTarget) {
-      onClose();
-    }
-  };
-  if (!mounted) {
-    return null;
-  }
-  return reactDomExports.createPortal(
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "div",
-      {
-        className: "fixed inset-0 z-[200] flex items-end justify-center bg-slate-950/45 p-4 backdrop-blur-[2px] sm:items-center",
-        onClick: handleBackdropClick,
-        role: "dialog",
-        "aria-modal": "true",
-        "aria-label": ariaLabel,
-        children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "div",
-          {
-            ref: panelRef,
-            className: `relative ${panelClassName}`,
-            onClick: (event) => event.stopPropagation(),
-            children
-          }
-        )
-      }
-    ),
-    document.body
-  );
-}
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -21622,6 +22307,63 @@ function parseInterceptProofSnapshot(body) {
     summary,
     tone: interceptProved ? "success" : "warning"
   };
+}
+const countFormatter = new Intl.NumberFormat();
+function formatOperatorCount(value) {
+  return countFormatter.format(value);
+}
+function formatOldestWait(milliseconds) {
+  if (milliseconds < 1e3) return `${formatOperatorCount(Math.round(milliseconds))} ms`;
+  return `${(milliseconds / 1e3).toLocaleString(void 0, { maximumFractionDigits: 1 })} s`;
+}
+function operatorHealthLabel(state) {
+  if (state === "store-contended") return "Store contended";
+  return state[0].toUpperCase() + state.slice(1);
+}
+function operatorHealthTone(state) {
+  if (state === "healthy") return "green";
+  if (state === "backlogged") return "blue";
+  return "attention";
+}
+function OperatorHealthCard(props) {
+  const health = props.health;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl border border-border bg-white px-5 py-4", "data-operator-health": health.state, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.18em] text-brand-blue", children: "Local processing" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Tag, { tone: operatorHealthTone(health.state), children: operatorHealthLabel(health.state) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-relaxed text-brand-dark/80", children: health.cause }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { className: "mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-xs text-slate-500", children: "Queue" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("dd", { className: "text-sm font-semibold text-brand-dark", children: [
+          formatOperatorCount(health.queue_depth),
+          " / ",
+          formatOperatorCount(health.queue_limit)
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-xs text-slate-500", children: "Oldest wait" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { className: "text-sm font-semibold text-brand-dark", children: formatOldestWait(health.oldest_wait_ms) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-xs text-slate-500", children: "Workers busy" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { className: "text-sm font-semibold text-brand-dark", children: formatOperatorCount(health.workers_busy) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-xs text-slate-500", children: "Workers ready" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { className: "text-sm font-semibold text-brand-dark", children: formatOperatorCount(health.workers_ready) })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs leading-relaxed text-slate-600", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-semibold text-brand-dark", children: "Automatic recovery:" }),
+        " ",
+        health.automatic_recovery
+      ] }),
+      health.repairable ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: "/settings?section=maintenance#approval-center-repair", variant: "secondary", children: "Repair local processing" }) : null
+    ] })
+  ] });
 }
 function resolveProtectionLevelCopy(level) {
   if (level === "gentle") {
@@ -26868,106 +27610,6 @@ function requiresApprovalPasswordPrompt(cooldownActive, strictAllDecisions, sele
   }
   return strictAllDecisions;
 }
-function approvalProofRequiresPassword(gate) {
-  return gate?.totp_enabled !== true;
-}
-function isApprovalProofSubmitDisabled(gate, credentials, busy) {
-  if (busy) {
-    return true;
-  }
-  if (approvalProofRequiresPassword(gate)) {
-    return credentials.approvalPassword.trim() === "";
-  }
-  return credentials.approvalTotpCode.trim() === "";
-}
-function buildApprovalProofCredentials(gate, credentials) {
-  if (approvalProofRequiresPassword(gate)) {
-    return { approval_password: credentials.approvalPassword };
-  }
-  return { approval_totp_code: credentials.approvalTotpCode };
-}
-function ApprovalProofFieldInputs(props) {
-  const needsPassword = approvalProofRequiresPassword(props.approvalGate);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-3", children: needsPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-brand-dark", children: "Approval password" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "input",
-      {
-        ref: props.passwordRef,
-        type: "password",
-        autoComplete: "current-password",
-        value: props.approvalPassword,
-        onChange: props.onApprovalPasswordChange,
-        className: "mt-1 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-      }
-    )
-  ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-brand-dark", children: "Authenticator code" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "input",
-      {
-        type: "text",
-        inputMode: "numeric",
-        pattern: "[0-9]*",
-        autoComplete: "one-time-code",
-        value: props.approvalTotpCode,
-        onChange: props.onApprovalTotpCodeChange,
-        className: "mt-1 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-      }
-    )
-  ] }) });
-}
-function ApprovalProofInline(props) {
-  const passwordRef = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    const timer = window.setTimeout(() => {
-      passwordRef.current?.focus();
-    }, 50);
-    return () => window.clearTimeout(timer);
-  }, []);
-  const submitDisabled = isApprovalProofSubmitDisabled(
-    props.approvalGate,
-    {
-      approvalPassword: props.approvalPassword,
-      approvalTotpCode: props.approvalTotpCode
-    },
-    props.submitBusy
-  );
-  const handleKeyDown = reactExports.useCallback(
-    (event) => {
-      if (event.key === "Enter" && !submitDisabled) {
-        event.preventDefault();
-        props.onSubmit();
-      }
-    },
-    [props.onSubmit, submitDisabled]
-  );
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-5", onKeyDown: handleKeyDown, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "rounded-xl border border-brand-blue/20 bg-brand-blue/[0.04] px-4 py-4", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-blue/10", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniKey, { className: "h-5 w-5 text-brand-blue", "aria-hidden": "true" }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "text-sm font-semibold text-brand-dark", children: "Approval proof required" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-relaxed text-slate-600", children: "Enter your local approval proof before Guard syncs supply-chain intel on this device." })
-      ] })
-    ] }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      ApprovalProofFieldInputs,
-      {
-        approvalGate: props.approvalGate,
-        approvalPassword: props.approvalPassword,
-        approvalTotpCode: props.approvalTotpCode,
-        passwordRef,
-        onApprovalPasswordChange: props.onApprovalPasswordChange,
-        onApprovalTotpCodeChange: props.onApprovalTotpCodeChange
-      }
-    ),
-    props.error !== null ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-brand-attention", role: "alert", children: props.error }) : null,
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-2 sm:flex-row sm:items-center", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { variant: "primary", onClick: props.onSubmit, disabled: submitDisabled, children: props.submitLabel }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { variant: "outline", onClick: props.onBack, disabled: props.submitBusy, children: "Go back" })
-    ] })
-  ] });
-}
 function ApprovalPasswordModal(props) {
   const passwordRef = reactExports.useRef(null);
   const totpRef = reactExports.useRef(null);
@@ -27103,6 +27745,9 @@ function ConsolidatedEvidenceAlert({ items }) {
   const handleNext = reactExports.useCallback(() => {
     setIndex((prev) => (prev + 1) % items.length);
   }, [items.length]);
+  const handlePrevious = reactExports.useCallback(() => {
+    setIndex((prev) => (prev - 1 + items.length) % items.length);
+  }, [items.length]);
   if (items.length === 0) return null;
   const current = items[Math.min(index, items.length - 1)];
   const hasMultiple = items.length > 1;
@@ -27131,6 +27776,19 @@ function ConsolidatedEvidenceAlert({ items }) {
           " of ",
           items.length
         ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            type: "button",
+            onClick: handlePrevious,
+            className: "flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-brand-dark transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-blue/20",
+            "aria-label": "Previous insight",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronLeft, { className: "h-3.5 w-3.5", "aria-hidden": "true" }),
+              "Previous"
+            ]
+          }
+        ),
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
@@ -27423,6 +28081,203 @@ function buildEvidenceItems(item) {
   }
   return items;
 }
+const validationEvidencePhrases = [
+  // Queued requests can outlive the daemon version that created their copy.
+  "could not verify registry identity or package intelligence",
+  "cloud evaluation could not validate",
+  "cloud evaluation endpoint was not trusted",
+  "cloud evaluation returned http",
+  "cloud evaluation returned an invalid",
+  "cloud evaluation timed out",
+  "current package safety data was unavailable"
+];
+const authorizationEvidencePhrases = [
+  "cloud evaluation was not authorized",
+  "cloud authorization expired",
+  "cloud evaluation could not establish a trusted session",
+  "cloud sign-in is missing or stale"
+];
+const validationReasonCodes = /* @__PURE__ */ new Set([
+  "cloud_validation_error",
+  "cloud_http_error",
+  "cloud_timeout"
+]);
+function packageReviewCloudRecoveryKind(item) {
+  const packageRequest = item.artifact_type === "supply_chain" || item.artifact_type === "package_request" || item.artifact_type.endsWith("_package");
+  if (!packageRequest) return null;
+  const reasonCode = item.decision_v2_json?.package_review_cloud_reason_code;
+  if (reasonCode === "cloud_auth_error") return "authorization";
+  if (typeof reasonCode === "string" && validationReasonCodes.has(reasonCode)) return "validation";
+  const evidence = [item.risk_headline, item.risk_summary, ...item.risk_signals ?? []].filter((value) => typeof value === "string").join(" ").toLowerCase();
+  if (authorizationEvidencePhrases.some((phrase) => evidence.includes(phrase))) {
+    return "authorization";
+  }
+  return validationEvidencePhrases.some((phrase) => evidence.includes(phrase)) ? "validation" : null;
+}
+async function withCloudRequestTimeout(request, parentSignal) {
+  if (parentSignal?.aborted) {
+    throw new DOMException("Cloud connection request stopped", "AbortError");
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  parentSignal?.addEventListener("abort", abort, { once: true });
+  const timeout = globalThis.setTimeout(() => controller.abort(), 5e3);
+  try {
+    return await request(controller.signal);
+  } finally {
+    globalThis.clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abort);
+  }
+}
+function waitForPoll(delayMs, signal) {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Cloud connection polling stopped", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timeout = globalThis.setTimeout(finish, delayMs);
+    const abort = () => {
+      globalThis.clearTimeout(timeout);
+      reject(new DOMException("Cloud connection polling stopped", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+async function waitForAuthorizeUrl(initialStatus, signal) {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
+  let status = initialStatus;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const flow = status.connect_flow;
+    if (!status.connect_required || flow?.authorize_url || !flow || !["starting", "running"].includes(flow.state)) {
+      return status;
+    }
+    const pollDelayMs = Math.max(100, Math.min(5e3, flow.poll_after_ms ?? 1e3));
+    await waitForPoll(pollDelayMs, signal);
+    status = await withCloudRequestTimeout(fetchGuardCloudConnectStatus, signal);
+  }
+  return status;
+}
+async function waitForCloudConnection(initialStatus, {
+  signal,
+  fetchStatus = fetchGuardCloudConnectStatus,
+  wait = waitForPoll,
+  maxAttempts = 300
+}) {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
+  let status = initialStatus;
+  for (let attempt = 0; attempt < maxAttempts && status.connect_required; attempt += 1) {
+    if (status.connect_flow?.state === "failed") return status;
+    const pollDelayMs = Math.max(250, Math.min(5e3, status.connect_flow?.poll_after_ms ?? 1e3));
+    await wait(pollDelayMs, signal);
+    status = await withCloudRequestTimeout(fetchStatus, signal);
+  }
+  return status;
+}
+function cloudRecoveryContent(connected, kind = "authorization") {
+  if (kind === "validation") {
+    return {
+      title: "Guard Cloud could not check this package request",
+      detail: "This is not a sign-in error. Retry the install, or approve it once if you trust the package."
+    };
+  }
+  return connected ? {
+    title: "Guard Cloud connected",
+    detail: "Run the install command again for a current package safety check."
+  } : {
+    title: "Check this package with Guard Cloud",
+    detail: "Guard could not load current safety data for this package. This does not mean the package is unsafe."
+  };
+}
+function ReviewCloudRecovery({ item }) {
+  const recoveryKind = packageReviewCloudRecoveryKind(item);
+  const [connecting, setConnecting] = reactExports.useState(false);
+  const [connected, setConnected] = reactExports.useState(false);
+  const [message, setMessage] = reactExports.useState(null);
+  const [manualConnectUrl, setManualConnectUrl] = reactExports.useState(null);
+  const connectControllerRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    connectControllerRef.current?.abort();
+    setConnecting(false);
+    setConnected(false);
+    setMessage(null);
+    setManualConnectUrl(null);
+    return () => connectControllerRef.current?.abort();
+  }, [item.request_id]);
+  const handleConnect = reactExports.useCallback(async () => {
+    connectControllerRef.current?.abort();
+    const controller = new AbortController();
+    connectControllerRef.current = controller;
+    setConnecting(true);
+    setConnected(false);
+    setMessage(null);
+    setManualConnectUrl(null);
+    try {
+      const status = await waitForAuthorizeUrl(
+        await withCloudRequestTimeout(startGuardCloudConnect, controller.signal),
+        controller.signal
+      );
+      const flow = status.connect_flow;
+      if (flow?.authorize_url) {
+        setManualConnectUrl(flow.authorize_url);
+        setMessage(
+          openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened) ? "Complete sign-in in the opened window. This page will update automatically." : PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE
+        );
+        const connectedStatus = await waitForCloudConnection(status, { signal: controller.signal });
+        if (!connectedStatus.connect_required) {
+          setConnected(true);
+          setManualConnectUrl(null);
+          setMessage(null);
+          return;
+        }
+        setMessage("Sign-in is still pending. Complete it in the opened window, or open sign-in again.");
+        return;
+      }
+      if (status.connect_required && flow?.connect_url) {
+        setMessage("Open sign-in to continue. This page will update automatically.");
+        setManualConnectUrl(flow.connect_url);
+        const connectedStatus = await waitForCloudConnection(status, { signal: controller.signal });
+        if (!connectedStatus.connect_required) {
+          setConnected(true);
+          setManualConnectUrl(null);
+          setMessage(null);
+          return;
+        }
+        setMessage("Sign-in is still pending. Complete it in the opened window, or open sign-in again.");
+        return;
+      }
+      setMessage(
+        status.connect_required ? "Guard could not finish starting sign-in. Try again." : null
+      );
+      setConnected(!status.connect_required);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setMessage(error instanceof Error ? error.message : "Guard could not start sign-in. Try again.");
+    } finally {
+      if (!controller.signal.aborted) setConnecting(false);
+    }
+  }, []);
+  if (recoveryKind === null) return null;
+  const content = cloudRecoveryContent(connected, recoveryKind);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 rounded-xl border border-brand-blue/20 bg-brand-blue/[0.04] p-4", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: content.title }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-relaxed text-muted-foreground", children: content.detail }),
+    !connected && recoveryKind === "authorization" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(ActionButton, { onClick: handleConnect, disabled: connecting, variant: "outline", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloudArrowUp, { className: "h-4 w-4", "aria-hidden": "true" }),
+        connecting ? "Waiting for sign-in..." : "Connect Guard Cloud"
+      ] }),
+      manualConnectUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: manualConnectUrl, variant: "quiet", children: "Open sign-in" }) : null,
+      message ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", role: "status", children: message }) : null
+    ] }) : null
+  ] });
+}
 function ReviewScopeControls(props) {
   const showAllowScopes = props.showAllowScopes !== false;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 space-y-2", children: [
@@ -27616,6 +28471,7 @@ function ReviewEmptyState({ runtime, resolutionMessage, codexResume, onRetryResu
 }
 function PrimaryActionCard({ item }) {
   const action = buildPrimaryReviewAction(item);
+  const workingDirectory = resolveRequestWorkingDirectory(item);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-3", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
@@ -27624,17 +28480,24 @@ function PrimaryActionCard({ item }) {
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full border border-brand-blue/15 bg-brand-blue/[0.04] px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-blue", children: action.label })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-      LoggedActionPanel,
-      {
-        label: action.label,
-        text: action.text,
-        copyAriaLabel: "Copy full stopped action to clipboard",
-        expandAriaLabel: "Expand full stopped action",
-        collapseAriaLabel: "Collapse full stopped action"
-      },
-      item.request_id
-    ) })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        LoggedActionPanel,
+        {
+          label: action.label,
+          text: action.text,
+          copyAriaLabel: "Copy full stopped action to clipboard",
+          expandAriaLabel: "Expand full stopped action",
+          collapseAriaLabel: "Collapse full stopped action"
+        },
+        item.request_id
+      ),
+      workingDirectory !== null && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex min-w-0 items-start gap-2 text-xs text-muted-foreground", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniFolder, { className: "mt-0.5 h-4 w-4 shrink-0 text-brand-blue", "aria-hidden": "true" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "shrink-0 font-medium text-brand-dark/70", children: "Working directory" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "min-w-0 break-all font-mono text-brand-dark", title: workingDirectory, children: workingDirectory })
+      ] })
+    ] })
   ] });
 }
 function buildWhatWouldHappen(item) {
@@ -27670,6 +28533,12 @@ function pastDecisionVerb(decision) {
   }
 }
 const EXCLUSION_COPY = "Privileged browser access, file transfer, secrets, command execution, destructive actions, and shared-profile access still require review.";
+function TemporaryMcpRetryNotice() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 border-l-2 border-brand-blue bg-brand-blue/[0.04] px-4 py-3", role: "status", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-medium text-brand-dark", children: "Timed access is not available for this request." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-brand-dark/70", children: "You can approve this browser action once below. Routine browser actions also show time and access choices when Guard can safely verify them." })
+  ] });
+}
 function TemporaryMcpApprovalControls(props) {
   const expiry = temporaryMcpExpiryLabel(props.duration);
   const descriptionId = "temporary-mcp-boundary";
@@ -27736,6 +28605,88 @@ function TemporaryMcpApprovalControls(props) {
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: descriptionId, className: "text-xs leading-5 text-brand-dark/70", children: EXCLUSION_COPY })
   ] });
 }
+function LocalToolApprovalControls(props) {
+  const expiry = localToolExpiryLabel(props.duration);
+  const durationDescriptionId = "local-tool-duration-description";
+  const targetDescriptionId = "local-tool-target-description";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 space-y-5", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-y border-slate-200/70 py-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm font-semibold text-brand-dark", children: [
+        "Trust read-only calls from ",
+        props.options.tool_name
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-xs leading-5 text-muted-foreground", children: [
+        "Guard identified this as ",
+        localToolReadOnlyReasonLabel(props.options.read_only_reason),
+        ". Argument values may vary, but the tool files, option names, and selected capability must still match."
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-describedby": durationDescriptionId, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue", children: "How long should this choice last?" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: durationDescriptionId, className: "mt-1 text-xs text-muted-foreground", children: "Choose one-time approval or an explicit reusable trust window." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5", children: props.options.allowed_durations.map((duration) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "label",
+        {
+          className: `flex min-h-11 cursor-pointer items-center justify-center rounded-lg border px-3 text-center text-sm font-medium transition-colors focus-within:ring-2 focus-within:ring-brand-blue/30 ${props.duration === duration ? "border-brand-blue bg-brand-blue/[0.06] text-brand-dark" : "border-slate-200/70 bg-white text-brand-dark hover:bg-slate-50"}`,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                className: "sr-only",
+                type: "radio",
+                name: "local-tool-duration",
+                value: duration,
+                checked: props.duration === duration,
+                onChange: () => props.onDurationChange(duration)
+              }
+            ),
+            localToolDurationLabel(duration)
+          ]
+        },
+        duration
+      )) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { "aria-describedby": targetDescriptionId, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue", children: "What should it cover?" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: targetDescriptionId, className: "mt-1 text-xs text-muted-foreground", children: "Limit trust to this capability, or include other calls Guard independently recognizes as read-only." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 grid grid-cols-1 gap-2 md:grid-cols-2", children: props.options.allowed_targets.map((target) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "label",
+        {
+          className: `flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 transition-colors focus-within:ring-2 focus-within:ring-brand-blue/30 ${props.target === target ? "border-brand-blue bg-brand-blue/[0.06]" : "border-slate-200/70 bg-white hover:bg-slate-50"}`,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                className: "mt-0.5 h-4 w-4 shrink-0 accent-brand-blue",
+                type: "radio",
+                name: "local-tool-target",
+                value: target,
+                checked: props.target === target,
+                onChange: () => props.onTargetChange(target)
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-sm font-medium text-brand-dark", children: localToolTargetLabel(target, props.options) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block text-xs text-muted-foreground", children: target === "capability" ? "The selected read-only operation may use different IDs, filters, and timestamps." : "Other operations run only when Guard independently recognizes them as read-only." })
+            ] })
+          ]
+        },
+        target
+      )) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-y border-slate-200/70 py-3", "aria-live": "polite", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: localToolSummary(props.options, props.target, props.duration) }),
+      expiry !== null && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-xs text-muted-foreground", children: [
+        "Expires around ",
+        expiry,
+        ". The Guard service sets the final expiry."
+      ] }),
+      props.duration === "version" && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-muted-foreground", children: "Trust ends automatically when the executable, script, or approved output processor changes." }),
+      props.duration === "always" && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-muted-foreground", children: "Guard still checks package safety, command behavior, paths, and environment settings on every call." })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs leading-5 text-brand-dark/70", children: props.options.trust_basis === "package-profile" ? "Only recognized local scan calls are covered. Package risks, URLs, writes, unsafe paths, shell composition, and changed runner files still require review." : "Guard rechecks the executable and script before every call. Writes, shell chaining, redirects, embedded commands, environment overrides, and changed tool files still require review." })
+  ] });
+}
 const commonScopeValues = /* @__PURE__ */ new Set(["artifact"]);
 function resolvedActionCopy(item, action) {
   if (item !== null) return buildRetryAfterApprovalCopy(item, action);
@@ -27761,6 +28712,8 @@ function ReviewDecisionCard(props) {
   const [pendingContractKey, setPendingContractKey] = reactExports.useState(null);
   const [mcpGrantTarget, setMcpGrantTarget] = reactExports.useState("exact");
   const [mcpGrantDuration, setMcpGrantDuration] = reactExports.useState("once");
+  const [localToolGrantTarget, setLocalToolGrantTarget] = reactExports.useState("capability");
+  const [localToolGrantDuration, setLocalToolGrantDuration] = reactExports.useState("once");
   const timerRef = reactExports.useRef(null);
   const allowButtonRef = reactExports.useRef(null);
   const availableScopeChoices = reactExports.useMemo(
@@ -27788,6 +28741,11 @@ function ReviewDecisionCard(props) {
     () => item ? temporaryMcpApprovalOptions(item) : null,
     [item]
   );
+  const temporaryMcpRetryRequired = item !== null && temporaryMcpApprovalNeedsRetry(item);
+  const localToolOptions = reactExports.useMemo(
+    () => item ? localToolApprovalOptions(item) : null,
+    [item]
+  );
   const hasAllowScope = availableScopeChoices.length + advancedScopeOptions.length > 0;
   const decisionContractKey = item ? `${item.request_id}:${item.scope_contract_version ?? "legacy"}:${item.scope_contract_digest ?? "legacy"}` : null;
   reactExports.useEffect(() => {
@@ -27811,6 +28769,14 @@ function ReviewDecisionCard(props) {
         setMcpGrantTarget("exact");
         setMcpGrantDuration("once");
       }
+      const nextLocalToolOptions = localToolApprovalOptions(item);
+      if (nextLocalToolOptions !== null) {
+        setLocalToolGrantTarget(defaultLocalToolTarget(nextLocalToolOptions));
+        setLocalToolGrantDuration(defaultLocalToolDuration(nextLocalToolOptions));
+      } else {
+        setLocalToolGrantTarget("capability");
+        setLocalToolGrantDuration("once");
+      }
     }
   }, [item?.request_id, item?.scope_contract_version, item?.scope_contract_digest]);
   reactExports.useEffect(() => {
@@ -27818,6 +28784,11 @@ function ReviewDecisionCard(props) {
     if (selection.target !== mcpGrantTarget) setMcpGrantTarget(selection.target);
     if (selection.duration !== mcpGrantDuration) setMcpGrantDuration(selection.duration);
   }, [temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration]);
+  reactExports.useEffect(() => {
+    const selection = validLocalToolSelection(localToolOptions, localToolGrantTarget, localToolGrantDuration);
+    if (selection.target !== localToolGrantTarget) setLocalToolGrantTarget(selection.target);
+    if (selection.duration !== localToolGrantDuration) setLocalToolGrantDuration(selection.duration);
+  }, [localToolOptions, localToolGrantTarget, localToolGrantDuration]);
   reactExports.useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
@@ -27843,7 +28814,8 @@ function ReviewDecisionCard(props) {
           ...includeGateFields && needsPassword ? { approval_password: approvalPassword } : {},
           ...includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {},
           ...includeGateFields ? { approval_gate_use_cooldown: useCooldown } : {},
-          ...action === "allow" ? buildTemporaryMcpResolutionFields(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration) : {}
+          ...action === "allow" ? buildTemporaryMcpResolutionFields(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration) : {},
+          ...action === "allow" && temporaryMcpOptions === null ? buildLocalToolResolutionFields(localToolOptions, localToolGrantTarget, localToolGrantDuration) : {}
         });
         setResolved(action);
         setApprovalPassword("");
@@ -27870,7 +28842,10 @@ function ReviewDecisionCard(props) {
       resolutionBlockReason,
       temporaryMcpOptions,
       mcpGrantTarget,
-      mcpGrantDuration
+      mcpGrantDuration,
+      localToolOptions,
+      localToolGrantTarget,
+      localToolGrantDuration
     ]
   );
   const handleRequestResolve = reactExports.useCallback(
@@ -27991,6 +28966,12 @@ function ReviewDecisionCard(props) {
   const topAlertItems = buildTopAlertItems(item);
   const evidenceItems = buildEvidenceItems(item);
   const actionPresentation = guardActionPresentation(item.policy_action);
+  let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
+  if (temporaryMcpOptions !== null) {
+    resolvedAllowButtonLabel = temporaryMcpAllowButtonLabel(mcpGrantDuration);
+  } else if (localToolOptions !== null) {
+    resolvedAllowButtonLabel = localToolAllowButtonLabel(localToolGrantDuration);
+  }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-5", children: [
     resolved && /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
@@ -28037,6 +29018,7 @@ function ReviewDecisionCard(props) {
         ] })
       ] }) }),
       topAlertItems.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-xl border border-slate-100 bg-slate-50/50 p-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ConsolidatedEvidenceAlert, { items: topAlertItems }, item.request_id) }),
+      resolutionBlockReason === null ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewCloudRecovery, { item }, item.request_id) : null,
       whatWouldHappen && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
@@ -28065,6 +29047,17 @@ function ReviewDecisionCard(props) {
             onDurationChange: setMcpGrantDuration
           }
         ),
+        temporaryMcpRetryRequired && /* @__PURE__ */ jsxRuntimeExports.jsx(TemporaryMcpRetryNotice, {}),
+        temporaryMcpOptions === null && localToolOptions !== null && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          LocalToolApprovalControls,
+          {
+            options: localToolOptions,
+            target: localToolGrantTarget,
+            duration: localToolGrantDuration,
+            onTargetChange: setLocalToolGrantTarget,
+            onDurationChange: setLocalToolGrantDuration
+          }
+        ),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           ReviewScopeControls,
           {
@@ -28076,7 +29069,7 @@ function ReviewDecisionCard(props) {
             taskCapabilityCopy,
             allowScope,
             blockScope,
-            showAllowScopes: temporaryMcpOptions === null,
+            showAllowScopes: temporaryMcpOptions === null && localToolOptions === null,
             onAllowScopeChange: setAllowScope,
             onBlockScopeChange: setBlockScope
           }
@@ -28110,7 +29103,7 @@ function ReviewDecisionCard(props) {
               "Approving..."
             ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "h-4 w-4", "aria-hidden": "true" }),
-              temporaryMcpOptions === null ? allowButtonLabel(allowScope) : temporaryMcpAllowButtonLabel(mcpGrantDuration)
+              resolvedAllowButtonLabel
             ] })
           }
         ),
@@ -28177,7 +29170,7 @@ function ReviewDecisionCard(props) {
         onUseCooldownChange: handleUseCooldownChange,
         onSubmit: handleModalSubmit,
         onCancel: handleModalCancel,
-        submitLabel: pendingAction === "allow" ? temporaryMcpOptions === null ? allowButtonLabel(allowScope) : temporaryMcpAllowButtonLabel(mcpGrantDuration) : blockButtonLabel(blockScope)
+        submitLabel: pendingAction === "allow" ? resolvedAllowButtonLabel : blockButtonLabel(blockScope)
       }
     )
   ] });
@@ -29098,7 +30091,8 @@ function ApprovalCenterLayout(props) {
     updateStatus,
     updatePhase,
     onUpdateGuard,
-    onReinstallGuard
+    onReinstallGuard,
+    onSetUpdateChannel
   } = useGuardUpdate({ onReconnected: props.onGuardReconnected, enabled: props.enableUpdateStatus });
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-h-screen bg-white text-brand-dark", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -29126,6 +30120,8 @@ function ApprovalCenterLayout(props) {
         updatePhase,
         onUpdateGuard,
         onReinstallGuard,
+        onSetUpdateChannel,
+        approvalGate: props.approvalGate ?? null,
         cloudUserProfile: props.runtime.kind === "ready" ? props.runtime.snapshot.cloud_user_profile : null,
         workspaceId: props.runtime.kind === "ready" ? props.runtime.snapshot.cloud_pairing_state.workspace_id ?? null : null,
         planId: props.runtime.kind === "ready" ? props.runtime.snapshot.cloud_pairing_state.plan_id ?? null : null
@@ -29274,7 +30270,7 @@ const SettingsWorkspace = reactExports.lazy(() => __vitePreload(() => import("./
 const AppDetailWorkspace = reactExports.lazy(() => __vitePreload(() => import("./chunks/app-detail-workspace.js"), true ? [] : void 0).then((m) => ({ default: m.AppDetailWorkspace })));
 const HelpModal = reactExports.lazy(() => __vitePreload(() => import("./chunks/help-modal.js"), true ? [] : void 0).then((m) => ({ default: m.HelpModal })));
 const SupplyChainHubWorkspace = reactExports.lazy(
-  () => __vitePreload(() => import("./chunks/supply-chain-hub-workspace.js").then((n) => n.a), true ? [] : void 0).then((m) => ({ default: m.SupplyChainHubWorkspace }))
+  () => __vitePreload(() => import("./chunks/supply-chain-hub-workspace.js").then((n) => n.c), true ? [] : void 0).then((m) => ({ default: m.SupplyChainHubWorkspace }))
 );
 const PolicyWorkspacePage = reactExports.lazy(
   () => __vitePreload(() => import("./chunks/policy-workspace-page.js"), true ? [] : void 0).then((m) => ({ default: m.PolicyWorkspacePage }))
@@ -30042,7 +31038,7 @@ clientExports.createRoot(container).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
 );
 export {
-  HiMiniAdjustmentsHorizontal as $,
+  HiMiniBellAlert as $,
   ActionButton as A,
   resolveCloudIntelCopy as B,
   HiMiniCloud as C,
@@ -30057,139 +31053,141 @@ export {
   HiMiniBolt as L,
   Badge as M,
   HiMiniMinusCircle as N,
-  HiMiniWrenchScrewdriver as O,
-  HiMiniExclamationCircle as P,
-  ProofStrip as Q,
-  HiMiniEye as R,
+  OperatorHealthCard as O,
+  HiMiniWrenchScrewdriver as P,
+  HiMiniExclamationCircle as Q,
+  ProofStrip as R,
   SectionLabel as S,
-  HiMiniXCircle as T,
-  HiMiniClipboardDocumentCheck as U,
-  HiMiniClipboard as V,
-  getDefaultExportFromCjs as W,
-  React as X,
-  HiMiniKey as Y,
-  HiMiniLockClosed as Z,
-  HiMiniBellAlert as _,
+  HiMiniEye as T,
+  HiMiniXCircle as U,
+  HiMiniClipboardDocumentCheck as V,
+  HiMiniClipboard as W,
+  getDefaultExportFromCjs as X,
+  React as Y,
+  HiMiniKey as Z,
+  HiMiniLockClosed as _,
   EvidenceActivityHeatmapMini as a,
-  HiMiniArrowTopRightOnSquare as a$,
-  HiMiniCircleStack as a0,
-  TabBar as a1,
-  resolveProtectionLevelCopy as a2,
-  fetchSettings as a3,
-  fetchRuntimeSnapshot as a4,
-  updateSettings as a5,
-  clearPolicy as a6,
-  clearReviewQueue as a7,
-  revokeApprovalGateCooldown as a8,
-  disableApprovalGateTotp as a9,
-  EvidenceActionList as aA,
-  EvidenceActionDetail as aB,
-  policyIdentityKey as aC,
-  HiMiniChartBar as aD,
-  runHarnessAction as aE,
-  GuardHarnessActionError as aF,
-  HiMiniRocketLaunch as aG,
-  HiMiniArrowPath as aH,
-  HiMiniTrash as aI,
-  clearLabelForScope as aJ,
-  formatHarnessCommand as aK,
-  isSupplyChainAuditIncomplete as aL,
-  isSupplyChainAuditEvidence as aM,
-  buildApprovalProofCredentials as aN,
-  isApprovalProofSubmitDisabled as aO,
-  ApprovalProofFieldInputs as aP,
-  readString$1 as aQ,
-  isRecord$2 as aR,
-  HiMiniClock as aS,
-  IconActionButton as aT,
-  HiMiniBeaker as aU,
-  ActivationSummary as aV,
-  ActionResultPanel as aW,
-  HiMiniBugAnt as aX,
-  GuardModalLayer as aY,
-  ConnectFlowCard as aZ,
-  ApprovalProofInline as a_,
-  importSettings as aa,
-  resetSettings as ab,
-  enrollApprovalGateTotp as ac,
-  verifyApprovalGateTotp as ad,
-  clearEvidence as ae,
-  exportDiagnostics as af,
-  repairApprovalCenter as ag,
-  exportSettings as ah,
-  setupDesktopNotifications as ai,
-  Tag as aj,
-  HiMiniMagnifyingGlass as ak,
-  HiMiniCog6Tooth as al,
-  approvalGateCooldownLabel as am,
-  fetchApprovalPage as an,
-  fetchPolicy as ao,
-  HiMiniArrowLeft as ap,
-  HiMiniHome as aq,
-  appSetupTarget as ar,
-  guardActionPresentation as as,
-  DEFAULT_FILTER_STATE as at,
-  filterEvidence as au,
-  sortEvidence as av,
-  computeMetrics as aw,
-  CommandActivityWorkspace as ax,
-  EvidenceFilterBar as ay,
-  EvidenceInsightStrip as az,
+  ApprovalProofInline as a$,
+  HiMiniAdjustmentsHorizontal as a0,
+  HiMiniCircleStack as a1,
+  TabBar as a2,
+  resolveProtectionLevelCopy as a3,
+  fetchSettings as a4,
+  fetchRuntimeSnapshot as a5,
+  updateSettings as a6,
+  clearPolicy as a7,
+  clearReviewQueue as a8,
+  revokeApprovalGateCooldown as a9,
+  EvidenceInsightStrip as aA,
+  EvidenceActionList as aB,
+  EvidenceActionDetail as aC,
+  policyIdentityKey as aD,
+  HiMiniChartBar as aE,
+  runHarnessAction as aF,
+  GuardHarnessActionError as aG,
+  HiMiniRocketLaunch as aH,
+  HiMiniArrowPath as aI,
+  HiMiniTrash as aJ,
+  clearLabelForScope as aK,
+  formatHarnessCommand as aL,
+  isSupplyChainAuditIncomplete as aM,
+  isSupplyChainAuditEvidence as aN,
+  buildApprovalProofCredentials as aO,
+  isApprovalProofSubmitDisabled as aP,
+  ApprovalProofFieldInputs as aQ,
+  readString$1 as aR,
+  isRecord$2 as aS,
+  HiMiniClock as aT,
+  IconActionButton as aU,
+  HiMiniBeaker as aV,
+  ActivationSummary as aW,
+  ActionResultPanel as aX,
+  HiMiniBugAnt as aY,
+  GuardModalLayer as aZ,
+  ConnectFlowCard as a_,
+  disableApprovalGateTotp as aa,
+  importSettings as ab,
+  resetSettings as ac,
+  enrollApprovalGateTotp as ad,
+  verifyApprovalGateTotp as ae,
+  clearEvidence as af,
+  exportDiagnostics as ag,
+  repairApprovalCenter as ah,
+  exportSettings as ai,
+  setupDesktopNotifications as aj,
+  Tag as ak,
+  HiMiniMagnifyingGlass as al,
+  HiMiniCog6Tooth as am,
+  approvalGateCooldownLabel as an,
+  fetchApprovalPage as ao,
+  fetchPolicy as ap,
+  HiMiniArrowLeft as aq,
+  HiMiniHome as ar,
+  appSetupTarget as as,
+  guardActionPresentation as at,
+  DEFAULT_FILTER_STATE as au,
+  filterEvidence as av,
+  sortEvidence as aw,
+  computeMetrics as ax,
+  CommandActivityWorkspace as ay,
+  EvidenceFilterBar as az,
   HiMiniCommandLine as b,
-  HiMiniCloudArrowDown as b0,
-  fetchPackageFirewallStatus as b1,
-  runPackageAudit as b2,
-  resolveSupplyChainAuditFailure as b3,
-  runPackageSync as b4,
-  startPackageFirewallConnect as b5,
-  openPackageFirewallAuthorizeFallback as b6,
-  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b7,
-  runPackageFirewallAction as b8,
-  parseInterceptProofSnapshot as b9,
-  HiMiniNoSymbol as bA,
-  HiMiniCube as bB,
-  HiMiniArrowDownTray as bC,
-  HiMiniQueueList as bD,
-  Surface as bE,
-  HiMiniCheckBadge as bF,
-  fetchSupplyChainBundle as bG,
-  isSupplyChainScannerEvidence as bH,
-  isBlockedGuardAction as bI,
-  HiMiniDocumentMagnifyingGlass as bJ,
-  HiMiniShieldExclamation as bK,
-  HiMiniComputerDesktop as bL,
-  HiMiniChevronLeft as bM,
-  HiMiniFunnel as bN,
-  HiMiniArrowDown as bO,
-  HiMiniArrowUp as bP,
-  runAuditRemediation as bQ,
-  HiMiniSignal as bR,
-  activatePackageFirewallRuntime as ba,
-  EntitlementNotice as bb,
-  fetchReceipts as bc,
-  WorkspacePageHeader as bd,
-  __vitePreload as be,
-  scopeLabel as bf,
-  guardAwareHref as bg,
-  HiMiniDocumentText as bh,
-  HiMiniCloudArrowUp as bi,
-  HiMiniCheck as bj,
-  HiMiniCodeBracket as bk,
-  HiMiniClipboardDocument as bl,
-  HiMiniUsers as bm,
-  HiMiniFolder as bn,
-  HiMiniInformationCircle as bo,
-  HiMiniIdentification as bp,
-  policyActionLabel as bq,
-  createCloudExceptionRequest as br,
-  HiMiniArrowRight as bs,
-  HiMiniPuzzlePiece as bt,
-  HiMiniGlobeAlt as bu,
-  fetchCloudExceptions as bv,
-  fetchCloudExceptionRequests as bw,
-  downloadBlob as bx,
-  PolicyStatField as by,
-  PaginationControls as bz,
+  HiMiniArrowTopRightOnSquare as b0,
+  HiMiniCloudArrowDown as b1,
+  fetchPackageFirewallStatus as b2,
+  runPackageAudit as b3,
+  resolveSupplyChainAuditFailure as b4,
+  runPackageSync as b5,
+  startPackageFirewallConnect as b6,
+  openPackageFirewallAuthorizeFallback as b7,
+  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b8,
+  repairSupplyChainProtection as b9,
+  PolicyStatField as bA,
+  PaginationControls as bB,
+  HiMiniNoSymbol as bC,
+  HiMiniCube as bD,
+  HiMiniArrowDownTray as bE,
+  HiMiniQueueList as bF,
+  Surface as bG,
+  HiMiniCheckBadge as bH,
+  fetchSupplyChainBundle as bI,
+  isSupplyChainScannerEvidence as bJ,
+  isBlockedGuardAction as bK,
+  HiMiniDocumentMagnifyingGlass as bL,
+  HiMiniShieldExclamation as bM,
+  HiMiniComputerDesktop as bN,
+  HiMiniChevronLeft as bO,
+  HiMiniFunnel as bP,
+  HiMiniArrowDown as bQ,
+  HiMiniArrowUp as bR,
+  runAuditRemediation as bS,
+  HiMiniSignal as bT,
+  runPackageFirewallAction as ba,
+  parseInterceptProofSnapshot as bb,
+  activatePackageFirewallRuntime as bc,
+  EntitlementNotice as bd,
+  fetchReceipts as be,
+  WorkspacePageHeader as bf,
+  __vitePreload as bg,
+  scopeLabel as bh,
+  guardAwareHref as bi,
+  HiMiniDocumentText as bj,
+  HiMiniCloudArrowUp as bk,
+  HiMiniCheck as bl,
+  HiMiniCodeBracket as bm,
+  HiMiniClipboardDocument as bn,
+  HiMiniUsers as bo,
+  HiMiniFolder as bp,
+  HiMiniInformationCircle as bq,
+  HiMiniIdentification as br,
+  policyActionLabel as bs,
+  createCloudExceptionRequest as bt,
+  HiMiniArrowRight as bu,
+  HiMiniPuzzlePiece as bv,
+  HiMiniGlobeAlt as bw,
+  fetchCloudExceptions as bx,
+  fetchCloudExceptionRequests as by,
+  downloadBlob as bz,
   HiMiniChevronRight as c,
   createCommandActivityClient as d,
   harnessDisplayName as e,

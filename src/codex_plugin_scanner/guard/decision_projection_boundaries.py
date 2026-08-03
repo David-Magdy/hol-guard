@@ -21,6 +21,9 @@ from .runtime.signals import RiskSignalV2
 
 _PRODUCT_ACTIONS = frozenset({"allow", "warn", "ask", "block"})
 _DEGRADED_TRUST_DETAIL_REASON = "remembered_rule_ignored_degraded_trust"
+_PACKAGE_REVIEW_CLOUD_REASON_CODES = frozenset(
+    {"cloud_auth_error", "cloud_http_error", "cloud_timeout", "cloud_validation_error"}
+)
 _DECISION_V2_ACTION_FIELDS = frozenset({"action", "guard_action"})
 
 
@@ -137,6 +140,9 @@ def canonical_approval_decision(
         policy_version = raw_decision.get("policyVersion")
         if isinstance(policy_version, str) and policy_version.strip():
             canonical_v2["policyVersion"] = policy_version
+        cloud_reason_code = raw_decision.get("package_review_cloud_reason_code")
+        if isinstance(cloud_reason_code, str) and cloud_reason_code in _PACKAGE_REVIEW_CLOUD_REASON_CODES:
+            canonical_v2["package_review_cloud_reason_code"] = cloud_reason_code
 
     return CanonicalApprovalDecision(
         policy_action=projected_action,

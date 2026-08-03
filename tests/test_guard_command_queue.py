@@ -25,6 +25,7 @@ from codex_plugin_scanner.guard.review_contracts import (
     payload_hash_for_decision_memory_bundle,
     payload_hash_for_remote_approval_envelope,
     validate_remote_approval_request_binding,
+    validated_decision_memory_bundle,
     validated_remote_approval_envelope,
 )
 from codex_plugin_scanner.guard.runtime import (
@@ -228,7 +229,7 @@ def _signed_remote_approval(
         "policyVersion": claim["policyVersion"],
         "projectIdentity": claim["projectIdentity"],
         "receiptId": receipt_id,
-        "reviewerRole": "workspace-owner",
+        "reviewerRole": "owner",
         "reviewerUserId": "user-1",
         "riskCategory": claim["riskCategory"],
         "runtimeGrantId": claim["runtimeGrantId"],
@@ -254,6 +255,12 @@ def _signed_decision_memory_bundle(
     rule_id: str = "review-memory:receipt-1",
     policy_version: str = "policy-version-2",
 ) -> dict[str, object]:
+    decision_memory_keys = review_verification_keys(workspace_id=None, purpose="unscoped")
+    store.set_sync_payload(
+        "policy_bundle_keyring",
+        decision_memory_keys,
+        datetime.now(timezone.utc).isoformat(),
+    )
     oauth = guard_review_oauth_metadata(store)
     issued_at = datetime.now(timezone.utc).replace(microsecond=0)
     expires_at = issued_at + timedelta(days=30)
@@ -298,7 +305,7 @@ def _signed_decision_memory_bundle(
             "sourceReceiptHashes": ["c" * 64],
             "sourceReceiptIds": ["receipt-1"],
         },
-        "verificationKeys": review_verification_keys(),
+        "verificationKeys": decision_memory_keys,
         "signatureAlgorithm": "rsa-pss-sha256",
         "workspaceId": oauth.workspace_id,
     }
@@ -307,6 +314,13 @@ def _signed_decision_memory_bundle(
     bundle["payloadHash"] = payload_hash
     bundle["signature"] = sign_review_payload(bundle)
     return bundle
+
+
+def test_decision_memory_accepts_its_unscoped_signing_authority(tmp_path: Path) -> None:
+    store = FakeStore(tmp_path / "guard-home")
+    bundle = _signed_decision_memory_bundle(store)
+
+    assert validated_decision_memory_bundle(bundle, store=store) == bundle
 
 
 def _context(tmp_path: Path) -> HarnessContext:
@@ -354,6 +368,33 @@ def test_remote_approval_rejects_queue_admission_after_expiry(tmp_path: Path) ->
             store=store,
             admitted_at="2026-06-12T00:06:00+00:00",
         )
+
+
+@pytest.mark.parametrize(
+    ("trusted_keyring", "expected_error"),
+    [
+        (
+            review_trusted_keyring_payload(purpose="policy_bundle"),
+            "signing_key_purpose_mismatch",
+        ),
+        (
+            review_trusted_keyring_payload(workspace_id="workspace-2"),
+            "signing_key_workspace_mismatch",
+        ),
+    ],
+)
+def test_remote_approval_rejects_signing_key_outside_its_authority(
+    tmp_path: Path,
+    trusted_keyring: list[dict[str, object]],
+    expected_error: str,
+) -> None:
+    store = FakeStore(tmp_path / "guard-home")
+    request_row = _approval_request_row("request-wrong-key-authority")
+    envelope = _signed_remote_approval(store, request_row)
+    store.payloads["policy_bundle_keyring"] = trusted_keyring
+
+    with pytest.raises(GuardReviewContractError, match=expected_error):
+        validated_remote_approval_envelope(envelope, store=store)
 
 
 def test_guard_review_oauth_metadata_prefers_explicit_device_id(tmp_path: Path) -> None:

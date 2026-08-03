@@ -247,7 +247,8 @@ def test_absolute_header_deadline_closes_trickle_client(
         while daemon._server.active_requests and time.monotonic() < deadline:
             time.sleep(0.01)
 
-    assert elapsed < 0.6
+    assert daemon_server._DAEMON_REQUEST_READ_TIMEOUT_SECONDS == 0.4
+    assert elapsed < 1.0
     assert daemon._server.active_requests == 0
 
 
@@ -300,6 +301,95 @@ def test_liveness_uses_reserved_capacity_when_general_requests_are_saturated(
     assert elapsed < 0.5
 
 
+def test_128_connection_storm_keeps_fixed_workers_and_control_liveness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(daemon_server, "_DAEMON_REQUEST_READ_TIMEOUT_SECONDS", 2.0)
+    daemon: GuardDaemonServer | None = None
+    executor_threads: tuple[threading.Thread, ...] = ()
+    clients: list[socket.socket] = []
+    with _running_daemon(tmp_path, monkeypatch) as running:
+        daemon = running
+        executor_threads = (
+            *daemon._server.general_request_executor.threads,
+            *daemon._server.control_request_executor.threads,
+        )
+        clients = [socket.create_connection(("127.0.0.1", daemon.port), timeout=1) for _ in range(128)]
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            with daemon._server.request_capacity_lock:
+                if daemon._server.active_requests == 128:
+                    break
+            time.sleep(0.01)
+
+        with daemon._server.request_capacity_lock:
+            assert daemon._server.active_requests == 128
+        assert len(daemon._server.general_request_executor.threads) == 32
+        assert len(daemon._server.control_request_executor.threads) == 8
+        assert all(thread.is_alive() for thread in executor_threads)
+
+        started = time.monotonic()
+        with urllib.request.urlopen(f"http://127.0.0.1:{daemon.port}/healthz", timeout=0.5) as response:
+            assert json.loads(response.read())["ok"] is True
+        assert time.monotonic() - started < 0.5
+
+        for client in clients:
+            client.close()
+        clients.clear()
+
+    assert daemon is not None
+    assert daemon._server.active_requests == 0
+    assert daemon._server.unclassified_connections == {}
+    assert all(not thread.is_alive() for thread in executor_threads)
+
+
+def test_transport_queue_delay_returns_typed_hook_deadline_overload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(daemon_server, "_DAEMON_REQUEST_READ_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(daemon_server, "_RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS", 0.05)
+    with _running_daemon(tmp_path, monkeypatch) as daemon:
+        slow_clients = [socket.create_connection(("127.0.0.1", daemon.port), timeout=1) for _ in range(32)]
+        try:
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                with daemon._server.request_capacity_lock:
+                    if daemon._server.active_requests == 32:
+                        break
+                time.sleep(0.01)
+            query = urllib.parse.urlencode(
+                {
+                    "guard-home": str(daemon._server.store.guard_home),
+                    "workspace": str(tmp_path),
+                }
+            )
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{daemon.port}/v1/hooks/pi?{query}",
+                data=json.dumps(
+                    {
+                        "hook_event_name": "PreToolUse",
+                        "tool_name": "read",
+                        "tool_input": {},
+                    }
+                ).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Guard-Token": daemon._server.auth_token,
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=1) as response:
+                result = json.loads(response.read())
+        finally:
+            for client in slow_clients:
+                client.close()
+
+    assert result["decision"] == "deny"
+    assert result["reason_code"] == "daemon_hook_deadline_exhausted"
+
+
 @pytest.mark.parametrize(
     ("path", "payload", "assertion"),
     [
@@ -327,11 +417,8 @@ def test_hook_overload_returns_native_fail_safe_response(
     payload: dict[str, object],
     assertion: tuple[str, str],
 ) -> None:
-    monkeypatch.setattr(daemon_server, "_MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS", 1)
     with _running_daemon(tmp_path, monkeypatch) as daemon:
-        harness = "pi" if path.endswith("/pi") else "claude-code"
-        harness_capacity = daemon._server.hook_harness_semaphore(harness)
-        assert harness_capacity.acquire(blocking=False)
+        daemon._server.runtime_hook_scheduler = daemon_server.RuntimeHookScheduler(retained_bytes_limit=1)
         query = urllib.parse.urlencode(
             {
                 "guard-home": str(daemon._server.store.guard_home),
@@ -347,13 +434,10 @@ def test_hook_overload_returns_native_fail_safe_response(
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=1) as response:
-                result = json.loads(response.read())
-        finally:
-            harness_capacity.release()
+        with urllib.request.urlopen(request, timeout=1) as response:
+            result = json.loads(response.read())
 
-    assert result["reason_code"] == "daemon_hook_capacity"
+    assert result["reason_code"] == "daemon_hook_queue_bytes"
     if assertion[0] == "decision":
         assert result["decision"] == assertion[1]
     elif assertion[0] == "permissionDecision":
@@ -365,12 +449,13 @@ def test_hook_overload_returns_native_fail_safe_response(
 def test_unknown_harnesses_share_one_bounded_capacity_bucket(tmp_path: Path) -> None:
     daemon = GuardDaemonServer(GuardStore(tmp_path / "guard-home"), host="127.0.0.1", port=0)
     try:
-        capacities = {id(daemon._server.hook_harness_semaphore(f"unknown-{index}")) for index in range(1_000)}
+        capacity_harnesses = {
+            daemon._server.canonical_hook_capacity_harness(f"unknown-{index}") for index in range(1_000)
+        }
     finally:
         daemon._server.server_close()
 
-    assert len(capacities) == 1
-    assert set(daemon._server.hook_harness_capacity) == {"other"}
+    assert capacity_harnesses == {"other"}
 
 
 def test_partial_start_failure_rolls_back_workers_state_and_owner_lock(
