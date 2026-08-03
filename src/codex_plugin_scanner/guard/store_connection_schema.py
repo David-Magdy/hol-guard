@@ -1148,15 +1148,19 @@ class StoreConnectionSchemaMixin:
         original_busy_timeout_ms = int(original_busy_timeout_row[0]) if original_busy_timeout_row else 0
         wal_busy_timeout_ms = min(original_busy_timeout_ms, SQLITE_WAL_BUSY_TIMEOUT_MS)
         connection.execute(f"pragma busy_timeout={wal_busy_timeout_ms}")
+        retry_deadline = time.monotonic() + (original_busy_timeout_ms / 1000)
         try:
-            for attempt in range(_SQLITE_LOCK_RETRY_ATTEMPTS):
+            while True:
                 try:
                     connection.execute("pragma journal_mode=WAL")
                     return
                 except sqlite3.OperationalError as exc:
-                    if "database is locked" not in str(exc).lower() or attempt == _SQLITE_LOCK_RETRY_ATTEMPTS - 1:
+                    if "database is locked" not in str(exc).lower():
                         raise
-                    _sleep_compat(_sqlite_lock_retry_delay_seconds_compat())
+                    remaining_seconds = retry_deadline - time.monotonic()
+                    if remaining_seconds <= 0:
+                        raise
+                    _sleep_compat(min(_sqlite_lock_retry_delay_seconds_compat(), remaining_seconds))
         finally:
             connection.execute(f"pragma busy_timeout={original_busy_timeout_ms}")
 
