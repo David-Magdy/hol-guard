@@ -67,7 +67,7 @@ def _manifest_dependency_targets(
     package_manager = str(artifact.metadata.get("package_manager") or "npm")
     redacted_command = package_eval._optional_string(artifact.metadata.get("redacted_command"))
     lockfile_paths = artifact.metadata.get("lockfile_paths")
-    lockfile_names: set[str] = set()
+    lockfile_versions: dict[str, str | None] = {}
     if isinstance(lockfile_paths, list):
         for relative_path in lockfile_paths:
             if not isinstance(relative_path, str) or not relative_path:
@@ -79,8 +79,12 @@ def _manifest_dependency_targets(
             if lockfile_text is None:
                 continue
             lockfile_ecosystem = package_eval._lockfile_ecosystem(lockfile_path.name) or "npm"
-            for package_name in parse_manifest_dependencies(path=relative_path, text=lockfile_text):
-                lockfile_names.add(package_eval._normalize_package_name(lockfile_ecosystem, package_name))
+            for package_name, version in parse_manifest_dependencies(path=relative_path, text=lockfile_text).items():
+                normalized_name = package_eval._normalize_package_name(lockfile_ecosystem, package_name)
+                if normalized_name not in lockfile_versions:
+                    lockfile_versions[normalized_name] = version
+                elif lockfile_versions[normalized_name] != version:
+                    lockfile_versions[normalized_name] = None
     unsynced_targets: list[dict[str, object]] = []
     for relative_path in manifest_paths:
         if not isinstance(relative_path, str) or not relative_path:
@@ -101,10 +105,11 @@ def _manifest_dependency_targets(
         )
         for package_name, specifier in dependency_map.items():
             normalized_name = package_eval._normalize_package_name(ecosystem, package_name)
-            if not include_locked and normalized_name in lockfile_names:
+            if not include_locked and normalized_name in lockfile_versions:
                 continue
             namespace, name = package_eval._split_namespace_name(package_name, ecosystem=ecosystem)
-            exact_version = package_eval._manifest_exact_version(ecosystem, specifier)
+            locked_version = lockfile_versions.get(normalized_name) if include_locked else None
+            exact_version = locked_version or package_eval._manifest_exact_version(ecosystem, specifier)
             unsynced_targets.append(
                 {
                     "ecosystem": ecosystem,
@@ -122,7 +127,7 @@ def _manifest_dependency_targets(
                     "editable": False,
                     "package_manager": package_manager,
                     "redacted_command": redacted_command,
-                    "manifest_unsynced": True,
+                    "manifest_unsynced": normalized_name not in lockfile_versions,
                 }
             )
     return tuple(unsynced_targets)

@@ -478,7 +478,7 @@ def test_lockfile_install_derives_manifest_packages_for_cloud_request(
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()
     (workspace_dir / "package.json").write_text(
-        '{"dependencies":{"left-pad":"1.0.0"}}',
+        '{"dependencies":{"left-pad":"^1.0.0"}}',
         encoding="utf-8",
     )
     (workspace_dir / "package-lock.json").write_text(
