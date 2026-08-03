@@ -49,9 +49,14 @@ from .commands_hook_runtime_state import (
 )
 
 
-def _embedded_script_remediation(state: RuntimeArtifactHookState) -> str | None:
-    """Guidance when the flagged command carries an inline script body."""
+_GUIDED_POLICY_ACTIONS = frozenset({"block", "review", "require-reapproval", "sandbox-required"})
 
+
+def _embedded_script_remediation(state: RuntimeArtifactHookState) -> str | None:
+    """Guidance when a blocked/reviewed command carries an inline script body."""
+
+    if state.policy_action not in _GUIDED_POLICY_ACTIONS:
+        return None
     envelope = state.action_envelope
     command_text = envelope.command if envelope is not None else None
     if not isinstance(command_text, str):

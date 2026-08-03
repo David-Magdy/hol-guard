@@ -160,6 +160,22 @@ def test_embedded_scripts_for_receipt_recovers_from_whitespace_shifted_command()
     assert scripts[0]["sha256_verified"] is True
 
 
+def test_embedded_scripts_for_receipt_recovers_with_non_ascii_prefix() -> None:
+    """Spans are code-point indices while ``bytes`` counts UTF-8 bytes;
+    recovery must not confuse the two for multibyte text before the body."""
+    body = "print('héllo wörld')\n"
+    stripped = f"echo '日本語のパス' > /tmp/ñame.txt && python3 - <<'EOF'\n{body}EOF"
+    receipt = {
+        "receipt_id": "guard-receipt-unicode",
+        "scanner_evidence": embedded_script_evidence_entries(stripped),
+        "action_envelope_json": {"command": f" {stripped}"},
+    }
+    scripts = _embedded_scripts_for_receipt(receipt)
+    assert len(scripts) == 1
+    assert scripts[0]["body"] == body
+    assert scripts[0]["sha256_verified"] is True
+
+
 def test_embedded_scripts_for_receipt_without_evidence_returns_empty() -> None:
     assert _embedded_scripts_for_receipt({"scanner_evidence": []}) == []
     assert _embedded_scripts_for_receipt({}) == []

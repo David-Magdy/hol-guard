@@ -175,6 +175,21 @@ def _embedded_scripts_for_receipt(match: dict[str, object]) -> list[dict[str, ob
     return scripts
 
 
+def _slice_by_utf8_length(text: str, start: int, byte_len: int) -> str | None:
+    """Return the str slice starting at ``start`` whose UTF-8 encoding is
+    exactly ``byte_len`` bytes, or None if no such slice exists."""
+
+    total = 0
+    for offset, char in enumerate(text[start:]):
+        char_len = len(char.encode("utf-8"))
+        if total + char_len > byte_len:
+            return None
+        total += char_len
+        if total == byte_len:
+            return text[start : start + offset + 1]
+    return None
+
+
 def _recover_embedded_body(command_text: str, marker: dict[str, object]) -> tuple[str | None, bool]:
     """Recover a heredoc body from retained command text.
 
@@ -191,27 +206,23 @@ def _recover_embedded_body(command_text: str, marker: dict[str, object]) -> tupl
         return None, False
     span = marker.get("span")
     recorded_start = span.get("start") if isinstance(span, dict) else None
-    candidates: list[int] = []
-    if isinstance(recorded_start, int):
-        candidates.extend((recorded_start, recorded_start - 1, recorded_start + 1))
-    # UTF-8 encode once; slices of the byte string are cheaper than re-encoding str.
-    encoded = command_text.encode("utf-8")
+    if not isinstance(recorded_start, int):
+        return None, False
+    # Spans are Python string (code-point) indices; ``bytes`` is the UTF-8
+    # length of the body. Search the neighborhood of the recorded start in
+    # str space and hash-verify each candidate's UTF-8 encoding.
     seen: set[int] = set()
-    for start in candidates:
-        if start in seen or start < 0 or start + byte_len > len(encoded):
+    for start in (recorded_start, recorded_start - 1, recorded_start + 1):
+        if start in seen or start < 0 or start > len(command_text):
             continue
         seen.add(start)
-        body_bytes = encoded[start : start + byte_len]
-        if hashlib.sha256(body_bytes).hexdigest() == expected_sha:
-            try:
-                return body_bytes.decode("utf-8"), True
-            except UnicodeDecodeError:
-                return None, False
-    if isinstance(recorded_start, int) and isinstance(span, dict) and isinstance(span.get("end"), int):
-        end = span["end"]
-        if 0 <= recorded_start <= end <= len(command_text):
-            body = command_text[recorded_start:end]
-            return body, hashlib.sha256(body.encode("utf-8")).hexdigest() == expected_sha
+        body = _slice_by_utf8_length(command_text, start, byte_len)
+        if body is not None and hashlib.sha256(body.encode("utf-8")).hexdigest() == expected_sha:
+            return body, True
+    end = span.get("end") if isinstance(span, dict) else None
+    if isinstance(end, int) and 0 <= recorded_start <= end <= len(command_text):
+        body = command_text[recorded_start:end]
+        return body, hashlib.sha256(body.encode("utf-8")).hexdigest() == expected_sha
     return None, False
 
 
