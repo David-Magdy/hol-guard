@@ -1890,7 +1890,7 @@ def test_guard_protect_probe_skips_local_approval_queue_on_block(
     assert store.list_approval_requests(limit=None) == []
 
 
-def test_guard_protect_pnpm_install_alias_uses_signed_lockfile_intelligence_without_empty_cloud_request(
+def test_guard_protect_pnpm_install_alias_renders_wrapped_review_link_for_cloud_validation_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -1949,9 +1949,10 @@ def test_guard_protect_pnpm_install_alias_uses_signed_lockfile_intelligence_with
 
     output = capsys.readouterr().out
 
-    assert rc == 0
-    assert "approve or keep this blocked" not in output
-    assert "http://127.0.0.1:5474/requests/" not in output
+    assert rc == 2
+    assert "approve or keep this blocked" in output
+    assert "http://127.0.0.1:5474/requests/" in output
+    assert "review.. Open HOL Guard" not in output
 
 
 def test_guard_protect_ignores_stale_policy_bundle_package_family_block(

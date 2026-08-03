@@ -2459,6 +2459,11 @@ class RuntimeMcpGuardProxy:
         payload["user_body"] = package_evaluation.user_copy.summary
         payload["harness_message"] = package_evaluation.user_copy.harness_message
         payload["dashboard_primary_detail"] = package_evaluation.user_copy.summary
+        reason_codes = {str(reason.get("code") or "") for reason in package_evaluation.reasons}
+        for reason_code in ("cloud_auth_error", "cloud_validation_error", "cloud_http_error", "cloud_timeout"):
+            if reason_code in reason_codes:
+                payload["package_review_cloud_reason_code"] = reason_code
+                break
         return payload
 
     def _queue_package_approval_response(

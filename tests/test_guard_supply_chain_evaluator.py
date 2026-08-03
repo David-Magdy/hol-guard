@@ -464,7 +464,7 @@ def test_evaluate_package_request_artifact_posts_cloud_request_and_maps_block_re
     assert "Review this request in HOL Guard, then retry." not in result.user_copy.harness_message
 
 
-def test_lockfile_only_install_does_not_send_empty_cloud_package_request(
+def test_lockfile_install_derives_manifest_packages_for_cloud_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -472,25 +472,52 @@ def test_lockfile_only_install_does_not_send_empty_cloud_package_request(
     _seed_guard_cloud(
         store,
         workspace_id=WORKSPACE_ID,
-        sync_url="https://guard.example.com/api/guard/receipts/sync",
+        sync_url="http://127.0.0.1:8042/api/guard/receipts/sync",
         token="demo-token",
     )
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()
-    (workspace_dir / "package-lock.json").write_text('{"packages":{}}', encoding="utf-8")
+    (workspace_dir / "package.json").write_text(
+        '{"dependencies":{"left-pad":"1.0.0"}}',
+        encoding="utf-8",
+    )
+    (workspace_dir / "package-lock.json").write_text(
+        '{"packages":{"node_modules/left-pad":{"version":"1.0.0"}}}',
+        encoding="utf-8",
+    )
+    captured_packages: list[object] = []
 
-    def fail_cloud(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("zero-package cloud evaluation must not be sent")
+    def open_cloud(**kwargs: object) -> dict[str, object]:
+        request = kwargs["request"]
+        assert isinstance(request, urllib.request.Request)
+        payload = json.loads(bytes(request.data or b"").decode("utf-8"))
+        captured_packages.extend(payload["packages"])
+        return _cloud_response(
+            decision="monitor",
+            enforcement="premium_cloud",
+            entitlement_state="premium",
+            package_name="left-pad",
+        )
 
-    monkeypatch.setattr(evaluator_module, "_urlopen_json_with_timeout_retry", fail_cloud)
+    monkeypatch.setattr(evaluator_module, "_urlopen_json_with_timeout_retry", open_cloud)
 
     result = evaluate_package_request_artifact(
-        artifact=_artifact_for_targets(lockfile_paths=("package-lock.json",)),
+        artifact=_artifact_for_targets(
+            manifest_paths=("package.json",),
+            lockfile_paths=("package-lock.json",),
+        ),
         store=store,
         workspace_dir=workspace_dir,
         now="2026-05-19T00:00:00Z",
     )
 
+    assert len(captured_packages) == 1
+    package = captured_packages[0]
+    assert isinstance(package, dict)
+    assert package["direct"] is True
+    assert package["ecosystem"] == "npm"
+    assert package["name"] == "left-pad"
+    assert package["version"] == "1.0.0"
     assert all(reason.get("code") != "cloud_validation_error" for reason in result.reasons)
 
 

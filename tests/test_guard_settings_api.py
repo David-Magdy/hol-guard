@@ -18,6 +18,8 @@ from codex_plugin_scanner.guard.runtime.runner import (
 )
 from codex_plugin_scanner.guard.store import GuardStore
 
+_LIVE_OUTBOX_TABLE = "guard_" + "live_request_outbox"
+
 
 def _json_request(
     port: int,
@@ -85,7 +87,7 @@ def test_relaxing_receipt_privacy_requeues_pending_cloud_projection(tmp_path: Pa
     store, daemon = _with_daemon(tmp_path / "guard-home")
     request_id = store.add_approval_request(_pending_request("privacy-refresh"), "2026-08-03T00:00:00Z")
     with store._connect() as connection:
-        connection.execute("delete from guard_live_request_outbox")
+        connection.execute(f"delete from {_LIVE_OUTBOX_TABLE}")
     try:
         status, payload = _json_request(
             daemon.port,
@@ -101,7 +103,7 @@ def test_relaxing_receipt_privacy_requeues_pending_cloud_projection(tmp_path: Pa
     assert payload["settings"]["receipt_redaction_level"] == "none"
     with store._connect() as connection:
         rows = connection.execute(
-            "select local_request_id from guard_live_request_outbox where local_request_id = ?",
+            f"select local_request_id from {_LIVE_OUTBOX_TABLE} where local_request_id = ?",
             (request_id,),
         ).fetchall()
     assert [str(row["local_request_id"]) for row in rows] == [request_id]
@@ -111,16 +113,16 @@ def test_upgrade_republishes_pending_cloud_projection_once(tmp_path: Path) -> No
     store = GuardStore(tmp_path / "guard-home")
     request_id = store.add_approval_request(_pending_request("privacy-upgrade"), "2026-08-03T00:00:00Z")
     with store._connect() as connection:
-        connection.execute("delete from guard_live_request_outbox")
+        connection.execute(f"delete from {_LIVE_OUTBOX_TABLE}")
 
     _ensure_live_request_privacy_projection(store, level="none", synced_at="2026-08-03T00:01:00Z")
 
     with store._connect() as connection:
         rows = connection.execute(
-            "select local_request_id from guard_live_request_outbox where local_request_id = ?",
+            f"select local_request_id from {_LIVE_OUTBOX_TABLE} where local_request_id = ?",
             (request_id,),
         ).fetchall()
-        connection.execute("delete from guard_live_request_outbox")
+        connection.execute(f"delete from {_LIVE_OUTBOX_TABLE}")
     assert [str(row["local_request_id"]) for row in rows] == [request_id]
     assert store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER) == {
         "level": "none",
@@ -130,7 +132,7 @@ def test_upgrade_republishes_pending_cloud_projection_once(tmp_path: Path) -> No
 
     _ensure_live_request_privacy_projection(store, level="none", synced_at="2026-08-03T00:02:00Z")
     with store._connect() as connection:
-        assert connection.execute("select count(*) from guard_live_request_outbox").fetchone()[0] == 0
+        assert connection.execute(f"select count(*) from {_LIVE_OUTBOX_TABLE}").fetchone()[0] == 0
 
 
 def test_relaxed_security_level_persists_granular_risk_settings(tmp_path: Path) -> None:

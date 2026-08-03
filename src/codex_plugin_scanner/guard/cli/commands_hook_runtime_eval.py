@@ -1094,12 +1094,7 @@ def _evaluate_runtime_artifact_hook(
         action_envelope = action_envelope.with_pre_execution_result(policy_action)
     decision_v2 = build_decision_v2(policy_action, reason=policy_action, signals=decision_signals)
     decision_v2_payload = decision_v2.to_dict()
-    package_only_decision = not has_compound_findings
-    if package_evaluation is not None and package_policy_action == policy_action and package_only_decision:
-        decision_v2_payload["user_title"] = package_evaluation.user_copy.title
-        decision_v2_payload["user_body"] = package_evaluation.user_copy.summary
-        decision_v2_payload["harness_message"] = package_evaluation.user_copy.harness_message
-        decision_v2_payload["dashboard_primary_detail"] = package_evaluation.user_copy.summary
+    if package_evaluation is not None:
         cloud_reason_codes = {
             str(reason.get("code") or "") for reason in package_evaluation.reasons if isinstance(reason, Mapping)
         }
@@ -1112,6 +1107,12 @@ def _evaluate_runtime_artifact_hook(
             if cloud_reason_code in cloud_reason_codes:
                 decision_v2_payload["package_review_cloud_reason_code"] = cloud_reason_code
                 break
+    package_only_decision = not has_compound_findings
+    if package_evaluation is not None and package_policy_action == policy_action and package_only_decision:
+        decision_v2_payload["user_title"] = package_evaluation.user_copy.title
+        decision_v2_payload["user_body"] = package_evaluation.user_copy.summary
+        decision_v2_payload["harness_message"] = package_evaluation.user_copy.harness_message
+        decision_v2_payload["dashboard_primary_detail"] = package_evaluation.user_copy.summary
     if has_compound_findings:
         action_phrase = {
             "allow": "allowed",

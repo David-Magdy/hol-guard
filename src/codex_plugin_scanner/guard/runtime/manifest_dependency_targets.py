@@ -41,12 +41,21 @@ def evaluation_targets(
     intent_kind = _supply_chain_package_eval_module()._optional_string(artifact.metadata.get("intent_kind"))
     if intent_kind not in {None, "install", "sync"}:
         return ()
-    return unsynced_manifest_dependency_targets(artifact, workspace_dir)
+    return _manifest_dependency_targets(artifact, workspace_dir, include_locked=True)
 
 
 def unsynced_manifest_dependency_targets(
     artifact: GuardArtifact,
     workspace_dir: Path | None,
+) -> tuple[dict[str, object], ...]:
+    return _manifest_dependency_targets(artifact, workspace_dir, include_locked=False)
+
+
+def _manifest_dependency_targets(
+    artifact: GuardArtifact,
+    workspace_dir: Path | None,
+    *,
+    include_locked: bool,
 ) -> tuple[dict[str, object], ...]:
     if workspace_dir is None:
         return ()
@@ -92,7 +101,7 @@ def unsynced_manifest_dependency_targets(
         )
         for package_name, specifier in dependency_map.items():
             normalized_name = package_eval._normalize_package_name(ecosystem, package_name)
-            if normalized_name in lockfile_names:
+            if not include_locked and normalized_name in lockfile_names:
                 continue
             namespace, name = package_eval._split_namespace_name(package_name, ecosystem=ecosystem)
             exact_version = package_eval._manifest_exact_version(ecosystem, specifier)
