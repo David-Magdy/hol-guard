@@ -1283,6 +1283,7 @@ export function parseDecisionV2(raw: unknown): GuardDecisionV2 | null {
   const dashboardPrimaryDetail = raw["dashboard_primary_detail"];
   const approvalScopes = raw["approval_scopes"];
   const retryInstruction = raw["retry_instruction"];
+  const packageReviewCloudReasonCode = raw["package_review_cloud_reason_code"];
   const signals = raw["signals"];
   const confidence = raw["confidence"];
   if (
@@ -1296,6 +1297,7 @@ export function parseDecisionV2(raw: unknown): GuardDecisionV2 | null {
     !isNonEmptyString(dashboardPrimaryDetail) ||
     !isStringArray(approvalScopes) ||
     !isStringOrNull(retryInstruction) ||
+    !(packageReviewCloudReasonCode === undefined || isStringOrNull(packageReviewCloudReasonCode)) ||
     !isRiskSignalV2Array(signals) ||
     !isDecisionV2Confidence(confidence)
   ) {
@@ -1311,6 +1313,7 @@ export function parseDecisionV2(raw: unknown): GuardDecisionV2 | null {
     dashboard_primary_detail: dashboardPrimaryDetail,
     approval_scopes: approvalScopes,
     retry_instruction: retryInstruction,
+    package_review_cloud_reason_code: packageReviewCloudReasonCode,
     signals,
     confidence
   };

@@ -8,6 +8,7 @@ from codex_plugin_scanner.guard.models import GuardApprovalRequest
 from codex_plugin_scanner.guard.runtime import live_request_sync
 from codex_plugin_scanner.guard.store import GuardStore
 from codex_plugin_scanner.guard.store_live_request_outbox import (
+    _requeue_pending_live_requests,
     live_request_oauth_subject_hash,
     seed_live_request_outbox,
 )
@@ -941,3 +942,16 @@ def test_transient_newest_failures_do_not_reset_oldest_fairness_slot(
 def test_worker_safety_interval_is_subsecond() -> None:
     assert live_request_sync.DEFAULT_POLL_INTERVAL_SECONDS <= 0.1
     assert live_request_sync.LIVE_REQUEST_SYNC_BATCH_SIZE == 1
+
+
+def test_pending_requeue_opens_write_transaction_before_binding_read(tmp_path) -> None:
+    store = GuardStore(tmp_path / "guard")
+    statements: list[str] = []
+
+    with store._connect() as connection:
+        connection.set_trace_callback(statements.append)
+        _requeue_pending_live_requests(connection, source=store.guard_source, changed_at=_NOW)
+
+    normalized = [statement.strip().lower() for statement in statements]
+    assert normalized[0] == "begin immediate"
+    assert next(index for index, statement in enumerate(normalized) if "from sync_state" in statement) > 0

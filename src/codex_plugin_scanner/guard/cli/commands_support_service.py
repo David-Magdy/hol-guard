@@ -64,6 +64,8 @@ def _guard_service_sync_prerequisite_message() -> str:
     return "Hosted Guard runtime is not configured yet. Run `hol-guard connect` first."
 
 def _guard_service_sync_failure_message(error: GuardSyncNotConfiguredError) -> str:
+    if isinstance(error, GuardSyncEndpointUntrustedError):
+        return str(error)
     if isinstance(error, GuardSyncAuthorizationExpiredError):
         return str(error)
     return _guard_service_sync_prerequisite_message()
@@ -129,6 +131,8 @@ def _guard_sync_prerequisite_message() -> str:
     )
 
 def _guard_sync_failure_message(error: GuardSyncNotConfiguredError) -> str:
+    if isinstance(error, GuardSyncEndpointUntrustedError):
+        return str(error)
     if isinstance(error, GuardSyncAuthorizationExpiredError):
         return str(error)
     return _guard_sync_prerequisite_message()

@@ -73,9 +73,12 @@ def _run_guard_advisories_command(
         try:
             payload = _validated_supply_chain_sync_payload(sync_supply_chain_bundle(store))
         except GuardSyncNotConfiguredError as error:
-            status = (
-                "auth_expired" if isinstance(error, GuardSyncAuthorizationExpiredError) else "no_cloud_sync_configured"
-            )
+            if isinstance(error, GuardSyncEndpointUntrustedError):
+                status = "endpoint_untrusted"
+            elif isinstance(error, GuardSyncAuthorizationExpiredError):
+                status = "auth_expired"
+            else:
+                status = "no_cloud_sync_configured"
             _emit(
                 "advisories_sync",
                 {"generated_at": _now(), "status": status, "error": _guard_sync_failure_message(error)},

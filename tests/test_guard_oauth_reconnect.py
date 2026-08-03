@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from codex_plugin_scanner.guard.cli import connect_flow as guard_connect_flow_module
 from codex_plugin_scanner.guard.cli.connect_flow import run_guard_connect_repair_command
 from codex_plugin_scanner.guard.cli.oauth_client import PRODUCTION_GUARD_ISSUER, generate_dpop_key_pair
 from codex_plugin_scanner.guard.models import GuardApprovalRequest
@@ -111,6 +112,171 @@ def test_invalid_grant_refresh_preserves_sign_in_until_explicit_repair(tmp_path,
     assert "hol-guard connect" in str(error.value)
     assert "hol-guard disconnect" not in str(error.value)
     assert store.get_oauth_local_credentials(allow_primary=True) is not None
+
+
+def test_invalid_grant_refresh_reloads_rotated_cross_process_credentials(tmp_path, monkeypatch) -> None:
+    store = _store_with_oauth_credentials(tmp_path)
+    initial_credentials = store.get_oauth_local_credentials(allow_primary=True)
+    assert initial_credentials is not None
+    second_store = GuardStore(tmp_path / "guard-home")
+    resolver_tokens: list[str] = []
+
+    def _fake_resolve(_store, credentials, **_kwargs):
+        refresh_token = str(credentials["refresh_token"])
+        resolver_tokens.append(refresh_token)
+        if refresh_token == "refresh-token-1":
+            second_store.set_oauth_local_credentials(
+                issuer=str(credentials["issuer"]),
+                client_id=str(credentials["client_id"]),
+                refresh_token="refresh-token-2",
+                dpop_private_key_pem=str(credentials["dpop_private_key_pem"]),
+                dpop_public_jwk=dict(credentials["dpop_public_jwk"]),
+                dpop_public_jwk_thumbprint=str(credentials["dpop_public_jwk_thumbprint"]),
+                grant_id=str(credentials["grant_id"]),
+                machine_id=str(credentials["machine_id"]),
+                workspace_id=str(credentials["workspace_id"]),
+                now="2026-06-01T00:01:00+00:00",
+            )
+            raise guard_runner_module.GuardSyncAuthorizationExpiredError(
+                guard_runner_module._guard_oauth_reconnect_after_revoked_message()
+            )
+        return {
+            "sync_url": "https://hol.org/api/guard/receipts/sync",
+            "access_token": "rotated-access-token",
+            "dpop_key_material": None,
+        }
+
+    monkeypatch.setattr(
+        guard_runner_module,
+        "_resolve_guard_sync_auth_context_from_oauth_credentials",
+        _fake_resolve,
+    )
+
+    result = guard_runner_module._resolve_guard_sync_auth_context(store)
+
+    assert result["access_token"] == "rotated-access-token"
+    assert resolver_tokens == ["refresh-token-1", "refresh-token-2"]
+
+
+def test_invalid_grant_refresh_does_not_retry_unchanged_credentials(tmp_path, monkeypatch) -> None:
+    store = _store_with_oauth_credentials(tmp_path)
+    credentials = store.get_oauth_local_credentials(allow_primary=True)
+    assert credentials is not None
+    resolver_calls = 0
+
+    monkeypatch.setattr(store, "get_oauth_local_credentials", lambda **_kwargs: credentials)
+    monkeypatch.setattr(store, "_clear_oauth_secret_payload_cache", lambda: None)
+
+    def _fake_resolve(_store, _credentials, **_kwargs):
+        nonlocal resolver_calls
+        resolver_calls += 1
+        raise guard_runner_module.GuardSyncAuthorizationExpiredError(
+            guard_runner_module._guard_oauth_reconnect_after_revoked_message()
+        )
+
+    monkeypatch.setattr(
+        guard_runner_module,
+        "_resolve_guard_sync_auth_context_from_oauth_credentials",
+        _fake_resolve,
+    )
+
+    with pytest.raises(guard_runner_module.GuardSyncAuthorizationExpiredError):
+        guard_runner_module._resolve_guard_sync_auth_context(store)
+
+    assert resolver_calls == 1
+
+
+def test_connect_persistence_serializes_with_runtime_refresh(tmp_path, monkeypatch) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    dpop_key_material = generate_dpop_key_pair()
+    lock_held = False
+    persisted_while_locked = False
+    reconciled_while_locked = False
+
+    @contextmanager
+    def _fake_refresh_lock():
+        nonlocal lock_held
+        assert lock_held is False
+        lock_held = True
+        try:
+            yield
+        finally:
+            lock_held = False
+
+    def _fake_set_credentials(**_kwargs) -> None:
+        nonlocal persisted_while_locked
+        persisted_while_locked = lock_held
+
+    def _fake_reconcile(_store, *, now: str) -> None:
+        del now
+        nonlocal reconciled_while_locked
+        reconciled_while_locked = lock_held
+
+    monkeypatch.setattr(store, "hold_oauth_refresh_lock", _fake_refresh_lock)
+    monkeypatch.setattr(store, "set_oauth_local_credentials", _fake_set_credentials)
+    monkeypatch.setattr(
+        guard_connect_flow_module,
+        "reconcile_connect_state_with_oauth_entitlement",
+        _fake_reconcile,
+    )
+
+    guard_connect_flow_module._persist_oauth_local_credentials(
+        store=store,
+        issuer=PRODUCTION_GUARD_ISSUER,
+        client_id="guard-local-daemon",
+        refresh_token="refresh-token-2",
+        dpop_key_material=dpop_key_material,
+        grant_id="grant-2",
+        machine_id="machine-1",
+        workspace_id="workspace-1",
+        now="2026-06-01T00:01:00+00:00",
+    )
+
+    assert persisted_while_locked is True
+    assert reconciled_while_locked is True
+    assert lock_held is False
+
+
+def test_credential_clear_serializes_with_runtime_refresh(tmp_path, monkeypatch) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    refresh_lock_held = False
+    credential_lock_held = False
+    cache_cleared_under_both_locks = False
+
+    @contextmanager
+    def _fake_refresh_lock():
+        nonlocal refresh_lock_held
+        assert refresh_lock_held is False
+        refresh_lock_held = True
+        try:
+            yield
+        finally:
+            refresh_lock_held = False
+
+    @contextmanager
+    def _fake_credential_lock():
+        nonlocal credential_lock_held
+        assert refresh_lock_held is True
+        assert credential_lock_held is False
+        credential_lock_held = True
+        try:
+            yield
+        finally:
+            credential_lock_held = False
+
+    def _fake_clear_cache() -> None:
+        nonlocal cache_cleared_under_both_locks
+        cache_cleared_under_both_locks = refresh_lock_held and credential_lock_held
+
+    monkeypatch.setattr(store, "hold_oauth_refresh_lock", _fake_refresh_lock)
+    monkeypatch.setattr(store, "hold_oauth_credential_lock", _fake_credential_lock)
+    monkeypatch.setattr(store, "_clear_oauth_secret_payload_cache", _fake_clear_cache)
+
+    store.clear_oauth_local_credentials()
+
+    assert cache_cleared_under_both_locks is True
+    assert credential_lock_held is False
+    assert refresh_lock_held is False
 
 
 def test_storage_repair_recovers_missing_oauth_binding_and_claims_unowned_requests(tmp_path) -> None:

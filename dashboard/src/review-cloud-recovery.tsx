@@ -9,12 +9,55 @@ import {
   PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE,
 } from "./package-firewall-connect-browser";
 
-const unavailableEvidencePhrases = [
+const validationEvidencePhrases = [
   // Queued requests can outlive the daemon version that created their copy.
   "could not verify registry identity or package intelligence",
   "cloud evaluation could not validate",
+  "cloud evaluation endpoint was not trusted",
+  "cloud evaluation returned http",
+  "cloud evaluation returned an invalid",
+  "cloud evaluation timed out",
   "current package safety data was unavailable",
 ];
+const authorizationEvidencePhrases = [
+  "cloud evaluation was not authorized",
+  "cloud authorization expired",
+  "cloud evaluation could not establish a trusted session",
+  "cloud sign-in is missing or stale",
+];
+
+type PackageCloudRecoveryKind = "authorization" | "validation";
+
+const validationReasonCodes = new Set([
+  "cloud_validation_error",
+  "cloud_http_error",
+  "cloud_timeout",
+]);
+
+export function packageReviewCloudRecoveryKind(
+  item: GuardApprovalRequest,
+): PackageCloudRecoveryKind | null {
+  const packageRequest =
+    item.artifact_type === "supply_chain" ||
+    item.artifact_type === "package_request" ||
+    item.artifact_type.endsWith("_package");
+  if (!packageRequest) return null;
+  const reasonCode = item.decision_v2_json?.package_review_cloud_reason_code;
+  if (reasonCode === "cloud_auth_error") return "authorization";
+  if (typeof reasonCode === "string" && validationReasonCodes.has(reasonCode)) return "validation";
+
+  // Legacy queued requests predate the structured recovery reason code.
+  const evidence = [item.risk_headline, item.risk_summary, ...(item.risk_signals ?? [])]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  if (authorizationEvidencePhrases.some((phrase) => evidence.includes(phrase))) {
+    return "authorization";
+  }
+  return validationEvidencePhrases.some((phrase) => evidence.includes(phrase))
+    ? "validation"
+    : null;
+}
 
 async function withCloudRequestTimeout<T>(
   request: (signal: AbortSignal) => Promise<T>,
@@ -103,19 +146,19 @@ export async function waitForCloudConnection(
 }
 
 export function packageReviewNeedsCloudRecovery(item: GuardApprovalRequest): boolean {
-  const packageRequest =
-    item.artifact_type === "supply_chain" ||
-    item.artifact_type === "package_request" ||
-    item.artifact_type.endsWith("_package");
-  if (!packageRequest) return false;
-  const evidence = [item.risk_headline, item.risk_summary, ...(item.risk_signals ?? [])]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ")
-    .toLowerCase();
-  return unavailableEvidencePhrases.some((phrase) => evidence.includes(phrase));
+  return packageReviewCloudRecoveryKind(item) !== null;
 }
 
-export function cloudRecoveryContent(connected: boolean): { title: string; detail: string } {
+export function cloudRecoveryContent(
+  connected: boolean,
+  kind: PackageCloudRecoveryKind = "authorization",
+): { title: string; detail: string } {
+  if (kind === "validation") {
+    return {
+      title: "Guard Cloud could not check this package request",
+      detail: "This is not a sign-in error. Retry the install, or approve it once if you trust the package.",
+    };
+  }
   return connected
     ? {
         title: "Guard Cloud connected",
@@ -129,6 +172,7 @@ export function cloudRecoveryContent(connected: boolean): { title: string; detai
 }
 
 export function ReviewCloudRecovery({ item }: { item: GuardApprovalRequest }) {
+  const recoveryKind = packageReviewCloudRecoveryKind(item);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -202,14 +246,14 @@ export function ReviewCloudRecovery({ item }: { item: GuardApprovalRequest }) {
     }
   }, []);
 
-  if (!packageReviewNeedsCloudRecovery(item)) return null;
-  const content = cloudRecoveryContent(connected);
+  if (recoveryKind === null) return null;
+  const content = cloudRecoveryContent(connected, recoveryKind);
 
   return (
     <div className="mt-4 rounded-xl border border-brand-blue/20 bg-brand-blue/[0.04] p-4">
       <p className="text-sm font-semibold text-brand-dark">{content.title}</p>
       <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{content.detail}</p>
-      {!connected ? (
+      {!connected && recoveryKind === "authorization" ? (
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <ActionButton onClick={handleConnect} disabled={connecting} variant="outline">
             <HiMiniCloudArrowUp className="h-4 w-4" aria-hidden="true" />

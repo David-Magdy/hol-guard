@@ -2030,6 +2030,9 @@ def test_guard_protect_ignores_stale_policy_bundle_package_family_block(
     assert "cloud_validation_error" in reason_codes
     assert "saved_package_block" not in reason_codes
     assert "saved package policy" not in payload["supply_chain_evaluation"]["user_copy"]["harness_message"]
+    pending = GuardStore(home_dir).list_approval_requests(limit=None)
+    assert len(pending) == 1
+    assert pending[0]["decision_v2_json"]["package_review_cloud_reason_code"] == "cloud_validation_error"
 
 
 def test_guard_protect_ignores_ecosystem_scoped_policy_bundle_family_block(

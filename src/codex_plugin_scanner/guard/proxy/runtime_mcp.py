@@ -1696,9 +1696,7 @@ class RuntimeMcpGuardProxy:
                 execution_context=package_context,
                 artifact_digest=artifact_digest,
                 policy_workspace=policy_workspace,
-                saved_policy_blocks=any(
-                    reason.get("code") == "saved_package_block" for reason in resolved_package_evaluation.reasons
-                ),
+                saved_policy_blocks=_has_saved_package_block(resolved_package_evaluation.reasons),
                 pending_approval_reuse_decision=stored_package_resolution.approval_reuse_decision,
                 approval_reuse_claim_disposition=stored_package_resolution.claim_disposition,
             )
@@ -2250,7 +2248,7 @@ class RuntimeMcpGuardProxy:
         reuse_evidence = tuple(
             {"source": "approval_reuse", **cast(dict[str, object], raw)}
             for reason in resolution.evaluation.reasons
-            if isinstance((raw := reason.get("approval_reuse")), dict)
+            if isinstance(reason, Mapping) and isinstance((raw := reason.get("approval_reuse")), dict)
         )
         return (*tool_evidence, *context_evidence, *reuse_evidence)
 
@@ -2279,9 +2277,7 @@ class RuntimeMcpGuardProxy:
         receipt_signals: tuple[str, ...] = (),
         receipt_risk_categories: tuple[str, ...] = (),
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        reason_signals = tuple(
-            str(item.get("message") or item.get("code") or "") for item in package_evaluation.reasons
-        )
+        reason_signals = _package_reason_messages(package_evaluation.reasons)
         if remember:
             allow_tool_call(
                 store=self.store,
@@ -2352,6 +2348,13 @@ class RuntimeMcpGuardProxy:
         payload["user_body"] = package_evaluation.user_copy.summary
         payload["harness_message"] = package_evaluation.user_copy.harness_message
         payload["dashboard_primary_detail"] = package_evaluation.user_copy.summary
+        reason_codes = {
+            str(reason.get("code") or "") for reason in package_evaluation.reasons if isinstance(reason, Mapping)
+        }
+        for reason_code in ("cloud_auth_error", "cloud_validation_error", "cloud_http_error", "cloud_timeout"):
+            if reason_code in reason_codes:
+                payload["package_review_cloud_reason_code"] = reason_code
+                break
         return payload
 
     def _queue_package_approval_response(
@@ -2368,7 +2371,7 @@ class RuntimeMcpGuardProxy:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         approval_center_url = ensure_guard_daemon(self.context.guard_home)
         decision_v2_payload = self._package_decision_v2(package_evaluation, policy_action)
-        risk_signals = tuple(str(item.get("message") or item.get("code") or "") for item in package_evaluation.reasons)
+        risk_signals = _package_reason_messages(package_evaluation.reasons)
         queued = queue_blocked_approvals(
             redaction_level=self.config.receipt_redaction_level,
             detection=HarnessDetection(
@@ -2510,9 +2513,7 @@ class RuntimeMcpGuardProxy:
         policy_action: GuardAction,
         scanner_evidence: tuple[dict[str, object], ...],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        reason_signals = tuple(
-            str(item.get("message") or item.get("code") or "") for item in package_evaluation.reasons
-        )
+        reason_signals = _package_reason_messages(package_evaluation.reasons)
         block_tool_call(
             store=self.store,
             artifact=artifact,
@@ -2613,9 +2614,7 @@ class RuntimeMcpGuardProxy:
         package_evaluation: Any,
         scanner_evidence: tuple[dict[str, object], ...],
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        reason_signals = tuple(
-            str(item.get("message") or item.get("code") or "") for item in package_evaluation.reasons
-        )
+        reason_signals = _package_reason_messages(package_evaluation.reasons)
         block_tool_call(
             store=self.store,
             artifact=artifact,
@@ -3784,9 +3783,28 @@ def _command_argument(arguments: object) -> str | None:
     return None
 
 
+def _package_reason_messages(reasons: object) -> tuple[str, ...]:
+    if not isinstance(reasons, list | tuple):
+        return ("Package safety evaluation returned malformed reason data.",)
+    messages = tuple(
+        str(reason.get("message") or reason.get("code") or "")
+        for reason in reasons
+        if isinstance(reason, Mapping) and (reason.get("message") or reason.get("code"))
+    )
+    return messages or ("Package safety evaluation returned malformed reason data.",)
+
+
+def _has_saved_package_block(reasons: object) -> bool:
+    return isinstance(reasons, list | tuple) and any(
+        isinstance(reason, Mapping) and reason.get("code") == "saved_package_block" for reason in reasons
+    )
+
+
 def _package_reason_signals(reasons: tuple[dict[str, object], ...]) -> tuple[RiskSignalV2, ...]:
     signals: list[RiskSignalV2] = []
     for reason in reasons:
+        if not isinstance(reason, Mapping):
+            continue
         code = _optional_text(reason.get("code")) or "package-risk"
         message = _optional_text(reason.get("message")) or code.replace("_", " ")
         severity = _package_signal_severity(_optional_text(reason.get("severity")))

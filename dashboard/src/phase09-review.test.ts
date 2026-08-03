@@ -43,6 +43,7 @@ import {
 } from "./approval-center-utils";
 import {
   cloudRecoveryContent,
+  packageReviewCloudRecoveryKind,
   packageReviewNeedsCloudRecovery,
   ReviewCloudRecovery,
   waitForCloudConnection,
@@ -1361,9 +1362,58 @@ const cloudRecoveryMarkup = renderToStaticMarkup(
   createElement(ReviewCloudRecovery, { item: CLOUD_EVIDENCE_UNAVAILABLE_REQUEST }),
 );
 assert(
-  cloudRecoveryMarkup.includes("This does not mean the package is unsafe") &&
-    cloudRecoveryMarkup.includes("Connect Guard Cloud"),
-  "GR224-10: recovery UI explains the uncertainty and provides a connect action",
+  cloudRecoveryMarkup.includes("This is not a sign-in error") &&
+    !cloudRecoveryMarkup.includes("Connect Guard Cloud"),
+  "GR224-10: validation failures do not misrepresent a healthy Cloud connection",
+);
+assert(
+  packageReviewCloudRecoveryKind(CLOUD_EVIDENCE_UNAVAILABLE_REQUEST) === "validation",
+  "GR224-10a: package validation failures are distinct from authorization failures",
+);
+const CLOUD_AUTHORIZATION_REQUEST = {
+  ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+  risk_summary: "Guard cloud evaluation was not authorized, so this package request needs review.",
+};
+const cloudAuthorizationMarkup = renderToStaticMarkup(
+  createElement(ReviewCloudRecovery, { item: CLOUD_AUTHORIZATION_REQUEST }),
+);
+assert(
+  packageReviewCloudRecoveryKind(CLOUD_AUTHORIZATION_REQUEST) === "authorization" &&
+    cloudAuthorizationMarkup.includes("Connect Guard Cloud"),
+  "GR224-10b: authorization failures retain the sign-in recovery action",
+);
+const STRUCTURED_CLOUD_VALIDATION_REQUEST = {
+  ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+  risk_summary: "Package review needs attention.",
+  decision_v2_json: {
+    ...HIGH_SIGNAL_ITEM.decision_v2_json!,
+    package_review_cloud_reason_code: "cloud_timeout",
+  },
+};
+assert(
+  packageReviewCloudRecoveryKind(STRUCTURED_CLOUD_VALIDATION_REQUEST) === "validation",
+  "GR224-10c: structured reason codes classify recovery independently of copy",
+);
+for (const legacySummary of [
+  "Guard cloud evaluation returned HTTP 503, so Guard fell back to local intelligence.",
+  "Guard cloud evaluation timed out, so Guard fell back to local intelligence.",
+  "Guard cloud evaluation endpoint was not trusted, so this package request needs review.",
+  "Guard cloud evaluation returned an invalid response, so this package request needs review.",
+]) {
+  assert(
+    packageReviewCloudRecoveryKind({
+      ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+      risk_summary: legacySummary,
+    }) === "validation",
+    `GR224-10d: legacy validation recovery remains visible for ${legacySummary}`,
+  );
+}
+assert(
+  packageReviewCloudRecoveryKind({
+    ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+    risk_summary: "Guard cloud evaluation could not establish a trusted session, so this request needs review.",
+  }) === "authorization",
+  "GR224-10e: legacy trusted-session failure retains sign-in recovery",
 );
 assert(
   !packageReviewNeedsCloudRecovery({

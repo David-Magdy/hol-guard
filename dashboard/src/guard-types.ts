@@ -121,6 +121,7 @@ export type GuardDecisionV2 = {
   dashboard_primary_detail: string;
   approval_scopes: string[];
   retry_instruction: string | null;
+  package_review_cloud_reason_code?: string | null;
   signals: RiskSignalV2[];
   confidence: GuardDecisionV2Confidence;
 };
