@@ -1592,6 +1592,7 @@ def test_conflicting_scoped_lockfiles_remain_unsynced(tmp_path: Path) -> None:
 
     assert len(targets) == 1
     assert targets[0]["package_name"] == "lodash"
+    assert targets[0]["version"] is None
     assert targets[0]["manifest_unsynced"] is True
 
 
