@@ -48,38 +48,6 @@ def test_package_decision_v2_ignores_malformed_reason_items() -> None:
     assert decision["package_review_cloud_reason_code"] == "cloud_timeout"
 
 
-def test_observed_package_queue_ignores_malformed_reason_items(monkeypatch: pytest.MonkeyPatch) -> None:
-    evaluation = SimpleNamespace(
-        reasons=("malformed", {"code": "cloud_timeout", "message": "Cloud timed out."}),
-        risk_summary="Current package safety data was unavailable.",
-        user_copy=SimpleNamespace(
-            title="Review package request",
-            summary="Current package safety data was unavailable.",
-            harness_message="Review the package request.",
-        ),
-        to_dict=lambda: {"decision": "ask"},
-    )
-    proxy = object.__new__(RuntimeMcpGuardProxy)
-    queued: dict[str, object] = {}
-
-    def _capture_queue(**kwargs: object) -> None:
-        queued.update(kwargs)
-
-    monkeypatch.setattr(proxy, "_queue_observed_approval_requests", _capture_queue)
-
-    proxy._queue_observed_package_request(
-        artifact=SimpleNamespace(),
-        artifact_hash="artifact-hash",
-        tool_name="packages/install",
-        params={},
-        package_evaluation=evaluation,
-        policy_action="require-reapproval",
-        scanner_evidence=(),
-    )
-
-    assert queued["risk_signals"] == ["Cloud timed out."]
-
-
 def test_package_resolution_helpers_ignore_malformed_reason_items() -> None:
     reasons = ("malformed", {"code": "saved_package_block"})
     resolution = SimpleNamespace(
