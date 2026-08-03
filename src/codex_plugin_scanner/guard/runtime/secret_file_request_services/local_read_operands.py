@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 from pathlib import Path
 
+from ..false_positive_rules import SOURCE_INSPECTION_SENSITIVE_PARTS
 from .read_only_filters import _read_only_lookup_target_is_safe
 
 
@@ -39,9 +41,20 @@ def _local_read_operands_resolve_safely(
         resolved_root = root.resolve(strict=True)
     except (OSError, RuntimeError):
         return False
-    for operand in _shell_segment_file_operand_tokens([command_name, *args]):
+    if command_name == "rg" and any(arg in {"--hidden", "-.", "-u", "-uu", "-uuu", "--unrestricted"} for arg in args):
+        return False
+    operand_roles = (
+        _search_file_operand_roles(command_name, args)
+        if command_name in {"grep", "egrep", "fgrep", "rg"}
+        else tuple((operand, False) for operand in _shell_segment_file_operand_tokens([command_name, *args]))
+    )
+    for operand, is_search_glob in operand_roles:
         stripped = operand.strip().strip("'\"")
         if not stripped or stripped == "-":
+            continue
+        if is_search_glob:
+            if not _search_glob_pattern_is_safe(stripped, root=root):
+                return False
             continue
         has_glob_metacharacter = any(character in stripped for character in "*?[")
         candidate = Path(stripped)
@@ -82,36 +95,48 @@ def _bounded_local_read_glob_is_safe(
     root: Path,
     allow_dirs: bool,
 ) -> bool:
-    """Accept one-level read globs only when every match is a safe in-root target."""
+    """Accept bounded read globs only when every shell-visible match is safe."""
 
-    pattern = candidate.name
-    pattern_match = re.fullmatch(r"([A-Za-z0-9_.-]+)\*", pattern)
-    if pattern_match is None or any(character in os.fspath(candidate.parent) for character in "*?["):
-        return False
-    literal_prefix = pattern_match.group(1)
     try:
         root_resolved = root.resolve(strict=True)
-        lexical_parent = Path(os.path.abspath(os.fspath(candidate.parent)))
-        resolved_parent = candidate.parent.resolve(strict=True)
-        resolved_parent.relative_to(root_resolved)
-    except (FileNotFoundError, OSError, RuntimeError, ValueError):
-        return False
-    if resolved_parent != lexical_parent:
-        return False
-    matches: list[Path] = []
-    try:
-        entries_seen = 0
-        for match in resolved_parent.iterdir():
-            entries_seen += 1
-            if entries_seen > 4096:
-                return False
-            if not match.name.casefold().startswith(literal_prefix.casefold()):
-                continue
-            matches.append(match)
-            if len(matches) > 128:
-                return False
+        lexical_candidate = Path(os.path.abspath(os.fspath(candidate)))
+        relative_pattern = lexical_candidate.relative_to(root_resolved)
     except (OSError, RuntimeError, ValueError):
         return False
+    if "**" in relative_pattern.parts:
+        return False
+    matches = [root_resolved]
+    literal_fallback = False
+    try:
+        entries_seen = 0
+        for pattern in relative_pattern.parts:
+            next_matches: list[Path] = []
+            has_glob = any(character in pattern for character in "*?[")
+            for parent in matches:
+                if not has_glob:
+                    child = parent / pattern
+                    if child.exists():
+                        next_matches.append(child)
+                    continue
+                for child in parent.iterdir():
+                    entries_seen += 1
+                    if entries_seen > 4096:
+                        return False
+                    if child.name.startswith(".") and not pattern.startswith("."):
+                        continue
+                    # Audit a cross-platform superset so case-insensitive filesystems cannot widen the read.
+                    if fnmatch.fnmatchcase(child.name.casefold(), pattern.casefold()):
+                        next_matches.append(child)
+            matches = next_matches
+            if len(matches) > 128:
+                return False
+            if not matches:
+                break
+    except (OSError, RuntimeError, ValueError):
+        return False
+    if not matches and lexical_candidate.exists():
+        matches.append(lexical_candidate)
+        literal_fallback = True
     for match in matches:
         if match.name.startswith("-"):
             return False
@@ -123,10 +148,17 @@ def _bounded_local_read_glob_is_safe(
             relative = resolved.relative_to(root_resolved)
         except (FileNotFoundError, OSError, RuntimeError, ValueError):
             return False
-        if resolved != lexical or not _read_only_lookup_target_is_safe(
-            relative.as_posix(),
-            allow_dirs=allow_dirs and resolved.is_dir(),
-            home_dir=root,
+        lookup_target = relative.as_posix()
+        if literal_fallback:
+            lookup_target = lookup_target.replace("[", "").replace("]", "")
+        if (
+            resolved != lexical
+            or not lookup_target
+            or not _read_only_lookup_target_is_safe(
+                lookup_target,
+                allow_dirs=allow_dirs and resolved.is_dir(),
+                home_dir=root,
+            )
         ):
             return False
     return True
@@ -212,7 +244,17 @@ def _sed_file_operand_tokens(args: list[str]) -> tuple[str, ...]:
 
 
 def _search_file_operand_tokens(command_name: str, args: list[str]) -> tuple[str, ...]:
-    operands: list[str] = []
+    return tuple(operand for operand, _is_search_glob in _search_file_operand_roles(command_name, args))
+
+
+def _search_concrete_file_operand_tokens(command_name: str, args: list[str]) -> tuple[str, ...]:
+    return tuple(
+        operand for operand, is_search_glob in _search_file_operand_roles(command_name, args) if not is_search_glob
+    )
+
+
+def _search_file_operand_roles(command_name: str, args: list[str]) -> tuple[tuple[str, bool], ...]:
+    operands: list[tuple[str, bool]] = []
     pattern_seen = False
     skip_next = False
     skip_next_is_operand = False
@@ -220,12 +262,12 @@ def _search_file_operand_tokens(command_name: str, args: list[str]) -> tuple[str
     for arg in args:
         if skip_next:
             if skip_next_is_operand:
-                operands.append(arg)
+                operands.append((arg, True))
             skip_next = False
             skip_next_is_operand = False
             continue
         if after_options:
-            operands.append(arg)
+            operands.append((arg, False))
             continue
         if arg == "--":
             after_options = True
@@ -256,9 +298,9 @@ def _search_file_operand_tokens(command_name: str, args: list[str]) -> tuple[str
             "--type-not",
         }:
             skip_next = True
-            skip_next_is_operand = command_name in {"grep", "egrep", "fgrep"} and arg == "--include"
-            if command_name == "rg" and arg in {"-g", "--glob", "--iglob"}:
-                skip_next_is_operand = True
+            skip_next_is_operand = (command_name in {"grep", "egrep", "fgrep"} and arg == "--include") or (
+                command_name == "rg" and arg in {"-g", "--glob", "--iglob"}
+            )
             if arg in {"-e", "--regexp", "-f", "--file"}:
                 pattern_seen = True
             continue
@@ -281,10 +323,10 @@ def _search_file_operand_tokens(command_name: str, args: list[str]) -> tuple[str
         )
         if any(arg.startswith(f"{flag}=") for flag in search_value_flags):
             if command_name in {"grep", "egrep", "fgrep"} and arg.startswith("--include="):
-                operands.append(arg.split("=", 1)[1])
+                operands.append((arg.split("=", 1)[1], True))
                 continue
             if command_name == "rg" and any(arg.startswith(f"{flag}=") for flag in ("--glob", "--iglob")):
-                operands.append(arg.split("=", 1)[1])
+                operands.append((arg.split("=", 1)[1], True))
                 continue
             if arg.startswith(("--regexp=", "--file=")):
                 pattern_seen = True
@@ -293,7 +335,7 @@ def _search_file_operand_tokens(command_name: str, args: list[str]) -> tuple[str
         if any(arg.startswith(prefix) and len(arg) > len(prefix) for prefix in option_value_prefixes):
             continue
         if command_name == "rg" and arg.startswith("-g") and len(arg) > 2:
-            operands.append(arg[2:])
+            operands.append((arg[2:], True))
             continue
         if arg.startswith("-e") and len(arg) > 2:
             pattern_seen = True
@@ -303,8 +345,27 @@ def _search_file_operand_tokens(command_name: str, args: list[str]) -> tuple[str
         if not pattern_seen:
             pattern_seen = True
             continue
-        operands.append(arg)
+        operands.append((arg, False))
     return tuple(operands)
+
+
+def _search_glob_pattern_is_safe(pattern: str, *, root: Path) -> bool:
+    if any(token in pattern for token in ("**", "{", "}", "!")) or not _read_only_lookup_target_is_safe(
+        pattern,
+        allow_dirs=False,
+        home_dir=root,
+    ):
+        return False
+    components = Path(pattern).parts
+    for component in components:
+        folded = component.casefold()
+        for sensitive in SOURCE_INSPECTION_SENSITIVE_PARTS:
+            sensitive_folded = sensitive.casefold()
+            if fnmatch.fnmatchcase(sensitive_folded, folded) or fnmatch.fnmatchcase(
+                f"{sensitive_folded}.guard-sensitive-probe", folded
+            ):
+                return False
+    return True
 
 
 __all__ = [
@@ -312,6 +373,7 @@ __all__ = [
     "_cat_file_operand_tokens",
     "_local_read_operands_resolve_safely",
     "_plain_file_operand_tokens",
+    "_search_concrete_file_operand_tokens",
     "_search_file_operand_tokens",
     "_sed_file_operand_tokens",
     "_shell_segment_file_operand_tokens",

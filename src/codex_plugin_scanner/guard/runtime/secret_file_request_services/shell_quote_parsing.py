@@ -6,7 +6,9 @@ import shlex
 from dataclasses import replace
 from pathlib import Path
 
+from ..direct_vitest import _trusted_path_command
 from ..env_wrapper import parse_env_wrapper
+from ..local_package_script_evidence import build_local_package_script_evidence
 from ..shell_execution_context import ShellExecutionContext, model_shell_execution_context
 from .constants_core import _GH_PR_OPTION_VALUE_FLAGS
 from .developer_inspection import _static_shell_segment_is_safe
@@ -112,11 +114,11 @@ def literal_cd_execution_context(
     if _shell_execution_context_validation_reason(context) is not None:
         return None
     if len(context.segments) not in {2, 3}:
-        return None
+        return context if _bounded_local_runner_chain_is_safe(context, home_dir=home_dir) else None
     runner = context.segments[1]
     command_name, command_index = _shell_segment_primary_command(list(runner.tokens))
     if command_name not in {"bunx", "npx"} or command_index is None:
-        return None
+        return context if _bounded_local_runner_chain_is_safe(context, home_dir=home_dir) else None
     args = _without_safe_inspection_redirections(list(runner.tokens[command_index + 1 :]))
     if args is None:
         return None
@@ -154,6 +156,62 @@ def literal_cd_execution_context(
         if not count.startswith("-") or not count[1:].isdigit() or not 1 <= int(count[1:]) <= 1000:
             return None
     return context
+
+
+def _bounded_local_runner_chain_is_safe(context: ShellExecutionContext, *, home_dir: Path) -> bool:
+    """Compose verified local checks, bounded output filters, and static labels."""
+
+    workspace = context.workspace_root
+    if workspace is None or not context.segments:
+        return False
+    index = 1
+    saw_runner = False
+    bun_trusted: bool | None = None
+    while index < len(context.segments):
+        segment = context.segments[index]
+        command_name, command_index = _shell_segment_primary_command(list(segment.tokens))
+        if command_name is None or command_index is None or segment.control_before not in {("&&",), (";",), ("\n",)}:
+            return False
+        if command_index != 0:
+            return False
+        args = _without_safe_inspection_redirections(list(segment.tokens[command_index + 1 :]))
+        if args is None:
+            return False
+        if command_name == "echo":
+            if not _static_shell_segment_is_safe(args):
+                return False
+            index += 1
+            continue
+        if command_name == "bun":
+            if len(args) != 2 or args[0] != "run":
+                return False
+            if bun_trusted is None:
+                bun_trusted = _trusted_path_command("bun", cwd=workspace, home_dir=home_dir)
+            script_key = tuple(args)
+            evidence = build_local_package_script_evidence("bun", script_key, workspace=workspace)
+            if not bun_trusted or evidence is None or evidence.status != "complete":
+                return False
+        else:
+            return False
+        saw_runner = True
+        index += 1
+        if index < len(context.segments) and context.segments[index].control_before == ("|",):
+            output_filter = context.segments[index]
+            filter_name, filter_index = _shell_segment_primary_command(list(output_filter.tokens))
+            if (
+                filter_name not in {"head", "tail"}
+                or filter_index != 0
+                or not _trusted_path_command(filter_name, cwd=workspace, home_dir=home_dir)
+            ):
+                return False
+            filter_args = _without_safe_inspection_redirections(list(output_filter.tokens[filter_index + 1 :]))
+            if filter_args is None or len(filter_args) != 1:
+                return False
+            count = filter_args[0]
+            if not count.startswith("-") or not count[1:].isdigit() or not 1 <= int(count[1:]) <= 1000:
+                return False
+            index += 1
+    return saw_runner
 
 
 def _runner_argument_escapes_root(arg: str, *, cwd: Path, root: Path) -> bool:
