@@ -875,6 +875,10 @@ class GuardSyncNotConfiguredError(RuntimeError):
     """Raised when Guard Cloud sync is requested before the machine is paired."""
 
 
+class GuardSyncEndpointUntrustedError(GuardSyncNotConfiguredError):
+    """Raised when a configured Guard Cloud endpoint fails trust validation."""
+
+
 class GuardSyncNotAvailableError(RuntimeError):
     """Raised when Guard Cloud sync is blocked by plan limits or temporary outages."""
 
@@ -4037,9 +4041,7 @@ def _validate_guard_sync_url(sync_url: str, *, issuer: str | None = None) -> str
     try:
         return validate_guard_sync_endpoint(sync_url, issuer=issuer)
     except ValueError as error:
-        if issuer is not None:
-            raise GuardSyncAuthorizationExpiredError(f"{_guard_oauth_reauthorization_message()} {error}") from error
-        raise GuardSyncNotConfiguredError(f"{_guard_sync_reconnect_message()} {error}") from error
+        raise GuardSyncEndpointUntrustedError(f"{_guard_sync_reconnect_message()} {error}") from error
 
 
 def _refresh_guard_oauth_access_token(
@@ -4338,7 +4340,7 @@ def _resolve_guard_sync_auth_context_from_oauth_credentials(
     try:
         oauth_client = resolve_guard_oauth_client_config(issuer)
     except ValueError as error:
-        raise GuardSyncAuthorizationExpiredError(f"{_guard_oauth_reauthorization_message()} {error}") from error
+        raise GuardSyncEndpointUntrustedError(f"{_guard_sync_reconnect_message()} {error}") from error
     cached_access_token = (
         None if force_refresh else _cached_oauth_access_token(oauth_credentials, now=datetime.now(timezone.utc))
     )

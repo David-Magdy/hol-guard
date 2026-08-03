@@ -64,6 +64,7 @@ from .restricted_archive_download import (
 )
 from .runner import (
     GuardSyncAuthorizationExpiredError,
+    GuardSyncEndpointUntrustedError,
     GuardSyncNotConfiguredError,
     _guard_sync_request,
     _normalized_receipts_sync_url,
@@ -1082,12 +1083,31 @@ def _evaluate_with_cloud(
             ),
             None,
         )
+    except GuardSyncEndpointUntrustedError:
+        return (
+            _cloud_fail_closed_evaluation(
+                code="cloud_validation_error",
+                message="Guard cloud evaluation endpoint was not trusted, so this package request needs review.",
+                artifact=artifact,
+                targets=targets,
+                workspace_dir=workspace_dir,
+                workspace_fingerprint=workspace_fingerprint,
+                bundle_meta=bundle_meta,
+                fail_closed_decision=resolve_fail_closed_decision(),
+            ),
+            None,
+        )
     except GuardSyncNotConfiguredError:
         if bool(store.get_oauth_local_credential_health().get("configured")):
+            if can_fallback_from_auth_failure():
+                return None, _cloud_fallback_reason(
+                    code="cloud_auth_error",
+                    message="Guard Cloud credentials were unavailable, so Guard used local package intelligence.",
+                )
             return (
                 _cloud_fail_closed_evaluation(
-                    code="cloud_validation_error",
-                    message="Guard cloud evaluation endpoint was not trusted, so this package request needs review.",
+                    code="cloud_auth_error",
+                    message="Guard Cloud credentials were unavailable, so this package request needs review.",
                     artifact=artifact,
                     targets=targets,
                     workspace_dir=workspace_dir,
@@ -1117,7 +1137,19 @@ def _evaluate_with_cloud(
         )
     sync_url = _optional_string(auth_context.get("sync_url"))
     if sync_url is None:
-        return None, None
+        return (
+            _cloud_fail_closed_evaluation(
+                code="cloud_validation_error",
+                message="Guard cloud evaluation session was invalid, so this package request needs review.",
+                artifact=artifact,
+                targets=targets,
+                workspace_dir=workspace_dir,
+                workspace_fingerprint=workspace_fingerprint,
+                bundle_meta=bundle_meta,
+                fail_closed_decision=resolve_fail_closed_decision(),
+            ),
+            None,
+        )
     try:
         sync_url = _validate_guard_sync_url(sync_url, issuer=_optional_string(auth_context.get("issuer")))
     except GuardSyncNotConfiguredError:
@@ -4802,8 +4834,6 @@ def _cloud_result_should_defer_to_bundle(
         return False
     reason_codes = {str(reason.get("code") or "") for reason in evaluation.reasons if isinstance(reason, dict)}
     if evaluation.decision == "block" and evaluation.policy_action == "block":
-        if "cloud_validation_error" in reason_codes and "cloud_timeout" not in reason_codes:
-            return False
         return False
     defer_codes = {"cloud_auth_error", "cloud_http_error", "cloud_timeout"}
     if not any(code in defer_codes for code in reason_codes):

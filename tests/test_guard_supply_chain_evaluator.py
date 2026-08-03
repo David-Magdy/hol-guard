@@ -32,7 +32,7 @@ from codex_plugin_scanner.guard.runtime.package_intent_common import (
 )
 from codex_plugin_scanner.guard.runtime.package_manifest_diff import _DeadlineExceededError
 from codex_plugin_scanner.guard.runtime.restricted_archive_download import RestrictedArchiveDownload
-from codex_plugin_scanner.guard.runtime.runner import GuardSyncAuthorizationExpiredError
+from codex_plugin_scanner.guard.runtime.runner import GuardSyncAuthorizationExpiredError, GuardSyncNotConfiguredError
 from codex_plugin_scanner.guard.runtime.supply_chain_package_eval import (
     PackageRequestEvaluation,
     SupplyChainUserCopy,
@@ -1202,6 +1202,121 @@ def test_cloud_access_token_refresh_failure_returns_safe_evaluation(
     assert result.policy_action == expected_action
     reason_codes = [reason["code"] for reason in result.reasons]
     assert expected_code in reason_codes, reason_codes
+
+
+def test_unavailable_configured_credentials_use_complete_signed_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id=WORKSPACE_ID)
+    response = _bundle_response(
+        packages=[
+            _package(
+                ecosystem="npm",
+                name="left-pad",
+                version="1.0.0",
+                default_action="monitor",
+                normalized_severity="low",
+                exploit_level="none",
+                known_exploited=False,
+                malware_state="none",
+                risk_score=220,
+            )
+        ]
+    )
+    store.cache_supply_chain_bundle(WORKSPACE_ID, response, "2026-05-19T00:00:00Z")
+
+    def unavailable_credentials(_store: GuardStore, **_kwargs: object) -> dict[str, object]:
+        raise GuardSyncNotConfiguredError("Guard Cloud credentials are unavailable.")
+
+    monkeypatch.setattr(evaluator_module, "_resolve_guard_sync_auth_context", unavailable_credentials)
+
+    result = evaluate_package_request_artifact(
+        artifact=_artifact_for_targets("left-pad@1.0.0"),
+        store=store,
+        workspace_dir=tmp_path / "workspace",
+        now="2026-05-19T00:00:00Z",
+    )
+
+    assert result.decision == "monitor"
+    assert result.policy_action == "allow"
+    assert any(reason["code"] == "cloud_auth_error" for reason in result.reasons)
+
+
+def test_untrusted_stored_oauth_issuer_cannot_use_bundle_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from codex_plugin_scanner.guard.runtime import runner as guard_runner_module
+
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id=WORKSPACE_ID)
+    response = _bundle_response(
+        packages=[
+            _package(
+                ecosystem="npm",
+                name="left-pad",
+                version="1.0.0",
+                default_action="monitor",
+                normalized_severity="low",
+                exploit_level="none",
+                known_exploited=False,
+                malware_state="none",
+                risk_score=220,
+            )
+        ]
+    )
+    store.cache_supply_chain_bundle(WORKSPACE_ID, response, "2026-05-19T00:00:00Z")
+    credential_state = store.get_sync_payload("oauth_local_credentials")
+    assert isinstance(credential_state, dict)
+    store.set_sync_payload(
+        "oauth_local_credentials",
+        {**credential_state, "issuer": "https://untrusted.example"},
+        "2026-05-19T00:00:01Z",
+    )
+    monkeypatch.setattr(guard_runner_module, "_test_sync_auth_context_override", None)
+
+    def unexpected_network(**_kwargs: object) -> object:
+        raise AssertionError("untrusted stored issuer must fail before network access")
+
+    monkeypatch.setattr(evaluator_module, "_urlopen_json_with_timeout_retry", unexpected_network)
+
+    result = evaluate_package_request_artifact(
+        artifact=_artifact_for_targets("left-pad@1.0.0"),
+        store=store,
+        workspace_dir=tmp_path / "workspace",
+        now="2026-05-19T00:00:00Z",
+    )
+
+    assert result.decision == "ask"
+    assert result.policy_action == "require-reapproval"
+    assert any(reason["code"] == "cloud_validation_error" for reason in result.reasons)
+
+
+def test_malformed_auth_context_without_sync_url_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id=WORKSPACE_ID)
+
+    monkeypatch.setattr(
+        evaluator_module,
+        "_resolve_guard_sync_auth_context",
+        lambda _store, **_kwargs: {"access_token": "token"},
+    )
+
+    result = evaluate_package_request_artifact(
+        artifact=_artifact_for_targets("left-pad@1.0.0"),
+        store=store,
+        workspace_dir=tmp_path / "workspace",
+        now="2026-05-19T00:00:00Z",
+    )
+
+    assert result.decision == "ask"
+    assert result.policy_action == "require-reapproval"
+    assert any(reason["code"] == "cloud_validation_error" for reason in result.reasons)
 
 
 def test_evaluate_package_request_artifact_strict_mode_blocks_on_cloud_unreachable(
