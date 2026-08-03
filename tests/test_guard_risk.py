@@ -3864,6 +3864,14 @@ def test_explicitly_benign_tool_action_request_allows_verified_observers(command
         "rg --pre=/tmp/payload GuardStore src",
         "rg --hostname-bin=/tmp/payload GuardStore src",
         "rg --config-path=/tmp/rg.conf GuardStore src",
+        "rg --hidden API_KEY .",
+        "rg --unrestricted API_KEY .",
+        "rg -u API_KEY .",
+        "rg -uuu API_KEY .",
+        "rg -uF API_KEY .",
+        "rg -Fu API_KEY .",
+        "rg -uuuF API_KEY .",
+        "rg -.F API_KEY .",
     ),
 )
 def test_explicitly_benign_tool_action_request_rejects_unverified_observers(command: str):

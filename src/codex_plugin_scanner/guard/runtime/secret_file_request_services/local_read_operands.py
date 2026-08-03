@@ -10,6 +10,53 @@ from pathlib import Path
 from ..false_positive_rules import SOURCE_INSPECTION_SENSITIVE_PARTS
 from .read_only_filters import _read_only_lookup_target_is_safe
 
+_RG_SHORT_OPTIONS_WITH_VALUE = frozenset("ABCEdefgjmMrTt")
+_RG_LONG_OPTIONS_WITH_VALUE = frozenset(
+    {
+        "--after-context",
+        "--before-context",
+        "--context",
+        "--encoding",
+        "--file",
+        "--glob",
+        "--iglob",
+        "--max-columns",
+        "--max-count",
+        "--max-depth",
+        "--max-filesize",
+        "--regexp",
+        "--replace",
+        "--threads",
+        "--type",
+        "--type-not",
+    }
+)
+
+
+def _ripgrep_args_expand_hidden_files(args: list[str]) -> bool:
+    expect_value = False
+    for arg in args:
+        if expect_value:
+            expect_value = False
+            continue
+        if arg == "--":
+            break
+        if arg in {"--hidden", "--unrestricted"}:
+            return True
+        if arg.startswith("--"):
+            expect_value = "=" not in arg and arg in _RG_LONG_OPTIONS_WITH_VALUE
+            continue
+        if not arg.startswith("-") or arg == "-":
+            continue
+        cluster = arg[1:]
+        for index, option in enumerate(cluster):
+            if option in {"u", "."}:
+                return True
+            if option in _RG_SHORT_OPTIONS_WITH_VALUE:
+                expect_value = index == len(cluster) - 1
+                break
+    return False
+
 
 def _shell_segment_file_operand_tokens(segment: list[str]) -> tuple[str, ...]:
     if not segment:
@@ -41,7 +88,7 @@ def _local_read_operands_resolve_safely(
         resolved_root = root.resolve(strict=True)
     except (OSError, RuntimeError):
         return False
-    if command_name == "rg" and any(arg in {"--hidden", "-.", "-u", "-uu", "-uuu", "--unrestricted"} for arg in args):
+    if command_name == "rg" and _ripgrep_args_expand_hidden_files(args):
         return False
     operand_roles = (
         _search_file_operand_roles(command_name, args)
@@ -373,6 +420,7 @@ __all__ = [
     "_cat_file_operand_tokens",
     "_local_read_operands_resolve_safely",
     "_plain_file_operand_tokens",
+    "_ripgrep_args_expand_hidden_files",
     "_search_concrete_file_operand_tokens",
     "_search_file_operand_tokens",
     "_sed_file_operand_tokens",

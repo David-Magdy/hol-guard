@@ -20,6 +20,7 @@ from codex_plugin_scanner.guard.runtime.secret_file_request_services.interpreter
 )
 from codex_plugin_scanner.guard.runtime.secret_file_request_services.local_read_operands import (
     _local_read_operands_resolve_safely,
+    _ripgrep_args_expand_hidden_files,
 )
 from codex_plugin_scanner.guard.runtime.secret_file_request_services.node_heredoc_safety import (
     _looks_like_safe_node_generated_file_heredoc,
@@ -74,6 +75,14 @@ def test_local_read_rejects_missing_containment_root(tmp_path: Path) -> None:
         cwd=tmp_path,
         root=tmp_path / "missing",
     )
+
+
+def test_ripgrep_hidden_mode_parser_handles_clusters_and_option_values() -> None:
+    assert _ripgrep_args_expand_hidden_files(["-Fu", "API_KEY", "."])
+    assert _ripgrep_args_expand_hidden_files(["-.F", "API_KEY", "."])
+    assert not _ripgrep_args_expand_hidden_files(["-g*.ts", "API_KEY", "."])
+    assert not _ripgrep_args_expand_hidden_files(["-g", "-u", "API_KEY", "."])
+    assert not _ripgrep_args_expand_hidden_files(["--", "-u", "."])
 
 
 def test_generated_node_workflow_requires_quoted_heredoc() -> None:

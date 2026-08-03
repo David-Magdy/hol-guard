@@ -29,6 +29,7 @@ from .developer_inspection import (
     _static_shell_segment_is_safe,
 )
 from .github_pr_body_safety import _shell_heredoc_payloads
+from .local_read_operands import _ripgrep_args_expand_hidden_files
 from .read_only_filters import _read_only_lookup_filter_segment_is_safe, _split_attached_redirection_token
 from .request_artifacts import _normalized_shell_command_name
 from .shell_static_safety import (
@@ -68,6 +69,8 @@ def _looks_like_safe_read_only_lookup_command(
             return False
         if index == 0:
             if command not in _READ_ONLY_LOOKUP_COMMANDS:
+                return False
+            if command == "rg" and _ripgrep_args_expand_hidden_files(segment[1:]):
                 return False
             if not _read_only_lookup_primary_segment_is_safe(command, segment[1:], home_dir=home_dir):
                 return False
