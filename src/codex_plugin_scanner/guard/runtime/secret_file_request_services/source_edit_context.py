@@ -14,7 +14,7 @@ from .developer_inspection import (
     _static_shell_segment_is_safe,
 )
 from .docker_requests import _shell_execution_context_validation_reason, shell_execution_context_starts_with_literal_cd
-from .local_read_operands import _search_file_operand_tokens
+from .local_read_operands import _search_concrete_file_operand_tokens
 from .read_only_filters import _read_only_lookup_target_is_safe
 from .shell_static_safety import _leading_literal_cd_workspace_root, _without_safe_inspection_redirections
 from .shell_tokenization import _shell_segment_primary_command
@@ -116,7 +116,7 @@ def _bounded_verified_source_edit_execution_context(
         home_dir=verification.effective_cwd or workspace_root,
     ):
         return None
-    verification_targets = _search_file_operand_tokens(verification_name, verification_args)
+    verification_targets = _search_concrete_file_operand_tokens(verification_name, verification_args)
     if len(verification_targets) != 1:
         return None
     if not _same_workspace_file(target, verification_targets[0], cwd=workspace_root):
