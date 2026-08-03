@@ -817,7 +817,7 @@ function SupplyChainRecovery({ issues, state, onFixAll }) {
               ]
             }
           ),
-          state.failedSteps.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 space-y-1 text-xs text-red-600", children: state.failedSteps.map((failure) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: failure }, failure)) }) : null
+          state.failedSteps.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 space-y-1 text-xs text-red-600", children: state.failedSteps.map((failure, index) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: failure }, `${index}:${failure}`)) }) : null
         ] }) : null }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",

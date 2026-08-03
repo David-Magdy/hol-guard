@@ -49,6 +49,23 @@ assert(markup.includes('aria-live="polite"'), "the result live region exists bef
 assert(supplyChainFixAllButtonLabel("incomplete") === "Retry fixes", "partial repair remains actionable");
 assert(supplyChainFixAllIsPending("approval"), "approval phase prevents duplicate submissions");
 
+const duplicateFailureMarkup = renderToStaticMarkup(
+  <SupplyChainRecovery
+    issues={issues}
+    state={{
+      phase: "incomplete",
+      message: "Two steps need another attempt.",
+      completedSteps: [],
+      failedSteps: ["Retry this step.", "Retry this step."],
+    }}
+    onFixAll={() => undefined}
+  />,
+);
+assert(
+  duplicateFailureMarkup.match(/Retry this step\./g)?.length === 2,
+  "duplicate failure messages render as distinct rows",
+);
+
 function firewallStatus(
   reason: string,
   options: { allowed?: boolean; installed?: boolean } = {},

@@ -60,28 +60,28 @@ export function SupplyChainRecovery({ issues, state, onFixAll }: SupplyChainReco
       <div className={showResult ? "mt-3" : ""} aria-live="polite">
         {showResult ? (
           <>
-          <p
-            className={`flex items-start gap-2 text-sm ${
-              state.phase === "error" || state.phase === "incomplete"
-                ? "text-red-600"
-                : "text-slate-600"
-            }`}
-          >
-            {state.phase === "success" ? (
-              <HiMiniCheckCircle
-                className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500"
-                aria-hidden="true"
-              />
+            <p
+              className={`flex items-start gap-2 text-sm ${
+                state.phase === "error" || state.phase === "incomplete"
+                  ? "text-red-600"
+                  : "text-slate-600"
+              }`}
+            >
+              {state.phase === "success" ? (
+                <HiMiniCheckCircle
+                  className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500"
+                  aria-hidden="true"
+                />
+              ) : null}
+              {state.message}
+            </p>
+            {state.failedSteps.length > 0 ? (
+              <ul className="mt-2 space-y-1 text-xs text-red-600">
+                {state.failedSteps.map((failure, index) => (
+                  <li key={`${index}:${failure}`}>{failure}</li>
+                ))}
+              </ul>
             ) : null}
-            {state.message}
-          </p>
-          {state.failedSteps.length > 0 ? (
-            <ul className="mt-2 space-y-1 text-xs text-red-600">
-              {state.failedSteps.map((failure) => (
-                <li key={failure}>{failure}</li>
-              ))}
-            </ul>
-          ) : null}
           </>
         ) : null}
       </div>

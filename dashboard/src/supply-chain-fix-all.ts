@@ -1,3 +1,5 @@
+import type { PackageFirewallStatusResponse } from "./guard-types";
+
 export type SupplyChainFixAllPhase =
   | "idle"
   | "working"
@@ -39,4 +41,3 @@ export function supplyChainFixAllRequiresConnection(data: PackageFirewallStatusR
   if (data.entitlement.reason !== "guard_cloud_connect_required") return false;
   return !data.package_shims.some((entry) => entry.installed);
 }
-import type { PackageFirewallStatusResponse } from "./guard-types";
