@@ -1121,7 +1121,7 @@ def _evaluate_with_cloud(
     except RuntimeError:
         return (
             _cloud_fail_closed_evaluation(
-                code="cloud_validation_error",
+                code="cloud_auth_error",
                 message=(
                     "Guard cloud evaluation could not establish a trusted session, "
                     "so this package request needs review."

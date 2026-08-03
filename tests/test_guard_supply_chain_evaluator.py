@@ -2883,7 +2883,7 @@ def test_evaluate_unlisted_package_fails_closed_on_unexpected_auth_context_error
 
     assert result.decision == "ask"
     assert result.policy_action == "require-reapproval"
-    assert any(reason["code"] == "cloud_validation_error" for reason in result.reasons)
+    assert any(reason["code"] == "cloud_auth_error" for reason in result.reasons)
 
 
 def test_evaluate_package_request_artifact_honors_cloud_advisory_block_when_auth_expired(
