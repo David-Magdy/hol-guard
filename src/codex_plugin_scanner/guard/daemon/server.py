@@ -5814,6 +5814,14 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 deadline=deadline,
             )
             if result is not None:
+                if deadline is not None and time.monotonic() >= deadline:
+                    result = self._runtime_hook_fail_safe_response(
+                        payload,
+                        params,
+                        default_harness=default_harness,
+                        reason="HOL Guard could not complete local review within the hook deadline. Retry this action.",
+                        reason_code="daemon_hook_deadline_exhausted",
+                    )
                 self._write_json(result)
                 return
 

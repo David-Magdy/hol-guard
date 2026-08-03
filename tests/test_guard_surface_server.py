@@ -4328,6 +4328,61 @@ class TestGuardDaemonFastHookPath:
         assert result["reviewed_output_sha256"] == output_sha256
         assert result["notice"] == "none"
 
+    def test_fast_path_rejects_authorization_after_deadline(self, tmp_path, monkeypatch) -> None:
+        home_dir = tmp_path / "home"
+        workspace_dir = tmp_path / "workspace"
+        home_dir.mkdir()
+        workspace_dir.mkdir()
+        store = GuardStore(tmp_path / "guard-home")
+        monkeypatch.setattr(
+            daemon_server_module._GuardDaemonHandler,
+            "_hook_safe_roots",
+            lambda _self: (tmp_path.resolve(),),
+        )
+        monkeypatch.setenv("HOL_GUARD_HOOK_FAST_PATH", "1")
+
+        def late_allow(*_args: object, **_kwargs: object) -> dict[str, object]:
+            time.sleep(0.05)
+            return {"decision": "allow", "model_output_action": "allow_original"}
+
+        monkeypatch.setattr(
+            daemon_server_module._GuardDaemonHandler,
+            "_handle_runtime_hook_fast",
+            late_allow,
+        )
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+
+        try:
+            request = urllib.request.Request(
+                (
+                    f"http://127.0.0.1:{daemon.port}/v1/hooks/pi?"
+                    f"guard-home={urllib.parse.quote(str(store.guard_home))}&"
+                    f"home={urllib.parse.quote(str(home_dir))}&"
+                    f"workspace={urllib.parse.quote(str(workspace_dir))}"
+                ),
+                data=json.dumps(
+                    {
+                        "hook_event_name": "PostToolUse",
+                        "tool_name": "Read",
+                        "guard_remaining_ms": 30,
+                    }
+                ).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Guard-Token": daemon._server.auth_token,
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        finally:
+            daemon.stop()
+
+        assert response.status == 200
+        assert result["decision"] == "deny"
+        assert result["reason_code"] == "daemon_hook_deadline_exhausted"
+
     @pytest.mark.parametrize("source_kind", ["relative", "virtual", "absolute"])
     def test_fast_path_hydrates_large_pi_payload_reference(
         self,
