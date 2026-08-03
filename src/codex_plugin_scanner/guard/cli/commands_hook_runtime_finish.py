@@ -48,6 +48,28 @@ from .commands_hook_runtime_state import (
     set_runtime_artifact_hook_final_action,
 )
 
+
+_GUIDED_POLICY_ACTIONS = frozenset({"block", "review", "require-reapproval", "sandbox-required"})
+
+
+def _embedded_script_remediation(state: RuntimeArtifactHookState) -> str | None:
+    """Guidance when a blocked/reviewed command carries an inline script body."""
+
+    if state.policy_action not in _GUIDED_POLICY_ACTIONS:
+        return None
+    envelope = state.action_envelope
+    command_text = envelope.command if envelope is not None else None
+    if not isinstance(command_text, str):
+        return None
+    from ..runtime.embedded_script_evidence import (
+        EMBEDDED_SCRIPT_REMEDIATION_GUIDANCE,
+        command_has_embedded_script,
+    )
+
+    if command_has_embedded_script(command_text):
+        return EMBEDDED_SCRIPT_REMEDIATION_GUIDANCE
+    return None
+
 def _finalize_runtime_artifact_hook(
     state: RuntimeArtifactHookState,
     args: argparse.Namespace,
@@ -204,12 +226,17 @@ def _finalize_runtime_artifact_hook(
     raw_runtime_reason = _runtime_artifact_native_reason(runtime_artifact, response_payload)
     if _should_emit_native_hook_exit_block(args, event_name=event_name, policy_action=policy_action):
         if _canonical_harness_name(args.harness) == "codex" and approval_context is not None:
-            native_block_reason = _native_hook_reason(raw_runtime_reason, approval_context)
+            native_block_reason = _native_hook_reason(
+                raw_runtime_reason,
+                approval_context,
+                _embedded_script_remediation(state),
+            )
         else:
             native_block_reason = _native_hook_reason_for_harness(
                 args.harness,
                 raw_runtime_reason,
                 approval_context,
+                _embedded_script_remediation(state),
             )
         if _canonical_harness_name(args.harness) == "kimi":
             _emit_native_hook_response(
@@ -263,12 +290,14 @@ def _finalize_runtime_artifact_hook(
         runtime_reason = _native_hook_reason(
             raw_runtime_reason,
             approval_context or response_payload.get("review_hint"),
+            _embedded_script_remediation(state),
         )
     else:
         runtime_reason = _native_hook_reason_for_harness(
             args.harness,
             raw_runtime_reason,
             approval_context,
+            _embedded_script_remediation(state),
         )
     if _should_emit_claude_native_pretooluse_notice(
         args,

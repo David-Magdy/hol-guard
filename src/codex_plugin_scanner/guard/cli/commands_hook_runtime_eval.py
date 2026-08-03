@@ -199,6 +199,14 @@ def _runtime_external_archive_has_digest_binding_sink(
     return resolved_executable == shim_path
 
 
+def _embedded_script_evidence(command_text: str) -> list[dict[str, object]]:
+    """Hash-addressed audit entries for heredoc script bodies (lazy import)."""
+
+    from ..runtime.embedded_script_evidence import embedded_script_evidence_entries
+
+    return embedded_script_evidence_entries(command_text)
+
+
 def _runtime_cisco_scanner_evidence(
     action_envelope: GuardActionEnvelope,
     *,
@@ -449,6 +457,8 @@ def _evaluate_runtime_artifact_hook(
         else ()
     )
     scanner_evidence_payload = [signal.to_dict() for signal in scanner_evidence]
+    if action_envelope is not None and isinstance(action_envelope.command, str):
+        scanner_evidence_payload.extend(_embedded_script_evidence(action_envelope.command))
     if workflow_state.approval_record is not None:
         scanner_evidence_payload.append(github_workflow_approval_evidence(workflow_state.approval_record))
     for input_source, normalization in (
