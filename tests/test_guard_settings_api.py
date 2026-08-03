@@ -12,6 +12,10 @@ from codex_plugin_scanner.guard.config import load_guard_config, resolve_risk_ac
 from codex_plugin_scanner.guard.daemon import GuardDaemonServer
 from codex_plugin_scanner.guard.daemon import server as daemon_server_module
 from codex_plugin_scanner.guard.models import GuardApprovalRequest, PolicyDecision
+from codex_plugin_scanner.guard.runtime.runner import (
+    _LIVE_REQUEST_PRIVACY_PROJECTION_MARKER,
+    _ensure_live_request_privacy_projection,
+)
 from codex_plugin_scanner.guard.store import GuardStore
 
 
@@ -101,6 +105,32 @@ def test_relaxing_receipt_privacy_requeues_pending_cloud_projection(tmp_path: Pa
             (request_id,),
         ).fetchall()
     assert [str(row["local_request_id"]) for row in rows] == [request_id]
+
+
+def test_upgrade_republishes_pending_cloud_projection_once(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    request_id = store.add_approval_request(_pending_request("privacy-upgrade"), "2026-08-03T00:00:00Z")
+    with store._connect() as connection:
+        connection.execute("delete from guard_live_request_outbox")
+
+    _ensure_live_request_privacy_projection(store, level="none", synced_at="2026-08-03T00:01:00Z")
+
+    with store._connect() as connection:
+        rows = connection.execute(
+            "select local_request_id from guard_live_request_outbox where local_request_id = ?",
+            (request_id,),
+        ).fetchall()
+        connection.execute("delete from guard_live_request_outbox")
+    assert [str(row["local_request_id"]) for row in rows] == [request_id]
+    assert store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER) == {
+        "level": "none",
+        "requeued": 1,
+        "updated_at": "2026-08-03T00:01:00Z",
+    }
+
+    _ensure_live_request_privacy_projection(store, level="none", synced_at="2026-08-03T00:02:00Z")
+    with store._connect() as connection:
+        assert connection.execute("select count(*) from guard_live_request_outbox").fetchone()[0] == 0
 
 
 def test_relaxed_security_level_persists_granular_risk_settings(tmp_path: Path) -> None:

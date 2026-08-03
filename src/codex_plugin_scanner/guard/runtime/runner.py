@@ -2502,6 +2502,7 @@ def sync_receipts(
     sync_url = _normalized_receipts_sync_url(_validate_guard_sync_url(_auth_context_sync_url(resolved_auth_context)))
     local_guard_online_at = _now()
     redaction_level = _resolve_cloud_receipt_redaction_level(store)
+    _ensure_live_request_privacy_projection(store, level=redaction_level, synced_at=local_guard_online_at)
     _ensure_relaxed_receipt_redaction_resync(store, level=redaction_level, synced_at=local_guard_online_at)
     prior_receipt_cursor = _receipt_sync_cursor_rowid(store)
     receipts = _receipt_sync_rows_for_upload(store, cursor_rowid=prior_receipt_cursor)
@@ -5480,6 +5481,7 @@ _RECEIPT_REDACTION_LEVEL_RANK: dict[str, int] = {
     "none": 2,
 }
 _RELAXED_RECEIPT_REDACTION_RESYNC_MARKER = "cloud_receipt_redaction_relaxed_resync_v1"
+_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER = "cloud_live_request_privacy_projection_v1"
 _RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER = "cloud_receipt_command_detail_backfill_v2"
 _RECEIPT_COMMAND_DETAIL_BACKFILL_FLAG = "__command_detail_backfill"
 
@@ -5550,6 +5552,23 @@ def _reset_cloud_receipt_redaction_authority(store: GuardStore, *, synced_at: st
         store.requeue_pending_live_requests(changed_at=synced_at)
     store.delete_sync_payload(_RELAXED_RECEIPT_REDACTION_RESYNC_MARKER)
     store.delete_sync_payload(_RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER)
+
+
+def _ensure_live_request_privacy_projection(
+    store: GuardStore,
+    *,
+    level: str,
+    synced_at: str,
+) -> None:
+    marker = store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER)
+    if isinstance(marker, dict) and marker.get("level") == level:
+        return
+    requeued = store.requeue_pending_live_requests(changed_at=synced_at)
+    store.set_sync_payload(
+        _LIVE_REQUEST_PRIVACY_PROJECTION_MARKER,
+        {"level": level, "requeued": requeued, "updated_at": synced_at},
+        synced_at,
+    )
 
 
 def _ensure_relaxed_receipt_redaction_resync(
