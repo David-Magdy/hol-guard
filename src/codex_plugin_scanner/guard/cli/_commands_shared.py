@@ -167,6 +167,7 @@ from ..runtime.harness_attribution import resolve_runtime_hook_harness
 from ..runtime.package_intent import build_package_request_artifact, extract_package_intent_request
 from ..runtime.runner import (
     GuardSyncAuthorizationExpiredError,
+    GuardSyncEndpointUntrustedError,
     GuardSyncNotAvailableError,
     GuardSyncNotConfiguredError,
     extract_prompt_requests,

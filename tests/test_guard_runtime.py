@@ -22074,7 +22074,7 @@ def test_sync_runtime_session_rejects_untrusted_oauth_issuer_before_network(tmp_
 
     monkeypatch.setattr(guard_runner_module.urllib.request, "urlopen", _fake_urlopen)
 
-    with pytest.raises(guard_runner_module.GuardSyncAuthorizationExpiredError, match="hol-guard connect"):
+    with pytest.raises(guard_runner_module.GuardSyncEndpointUntrustedError, match="hol-guard connect"):
         guard_runner_module.sync_runtime_session(
             store,
             session={
