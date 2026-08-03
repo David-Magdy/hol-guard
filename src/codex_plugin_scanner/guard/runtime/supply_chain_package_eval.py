@@ -1177,6 +1177,41 @@ def _evaluate_with_cloud(
                 response_payload = None
             except urllib.error.HTTPError as refreshed_error:
                 status_code = refreshed_error.code
+            except OSError:
+                if resolve_fail_closed_decision() == "block":
+                    return (
+                        _cloud_fail_closed_evaluation(
+                            code="cloud_validation_error",
+                            message="Guard cloud evaluation timed out, so strict mode blocked this package request.",
+                            artifact=artifact,
+                            targets=targets,
+                            workspace_dir=workspace_dir,
+                            workspace_fingerprint=workspace_fingerprint,
+                            bundle_meta=bundle_meta,
+                            fail_closed_decision=resolve_fail_closed_decision(),
+                        ),
+                        None,
+                    )
+                return None, _cloud_fallback_reason(
+                    code="cloud_timeout",
+                    message="Guard cloud evaluation timed out, so Guard fell back to local intelligence.",
+                )
+            except ValueError:
+                return (
+                    _cloud_fail_closed_evaluation(
+                        code="cloud_validation_error",
+                        message=(
+                            "Guard cloud evaluation returned an invalid response, so this package request needs review."
+                        ),
+                        artifact=artifact,
+                        targets=targets,
+                        workspace_dir=workspace_dir,
+                        workspace_fingerprint=workspace_fingerprint,
+                        bundle_meta=bundle_meta,
+                        fail_closed_decision=resolve_fail_closed_decision(),
+                    ),
+                    None,
+                )
             else:
                 status_code = None
         if status_code is not None:

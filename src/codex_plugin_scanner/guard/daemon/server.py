@@ -180,6 +180,7 @@ from ..runtime.runner import (
     _policy_bundle_cloud_exception_items,
     _policy_bundle_downgrade_reference,
     _policy_bundle_is_version_downgrade,
+    _requeue_live_request_privacy_projection,
     _reset_cloud_receipt_redaction_authority,
     _resolve_guard_sync_auth_context,
     _validate_cached_policy_bundle,
@@ -4909,7 +4910,11 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 )
                 config = load_guard_config(guard_home)
             if config.receipt_redaction_level != previous_redaction_level:
-                self.server.store.requeue_pending_live_requests(changed_at=_now())  # type: ignore[attr-defined]
+                _requeue_live_request_privacy_projection(  # type: ignore[arg-type]
+                    self.server.store,
+                    level=config.receipt_redaction_level,
+                    changed_at=_now(),
+                )
         except ApprovalGateError as error:
             self._write_approval_gate_error(error)
             return
@@ -4987,7 +4992,11 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 )
                 config = load_guard_config(guard_home)
             if config.receipt_redaction_level != previous_redaction_level:
-                self.server.store.requeue_pending_live_requests(changed_at=_now())  # type: ignore[attr-defined]
+                _requeue_live_request_privacy_projection(  # type: ignore[arg-type]
+                    self.server.store,
+                    level=config.receipt_redaction_level,
+                    changed_at=_now(),
+                )
         except ApprovalGateError as error:
             self._write_approval_gate_error(error)
             return
@@ -5011,7 +5020,11 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             )
             config = reset_guard_settings(guard_home, approval_gate_grant=approval_gate_grant)
             if config.receipt_redaction_level != previous_redaction_level:
-                self.server.store.requeue_pending_live_requests(changed_at=_now())  # type: ignore[attr-defined]
+                _requeue_live_request_privacy_projection(  # type: ignore[arg-type]
+                    self.server.store,
+                    level=config.receipt_redaction_level,
+                    changed_at=_now(),
+                )
         except ApprovalGateError as error:
             self._write_approval_gate_error(error)
             return

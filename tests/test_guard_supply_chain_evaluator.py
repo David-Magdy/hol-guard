@@ -1148,6 +1148,57 @@ def test_evaluate_package_request_artifact_refreshes_expired_cloud_access_token(
     assert not any(reason["code"] == "cloud_auth_error" for reason in result.reasons)
 
 
+@pytest.mark.parametrize(
+    ("refreshed_error", "expected_code", "expected_action"),
+    [
+        (TimeoutError("refresh timed out"), "cloud_timeout", "require-reapproval"),
+        (ValueError("invalid response"), "cloud_validation_error", "require-reapproval"),
+    ],
+)
+def test_cloud_access_token_refresh_failure_returns_safe_evaluation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    refreshed_error: Exception,
+    expected_code: str,
+    expected_action: str,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id=WORKSPACE_ID)
+
+    def resolve_auth(_store: GuardStore, **_kwargs: object) -> dict[str, object]:
+        return {
+            "sync_url": "http://127.0.0.1:8042/api/guard/receipts/sync",
+            "access_token": "token",
+            "dpop_key_material": None,
+        }
+
+    attempts = 0
+
+    def open_cloud(**kwargs: object) -> object:
+        nonlocal attempts
+        attempts += 1
+        request = kwargs["request"]
+        assert isinstance(request, urllib.request.Request)
+        if attempts == 1:
+            raise urllib.error.HTTPError(request.full_url, 401, "expired", {}, None)
+        raise refreshed_error
+
+    monkeypatch.setattr(evaluator_module, "_resolve_guard_sync_auth_context", resolve_auth)
+    monkeypatch.setattr(evaluator_module, "_urlopen_json_with_timeout_retry", open_cloud)
+
+    result = evaluate_package_request_artifact(
+        artifact=_artifact_for_targets("left-pad@1.0.0"),
+        store=store,
+        workspace_dir=tmp_path / "workspace",
+        now="2026-05-19T00:00:00Z",
+    )
+
+    assert attempts == 2
+    assert result.policy_action == expected_action
+    reason_codes = [reason["code"] for reason in result.reasons]
+    assert expected_code in reason_codes, reason_codes
+
+
 def test_evaluate_package_request_artifact_strict_mode_blocks_on_cloud_unreachable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

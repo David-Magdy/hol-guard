@@ -13,11 +13,16 @@ const validationEvidencePhrases = [
   // Queued requests can outlive the daemon version that created their copy.
   "could not verify registry identity or package intelligence",
   "cloud evaluation could not validate",
+  "cloud evaluation endpoint was not trusted",
+  "cloud evaluation returned http",
+  "cloud evaluation returned an invalid",
+  "cloud evaluation timed out",
   "current package safety data was unavailable",
 ];
 const authorizationEvidencePhrases = [
   "cloud evaluation was not authorized",
   "cloud authorization expired",
+  "cloud evaluation could not establish a trusted session",
   "cloud sign-in is missing or stale",
 ];
 

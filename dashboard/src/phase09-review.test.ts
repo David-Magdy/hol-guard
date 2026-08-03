@@ -1394,6 +1394,27 @@ assert(
   packageReviewCloudRecoveryKind(STRUCTURED_CLOUD_VALIDATION_REQUEST) === "validation",
   "GR224-10c: structured reason codes classify recovery independently of copy",
 );
+for (const legacySummary of [
+  "Guard cloud evaluation returned HTTP 503, so Guard fell back to local intelligence.",
+  "Guard cloud evaluation timed out, so Guard fell back to local intelligence.",
+  "Guard cloud evaluation endpoint was not trusted, so this package request needs review.",
+  "Guard cloud evaluation returned an invalid response, so this package request needs review.",
+]) {
+  assert(
+    packageReviewCloudRecoveryKind({
+      ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+      risk_summary: legacySummary,
+    }) === "validation",
+    `GR224-10d: legacy validation recovery remains visible for ${legacySummary}`,
+  );
+}
+assert(
+  packageReviewCloudRecoveryKind({
+    ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+    risk_summary: "Guard cloud evaluation could not establish a trusted session, so this request needs review.",
+  }) === "authorization",
+  "GR224-10e: legacy trusted-session failure retains sign-in recovery",
+);
 assert(
   !packageReviewNeedsCloudRecovery({
     ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,

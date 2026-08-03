@@ -5529,7 +5529,7 @@ def _persist_cloud_receipt_redaction_level(store: GuardStore, *, level: str, syn
         synced_at,
     )
     if level != previous_level:
-        store.requeue_pending_live_requests(changed_at=synced_at)
+        _requeue_live_request_privacy_projection(store, level=level, changed_at=synced_at)
     if _receipt_redaction_level_rank(level) > _receipt_redaction_level_rank("full"):
         store.set_sync_payload(
             _RELAXED_RECEIPT_REDACTION_RESYNC_MARKER,
@@ -5549,7 +5549,7 @@ def _reset_cloud_receipt_redaction_authority(store: GuardStore, *, synced_at: st
         synced_at,
     )
     if previous_level is not None and previous_level != local_level:
-        store.requeue_pending_live_requests(changed_at=synced_at)
+        _requeue_live_request_privacy_projection(store, level=local_level, changed_at=synced_at)
     store.delete_sync_payload(_RELAXED_RECEIPT_REDACTION_RESYNC_MARKER)
     store.delete_sync_payload(_RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER)
 
@@ -5563,11 +5563,19 @@ def _ensure_live_request_privacy_projection(
     marker = store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER)
     if isinstance(marker, dict) and marker.get("level") == level:
         return
-    requeued = store.requeue_pending_live_requests(changed_at=synced_at)
-    store.set_sync_payload(
-        _LIVE_REQUEST_PRIVACY_PROJECTION_MARKER,
-        {"level": level, "requeued": requeued, "updated_at": synced_at},
-        synced_at,
+    _requeue_live_request_privacy_projection(store, level=level, changed_at=synced_at)
+
+
+def _requeue_live_request_privacy_projection(
+    store: GuardStore,
+    *,
+    level: str,
+    changed_at: str,
+) -> int:
+    return store.requeue_pending_live_requests_with_marker(
+        changed_at=changed_at,
+        marker_key=_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER,
+        marker_payload={"level": level, "updated_at": changed_at},
     )
 
 
