@@ -344,6 +344,7 @@ def _requeue_pending_live_requests(
     source: str,
     changed_at: str,
 ) -> int:
+    connection.execute("begin immediate")
     binding = _live_request_oauth_binding(connection, source)
     connection.execute(
         """

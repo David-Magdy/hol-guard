@@ -141,7 +141,7 @@ def canonical_approval_decision(
         if isinstance(policy_version, str) and policy_version.strip():
             canonical_v2["policyVersion"] = policy_version
         cloud_reason_code = raw_decision.get("package_review_cloud_reason_code")
-        if cloud_reason_code in _PACKAGE_REVIEW_CLOUD_REASON_CODES:
+        if isinstance(cloud_reason_code, str) and cloud_reason_code in _PACKAGE_REVIEW_CLOUD_REASON_CODES:
             canonical_v2["package_review_cloud_reason_code"] = cloud_reason_code
 
     return CanonicalApprovalDecision(

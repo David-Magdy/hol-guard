@@ -57,3 +57,13 @@ def test_projection_drops_unknown_package_cloud_reason_code() -> None:
     decision = canonical_approval_decision("review", source, reject_contradiction=True)
 
     assert "package_review_cloud_reason_code" not in decision.decision_v2_json
+
+
+@pytest.mark.parametrize("malformed_code", ([], {}))
+def test_projection_drops_non_string_package_cloud_reason_code(malformed_code: object) -> None:
+    source = canonical_approval_decision("review", None, reject_contradiction=False).decision_v2_json
+    source["package_review_cloud_reason_code"] = malformed_code
+
+    decision = canonical_approval_decision("review", source, reject_contradiction=True)
+
+    assert "package_review_cloud_reason_code" not in decision.decision_v2_json

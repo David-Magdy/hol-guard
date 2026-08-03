@@ -68,7 +68,7 @@ def _manifest_dependency_targets(
     package_manager = str(artifact.metadata.get("package_manager") or "npm")
     redacted_command = package_eval._optional_string(artifact.metadata.get("redacted_command"))
     lockfile_paths = artifact.metadata.get("lockfile_paths")
-    lockfile_versions: dict[str, str | None] = {}
+    lockfile_dependencies: list[tuple[Path, str, dict[str, str]]] = []
     if isinstance(lockfile_paths, list):
         for relative_path in lockfile_paths:
             if not isinstance(relative_path, str) or not relative_path:
@@ -80,12 +80,11 @@ def _manifest_dependency_targets(
             if lockfile_text is None:
                 continue
             lockfile_ecosystem = package_eval._lockfile_ecosystem(lockfile_path.name) or "npm"
+            versions: dict[str, str] = {}
             for package_name, version in parse_manifest_dependencies(path=relative_path, text=lockfile_text).items():
                 normalized_name = package_eval._normalize_package_name(lockfile_ecosystem, package_name)
-                if normalized_name not in lockfile_versions:
-                    lockfile_versions[normalized_name] = version
-                elif lockfile_versions[normalized_name] != version:
-                    lockfile_versions[normalized_name] = None
+                versions[normalized_name] = version
+            lockfile_dependencies.append((lockfile_path.parent, lockfile_ecosystem, versions))
     unsynced_targets: list[dict[str, object]] = []
     for relative_path in manifest_paths:
         if not isinstance(relative_path, str) or not relative_path:
@@ -104,13 +103,35 @@ def _manifest_dependency_targets(
             relative_path=relative_path,
             manifest_text=manifest_text,
         )
+        applicable_lockfiles = [
+            (lockfile_parent, versions)
+            for lockfile_parent, lockfile_ecosystem, versions in lockfile_dependencies
+            if lockfile_ecosystem == ecosystem
+            and (lockfile_parent == manifest_path.parent or lockfile_parent in manifest_path.parent.parents)
+        ]
+        if applicable_lockfiles:
+            closest_depth = max(len(parent.parts) for parent, _versions in applicable_lockfiles)
+            scoped_lockfiles = [
+                versions for parent, versions in applicable_lockfiles if len(parent.parts) == closest_depth
+            ]
+        else:
+            scoped_lockfiles = []
+        lockfile_versions: dict[str, str | None] = {}
+        for versions in scoped_lockfiles:
+            for normalized_name, version in versions.items():
+                if normalized_name not in lockfile_versions:
+                    lockfile_versions[normalized_name] = version
+                elif lockfile_versions[normalized_name] != version:
+                    lockfile_versions[normalized_name] = None
         for package_name, specifier in dependency_map.items():
             normalized_name = package_eval._normalize_package_name(ecosystem, package_name)
-            if not include_locked and normalized_name in lockfile_versions:
+            locked_version = lockfile_versions.get(normalized_name)
+            if not include_locked and locked_version is not None:
                 continue
             namespace, name = package_eval._split_namespace_name(package_name, ecosystem=ecosystem)
-            locked_version = lockfile_versions.get(normalized_name) if include_locked else None
-            exact_version = locked_version or package_eval._manifest_exact_version(ecosystem, specifier)
+            exact_version = (locked_version if include_locked else None) or package_eval._manifest_exact_version(
+                ecosystem, specifier
+            )
             unsynced_targets.append(
                 {
                     "ecosystem": ecosystem,
@@ -128,7 +149,7 @@ def _manifest_dependency_targets(
                     "editable": False,
                     "package_manager": package_manager,
                     "redacted_command": redacted_command,
-                    "manifest_unsynced": normalized_name not in lockfile_versions,
+                    "manifest_unsynced": locked_version is None,
                 }
             )
     return tuple(unsynced_targets)

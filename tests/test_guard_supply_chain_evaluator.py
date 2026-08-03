@@ -1165,7 +1165,11 @@ def test_cloud_access_token_refresh_failure_returns_safe_evaluation(
     store = GuardStore(tmp_path / "guard-home")
     _seed_guard_cloud(store, workspace_id=WORKSPACE_ID)
 
+    auth_resolutions = 0
+
     def resolve_auth(_store: GuardStore, **_kwargs: object) -> dict[str, object]:
+        nonlocal auth_resolutions
+        auth_resolutions += 1
         return {
             "sync_url": "http://127.0.0.1:8042/api/guard/receipts/sync",
             "access_token": "token",
@@ -1194,6 +1198,7 @@ def test_cloud_access_token_refresh_failure_returns_safe_evaluation(
     )
 
     assert attempts == 2
+    assert auth_resolutions == 2
     assert result.policy_action == expected_action
     reason_codes = [reason["code"] for reason in result.reasons]
     assert expected_code in reason_codes, reason_codes
