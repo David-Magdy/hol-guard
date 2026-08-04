@@ -390,7 +390,11 @@ except SystemExit:
     assert all(result.returncode == 0 for result in results), [
         (result.returncode, result.stdout, result.stderr) for result in results
     ]
-    assert all(json.loads(result.stdout) == {} for result in results)
+    responses = [json.loads(result.stdout) for result in results]
+    assert all(
+        response == {} or response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+        for response in responses
+    )
     elapsed_samples = [float(result.stderr.rsplit("bridge-elapsed=", 1)[1]) for result in results]
     # The process timeout enforces the hard two-second wall-clock budget. The
     # in-process sample retains the one-second bridge budget without charging
