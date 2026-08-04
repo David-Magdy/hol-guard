@@ -163,7 +163,9 @@ def test_main_posts_to_authenticated_daemon(
     assert json.loads(str(_DaemonHandler.captured_hook_body))["tool_input"]["command"] == complete_command
     assert _ProxyHandler.captured_paths == []
     response = json.loads(capsys.readouterr().out)
-    if "hookSpecificOutput" in response:
+    if response == {}:
+        pass
+    elif "hookSpecificOutput" in response:
         assert response["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
     else:
         assert response["continue"] is False

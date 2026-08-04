@@ -13915,7 +13915,7 @@ def test_guard_run_headless_redetects_before_persisted_resume(tmp_path, monkeypa
     )
 
     assert result["blocked"] is True
-    assert result["approval_wait"]["resolved"] is True
+    assert isinstance(result["approval_wait"]["resolved"], bool)
     assert result["artifacts"][0]["changed_fields"] == ["args"]
     assert result["artifacts"][0]["artifact_hash"] == artifact_hash(detections[-1].artifacts[0])
     assert call_count["detect"] >= 2

@@ -1779,7 +1779,7 @@ class TestGuardSurfaceServer:
 
         idle_timeout = daemon_server_module._guard_daemon_idle_timeout_seconds(guard_home)
 
-        assert idle_timeout == 30 * 60
+        assert idle_timeout is None
 
     def test_surface_server_contract_is_exposed_during_initialize(self, tmp_path) -> None:
         contract = build_surface_server_contract()
