@@ -1658,9 +1658,7 @@ class RuntimeMcpGuardProxy:
                 execution_context=package_context,
                 artifact_digest=artifact_digest,
                 policy_workspace=policy_workspace,
-                saved_policy_blocks=any(
-                    reason.get("code") == "saved_package_block" for reason in resolved_package_evaluation.reasons
-                ),
+                saved_policy_blocks=_has_saved_package_block(resolved_package_evaluation.reasons),
                 pending_approval_reuse_decision=stored_package_resolution.approval_reuse_decision,
                 approval_reuse_claim_disposition=stored_package_resolution.claim_disposition,
             )
@@ -2256,7 +2254,7 @@ class RuntimeMcpGuardProxy:
         reuse_evidence = tuple(
             {"source": "approval_reuse", **cast(dict[str, object], raw)}
             for reason in resolution.evaluation.reasons
-            if isinstance((raw := reason.get("approval_reuse")), dict)
+            if isinstance(reason, Mapping) and isinstance((raw := reason.get("approval_reuse")), dict)
         )
         return (*tool_evidence, *context_evidence, *reuse_evidence)
 
@@ -3857,9 +3855,15 @@ def _command_argument(arguments: object) -> str | None:
     return None
 
 
-def _package_reason_signals(reasons: tuple[dict[str, object], ...]) -> tuple[RiskSignalV2, ...]:
+def _has_saved_package_block(reasons: Sequence[object]) -> bool:
+    return any(isinstance(reason, Mapping) and reason.get("code") == "saved_package_block" for reason in reasons)
+
+
+def _package_reason_signals(reasons: Sequence[object]) -> tuple[RiskSignalV2, ...]:
     signals: list[RiskSignalV2] = []
     for reason in reasons:
+        if not isinstance(reason, Mapping):
+            continue
         code = _optional_text(reason.get("code")) or "package-risk"
         message = _optional_text(reason.get("message")) or code.replace("_", " ")
         severity = _package_signal_severity(_optional_text(reason.get("severity")))

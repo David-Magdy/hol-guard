@@ -17,6 +17,7 @@ import pytest
 
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager
 from codex_plugin_scanner.guard.daemon import server as daemon_server
+from codex_plugin_scanner.guard.daemon.runtime_hook_scheduler_contracts import RuntimeHookAdmission
 from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
 from codex_plugin_scanner.guard.store import GuardStore
 
@@ -328,11 +329,12 @@ def test_hook_overload_returns_native_fail_safe_response(
     payload: dict[str, object],
     assertion: tuple[str, str],
 ) -> None:
-    monkeypatch.setattr(daemon_server, "_MAX_CONCURRENT_RUNTIME_HOOKS_PER_HARNESS", 1)
     with _running_daemon(tmp_path, monkeypatch) as daemon:
-        harness = "pi" if path.endswith("/pi") else "claude-code"
-        harness_capacity = daemon._server.hook_harness_semaphore(harness)
-        assert harness_capacity.acquire(blocking=False)
+        monkeypatch.setattr(
+            daemon._server.runtime_hook_scheduler,
+            "acquire",
+            lambda **_kwargs: RuntimeHookAdmission(permit=None, reason_code="daemon_hook_queue_capacity"),
+        )
         query = urllib.parse.urlencode(
             {
                 "guard-home": str(daemon._server.store.guard_home),
@@ -348,13 +350,10 @@ def test_hook_overload_returns_native_fail_safe_response(
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=1) as response:
-                result = json.loads(response.read())
-        finally:
-            harness_capacity.release()
+        with urllib.request.urlopen(request, timeout=1) as response:
+            result = json.loads(response.read())
 
-    assert result["reason_code"] == "daemon_hook_capacity"
+    assert result["reason_code"] == "daemon_hook_queue_capacity"
     if assertion[0] == "decision":
         assert result["decision"] == assertion[1]
     elif assertion[0] == "permissionDecision":
@@ -366,12 +365,13 @@ def test_hook_overload_returns_native_fail_safe_response(
 def test_unknown_harnesses_share_one_bounded_capacity_bucket(tmp_path: Path) -> None:
     daemon = GuardDaemonServer(GuardStore(tmp_path / "guard-home"), host="127.0.0.1", port=0)
     try:
-        capacities = {id(daemon._server.hook_harness_semaphore(f"unknown-{index}")) for index in range(1_000)}
+        capacity_harnesses = {
+            daemon._server.canonical_hook_capacity_harness(f"unknown-{index}") for index in range(1_000)
+        }
     finally:
         daemon._server.server_close()
 
-    assert len(capacities) == 1
-    assert set(daemon._server.hook_harness_capacity) == {"other"}
+    assert capacity_harnesses == {"other"}
 
 
 def test_partial_start_failure_rolls_back_workers_state_and_owner_lock(
