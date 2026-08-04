@@ -949,42 +949,43 @@ def _persist_oauth_local_credentials(
     access_token: str | None = None,
     access_token_expires_at: str | None = None,
 ) -> None:
-    store.set_oauth_local_credentials(
-        issuer=issuer,
-        client_id=client_id,
-        refresh_token=refresh_token,
-        dpop_private_key_pem=dpop_key_material.private_key_pem,
-        dpop_public_jwk=dpop_key_material.public_jwk,
-        dpop_public_jwk_thumbprint=dpop_key_material.public_jwk_thumbprint,
-        grant_id=grant_id,
-        machine_id=machine_id,
-        supply_chain_entitlement_expires_at=(
-            str(supply_chain_entitlement.get("supply_chain_entitlement_expires_at"))
-            if isinstance(supply_chain_entitlement, dict)
-            and isinstance(supply_chain_entitlement.get("supply_chain_entitlement_expires_at"), str)
-            else None
-        ),
-        supply_chain_firewall=(
-            bool(supply_chain_entitlement.get("supply_chain_firewall"))
-            if isinstance(supply_chain_entitlement, dict)
-            and isinstance(supply_chain_entitlement.get("supply_chain_firewall"), bool)
-            else None
-        ),
-        supply_chain_plan_id=(
-            str(supply_chain_entitlement.get("supply_chain_plan_id"))
-            if isinstance(supply_chain_entitlement, dict)
-            and isinstance(supply_chain_entitlement.get("supply_chain_plan_id"), str)
-            else None
-        ),
-        workspace_id=workspace_id,
-        cloud_user_profile=cloud_user_profile,
-        runtime_id=runtime_id,
-        runtime_label=runtime_label,
-        access_token=access_token,
-        access_token_expires_at=access_token_expires_at,
-        now=now,
-    )
-    reconcile_connect_state_with_oauth_entitlement(store, now=now)
+    with store.hold_oauth_refresh_lock():
+        store.set_oauth_local_credentials(
+            issuer=issuer,
+            client_id=client_id,
+            refresh_token=refresh_token,
+            dpop_private_key_pem=dpop_key_material.private_key_pem,
+            dpop_public_jwk=dpop_key_material.public_jwk,
+            dpop_public_jwk_thumbprint=dpop_key_material.public_jwk_thumbprint,
+            grant_id=grant_id,
+            machine_id=machine_id,
+            supply_chain_entitlement_expires_at=(
+                str(supply_chain_entitlement.get("supply_chain_entitlement_expires_at"))
+                if isinstance(supply_chain_entitlement, dict)
+                and isinstance(supply_chain_entitlement.get("supply_chain_entitlement_expires_at"), str)
+                else None
+            ),
+            supply_chain_firewall=(
+                bool(supply_chain_entitlement.get("supply_chain_firewall"))
+                if isinstance(supply_chain_entitlement, dict)
+                and isinstance(supply_chain_entitlement.get("supply_chain_firewall"), bool)
+                else None
+            ),
+            supply_chain_plan_id=(
+                str(supply_chain_entitlement.get("supply_chain_plan_id"))
+                if isinstance(supply_chain_entitlement, dict)
+                and isinstance(supply_chain_entitlement.get("supply_chain_plan_id"), str)
+                else None
+            ),
+            workspace_id=workspace_id,
+            cloud_user_profile=cloud_user_profile,
+            runtime_id=runtime_id,
+            runtime_label=runtime_label,
+            access_token=access_token,
+            access_token_expires_at=access_token_expires_at,
+            now=now,
+        )
+        reconcile_connect_state_with_oauth_entitlement(store, now=now)
 
 
 def run_guard_disconnect_command(

@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import tempfile
+import time
 from base64 import urlsafe_b64encode
 from pathlib import Path
 
@@ -14,7 +16,12 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from codex_plugin_scanner.guard.cli.commands_support_hook_payload import _load_hook_payload
 from codex_plugin_scanner.guard.cli.commands_support_runtime_artifacts import _codex_post_tool_output_artifact
-from codex_plugin_scanner.guard.runtime.hook_payload_reference import HookPayloadReferenceError
+from codex_plugin_scanner.guard.runtime import hook_payload_reference as hook_payload_reference_module
+from codex_plugin_scanner.guard.runtime.hook_payload_reference import (
+    MAX_HOOK_PAYLOAD_REFERENCE_BYTES,
+    HookPayloadReferenceError,
+    hook_payload_reference_size,
+)
 
 
 def _b64url(value: bytes) -> str:
@@ -77,6 +84,27 @@ def test_hook_payload_reference_hydrates_full_payload_for_runtime_review(tmp_pat
     assert artifact.harness == "pi"
 
 
+def test_hook_payload_reference_reports_bounded_bytes_before_hydration() -> None:
+    payload = {"hook_event_name": "PostToolUse", "tool_name": "Read", "tool_response": []}
+    with tempfile.TemporaryDirectory(prefix="hol-guard-hook-payload-") as reference_dir:
+        referenced = json.loads(_referenced_input(payload, Path(reference_dir)))
+        assert hook_payload_reference_size(referenced) == MAX_HOOK_PAYLOAD_REFERENCE_BYTES
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin user temp root contract")
+def test_hook_payload_reference_survives_sanitized_daemon_temp_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload: dict[str, object] = {"hook_event_name": "PostToolUse", "tool_name": "Read", "tool_response": []}
+    with tempfile.TemporaryDirectory(prefix="hol-guard-hook-payload-") as reference_dir:
+        referenced = _referenced_input(payload, Path(reference_dir))
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: "/tmp")
+
+        loaded_payload = _load_hook_payload(None, input_text=referenced, harness="pi")
+
+    assert loaded_payload == payload
+
+
 def test_hook_payload_reference_rejects_digest_mismatch() -> None:
     payload = {"hook_event_name": "PostToolUse", "tool_name": "Read", "tool_response": []}
 
@@ -89,6 +117,18 @@ def test_hook_payload_reference_rejects_digest_mismatch() -> None:
             input_text=_referenced_input(payload, Path(reference_dir), sha256="0" * 64),
             harness="pi",
         )
+
+
+def test_hook_payload_reference_rejects_authentication_failure() -> None:
+    payload = {"hook_event_name": "PostToolUse", "tool_name": "Read", "tool_response": []}
+
+    with (
+        pytest.raises(HookPayloadReferenceError, match="could not be decrypted"),
+        tempfile.TemporaryDirectory(prefix="hol-guard-hook-payload-") as reference_dir,
+    ):
+        referenced = json.loads(_referenced_input(payload, Path(reference_dir)))
+        referenced["guard_payload_ref"]["key"] = _b64url(os.urandom(32))
+        _load_hook_payload(None, input_text=json.dumps(referenced), harness="pi")
 
 
 def test_reject_path_outside_temp_root(tmp_path: Path) -> None:
@@ -154,6 +194,53 @@ def test_reject_payload_over_5mb() -> None:
             },
         }
         _load_hook_payload(None, input_text=json.dumps(ref), harness="pi")
+
+
+def test_reject_payload_growth_after_descriptor_size_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    with (
+        pytest.raises(HookPayloadReferenceError, match="exceeds the safe local size limit"),
+        tempfile.TemporaryDirectory(prefix="hol-guard-hook-payload-") as reference_dir,
+    ):
+        ref_path = Path(reference_dir) / "payload.json"
+        ref_path.write_bytes(bytes(MAX_HOOK_PAYLOAD_REFERENCE_BYTES + 1))
+        original_fstat = os.fstat
+
+        def understated_fstat(descriptor: int) -> os.stat_result:
+            values = list(original_fstat(descriptor))
+            values[6] = 1
+            return os.stat_result(values)
+
+        monkeypatch.setattr(os, "fstat", understated_fstat)
+        ref = {
+            "guard_payload_ref": {
+                "version": 1,
+                "path": str(ref_path),
+                "sha256": "0" * 64,
+                "encoding": "json",
+            },
+        }
+
+        _load_hook_payload(None, input_text=json.dumps(ref), harness="pi")
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO path race requires POSIX")
+def test_reject_fifo_replacing_validated_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fifo_path = tmp_path / "payload.fifo"
+    os.mkfifo(fifo_path)
+    monkeypatch.setattr(hook_payload_reference_module, "_safe_reference_path", lambda _value: fifo_path)
+    ref = {
+        "guard_payload_ref": {
+            "version": 1,
+            "path": str(fifo_path),
+            "sha256": "0" * 64,
+            "encoding": "json",
+        },
+    }
+
+    started = time.monotonic()
+    with pytest.raises(HookPayloadReferenceError, match="must be a file"):
+        _load_hook_payload(None, input_text=json.dumps(ref), harness="pi")
+    assert time.monotonic() - started < 0.1
 
 
 def test_reject_invalid_aes_key_length() -> None:

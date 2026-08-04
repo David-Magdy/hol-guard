@@ -176,6 +176,14 @@ def _protect_approval_item(
     )
     decision_reason = risk_summary or f"package_supply_chain_{policy_action.replace('-', '_')}"
     decision_v2 = build_decision_v2(policy_action, reason=decision_reason)
+    decision_v2_payload = decision_v2.to_dict()
+    reasons = supply_chain_evaluation.get("reasons")
+    reason_items = reasons if isinstance(reasons, list) else []
+    reason_codes = {str(reason.get("code") or "") for reason in reason_items if isinstance(reason, dict)}
+    for reason_code in ("cloud_auth_error", "cloud_validation_error", "cloud_http_error", "cloud_timeout"):
+        if reason_code in reason_codes:
+            decision_v2_payload["package_review_cloud_reason_code"] = reason_code
+            break
     return {
         "artifact_id": artifact.artifact_id,
         "artifact_name": artifact.name,
@@ -190,7 +198,7 @@ def _protect_approval_item(
         "action_envelope_json": (
             receipt.get("action_envelope_json") if isinstance(receipt.get("action_envelope_json"), dict) else None
         ),
-        "decision_v2_json": decision_v2.to_dict(),
+        "decision_v2_json": decision_v2_payload,
         "scanner_evidence": scanner_evidence,
     }
 

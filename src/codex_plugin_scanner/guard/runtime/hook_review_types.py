@@ -72,9 +72,11 @@ class HookReviewRequest:
     home_dir: Path
     guard_home: Path
     source_scope: str
+    source_ref_external_allowed: bool = False
     output_summary: HookOutputSummary | None = None
     source_ref: HookSourceFileRef | None = None
     received_at_monotonic: float = 0.0
+    deadline_monotonic: float | None = None
     request_id: str | None = None
 
 
@@ -97,6 +99,8 @@ class HookReviewResponse:
     notice: Literal["none", "excerpt", "warning"] = "none"
     reason_code: str = "unknown"
     policy_action: str | None = None
+    observed_policy_action: str | None = None
+    observe_mode: bool = False
     metrics: dict[str, object] = field(default_factory=dict)
 
     def to_harness_json(self) -> dict[str, object]:
@@ -119,6 +123,10 @@ class HookReviewResponse:
         payload["reason_code"] = self.reason_code
         if self.policy_action is not None:
             payload["policy_action"] = self.policy_action
+        if self.observed_policy_action is not None:
+            payload["observed_policy_action"] = self.observed_policy_action
+        if self.observe_mode:
+            payload["observe_mode"] = True
         return payload
 
 

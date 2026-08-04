@@ -194,7 +194,6 @@ def _build_python_shim(harness: str, context: HarnessContextLike, workspace_args
             f"#!{sys.executable}",
             "from __future__ import annotations",
             "import os",
-            "import subprocess",
             "import sys",
             f"base_command = {command_args!r}",
             f"base_env = {launcher_env!r}",
@@ -209,7 +208,7 @@ def _build_python_shim(harness: str, context: HarnessContextLike, workspace_args
             "            pythonpath_entries.append(normalized)",
             "    combined_env['PYTHONPATH'] = os.pathsep.join(pythonpath_entries)",
             'extra_args = [f"--arg={arg}" for arg in sys.argv[1:]]',
-            "raise SystemExit(subprocess.call([*base_command, *extra_args], env=combined_env))",
+            "os.execvpe(base_command[0], [*base_command, *extra_args], combined_env)",
             "",
         )
     )

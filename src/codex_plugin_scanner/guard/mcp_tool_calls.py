@@ -28,7 +28,7 @@ from .runtime.approval_reuse import (
     ApprovalReuseValidationFailure,
     evaluate_approval_reuse,
 )
-from .runtime.browser_mcp_intent import normalize_browser_mcp_intent
+from .runtime.browser_mcp_intent import browser_intent_display_target, normalize_browser_mcp_intent
 from .runtime.mcp_protection import (
     McpServerIdentity,
     build_mcp_tool_identity,
@@ -37,9 +37,10 @@ from .runtime.mcp_protection import (
 )
 from .runtime.mcp_skill_firewall import enrich_artifact_with_mcp_skill_firewall, scanner_evidence_for_mcp_skill_firewall
 from .store import GuardStore, browser_mcp_exact_match_context
+from .temporary_mcp_approvals import runtime_grant_selectors
 
 # Bump when MCP risk classification or action-composition semantics change.
-_MCP_TOOL_CALL_EVALUATOR_POLICY_VERSION = "mcp-tool-call-evaluation-v2"
+_MCP_TOOL_CALL_EVALUATOR_POLICY_VERSION = "mcp-tool-call-evaluation-v3"
 
 _NON_EXECUTED_TOOL_CALL_TAXONOMY: Mapping[GuardAction, tuple[str, str]] = {
     "review": ("runtime_tool_call_review_required", "runtime tool call awaiting review"),
@@ -305,6 +306,15 @@ def build_tool_call_hash(
             "mcp_schema_hash": browser_intent.mcp_schema_hash,
             "sensitive_surface_flags": list(browser_intent.sensitive_surface_flags),
         }
+        if browser_intent.sensitive_surface_flags:
+            sensitive_arguments = arguments
+            if isinstance(arguments, Mapping):
+                sensitive_arguments = {
+                    key: value for key, value in arguments.items() if key not in browser_intent.volatile_fields_dropped
+                }
+            content_arguments["sensitive_arguments_hash"] = sha256(
+                json.dumps(sensitive_arguments, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
     legacy_material: dict[str, object] = {
         "artifact_id": artifact.artifact_id,
         "config_path": artifact.config_path,
@@ -438,6 +448,13 @@ def evaluate_tool_call(
         artifact=artifact,
         arguments=arguments,
     )
+    current = _apply_temporary_mcp_grant(
+        store=store,
+        artifact=artifact,
+        artifact_hash=artifact_hash,
+        arguments=arguments,
+        current=current,
+    )
     runtime_exact_match_context = _browser_runtime_exact_match_context(artifact, arguments)
     policy_lookup = store.resolve_policy_decision_lookup_with_memory_pattern(
         artifact.harness,
@@ -529,6 +546,39 @@ def evaluate_tool_call(
         pending_decision=pending_decision,
         claim_disposition=claim_disposition,
     )
+
+
+def _apply_temporary_mcp_grant(
+    *,
+    store: GuardStore,
+    artifact: GuardArtifact,
+    artifact_hash: str,
+    arguments: object,
+    current: ToolCallDecision,
+) -> ToolCallDecision:
+    if current.action != "review":
+        return current
+    selectors = runtime_grant_selectors(
+        normalize_browser_mcp_intent(artifact, arguments),
+        current.risk_categories,
+        artifact_id=artifact.artifact_id,
+        artifact_hash=artifact_hash,
+    )
+    for selector in selectors:
+        lookup = store.resolve_policy_decision_lookup(
+            artifact.harness,
+            selector,
+            consume_one_shot=False,
+        )
+        decision = lookup["decision"]
+        if decision is not None and decision.get("action") == "allow" and decision.get("source") == "approval-gate":
+            return replace(
+                current,
+                action="allow",
+                source="temporary-mcp-grant",
+                summary="A time-bounded approval covers this routine MCP capability.",
+            )
+    return current
 
 
 def _revalidate_claimed_tool_call_approval(
@@ -724,6 +774,7 @@ def _evaluate_current_tool_call(
 
     signals = tool_call_risk_signals(artifact, arguments)
     risk_categories = tool_call_risk_categories(artifact, arguments)
+    explicit_risk_action = _configured_risk_action(config, "mcp_dangerous_tool", harness=artifact.harness)
 
     if len(signals) == 0:
         return with_current_config(
@@ -735,7 +786,16 @@ def _evaluate_current_tool_call(
                 risk_categories=(),
             )
         )
-    explicit_risk_action = _configured_risk_action(config, "mcp_dangerous_tool", harness=artifact.harness)
+    if explicit_risk_action is None and _routine_browser_call_is_safe_by_default(risk_categories):
+        return with_current_config(
+            ToolCallDecision(
+                action="allow",
+                source="browser-routine",
+                signals=signals,
+                summary=tool_call_risk_summary(artifact, arguments),
+                risk_categories=risk_categories,
+            )
+        )
     configured_risk_action = explicit_risk_action or resolve_risk_action(
         config,
         "mcp_dangerous_tool",
@@ -763,6 +823,15 @@ def _evaluate_current_tool_call(
             summary=tool_call_risk_summary(artifact, arguments),
             risk_categories=risk_categories,
         )
+    )
+
+
+def _routine_browser_call_is_safe_by_default(risk_categories: tuple[str, ...]) -> bool:
+    categories = set(risk_categories)
+    routine_categories = {"browser_navigation", "browser_inspection"}
+    informational_categories = {"browser_external_domain"}
+    return bool(categories.intersection(routine_categories)) and categories.issubset(
+        routine_categories | informational_categories
     )
 
 
@@ -832,7 +901,7 @@ def tool_call_risk_signals(artifact: GuardArtifact, arguments: object) -> tuple[
         "tool_schema_mismatch": "tool name understates dangerous schema capabilities",
     }
     if browser_intent is not None:
-        target = browser_intent.target_domain or browser_intent.target_origin or "unknown target"
+        target = browser_intent_display_target(browser_intent, arguments)
         signals_by_category.update(
             {
                 "browser_navigation": f"browser navigation to {target}",
@@ -888,6 +957,11 @@ def _tool_call_risk_category_set(artifact: GuardArtifact, arguments: object) -> 
     # browser navigation targets.
     browser_intent = normalize_browser_mcp_intent(artifact, arguments)
     is_browser_navigation = browser_intent is not None and browser_intent.intent == "browser.navigation"
+    routine_browser_intent = browser_intent is not None and browser_intent.intent in {
+        "browser.navigation",
+        "browser.inspect",
+        "browser.interact",
+    }
 
     if len(tool_name_tokens.intersection({"delete", "remove", "rm", "destroy", "erase"})) > 0:
         categories.add("destructive_mutation")
@@ -924,7 +998,16 @@ def _tool_call_risk_category_set(artifact: GuardArtifact, arguments: object) -> 
     categories.update(argument_categories)
     categories.update(schema_categories)
     categories.update(description_categories)
-    if _tool_schema_understates_name(tool_name_tokens, schema_categories):
+    if (
+        routine_browser_intent
+        and "filesystem_access" not in argument_categories
+        and "filesystem_access" not in description_categories
+    ):
+        categories.discard("filesystem_access")
+    mismatch_schema_categories = set(schema_categories)
+    if browser_intent is not None and browser_intent.intent == "browser.navigation":
+        mismatch_schema_categories.discard("outbound_network")
+    if _tool_schema_understates_name(tool_name_tokens, mismatch_schema_categories):
         categories.add("tool_schema_mismatch")
 
     # Browser intent categories (HGBM034-HGBM043)

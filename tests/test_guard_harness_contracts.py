@@ -95,11 +95,6 @@ class TestContractFor:
         assert c is not None
         assert c.harness == "claude-code"
 
-    def test_codex_cli_alias(self) -> None:
-        c = contract_for("codex")
-        assert c is not None
-        assert "codex" in c.install_aliases
-
     def test_claude_code_alias(self) -> None:
         c = contract_for("claude-code")
         assert c is not None

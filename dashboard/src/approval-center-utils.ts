@@ -80,7 +80,18 @@ export function buildRetryAfterApprovalCopy(item: GuardApprovalRequest, action: 
   return `Blocked. Return to ${harness} to continue with a different action, or ask it to try something else.`;
 }
 
+function isApplyPatchEnvelope(envelope: GuardActionEnvelope): boolean {
+  return (
+    envelope.action_type === "file_write" &&
+    envelope.tool_name?.trim().toLowerCase() === "apply_patch" &&
+    envelope.command?.trim().startsWith("*** Begin Patch") === true
+  );
+}
+
 export function resolveEnvelopeDisplayText(envelope: GuardActionEnvelope): string | null {
+  if (isApplyPatchEnvelope(envelope) && envelope.command !== null && envelope.command.length > 0) {
+    return envelope.command;
+  }
   if (envelope.action_type === "shell_command" && envelope.command !== null && envelope.command.length > 0) {
     return envelope.command;
   }
@@ -104,6 +115,9 @@ export function resolveActionEnvelopeDetailText(
   envelope: GuardActionEnvelope,
   options: { mcpInputMaxLength?: number | null } = {}
 ): string | null {
+  if (isApplyPatchEnvelope(envelope) && envelope.command !== null && envelope.command.length > 0) {
+    return envelope.command;
+  }
   if (envelope.action_type === "shell_command") {
     return envelope.command !== null && envelope.command.length > 0 ? envelope.command : null;
   }
@@ -425,6 +439,10 @@ export function resolveSecondaryRiskSummary(item: GuardApprovalRequest): string 
   if (duplicatesStoppedActionText(item, summary)) {
     return null;
   }
+  const dashboardDetail = resolveDecisionV2Detail(item);
+  if (dashboardDetail && normalizeDuplicateReviewText(summary) === normalizeDuplicateReviewText(dashboardDetail)) {
+    return null;
+  }
   return summary;
 }
 
@@ -560,6 +578,26 @@ export function resolveStoppedCommandText(item: GuardApprovalRequest): string {
     return item.launch_summary;
   }
   return item.artifact_name.trim() || item.artifact_id;
+}
+
+export function resolveRequestWorkingDirectory(item: GuardApprovalRequest): string | null {
+  const actionType = item.action_envelope_json?.action_type;
+  const artifactType = item.artifact_type.toLowerCase();
+  const isExecutableAction =
+    actionType === "shell_command" ||
+    actionType === "package_script" ||
+    artifactType.includes("command") ||
+    artifactType.includes("shell") ||
+    artifactType.includes("package");
+  if (!isExecutableAction) {
+    return null;
+  }
+  const envelopeWorkspace = item.action_envelope_json?.workspace?.trim();
+  if (envelopeWorkspace) {
+    return envelopeWorkspace;
+  }
+  const requestWorkspace = item.workspace?.trim();
+  return requestWorkspace || null;
 }
 
 function resolvePrimaryReviewText(item: GuardApprovalRequest): string {
@@ -728,7 +766,9 @@ export function resolveApprovalShareUrl(item: GuardApprovalRequest): string | nu
 }
 
 export function resolveTerminalLabel(item: GuardApprovalRequest): string {
-  const actionType = item.action_envelope_json?.action_type;
+  const envelope = item.action_envelope_json;
+  if (envelope && isApplyPatchEnvelope(envelope)) return "Patch";
+  const actionType = envelope?.action_type;
   if (actionType === "shell_command") return "Command";
   if (actionType === "prompt") return "Prompt excerpt";
   if (actionType === "file_read" || actionType === "file_write") return "File path";

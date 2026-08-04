@@ -1,4 +1,4 @@
-import { aq as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, ar as HiMiniArrowPath, Z as HiMiniLockClosed, y as HiMiniChevronUp, z as HiMiniChevronDown, m as HiMiniCheckCircle, q as HiMiniShieldCheck, K as HiMiniExclamationTriangle, as as HiMiniPuzzlePiece, x as HiMiniXMark } from "../guard-dashboard.js";
+import { ar as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, as as HiMiniArrowPath, _ as HiMiniLockClosed, x as HiMiniChevronUp, y as HiMiniChevronDown, l as HiMiniCheckCircle, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, at as HiMiniPuzzlePiece, w as HiMiniXMark } from "../guard-dashboard.js";
 class ExtensionControlApiError extends Error {
   constructor(message, status, code, recoveryAction) {
     super(message);

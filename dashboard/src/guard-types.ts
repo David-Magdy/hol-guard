@@ -121,6 +121,7 @@ export type GuardDecisionV2 = {
   dashboard_primary_detail: string;
   approval_scopes: string[];
   retry_instruction: string | null;
+  package_review_cloud_reason_code?: string | null;
   signals: RiskSignalV2[];
   confidence: GuardDecisionV2Confidence;
 };
@@ -143,6 +144,7 @@ export type GuardActionEnvelope = {
   mcp_tool: string | null;
   package_manager: string | null;
   package_name: string | null;
+  command_category?: string | null;
   package_intent_kind?: string | null;
   package_targets?: string[];
   /** Exact Guard action projected immediately before execution. */
@@ -205,12 +207,63 @@ export type GuardApprovalRequest = {
   decision_contract_error?: string;
   fallback_cli_command?: string | null;
   raw_command_text?: string | null;
+  queue_preview?: string | null;
+  queue_command_category?: string | null;
   action_identity?: string | null;
   queue_group_id?: string | null;
   dedupe_count?: number;
   last_seen_at?: string | null;
   display_status?: string;
   scanner_evidence?: GuardScannerEvidence[];
+  temporary_mcp_approval?: GuardTemporaryMcpApproval | null;
+  local_tool_approval?: GuardLocalToolApproval | null;
+};
+
+export type GuardTemporaryMcpGrantTarget = "exact" | "category" | "server";
+export type GuardTemporaryMcpGrantDuration = "once" | "15m" | "1h" | "5h";
+
+export type GuardTemporaryMcpApproval = {
+  eligible: boolean;
+  server_name: string;
+  server_identity_hash: string;
+  category: string;
+  target_label: string | null;
+  allowed_targets: GuardTemporaryMcpGrantTarget[];
+  allowed_durations: GuardTemporaryMcpGrantDuration[];
+  hard_risk_exclusions: string[];
+};
+
+export type GuardLocalToolGrantTarget = "capability" | "version";
+export type GuardLocalToolGrantDuration = "once" | "15m" | "1h" | "5h" | "version" | "always";
+
+export type GuardLocalToolApproval = {
+  eligible: boolean;
+  tool_name: string;
+  tool_identity_hash: string;
+  capability: string;
+  read_only_reason: string;
+  trust_basis: "verified-files" | "package-profile";
+  indefinite_allowed: boolean;
+  allowed_targets: GuardLocalToolGrantTarget[];
+  allowed_durations: GuardLocalToolGrantDuration[];
+  hard_risk_exclusions: string[];
+};
+
+export type GuardApprovalResolutionInput = {
+  requestId: string;
+  action: "allow" | "block";
+  scope: DecisionScope;
+  workspace?: string;
+  reason: string;
+  approval_password?: string;
+  approval_totp_code?: string;
+  approval_gate_use_cooldown?: boolean;
+  scope_contract_version?: string;
+  scope_contract_digest?: string;
+  mcp_grant_target?: GuardTemporaryMcpGrantTarget;
+  mcp_grant_duration?: GuardTemporaryMcpGrantDuration;
+  local_tool_grant_target?: GuardLocalToolGrantTarget;
+  local_tool_grant_duration?: Exclude<GuardLocalToolGrantDuration, "once">;
 };
 
 export type GuardApprovalPageStatus = "pending" | "resolved" | "all";
@@ -481,6 +534,21 @@ export type GuardCloudCommandCapability = {
   revoke_command: string;
 };
 
+export type GuardOperatorHealthState = "healthy" | "backlogged" | "saturated" | "store-contended";
+
+export type GuardOperatorHealth = {
+  state: GuardOperatorHealthState;
+  cause: string;
+  automatic_recovery: string;
+  repairable: boolean;
+  queue_depth: number;
+  queue_limit: number;
+  oldest_wait_ms: number;
+  workers_busy: number;
+  workers_ready: number;
+  workers_configured: number;
+};
+
 export type GuardRuntimeSnapshot = {
   generated_at: string;
   approval_center_url: string | null;
@@ -518,6 +586,7 @@ export type GuardRuntimeSnapshot = {
   managed_installs?: GuardManagedInstall[];
   inventory?: GuardInventoryItem[];
   cloud_command_capability?: GuardCloudCommandCapability;
+  operator_health?: GuardOperatorHealth;
   security_level?: "balanced" | "strict" | "custom";
   supply_chain?: SupplyChainSnapshot;
 };
@@ -826,7 +895,9 @@ export type GuardSettings = {
   approval_browser_immediate_severity: RiskSignalV2Severity;
   telemetry: boolean;
   sync: boolean;
+  receipt_redaction_level: "full" | "partial" | "none";
   billing: boolean;
+  update_channel?: "stable" | "alpha";
   approval_gate?: GuardApprovalGatePublicConfig;
 };
 
@@ -949,6 +1020,18 @@ export type PackageFirewallActionResponse = {
   entitlement: PackageFirewallEntitlement;
 };
 
+export type SupplyChainRepairStepFailure = {
+  step: "package_shims" | "runtime_activation" | "intelligence_sync";
+  message: string;
+};
+
+export type SupplyChainRepairResult = {
+  repaired: boolean;
+  completed_steps: string[];
+  failed_steps: SupplyChainRepairStepFailure[];
+  message: string;
+};
+
 export type SupplyChainAuditDecision = "allow" | "monitor" | "warn" | "ask" | "block";
 
 export type SupplyChainAuditSeverity = "critical" | "high" | "medium" | "low" | "unknown";
@@ -1021,6 +1104,7 @@ export type GuardUpdateStatus = {
   update_suppressed?: boolean;
   retry_command?: string;
   update_attempt_message?: string;
+  release_channel: "stable" | "alpha";
 };
 
 export type GuardUpdateReconnectOptions = {

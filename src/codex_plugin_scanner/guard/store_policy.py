@@ -704,7 +704,6 @@ class StorePolicyMixin:
         remote_write_authorized: bool = False,
     ) -> None:
         now = _canonical_utc_timestamp(now)
-        expires_at = _canonical_utc_timestamp(decision.expires_at) if decision.expires_at is not None else None
         validate_policy_write_authority(
             decision,
             remote_write_authorized=remote_write_authorized,
@@ -716,78 +715,96 @@ class StorePolicyMixin:
             now=now,
         )
         _validate_scoped_policy_artifact_target(decision.scope, decision.artifact_id)
-        artifact_id, artifact_hash, workspace, publisher = self._normalized_policy_keys(decision)
         next_control_state: dict[str, object] | None = None
         with self._connect() as connection:
             secret_material = (None, None)
             if not is_remote_policy_source(decision.source):
                 secret_material = self._policy_integrity_secret_material(create=True)
-            state = self._refresh_policy_integrity_state(
+            next_control_state = self._upsert_policy_locked(
                 connection,
+                decision=decision,
                 now=now,
-                create_key=not is_remote_policy_source(decision.source),
                 secret_material=secret_material,
-                allow_cutover_resign=False,
             )
-            connection.execute(
-                """
-                delete from policy_decisions
-                where harness = ? and scope = ? and coalesce(artifact_id, '') = coalesce(?, '')
-                  and coalesce(artifact_hash, '') = coalesce(?, '')
-                  and coalesce(workspace, '') = coalesce(?, '')
-                  and coalesce(publisher, '') = coalesce(?, '')
-                """,
-                (decision.harness, decision.scope, artifact_id, artifact_hash, workspace, publisher),
-            )
-            cursor = connection.execute(
-                """
-                insert into policy_decisions (
-                  harness, scope, artifact_id, artifact_hash, workspace, publisher, action, reason, owner, source,
-                  expires_at, updated_at, integrity_version, integrity_generation, payload_hash, payload_mac,
-                  integrity_key_id, signed_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    decision.harness,
-                    decision.scope,
-                    artifact_id,
-                    artifact_hash,
-                    workspace,
-                    publisher,
-                    decision.action,
-                    decision.reason,
-                    decision.owner,
-                    decision.source,
-                    expires_at,
-                    now,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-            )
-            if not is_remote_policy_source(decision.source) and state.get("mode") == "protected":
-                key, key_id = secret_material
-                if key is not None and key_id is not None:
-                    trusted_state = self._load_policy_integrity_control_state(create=True)
-                    if trusted_state is not None:
-                        lastrowid = cursor.lastrowid
-                        if lastrowid is None:
-                            raise RuntimeError("Guard policy decision row was not inserted.")
-                        next_control_state = self._advance_policy_integrity_generation(
-                            connection,
-                            now=now,
-                            key=key,
-                            key_id=key_id,
-                            trusted_state=trusted_state,
-                            force_sign_decision_ids={lastrowid},
-                        )
-                        connection.commit()
         if next_control_state is not None:
             self._finalize_policy_integrity_control_state(next_control_state)
+
+    def _upsert_policy_locked(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        decision: PolicyDecision,
+        now: str,
+        secret_material: tuple[bytes | None, str | None],
+    ) -> dict[str, object] | None:
+        expires_at = _canonical_utc_timestamp(decision.expires_at) if decision.expires_at is not None else None
+        artifact_id, artifact_hash, workspace, publisher = self._normalized_policy_keys(decision)
+        state = self._refresh_policy_integrity_state(
+            connection,
+            now=now,
+            create_key=not is_remote_policy_source(decision.source),
+            secret_material=secret_material,
+            allow_cutover_resign=False,
+        )
+        connection.execute(
+            """
+            delete from policy_decisions
+            where harness = ? and scope = ? and coalesce(artifact_id, '') = coalesce(?, '')
+              and coalesce(artifact_hash, '') = coalesce(?, '')
+              and coalesce(workspace, '') = coalesce(?, '')
+              and coalesce(publisher, '') = coalesce(?, '')
+            """,
+            (decision.harness, decision.scope, artifact_id, artifact_hash, workspace, publisher),
+        )
+        cursor = connection.execute(
+            """
+            insert into policy_decisions (
+              harness, scope, artifact_id, artifact_hash, workspace, publisher, action, reason, owner, source,
+              expires_at, updated_at, integrity_version, integrity_generation, payload_hash, payload_mac,
+              integrity_key_id, signed_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                decision.harness,
+                decision.scope,
+                artifact_id,
+                artifact_hash,
+                workspace,
+                publisher,
+                decision.action,
+                decision.reason,
+                decision.owner,
+                decision.source,
+                expires_at,
+                now,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+        if is_remote_policy_source(decision.source) or state.get("mode") != "protected":
+            return None
+        key, key_id = secret_material
+        if key is None or key_id is None:
+            return None
+        trusted_state = self._load_policy_integrity_control_state(create=True)
+        if trusted_state is None:
+            return None
+        lastrowid = cursor.lastrowid
+        if lastrowid is None:
+            raise RuntimeError("Guard policy decision row was not inserted.")
+        return self._advance_policy_integrity_generation(
+            connection,
+            now=now,
+            key=key,
+            key_id=key_id,
+            trusted_state=trusted_state,
+            force_sign_decision_ids={lastrowid},
+        )
 
     def replace_remote_policies(
         self,
@@ -1128,6 +1145,14 @@ class StorePolicyMixin:
             if artifact_hash is not None
             else None
         )
+        portable_runtime_exact_match_key = (
+            _runtime_scoped_exact_match_key(
+                artifact_id,
+                runtime_tool_action_portable_match_context(runtime_exact_match_context),
+            )
+            if artifact_hash is not None and runtime_exact_match_context is not None
+            else None
+        )
         events: list[tuple[str, dict[str, object]]] = []
         selected_payload: dict[str, object] | None = None
         ignored_local_integrity: dict[str, object] | None = None
@@ -1430,6 +1455,7 @@ class StorePolicyMixin:
                         requested_artifact_id=artifact_id,
                         requested_artifact_hash=artifact_hash,
                         requested_runtime_exact_match_key=runtime_exact_match_key,
+                        requested_portable_exact_match_key=portable_runtime_exact_match_key,
                     ):
                         continue
                     integrity_result = self._policy_integrity_result_for_row(
@@ -1525,6 +1551,7 @@ class StorePolicyMixin:
                     requested_artifact_id=artifact_id,
                     requested_artifact_hash=artifact_hash,
                     requested_runtime_exact_match_key=runtime_exact_match_key,
+                    requested_portable_exact_match_key=portable_runtime_exact_match_key,
                 ):
                     continue
                 integrity_result = self._policy_integrity_result_for_row(

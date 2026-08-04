@@ -3,7 +3,6 @@ import {
   HiMiniAdjustmentsHorizontal,
   HiMiniBellAlert,
   HiMiniCircleStack,
-  HiMiniCog6Tooth,
   HiMiniLockClosed,
   HiMiniShieldCheck,
   HiMiniWindow,
@@ -13,8 +12,7 @@ export type LocalSettingsTabKey =
   | "protection"
   | "approval"
   | "notifications"
-  | "risk"
-  | "defaults"
+  | "rules"
   | "tray"
   | "maintenance";
 
@@ -47,9 +45,8 @@ const ICON_PROTECTION = <HiMiniShieldCheck className="h-4 w-4" aria-hidden="true
 const ICON_APPROVAL = <HiMiniLockClosed className="h-4 w-4" aria-hidden="true" />;
 const ICON_NOTIFICATIONS = <HiMiniBellAlert className="h-4 w-4" aria-hidden="true" />;
 const ICON_RISK = <HiMiniAdjustmentsHorizontal className="h-4 w-4" aria-hidden="true" />;
-const ICON_DEFAULTS = <HiMiniCog6Tooth className="h-4 w-4" aria-hidden="true" />;
-const ICON_MAINTENANCE = <HiMiniCircleStack className="h-4 w-4" aria-hidden="true" />;
 const ICON_TRAY = <HiMiniWindow className="h-4 w-4" aria-hidden="true" />;
+const ICON_MAINTENANCE = <HiMiniCircleStack className="h-4 w-4" aria-hidden="true" />;
 
 export const localSettingsNavItems: readonly LocalSettingsNavItem[] = [
   {
@@ -77,20 +74,12 @@ export const localSettingsNavItems: readonly LocalSettingsNavItem[] = [
     icon: ICON_NOTIFICATIONS,
   },
   {
-    key: "risk",
-    label: "Fine-tuning",
-    mobileLabel: "Tune",
-    summary: "Pick what Guard does for each risky action type.",
+    key: "rules",
+    label: "Protection rules",
+    mobileLabel: "Rules",
+    summary: "Tune risky actions and advanced fallback behavior.",
     group: "local",
     icon: ICON_RISK,
-  },
-  {
-    key: "defaults",
-    label: "Fallback rules",
-    mobileLabel: "Fallback",
-    summary: "What Guard does when it has not seen something before.",
-    group: "local",
-    icon: ICON_DEFAULTS,
   },
   {
     key: "tray",
@@ -119,8 +108,7 @@ export const localSettingsTabLabels: Record<LocalSettingsTabKey, string> = {
   protection: "Protection",
   approval: "Approval gate",
   notifications: "Notifications",
-  risk: "Fine-tuning",
-  defaults: "Fallback rules",
+  rules: "Protection rules",
   tray: "Tray icon",
   maintenance: "Data & repair",
 };
@@ -130,8 +118,7 @@ export function isLocalSettingsTabKey(value: string): value is LocalSettingsTabK
     value === "protection"
     || value === "approval"
     || value === "notifications"
-    || value === "risk"
-    || value === "defaults"
+    || value === "rules"
     || value === "tray"
     || value === "maintenance"
   );

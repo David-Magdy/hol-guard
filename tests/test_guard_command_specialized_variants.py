@@ -148,49 +148,48 @@ def test_literal_shell_wrapped_heredoc_substitutions_remain_safe_at_cli_and_runt
     assert match is None
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        "cat <<'EOF'\n'$(rm -rf ./build)'\nEOF",
-        "cat <<EOF\n\\$(rm -rf ./build)\nEOF",
-        "cat <<EOF\n\\`rm -rf ./build\\`\nEOF",
-        "curl -X DELETE https://api.example.test/items --next -X GET localhost:9200/customer-index",
-        "curl -sXGET localhost:9200/customer-index",
-        "curl -X DELETE --data localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE --data=localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE --output localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE --header localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE -Hlocalhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE --user localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE --cert localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE --key localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE --cacert localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE --proxy-user localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE --url-query localhost:9200/customer-index https://api.example.test/items",
-        "curl -X DELETE -o localhost:9200/customer-index https://api.example.test/items",
-        "curl -oXDELETE localhost:9200/customer-index",
-        "ssh -pvoProxyCommand='sh -c id' host.example",
-        "ssh -FvoProxyCommand='sh -c id' host.example",
-        "ssh -v4 host.example",
-        "git push +origin",
-        "git push --repo +origin main",
-        "git push --repo=+origin main",
-        "git push --push-option +audit origin main",
-        "git push --push-option=+audit origin main",
-        "git push -o +audit origin main",
-        "git push -o+audit origin main",
-        "git push -n origin +main",
-        "git push origin +main -n",
-    ],
+SPECIALIZED_SAFE_VARIANT_CASES = (
+    "cat <<'EOF'\n'$(rm -rf ./build)'\nEOF",
+    "cat <<EOF\n\\$(rm -rf ./build)\nEOF",
+    "cat <<EOF\n\\`rm -rf ./build\\`\nEOF",
+    "curl -X DELETE https://api.example.test/items --next -X GET localhost:9200/customer-index",
+    "curl -sXGET localhost:9200/customer-index",
+    "curl -X DELETE --data localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE --data=localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE --output localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE --header localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE -Hlocalhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE --user localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE --cert localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE --key localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE --cacert localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE --proxy-user localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE --url-query localhost:9200/customer-index https://api.example.test/items",
+    "curl -X DELETE -o localhost:9200/customer-index https://api.example.test/items",
+    "curl -oXDELETE localhost:9200/customer-index",
+    "ssh -pvoProxyCommand='sh -c id' host.example",
+    "ssh -FvoProxyCommand='sh -c id' host.example",
+    "ssh -v4 host.example",
+    "git push +origin",
+    "git push --repo +origin main",
+    "git push --repo=+origin main",
+    "git push --push-option +audit origin main",
+    "git push --push-option=+audit origin main",
+    "git push -o +audit origin main",
+    "git push -o+audit origin main",
+    "git push -n origin +main",
+    "git push origin +main -n",
 )
-def test_specialized_literal_observer_and_option_value_variants_remain_safe(command: str, tmp_path: Path) -> None:
-    payload = inspect_command(command, cwd=tmp_path, home_dir=tmp_path)
-    match = extract_sensitive_tool_action_request(
-        "Shell",
-        {"command": command},
-        cwd=tmp_path,
-        home_dir=tmp_path,
-    )
 
-    assert payload["status"] == "no_match"
-    assert match is None
+
+def test_specialized_literal_observer_and_option_value_variants_remain_safe(tmp_path: Path) -> None:
+    for case_id, command in enumerate(SPECIALIZED_SAFE_VARIANT_CASES, start=1):
+        payload = inspect_command(command, cwd=tmp_path, home_dir=tmp_path)
+        match = extract_sensitive_tool_action_request(
+            "Shell",
+            {"command": command},
+            cwd=tmp_path,
+            home_dir=tmp_path,
+        )
+        assert payload["status"] == "no_match", f"specialized-safe-{case_id:03}: {command!r}"
+        assert match is None, f"specialized-safe-{case_id:03}: {command!r}"

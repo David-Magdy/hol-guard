@@ -143,9 +143,10 @@ class GuardDecisionV2:
     retry_instruction: str | None
     signals: tuple[RiskSignalV2, ...]
     confidence: RiskConfidenceLabel
+    package_review_cloud_reason_code: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "guard_action": self.guard_action,
             "action": self.action,
             "reason": self.reason,
@@ -158,6 +159,9 @@ class GuardDecisionV2:
             "signals": [signal.to_dict() for signal in self.signals],
             "confidence": self.confidence,
         }
+        if self.package_review_cloud_reason_code is not None:
+            payload["package_review_cloud_reason_code"] = self.package_review_cloud_reason_code
+        return payload
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, object]) -> GuardDecisionV2:
@@ -182,6 +186,7 @@ class GuardDecisionV2:
             retry_instruction=_optional_string(payload, "retry_instruction"),
             signals=_parse_signals(payload.get("signals")),
             confidence=_parse_confidence(payload.get("confidence")),
+            package_review_cloud_reason_code=_optional_string(payload, "package_review_cloud_reason_code"),
         )
 
 

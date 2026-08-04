@@ -15,7 +15,7 @@ import {
 } from "./supply-chain-firewall-views";
 import { ManagerRow, resolveShimStatus } from "./supply-chain-firewall-manager-row";
 
-export type FirewallOpKey = PackageFirewallActionType | "audit" | "sync";
+export type FirewallOpKey = PackageFirewallActionType | "audit" | "sync" | "fix_all";
 
 export type FirewallPendingOp = {
   op: FirewallOpKey;

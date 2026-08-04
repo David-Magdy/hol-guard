@@ -5,6 +5,8 @@ import type {
   GuardReceipt,
   RiskSignalV2,
 } from "./guard-types";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
 import {
   buildStaleRequestCopy,
   groupDuplicates,
@@ -39,6 +41,13 @@ import {
   deriveSkillRiskSignals,
   deriveSupplyChainRiskSignals,
 } from "./approval-center-utils";
+import {
+  cloudRecoveryContent,
+  packageReviewCloudRecoveryKind,
+  packageReviewNeedsCloudRecovery,
+  ReviewCloudRecovery,
+  waitForCloudConnection,
+} from "./review-cloud-recovery";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -280,7 +289,7 @@ const ALL_VALID_CATEGORY_IDS = new Set<QueueCategoryId>([
   "credential_output", "secret_file_read", "file_read", "secret_exfiltration",
   "system_prompt_access", "prompt_injection", "guard_bypass", "generated_inventory_edit",
   "docs_edit", "source_edit", "config_change", "file_upload", "file_delete_cleanup",
-  "git_operation", "process_control", "container_or_deploy", "persistence_change",
+  "git_operation", "docker_command", "github_command", "process_control", "container_or_deploy", "persistence_change",
   "package_install", "package_script", "destructive_shell", "encoded_shell",
   "network", "mcp_tool", "browser_action", "harness_start", "shell_command", "other",
 ]);
@@ -772,6 +781,26 @@ assert(
 assert(
   PRIMARY_COMMAND_ACTION.text === "git diff -- app/guard/_components/home.tsx",
   "GR211-15: primary review card exposes shell command without opening technical details"
+);
+
+const PRIMARY_APPLY_PATCH_ACTION = buildPrimaryReviewAction({
+  ...BASE_REQUEST,
+  request_id: "ph09-primary-apply-patch",
+  action_envelope_json: {
+    ...BASE_ENVELOPE,
+    action_type: "file_write",
+    tool_name: "apply_patch",
+    command: "*** Begin Patch\n*** Update File: src/guard.py\n@@\n+value = 1\n*** End Patch",
+    target_paths: ["src/guard.py"],
+  },
+});
+assert(
+  PRIMARY_APPLY_PATCH_ACTION.label === "Patch",
+  "GR211-15: primary review card identifies native apply_patch actions as patches"
+);
+assert(
+  PRIMARY_APPLY_PATCH_ACTION.text.includes("*** Update File: src/guard.py"),
+  "GR211-15: primary review card exposes the redacted patch instead of only the tool name"
 );
 
 const EMPTY_COMMAND_WITH_LAUNCH_TARGET = {
@@ -1318,6 +1347,141 @@ const largeSearchResults = searchQueue(largeQueueWithNeedle, LARGE_UNIQUE_NEEDLE
 assert(
   largeSearchResults.length === 1,
   "GR224-08: searchQueue can find a single item by unique command text in a 10k queue"
+);
+
+const CLOUD_EVIDENCE_UNAVAILABLE_REQUEST = {
+  ...largeQueue[0],
+  artifact_type: "package_request",
+  risk_summary: "Current package safety data was unavailable for codex. Review this install now.",
+};
+assert(
+  packageReviewNeedsCloudRecovery(CLOUD_EVIDENCE_UNAVAILABLE_REQUEST),
+  "GR224-09: package evidence outage offers Cloud recovery",
+);
+const cloudRecoveryMarkup = renderToStaticMarkup(
+  createElement(ReviewCloudRecovery, { item: CLOUD_EVIDENCE_UNAVAILABLE_REQUEST }),
+);
+assert(
+  cloudRecoveryMarkup.includes("This is not a sign-in error") &&
+    !cloudRecoveryMarkup.includes("Connect Guard Cloud"),
+  "GR224-10: validation failures do not misrepresent a healthy Cloud connection",
+);
+assert(
+  packageReviewCloudRecoveryKind(CLOUD_EVIDENCE_UNAVAILABLE_REQUEST) === "validation",
+  "GR224-10a: package validation failures are distinct from authorization failures",
+);
+const CLOUD_AUTHORIZATION_REQUEST = {
+  ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+  risk_summary: "Guard cloud evaluation was not authorized, so this package request needs review.",
+};
+const cloudAuthorizationMarkup = renderToStaticMarkup(
+  createElement(ReviewCloudRecovery, { item: CLOUD_AUTHORIZATION_REQUEST }),
+);
+assert(
+  packageReviewCloudRecoveryKind(CLOUD_AUTHORIZATION_REQUEST) === "authorization" &&
+    cloudAuthorizationMarkup.includes("Connect Guard Cloud"),
+  "GR224-10b: authorization failures retain the sign-in recovery action",
+);
+const STRUCTURED_CLOUD_VALIDATION_REQUEST = {
+  ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+  risk_summary: "Package review needs attention.",
+  decision_v2_json: {
+    ...HIGH_SIGNAL_ITEM.decision_v2_json!,
+    package_review_cloud_reason_code: "cloud_timeout",
+  },
+};
+assert(
+  packageReviewCloudRecoveryKind(STRUCTURED_CLOUD_VALIDATION_REQUEST) === "validation",
+  "GR224-10c: structured reason codes classify recovery independently of copy",
+);
+for (const legacySummary of [
+  "Guard cloud evaluation returned HTTP 503, so Guard fell back to local intelligence.",
+  "Guard cloud evaluation timed out, so Guard fell back to local intelligence.",
+  "Guard cloud evaluation endpoint was not trusted, so this package request needs review.",
+  "Guard cloud evaluation returned an invalid response, so this package request needs review.",
+]) {
+  assert(
+    packageReviewCloudRecoveryKind({
+      ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+      risk_summary: legacySummary,
+    }) === "validation",
+    `GR224-10d: legacy validation recovery remains visible for ${legacySummary}`,
+  );
+}
+assert(
+  packageReviewCloudRecoveryKind({
+    ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+    risk_summary: "Guard cloud evaluation could not establish a trusted session, so this request needs review.",
+  }) === "authorization",
+  "GR224-10e: legacy trusted-session failure retains sign-in recovery",
+);
+assert(
+  !packageReviewNeedsCloudRecovery({
+    ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST,
+    risk_summary: "Known malware was found.",
+  }),
+  "GR224-11: confirmed package risk does not offer outage recovery",
+);
+assert(
+  !packageReviewNeedsCloudRecovery({ ...CLOUD_EVIDENCE_UNAVAILABLE_REQUEST, artifact_type: "command" }),
+  "GR224-12: unrelated approvals do not offer package recovery",
+);
+
+let cloudStatusChecks = 0;
+const connectedCloudStatus = await waitForCloudConnection(
+  {
+    connect_required: true,
+    connect_flow: {
+      state: "running",
+      title: "Connect Guard Cloud",
+      detail: "Waiting for sign-in",
+      action_label: "Open sign-in",
+      connect_url: "https://example.com/connect",
+      authorize_url: "https://example.com/authorize",
+      browser_opened: true,
+      request_id: "cloud-connect-request",
+      poll_after_ms: 1000,
+    },
+  },
+  {
+    signal: new AbortController().signal,
+    wait: async () => undefined,
+    fetchStatus: async () => {
+      cloudStatusChecks += 1;
+      return { connect_required: false, connect_flow: null };
+    },
+  },
+);
+assert(
+  !connectedCloudStatus.connect_required && cloudStatusChecks === 1,
+  "GR224-13: recovery polling observes completed Cloud sign-in",
+);
+const connectedRecoveryContent = cloudRecoveryContent(true);
+assert(
+  connectedRecoveryContent.title === "Guard Cloud connected" &&
+    connectedRecoveryContent.detail.includes("Run the install command again"),
+  "GR224-14: completed Cloud sign-in replaces stale authorization guidance",
+);
+let canceledPollWaits = 0;
+const canceledPollController = new AbortController();
+canceledPollController.abort();
+const canceledPollRejected = await waitForCloudConnection(
+  { connect_required: true, connect_flow: null },
+  {
+    signal: canceledPollController.signal,
+    wait: async () => {
+      canceledPollWaits += 1;
+    },
+    maxAttempts: 1,
+  },
+).then(
+  () => false,
+  (error: unknown) =>
+    typeof error === "object" && error !== null && "name" in error && error.name === "AbortError",
+);
+assert(
+  canceledPollRejected && canceledPollWaits === 0,
+  "GR224-15: canceled recovery polling schedules no additional work",
 );
 
 console.log("phase09-review.test.ts: all tests passed");

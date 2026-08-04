@@ -421,6 +421,11 @@ def test_daemon_workspace_audit_uses_managed_install_workspace_when_cwd_is_not_a
     store = GuardStore(tmp_path / "guard-home")
     store.set_managed_install("codex", True, str(workspace_dir), {}, WORKSPACE_AUDIT_NOW)
     _seed_premium_entitlement(store)
+    monkeypatch.setattr(
+        local_supply_chain_module,
+        "_run_cloud_workspace_audit",
+        lambda **_kwargs: (None, {"code": "cloud_timeout", "message": "Cloud unavailable."}),
+    )
     monkeypatch.chdir(empty_dir)
 
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
@@ -578,6 +583,11 @@ def test_daemon_workspace_audit_persists_receipt_and_queues_cloud_sync(
     )
     store = GuardStore(tmp_path / "guard-home")
     _seed_premium_entitlement(store)
+    monkeypatch.setattr(
+        local_supply_chain_module,
+        "_run_cloud_workspace_audit",
+        lambda **_kwargs: (None, {"code": "cloud_timeout", "message": "Cloud unavailable."}),
+    )
     store.record_guard_connect_pairing_completed(
         sync_url="https://hol.org/api/guard/receipts/sync",
         allowed_origin="https://hol.org",

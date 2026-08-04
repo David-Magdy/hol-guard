@@ -115,6 +115,11 @@ def _configure_guard_local_parsers(
     _add_guard_common_args(update_parser)
     update_parser.add_argument("--dry-run", action="store_true")
     update_parser.add_argument(
+        "--alpha",
+        action="store_true",
+        help="Update to the newest alpha release in the installed major version",
+    )
+    update_parser.add_argument(
         "--wheel",
         help="Install a local HOL Guard wheel file, or the newest matching hol_guard-*.whl from a directory",
     )
@@ -355,6 +360,11 @@ def _configure_guard_local_parsers(
     history_sub = history_parser.add_subparsers(dest="history_command", metavar="COMMAND")
     history_explain_parser = history_sub.add_parser("explain", help="Show insight and evidence for a receipt ID")
     history_explain_parser.add_argument("receipt_id", help="Receipt ID to explain")
+    history_explain_parser.add_argument(
+        "--script",
+        action="store_true",
+        help="Show only inline script bodies (heredocs) recorded with the receipt",
+    )
     history_explain_parser.add_argument("--json", action="store_true")
 
     inventory_parser = guard_subparsers.add_parser("inventory", help="List the local Guard artifact inventory")

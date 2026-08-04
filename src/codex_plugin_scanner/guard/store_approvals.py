@@ -13,11 +13,25 @@ from .approval_scope_support import request_scope_contract_payload, supported_re
 from .decision_boundaries import canonical_approval_surfaces
 from .models import GuardApprovalRequest
 from .runtime.action_identity import normalize_command_identity
+from .runtime.browser_mcp_intent import _classify_operation
 
 MAX_APPROVAL_PAGE_LIMIT = 200
+APPROVAL_QUEUE_PREVIEW_MAX_LENGTH = 512
 APPROVAL_QUEUE_BACKFILL_BATCH_SIZE = 500
 _APPROVAL_RESOLUTION_BATCH_SIZE = 500
 _QUEUE_IDENTITY_VERSION = "v1"
+_LEGACY_BROWSER_MULTI_ELEMENT_OPERATIONS = frozenset({"drag", "drag_drop_file", "fill_form"})
+_LEGACY_BROWSER_ELEMENT_OPERATIONS = frozenset(
+    {
+        "click",
+        "fill",
+        "fill_input",
+        "focus_element",
+        "hover",
+        "select_dropdown",
+        "upload_file",
+    }
+)
 _VOLATILE_PAYLOAD_KEY_TOKENS = frozenset(
     {
         "callid",
@@ -39,6 +53,61 @@ class InvalidApprovalCursorError(ValueError):
 
 def _normalized_identity_key(launch_target: str | None) -> str:
     return normalize_command_identity(launch_target or "")
+
+
+def _browser_launch_target_for_display(value: object) -> tuple[object, str | None]:
+    """Repair legacy browser labels without changing persisted approval identity."""
+    if not isinstance(value, str):
+        return value, None
+    parts = value.split()
+    if len(parts) != 3 or parts[2] != "unknown":
+        return value, None
+    server_name, operation, _unknown = parts
+    intent = _classify_operation(operation, server_name)
+    if intent is None:
+        return value, None
+
+    operation_lower = operation.lower()
+    if "network" in operation_lower:
+        target = "network request" if operation_lower.startswith(("get_", "read_")) else "network activity"
+    elif "console" in operation_lower:
+        target = "console message" if operation_lower.startswith(("get_", "read_")) else "console messages"
+    elif operation_lower in _LEGACY_BROWSER_MULTI_ELEMENT_OPERATIONS:
+        target = "page elements"
+    elif operation_lower in _LEGACY_BROWSER_ELEMENT_OPERATIONS:
+        target = "page element"
+    elif operation_lower in {"list_pages", "browser_list_pages"}:
+        target = "open pages"
+    elif operation_lower in {"select_page", "close_page", "browser_select_page", "browser_close_page"}:
+        target = "browser page"
+    else:
+        target = "current page"
+    return f"{server_name} {operation} {target}", target
+
+
+def _browser_risk_signals_for_display(signals: list[object], target: str | None) -> list[object]:
+    if target is None:
+        return signals
+    return [signal.replace("unknown target", target) if isinstance(signal, str) else signal for signal in signals]
+
+
+def _approval_queue_preview(
+    action_envelope: dict[str, object] | None,
+    launch_target: object,
+) -> str | None:
+    command = action_envelope.get("command") if action_envelope is not None else None
+    candidate = command if isinstance(command, str) and command.strip() else launch_target
+    if not isinstance(candidate, str) or not candidate.strip():
+        return None
+    normalized = candidate.strip()
+    if len(normalized) <= APPROVAL_QUEUE_PREVIEW_MAX_LENGTH:
+        return normalized
+    return f"{normalized[: APPROVAL_QUEUE_PREVIEW_MAX_LENGTH - 1]}…"
+
+
+def _approval_queue_command_category(action_envelope: dict[str, object] | None) -> str | None:
+    value = action_envelope.get("command_category") if action_envelope is not None else None
+    return value if isinstance(value, str) and value.startswith("command.") else None
 
 
 def _begin_immediate(connection: sqlite3.Connection) -> None:
@@ -186,8 +255,12 @@ def approval_schema_statement() -> str:
           decision_v2_json text,
           fallback_cli_command text,
           scanner_evidence_json text not null default '[]',
+          browser_intent_json text,
           desktop_notified_at text,
           raw_command_text text,
+          guard_version text,
+          first_seen_guard_version text,
+          last_seen_guard_version text,
           review_command text not null,
           approval_url text not null,
           status text not null,
@@ -291,7 +364,10 @@ def add_approval_request(
                 transport = ?, risk_summary = ?, risk_signals_json = ?,
                 artifact_label = ?, source_label = ?, trigger_summary = ?, why_now = ?, launch_summary = ?,
                 risk_headline = ?, action_envelope_json = ?, decision_v2_json = ?, fallback_cli_command = ?,
-                scanner_evidence_json = ?, review_command = ?, approval_url = ?, raw_command_text = ?
+                scanner_evidence_json = ?, browser_intent_json = ?, review_command = ?, approval_url = ?,
+                raw_command_text = ?, guard_version = ?,
+                first_seen_guard_version = coalesce(first_seen_guard_version, ?),
+                last_seen_guard_version = ?
             where request_id = ? and oauth_source = ?
             """,
             (
@@ -332,9 +408,13 @@ def add_approval_request(
                     else None
                 ),
                 json.dumps(list(request.scanner_evidence), sort_keys=True),
+                json.dumps(request.browser_intent, sort_keys=True) if request.browser_intent is not None else None,
                 review_command,
                 approval_url,
                 request.raw_command_text,
+                request.guard_version,
+                request.first_seen_guard_version or request.guard_version,
+                request.last_seen_guard_version or request.guard_version,
                 request_id,
                 normalized_oauth_source,
             ),
@@ -348,14 +428,14 @@ def add_approval_request(
           launch_target, normalized_identity_key, action_identity, queue_group_id, dedupe_count, last_seen_at,
           transport, risk_summary,
           risk_signals_json, artifact_label, source_label, trigger_summary, why_now, launch_summary, risk_headline,
-          action_envelope_json, decision_v2_json, fallback_cli_command, scanner_evidence_json,
+          action_envelope_json, decision_v2_json, fallback_cli_command, scanner_evidence_json, browser_intent_json,
           review_command, approval_url, status, resolution_action, resolution_scope, reason, created_at, resolved_at,
-          raw_command_text
+          raw_command_text, guard_version, first_seen_guard_version, last_seen_guard_version
         )
         values (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, ?
+          ?, ?, ?, ?, ?, ?
             )
         """,
         (
@@ -396,6 +476,7 @@ def add_approval_request(
             json.dumps(canonical_decision.decision_v2_json),
             request.fallback_cli_command,
             json.dumps(list(request.scanner_evidence), sort_keys=True),
+            json.dumps(request.browser_intent, sort_keys=True) if request.browser_intent is not None else None,
             request.review_command,
             request.approval_url,
             "pending",
@@ -405,6 +486,9 @@ def add_approval_request(
             now,
             None,
             request.raw_command_text,
+            request.guard_version,
+            request.first_seen_guard_version or request.guard_version,
+            request.last_seen_guard_version or request.guard_version,
         ),
     )
     return request.request_id
@@ -472,9 +556,9 @@ def list_approval_requests(
                 normalized_identity_key, action_identity, queue_group_id, dedupe_count, last_seen_at, transport,
                 risk_summary, risk_signals_json, artifact_label, source_label, trigger_summary, why_now,
                 launch_summary, risk_headline, action_envelope_json, decision_v2_json,
-                fallback_cli_command, scanner_evidence_json, review_command,
+                fallback_cli_command, scanner_evidence_json, browser_intent_json, review_command,
                 approval_url, status, resolution_action, resolution_scope, reason, created_at, resolved_at,
-                raw_command_text
+                raw_command_text, guard_version, first_seen_guard_version, last_seen_guard_version
         from approval_requests
         {where_clause}
         order by last_seen_at desc, request_id desc
@@ -503,7 +587,11 @@ def get_approval_request(connection: sqlite3.Connection, request_id: str) -> dic
                 launch_summary, risk_headline, action_envelope_json, decision_v2_json,
                 {_column_expr(columns, "fallback_cli_command", "NULL")},
                 {_column_expr(columns, "raw_command_text", "NULL")},
-                {_column_expr(columns, "scanner_evidence_json", "'[]'")}, review_command,
+                {_column_expr(columns, "guard_version", "NULL")},
+                {_column_expr(columns, "first_seen_guard_version", "NULL")},
+                {_column_expr(columns, "last_seen_guard_version", "NULL")},
+                {_column_expr(columns, "scanner_evidence_json", "'[]'")},
+                {_column_expr(columns, "browser_intent_json", "NULL")}, review_command,
                 approval_url, status, resolution_action, resolution_scope, reason, created_at, resolved_at
         from approval_requests
         where request_id = ?
@@ -607,6 +695,8 @@ def _row_to_payload(row: sqlite3.Row) -> dict[str, object]:
         parsed_action_envelope if parsed_action_envelope is not None else row["action_envelope_json"],
         reject_contradiction=False,
     )
+    launch_target, browser_target = _browser_launch_target_for_display(row["launch_target"])
+    risk_signals = _browser_risk_signals_for_display(_safe_json_list(row["risk_signals_json"]), browser_target)
     payload: dict[str, object] = {
         "request_id": str(row["request_id"]),
         "harness": str(row["harness"]),
@@ -622,7 +712,7 @@ def _row_to_payload(row: sqlite3.Row) -> dict[str, object]:
         "oauth_source": row["oauth_source"],
         "config_path": str(row["config_path"]),
         "workspace": row["workspace"],
-        "launch_target": row["launch_target"],
+        "launch_target": launch_target,
         "normalized_identity_key": row["normalized_identity_key"],
         "action_identity": row["action_identity"],
         "queue_group_id": row["queue_group_id"],
@@ -632,7 +722,7 @@ def _row_to_payload(row: sqlite3.Row) -> dict[str, object]:
         "resolution_intent": row["resolution_action"],
         "transport": row["transport"],
         "risk_summary": row["risk_summary"],
-        "risk_signals": _safe_json_list(row["risk_signals_json"]),
+        "risk_signals": risk_signals,
         "artifact_label": row["artifact_label"],
         "source_label": row["source_label"],
         "trigger_summary": row["trigger_summary"],
@@ -643,7 +733,11 @@ def _row_to_payload(row: sqlite3.Row) -> dict[str, object]:
         "decision_v2_json": canonical_decision.decision_v2_json,
         "fallback_cli_command": row["fallback_cli_command"],
         "raw_command_text": row["raw_command_text"],
+        "guard_version": row["guard_version"],
+        "first_seen_guard_version": row["first_seen_guard_version"],
+        "last_seen_guard_version": row["last_seen_guard_version"],
         "scanner_evidence": _json_object_list(row["scanner_evidence_json"]),
+        "browser_intent": _json_object(row["browser_intent_json"]),
         "review_command": str(row["review_command"]),
         "approval_url": str(row["approval_url"]),
         "status": str(row["status"]),
@@ -790,6 +884,8 @@ def _row_to_approval_summary(row: sqlite3.Row) -> dict[str, object]:
         parsed_action_envelope if parsed_action_envelope is not None else row["action_envelope_json"],
         reject_contradiction=False,
     )
+    launch_target, _browser_target = _browser_launch_target_for_display(row["launch_target"])
+    action_envelope = canonical_decision.action_envelope_json
     payload: dict[str, object] = {
         "request_id": str(row["request_id"]),
         "harness": str(row["harness"]),
@@ -801,7 +897,9 @@ def _row_to_approval_summary(row: sqlite3.Row) -> dict[str, object]:
         "source_scope": str(row["source_scope"]),
         "config_path": str(row["config_path"]),
         "workspace": row["workspace"],
-        "launch_target": row["launch_target"],
+        "launch_target": launch_target,
+        "queue_preview": _approval_queue_preview(action_envelope, launch_target),
+        "queue_command_category": _approval_queue_command_category(action_envelope),
         "risk_summary": row["risk_summary"],
         "risk_headline": row["risk_headline"],
         "raw_command_text": row["raw_command_text"],

@@ -62,6 +62,24 @@ def add_approval_parser(
             action="store_true",
             help="Save an exact-action remembered rule for artifact scope instead of resolving only this request.",
         )
+        if action == "allow":
+            decision_parser.add_argument(
+                "--trust-local-tool",
+                action="store_true",
+                help="Trust the verified read-only local tool capability after authenticated approval.",
+            )
+            decision_parser.add_argument(
+                "--trust-target",
+                choices=("capability", "version"),
+                default="capability",
+                help="Trust only this capability or every verified read-only capability from this tool version.",
+            )
+            decision_parser.add_argument(
+                "--trust-duration",
+                choices=("15m", "1h", "5h", "version", "always"),
+                default="1h",
+                help="How long the local tool grant remains active.",
+            )
         add_common_args(decision_parser)
         decision_parser.add_argument("--json", action="store_true")
         decision_parser.set_defaults(approval_action=action)
@@ -233,6 +251,14 @@ def run_approval_command(
             "exit_code": 4,
         }
     try:
+        trust_local_tool = bool(getattr(args, "trust_local_tool", False))
+        if trust_local_tool and (args.scope != "artifact" or bool(getattr(args, "remember", False))):
+            return {
+                "resolved": False,
+                "error": "invalid_local_tool_trust_scope",
+                "message": "Local tool trust requires artifact scope and cannot be combined with --remember.",
+                "exit_code": 2,
+            }
         gate_input = (
             prompt_for_approval_gate(store.guard_home)
             if _approval_resolution_needs_gate(
@@ -252,6 +278,8 @@ def run_approval_command(
             now=_now(),
             approval_gate_input=gate_input,
             persist_policy=True if bool(getattr(args, "remember", False)) else None,
+            local_tool_grant_target=(getattr(args, "trust_target", None) if trust_local_tool else None),
+            local_tool_grant_duration=(getattr(args, "trust_duration", None) if trust_local_tool else None),
         )
     except ApprovalGateError as error:
         return approval_gate_cli_payload(error)
