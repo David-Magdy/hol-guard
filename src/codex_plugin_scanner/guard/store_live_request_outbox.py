@@ -5,7 +5,7 @@ from __future__ import annotations
 # pyright: reportAttributeAccessIssue=false
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
@@ -338,7 +338,91 @@ def _normalized_delivery_binding(
     return values
 
 
+def _requeue_pending_live_requests(
+    connection: sqlite3.Connection,
+    *,
+    source: str,
+    changed_at: str,
+) -> int:
+    connection.execute("begin immediate")
+    binding = _live_request_oauth_binding(connection, source)
+    connection.execute(
+        """
+        delete from guard_live_request_outbox
+        where local_request_id in (
+          select request_id
+          from approval_requests
+          where status = 'pending' and oauth_source = ?
+        )
+        """,
+        (source,),
+    )
+    values = binding or {
+        "oauth_subject_hash": None,
+        "workspace_id": None,
+        "machine_id": None,
+        "machine_installation_id": None,
+    }
+    cursor = connection.execute(
+        """
+        insert into guard_live_request_outbox (
+          local_request_id,
+          changed_at,
+          oauth_source,
+          oauth_subject_hash,
+          workspace_id,
+          machine_id,
+          machine_installation_id
+        )
+        select request_id, ?, ?, ?, ?, ?, ?
+        from approval_requests
+        where status = 'pending' and oauth_source = ?
+        order by coalesce(last_seen_at, created_at), request_id
+        """,
+        (
+            changed_at,
+            source,
+            values["oauth_subject_hash"],
+            values["workspace_id"],
+            values["machine_id"],
+            values["machine_installation_id"],
+            source,
+        ),
+    )
+    return max(0, int(cursor.rowcount if cursor.rowcount is not None else 0))
+
+
 class StoreLiveRequestOutboxMixin:
+    def requeue_pending_live_requests(self, *, changed_at: str) -> int:
+        """Republish pending requests after a cloud-visible privacy change."""
+
+        with self._connect() as connection:
+            return _requeue_pending_live_requests(connection, source=self._guard_source, changed_at=changed_at)
+
+    def requeue_pending_live_requests_with_marker(
+        self,
+        *,
+        changed_at: str,
+        marker_key: str,
+        marker_payload: Mapping[str, object],
+    ) -> int:
+        """Atomically republish pending requests and advance their projection marker."""
+
+        with self._connect() as connection:
+            requeued = _requeue_pending_live_requests(connection, source=self._guard_source, changed_at=changed_at)
+            payload = {**marker_payload, "requeued": requeued}
+            connection.execute(
+                """
+                insert into sync_state (state_key, payload_json, updated_at)
+                values (?, ?, ?)
+                on conflict(state_key) do update set
+                  payload_json = excluded.payload_json,
+                  updated_at = excluded.updated_at
+                """,
+                (marker_key, json.dumps(payload), changed_at),
+            )
+            return requeued
+
     def get_live_request_oauth_binding(self) -> dict[str, str] | None:
         """Return the complete non-secret binding for this store source."""
         with self._connect() as connection:
@@ -426,12 +510,16 @@ class StoreLiveRequestOutboxMixin:
                     where outbox.local_request_id = requests.request_id
                   )
                 union
-                select outbox.local_request_id
+                select local_request_id
                 from guard_live_request_outbox as outbox
-                join approval_requests as requests on requests.request_id = outbox.local_request_id
                 where outbox.oauth_source is null
-                  and requests.workspace = ?
                   and (outbox.workspace_id is null or outbox.workspace_id = ?)
+                  and exists (
+                    select 1
+                    from approval_requests as requests
+                    where requests.request_id = outbox.local_request_id
+                      and requests.workspace = ?
+                  )
                 union
                 select local_request_id
                 from guard_live_request_outbox

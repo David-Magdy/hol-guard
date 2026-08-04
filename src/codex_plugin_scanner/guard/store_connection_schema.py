@@ -4,9 +4,19 @@
 
 from __future__ import annotations
 
+import threading
+from contextlib import suppress
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import ClassVar
+from uuid import uuid4
 
-from .mcp.policy_store import ensure_mcp_policy_request_schema
+from .sqlite_profile import (
+    SQLiteMigrationGateReport,
+    SQLiteProfiler,
+    SQLiteProfileSnapshot,
+    sqlite_error_is_busy_locked,
+)
 
 # ruff: noqa: F403,F405
 from .store_base import *
@@ -20,6 +30,7 @@ from .store_live_request_outbox import ensure_live_request_outbox_schema, seed_l
 from .store_secret_policy_integrity import _POLICY_INTEGRITY_LOOKUP_UNSET
 from .store_storage_maintenance import (
     STORAGE_MAINTENANCE_MIGRATION_VERSION,
+    STORAGE_QUERY_INDEX_MIGRATION_VERSION,
     storage_maintenance_schema_statements,
 )
 from .store_workflow_capabilities_schema import ensure_workflow_capability_schema
@@ -132,10 +143,26 @@ _POLICY_INDEX_STATEMENTS = (
 )
 
 _RECEIPT_WARN_ROLLUP_MIGRATION_VERSION = 16
-_REQUIRED_SCHEMA_MIGRATION_VERSIONS = (*range(2, 19), STORAGE_MAINTENANCE_MIGRATION_VERSION)
+_REQUIRED_SCHEMA_MIGRATION_VERSIONS = tuple(range(2, STORAGE_QUERY_INDEX_MIGRATION_VERSION + 1))
+_FATAL_SQLITE_ERROR_MARKERS = (
+    "database disk image is malformed",
+    "database corruption",
+    "file is not a database",
+)
+_SQLITE_IO_ERROR_MARKER = "disk i/o error"
+
+
+@dataclass
+class _SchemaInitializationState:
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    references: int = 0
+    last_run_succeeded: bool = False
 
 
 class StoreConnectionSchemaMixin:
+    _sqlite_profiler_init_lock = threading.Lock()
+    _schema_initialization_locks_guard: ClassVar[threading.Lock] = threading.Lock()
+    _schema_initialization_states: ClassVar[dict[str, _SchemaInitializationState]] = {}
     _startup_prefetched_policy_integrity_secret_material: object | tuple[bytes | None, str | None] = (
         _POLICY_INTEGRITY_LOOKUP_UNSET
     )
@@ -143,21 +170,226 @@ class StoreConnectionSchemaMixin:
         _POLICY_INTEGRITY_LOOKUP_UNSET
     )
     _startup_prefetched_policy_integrity_repair_failed = False
+    _storage_recovery_local: ClassVar[threading.local] = threading.local()
+    _storage_gate_local: ClassVar[threading.local] = threading.local()
+
+    def _current_thread_owns_storage_recovery(self) -> bool:
+        return getattr(self._storage_recovery_local, "owner", None) == id(self)
+
+    @staticmethod
+    def _is_fatal_sqlite_error(error: BaseException) -> bool:
+        return isinstance(error, sqlite3.DatabaseError) and any(
+            marker in str(error).lower() for marker in _FATAL_SQLITE_ERROR_MARKERS
+        )
+
+    @contextmanager
+    def _hold_storage_gate(self, *, exclusive: bool) -> Iterator[None]:
+        local = self._storage_gate_local
+        if getattr(local, "owner", None) == id(self) and getattr(local, "depth", 0) > 0:
+            if exclusive and getattr(local, "exclusive", False) is False:
+                raise RuntimeError("Cannot upgrade an active Guard storage read gate.")
+            local.depth += 1
+            try:
+                yield
+            finally:
+                local.depth -= 1
+            return
+        path = self.guard_home / "storage-access.lock"
+        deadline = time.monotonic() + sqlite_connect_timeout_seconds()
+        with path.open("a+b") as handle:
+            while True:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+
+                        handle.seek(0)
+                        if not handle.read(1):
+                            handle.write(b"0")
+                            handle.flush()
+                        handle.seek(0)
+                        mode = msvcrt.LK_NBLCK if exclusive else msvcrt.LK_NBRLCK
+                        msvcrt.locking(handle.fileno(), mode, 1)
+                    else:
+                        import fcntl
+
+                        mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                        fcntl.flock(handle.fileno(), mode | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Timed out waiting for Guard storage access.") from None
+                    time.sleep(0.01)
+            local.owner = id(self)
+            local.depth = 1
+            local.exclusive = exclusive
+            try:
+                yield
+            finally:
+                local.owner = None
+                local.depth = 0
+                local.exclusive = False
+                if os.name == "nt":
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def _store_is_proven_unusable(self, error: BaseException) -> bool:
+        if self._is_fatal_sqlite_error(error):
+            return True
+        if _SQLITE_IO_ERROR_MARKER not in str(error).lower():
+            return False
+        # An I/O error alone does not prove corruption. Only replace the active
+        # path when the same directory supports a fresh SQLite transaction and
+        # the existing database remains unreadable on a second probe.
+        probe_path = self.guard_home / f"storage-probe-{uuid4().hex}.db"
+        try:
+            with sqlite3.connect(probe_path, timeout=0.1) as probe:
+                probe.execute("create table probe (value integer)")
+                probe.execute("insert into probe values (1)")
+            with sqlite3.connect(self.path, timeout=0.1) as existing:
+                _ = existing.execute("pragma schema_version").fetchone()
+                return False
+        except sqlite3.DatabaseError as probe_error:
+            return _SQLITE_IO_ERROR_MARKER in str(probe_error).lower() and probe_path.is_file()
+        finally:
+            with suppress(OSError):
+                probe_path.unlink()
+
+    def _recover_fatal_sqlite_store(self, error: BaseException) -> bool:
+        is_io_error = _SQLITE_IO_ERROR_MARKER in str(error).lower()
+        if (
+            not isinstance(error, sqlite3.DatabaseError)
+            or (not self._is_fatal_sqlite_error(error) and not is_io_error)
+            or self._current_thread_owns_storage_recovery()
+            or self.path.is_symlink()
+        ):
+            return False
+        try:
+            failed_stat = self.path.stat()
+            failed_identity = failed_stat.st_dev, failed_stat.st_ino
+        except OSError:
+            failed_identity = None
+        with self._hold_storage_gate(exclusive=True):
+            # Another process may already have replaced the failed store.
+            try:
+                current_stat = self.path.stat()
+                current_identity = current_stat.st_dev, current_stat.st_ino
+            except OSError:
+                current_identity = None
+            if current_identity != failed_identity:
+                return True
+
+            if not self._store_is_proven_unusable(error):
+                return False
+
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            quarantine_id = f"{stamp}-{uuid4().hex[:8]}"
+            for suffix in ("", "-wal", "-shm"):
+                source = Path(f"{self.path}{suffix}")
+                if not source.exists() or source.is_symlink():
+                    continue
+                destination = self.guard_home / f"guard.db.corrupt-{quarantine_id}{suffix}"
+                source.replace(destination)
+            _store_logger.error(
+                "Guard quarantined an unusable SQLite store after a fatal storage error: %s",
+                type(error).__name__,
+            )
+            self._storage_recovery_local.owner = id(self)
+            try:
+                self._initialize_schema()
+            finally:
+                self._storage_recovery_local.owner = None
+            return True
+
+    def _sqlite_profiler(self) -> SQLiteProfiler:
+        profiler = self.__dict__.get("_guard_sqlite_profiler")
+        if not isinstance(profiler, SQLiteProfiler):
+            with self._sqlite_profiler_init_lock:
+                profiler = self.__dict__.get("_guard_sqlite_profiler")
+                if not isinstance(profiler, SQLiteProfiler):
+                    profiler = SQLiteProfiler()
+                    self.__dict__["_guard_sqlite_profiler"] = profiler
+        return profiler
+
+    def sqlite_profile(self) -> SQLiteProfileSnapshot:
+        return self._sqlite_profiler().snapshot()
+
+    def sqlite_migration_gate_report(
+        self,
+        *,
+        end_to_end_p95_ms: float | None = None,
+    ) -> SQLiteMigrationGateReport:
+        return self._sqlite_profiler().migration_gate_report(end_to_end_p95_ms=end_to_end_p95_ms)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
+        if self._current_thread_owns_storage_recovery():
+            with self._connect_once() as connection:
+                yield connection
+            return
+        fatal_error: sqlite3.DatabaseError | None = None
+        with self._hold_storage_gate(exclusive=False):
+            try:
+                with self._connect_once() as connection:
+                    yield connection
+            except sqlite3.DatabaseError as error:
+                fatal_error = error
+        if fatal_error is not None:
+            self._recover_fatal_sqlite_store(fatal_error)
+            raise fatal_error
+
+    @contextmanager
+    def _connect_once(self) -> Iterator[sqlite3.Connection]:
         connect_timeout_seconds = sqlite_connect_timeout_seconds()
-        connection = sqlite3.connect(self.path, timeout=connect_timeout_seconds)
+        profiler = self._sqlite_profiler()
+        connect_started = time.monotonic()
+        try:
+            connection = sqlite3.connect(self.path, timeout=connect_timeout_seconds)
+        except sqlite3.OperationalError as error:
+            profiler.record_connect((time.monotonic() - connect_started) * 1000)
+            if sqlite_error_is_busy_locked(error):
+                profiler.record_busy_locked()
+            raise
+        profiler.record_connect((time.monotonic() - connect_started) * 1000)
         connection.row_factory = sqlite3.Row
         start = time.monotonic()
         notification: dict[str, object] | None = None
+        database_failed = False
         try:
             connection.execute(f"pragma busy_timeout={int(connect_timeout_seconds * 1000)}")
+            # Hot-path tuning: synchronous=NORMAL is only safe once the database
+            # is in WAL mode (durability comes from checkpointing, not per-commit
+            # fsync). Leave FULL for rollback-journal DBs and schema-init paths.
+            journal_mode_row = connection.execute("pragma journal_mode").fetchone()
+            if journal_mode_row is not None and str(journal_mode_row[0]).lower() == "wal":
+                connection.execute("pragma synchronous=NORMAL")
+            # Enlarge the page cache and mmap window so multi-GB stores don't
+            # thrash the default 2 MiB cache.
+            connection.execute(f"pragma cache_size=-{SQLITE_CACHE_SIZE_KIB}")
+            connection.execute(f"pragma mmap_size={SQLITE_MMAP_SIZE_BYTES}")
             yield connection
-            connection.commit()
+            commit_started = time.monotonic()
+            try:
+                connection.commit()
+            finally:
+                profiler.record_commit((time.monotonic() - commit_started) * 1000)
             notification = self._take_policy_integrity_state_notification(connection)
+        except sqlite3.OperationalError as error:
+            database_failed = True
+            if sqlite_error_is_busy_locked(error):
+                profiler.record_busy_locked()
+            raise
+        except sqlite3.DatabaseError:
+            database_failed = True
+            raise
         finally:
-            if notification is None:
+            profiler.record_transaction((time.monotonic() - start) * 1000)
+            if notification is None and not database_failed:
                 self._take_policy_integrity_state_notification(connection)
             connection.close()
             elapsed_ms = (time.monotonic() - start) * 1000
@@ -264,19 +496,64 @@ class StoreConnectionSchemaMixin:
                     _release_advisory_file_lock(handle)
 
     def _initialize_serialized(self) -> None:
-        if getattr(self, "_daemon_managed_schema", False) and self._schema_is_current():
+        try:
+            self._initialize_serialized_once()
+        except sqlite3.DatabaseError as error:
+            if self._schema_is_current():
+                self._initialize_policy_integrity()
+                return
+            if not self._recover_fatal_sqlite_store(error):
+                raise
+            self._initialize_policy_integrity()
+
+    def _initialize_serialized_once(self) -> None:
+        daemon_managed = getattr(self, "_daemon_managed_schema", False)
+        if daemon_managed and self._schema_is_current():
             self._initialize_policy_integrity()
             return
         timeout_seconds = sqlite_connect_timeout_seconds()
-        with self._hold_advisory_file_lock(
-            path=self.guard_home / "schema-migration.lock",
-            timeout_seconds=timeout_seconds,
-            poll_seconds=min(0.05, max(timeout_seconds, 0.001)),
-            timeout_message="Timed out waiting for the Guard schema migration lock.",
-        ):
-            self._initialize()
+        deadline = time.monotonic() + timeout_seconds
+        path_key = str(self.path.absolute())
+        with self._schema_initialization_locks_guard:
+            state = self._schema_initialization_states.setdefault(path_key, _SchemaInitializationState())
+            state.references += 1
+        process_contended = not state.lock.acquire(blocking=False)
+        acquired = not process_contended or state.lock.acquire(timeout=timeout_seconds)
+        if not acquired:
+            with self._schema_initialization_locks_guard:
+                state.references -= 1
+                if state.references == 0:
+                    del self._schema_initialization_states[path_key]
+            raise TimeoutError("Timed out waiting for the Guard schema migration lock.")
+        schema_ready = False
+        try:
+            if process_contended and state.last_run_succeeded and self._schema_is_current():
+                schema_ready = True
+            else:
+                state.last_run_succeeded = False
+                remaining_seconds = max(0.0, deadline - time.monotonic())
+                with self._hold_advisory_file_lock(
+                    path=self.guard_home / "schema-migration.lock",
+                    timeout_seconds=remaining_seconds,
+                    poll_seconds=min(0.05, max(remaining_seconds, 0.001)),
+                    timeout_message="Timed out waiting for the Guard schema migration lock.",
+                ):
+                    if daemon_managed and self._schema_is_current():
+                        schema_ready = True
+                    else:
+                        self._initialize_schema()
+                        schema_ready = True
+                    state.last_run_succeeded = True
+        finally:
+            state.lock.release()
+            with self._schema_initialization_locks_guard:
+                state.references -= 1
+                if state.references == 0:
+                    del self._schema_initialization_states[path_key]
+        if schema_ready:
+            self._initialize_policy_integrity()
 
-    def _initialize(self) -> None:
+    def _initialize_schema(self) -> None:
         initialize_incremental_vacuum = not self.path.exists()
         statements = (
             """
@@ -709,7 +986,6 @@ class StoreConnectionSchemaMixin:
             self._ensure_policy_column(connection, "policy_provenance_json", "text")
             for index_statement in _POLICY_INDEX_STATEMENTS:
                 connection.execute(index_statement)
-            ensure_mcp_policy_request_schema(connection)
             self._ensure_column(connection, "guard_local_once_approvals", "integrity_version", "integer")
             self._ensure_column(connection, "guard_local_once_approvals", "payload_hash", "text")
             self._ensure_column(connection, "guard_local_once_approvals", "payload_mac", "text")
@@ -746,8 +1022,12 @@ class StoreConnectionSchemaMixin:
             self._ensure_approval_column(connection, "last_seen_at", "text")
             self._ensure_approval_column(connection, "fallback_cli_command", "text")
             self._ensure_approval_column(connection, "scanner_evidence_json", "text not null default '[]'")
+            self._ensure_approval_column(connection, "browser_intent_json", "text")
             self._ensure_approval_column(connection, "desktop_notified_at", "text")
             self._ensure_approval_column(connection, "raw_command_text", "text")
+            self._ensure_approval_column(connection, "guard_version", "text")
+            self._ensure_approval_column(connection, "first_seen_guard_version", "text")
+            self._ensure_approval_column(connection, "last_seen_guard_version", "text")
             self._ensure_approval_column(connection, "oauth_source", "text")
             if not self._schema_version_applied(connection, version=3):
                 _backfill_approval_queue_columns_compat(connection)
@@ -796,6 +1076,10 @@ class StoreConnectionSchemaMixin:
                 connection,
                 version=STORAGE_MAINTENANCE_MIGRATION_VERSION,
             )
+            self._record_schema_version(
+                connection,
+                version=STORAGE_QUERY_INDEX_MIGRATION_VERSION,
+            )
             if not self._schema_version_applied(connection, version=2):
                 self._record_schema_version(connection, version=2)
             self._enable_wal_mode(connection)
@@ -807,7 +1091,6 @@ class StoreConnectionSchemaMixin:
                 """
             )
             self._repair_store_permissions()
-        self._initialize_policy_integrity()
 
     def _initialize_policy_integrity(self) -> None:
         if getattr(self, "_prime_policy_integrity_on_initialize", True):
@@ -833,49 +1116,66 @@ class StoreConnectionSchemaMixin:
     def _schema_is_current(self) -> bool:
         if not self.path.is_file():
             return False
-        timeout_seconds = min(sqlite_connect_timeout_seconds(), 0.1)
+        timeout_seconds = sqlite_connect_timeout_seconds()
         try:
-            connection = sqlite3.connect(self.path, timeout=timeout_seconds)
-            try:
-                connection.execute(f"pragma busy_timeout={int(timeout_seconds * 1000)}")
-                placeholders = ", ".join("?" for _ in _REQUIRED_SCHEMA_MIGRATION_VERSIONS)
-                row = connection.execute(
-                    f"select count(*) from schema_migrations where version in ({placeholders})",
-                    _REQUIRED_SCHEMA_MIGRATION_VERSIONS,
-                ).fetchone()
-                storage_row = connection.execute(
-                    """
-                    select 1 from sqlite_master
-                    where type = 'table' and name = 'guard_storage_maintenance'
-                    """
-                ).fetchone()
-                return (
-                    row is not None
-                    and int(row[0]) == len(_REQUIRED_SCHEMA_MIGRATION_VERSIONS)
-                    and storage_row is not None
-                )
-            finally:
-                connection.close()
-        except sqlite3.OperationalError as error:
-            if "locked" in str(error).lower() or "busy" in str(error).lower():
-                return False
+            with self._hold_storage_gate(exclusive=False):
+                connection = sqlite3.connect(self.path, timeout=timeout_seconds)
+                try:
+                    connection.execute(f"pragma busy_timeout={int(timeout_seconds * 1000)}")
+                    placeholders = ", ".join("?" for _ in _REQUIRED_SCHEMA_MIGRATION_VERSIONS)
+                    row = connection.execute(
+                        f"select count(*) from schema_migrations where version in ({placeholders})",
+                        _REQUIRED_SCHEMA_MIGRATION_VERSIONS,
+                    ).fetchone()
+                    storage_row = connection.execute(
+                        """
+                        select 1 from sqlite_master
+                        where type = 'table' and name = 'guard_storage_maintenance'
+                        """
+                    ).fetchone()
+                    approval_columns = {
+                        str(column[1]) for column in connection.execute("pragma table_info(approval_requests)")
+                    }
+                    required_approval_columns = {
+                        "guard_version",
+                        "first_seen_guard_version",
+                        "last_seen_guard_version",
+                    }
+                    return (
+                        row is not None
+                        and int(row[0]) == len(_REQUIRED_SCHEMA_MIGRATION_VERSIONS)
+                        and storage_row is not None
+                        and required_approval_columns <= approval_columns
+                    )
+                finally:
+                    connection.close()
+        except sqlite3.DatabaseError:
             return False
 
     @staticmethod
     def _enable_wal_mode(connection: sqlite3.Connection) -> None:
         original_busy_timeout_row = connection.execute("pragma busy_timeout").fetchone()
         original_busy_timeout_ms = int(original_busy_timeout_row[0]) if original_busy_timeout_row else 0
-        wal_busy_timeout_ms = min(original_busy_timeout_ms, SQLITE_WAL_BUSY_TIMEOUT_MS)
-        connection.execute(f"pragma busy_timeout={wal_busy_timeout_ms}")
+        retry_deadline = time.monotonic() + (original_busy_timeout_ms / 1000)
+        lock_error: sqlite3.OperationalError | None = None
         try:
-            for attempt in range(_SQLITE_LOCK_RETRY_ATTEMPTS):
+            while True:
+                remaining_timeout_ms = max(0, int((retry_deadline - time.monotonic()) * 1000))
+                if lock_error is not None and remaining_timeout_ms <= 0:
+                    raise lock_error
+                wal_busy_timeout_ms = min(remaining_timeout_ms, SQLITE_WAL_BUSY_TIMEOUT_MS)
+                connection.execute(f"pragma busy_timeout={wal_busy_timeout_ms}")
                 try:
                     connection.execute("pragma journal_mode=WAL")
                     return
                 except sqlite3.OperationalError as exc:
-                    if "database is locked" not in str(exc).lower() or attempt == _SQLITE_LOCK_RETRY_ATTEMPTS - 1:
+                    if "database is locked" not in str(exc).lower():
                         raise
-                    _sleep_compat(_sqlite_lock_retry_delay_seconds_compat())
+                    lock_error = exc
+                    remaining_seconds = retry_deadline - time.monotonic()
+                    if remaining_seconds <= 0:
+                        raise
+                    _sleep_compat(min(_sqlite_lock_retry_delay_seconds_compat(), remaining_seconds))
         finally:
             connection.execute(f"pragma busy_timeout={original_busy_timeout_ms}")
 

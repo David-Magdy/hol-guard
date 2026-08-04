@@ -297,6 +297,7 @@ def _run_guard_hook_command(
             *,
             claimed_saved_allow_hash: str | None = None,
             claimed_trusted_request_override: bool = False,
+            claimed_package_approval_consumed: bool = False,
             claimed_approval_request_id: str | None = None,
             trusted_request_override_hash: str | None = None,
         ):
@@ -340,6 +341,7 @@ def _run_guard_hook_command(
                 post_claim_revalidator=(revalidate_runtime_after_claim if claimed_saved_allow_hash is None else None),
                 _claimed_saved_allow_hash=claimed_saved_allow_hash,
                 _claimed_trusted_request_override=claimed_trusted_request_override,
+                _claimed_package_approval_consumed=claimed_package_approval_consumed,
                 _claimed_approval_request_id=claimed_approval_request_id,
                 _claim_saved_approval=claimed_saved_allow_hash is None,
             )
@@ -348,10 +350,12 @@ def _run_guard_hook_command(
             claimed_artifact_hash: str,
             trusted_request_override: bool,
             approval_request_id: str | None,
+            package_approval_consumed: bool,
         ):
             return evaluate_fresh_runtime_artifact(
                 claimed_saved_allow_hash=claimed_artifact_hash,
                 claimed_trusted_request_override=trusted_request_override,
+                claimed_package_approval_consumed=package_approval_consumed,
                 claimed_approval_request_id=approval_request_id,
             )
 
@@ -419,6 +423,7 @@ def _run_guard_hook_command(
             home_dir=context.home_dir,
             output_stream=output_stream,
             payload=payload,
+            runtime_artifact_checked=True,
             runtime_workspace=runtime_workspace,
             store=store,
             _claimed_saved_allow_hash=claimed_artifact_hash,
@@ -432,6 +437,7 @@ def _run_guard_hook_command(
         home_dir=context.home_dir,
         output_stream=output_stream,
         payload=payload,
+        runtime_artifact_checked=True,
         runtime_workspace=runtime_workspace,
         store=store,
         post_claim_revalidator=revalidate_generic_after_claim,

@@ -38,7 +38,7 @@ def test_pyproject_keeps_cisco_mcp_scanner_optional() -> None:
     assert "cisco-ai-skill-scanner~=2.0.12" in dependency_entries
     assert "litellm==1.93.0; python_version < '3.15'" in dependency_entries
     assert "requests>=2.32,<3" in dependency_entries
-    assert "aiohttp==3.14.1" in override_entries
+    assert "aiohttp==3.14.3" in override_entries
     assert "click==8.4.1" in override_entries
     assert "cisco-ai-skill-scanner==2.0.12" in override_entries
     assert "importlib-metadata==8.9.0" in override_entries

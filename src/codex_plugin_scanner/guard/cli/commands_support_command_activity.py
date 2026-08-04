@@ -15,6 +15,7 @@ from ..runtime.command_activity_contract import (
     ActivityApprovalReuseStatus,
     ActivityDecisionReason,
     CommandExecutionStatus,
+    CorrelationHandle,
 )
 from ..runtime.command_activity_correlation import (
     derive_proven_request_correlation,
@@ -112,7 +113,11 @@ def record_pre_hook_command_activity_best_effort(
             occurred_at=occurred_at,
         )
         try:
-            recorded = store.record_command_activity(evidence, shadow=shadow)
+            recorded = store.record_command_activity(
+                evidence,
+                shadow=shadow,
+                shadow_evaluation_succeeded=not shadow_failed,
+            )
         except Exception:
             if correlation is not None and store.is_exact_command_activity_pre_replay(evidence):
                 return False
@@ -133,6 +138,7 @@ def record_post_hook_command_activity_best_effort(
     event: str,
     payload: Mapping[str, object],
     succeeded: bool,
+    raise_on_persistence_error: bool = False,
 ) -> bool:
     """Transition strong pairs or record a fact-minimal unpaired command post."""
 
@@ -146,34 +152,58 @@ def record_post_hook_command_activity_best_effort(
             payload=payload,
             key=key,
         )
-        if correlation is not None:
-            previous = store.get_command_activity_by_request_correlation(correlation)
-            if previous is not None:
-                expected_status = (
-                    CommandExecutionStatus.CONFIRMED_SUCCESS if succeeded else CommandExecutionStatus.CONFIRMED_FAILURE
-                )
-                if previous.execution_status is expected_status:
-                    return False
-                if previous.execution_status is not CommandExecutionStatus.ALLOWED_UNCONFIRMED:
-                    raise ValueError("post-hook proof conflicts with persisted command lifecycle")
-                current = build_correlated_post_activity(
-                    previous,
-                    request_correlation=correlation,
-                    succeeded=succeeded,
-                )
-                return store.transition_command_activity(current)
-        if _payload_command_text(payload) is None:
-            return False
-        evidence = build_unpaired_post_evidence(
-            activity_id=_activity_id(),
-            occurred_at=_utc_now(),
+        return persist_deferred_post_hook_command_activity(
+            store=store,
             harness=harness,
+            correlation=correlation,
             succeeded=succeeded,
+            has_command=_payload_command_text(payload) is not None,
         )
-        return store.record_command_activity(evidence)
     except Exception:
         _record_persistence_failure(store, "post_record_failed")
+        if raise_on_persistence_error:
+            raise
         return False
+
+
+def persist_deferred_post_hook_command_activity(
+    *,
+    store: GuardStore,
+    harness: str,
+    correlation: CorrelationHandle | None,
+    succeeded: bool,
+    has_command: bool,
+) -> bool:
+    """Persist a sanitized deferred post-hook record."""
+
+    if correlation is not None:
+        previous = store.get_command_activity_by_request_correlation(correlation)
+        if previous is not None:
+            if previous.execution_status is CommandExecutionStatus.PREVENTED:
+                return False
+            expected_status = (
+                CommandExecutionStatus.CONFIRMED_SUCCESS if succeeded else CommandExecutionStatus.CONFIRMED_FAILURE
+            )
+            if previous.execution_status is expected_status:
+                return False
+            if previous.execution_status is not CommandExecutionStatus.ALLOWED_UNCONFIRMED:
+                store.record_command_activity_observation_conflict(occurred_at=_utc_now())
+                return False
+            current = build_correlated_post_activity(
+                previous,
+                request_correlation=correlation,
+                succeeded=succeeded,
+            )
+            return store.transition_command_activity(current)
+    if not has_command:
+        return False
+    evidence = build_unpaired_post_evidence(
+        activity_id=_activity_id(),
+        occurred_at=_utc_now(),
+        harness=harness,
+        succeeded=succeeded,
+    )
+    return store.record_command_activity(evidence)
 
 
 def hook_post_succeeded(event: str, payload: Mapping[str, object]) -> bool:
@@ -314,6 +344,7 @@ __all__ = [
     "hook_is_post_event",
     "hook_is_pre_event",
     "hook_post_succeeded",
+    "persist_deferred_post_hook_command_activity",
     "record_command_activity_failure_best_effort",
     "record_post_hook_command_activity_best_effort",
     "record_pre_hook_command_activity_best_effort",

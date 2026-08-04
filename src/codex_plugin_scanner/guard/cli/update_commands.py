@@ -33,7 +33,7 @@ from ..adapters.opencode_pretool import (
     managed_plugin_path,
     pretool_plugin_source,
 )
-from ..config import resolve_guard_home
+from ..config import load_guard_config, resolve_guard_home
 from ..mdm.contracts import ManagedNetworkPolicy, ManagedPolicy
 from ..mdm.network import ManagedNetworkError, managed_urlopen
 from ..mdm.policy import load_managed_policy
@@ -274,6 +274,7 @@ def run_guard_update(
     force_pypi_reinstall: bool = False,
     wheel: str | None = None,
     guard_home: Path | None = None,
+    include_alpha: bool = False,
 ) -> tuple[dict[str, object], int]:
     installer = _installer_kind()
     payload: dict[str, object] = {
@@ -415,6 +416,7 @@ def run_guard_update(
         current_version,
         source_kind=update_context.source.public_name,
         network_policy=network_policy,
+        include_alpha=include_alpha,
     )
     if requested_wheel_path is None and _python_runtime_blocks_update(version_check):
         payload.update(
@@ -487,7 +489,7 @@ def run_guard_update(
     payload.update(
         {
             "command": command,
-            "retry_command": _safe_update_retry_command(requested_wheel_path),
+            "retry_command": _safe_update_retry_command(requested_wheel_path, include_alpha=include_alpha),
             "binary_diagnostics": _binary_diagnostics(command, installer),
             "version_check": version_check,
         }
@@ -499,6 +501,8 @@ def run_guard_update(
             payload["wheel_version"] = trusted_wheel.version
     else:
         payload["upgrade_source"] = update_context.source.public_name
+        if include_alpha:
+            payload["release_channel"] = "alpha"
     if dry_run:
         payload["status"] = "planned"
         payload["changed"] = False
@@ -626,6 +630,7 @@ def run_guard_update(
             resulting_version,
             source_kind=update_context.source.public_name,
             network_policy=network_policy,
+            include_alpha=include_alpha,
         )
         payload["post_version_check"] = post_version_check
         payload["version_check"] = _merge_version_checks(
@@ -1019,8 +1024,10 @@ def _stale_retry_command(payload: dict[str, object]) -> str:
     return ""
 
 
-def _safe_update_retry_command(wheel_path: Path | None) -> str:
+def _safe_update_retry_command(wheel_path: Path | None, *, include_alpha: bool = False) -> str:
     command = ["hol-guard", "update"]
+    if include_alpha:
+        command.append("--alpha")
     if wheel_path is not None:
         command.extend(["--wheel", str(wheel_path)])
     return _shell_command(command)
@@ -1093,6 +1100,7 @@ def _version_check_payload(
     *,
     source_kind: str = "pypi",
     network_policy: ManagedNetworkPolicy | None = None,
+    include_alpha: bool = False,
 ) -> dict[str, object]:
     if source_kind != "pypi":
         return {
@@ -1104,7 +1112,9 @@ def _version_check_payload(
         }
     policy_token = _version_network_policy.set(network_policy)
     try:
-        latest_version = _latest_version_from_pypi()
+        latest_version = (
+            _latest_alpha_version_from_pypi(current_version) if include_alpha else _latest_version_from_pypi()
+        )
     finally:
         _version_network_policy.reset(policy_token)
     if latest_version is None:
@@ -1151,6 +1161,7 @@ def _version_check_payload(
         }
     return {
         "source": "pypi",
+        **({"release_channel": "alpha"} if include_alpha else {}),
         "status": "stale" if update_available else "current",
         "current_version": current_version,
         "latest_version": latest_version,
@@ -1190,6 +1201,35 @@ def _latest_version_from_pypi() -> str | None:
         return None
     version = info.get("version")
     return version if isinstance(version, str) and version.strip() else None
+
+
+def _latest_alpha_version_from_pypi(current_version: str) -> str | None:
+    _ = _latest_version_from_pypi()
+    payload = _last_pypi_payload
+    if not isinstance(payload, dict):
+        return None
+    releases = payload.get("releases")
+    if not isinstance(releases, dict):
+        return None
+    try:
+        current_major = Version(current_version).major
+    except InvalidVersion:
+        return None
+    candidates: list[tuple[Version, str]] = []
+    for version_text, files in releases.items():
+        if not isinstance(version_text, str) or not version_text.strip():
+            continue
+        try:
+            parsed_version = Version(version_text)
+        except InvalidVersion:
+            continue
+        if parsed_version.major != current_major or parsed_version.pre is None or parsed_version.pre[0] != "a":
+            continue
+        if _release_has_non_yanked_file(files):
+            candidates.append((parsed_version, version_text.strip()))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: candidate[0])[1]
 
 
 def _read_bounded_pypi_response(response: object, *, deadline: float) -> bytes:
@@ -1386,6 +1426,15 @@ def _hol_guard_package_spec(target_version: str | None = None) -> str:
     return "hol-guard"
 
 
+def _target_version_is_prerelease(target_version: str | None) -> bool:
+    if not isinstance(target_version, str) or not target_version.strip():
+        return False
+    try:
+        return Version(target_version.strip()).is_prerelease
+    except InvalidVersion:
+        return False
+
+
 def _installer_output_text(stdout: object, stderr: object) -> str:
     return "\n".join(part.strip() for part in (str(stdout or "").strip(), str(stderr or "").strip()) if part.strip())
 
@@ -1421,12 +1470,24 @@ def _update_command(
             return ["pipx", "install", "--force", wheel]
         return [sys.executable, "-m", "pip", "install", "--force-reinstall", wheel]
     package = _hol_guard_package_spec(target_version)
+    allow_prerelease = _target_version_is_prerelease(target_version)
     if use_pypi:
         if installer == "uv":
-            return ["uv", "tool", "install", "--force", package]
+            command = ["uv", "tool", "install", "--force", "--refresh-package", "hol-guard"]
+            if allow_prerelease:
+                command.append("--prerelease=allow")
+            command.append(package)
+            return command
         if installer == "pipx":
-            return ["pipx", "install", "--force", package]
-        return [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", package]
+            command = ["pipx", "install", "--force", package]
+            if allow_prerelease:
+                command.append("--pip-args=--pre")
+            return command
+        command = [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall"]
+        if allow_prerelease:
+            command.append("--pre")
+        command.append(package)
+        return command
     if installer == "uv":
         return ["uv", "tool", "upgrade", "hol-guard"]
     if installer == "pipx":
@@ -2235,7 +2296,10 @@ def _codex_backup_repair_contexts(context: HarnessContext) -> tuple[HarnessConte
     return (context,)
 
 
-def build_guard_update_status_payload() -> dict[str, object]:
+def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict[str, object]:
+    resolved_guard_home = guard_home or resolve_guard_home()
+    update_channel = load_guard_config(resolved_guard_home).update_channel
+    include_alpha = update_channel == "alpha"
     install_surface = build_guard_install_surface_payload()
     installer = str(install_surface.get("installer") or "")
     binary_diagnostics = install_surface.get("binary_diagnostics")
@@ -2270,6 +2334,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
             installed_distribution = _status_installed_distribution(
                 installer=installer,
                 managed_policy=managed_policy,
+                guard_home=resolved_guard_home,
             )
         except UpdateSubprocessError as error:
             auto_updatable = False
@@ -2282,7 +2347,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
     local_archive_install = _recover_local_archive_install(
         _local_archive_install_payload(direct_url),
         direct_url=direct_url,
-        guard_home=resolve_guard_home(),
+        guard_home=resolved_guard_home,
         installed_version=current_version,
     )
     version_check = (
@@ -2290,6 +2355,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
             current_version,
             source_kind=source_kind,
             network_policy=(managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()),
+            include_alpha=include_alpha,
         )
         if installed_distribution is not None
         else {
@@ -2350,6 +2416,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
         "python_update_required": _python_runtime_blocks_update(version_check),
         "recovery_reinstall_available": recovery_reinstall_available,
         "recovery_reinstall_command": recovery_reinstall_command,
+        "release_channel": update_channel,
     }
     if trusted_failure_reason is not None:
         payload["reason_code"] = trusted_failure_reason
@@ -2360,11 +2427,12 @@ def _status_installed_distribution(
     *,
     installer: str,
     managed_policy: ManagedPolicy | None,
+    guard_home: Path,
 ) -> InstalledDistribution:
     network = managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()
     index_url = managed_policy.update.index_url if managed_policy is not None else None
     context = build_trusted_update_context(
-        guard_home=resolve_guard_home(),
+        guard_home=guard_home,
         workspace_dir=None,
         installer_kind=installer,
         source_url=index_url,

@@ -176,34 +176,6 @@ def _canonical_policy_enforcement_enabled(
     return cohort < percentage
 
 
-def _hol_guard_runtime_source_sha256(package_root: Path | None = None) -> str:
-    resolved_package_root = package_root or Path(__file__).parents[2]
-    digest = hashlib.sha256()
-    for source_path in sorted(resolved_package_root.rglob("*.py")):
-        relative_path = source_path.relative_to(resolved_package_root).as_posix().encode("utf-8")
-        source_bytes = source_path.read_bytes()
-        digest.update(len(relative_path).to_bytes(8, "big"))
-        digest.update(relative_path)
-        digest.update(len(source_bytes).to_bytes(8, "big"))
-        digest.update(source_bytes)
-    return digest.hexdigest()
-
-
-def _hol_guard_runtime_package_identity() -> tuple[str | None, str] | None:
-    try:
-        source_sha256 = _hol_guard_runtime_source_sha256()
-    except OSError:
-        return None
-    try:
-        distribution_version = importlib.metadata.version("hol-guard")
-    except importlib.metadata.PackageNotFoundError:
-        distribution_version = None
-    return distribution_version, source_sha256
-
-
-_LOADED_HOL_GUARD_RUNTIME_PACKAGE_IDENTITY = _hol_guard_runtime_package_identity()
-
-
 def detect_harness(harness: str, context: HarnessContext) -> HarnessDetection:
     from ..consumer import detect_harness as _detect_harness
 

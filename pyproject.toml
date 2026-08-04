@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hol-guard"
-version = "2.0.1117"
+version = "2.2.0"
 description = "Open-source antivirus and runtime protection for AI agents, tools, MCP servers, plugins, skills, and package installs."
 readme = "README.md"
 license = "Apache-2.0"
@@ -45,7 +45,7 @@ classifiers = [
 ]
 dependencies = [
     "rich>=14.0,<15",
-    "cryptography>=49.0.0",
+    "cryptography>=50.0.0",
     "keyring>=25.0",
     "packaging>=24.0",
     "jsonschema>=4.26.0",
@@ -90,7 +90,7 @@ dev = [
 
 [tool.uv]
 override-dependencies = [
-    "aiohttp==3.14.1",
+    "aiohttp==3.14.3",
     "click==8.4.1",
     "cisco-ai-skill-scanner==2.0.12",
     "fastapi==0.137.1",
@@ -155,14 +155,33 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "RUF"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = ["-m", "not slow"]
+addopts = ["--strict-markers", "-m", "not slow"]
 markers = [
+  "adapter_contract: verifies the shared security contract for a harness adapter",
   "daemon_aibom_refresh: enables the daemon AIBOM refresh worker for focused tests",
   "daemon_bundle_refresh: enables the daemon supply-chain bundle refresh worker for focused tests",
   "daemon_headless_queue: enables request-triggered daemon cloud sync for focused tests",
   "daemon_headless_refresh: enables the daemon headless cloud sync worker for focused tests",
   "daemon_service_workers: enables command queue and live request sync workers for focused tests",
+  "installed: requires verification through an installed package artifact",
+  "integration: verifies multiple Guard subsystems together",
+  "parser: verifies parsing or normalization security semantics",
+  "policy: verifies policy composition or enforcement semantics",
+  "regression: protects a previously observed defect or security finding",
+  "release: required for a release-candidate verification gate",
+  "security_critical: protects a Guard security boundary that cannot be removed without an equivalent replacement",
   "slow: marks tests as slow (deselected by default; run with -m slow to include)",
+  "soak: marks long-running acceptance workloads that require explicit opt-in",
+  "compat: verifies a supported Python or platform compatibility contract",
+]
+
+[tool.mutmut]
+source_paths = ["src/codex_plugin_scanner/guard/runtime/command_model.py"]
+also_copy = ["src/codex_plugin_scanner"]
+pytest_add_cli_args_test_selection = [
+  "tests/test_guard_command_model.py",
+  "tests/test_guard_command_critical_floors.py",
+  "tests/test_guard_command_corpus.py",
 ]
 
 [tool.basedpyright]

@@ -1207,6 +1207,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ needs.build.outputs.source_sha }}
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
@@ -1241,7 +1243,36 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Inspect existing immutable image
+        id: image
+        env:
+          CHANNEL: ${{ needs.build.outputs.channel }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if [[ "$CHANNEL" != "alpha" ]]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          image="${IMAGE_NAME}:${VERSION}"
+          pull_output=$(mktemp)
+          if docker pull "$image" >"$pull_output" 2>&1; then
+            revision=$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
+            if [[ "$revision" != "$SOURCE_SHA" ]]; then
+              echo "Existing image tag targets a different source" >&2
+              exit 1
+            fi
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          elif grep -Eqi 'manifest unknown' "$pull_output"; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            cat "$pull_output" >&2
+            echo "Unable to determine whether the image tag already exists" >&2
+            exit 1
+          fi
       - uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf
+        if: steps.image.outputs.push == 'true'
         with:
           context: .
           file: ./Dockerfile
@@ -1250,4 +1281,4 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ needs.build.outputs.version }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ needs.build.outputs.source_sha }}

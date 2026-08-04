@@ -323,17 +323,9 @@ def _run_init_command(
                     init_failed = True
                     step_payload = {"skipped": False, "supported": True, "error": str(error)}
             elif step_id == "tray":
-                # Install the persistent tray/menu-bar icon. Errors are
-                # non-fatal: Guard protection is already active; the tray is
-                # a convenience layer. The user can retry via
-                # `hol-guard guard tray install` if it fails here.
                 try:
                     from ..tray.contracts import TrayState
-                    from ..tray.lifecycle import (
-                        get_status,
-                        install_registration,
-                        start_tray,
-                    )
+                    from ..tray.lifecycle import get_status, install_registration, start_tray
                     from ..tray.platforms import detect_platform_adapter
 
                     adapter = detect_platform_adapter()
@@ -345,26 +337,17 @@ def _run_init_command(
                             "error": "unsupported_platform",
                         }
                     else:
-                        install_registration(
-                            context.guard_home,
-                            adapter=adapter,
-                            run_at_login=True,
-                        )
+                        install_registration(context.guard_home, adapter=adapter, run_at_login=True)
                         start_tray(context.guard_home)
                         state, _capability, _locator = get_status(context.guard_home)
                         step_payload = {
+                            "skipped": False,
                             "installed": state in (TrayState.RUNNING, TrayState.INSTALLED),
                             "running": state == TrayState.RUNNING,
                             "state": state.value,
                         }
-                    step_payload["skipped"] = False
                 except Exception as error:
-                    # Non-fatal: tray is a convenience, not protection.
-                    step_payload = {
-                        "skipped": False,
-                        "installed": False,
-                        "error": str(error),
-                    }
+                    step_payload = {"skipped": False, "installed": False, "error": str(error)}
             else:
                 init_failed = True
                 step_payload = {"skipped": True, "reason": "unknown_step"}

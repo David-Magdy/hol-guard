@@ -62,6 +62,42 @@ _CONTROL_CONTEXT_LABELS = {
 _EXECUTION_CONTEXT_HMAC_KEY = os.urandom(32)
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
 _LOCAL_EXECUTION_COMMANDS = frozenset({"bunx", "npx"})
+_PACKAGE_COMMAND_NAMES = frozenset(
+    {
+        "apk",
+        "apt",
+        "apt-get",
+        "brew",
+        "bun",
+        "bundle",
+        "bundler",
+        "bunx",
+        "cargo",
+        "composer",
+        "dnf",
+        "gem",
+        "go",
+        "gradle",
+        "gradlew",
+        "helm",
+        "mvn",
+        "mvnw",
+        "npm",
+        "npx",
+        "pacman",
+        "pip",
+        "pip3",
+        "pipenv",
+        "pipx",
+        "pnpm",
+        "poetry",
+        "uv",
+        "uvx",
+        "yarn",
+        "yum",
+        "zypper",
+    }
+)
 _LOCAL_EXECUTION_FLAGS_BY_COMMAND = {
     "bunx": frozenset({"--bun", "--no-install"}),
     "npx": frozenset({"--no", "--no-install"}),
@@ -101,6 +137,7 @@ def parse_package_intent(
     command_text: str,
     *,
     workspace: Path | None = None,
+    home_dir: Path | None = None,
     canonical_command: CanonicalCommand | None = None,
 ) -> PackageIntent | None:
     handlers = {
@@ -138,7 +175,7 @@ def parse_package_intent(
         "helm": _parse_helm_intent,
     }
     intents: list[PackageIntent] = []
-    for segment in _normalized_command_segments(command_text, workspace=workspace):
+    for segment in _normalized_command_segments(command_text, workspace=workspace, home_dir=home_dir):
         if not segment.tokens:
             continue
         command_name = _command_name(segment.tokens[0])
@@ -183,15 +220,16 @@ def extract_package_intent_request(
     *,
     action_envelope_command: str | None,
     workspace: Path | None = None,
+    home_dir: Path | None = None,
 ) -> PackageIntent | None:
     normalized_tool_name = _normalize_tool_name(tool_name)
     if normalized_tool_name in _SHELL_TOOL_NAMES:
         for command_text in _candidate_command_texts(arguments):
-            intent = parse_package_intent(command_text, workspace=workspace)
+            intent = parse_package_intent(command_text, workspace=workspace, home_dir=home_dir)
             if intent is not None:
                 return intent
     if action_envelope_command:
-        return parse_package_intent(action_envelope_command, workspace=workspace)
+        return parse_package_intent(action_envelope_command, workspace=workspace, home_dir=home_dir)
     return None
 
 
@@ -1152,12 +1190,35 @@ def _normalized_command_segments(
     command_text: str,
     *,
     workspace: Path | None = None,
+    home_dir: Path | None = None,
 ) -> tuple[_CommandSegment, ...]:
     execution_context = model_shell_execution_context(
         command_text,
         cwd=workspace,
         workspace_root=workspace,
+        home_dir=home_dir,
     )
+    if not execution_context.complete and home_dir is not None:
+        home_context = model_shell_execution_context(
+            command_text,
+            cwd=home_dir,
+            workspace_root=home_dir,
+            home_dir=home_dir,
+        )
+        if home_context.complete and home_context.segments and home_context.segments[0].directory_operation == "cd":
+            target = next(
+                (segment.effective_cwd for segment in home_context.segments[1:] if segment.effective_cwd is not None),
+                None,
+            )
+            if target is not None:
+                recovered = model_shell_execution_context(
+                    command_text,
+                    cwd=target,
+                    workspace_root=target,
+                    home_dir=home_dir,
+                )
+                if recovered.complete:
+                    execution_context = recovered
     control_shape = tuple(
         _CONTROL_CONTEXT_LABELS[context_segment.control_operator] for context_segment in execution_context.segments
     )
@@ -1311,10 +1372,57 @@ def _raw_command_segments_with_operators(
 
 
 def _normalize_segment(raw_segment: list[str]) -> list[str]:
-    segment = _strip_wrapper_tokens(list(raw_segment))
+    substitution_segment = _shell_substitution_segment(raw_segment)
+    if substitution_segment is not None:
+        return _without_fd_merge_redirections(substitution_segment)
+    if _command_builtin_is_lookup(_strip_command_lookup_prefixes(list(raw_segment))):
+        return []
+    segment = _without_fd_merge_redirections(_strip_wrapper_tokens(list(raw_segment)))
     if len(segment) >= 3 and _command_name(segment[0]) in _PYTHON_EXECUTABLES and segment[1] == "-m":
         segment = [segment[2], *segment[3:]]
     return segment
+
+
+def _shell_substitution_segment(segment: list[str]) -> list[str] | None:
+    for index, token in enumerate(segment):
+        if "`" not in token and "$(" not in token:
+            continue
+        markers = [(token.find(marker), marker) for marker in ("`", "$(") if marker in token]
+        position, marker = min(markers)
+        command = token[position + len(marker) :]
+        normalized = _strip_wrapper_tokens([command, *segment[index + 1 :]]) if command else []
+        if normalized and _command_name(normalized[0]) in _PACKAGE_COMMAND_NAMES:
+            return normalized
+    return None
+
+
+def _strip_command_lookup_prefixes(segment: list[str]) -> list[str]:
+    while segment:
+        if _ENV_ASSIGNMENT_RE.match(segment[0]):
+            if "`" in segment[0] or "$(" in segment[0]:
+                return segment
+            segment.pop(0)
+            continue
+        if _command_name(segment[0]) == "time":
+            segment = _strip_plain_wrapper_flags(segment[1:])
+            continue
+        break
+    return segment
+
+
+def _command_builtin_is_lookup(segment: list[str]) -> bool:
+    if any("`" in token or "$(" in token for token in segment):
+        return False
+    if not segment or _command_name(segment[0]) != "command":
+        return False
+    index = 1
+    saw_lookup = False
+    while index < len(segment) and segment[index].startswith("-"):
+        option = segment[index]
+        saw_lookup = saw_lookup or "v" in option[1:] or "V" in option[1:]
+        index += 1
+    operands = [token for token in segment[index:] if ">" not in token and "<" not in token]
+    return saw_lookup and len(operands) == 1
 
 
 def _effective_execution_context(
@@ -1466,10 +1574,14 @@ def _redacted_command_text(command_text: str) -> str:
 
 
 def _redacted_segment(raw_segment: list[str]) -> list[str]:
-    segment = _strip_redaction_wrappers(list(raw_segment))
+    segment = _without_fd_merge_redirections(_strip_redaction_wrappers(list(raw_segment)))
     if len(segment) >= 3 and _command_name(segment[0]) in _PYTHON_EXECUTABLES and segment[1] == "-m":
         segment = [segment[2], *segment[3:]]
     return _redact_local_source_tokens(segment)
+
+
+def _without_fd_merge_redirections(tokens: list[str]) -> list[str]:
+    return [token for token in tokens if token not in {"1>&2", "2>&1"}]
 
 
 def _split_shell_tokens(command_text: str) -> list[str]:

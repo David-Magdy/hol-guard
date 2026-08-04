@@ -12,9 +12,9 @@ from codex_plugin_scanner.guard.runtime.hook_source_read import sha256_text
 from codex_plugin_scanner.guard.store import GuardStore
 
 
-def test_resident_hook_worker_is_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resident_hook_worker_is_enabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(HOOK_FAST_PATH_ENV, raising=False)
-    assert hook_fast_path_enabled() is False
+    assert hook_fast_path_enabled() is True
 
 
 def test_resident_hook_worker_supports_emergency_disable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,6 +90,45 @@ class TestHookWorkerReviewSafeSourceRef:
         assert result["model_output_action"] == "allow_original"
         assert result["reason_code"] == "source_full_scan_allow"
         assert "reviewed_output_sha256" in result
+
+    def test_pi_allows_proven_absolute_sibling_source_read(
+        self, worker: HookWorker, home_dir: Path, guard_home: Path
+    ) -> None:
+        workspace = home_dir / "workspace"
+        workspace.mkdir()
+        source_path = home_dir / "hol-guard-feature" / "tests" / "test_hook.py"
+        source_path.parent.mkdir(parents=True)
+        (source_path.parents[1] / ".git").mkdir()
+        content = (
+            'assert json.loads(str(_DaemonHandler.captured_hook_body))["tool_input"]["command"] == complete_command\\n'
+        )
+        source_path.write_text(content, encoding="utf-8")
+
+        payload = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
+            "tool_input": {"file_path": str(source_path)},
+            "guard_source_ref": {
+                "version": 1,
+                "path": str(source_path),
+                "tool_input_path": str(source_path),
+                "output_sha256": sha256_text(content),
+                "output_chars": len(content),
+            },
+        }
+
+        result = worker.review_http_payload(
+            payload=payload,
+            params={},
+            default_harness="pi",
+            home_dir=home_dir,
+            guard_home=guard_home,
+            workspace=workspace,
+        )
+
+        assert result["decision"] == "allow"
+        assert result["model_output_action"] == "allow_original"
+        assert result["reason_code"] == "source_full_scan_allow"
 
 
 class TestHookWorkerDoesNotCallRunGuardCommand:

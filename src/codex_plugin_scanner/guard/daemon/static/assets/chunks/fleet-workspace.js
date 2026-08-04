@@ -1,4 +1,4 @@
-import { i as isDisplayableHarness, p as protectionHealthFor, j as jsxRuntimeExports, n as GuardHero, A as ActionButton, P as ProofStrip, S as SectionLabel, k as EmptyState, r as reactExports, e as harnessDisplayName, c as HiMiniChevronRight, m as HiMiniCheckCircle, O as HiMiniEye, Q as HiMiniWrenchScrewdriver, R as HiMiniXCircle, T as HiMiniExclamationCircle, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard } from "../guard-dashboard.js";
+import { N as isDisplayableHarness, p as protectionHealthFor, j as jsxRuntimeExports, m as GuardHero, A as ActionButton, P as ProofStrip, S as SectionLabel, i as EmptyState, r as reactExports, e as harnessDisplayName, c as HiMiniChevronRight, l as HiMiniCheckCircle, Q as HiMiniEye, R as HiMiniWrenchScrewdriver, T as HiMiniXCircle, U as HiMiniExclamationCircle, V as HiMiniClipboardDocumentCheck, W as HiMiniClipboard } from "../guard-dashboard.js";
 import { S as SUPPORTED_APPS_BRIEF, A as APP_STATUS_LABELS } from "./app-catalog.js";
 const SUPPORTED_APPS_COPY = SUPPORTED_APPS_BRIEF;
 function resolveFleetHeroCopy(cloudState, activeInstallCount, protectionState, urls) {

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import date
 from pathlib import Path
 from typing import cast
 
@@ -20,6 +21,7 @@ from codex_plugin_scanner.guard.runtime.command_activity_contract import (
     ActivityDecisionReason,
     CommandExecutionStatus,
 )
+from codex_plugin_scanner.guard.runtime.command_activity_models import CommandActivityAnalyticsQuery
 from codex_plugin_scanner.guard.runtime.command_activity_correlation import (
     derive_proven_request_correlation,
     load_or_create_installation_correlation_key,
@@ -314,7 +316,10 @@ def test_conflicting_terminal_post_is_counted_without_creating_unpaired_evidence
     assert store.count_command_activities() == 1
     health = store.get_command_activity_persistence_health()
     assert health.dropped_event_count == 1
-    assert health.last_error_code == "post_record_failed"
+    assert health.persistence_error_count == 0
+    assert health.last_error_code == "post_result_conflict"
+    analytics = store.command_activity_analytics(CommandActivityAnalyticsQuery(days=7), as_of=date.today())
+    assert cast(dict[str, object], analytics["health"])["status"] == "healthy"
 
 
 def test_non_hook_command_event_does_not_create_pre_evidence(tmp_path: Path) -> None:

@@ -37,9 +37,9 @@ from codex_plugin_scanner.guard.risk import (
     extract_network_hosts,
 )
 from codex_plugin_scanner.guard.runtime.actions import normalize_codex_hook_payload
+from codex_plugin_scanner.guard.runtime.git_execution_safety import git_binary_path_is_trusted
 from codex_plugin_scanner.guard.runtime.secret_file_requests import (
     _gh_pr_create_body_has_shell_command_substitution,
-    _git_binary_path_is_trusted,
     _path_text_is_within_root_text,
     _read_small_runtime_text_file,
     _resolved_runtime_path,
@@ -3479,7 +3479,7 @@ def test_git_binary_path_is_trusted_when_cwd_is_filesystem_root():
     if git_binary is None:
         pytest.skip("git is required for the verified-status classifier")
 
-    assert _git_binary_path_is_trusted(Path(git_binary).resolve(), cwd=Path("/"))
+    assert git_binary_path_is_trusted(Path(git_binary).resolve(), cwd=Path("/"))
 
 
 def test_explicitly_benign_git_status_rejects_repository_fsmonitor(tmp_path: Path):

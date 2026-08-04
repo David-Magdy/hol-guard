@@ -15536,6 +15536,7 @@ def test_guard_hook_codex_strict_default_allows_verified_benign_git_status(
     home_dir = tmp_path / "home"
     workspace_dir = tmp_path / "workspace"
     _build_guard_fixture(home_dir, workspace_dir)
+    subprocess.run(["git", "init", "--quiet", str(workspace_dir)], check=True)
     _write_text(home_dir / "config.toml", strict_config)
     event = {
         "hook_event_name": "PreToolUse",
@@ -17796,8 +17797,8 @@ def test_guard_runtime_narrows_legacy_broad_allow_for_same_risky_tool_action(
     )
 
     assert resolution["requested_scope"] == scope
-    assert resolution["applied_scope"] == "artifact"
-    assert resolution["scope_warning"] == "legacy_scope_narrowed_to_artifact"
+    assert resolution["applied_scope"] == scope
+    assert "scope_warning" not in resolution
 
     runtime_artifact = GuardArtifact(
         artifact_id=request.artifact_id,
@@ -17887,8 +17888,8 @@ def test_guard_runtime_rejects_saved_allows_for_different_risky_tool_action(
     )
 
     assert resolution["requested_scope"] == scope
-    assert resolution["applied_scope"] == "artifact"
-    assert resolution["scope_warning"] == "legacy_scope_narrowed_to_artifact"
+    assert resolution["applied_scope"] == scope
+    assert "scope_warning" not in resolution
 
     later_artifact = GuardArtifact(
         artifact_id="opencode:project:tool-action:credential-upload",
@@ -23715,7 +23716,7 @@ def test_sync_runtime_session_rejects_untrusted_oauth_issuer_before_network(tmp_
 
     monkeypatch.setattr(guard_runner_module.urllib.request, "urlopen", _fake_urlopen)
 
-    with pytest.raises(guard_runner_module.GuardSyncAuthorizationExpiredError, match="hol-guard connect"):
+    with pytest.raises(guard_runner_module.GuardSyncEndpointUntrustedError, match="hol-guard connect"):
         guard_runner_module.sync_runtime_session(
             store,
             session={
