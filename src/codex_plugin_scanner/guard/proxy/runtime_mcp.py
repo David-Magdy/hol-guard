@@ -1532,45 +1532,10 @@ class RuntimeMcpGuardProxy:
             authority = fresh_authority
             fresh_decision = fresh_authority.decision
             fresh_scanner_evidence = _tool_decision_scanner_evidence(fresh_decision)
-            if fresh_decision.saved_action == "block":
-                return self._stored_tool_block_response(
-                    message_id=message.get("id"),
-                    artifact=artifact,
-                    artifact_hash=tool_artifact_hash,
-                    tool_name=tool_name,
-                    params=params,
-                    signals=fresh_decision.signals,
-                    risk_categories=fresh_decision.risk_categories,
-                    scanner_evidence=fresh_scanner_evidence,
-                    package_request=False,
-                )
             fresh_policy_action = _enforcement_action(
                 fresh_decision.current_action or fresh_decision.action,
                 approval_decision=fresh_decision,
             )
-            if fresh_policy_action in {"block", "sandbox-required"}:
-                return self._terminal_tool_response(
-                    message_id=message.get("id"),
-                    artifact=artifact,
-                    artifact_hash=tool_artifact_hash,
-                    tool_name=tool_name,
-                    params=params,
-                    policy_action=fresh_policy_action,
-                    signals=fresh_decision.signals,
-                    risk_categories=fresh_decision.risk_categories,
-                    scanner_evidence=fresh_scanner_evidence,
-                )
-            if not is_execution_permitted(fresh_policy_action):
-                self._queue_observed_approval_requests(
-                    artifact=artifact,
-                    artifact_hash=tool_artifact_hash,
-                    tool_name=tool_name,
-                    params=params,
-                    policy_action=fresh_policy_action,
-                    risk_summary=fresh_decision.summary,
-                    risk_signals=list(fresh_decision.signals),
-                    extra_fields={"scanner_evidence": list(fresh_scanner_evidence)},
-                )
             observe_override = not is_execution_permitted(fresh_policy_action)
             executed_action: GuardAction = "allow" if observe_override else fresh_policy_action
             observe_evidence = fresh_scanner_evidence
