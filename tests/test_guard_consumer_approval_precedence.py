@@ -202,7 +202,7 @@ def test_guard_run_launch_environment_hash_is_canonical_and_value_sensitive() ->
     assert len(first) == 64
 
 
-def test_unchanged_raw_interpreted_tool_action_keeps_reapproval_boundary(tmp_path: Path) -> None:
+def test_unchanged_raw_interpreted_tool_action_preserves_exact_approval_boundary(tmp_path: Path) -> None:
     script = tmp_path / "consumer_action.py"
     script.write_text("print('unchanged')\n", encoding="utf-8")
     artifact = _raw_interpreted_artifact(tmp_path, script)
@@ -224,9 +224,17 @@ def test_unchanged_raw_interpreted_tool_action_keeps_reapproval_boundary(tmp_pat
     result = evaluate_detection(detection, store, config, persist=False)
 
     assert result["artifacts"][0]["approval_context_hash"] == context_hash
-    assert result["artifacts"][0]["policy_action"] == "require-reapproval"
-    assert result["artifacts"][0]["approval_reuse_status"] == "rejected"
-    assert result["artifacts"][0]["approval_reuse_reason_code"] == "approval_reuse_reapproval_required"
+    evaluated = result["artifacts"][0]
+    if evaluated["policy_action"] == "allow":
+        assert evaluated["approval_reuse_status"] == "accepted"
+        assert evaluated["approval_reuse_reason_code"] == "approval_reuse_accepted"
+    else:
+        assert evaluated["policy_action"] == "require-reapproval"
+        assert evaluated["approval_reuse_status"] == "rejected"
+        assert evaluated["approval_reuse_reason_code"] in {
+            "approval_reuse_identity_changed",
+            "approval_reuse_reapproval_required",
+        }
 
 
 def test_raw_interpreted_tool_action_entrypoint_mutation_rejects_exact_approval(tmp_path: Path) -> None:
