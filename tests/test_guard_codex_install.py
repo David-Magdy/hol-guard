@@ -364,11 +364,13 @@ def test_guard_codex_install_and_uninstall_reject_manifest_from_another_workspac
         home_dir=home_dir,
         workspace_dir=tmp_path / "first-workspace",
         guard_home=guard_home,
+        workspace_override_explicit=True,
     )
     second_context = HarnessContext(
         home_dir=home_dir,
         workspace_dir=tmp_path / "second-workspace",
         guard_home=guard_home,
+        workspace_override_explicit=True,
     )
     adapter = CodexHarnessAdapter()
     adapter.install(first_context)
