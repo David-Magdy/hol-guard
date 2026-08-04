@@ -176,7 +176,11 @@ def test_schedule_guard_daemon_ensure_is_reserved_and_nonblocking(
     assert kwargs["stdin"] == daemon_manager_module.subprocess.DEVNULL
     assert kwargs["stdout"] == daemon_manager_module.subprocess.DEVNULL
     assert kwargs["stderr"] == daemon_manager_module.subprocess.DEVNULL
-    assert kwargs.get("start_new_session") is (os.name != "nt")
+    if os.name == "nt":
+        assert "start_new_session" not in kwargs
+        assert isinstance(kwargs.get("creationflags"), int)
+    else:
+        assert kwargs.get("start_new_session") is True
 
 
 def test_schedule_guard_daemon_ensure_suppresses_duplicate_reservation(

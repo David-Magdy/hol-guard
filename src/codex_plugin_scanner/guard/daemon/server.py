@@ -7768,11 +7768,11 @@ class GuardDaemonServer:
         self._shutdown_started.set()
         self._server.shutdown()
         self._server.server_close()
-        _ = self._finish_service()
         if self._thread is not None:
             self._thread.join(timeout=5)
             if not self._thread.is_alive():
                 self._thread = None
+        _ = self._finish_service()
 
     def _begin_service(self) -> None:
         self._record_lifecycle("start_requested")
