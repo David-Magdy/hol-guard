@@ -1,15 +1,4 @@
-"""Tests for tray daemon endpoints (/v1/tray/status, /v1/tray/start, etc.).
-
-Verifies that the daemon server correctly routes tray requests to the tray
-lifecycle service and returns redacted JSON payloads. No tokens or secrets
-should appear in any response.
-
-Note: /v1/tray/start and /v1/tray/restart are NOT tested via real HTTP because
-they block the daemon thread for up to PROCESS_START_TIMEOUT_SECONDS=15s
-waiting for subprocess readiness, which exceeds the urllib timeout. The
-routing is verified by the safe endpoints (status, stop, repair) which do
-not spawn subprocesses.
-"""
+"""Regression tests for removed tray daemon HTTP control surfaces."""
 
 from __future__ import annotations
 
@@ -42,7 +31,8 @@ def _json_request(
         with urllib.request.urlopen(request, timeout=5) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
-        return error.code, json.loads(error.read().decode("utf-8"))
+        body = error.read().decode("utf-8")
+        return error.code, json.loads(body) if body else {}
 
 
 def _with_daemon(guard_home: Path) -> tuple[GuardStore, GuardDaemonServer]:
@@ -54,7 +44,7 @@ def _with_daemon(guard_home: Path) -> tuple[GuardStore, GuardDaemonServer]:
 
 
 class TestTrayDaemonStatus:
-    """GET /v1/tray/status returns capability + state without tokens."""
+    """GET /v1/tray/status remains unavailable over daemon HTTP."""
 
     def test_status_returns_supported_state(self, tmp_path: Path) -> None:
         _store, daemon = _with_daemon(tmp_path / "guard-home")
@@ -65,11 +55,8 @@ class TestTrayDaemonStatus:
                 "/v1/tray/status",
                 method="GET",
             )
-            assert status == 200
-            assert "state" in payload
-            assert "capability" in payload
-            assert "locator" in payload
-            assert payload["capability"]["supported"] in (True, False)
+            assert status == 404
+            assert payload == {}
         finally:
             daemon.stop()
 
@@ -108,7 +95,7 @@ class TestTrayDaemonStatus:
 
 
 class TestTrayDaemonActions:
-    """POST /v1/tray/{stop,repair} — safe actions that don't spawn subprocesses."""
+    """POST /v1/tray/{stop,repair} remains unavailable over daemon HTTP."""
 
     def test_stop_when_not_running_returns_ok(self, tmp_path: Path) -> None:
         """Stopping when no tray is running should return ok=True (idempotent)."""
@@ -121,9 +108,8 @@ class TestTrayDaemonActions:
                 method="POST",
                 payload={},
             )
-            assert status == 200
-            assert "ok" in payload
-            assert "state" in payload
+            assert status == 404
+            assert payload == {}
         finally:
             daemon.stop()
 
@@ -138,12 +124,12 @@ class TestTrayDaemonActions:
                 method="POST",
                 payload={},
             )
-            assert status == 200
-            assert payload["ok"] is True
+            assert status == 404
+            assert payload == {}
         finally:
             daemon.stop()
 
-    def test_actions_require_auth(self, tmp_path: Path) -> None:
+    def test_actions_are_not_routable_without_auth(self, tmp_path: Path) -> None:
         _store, daemon = _with_daemon(tmp_path / "guard-home")
         try:
             status, _payload = _json_request(
@@ -153,7 +139,8 @@ class TestTrayDaemonActions:
                 method="POST",
                 payload={},
             )
-            assert status == 401
+            assert status == 404
+            assert _payload == {}
         finally:
             daemon.stop()
 
@@ -174,63 +161,10 @@ class TestTrayDaemonActions:
             daemon.stop()
 
 
-class TestTrayDaemonRestartForce:
-    """Unit test: /v1/tray/restart must call start_tray(force=True) so a
-    failed stop doesn't leave the tray appearing already_running."""
+class TestTrayDaemonControlRemoval:
+    """The removed restart handler must not be reintroduced accidentally."""
 
-    def test_restart_calls_start_with_force_true(self, tmp_path: Path) -> None:
-        from unittest.mock import MagicMock, patch
+    def test_restart_handler_is_absent(self) -> None:
+        from codex_plugin_scanner.guard.daemon.server import _GuardDaemonHandler
 
-        from codex_plugin_scanner.guard.tray.contracts import (
-            TrayLifecycleResult,
-            TrayReasonCode,
-            TrayState,
-        )
-
-        guard_home = tmp_path / "guard-home"
-        guard_home.mkdir(parents=True, exist_ok=True)
-        store = GuardStore(guard_home)
-        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
-        daemon.start()
-        try:
-            handler = MagicMock()
-            handler.server = MagicMock()
-            handler.server.store = store
-            handler._write_json = MagicMock()
-
-            stop_result = TrayLifecycleResult(
-                ok=True,
-                state=TrayState.STOPPING,
-                reason=TrayReasonCode.OK,
-                message="stopped",
-            )
-            start_result = TrayLifecycleResult(
-                ok=True,
-                state=TrayState.RUNNING,
-                reason=TrayReasonCode.OK,
-                message="started",
-            )
-            with (
-                patch(
-                    "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-                    return_value=None,
-                ),
-                patch(
-                    "codex_plugin_scanner.guard.tray.lifecycle.stop_tray",
-                    return_value=stop_result,
-                ) as mock_stop,
-                patch(
-                    "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-                    return_value=start_result,
-                ) as mock_start,
-            ):
-                from codex_plugin_scanner.guard.daemon.server import (
-                    _GuardDaemonHandler,
-                )
-
-                _GuardDaemonHandler._handle_tray_action(handler, "restart", {})
-
-            mock_stop.assert_called_once_with(guard_home)
-            mock_start.assert_called_once_with(guard_home, force=True)
-        finally:
-            daemon.stop()
+        assert not hasattr(_GuardDaemonHandler, "_handle_tray_action")
