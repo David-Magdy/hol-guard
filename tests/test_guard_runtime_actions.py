@@ -50,6 +50,7 @@ def test_guard_action_envelope_round_trips_to_dict() -> None:
         "workspace_hash": "workspace-hash",
         "tool_name": "Bash",
         "command": "printf ok",
+        "command_category": None,
         "prompt_excerpt": None,
         "prompt_text": None,
         "target_paths": ["package.json"],

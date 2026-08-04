@@ -59,7 +59,7 @@ def _is_scanner_program(program_name: str) -> bool:
 
 
 def _build_parser(program_name: str, *, program_mode: str) -> argparse.ArgumentParser:
-    if program_mode == "guard":
+    if program_mode in {"guard", "hol-guard"}:
         parser = FriendlyArgumentParser(
             prog=program_name,
             description="Protect local harnesses before tools run.",
@@ -166,6 +166,20 @@ def _is_hol_guard_program(program_name: str) -> bool:
     return Path(program_name).stem.lower() == "hol-guard"
 
 
+def _resolve_hermes_args(argv: list[str]) -> list[str]:
+    if argv[0] != "hermes":
+        return argv
+    if len(argv) == 1:
+        return ["bootstrap", "hermes"]
+    if argv[1] == "bootstrap":
+        return ["bootstrap", "hermes", *argv[2:]]
+    if argv[1] == "pretool":
+        return ["hook", "--harness", "hermes", *argv[2:]]
+    if argv[1] == "mcp-proxy":
+        return ["hermes-mcp-proxy", *argv[2:]]
+    return argv
+
+
 def _resolve_legacy_args(
     argv: list[str] | None,
     *,
@@ -173,22 +187,13 @@ def _resolve_legacy_args(
     program_name: str = "",
 ) -> list[str] | None:
     if not argv:
-        if program_mode == "combined" and _is_hol_guard_program(program_name):
-            return ["guard"]
         return argv
     if program_mode == "guard":
         if argv[0] == "guard":
             return argv[1:]
-        if argv[0] == "hermes":
-            if len(argv) == 1:
-                return ["bootstrap", "hermes"]
-            if argv[1] == "bootstrap":
-                return ["bootstrap", "hermes", *argv[2:]]
-            if argv[1] == "pretool":
-                return ["hook", "--harness", "hermes", *argv[2:]]
-            if argv[1] == "mcp-proxy":
-                return ["hermes-mcp-proxy", *argv[2:]]
-        return argv
+        return _resolve_hermes_args(argv)
+    if program_mode == "hol-guard":
+        return _resolve_hermes_args(argv)
     if program_mode == "combined" and argv[0] == "hook":
         return ["guard", *argv]
     if program_mode == "combined" and argv[0] == "hermes":
@@ -298,6 +303,8 @@ def main(argv: list[str] | None = None) -> int:
     requested_argv = argv or sys.argv[1:]
     if _is_guard_program(program_name):
         program_mode = "guard"
+    elif _is_hol_guard_program(program_name):
+        program_mode = "hol-guard"
     elif _is_scanner_program(program_name) and (not requested_argv or requested_argv[0] != "guard"):
         program_mode = "scanner"
     else:
@@ -313,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     from .install_integrity import warn_if_shadowed
 
     warn_if_shadowed()
-    if program_mode == "guard":
+    if program_mode in {"guard", "hol-guard"}:
         try:
             return run_guard_command(args)
         except ValueError as exc:
