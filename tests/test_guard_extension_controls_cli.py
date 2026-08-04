@@ -82,8 +82,18 @@ def test_controls_help_is_available_from_every_installed_alias(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(sys, "argv", [program_name])
+    arguments = (
+        ["command", "controls", "--help"]
+        if program_name == "hol-guard"
+        else [
+            "guard",
+            "command",
+            "controls",
+            "--help",
+        ]
+    )
     with pytest.raises(SystemExit) as exit_info:
-        main(["guard", "command", "controls", "--help"])
+        main(arguments)
 
     assert exit_info.value.code == 0
     assert (

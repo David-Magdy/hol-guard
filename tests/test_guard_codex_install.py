@@ -936,6 +936,7 @@ def test_guard_install_and_repair_codex_preserve_ambiguous_legacy_post_tool_hook
             workspace_dir=workspace_dir,
             guard_home=guard_home,
             home_override_explicit=True,
+            workspace_override_explicit=True,
         )
     )
 
@@ -1567,7 +1568,12 @@ def test_guard_install_codex_migrates_global_and_workspace_hooks_to_toml(tmp_pat
         'model = "gpt-5.3-codex"\n\n[features]\nhooks = true\n',
     )
     _write_text(workspace_dir / ".codex" / "config.toml", 'approval_policy = "never"\n')
-    context = HarnessContext(home_dir=home_dir, guard_home=home_dir, workspace_dir=workspace_dir)
+    context = HarnessContext(
+        home_dir=home_dir,
+        guard_home=home_dir,
+        workspace_dir=workspace_dir,
+        workspace_override_explicit=True,
+    )
     legacy_group = codex_adapter._managed_hook_groups(context)["PreToolUse"]
     _write_text(
         home_dir / ".codex" / "hooks.json",
@@ -1620,7 +1626,12 @@ def test_guard_install_codex_migrates_legacy_bash_only_managed_hook(tmp_path, ca
     home_dir = tmp_path / "home"
     workspace_dir = tmp_path / "workspace"
     _write_text(workspace_dir / ".codex" / "config.toml", 'approval_policy = "never"\n')
-    context = HarnessContext(home_dir=home_dir, guard_home=home_dir, workspace_dir=workspace_dir)
+    context = HarnessContext(
+        home_dir=home_dir,
+        guard_home=home_dir,
+        workspace_dir=workspace_dir,
+        workspace_override_explicit=True,
+    )
     legacy_group = codex_adapter._managed_hook_groups(context)["PreToolUse"]
     _write_text(
         workspace_dir / ".codex" / "hooks.json",

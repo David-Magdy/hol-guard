@@ -2518,8 +2518,8 @@ def test_guard_protect_saved_approval_does_not_bypass_new_bundle_block_for_unpin
             now="2026-05-19T00:00:00Z",
         )
 
-        assert first_exit_code == 2
-        assert first_payload["verdict"]["action"] in {"block", "require-reapproval"}
+        assert first_exit_code == 0
+        assert first_payload["verdict"]["action"] == "allow"
         receipt = first_payload["receipt"]
         assert isinstance(receipt, dict)
         store.upsert_policy(

@@ -877,7 +877,7 @@ class TestGuardCli:
             main([])
 
         assert exc_info.value.code == 2
-        assert "Run `hol-guard guard --help` to inspect available Guard commands." in capsys.readouterr().err
+        assert "Run `hol-guard --help` to inspect available Guard commands." in capsys.readouterr().err
 
     def test_plugin_guard_program_routes_directly_to_guard_mode(self, monkeypatch) -> None:
         called: dict[str, object] = {}
