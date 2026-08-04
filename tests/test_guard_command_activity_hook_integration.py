@@ -21,7 +21,7 @@ from codex_plugin_scanner.guard.runtime.command_activity_contract import (
     ActivityDecisionReason,
     CommandExecutionStatus,
 )
-from codex_plugin_scanner.guard.runtime.command_activity_models import CommandActivityAnalyticsQuery
+from codex_plugin_scanner.guard.runtime.command_activity_api_contract import CommandActivityAnalyticsQuery
 from codex_plugin_scanner.guard.runtime.command_activity_correlation import (
     derive_proven_request_correlation,
     load_or_create_installation_correlation_key,
