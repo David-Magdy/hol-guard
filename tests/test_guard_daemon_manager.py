@@ -1838,6 +1838,7 @@ def test_ensure_guard_daemon_clears_stale_state_when_pid_no_longer_matches_guard
 def test_ensure_guard_daemon_reaps_stale_ephemeral_processes_without_state_file(tmp_path, monkeypatch):
     _disable_daemon_adoption(monkeypatch)
     _disable_duplicate_retire(monkeypatch)
+    _run_ephemeral_reap_synchronously(monkeypatch)
     guard_home = tmp_path / "guard-home"
     stale_guard_home = tmp_path / "pytest-of-user" / "pytest-9" / "test-stale" / "home"
     stale_guard_home.mkdir(parents=True)

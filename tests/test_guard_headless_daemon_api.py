@@ -3727,7 +3727,18 @@ def test_headless_remote_once_rejects_a_replayed_receipt_after_daemon_restart(
         daemon.stop()
 
     restarted_store = GuardStore(home)
-    restarted_daemon = GuardDaemonServer(restarted_store, host="127.0.0.1", port=0)
+    restart_deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            restarted_daemon = GuardDaemonServer(restarted_store, host="127.0.0.1", port=0)
+            break
+        except RuntimeError as error:
+            if (
+                str(error) != "A previous Guard daemon remains quarantined after unconfirmed containment."
+                or time.monotonic() >= restart_deadline
+            ):
+                raise
+            time.sleep(0.05)
     restarted_daemon.start()
     try:
         replay_status, replay_payload = _read_json_response(
