@@ -248,7 +248,7 @@ def test_slow_pi_reviews_release_every_slot_within_client_daemon_budget(
         thread.join(timeout=0.5)
     elapsed = time.monotonic() - started_at
 
-    assert overloaded.reason_code == "daemon_hook_process_overloaded"
+    assert overloaded.reason_code == "daemon_hook_process_not_ready"
     assert len(results) == 4
     assert {result.reason_code for result in results} == {"daemon_hook_process_timeout"}
     assert elapsed < 0.3
