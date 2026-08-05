@@ -212,7 +212,7 @@ def test_update_defers_when_latest_release_is_still_propagating(monkeypatch: pyt
 
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
-    assert exit_code == 0
+    assert exit_code == 0, json.dumps(payload, sort_keys=True)
     assert payload["status"] == "deferred"
     assert payload["reason_code"] == "update_release_propagating"
     assert payload["changed"] is False
@@ -253,7 +253,7 @@ def test_update_recovers_from_broken_pipx_launcher_with_trusted_python(
 
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
-    assert exit_code == 0
+    assert exit_code == 0, payload
     assert payload["status"] == "updated"
     assert payload["installer_recovery"] == "trusted_python_pip"
     assert commands == [
@@ -266,6 +266,66 @@ def test_update_recovers_from_broken_pipx_launcher_with_trusted_python(
             "--upgrade",
             "--force-reinstall",
             "hol-guard==2.2.3",
+        ],
+    ]
+
+
+def test_update_preserves_requested_wheel_during_broken_pipx_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wheel = tmp_path / "hol_guard-2.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    resulting_versions = iter(("2.2.1", "2.2.3"))
+    monkeypatch.setattr(
+        update_commands,
+        "_current_version_from_subprocess",
+        lambda *_args, **_kwargs: next(resulting_versions),
+    )
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(update_commands.sys, "executable", "/opt/guard/bin/python")
+    monkeypatch.setattr(update_commands, "_refresh_package_shims_after_update", lambda **_: (None, None))
+    monkeypatch.setattr(update_commands, "_repair_supported_harnesses", lambda **_: ([], []))
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[0] == "pipx":
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                "ModuleNotFoundError: No module named 'pipx'",
+            )
+        return subprocess.CompletedProcess(command, 0, "installed local wheel", "")
+
+    monkeypatch.setattr(update_commands.subprocess, "run", fake_run)
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False, wheel=str(wheel))
+
+    assert exit_code == 0, json.dumps(payload, sort_keys=True)
+    assert payload["status"] == "updated"
+    assert payload["installer_recovery"] == "trusted_python_pip"
+    assert payload["command"] == [
+        "/opt/guard/bin/python",
+        "-m",
+        "pip",
+        "install",
+        "--force-reinstall",
+        str(wheel),
+    ]
+    assert commands == [
+        ["pipx", "install", "--force", str(wheel)],
+        [
+            "/opt/guard/bin/python",
+            "-m",
+            "pip",
+            "install",
+            "--force-reinstall",
+            str(wheel),
         ],
     ]
 

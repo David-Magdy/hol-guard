@@ -530,22 +530,6 @@ def run_guard_update(
             )
         initial_version_check = payload.get("version_check")
         resulting_version = str(payload.get("resulting_version") or current_version)
-        if trusted_wheel is not None:
-            try:
-                if Version(resulting_version) != Version(trusted_wheel.version):
-                    return _trusted_update_failure(
-                        payload,
-                        UpdateSubprocessError("update_version_mismatch"),
-                        trusted_wheel=trusted_wheel,
-                        retain_trusted_wheel=installer_execution_started,
-                    )
-            except InvalidVersion:
-                return _trusted_update_failure(
-                    payload,
-                    UpdateSubprocessError("update_version_output_invalid"),
-                    trusted_wheel=trusted_wheel,
-                    retain_trusted_wheel=installer_execution_started,
-                )
         if result.returncode != 0:
             installer_output = _installer_output_text(payload.get("stdout"), payload.get("stderr"))
             if (
@@ -555,11 +539,18 @@ def run_guard_update(
             ):
                 pip_display_command = _update_command(
                     "pip",
-                    use_pypi=True,
+                    use_pypi=trusted_wheel is None,
                     target_version=target_version,
+                    wheel_path=requested_wheel_path if trusted_wheel is not None else None,
+                )
+                pip_execution_display_command = _update_command(
+                    "pip",
+                    use_pypi=trusted_wheel is None,
+                    target_version=target_version,
+                    wheel_path=trusted_wheel.staged_path if trusted_wheel is not None else None,
                 )
                 try:
-                    active_command = update_context.build_python_pip_command(pip_display_command)
+                    active_command = update_context.build_python_pip_command(pip_execution_display_command)
                 except UpdateSubprocessError as error:
                     return _trusted_update_failure(payload, error, trusted_wheel=trusted_wheel)
                 attempted_pipx_recovery = True
@@ -595,6 +586,22 @@ def run_guard_update(
             if trusted_wheel is not None:
                 _retain_local_wheel_staging(payload)
             return payload, 1
+        if trusted_wheel is not None:
+            try:
+                if Version(resulting_version) != Version(trusted_wheel.version):
+                    return _trusted_update_failure(
+                        payload,
+                        UpdateSubprocessError("update_version_mismatch"),
+                        trusted_wheel=trusted_wheel,
+                        retain_trusted_wheel=installer_execution_started,
+                    )
+            except InvalidVersion:
+                return _trusted_update_failure(
+                    payload,
+                    UpdateSubprocessError("update_version_output_invalid"),
+                    trusted_wheel=trusted_wheel,
+                    retain_trusted_wheel=installer_execution_started,
+                )
         if trusted_wheel is not None:
             _record_verified_local_wheel_receipt(
                 payload,
