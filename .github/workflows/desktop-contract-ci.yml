@@ -8,6 +8,10 @@ on:
       - src/codex_plugin_scanner/guard/cli/commands_parser.py
       - src/codex_plugin_scanner/guard/cli/commands_router.py
       - src/codex_plugin_scanner/guard/cli/commands_support.py
+      - src/codex_plugin_scanner/guard/cli/product.py
+      - src/codex_plugin_scanner/guard/store_approvals.py
+      - src/codex_plugin_scanner/guard/store_approval_facade.py
+      - src/codex_plugin_scanner/guard/store_receipts.py
       - tests/test_guard_desktop_contract.py
       - tests/fixtures/guard-command-corpus/decision-diff-report.json
       - ci/test-suite-ratchet-baseline.json
@@ -22,6 +26,10 @@ on:
       - src/codex_plugin_scanner/guard/cli/commands_parser.py
       - src/codex_plugin_scanner/guard/cli/commands_router.py
       - src/codex_plugin_scanner/guard/cli/commands_support.py
+      - src/codex_plugin_scanner/guard/cli/product.py
+      - src/codex_plugin_scanner/guard/store_approvals.py
+      - src/codex_plugin_scanner/guard/store_approval_facade.py
+      - src/codex_plugin_scanner/guard/store_receipts.py
       - tests/test_guard_desktop_contract.py
       - tests/fixtures/guard-command-corpus/decision-diff-report.json
       - ci/test-suite-ratchet-baseline.json
@@ -42,6 +50,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -62,10 +72,18 @@ jobs:
           uv run --no-sync python -m ruff format --check \
             src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
             src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
             tests/test_guard_desktop_contract.py
           uv run --no-sync python -m ruff check \
             src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
             src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
             tests/test_guard_desktop_contract.py
 
       - name: Run Desktop contract tests
