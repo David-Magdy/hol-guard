@@ -4322,7 +4322,10 @@ def _posture_status(
 
 def _posture_detail(status: str) -> str:
     details = {
-        "not_connected": "Connect Guard Cloud to fetch signed supply-chain bundles.",
+        "not_connected": (
+            "Local package protection is active. Guard Cloud is optional and adds live package intelligence, "
+            "synced policy, and cross-device evidence."
+        ),
         "workspace_required": "Finish Guard Cloud pairing to fetch workspace-specific supply-chain bundles.",
         "sync_required": "Run `hol-guard supply-chain sync` to fetch the latest signed bundle.",
         "expired": "The cached signed bundle expired. Run `hol-guard supply-chain sync` before the next install.",
@@ -4340,7 +4343,9 @@ def _posture_health_status(
 ) -> str:
     if status == "expired":
         return "stale"
-    if status in {"not_connected", "workspace_required", "sync_required", "degraded"}:
+    if status == "not_connected":
+        return "local"
+    if status in {"workspace_required", "sync_required", "degraded"}:
         return "degraded"
     next_refresh_timestamp = _parse_timestamp(next_refresh_at)
     if (

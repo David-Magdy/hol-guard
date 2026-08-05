@@ -155,8 +155,8 @@ export function cloudRecoveryContent(
 ): { title: string; detail: string } {
   if (kind === "validation") {
     return {
-      title: "Guard Cloud could not check this package request",
-      detail: "This is not a sign-in error. Retry the install, or approve it once if you trust the package.",
+      title: "Optional Cloud check unavailable",
+      detail: "Local Guard is still active. Retry the install, or approve it once if you trust the package.",
     };
   }
   return connected
@@ -165,9 +165,9 @@ export function cloudRecoveryContent(
         detail: "Run the install command again for a current package safety check.",
       }
     : {
-        title: "Check this package with Guard Cloud",
+        title: "Optional: add a Guard Cloud check",
         detail:
-          "Guard could not load current safety data for this package. This does not mean the package is unsafe.",
+          "Local Guard is working and still needs your decision. Approve this install once, or connect Guard Cloud for live package reputation.",
       };
 }
 

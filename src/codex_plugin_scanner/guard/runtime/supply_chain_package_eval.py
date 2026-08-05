@@ -2851,8 +2851,8 @@ def _unknown_package_result(
     package_name = str(target.get("name") or "this package")
     no_match_message = (
         (
-            f"Current package safety data was unavailable for {package_name}. "
-            "Review this install now, or connect Guard Cloud and try again."
+            f"Local Guard does not have enough current information to automatically allow {package_name}. "
+            "Review this install now. Guard Cloud is optional and can add live package reputation."
         )
         if requires_review
         else "Guard recorded this package request and will keep watching for new intelligence."
@@ -2870,8 +2870,8 @@ def _unknown_package_result(
             {
                 "code": "unidentified_package",
                 "message": (
-                    f"Guard could not confirm current safety details for {target['name']}. "
-                    "This does not mean the package is unsafe."
+                    f"Local checks could not confirm current safety details for {target['name']}. "
+                    "This does not mean the package is unsafe; approve it once if you trust it."
                 ),
                 "severity": "medium",
                 "source": "guard-local",

@@ -1362,7 +1362,7 @@ const cloudRecoveryMarkup = renderToStaticMarkup(
   createElement(ReviewCloudRecovery, { item: CLOUD_EVIDENCE_UNAVAILABLE_REQUEST }),
 );
 assert(
-  cloudRecoveryMarkup.includes("This is not a sign-in error") &&
+  cloudRecoveryMarkup.includes("Local Guard is still active") &&
     !cloudRecoveryMarkup.includes("Connect Guard Cloud"),
   "GR224-10: validation failures do not misrepresent a healthy Cloud connection",
 );
@@ -1379,6 +1379,8 @@ const cloudAuthorizationMarkup = renderToStaticMarkup(
 );
 assert(
   packageReviewCloudRecoveryKind(CLOUD_AUTHORIZATION_REQUEST) === "authorization" &&
+    cloudAuthorizationMarkup.includes("Optional: add a Guard Cloud check") &&
+    cloudAuthorizationMarkup.includes("Approve this install once") &&
     cloudAuthorizationMarkup.includes("Connect Guard Cloud"),
   "GR224-10b: authorization failures retain the sign-in recovery action",
 );

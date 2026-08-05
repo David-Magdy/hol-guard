@@ -21944,7 +21944,7 @@ function EvidenceDataProvenanceStrip({
   onViewActions
 }) {
   const beyondSample = analytics.total > sampleCount;
-  const cloudNote = runtime?.cloud_state === "local_only" ? "Guard Cloud not connected." : runtime?.cloud_state === "paired_active" && runtime?.cloud_sync_health?.label !== "Synced" ? runtime?.cloud_sync_health?.label : null;
+  const cloudNote = runtime?.cloud_state === "local_only" ? "Cloud sync optional and off." : runtime?.cloud_state === "paired_active" && runtime?.cloud_sync_health?.label !== "Synced" ? runtime?.cloud_sync_health?.label : null;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-2 border-t border-slate-100 px-5 py-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
       formatEvidenceCount(analytics.total),
@@ -28183,16 +28183,16 @@ async function waitForCloudConnection(initialStatus, {
 function cloudRecoveryContent(connected, kind = "authorization") {
   if (kind === "validation") {
     return {
-      title: "Guard Cloud could not check this package request",
-      detail: "This is not a sign-in error. Retry the install, or approve it once if you trust the package."
+      title: "Optional Cloud check unavailable",
+      detail: "Local Guard is still active. Retry the install, or approve it once if you trust the package."
     };
   }
   return connected ? {
     title: "Guard Cloud connected",
     detail: "Run the install command again for a current package safety check."
   } : {
-    title: "Check this package with Guard Cloud",
-    detail: "Guard could not load current safety data for this package. This does not mean the package is unsafe."
+    title: "Optional: add a Guard Cloud check",
+    detail: "Local Guard is working and still needs your decision. Approve this install once, or connect Guard Cloud for live package reputation."
   };
 }
 function ReviewCloudRecovery({ item }) {

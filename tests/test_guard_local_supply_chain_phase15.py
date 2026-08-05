@@ -421,7 +421,8 @@ def test_supply_chain_posture_reports_protected_degraded_stale_and_next_refresh(
     assert protected_posture["health_status"] == "protected"
     assert protected_posture["bundle"]["next_refresh_at"] == "2026-05-19T12:15:00+00:00"
     assert stale_posture["health_status"] == "stale"
-    assert degraded_posture["health_status"] == "degraded"
+    assert degraded_posture["health_status"] == "local"
+    assert "Guard Cloud is optional" in str(degraded_posture["detail"])
 
 
 def test_supply_chain_posture_reports_package_shim_path_and_unprotected_managers(

@@ -21,6 +21,10 @@ assert(surfaceSource.includes("EvidenceInsightsSurface"), "insights layout: surf
 assert(!surfaceSource.includes("Activity Insights"), "insights layout: removed redundant Activity Insights card");
 assert(surfaceSource.includes("EvidenceDataProvenanceStrip"), "insights layout: provenance strip wired");
 assert(provenanceSource.includes("full local store"), "insights layout: provenance mentions full local store");
+assert(
+  provenanceSource.includes("Cloud sync optional and off"),
+  "insights layout: local evidence does not present optional Cloud sync as a failure",
+);
 assert(surfaceSource.includes("EvidenceShareBar"), "insights layout: unified share bars for apps and actions");
 assert(heatmapSource.includes("createPortal"), "insights heatmap: cell-following tooltip portal");
 assert(heatmapSource.includes('role="grid"'), "insights heatmap: grid role for keyboard nav");
