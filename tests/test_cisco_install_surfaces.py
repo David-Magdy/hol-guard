@@ -140,7 +140,7 @@ def test_repo_controlled_surfaces_prefer_cisco_extra_where_supported() -> None:
     assert requirements_copy_index < source_copy_index
     assert build_deps_index < pip_install_index
     assert pip_install_index < purge_index
-    assert "aiohttp==3.14.1" in docker_requirements
+    assert "aiohttp==3.14.3" in docker_requirements
     assert "cisco-ai-mcp-scanner==" in docker_requirements
     assert "importlib-metadata==8.9.0" in docker_requirements
     assert "litellm==1.93.0" in docker_requirements
