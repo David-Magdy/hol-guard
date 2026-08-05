@@ -1185,7 +1185,7 @@ clearer UX and an implementation plan with technical references.
 
         assert rc == 1
         assert output["artifact_type"] == "tool_action_request"
-        assert output["policy_action"] == "require-reapproval"
+        assert output["policy_action"] == "block"
         assert "destructive shell command" in output["artifact_name"]
 
     def test_codex_pre_tool_use_blocks_fd_skill_docs_compact_shell_exec(
@@ -20090,8 +20090,7 @@ def test_hermes_pretool_blocks_destructive_shell_command_requests(tmp_path, caps
 
     assert rc == 1
     assert output["artifact_type"] == "tool_action_request"
-    assert output["policy_action"] == "require-reapproval"
-    assert output["approval_delivery"]["destination"] == "harness"
+    assert output["policy_action"] == "block"
     assert "destructive shell command" in output["risk_summary"].lower()
 
 
