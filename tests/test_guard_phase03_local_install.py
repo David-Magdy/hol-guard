@@ -359,6 +359,31 @@ def test_update_does_not_defer_local_wheel_failure_as_registry_propagation(
     assert payload["reason_code"] == "update_installer_failed"
 
 
+def test_update_does_not_hide_registry_auth_failure_as_propagation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.2.1")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pip")
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda command, **_: subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            "ERROR: HTTP error 401 while fetching package index\n"
+            "ERROR: No matching distribution found for hol-guard==2.2.3",
+        ),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False)
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["reason_code"] == "update_installer_failed"
+
+
 def test_update_binary_diagnostics_accepts_same_environment_script(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update_commands, "_current_version", lambda: "2.0.0")
     monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)

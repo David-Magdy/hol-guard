@@ -67,6 +67,26 @@ _PYPI_PROPAGATION_FAILURE_HINTS = (
     "No matching distribution found for hol-guard==",
     "Could not find a version that satisfies the requirement hol-guard==",
 )
+_PYPI_PROPAGATION_EXCLUSION_HINTS = (
+    "401",
+    "403",
+    "authentication",
+    "certificate verify failed",
+    "connection error",
+    "connection refused",
+    "connection reset",
+    "could not fetch url",
+    "credential",
+    "forbidden",
+    "invalid index",
+    "name or service not known",
+    "ssl",
+    "temporary failure in name resolution",
+    "timed out",
+    "timeout",
+    "tls",
+    "unauthorized",
+)
 _PYPI_JSON_URL = "https://pypi.org/pypi/hol-guard/json"
 _PYPI_TIMEOUT_SECONDS = 3.0
 _PYPI_RESPONSE_LIMIT_BYTES = 8 * 1024 * 1024
@@ -557,10 +577,7 @@ def run_guard_update(
                 active_display_command = pip_display_command
                 payload["installer_recovery"] = "trusted_python_pip"
                 continue
-            if requested_wheel_path is None and _contains_any(
-                installer_output,
-                _PYPI_PROPAGATION_FAILURE_HINTS,
-            ):
+            if requested_wheel_path is None and _is_pypi_propagation_failure(installer_output):
                 payload["status"] = "deferred"
                 payload["changed"] = False
                 payload["reason_code"] = "update_release_propagating"
@@ -1431,6 +1448,13 @@ def _installer_output_text(stdout: object, stderr: object) -> str:
 
 def _contains_any(value: str, candidates: tuple[str, ...]) -> bool:
     return any(candidate in value for candidate in candidates)
+
+
+def _is_pypi_propagation_failure(installer_output: str) -> bool:
+    if not _contains_any(installer_output, _PYPI_PROPAGATION_FAILURE_HINTS):
+        return False
+    lowered = installer_output.lower()
+    return not _contains_any(lowered, _PYPI_PROPAGATION_EXCLUSION_HINTS)
 
 
 def _dependency_conflict_message(installer_output: str) -> str | None:
