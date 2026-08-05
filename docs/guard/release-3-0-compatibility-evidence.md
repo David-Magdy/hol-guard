@@ -2,7 +2,7 @@
 
 Status: alpha gate evidence. Audience: compatibility gate reviewers.
 
-This document records the current-state evidence that `release/3.0` preserves the 2.1/2.2 local client contracts required by the execution-assurance program: policy, receipt, runtime-session, protection, and approval payloads, plus the surface-schema/runtime method-list negotiated contract and archived receipt-rollup reconstruction. Each claim cites the authoritative source and the focused test that proves it. Source evidence snapshot: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`; release identity migrated to 3.0 and revalidated in PR #1901.
+This document records historical baseline evidence that the release train preserves the 2.1/2.2 local client contracts required by the execution-assurance program: policy, receipt, runtime-session, protection, and approval payloads, plus the surface-schema/runtime method-list negotiated contract and archived receipt-rollup reconstruction. Each claim cites the authoritative source and the focused test that established it. The evidence was captured from `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`; PR #1901 migrates the release identity to 3.0. This snapshot is a baseline, not a claim that the cited commit contains the later cutover or the current PR head.
 
 ## Verdict summary
 
