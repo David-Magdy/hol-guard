@@ -33,6 +33,7 @@ from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.adapters.codex import CodexHarnessAdapter
 from codex_plugin_scanner.guard.approvals import apply_approval_resolution, wait_for_approval_requests
 from codex_plugin_scanner.guard.cli import commands as guard_commands_module
+from codex_plugin_scanner.guard.cli import commands_hook_runtime_review as runtime_review_module
 from codex_plugin_scanner.guard.cli import commands_support_interaction as interaction_module
 from codex_plugin_scanner.guard.cli import render as guard_render_module
 from codex_plugin_scanner.guard.cli.commands_support_runtime_artifacts import (
@@ -15458,7 +15459,7 @@ def test_guard_hook_codex_falls_back_to_native_deny_after_daemon_request_failure
     _build_guard_fixture(home_dir, workspace_dir)
     _write_text(home_dir / "config.toml", "approval_wait_timeout_seconds = 0\n")
     monkeypatch.setattr(
-        guard_commands_module,
+        runtime_review_module,
         "schedule_guard_daemon_ensure",
         lambda _guard_home, **_kwargs: "http://127.0.0.1:4455",
     )
@@ -15471,16 +15472,15 @@ def test_guard_hook_codex_falls_back_to_native_deny_after_daemon_request_failure
 
         def queue_blocked_operation(self, **_kwargs):
             raise RuntimeError("Guard daemon request failed: timed out")
-
     monkeypatch.setattr(
-        guard_commands_module,
+        runtime_review_module,
         "load_guard_surface_daemon_client",
         lambda _guard_home: FailingDaemonClient(),
     )
     event = {
         "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": {"command": "echo MALICIOUS > dangerous-marker.json"},
+        "tool_name": "Read",
+        "tool_input": {"path": str(home_dir / ".env")},
         "policy_action": "require-reapproval",
         "cwd": str(workspace_dir),
     }
