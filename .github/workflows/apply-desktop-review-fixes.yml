@@ -119,11 +119,29 @@ jobs:
           }
           PY
 
-      - name: Commit validated fixes
+      - name: Commit validated product fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git restore \
+            .github/workflows/desktop-contract-ci.yml \
+            .github/workflows/apply-desktop-review-fixes.yml \
+            scripts/patch_desktop_review_fixes.py \
+            scripts/fix_patch_script_scope.py
+          rm -f test-inventory.json
+          git add \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py \
+            tests/fixtures/guard-command-corpus/decision-diff-report.json \
+            ci/test-suite-ratchet-baseline.json
+          if git diff --cached --quiet; then
+            echo "Validated fixes are already committed"
+            exit 0
+          fi
           git commit -m "fix(guard): make Desktop aggregates authoritative"
           git pull --rebase origin desktop/3.0-contracts
           git push origin HEAD:desktop/3.0-contracts
