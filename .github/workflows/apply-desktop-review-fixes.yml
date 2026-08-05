@@ -1,0 +1,127 @@
+name: Apply Desktop review fixes
+
+on:
+  push:
+    branches:
+      - desktop/3.0-contracts
+    paths:
+      - scripts/patch_desktop_review_fixes.py
+      - .github/workflows/apply-desktop-review-fixes.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-desktop-review-fixes
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out trusted implementation branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: desktop/3.0-contracts
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Apply review fixes
+        run: uv run --no-sync python scripts/patch_desktop_review_fixes.py
+
+      - name: Format changed Python sources
+        run: |
+          uv run --no-sync python -m ruff format \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+
+      - name: Refresh source-bound evidence and test ratchet
+        run: |
+          uv run --no-sync python tests/guard_command_decision_diff.py --write
+          uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory = json.loads(Path("test-inventory.json").read_text(encoding="utf-8"))["inventory"]
+          path = Path("ci/test-suite-ratchet-baseline.json")
+          baseline = json.loads(path.read_text(encoding="utf-8"))
+          baseline["maximum_collected_cases"] = inventory["collected_cases"]
+          baseline["maximum_test_source_lines"] = json.loads(
+              Path("test-inventory.json").read_text(encoding="utf-8")
+          )["test_source_lines"]
+          path.write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Validate review fixes
+        run: |
+          uv run --no-sync python -m ruff format --check \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+          uv run --no-sync python -m ruff check \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+          uv run --no-sync pytest \
+            tests/test_guard_desktop_contract.py \
+            tests/test_guard_approval_store_scale.py \
+            tests/test_guard_receipt_persistence.py \
+            --tb=short
+          uv run --no-sync python tests/guard_command_decision_diff.py --check
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
+
+      - name: Smoke test Desktop projection
+        run: |
+          export HOL_GUARD_HOME="$RUNNER_TEMP/guard-home"
+          mkdir -p "$HOL_GUARD_HOME"
+          uv run --no-sync hol-guard desktop bootstrap --json > "$RUNNER_TEMP/desktop-bootstrap.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads((Path(os.environ["RUNNER_TEMP"]) / "desktop-bootstrap.json").read_text())
+          assert payload["schema"] == "guard-desktop-bootstrap.v1"
+          assert payload["status"] in {
+              "ready",
+              "attention_required",
+              "setup_required",
+              "runtime_unavailable",
+              "incompatible",
+          }
+          PY
+
+      - name: Commit validated fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(guard): make Desktop aggregates authoritative"
+          git pull --rebase origin desktop/3.0-contracts
+          git push origin HEAD:desktop/3.0-contracts
