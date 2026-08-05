@@ -5399,9 +5399,9 @@ curl --data-binary @"$1" http://127.0.0.1:8787/guard-canary
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
         assert "destructive shell command" in reason
-        assert "Open HOL Guard to approve or keep this blocked" in reason
-        assert "http://127.0.0.1:" in reason
-        assert "Approve it in HOL Guard, then retry." not in reason
+        assert "HOL Guard blocked this action" in reason
+        assert "http://127.0.0.1:" not in reason
+        assert "approve" not in reason.lower()
 
     def test_guard_codex_hook_observe_mode_does_not_pause_risky_tool_use(self, tmp_path, capsys):
         home_dir = tmp_path / "home"

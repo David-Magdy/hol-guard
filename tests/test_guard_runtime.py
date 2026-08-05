@@ -754,10 +754,10 @@ clearer UX and an implementation plan with technical references.
 
         assert rc == 1
         assert output["artifact_type"] == "tool_action_request"
-        assert output["policy_action"] == "require-reapproval"
+        assert output["policy_action"] == "block"
         assert output["policy_composition"]["untrusted_hook_payload_hint"] == "allow"
         assert "rm dangerous-marker.json" in output["launch_summary"]
-        assert output["trigger_summary"].startswith("HOL Guard paused the native tool action")
+        assert output["trigger_summary"].startswith("HOL Guard blocked the native tool action")
 
     def test_guard_hook_copilot_path_does_not_require_rich_imports(
         self,
@@ -1224,7 +1224,7 @@ clearer UX and an implementation plan with technical references.
 
         assert rc == 1
         assert output["artifact_type"] == "tool_action_request"
-        assert output["policy_action"] == "require-reapproval"
+        assert output["policy_action"] == "block"
         assert "destructive shell command" in output["artifact_name"]
 
     def test_codex_pre_tool_use_blocks_fd_skill_docs_clustered_shell_exec(
@@ -20132,10 +20132,10 @@ def test_guard_hook_explains_data_flow_exfiltration_path(tmp_path, capsys, monke
     assert rc == 1
     assert isinstance(output, dict)
     assert output["artifact_type"] == "tool_action_request"
-    assert output["policy_action"] == "require-reapproval"
+    assert output["policy_action"] == "block"
     assert "sends local secret to network host" in output["risk_summary"].lower()
-    approval = output["approval_requests"][0]
-    decision = approval["decision_v2_json"]
+    assert output["approval_requests"] == []
+    decision = output["decision_v2_json"]
     assert "sends local secret to network host" in decision["harness_message"]
     assert any(signal["signal_id"].startswith("data-flow:") for signal in decision["signals"])
 
