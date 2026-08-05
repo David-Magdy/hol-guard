@@ -545,8 +545,8 @@ def _cloud_state_detail(
             f"at {dashboard_url} for Home, Inbox, Fleet, Evidence, upgrades, and team workflows."
         )
     return (
-        "Receipts stay on this machine until you choose to pair Guard Cloud. "
-        f"Run `{GUARD_COMMAND} connect` when you want shared history, trust advisories, or team policy."
+        "Local Guard is active and keeps receipts on this machine. Guard Cloud is optional; "
+        f"run `{GUARD_COMMAND} connect` when you want shared history, live advisories, or team policy."
     )
 
 
