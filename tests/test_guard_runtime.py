@@ -1147,7 +1147,7 @@ clearer UX and an implementation plan with technical references.
 
         assert rc == 1
         assert output["artifact_type"] == "tool_action_request"
-        assert output["policy_action"] == "require-reapproval"
+        assert output["policy_action"] == "block"
         assert "destructive shell command" in output["artifact_name"]
 
     def test_codex_pre_tool_use_blocks_fd_skill_docs_metachar_sed_exec(
@@ -1342,7 +1342,7 @@ clearer UX and an implementation plan with technical references.
 
         assert rc == 1
         assert output["artifact_type"] == "tool_action_request"
-        assert output["policy_action"] == "require-reapproval"
+        assert output["policy_action"] == "block"
         assert "destructive shell command" in output["artifact_name"]
 
     def test_codex_pre_tool_use_blocks_fd_follow_symlink_descendant_exec(
@@ -18424,8 +18424,8 @@ PY
     assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "HOL Guard" in reason
     assert "credential exfiltration" in reason
-    assert "Open HOL Guard to approve or keep this blocked" in reason
-    assert "http://127.0.0.1:4455/requests/" in reason
+    assert "terminal policy decision" in reason
+    assert "http://127.0.0.1:4455/requests/" not in reason
 
 
 def test_guard_hook_codex_post_tool_use_blocks_credential_looking_output(
