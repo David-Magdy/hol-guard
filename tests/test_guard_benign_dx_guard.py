@@ -10,6 +10,9 @@ from codex_plugin_scanner.guard.runtime.benign_dx_guard import (
     _is_git_safe_flag,
     classify_benign_command,
 )
+from codex_plugin_scanner.guard.runtime.secret_file_request_services.benign_requests import (
+    is_explicitly_benign_tool_action_request,
+)
 
 # ---------------------------------------------------------------------------
 # Benign allowlist — each command MUST be prompt-free
@@ -57,6 +60,15 @@ def test_all_benign_allowlisted_commands_are_prompt_free() -> None:
             f"Expected '{cmd}' to be prompt-free, got is_prompt_free={is_prompt_free}, reason={rc}"
         )
         assert rc == reason, f"Expected reason '{reason}' for '{cmd}', got '{rc}'"
+
+
+def test_release_allowlist_is_used_by_production_benign_request_path(tmp_path) -> None:
+    assert is_explicitly_benign_tool_action_request(
+        "bash",
+        {"command": "gh pr view 42 --json title"},
+        cwd=tmp_path,
+        home_dir=tmp_path,
+    )
 
 
 # ---------------------------------------------------------------------------

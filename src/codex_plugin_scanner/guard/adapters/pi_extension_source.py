@@ -168,6 +168,7 @@ def managed_extension_source(
         "  serializedPayload: string,\n"
         "  cwd?: string,\n"
         "  timeoutMs: number = GUARD_DAEMON_TIMEOUT_MS,\n"
+        "  deadlineAt?: number,\n"
         "): Promise<GuardDaemonAttempt> {\n"
         '  if (typeof fetch !== "function") {\n'
         '    return { response: null, recoveryKind: "transport-failure" };\n'
@@ -181,7 +182,6 @@ def managed_extension_source(
         "  const controller = typeof AbortController === 'function' ? new AbortController() : undefined;\n"
         "  const timeoutHandle = setTimeout(() => controller?.abort(), timeoutMs);\n"
         "  try {\n"
-        "    const response = await fetch(`http://127.0.0.1:${connection.port}/v1/hooks/pi?${params.toString()}`, {\n"
         "    let daemonPayload = serializedPayload;\n"
         "    try {\n"
         "      const parsedPayload = JSON.parse(serializedPayload) as Record<string, unknown>;\n"
@@ -196,7 +196,7 @@ def managed_extension_source(
         "        'Content-Type': 'application/json',\n"
         "        'X-Guard-Token': connection.authToken,\n"
         "      },\n"
-        "      body: serializedPayload,\n"
+        "      body: daemonPayload,\n"
         "      signal: controller?.signal,\n"
         "    });\n"
         "    if (!response.ok) {\n"
@@ -213,7 +213,7 @@ def managed_extension_source(
         "        return {\n"
         "          response: null,\n"
         '          recoveryKind: "authenticated-control-plane-failure",\n'
-        "        };\n"
+        "        body: daemonPayload,\n"
         "      }\n"
         "      return {\n"
         "        response: {\n"
@@ -304,7 +304,9 @@ def managed_extension_source(
         '        + "the safe size limit.",\n'
         "    };\n"
         "  }\n"
-        "  let daemonAttempt = await daemonGuardResponse(serializedPayload, cwd);\n"
+        "  let daemonAttempt = await daemonGuardResponse(\n"
+        "    serializedPayload, cwd, GUARD_DAEMON_TIMEOUT_MS, deadlineAt,\n"
+        "  );\n"
         "  if (daemonAttempt.response) {\n"
         "    cleanupPayloadReference();\n"
         "    return daemonAttempt.response;\n"
@@ -319,6 +321,7 @@ def managed_extension_source(
         "        serializedPayload,\n"
         "        cwd,\n"
         "        Math.min(GUARD_DAEMON_RETRY_TIMEOUT_MS, Math.max(deadlineAt - Date.now(), 1)),\n"
+        "        deadlineAt,\n"
         "      );\n"
         "      if (daemonAttempt.response) {\n"
         "        cleanupPayloadReference();\n"
@@ -377,9 +380,6 @@ def managed_extension_source(
         "    }\n"
         "    return {\n"
         '      decision: "deny",\n'
-        "      reason: errorCode === 'ETIMEDOUT' || result.error?.name === 'TimeoutError'\n"
-        "        ? `HOL Guard Pi hook timed out after ${GUARD_TIMEOUT_MS}ms while reviewing this action.`\n"
-        "        : `HOL Guard Pi hook failed before completing review: ${errorMessage}`,\n"
         f"      reason: `HOL Guard {display_name} hook failed before completing review: "
         "${errorMessage}`,\n"
         "    };\n"
