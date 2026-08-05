@@ -34,6 +34,12 @@ class TestMCPModuleImport:
 
         assert CONTRACT_VERSION == "guard-mcp.v1"
 
+    def test_omp_is_an_allowed_harness(self):
+        from codex_plugin_scanner.guard.mcp.schemas import VALID_HARNESSES, HarnessName
+
+        assert HarnessName.OMP.value == "omp"
+        assert "omp" in VALID_HARNESSES
+
 
 class TestMCPServerInitialization:
     """Verify the MCP server initializes correctly."""

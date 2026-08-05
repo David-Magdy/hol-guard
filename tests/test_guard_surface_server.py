@@ -6,6 +6,7 @@ import base64
 import json
 import os
 import socket
+import sqlite3
 import sys
 import tempfile
 import time
@@ -13,6 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -128,6 +130,324 @@ class TestGuardSurfaceServer:
         assert committed_state["trust_status"] == degraded
         assert rolled_back_state is not None
         assert rolled_back_state["trust_status"] == degraded
+
+    def test_protection_repair_requires_auth_and_repairs_integrity(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
+        monkeypatch.setattr(
+            GuardStore,
+            "setup_policy_integrity",
+            lambda self, **_kwargs: {"mode": "protected"},
+        )
+        monkeypatch.setattr(
+            GuardStore,
+            "get_cached_policy_integrity_state",
+            lambda self: {"backend": "system-keyring", "degraded_reasons": [], "mode": "protected"},
+        )
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+
+        unauthenticated = urllib.request.Request(
+            f"http://127.0.0.1:{daemon.port}/v1/protection/repair",
+            data=json.dumps({"check_id": "rule_packs"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        authenticated = urllib.request.Request(
+            f"http://127.0.0.1:{daemon.port}/v1/protection/repair",
+            data=json.dumps({"check_id": "rule_packs"}).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Guard-Token": daemon._server.auth_token,
+            },
+            method="POST",
+        )
+        try:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(unauthenticated, timeout=5)
+            with urllib.request.urlopen(authenticated, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            authenticated_state = load_authenticated_daemon_state(store.guard_home)
+        finally:
+            daemon.stop()
+
+        assert error.value.code == 401
+        assert payload == {
+            "repaired": True,
+            "repair_scope": "local_integrity",
+            "check_ids": ["policy_engine", "rule_packs", "tamper_checks"],
+            "pending_check_ids": [],
+            "message": "Integrity protection restored.",
+        }
+        assert authenticated_state is not None
+        assert authenticated_state["trust_status"] == {
+            "backend": "system-keyring",
+            "degraded_reasons": [],
+            "mode": "protected",
+        }
+
+    def test_protection_repair_all_returns_an_inline_recovery_result(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
+        monkeypatch.setattr(
+            GuardStore,
+            "setup_policy_integrity",
+            lambda self, **_kwargs: {"mode": "protected"},
+        )
+        containment_probes: list[bool] = []
+        monkeypatch.setattr(
+            daemon_server_module._GuardDaemonHandler,
+            "_containment_health_payload",
+            lambda self, *, force_refresh=False: containment_probes.append(force_refresh) or {},
+        )
+        monkeypatch.setattr(
+            daemon_server_module,
+            "containment_health_signals",
+            lambda value, **_kwargs: {
+                check_id: SimpleNamespace(status=daemon_server_module.ProtectionCheckStatus.PASS)
+                for check_id in (
+                    "decision_plane_compatibility",
+                    "containment_compatibility",
+                    "sandbox",
+                )
+            },
+        )
+        maintained: list[bool] = []
+        monkeypatch.setattr(
+            GuardStore,
+            "maintain_command_activity",
+            lambda self, **_kwargs: maintained.append(True),
+        )
+        monkeypatch.setattr(
+            GuardStore,
+            "get_command_activity_persistence_health",
+            lambda self: SimpleNamespace(active_error_count=0),
+        )
+        monkeypatch.setattr(GuardStore, "count_command_activities", lambda self: 0)
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{daemon.port}/v1/protection/repair",
+            data=json.dumps({"check_id": "all"}).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Guard-Token": daemon._server.auth_token,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            daemon.stop()
+
+        assert payload["repaired"] is True
+        assert payload["check_ids"] == [
+            "policy_engine",
+            "rule_packs",
+            "tamper_checks",
+            "decision_plane_compatibility",
+            "containment_compatibility",
+            "sandbox",
+            "decision_stream",
+        ]
+        assert payload["pending_check_ids"] == []
+        assert payload["message"] == "Integrity protection restored."
+        assert maintained
+        assert containment_probes == [True]
+
+    def test_protection_repair_converts_recovery_type_errors_to_inline_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
+
+        def fail_setup(_store: GuardStore, **_kwargs: object) -> dict[str, object]:
+            raise TypeError("invalid recovery state")
+
+        monkeypatch.setattr(
+            GuardStore,
+            "setup_policy_integrity",
+            fail_setup,
+        )
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{daemon.port}/v1/protection/repair",
+            data=json.dumps({"check_id": "all"}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Guard-Token": daemon._server.auth_token},
+            method="POST",
+        )
+        try:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=5)
+            payload = json.loads(error.value.read().decode("utf-8"))
+        finally:
+            daemon.stop()
+
+        assert error.value.code == 409
+        assert payload["error"] == "protection_repair_failed"
+
+    def test_protection_repair_converts_command_store_errors_to_inline_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
+
+        def fail_probe(_store: GuardStore) -> None:
+            raise sqlite3.OperationalError("write failed")
+
+        monkeypatch.setattr(
+            daemon_server_module,
+            "_repair_command_activity_persistence_health",
+            fail_probe,
+        )
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{daemon.port}/v1/protection/repair",
+            data=json.dumps({"check_id": "decision_stream"}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Guard-Token": daemon._server.auth_token},
+            method="POST",
+        )
+        try:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=5)
+            payload = json.loads(error.value.read().decode("utf-8"))
+        finally:
+            daemon.stop()
+
+        assert error.value.code == 409
+        assert payload["error"] == "protection_repair_failed"
+
+    def test_protection_repair_recovers_degraded_integrity_without_trusting_invalid_rows(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
+        monkeypatch.setattr(
+            GuardStore,
+            "setup_policy_integrity",
+            lambda self, **_kwargs: {"mode": "degraded", "degraded_reasons": ["rollback_detected"]},
+        )
+        repair_calls: list[bool] = []
+        monkeypatch.setattr(
+            GuardStore,
+            "repair_policy_integrity",
+            lambda self, *, clear_invalid, **_kwargs: (
+                repair_calls.append(clear_invalid) or {"mode": "protected", "counts": {"valid": 0}}
+            ),
+        )
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{daemon.port}/v1/protection/repair",
+            data=json.dumps({"check_id": "rule_packs"}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Guard-Token": daemon._server.auth_token},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            daemon.stop()
+
+        assert payload["repaired"] is True
+        assert repair_calls == [False]
+        assert payload["message"] == "Integrity protection restored."
+
+    def test_protection_repair_keeps_cloud_policy_availability_separate_from_local_integrity(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
+        degraded_status = {
+            "mode": "degraded",
+            "degraded_reasons": ["policy_integrity_key_unavailable"],
+            "counts": {"valid": 0},
+        }
+        monkeypatch.setattr(GuardStore, "setup_policy_integrity", lambda self, **_kwargs: degraded_status)
+        monkeypatch.setattr(
+            GuardStore,
+            "repair_policy_integrity",
+            lambda self, **_kwargs: degraded_status,
+        )
+        monkeypatch.setattr(
+            GuardStore,
+            "reset_policy_integrity",
+            lambda self, **_kwargs: (_ for _ in ()).throw(AssertionError("repair must not reset local trust")),
+        )
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{daemon.port}/v1/protection/repair",
+            data=json.dumps({"check_id": "rule_packs"}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Guard-Token": daemon._server.auth_token},
+            method="POST",
+        )
+        try:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=5)
+            payload = json.loads(error.value.read().decode("utf-8"))
+        finally:
+            daemon.stop()
+
+        assert error.value.code == 409
+        assert payload["error"] == "local_integrity_repair_incomplete"
+        assert payload["repair_scope"] == "local_integrity"
+        assert "unauthenticated policy data" not in payload["message"]
+        assert "Guard Cloud policy availability" in payload["message"]
+
+    def test_protection_repair_all_reports_containment_probe_failure_inline(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
+        monkeypatch.setattr(
+            GuardStore,
+            "setup_policy_integrity",
+            lambda self, **_kwargs: {"mode": "protected"},
+        )
+        monkeypatch.setattr(
+            daemon_server_module._GuardDaemonHandler,
+            "_containment_health_payload",
+            lambda self, **_kwargs: (_ for _ in ()).throw(RuntimeError("probe failed")),
+        )
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{daemon.port}/v1/protection/repair",
+            data=json.dumps({"check_id": "all"}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Guard-Token": daemon._server.auth_token},
+            method="POST",
+        )
+        try:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=5)
+            payload = json.loads(error.value.read().decode("utf-8"))
+        finally:
+            daemon.stop()
+
+        assert error.value.code == 409
+        assert payload["failed_check_ids"] == [
+            "decision_plane_compatibility",
+            "containment_compatibility",
+            "sandbox",
+        ]
+        assert payload["message"] == (
+            "Repair paused before every protection layer could be confirmed. Retry repair here."
+        )
 
     def test_local_dashboard_session_preserves_reserved_claims(self) -> None:
         token = build_local_dashboard_session_token(
@@ -3367,7 +3687,7 @@ class TestGuardSurfaceServer:
         store = GuardStore(tmp_path / "guard-home")
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         opened_urls: list[str] = []
-        monkeypatch.setattr(daemon_server_module.webbrowser, "open", lambda url: opened_urls.append(url) or True)
+        monkeypatch.setattr(daemon_server_module, "open_browser_url", lambda url: opened_urls.append(url) or True)
         daemon.start()
 
         try:
@@ -3638,7 +3958,10 @@ class TestGuardSurfaceServer:
         runtime = GuardSurfaceRuntime(store)
         config = GuardConfig(guard_home=tmp_path / "guard-home", workspace=None)
         opened_urls: list[str] = []
-        monkeypatch.setattr(guard_commands_module.webbrowser, "open", lambda url: opened_urls.append(url) or True)
+        monkeypatch.setattr(
+            "codex_plugin_scanner.guard.cli.commands_support_hook_payload.open_browser_url",
+            lambda url: opened_urls.append(url) or True,
+        )
 
         runtime.attach_client(client_id="approval-center-web", surface="approval-center")
 
@@ -3658,7 +3981,10 @@ class TestGuardSurfaceServer:
             approval_surface_policy="auto-open-once",
         )
         opened_urls: list[str] = []
-        monkeypatch.setattr(guard_commands_module.webbrowser, "open", lambda url: opened_urls.append(url) or True)
+        monkeypatch.setattr(
+            "codex_plugin_scanner.guard.cli.commands_support_hook_payload.open_browser_url",
+            lambda url: opened_urls.append(url) or True,
+        )
 
         guard_commands_module._open_approval_center(
             "http://127.0.0.1:4781",
@@ -3689,7 +4015,10 @@ class TestGuardSurfaceServer:
             approval_surface_policy="notify-only",
         )
         opened_urls: list[str] = []
-        monkeypatch.setattr(guard_commands_module.webbrowser, "open", lambda url: opened_urls.append(url) or True)
+        monkeypatch.setattr(
+            "codex_plugin_scanner.guard.cli.commands_support_hook_payload.open_browser_url",
+            lambda url: opened_urls.append(url) or True,
+        )
 
         guard_commands_module._open_approval_center(
             "http://127.0.0.1:4781",

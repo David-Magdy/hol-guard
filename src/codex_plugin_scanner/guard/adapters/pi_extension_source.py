@@ -28,8 +28,15 @@ GUARD_HOOK_MAX_DEPTH = 24
 GUARD_HOOK_MAX_SERIALIZED_PAYLOAD_CHARS = 24_000
 
 
-def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path: Path) -> str:
-    guard_args = ["hook", "--json", "--guard-home", str(guard_home), "--harness", "pi"]
+def managed_extension_source(
+    *,
+    guard_home: Path,
+    home_dir: Path,
+    settings_path: Path,
+    harness: str = "pi",
+    display_name: str = "Pi",
+) -> str:
+    guard_args = ["hook", "--json", "--guard-home", str(guard_home), "--harness", harness]
     if home_dir.resolve() != Path.home().resolve():
         guard_args.extend(["--home", str(home_dir)])
     guard_args_json = json.dumps(guard_args)
@@ -53,7 +60,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "config={'python_executable':sys.executable,"
         f"'package_root':{str(package_root)!r},"
         f"'guard_home':{str(guard_home)!r},"
-        "'cli_args':argv,'harness':'pi','timeout_seconds':0.75};"
+        f"'cli_args':argv,'harness':{harness!r},'timeout_seconds':0.75}};"
         "raise SystemExit(run_bounded_cli_hook(config,input_text=sys.stdin.read(1000001)))"
     )
     cli_wrapper_command_json = json.dumps(str(Path(sys.executable).expanduser().absolute()))
@@ -78,7 +85,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
     except (OSError, ValueError):
         taskkill_path = None
     taskkill_path_json = json.dumps(taskkill_path)
-    return (
+    source = (
         'import { spawn } from "node:child_process";\n'
         + 'import { createCipheriv, createHash, randomBytes } from "node:crypto";\n'  # pyright: ignore[reportImplicitStringConcatenation]
         'import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";\n'
@@ -125,6 +132,8 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "  resume_poll_path?: string;\n"
         '  model_output_action?: "allow_original" | "replace_with_reviewed_excerpt" | "block" | "not_applicable";\n'
         "  reviewed_output_sha256?: string;\n"
+        "  observed_policy_action?: string;\n"
+        "  observe_mode?: boolean;\n"
         '  notice?: "none" | "excerpt" | "warning";\n'
         "  reason_code?: string;\n"
         "};\n"
@@ -173,6 +182,15 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "  const timeoutHandle = setTimeout(() => controller?.abort(), timeoutMs);\n"
         "  try {\n"
         "    const response = await fetch(`http://127.0.0.1:${connection.port}/v1/hooks/pi?${params.toString()}`, {\n"
+        "    let daemonPayload = serializedPayload;\n"
+        "    try {\n"
+        "      const parsedPayload = JSON.parse(serializedPayload) as Record<string, unknown>;\n"
+        "      const remainingMs = deadlineAt === undefined ? timeoutMs : deadlineAt - Date.now();\n"
+        "      parsedPayload.guard_remaining_ms = Math.min(60_000, Math.max(1, Math.min(timeoutMs, remainingMs)));\n"
+        "      daemonPayload = JSON.stringify(parsedPayload);\n"
+        "    } catch {}\n"
+        f"    const response = await fetch(`http://127.0.0.1:${{connection.port}}"
+        f"/v1/hooks/{harness}?${{params.toString()}}`, {{\n"
         "      method: 'POST',\n"
         "      headers: {\n"
         "        'Content-Type': 'application/json',\n"
@@ -250,7 +268,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "  } catch (error) {\n"
         "    return {\n"
         '      decision: "deny",\n'
-        "      reason: `HOL Guard could not serialize Pi hook payload: ${\n"
+        f"      reason: `HOL Guard could not serialize {display_name} hook payload: ${{\n"
         "        error instanceof Error ? error.message : String(error)\n"
         "      }`,\n"
         "    };\n"
@@ -268,7 +286,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "      cleanupPayloadReference();\n"
         "      return {\n"
         '        decision: "deny",\n'
-        "        reason: `HOL Guard could not serialize Pi hook payload reference: ${\n"
+        f"        reason: `HOL Guard could not serialize {display_name} hook payload reference: ${{\n"
         "          error instanceof Error ? error.message : String(error)\n"
         "        }`,\n"
         "      };\n"
@@ -281,7 +299,8 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "    cleanupPayloadReference();\n"
         "    return {\n"
         '      decision: "deny",\n'
-        '      reason: "HOL Guard blocked this Pi hook payload before review because it exceeded "\n'
+        f'      reason: "HOL Guard blocked this {display_name} hook payload before review because it exceeded '
+        '"\n'
         '        + "the safe size limit.",\n'
         "    };\n"
         "  }\n"
@@ -341,7 +360,8 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "  if (result === null) {\n"
         "    return {\n"
         '      decision: "deny",\n'
-        '      reason: "HOL Guard Pi hook failed before completing review: Guard CLI was not found.",\n'
+        f'      reason: "HOL Guard {display_name} hook failed before completing review: '
+        'Guard CLI was not found.",\n'
         "    };\n"
         "  }\n"
         "  if (result.error) {\n"
@@ -350,7 +370,8 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "    if (errorCode === 'ETIMEDOUT') {\n"
         "      return {\n"
         '        decision: "deny",\n'
-        '        reason: "HOL Guard could not complete fallback review before the Pi deadline. Retry the action.",\n'
+        f'        reason: "HOL Guard could not complete fallback review before the {display_name} '
+        'deadline. Retry the action.",\n'
         '        reason_code: "guard_cli_recovery_timeout",\n'
         "      };\n"
         "    }\n"
@@ -359,6 +380,8 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "      reason: errorCode === 'ETIMEDOUT' || result.error?.name === 'TimeoutError'\n"
         "        ? `HOL Guard Pi hook timed out after ${GUARD_TIMEOUT_MS}ms while reviewing this action.`\n"
         "        : `HOL Guard Pi hook failed before completing review: ${errorMessage}`,\n"
+        f"      reason: `HOL Guard {display_name} hook failed before completing review: "
+        "${errorMessage}`,\n"
         "    };\n"
         "  }\n"
         '  const lines = (result.stdout ?? "").split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);\n'
@@ -379,7 +402,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "}\n"
         "\n"
         "function modelVisibleBlockedReason(reason: string): string {\n"
-        '  const prefix = "HOL Guard blocked this tool output before Pi could use it.";\n'
+        f'  const prefix = "HOL Guard blocked this tool output before {display_name} could use it.";\n'
         "  const approvalUrl = reason.match(/https?:\\/\\/\\S+/)?.[0]?.replace(/[.,;:]+$/, '');\n"
         "  const approvalHint = approvalUrl ? ` Human approval is pending in HOL Guard: ${approvalUrl}.` : '';\n"
         "  return `${prefix}${approvalHint} Do not retry the same tool call automatically; wait for the user to "
@@ -438,9 +461,11 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "            },\n"
         "            { triggerTurn: true, deliverAs: 'nextTurn' },\n"
         "          );\n"
-        "          ctx.ui.notify('HOL Guard approved this request. Pi is continuing the task.', 'info');\n"
+        f"          ctx.ui.notify('HOL Guard approved this request. {display_name} is continuing the task.', "
+        "'info');\n"
         "        } else if (action === 'block') {\n"
-        "          ctx.ui.notify('HOL Guard kept this request blocked. Pi will not retry it.', 'warning');\n"
+        f"          ctx.ui.notify('HOL Guard kept this request blocked. {display_name} will not retry it.', "
+        "'warning');\n"
         "        }\n"
         "      } finally {\n"
         "        pendingApprovalResumes.delete(requestId);\n"
@@ -527,6 +552,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "      guardPayload.guard_source_ref = sourceRef;\n"
         "      guardPayload.tool_response_summary = {\n"
         "        kind: 'text',\n"
+        "        text_excerpt: toolOutput,\n"
         "        excerpt_chars: toolOutput.length,\n"
         "        output_chars: digest.chars,\n"
         "        output_sha256: digest.sha256,\n"
@@ -548,6 +574,7 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         '      ctx.ui.notify(reason, "warning");\n'
         "      return blockedToolResult(modelReason, event.details);\n"
         "    }\n"
+        "    if (response.observe_mode === true) return undefined;\n"
         "    if (outputTruncated) {\n"
         '      if (response.model_output_action === "allow_original" &&\n'
         "          typeof response.reviewed_output_sha256 === 'string' &&\n"
@@ -567,3 +594,4 @@ def managed_extension_source(*, guard_home: Path, home_dir: Path, settings_path:
         "  });\n"
         "}\n"
     )
+    return source
