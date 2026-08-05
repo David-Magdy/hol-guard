@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from typing import Final, cast
 
+import idna
+
 NETWORK_POLICY_SCHEMA_VERSION: Final = "guard.network-policy.v1"
 NETWORK_BROKER_SCHEMA_VERSION: Final = "guard.network-broker.v1"
 NETWORK_BACKEND_SCHEMA_VERSION: Final = "guard.network-backend.v1"
@@ -375,9 +377,14 @@ def canonical_destination(kind: DestinationKind, value: object) -> str:
         raise ValueError("destination must be a trimmed non-empty string")
     if kind is DestinationKind.HOST:
         candidate = value[:-1] if value.endswith(".") else value
-        if not candidate or len(candidate) > 253 or any(ord(char) > 127 for char in candidate):
-            raise ValueError("host must be pre-normalized ASCII IDNA")
-        candidate = candidate.lower()
+        if not candidate:
+            raise ValueError("host must contain at least one label")
+        try:
+            candidate = idna.encode(candidate, uts46=True, std3_rules=True).decode("ascii").lower()
+        except idna.IDNAError as error:
+            raise ValueError("host contains invalid IDNA") from error
+        if len(candidate) > 253:
+            raise ValueError("host exceeds the DNS length limit")
         labels = candidate.split(".")
         if any(_LABEL.fullmatch(label) is None for label in labels):
             raise ValueError("host contains an invalid label")

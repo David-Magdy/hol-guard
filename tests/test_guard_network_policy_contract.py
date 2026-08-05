@@ -63,9 +63,8 @@ def test_destination_canonicalization_is_unambiguous() -> None:
     assert Destination(DestinationKind.HOST, "API.Example.COM.").value == "api.example.com"
     assert Destination(DestinationKind.IP, "2001:0db8::1").value == "2001:db8::1"
     assert Destination(DestinationKind.CIDR, "10.0.0.0/8").value == "10.0.0.0/8"
-    with pytest.raises(ValueError, match="pre-normalized ASCII IDNA"):
-        Destination(DestinationKind.HOST, "bücher.example")
-    with pytest.raises(ValueError, match="invalid label"):
+    assert Destination(DestinationKind.HOST, "bücher.example").value == "xn--bcher-kva.example"
+    with pytest.raises(ValueError, match="invalid IDNA"):
         Destination(DestinationKind.HOST, "*.example.com")
     with pytest.raises(ValueError):
         Destination(DestinationKind.CIDR, "10.0.0.1/8")
