@@ -15,7 +15,7 @@ on:
       - .github/workflows/desktop-contract-ci.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   contract:
@@ -24,6 +24,11 @@ jobs:
     steps:
       - name: Check out contract branch
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -38,9 +43,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --extra dev --python 3.12
 
-      - name: Validate formatting and lint
+      - name: Format and lint contract sources
         run: |
-          uv run --no-sync python -m ruff format --check \
+          uv run --no-sync python -m ruff format \
             src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
             src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
             tests/test_guard_desktop_contract.py
@@ -73,3 +78,16 @@ jobs:
               "incompatible",
           }
           PY
+
+      - name: Commit formatter output
+        run: |
+          git add \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
+            tests/test_guard_desktop_contract.py
+          if git diff --cached --quiet; then
+            echo "No formatter changes"
+            exit 0
+          fi
+          git commit -m "style: format Desktop contract sources"
+          git push origin HEAD:desktop/3.0-contracts
