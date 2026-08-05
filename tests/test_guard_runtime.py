@@ -1262,7 +1262,7 @@ clearer UX and an implementation plan with technical references.
 
         assert rc == 1
         assert output["artifact_type"] == "tool_action_request"
-        assert output["policy_action"] == "require-reapproval"
+        assert output["policy_action"] == "block"
         assert "destructive shell command" in output["artifact_name"]
 
     def test_codex_pre_tool_use_blocks_fd_implicit_root_sed_exec(
@@ -1300,7 +1300,7 @@ clearer UX and an implementation plan with technical references.
 
         assert rc == 1
         assert output["artifact_type"] == "tool_action_request"
-        assert output["policy_action"] == "require-reapproval"
+        assert output["policy_action"] == "block"
         assert "destructive shell command" in output["artifact_name"]
 
     def test_codex_pre_tool_use_blocks_fd_skill_doc_symlink_exec(
@@ -13050,7 +13050,7 @@ def test_approval_surface_policy_disables_auto_open_when_flow_forbids_browser():
     )
 
 
-def test_hermes_pretool_uses_managed_same_channel_policy_for_blocked_operations(
+def test_hermes_pretool_does_not_queue_terminal_blocks_for_same_channel_delivery(
     tmp_path,
     capsys,
     monkeypatch,
@@ -13117,9 +13117,9 @@ def test_hermes_pretool_uses_managed_same_channel_policy_for_blocked_operations(
     output = json.loads(capsys.readouterr().out)
 
     assert rc == 1
-    assert captured_surface_policy == ["notify-only"]
-    assert output["approval_delivery"]["destination"] == "harness"
-    assert output["approval_delivery"]["prompt_channel"] == "native"
+    assert captured_surface_policy == []
+    assert output["policy_action"] == "block"
+    assert "approval_delivery" not in output
 
 
 def test_guard_run_dry_run_human_output_is_summary_first(tmp_path, capsys):
@@ -15448,9 +15448,9 @@ def test_guard_hook_codex_emits_native_deny_for_sensitive_bash_command(tmp_path,
     assert captured.err == ""
     assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "HOL Guard" in reason
-    assert "Open HOL Guard to approve or keep this blocked" in reason
-    assert "http://127.0.0.1:4455/requests/" in reason
-    assert "Approve it in HOL Guard, then retry." not in reason
+    assert "HOL Guard blocked this action" in reason
+    assert "http://127.0.0.1:4455/requests/" not in reason
+    assert "approve" not in reason.lower()
 
 
 @pytest.mark.parametrize("failure_phase", ["start_session", "queue_blocked_operation"])
@@ -17547,6 +17547,8 @@ def test_guard_hook_codex_requires_sandbox_for_simple_pytest_command(tmp_path, c
     home_dir = tmp_path / "home"
     workspace_dir = tmp_path / "workspace"
     _build_guard_fixture(home_dir, workspace_dir)
+    _write_text(home_dir / ".codex" / "config.toml", 'approval_policy = "on-request"\n')
+    _write_text(workspace_dir / ".codex" / "config.toml", "\n")
     event = {
         "event": "PreToolUse",
         "tool_name": "Bash",
@@ -17599,6 +17601,8 @@ def test_guard_hook_codex_requires_sandbox_for_pytest_exit_code_echo(tmp_path, c
     home_dir = tmp_path / "home"
     workspace_dir = tmp_path / "workspace"
     _build_guard_fixture(home_dir, workspace_dir)
+    _write_text(home_dir / ".codex" / "config.toml", 'approval_policy = "on-request"\n')
+    _write_text(workspace_dir / ".codex" / "config.toml", "\n")
     (workspace_dir / "sub").mkdir()
     event = {
         "event": "PreToolUse",
@@ -18362,7 +18366,7 @@ def test_guard_hook_codex_user_prompt_submit_allows_outreach_message_context(
     assert GuardStore(home_dir).list_approval_requests(limit=10) == []
 
 
-def test_guard_hook_codex_permission_request_declines_to_native_prompt_for_reapproval(
+def test_guard_hook_codex_permission_request_denies_terminal_destructive_action(
     tmp_path,
     capsys,
     monkeypatch,
@@ -18390,9 +18394,9 @@ def test_guard_hook_codex_permission_request_declines_to_native_prompt_for_reapp
     payload = json.loads(output)
 
     assert rc == 0
-    assert "HOL Guard" in payload["systemMessage"]
-    assert "Codex will show its normal approval prompt" in payload["systemMessage"]
-    assert "hookSpecificOutput" not in payload
+    decision = payload["hookSpecificOutput"]["decision"]
+    assert decision["behavior"] == "deny"
+    assert "HOL Guard blocked this action" in decision["message"]
 
 
 def test_guard_hook_codex_permission_request_denies_blocked_action(
@@ -20247,10 +20251,10 @@ def test_guard_hook_flags_shell_variable_data_flow_without_legacy_runtime_artifa
     assert rc == 1
     assert isinstance(output, dict)
     assert output["artifact_type"] == "tool_action_request"
-    assert output["policy_action"] == "require-reapproval"
+    assert output["policy_action"] == "block"
+    assert output["approval_requests"] == []
     assert any(
-        signal["signal_id"].startswith("data-flow:")
-        for signal in output["approval_requests"][0]["decision_v2_json"]["signals"]
+        signal["signal_id"].startswith("data-flow:") for signal in output["decision_v2_json"]["signals"]
     )
 
 
