@@ -63,6 +63,9 @@ def test_network_intent_parses_url_credentials_and_bare_proxy_authorities() -> N
         ("ip", "2001:db8::1"),
     )
 
+    bare_ipv6 = consolidate_network_intent(declared_hosts=("2001:db8::2",))
+    assert bare_ipv6.destinations == (Destination(DestinationKind.IP, "2001:db8::2"),)
+
 
 def test_proxy_tunnel_detection_covers_environment_flags_and_ssh_forwarding() -> None:
     findings = detect_proxy_tunnel(

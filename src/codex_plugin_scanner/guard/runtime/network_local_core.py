@@ -172,6 +172,10 @@ def _destination_from_text(raw: str) -> Destination:
     value = raw.strip()
     if not value:
         raise ValueError("network destination cannot be empty")
+    try:
+        return Destination(DestinationKind.IP, value)
+    except ValueError:
+        pass
     parsed = urlsplit(value if "://" in value else f"//{value}")
     if parsed.hostname is not None:
         if "://" in value or parsed.port is not None or value.startswith("["):
