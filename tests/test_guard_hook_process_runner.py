@@ -1033,7 +1033,8 @@ def test_close_waits_for_inflight_worker_isolation_before_retirement(
     monkeypatch.setattr(hook_runner_module, "hook_worker_became_isolated", complete_isolation)
 
     assert runner.close_contained()
-    assert isolation_waits == [hook_runner_module._HOOK_PROCESS_READY_TIMEOUT_SECONDS]
+    assert len(isolation_waits) == 1
+    assert 0 < isolation_waits[0] <= hook_runner_module._HOOK_PROCESS_READY_TIMEOUT_SECONDS
     assert runner.stats()["workers"] == 0
 
 
