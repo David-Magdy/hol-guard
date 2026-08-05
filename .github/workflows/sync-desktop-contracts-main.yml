@@ -40,36 +40,56 @@ jobs:
 
           if [ "$merge_status" -ne 0 ]; then
             conflicts="$(git diff --name-only --diff-filter=U | sort)"
-            allowed="$(printf '%s\n' \
-              ci/test-suite-ratchet-baseline.json \
-              src/codex_plugin_scanner/guard/cli/commands_router.py \
-              tests/fixtures/guard-command-corpus/decision-diff-report.json | sort)"
-            if [ "$conflicts" != "$allowed" ]; then
-              echo "Unexpected merge conflicts:"
-              printf '%s\n' "$conflicts"
-              exit 1
-            fi
+            echo "Merge conflicts:"
+            printf '%s\n' "$conflicts"
 
-            git checkout --theirs ci/test-suite-ratchet-baseline.json
-            git checkout --theirs tests/fixtures/guard-command-corpus/decision-diff-report.json
-            git checkout --theirs src/codex_plugin_scanner/guard/cli/commands_router.py
-            python - <<'PY'
+            while IFS= read -r conflict; do
+              [ -z "$conflict" ] && continue
+              case "$conflict" in
+                ci/test-suite-ratchet-baseline.json|src/codex_plugin_scanner/guard/cli/commands_router.py|tests/fixtures/guard-command-corpus/decision-diff-report.json)
+                  ;;
+                *)
+                  echo "Unexpected merge conflict: $conflict" >&2
+                  exit 1
+                  ;;
+              esac
+            done <<< "$conflicts"
+
+            if grep -Fxq 'ci/test-suite-ratchet-baseline.json' <<< "$conflicts"; then
+              git checkout --theirs ci/test-suite-ratchet-baseline.json
+              git add ci/test-suite-ratchet-baseline.json
+            fi
+            if grep -Fxq 'tests/fixtures/guard-command-corpus/decision-diff-report.json' <<< "$conflicts"; then
+              git checkout --theirs tests/fixtures/guard-command-corpus/decision-diff-report.json
+              git add tests/fixtures/guard-command-corpus/decision-diff-report.json
+            fi
+            if grep -Fxq 'src/codex_plugin_scanner/guard/cli/commands_router.py' <<< "$conflicts"; then
+              git checkout --theirs src/codex_plugin_scanner/guard/cli/commands_router.py
+            fi
+          fi
+
+          python - <<'PY'
           from pathlib import Path
 
           path = Path("src/codex_plugin_scanner/guard/cli/commands_router.py")
           source = path.read_text(encoding="utf-8")
           needle = '    "bootstrap": "_run_guard_bootstrap_command",\n'
-          replacement = needle + '    "desktop": "_run_guard_desktop_command",\n'
-          if '    "desktop": "_run_guard_desktop_command",\n' not in source:
+          desktop = '    "desktop": "_run_guard_desktop_command",\n'
+          if desktop not in source:
               if source.count(needle) != 1:
                   raise RuntimeError("could not place Desktop command beside bootstrap")
-              source = source.replace(needle, replacement, 1)
+              source = source.replace(needle, needle + desktop, 1)
+          network = '    "network": "_run_guard_network_command",\n'
+          if network not in source:
+              raise RuntimeError("main network command was not preserved")
           path.write_text(source, encoding="utf-8")
           PY
-            git add \
-              ci/test-suite-ratchet-baseline.json \
-              src/codex_plugin_scanner/guard/cli/commands_router.py \
-              tests/fixtures/guard-command-corpus/decision-diff-report.json
+          git add src/codex_plugin_scanner/guard/cli/commands_router.py
+
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo "Unresolved merge conflicts remain" >&2
+            git diff --name-only --diff-filter=U
+            exit 1
           fi
 
       - name: Set up Python
