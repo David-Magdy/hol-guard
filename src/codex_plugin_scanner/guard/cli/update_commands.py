@@ -557,7 +557,10 @@ def run_guard_update(
                 active_display_command = pip_display_command
                 payload["installer_recovery"] = "trusted_python_pip"
                 continue
-            if _contains_any(installer_output, _PYPI_PROPAGATION_FAILURE_HINTS):
+            if requested_wheel_path is None and _contains_any(
+                installer_output,
+                _PYPI_PROPAGATION_FAILURE_HINTS,
+            ):
                 payload["status"] = "deferred"
                 payload["changed"] = False
                 payload["reason_code"] = "update_release_propagating"

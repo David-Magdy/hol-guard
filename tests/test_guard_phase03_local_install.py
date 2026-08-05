@@ -330,6 +330,35 @@ def test_update_preserves_requested_wheel_during_broken_pipx_recovery(
     ]
 
 
+def test_update_does_not_defer_local_wheel_failure_as_registry_propagation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wheel = tmp_path / "hol_guard-2.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.2.1")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda command, **_: subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            "ERROR: No matching distribution found for hol-guard==2.2.3",
+        ),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False, wheel=str(wheel))
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["reason_code"] == "update_installer_failed"
+
+
 def test_update_binary_diagnostics_accepts_same_environment_script(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update_commands, "_current_version", lambda: "2.0.0")
     monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
