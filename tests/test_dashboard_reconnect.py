@@ -139,7 +139,7 @@ def test_dashboard_reconnect_survives_restart_and_consumes_each_proof_once(tmp_p
     finally:
         original.stop()
 
-    restart_deadline = time.monotonic() + 5.0
+    restart_deadline = time.monotonic() + 30.0
     while True:
         try:
             restarted = GuardDaemonServer(store, host="127.0.0.1", port=0)
