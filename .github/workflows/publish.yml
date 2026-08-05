@@ -1147,8 +1147,29 @@ jobs:
             exit 0
           fi
           body_file=$(mktemp)
+          # Generate a "What's Changed" changelog from commits since the
+          # previous stable tag reachable from SOURCE_SHA (excluding this
+          # one). Semver-sorted so out-of-order tag pushes still pick the
+          # true previous version.
+          changelog=$(mktemp)
+          prev_tag=$(git tag --list 'v*' --merged "$SOURCE_SHA" \
+            | grep -vxF -- "$tag" | grep -v '^alpha/' \
+            | sort -V | tail -n 1 || true)
+          if [[ -n "$prev_tag" ]]; then
+            git log "${prev_tag}..${SOURCE_SHA}" --no-merges \
+              --pretty=format:'- %s (%h)' > "$changelog"
+          fi
+          # Only fall back when the range is genuinely empty (e.g. first
+          # release); git failures above already aborted via set -e.
+          if [[ ! -s "$changelog" ]]; then
+            git log "$SOURCE_SHA" --no-merges -n 20 \
+              --pretty=format:'- %s (%h)' > "$changelog"
+          fi
           cat > "$body_file" <<EOF
           Guard ${VERSION}
+
+          ### What's Changed
+          $(cat "$changelog")
 
           Install this release:
 
@@ -1246,8 +1267,30 @@ jobs:
             exit 0
           fi
           body_file=$(mktemp)
+          # Generate a "What's Changed" changelog from commits since the
+          # previous alpha tag for THIS release train (excluding this one),
+          # reachable from SOURCE_SHA. Scoping to the same version prefix
+          # avoids picking another train's most-recent alpha as the bound.
+          changelog=$(mktemp)
+          version_prefix="${VERSION%%a*}"
+          prev_tag=$(git tag --list "alpha/v${version_prefix}a*" \
+            --merged "$SOURCE_SHA" \
+            | grep -vxF -- "$tag" | sort -V | tail -n 1 || true)
+          if [[ -n "$prev_tag" ]]; then
+            git log "${prev_tag}..${SOURCE_SHA}" --no-merges \
+              --pretty=format:'- %s (%h)' > "$changelog"
+          fi
+          # Only fall back when the range is genuinely empty (e.g. first
+          # release); git failures above already aborted via set -e.
+          if [[ ! -s "$changelog" ]]; then
+            git log "$SOURCE_SHA" --no-merges -n 20 \
+              --pretty=format:'- %s (%h)' > "$changelog"
+          fi
           cat > "$body_file" <<EOF
           Guard ${VERSION} is an opt-in prerelease. Stable installations remain on the stable channel.
+
+          ### What's Changed
+          $(cat "$changelog")
 
           Install this exact alpha:
 
