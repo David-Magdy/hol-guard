@@ -20095,8 +20095,8 @@ def test_guard_hook_issues_one_combined_decision_for_package_and_data_flow_risks
     assert rc == 1
     assert isinstance(output, dict)
     assert output["artifact_type"] == "package_request"
-    assert output["policy_action"] == "require-reapproval"
-    assert len(output["approval_requests"]) == 1
+    assert output["policy_action"] == "block"
+    assert output["approval_requests"] == []
     assert "dependencies" in output["risk_summary"].lower()
     assert "local secret" in output["risk_summary"].lower()
     assert "supply_chain_evaluation" in output
