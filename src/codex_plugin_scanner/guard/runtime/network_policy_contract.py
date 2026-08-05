@@ -380,7 +380,7 @@ def canonical_destination(kind: DestinationKind, value: object) -> str:
         if not candidate:
             raise ValueError("host must contain at least one label")
         try:
-            candidate = idna.encode(candidate, uts46=True, std3_rules=True).decode("ascii").lower()
+            candidate = idna.encode(candidate.lower(), uts46=False, std3_rules=True).decode("ascii")
         except idna.IDNAError as error:
             raise ValueError("host contains invalid IDNA") from error
         if len(candidate) > 253:

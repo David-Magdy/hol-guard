@@ -20,6 +20,9 @@ _GRADE_RANK = {
     EnforcementGrade.DESTINATION_ENFORCED: 4,
 }
 
+if set(_GRADE_RANK) != set(EnforcementGrade):
+    raise RuntimeError("_GRADE_RANK must cover every EnforcementGrade")
+
 
 @dataclass(frozen=True, slots=True)
 class BackendSelection:

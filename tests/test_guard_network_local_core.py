@@ -52,6 +52,18 @@ def test_network_intent_consolidates_all_sources_canonically() -> None:
     )
 
 
+def test_network_intent_parses_url_credentials_and_bare_proxy_authorities() -> None:
+    intent = consolidate_network_intent(
+        command=("curl https://user:pass@api.example.com/path --proxy proxy.example.com:8080 --host [2001:db8::1]:443")
+    )
+
+    assert tuple((item.kind.value, item.value) for item in intent.destinations) == (
+        ("host", "api.example.com"),
+        ("host", "proxy.example.com"),
+        ("ip", "2001:db8::1"),
+    )
+
+
 def test_proxy_tunnel_detection_covers_environment_flags_and_ssh_forwarding() -> None:
     findings = detect_proxy_tunnel(
         command="ssh -D 1080 gateway.example.com --proxy=http://proxy.example.com",
@@ -64,6 +76,12 @@ def test_proxy_tunnel_detection_covers_environment_flags_and_ssh_forwarding() ->
         ("tunnel", "command", "ssh"),
         ("tunnel", "command", "ssh-forward"),
     }
+
+
+def test_proxy_tunnel_detection_ignores_unrelated_ssh_options() -> None:
+    findings = detect_proxy_tunnel(command="ssh -LogLevel INFO gateway.example.com")
+
+    assert {(item.kind, item.value) for item in findings} == {("tunnel", "ssh")}
 
 
 def test_resolution_binding_never_widens_and_expires_monotonically() -> None:

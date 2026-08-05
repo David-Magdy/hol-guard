@@ -23,13 +23,16 @@ class NetworkEvidenceLedger:
         self._retention_ms: int = policy.retention_seconds * 1_000
         self._entries: deque[NetworkEvidence] = deque()
         self._telemetry: NetworkTelemetrySink | None = telemetry
+        self._latest_reference_epoch_ms: int | None = None
 
     def append(self, evidence: NetworkEvidence) -> None:
         if evidence.raw_destination is not None:
             raise ValueError("raw destinations are prohibited in the local ledger")
-        if self._entries and evidence.observed_at_epoch_ms < self._entries[-1].observed_at_epoch_ms:
+        latest_reference = self._latest_reference_epoch_ms
+        if latest_reference is not None and evidence.observed_at_epoch_ms < latest_reference:
             raise ValueError("evidence timestamps must be monotonic")
         self._entries.append(evidence)
+        self._latest_reference_epoch_ms = evidence.observed_at_epoch_ms
         self._prune(reference_epoch_ms=evidence.observed_at_epoch_ms)
         overflow = len(self._entries) - self._capacity
         for _unused in range(max(overflow, 0)):
@@ -42,7 +45,10 @@ class NetworkEvidenceLedger:
             )
 
     def snapshot(self, *, now_epoch_ms: int) -> tuple[NetworkEvidence, ...]:
-        self._prune(reference_epoch_ms=now_epoch_ms)
+        latest_reference = self._latest_reference_epoch_ms
+        reference_epoch_ms = max(now_epoch_ms, latest_reference) if latest_reference is not None else now_epoch_ms
+        self._latest_reference_epoch_ms = reference_epoch_ms
+        self._prune(reference_epoch_ms=reference_epoch_ms)
         return tuple(self._entries)
 
     def clear(self) -> int:

@@ -17,7 +17,7 @@ from codex_plugin_scanner.guard.runtime.network_policy_contract import (
 )
 
 _HOST_TOKEN: Final = re.compile(
-    r"(?i)(?:https?|wss?|ftp)://([^\s/:?#]+)|(?:^|\s)(?:--host|--hostname|--proxy)\s*[= ]\s*([^\s]+)"
+    r"(?i)(?:https?|wss?|ftp)://[^\s]+|(?:^|\s)(?:--host|--hostname|--proxy)\s*[= ]\s*([^\s]+)"
 )
 _PROXY_VARIABLES: Final = frozenset(
     {"ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "all_proxy", "http_proxy", "https_proxy", "no_proxy"}
@@ -78,7 +78,7 @@ def consolidate_network_intent(
     candidates: list[tuple[str, str]] = [("declared", value) for value in declared_hosts]
     if command:
         for match in _HOST_TOKEN.finditer(command):
-            candidates.append(("command", next(value for value in match.groups() if value is not None)))
+            candidates.append(("command", match.group(1) or match.group(0).lstrip()))
     if environment:
         for key in sorted(_PROXY_VARIABLES.intersection(environment)):
             value = environment[key]
@@ -116,12 +116,22 @@ def detect_proxy_tunnel(
             findings.add(ProxyTunnelFinding("tunnel", "command", executable))
         if any(word == "--proxy" or word.startswith("--proxy=") for word in words):
             findings.add(ProxyTunnelFinding("proxy", "command", "--proxy"))
-        has_ssh_forward = any(
-            word in {"-D", "-L", "-R", "-W"} or word.startswith(("-D", "-L", "-R", "-W")) for word in words[1:]
-        )
+        has_ssh_forward = any(_is_ssh_forward_option(word) for word in words[1:])
         if executable == "ssh" and has_ssh_forward:
             findings.add(ProxyTunnelFinding("tunnel", "command", "ssh-forward"))
     return tuple(sorted(findings, key=lambda item: (item.kind, item.source, item.value)))
+
+
+def _is_ssh_forward_option(word: str) -> bool:
+    if word in {"-D", "-L", "-R", "-W"}:
+        return True
+    if len(word) <= 2 or not word.startswith("-"):
+        return False
+    option = word[1]
+    value = word[2:]
+    if option == "D":
+        return value.rsplit(":", 1)[-1].isdigit()
+    return option in {"L", "R", "W"} and ":" in value
 
 
 def bind_resolution(
@@ -162,12 +172,12 @@ def _destination_from_text(raw: str) -> Destination:
     value = raw.strip()
     if not value:
         raise ValueError("network destination cannot be empty")
-    if "://" in value:
-        host = urlsplit(value).hostname
-        if not host:
-            raise ValueError("network URL must include a hostname")
-        value = host
-    value = value.removeprefix("[").removesuffix("]")
+    parsed = urlsplit(value if "://" in value else f"//{value}")
+    if parsed.hostname is not None:
+        if "://" in value or parsed.port is not None or value.startswith("["):
+            value = parsed.hostname
+    elif "://" in value:
+        raise ValueError("network URL must include a hostname")
     try:
         return Destination(DestinationKind.IP, value)
     except ValueError:

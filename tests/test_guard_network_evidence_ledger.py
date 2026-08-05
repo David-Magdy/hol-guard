@@ -66,6 +66,15 @@ def test_ledger_rejects_non_monotonic_evidence() -> None:
         ledger.append(_evidence(2, 1_999))
 
 
+def test_snapshot_reference_rejects_later_stale_evidence() -> None:
+    ledger = NetworkEvidenceLedger(policy=_policy())
+    ledger.append(_evidence(1, 2_000))
+    assert ledger.snapshot(now_epoch_ms=100_000) == ()
+
+    with pytest.raises(ValueError, match="monotonic"):
+        ledger.append(_evidence(2, 3_000))
+
+
 def test_ledger_limits_come_from_validated_privacy_policy() -> None:
     with pytest.raises(ValueError, match="retention_seconds"):
         _ = NetworkPrivacyPolicy(
