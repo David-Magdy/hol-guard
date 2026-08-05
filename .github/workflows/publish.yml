@@ -1147,8 +1147,24 @@ jobs:
             exit 0
           fi
           body_file=$(mktemp)
+          # Generate a "What's Changed" changelog from commits since the
+          # previous stable tag (excluding this one).
+          changelog=$(mktemp)
+          prev_tag=$(git tag --list 'v*' --sort=-creatordate \
+            | grep -vx "$tag" | grep -v '^alpha/' | head -n 1 || true)
+          if [[ -n "$prev_tag" ]]; then
+            git log "${prev_tag}..${SOURCE_SHA}" --no-merges \
+              --pretty=format:'- %s (%h)' > "$changelog" || true
+          fi
+          if [[ ! -s "$changelog" ]]; then
+            git log "$SOURCE_SHA" --no-merges -n 20 \
+              --pretty=format:'- %s (%h)' > "$changelog" || true
+          fi
           cat > "$body_file" <<EOF
           Guard ${VERSION}
+
+          ### What's Changed
+          $(cat "$changelog")
 
           Install this release:
 
@@ -1246,8 +1262,24 @@ jobs:
             exit 0
           fi
           body_file=$(mktemp)
+          # Generate a "What's Changed" changelog from commits since the
+          # previous alpha tag (excluding this one).
+          changelog=$(mktemp)
+          prev_tag=$(git tag --list 'alpha/v*' --sort=-creatordate \
+            | grep -vx "$tag" | head -n 1 || true)
+          if [[ -n "$prev_tag" ]]; then
+            git log "${prev_tag}..${SOURCE_SHA}" --no-merges \
+              --pretty=format:'- %s (%h)' > "$changelog" || true
+          fi
+          if [[ ! -s "$changelog" ]]; then
+            git log "$SOURCE_SHA" --no-merges -n 20 \
+              --pretty=format:'- %s (%h)' > "$changelog" || true
+          fi
           cat > "$body_file" <<EOF
           Guard ${VERSION} is an opt-in prerelease. Stable installations remain on the stable channel.
+
+          ### What's Changed
+          $(cat "$changelog")
 
           Install this exact alpha:
 
