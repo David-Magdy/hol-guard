@@ -59,6 +59,7 @@ _COMMON_HANDLERS = {
     "inventory": "_run_guard_inventory_command",
     "aibom": "_run_guard_aibom_command",
     "abom": "_run_guard_abom_command",
+    "policy": "_run_guard_policy_document_command",
     "policies": "_run_guard_policies_command",
     "settings": "_run_guard_settings_command",
     "exceptions": "_run_guard_exceptions_command",
@@ -75,11 +76,14 @@ _COMMON_HANDLERS = {
     "disconnect": "_run_guard_disconnect_command",
     "bridge": "_run_guard_bridge_command",
     "sync": "_run_guard_sync_command",
+    "health-leases": "_run_guard_health_leases_command",
     "cloud": "_run_guard_cloud_command",
     "supply-chain": "_run_guard_supply_chain_command",
     "service": "_run_guard_service_command",
     "device": "_run_guard_device_command",
     "commands": "_run_guard_commands_command",
+    "daemon": "_run_guard_daemon_command",
+    "tray": "_run_guard_tray_command",
     "hook": "_run_guard_hook_command",
 }
 

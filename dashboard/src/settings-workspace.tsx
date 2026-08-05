@@ -69,6 +69,7 @@ import type {
 import { SettingsSectionShell } from "./settings/settings-section-shell";
 import { SettingsFormSection, SettingsSelectRow, SettingsToggleRow } from "./settings/settings-row-primitives";
 import { isLocalSettingsTabKey, type LocalSettingsTabKey } from "./settings/settings-ia";
+import { TraySettingsPanel } from "./settings/tray-settings-panel";
 
 export const resolveSecurityLevelDescription = resolveProtectionLevelCopy;
 
@@ -1649,6 +1650,10 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
               </div>
             </details>
           </div>
+        )}
+
+        {activeTab === "tray" && (
+          <TraySettingsPanel />
         )}
 
         {activeTab === "maintenance" && (
