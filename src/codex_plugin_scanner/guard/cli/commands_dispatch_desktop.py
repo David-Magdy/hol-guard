@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.metadata
 import json
+import sys
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, TextIO
 
@@ -270,14 +272,12 @@ def build_desktop_bootstrap_payload(
     blocked_today = sum(
         1
         for item in receipts
-        if _receipt_decision(item) == "blocked"
-        and _is_today(item.get("timestamp") or item.get("created_at"), today)
+        if _receipt_decision(item) == "blocked" and _is_today(item.get("timestamp") or item.get("created_at"), today)
     )
     approved_today = sum(
         1
         for item in receipts
-        if _receipt_decision(item) == "allowed"
-        and _is_today(item.get("timestamp") or item.get("created_at"), today)
+        if _receipt_decision(item) == "allowed" and _is_today(item.get("timestamp") or item.get("created_at"), today)
     )
     latest_at = next(
         (
