@@ -52,6 +52,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
+          version: "0.9.26"
           enable-cache: true
 
       - name: Install dependencies
@@ -87,7 +88,7 @@ jobs:
         run: uv run --no-sync pytest tests/test_guard_desktop_contract.py --tb=short
 
       - name: Validate source-bound decision evidence
-        run: uv run --no-sync pytest tests/test_guard_command_decision_diff.py::test_report_is_exactly_reproducible_and_source_bound --tb=short
+        run: uv run --no-sync python tests/guard_command_decision_diff.py --check
 
       - name: Validate test-suite ratchet
         run: |
