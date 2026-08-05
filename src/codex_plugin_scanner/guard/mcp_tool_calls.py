@@ -966,15 +966,14 @@ def _tool_call_risk_category_set(artifact: GuardArtifact, arguments: object) -> 
 
     if len(tool_name_tokens.intersection({"delete", "remove", "rm", "destroy", "erase"})) > 0:
         categories.add("destructive_mutation")
-    if (
-        len(tool_name_tokens.intersection({"shell", "bash", "exec", "execute", "command", "powershell"})) > 0
-        or _matches_any(
-            combined,
-            (
-                r"(?<![a-z0-9_])(subprocess|child_process|childprocess|popen|os\.system|runtime\.exec)(?![a-z0-9_])",
-                r"(?<![a-z0-9_])(spawn|execfile|system)(?:_sync)?\s*\(",
-            ),
-        )
+    if len(
+        tool_name_tokens.intersection({"shell", "bash", "exec", "execute", "command", "powershell"})
+    ) > 0 or _matches_any(
+        combined,
+        (
+            r"(?<![a-z0-9_])(subprocess|child_process|childprocess|popen|os\.system|runtime\.exec)(?![a-z0-9_])",
+            r"(?<![a-z0-9_])(spawn|execfile|system)(?:_sync)?\s*\(",
+        ),
     ):
         categories.add("command_execution")
     network_patterns = (
@@ -985,10 +984,7 @@ def _tool_call_risk_category_set(artifact: GuardArtifact, arguments: object) -> 
         r"(?<![a-z0-9_])(?:urllib(?:\.request)?|http\.client|https?)\s*\.",
         r"(?<![a-z0-9_])(udp|tcp|socks|proxy|tunnel|port_forward|port-forward)(?![a-z0-9_])",
     )
-    if (
-        (_matches_any(combined, network_patterns) or _contains_ip_address(combined))
-        and not is_browser_navigation
-    ):
+    if (_matches_any(combined, network_patterns) or _contains_ip_address(combined)) and not is_browser_navigation:
         # Browser navigation intent suppresses generic outbound_network;
         # browser-specific categories below capture the actual risk surface.
         categories.add("outbound_network")
