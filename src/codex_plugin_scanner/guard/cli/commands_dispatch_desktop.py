@@ -6,7 +6,7 @@ import argparse
 import importlib.metadata
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, TextIO
 
 if TYPE_CHECKING:
@@ -21,7 +21,6 @@ from ._commands_shared import *  # noqa: F403
 DESKTOP_BOOTSTRAP_SCHEMA = "guard-desktop-bootstrap.v1"
 _MAX_PENDING_APPROVALS = 20
 _MAX_RECENT_RECEIPTS = 20
-_MAX_HISTORY_ITEMS = 200
 
 _APP_NAMES = {
     "antigravity": "Antigravity",
@@ -75,7 +74,7 @@ def _harness_kind(harness: str) -> str:
     return "cli"
 
 
-def _app_projection(item: dict[str, object]) -> dict[str, object]:
+def _app_projection(item: dict[str, object], *, runtime_active: bool) -> dict[str, object]:
     harness = _text(item.get("harness")) or "unknown"
     installed = _bool(item.get("installed"))
     command_available = _bool(item.get("command_available"))
@@ -85,7 +84,10 @@ def _app_projection(item: dict[str, object]) -> dict[str, object]:
     managed = _bool(item.get("managed"))
     detected = installed or command_available or artifact_count > 0
 
-    if managed and review_count == 0 and warning_count == 0:
+    if managed and not runtime_active:
+        protection = "needs_repair"
+        detail = "Guard management is installed, but local enforcement is unavailable until the runtime is active."
+    elif managed and review_count == 0 and warning_count == 0:
         protection = "protected"
         detail = "Guard management is installed and the latest local check is clean."
     elif managed:
@@ -211,14 +213,18 @@ def build_desktop_bootstrap_payload(
     approval_history: list[dict[str, object]],
     receipts: list[dict[str, object]],
     core_version: str,
+    oldest_pending_at: str | None = None,
+    resolved_today_count: int | None = None,
+    receipt_summary: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    runtime_status = _text(status_payload.get("runtime_status")) or "offline"
+    runtime_active = runtime_status == "active"
     harness_items = status_payload.get("harnesses")
     harnesses = harness_items if isinstance(harness_items, list) else []
-    apps = [_app_projection(item) for item in harnesses if isinstance(item, dict)]
+    apps = [_app_projection(item, runtime_active=runtime_active) for item in harnesses if isinstance(item, dict)]
 
-    runtime_status = _text(status_payload.get("runtime_status")) or "offline"
     managed_harnesses = _int(status_payload.get("managed_harnesses"))
-    pending_count = len(pending_requests)
+    pending_count = _int(status_payload.get("pending_approvals"), len(pending_requests))
     protected_count = sum(1 for app in apps if app["protection"] == "protected")
     needs_repair = any(app["protection"] == "needs_repair" for app in apps)
 
@@ -260,33 +266,44 @@ def build_desktop_bootstrap_payload(
     ]
 
     today = datetime.now(timezone.utc).date().isoformat()
-    resolved_today = sum(
-        1
-        for item in approval_history[:_MAX_HISTORY_ITEMS]
-        if _is_today(item.get("resolved_at"), today) and item.get("status") != "pending"
+    resolved_today = (
+        resolved_today_count
+        if isinstance(resolved_today_count, int) and not isinstance(resolved_today_count, bool)
+        else sum(
+            1
+            for item in approval_history
+            if _is_today(item.get("resolved_at"), today) and item.get("status") != "pending"
+        )
     )
-    oldest_pending = min(
+    oldest_pending = oldest_pending_at or min(
         (created for item in pending_requests if (created := _text(item.get("created_at"))) is not None),
         default=None,
     )
-    blocked_today = sum(
-        1
-        for item in receipts
-        if _receipt_decision(item) == "blocked" and _is_today(item.get("timestamp") or item.get("created_at"), today)
-    )
-    approved_today = sum(
-        1
-        for item in receipts
-        if _receipt_decision(item) == "allowed" and _is_today(item.get("timestamp") or item.get("created_at"), today)
-    )
-    latest_at = next(
-        (
-            value
+    if isinstance(receipt_summary, dict):
+        blocked_today = _int(receipt_summary.get("blocked"))
+        approved_today = _int(receipt_summary.get("approved"))
+        latest_at = _text(receipt_summary.get("latest_at"))
+    else:
+        blocked_today = sum(
+            1
             for item in receipts
-            if (value := _text(item.get("timestamp")) or _text(item.get("created_at"))) is not None
-        ),
-        None,
-    )
+            if _receipt_decision(item) == "blocked"
+            and _is_today(item.get("timestamp") or item.get("created_at"), today)
+        )
+        approved_today = sum(
+            1
+            for item in receipts
+            if _receipt_decision(item) == "allowed"
+            and _is_today(item.get("timestamp") or item.get("created_at"), today)
+        )
+        latest_at = next(
+            (
+                value
+                for item in receipts
+                if (value := _text(item.get("timestamp")) or _text(item.get("created_at"))) is not None
+            ),
+            None,
+        )
 
     return {
         "schema": DESKTOP_BOOTSTRAP_SCHEMA,
@@ -338,15 +355,30 @@ def _run_guard_desktop_command(
         store,
         config,
     )
+    now = datetime.now(timezone.utc)
+    day_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+    day_start_text = day_start.isoformat()
+    day_end_text = day_end.isoformat()
+
     pending_requests = store.list_approval_requests(status="pending", limit=_MAX_PENDING_APPROVALS)
-    approval_history = store.list_approval_requests(status=None, limit=_MAX_HISTORY_ITEMS)
-    receipts = store.list_receipts()
+    oldest_pending_at = store.oldest_approval_request_created_at(status="pending")
+    resolved_today_count = store.count_approval_requests(
+        status="resolved",
+        resolved_at_from=day_start_text,
+        resolved_at_before=day_end_text,
+    )
+    receipts = store.list_receipts(limit=_MAX_RECENT_RECEIPTS)
+    receipt_summary = store.receipt_summary_between(start_at=day_start_text, before_at=day_end_text)
     payload = build_desktop_bootstrap_payload(
         status_payload=status_payload,
         pending_requests=pending_requests,
-        approval_history=approval_history,
+        approval_history=[],
         receipts=receipts,
         core_version=_core_version(),
+        oldest_pending_at=oldest_pending_at,
+        resolved_today_count=resolved_today_count,
+        receipt_summary=receipt_summary,
     )
     print(json.dumps(payload, sort_keys=True), file=output_stream or sys.stdout)
     return 0

@@ -126,3 +126,62 @@ def test_desktop_bootstrap_fails_closed_when_guard_is_not_configured() -> None:
     assert payload["daemon"] == {"running": False}
     assert payload["protection"]["state"] == "not_configured"
     assert payload["apps"][0]["protection"] == "detected"
+
+
+def test_desktop_bootstrap_degrades_managed_app_when_runtime_is_inactive() -> None:
+    payload = build_desktop_bootstrap_payload(
+        status_payload=_status_payload(managed=1, runtime="offline"),
+        pending_requests=[],
+        approval_history=[],
+        receipts=[],
+        core_version="3.0.0",
+    )
+
+    assert payload["status"] == "attention_required"
+    assert payload["protection"]["state"] == "degraded"
+    assert payload["apps"][0]["protection"] == "needs_repair"
+
+
+def test_desktop_bootstrap_uses_store_level_aggregates_beyond_preview_limits() -> None:
+    pending_preview = [
+        {
+            "request_id": f"approval-{index}",
+            "harness": "codex",
+            "created_at": f"2026-08-05T12:{index:02d}:00+00:00",
+        }
+        for index in range(20)
+    ]
+    payload = build_desktop_bootstrap_payload(
+        status_payload=_status_payload(managed=1, pending=21),
+        pending_requests=pending_preview,
+        approval_history=[],
+        receipts=[],
+        core_version="3.0.0",
+        oldest_pending_at="2026-08-05T11:00:00+00:00",
+        resolved_today_count=250,
+        receipt_summary={
+            "blocked": 125,
+            "approved": 75,
+            "latest_at": "2026-08-05T23:59:00+00:00",
+        },
+    )
+
+    assert payload["approvals"] == {
+        "pending": 21,
+        "resolvedToday": 250,
+        "oldestPendingAt": "2026-08-05T11:00:00+00:00",
+    }
+    assert len(payload["pendingApprovals"]) == 20
+    assert payload["receipts"]["blockedToday"] == 125
+    assert payload["receipts"]["approvedToday"] == 75
+    assert payload["receipts"]["latestAt"] == "2026-08-05T23:59:00+00:00"
+
+
+def test_desktop_command_remains_hidden_from_root_usage() -> None:
+    import argparse
+
+    from codex_plugin_scanner.guard.cli.commands_parser import add_guard_root_parser
+
+    parser = argparse.ArgumentParser(prog="hol-guard")
+    add_guard_root_parser(parser)
+    assert ",desktop," not in parser.format_usage()

@@ -52,7 +52,7 @@ def _configure_guard_parser(guard_parser: argparse.ArgumentParser) -> None:
         required=True,
         parser_class=FriendlyArgumentParser,
         metavar=(
-            "{start,status,dashboard,init,apps,bootstrap,desktop,detect,install,update,uninstall,package-shims,run,protect,preflight,scan,diff,"
+            "{start,status,dashboard,init,apps,bootstrap,detect,install,update,uninstall,package-shims,run,protect,preflight,scan,diff,"
             "test-eval,command,verified-read,contained-write,mdm,"
             "receipts,inventory,abom,aibom,approvals,explain,allow,deny,policies,trust,exceptions,advisories,events,doctor,connect,"
             "remote-pair,disconnect,"
