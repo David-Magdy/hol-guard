@@ -209,7 +209,7 @@ def build_tool_action_request_artifact(
     *,
     config_path: str,
     source_scope: str,
-    extension_control_layers: tuple[ExtensionControlLayer, ...] = (),
+    extension_control_layers: tuple[ExtensionControlLayer, ...] | None = None,
 ) -> GuardArtifact:
     """Build a Guard artifact for a sensitive native tool action request."""
 
