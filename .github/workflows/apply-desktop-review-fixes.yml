@@ -6,6 +6,7 @@ on:
       - desktop/3.0-contracts
     paths:
       - scripts/patch_desktop_review_fixes.py
+      - scripts/fix_patch_script_scope.py
       - .github/workflows/apply-desktop-review-fixes.yml
 
 permissions:
@@ -40,7 +41,9 @@ jobs:
         run: uv sync --frozen --extra dev --python 3.12
 
       - name: Apply review fixes
-        run: uv run --no-sync python scripts/patch_desktop_review_fixes.py
+        run: |
+          python scripts/fix_patch_script_scope.py
+          uv run --no-sync python scripts/patch_desktop_review_fixes.py
 
       - name: Format changed Python sources
         run: |
@@ -60,13 +63,12 @@ jobs:
           import json
           from pathlib import Path
 
-          inventory = json.loads(Path("test-inventory.json").read_text(encoding="utf-8"))["inventory"]
+          payload = json.loads(Path("test-inventory.json").read_text(encoding="utf-8"))
+          inventory = payload["inventory"]
           path = Path("ci/test-suite-ratchet-baseline.json")
           baseline = json.loads(path.read_text(encoding="utf-8"))
           baseline["maximum_collected_cases"] = inventory["collected_cases"]
-          baseline["maximum_test_source_lines"] = json.loads(
-              Path("test-inventory.json").read_text(encoding="utf-8")
-          )["test_source_lines"]
+          baseline["maximum_test_source_lines"] = payload["test_source_lines"]
           path.write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
 
