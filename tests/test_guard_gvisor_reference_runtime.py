@@ -76,6 +76,7 @@ class TestConfiguration:
             )
 
     def test_binary_digest_mismatch_fails_closed(self) -> None:
+        _write_fake_runsc()
         runner = _runner("1" * 64)
         with pytest.raises(ProviderPlanError, match="digest mismatch"):
             runner.verify_binary()
