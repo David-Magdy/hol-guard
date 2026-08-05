@@ -44,6 +44,33 @@ from tests.shim_execution_helpers import write_fake_manager_script
 from tests.test_guard_protect import _seed_bundle_cache_only, _SyncAndEvaluateHandler
 from tests.test_guard_supply_chain_evaluator import _cloud_response, _EvaluateHandler
 
+PACKAGE_SHIM_GUARD_CASES = (
+    ("bun", ("add", "minimist@1.2.9"), True),
+    ("bun", ("run", "build"), True),
+    ("bun", ("run", "build", "--watch"), True),
+    ("bun", ("run", "dev"), True),
+    ("bun", ("pm", "ls", "--all"), True),
+    ("bun", ("script.ts",), True),
+    ("bun", ("--version",), False),
+    ("brew", ("install", "jq"), True),
+    ("brew", ("install", "--cask", "firefox"), True),
+    ("brew", ("tap", "user/repository"), True),
+    ("brew", ("bundle", "install"), True),
+    ("brew", ("info", "jq"), False),
+    ("pip", ("install", "requests==2.32.3"), True),
+    ("pip", ("--isolated", "install", "requests==2.32.3"), True),
+    ("npm", ("install", "minimist@1.2.9"), True),
+    ("npm", ("--registry=https://registry.example.com", "install", "minimist@1.2.9"), True),
+    ("npm", ("run", "dev"), False),
+    ("pnpm", ("add", "minimist@1.2.9"), True),
+    ("pnpm", ("--dir", ".", "add", "minimist@1.2.9"), True),
+    ("pnpm", ("install",), True),
+    ("pnpm", ("--dir", ".", "run", "dev"), False),
+    ("pnpm", ("run", "dev"), False),
+    ("yarn", ("add", "minimist@1.2.9"), True),
+    ("yarn", ("--cwd", ".", "add", "minimist@1.2.9"), True),
+)
+
 
 def _seed_guard_cloud(store, *, workspace_id=None, sync_url=None, token="demo-token", now="2026-05-19T00:00:00Z"):
     """Seed OAuth credentials (replaces legacy set_sync_credentials scaffolding).

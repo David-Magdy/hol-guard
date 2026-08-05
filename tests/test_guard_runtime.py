@@ -93,6 +93,15 @@ from tests.policy_bundle_signing_helpers import (
     sign_policy_bundle,
 )
 
+COPILOT_NATIVE_DENY_COMMANDS = (
+    """node -e "require('fs').unlinkSync('dangerous-marker.json')" """,
+    "git rm --force dangerous-shell-marker.txt",
+    "find . -name dangerous-shell-marker.txt -exec rm {} ;",
+    "git -C /mock-workspace rm --force dangerous-shell-marker.txt",
+    """node -e "console.log(`x ${require('fs').unlinkSync('dangerous-marker.json')}`)" """,
+    """node -e "console.log(`x ${/}/.test('a') || require('fs').unlinkSync('dangerous-marker.json')}`)" """,
+)
+
 
 def _seed_guard_cloud(store, *, workspace_id=None, sync_url=None, token="demo-token", now="2026-05-19T00:00:00Z"):
     """Seed OAuth credentials (replaces legacy set_sync_credentials scaffolding).
