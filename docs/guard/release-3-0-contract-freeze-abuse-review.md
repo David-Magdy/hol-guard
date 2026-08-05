@@ -1,6 +1,6 @@
 # Wave-one contract freeze: abuse-case review (G1 gate)
 
-Status: G1 gate review of `release-3-1-contract-freeze.md`. Scope: adversarial review of each frozen contract against the program's required abuse cases. Reviewer: SOL-MEDIUM under owner-override (independent-pass replay). Pinned ref: `origin/release/3.1` at `97e2408a629acd4946db0677abd4022027d421f4`.
+Status: G1 gate review of `release-3-0-contract-freeze.md`. Scope: adversarial review of each frozen contract against the program's required abuse cases. Reviewer: SOL-MEDIUM under owner-override (independent-pass replay). Source evidence snapshot: `origin/release/3.1` at `97e2408a629acd4946db0677abd4022027d421f4`; release identity migrated to 3.0 and revalidated in PR #1901.
 
 Method: for each required abuse case, identify the frozen clause that must defeat it. Where no clause defeats it, record a blocking finding with the contract amendment that resolves it. Findings are resolved by amending the freeze spec before the gate passes; the generator is not the only reviewer because each amendment is independently checked against the invariant it must preserve.
 
@@ -41,7 +41,7 @@ The freeze spec requires freshness binding and quick-expiring cached health but 
 
 Resolution (amend the attestation-statement section and the fail-and-recovery matrix): attestation and health freshness use a bounded validity window with an explicit maximum accepted clock skew; a provider or attestation whose not-before/not-after window, combined with the accepted skew, exceeds the freshness bound is treated as stale and rejected. Cached health carries a `verified_at` timestamp and a hard expiry; the expiry is short enough to prevent stale assurance yet does not force a network round trip per benign local action (stale-while-reverify only for optional routes).
 
-## Amended clauses (applied to `release-3-1-contract-freeze.md`)
+## Amended clauses (applied to `release-3-0-contract-freeze.md`)
 
 - the provider contract gains: `plan` rejects any input manifest or mount targeting the forbidden host set (`.env`, `.ssh`, Guard state, VCS metadata, host sockets).
 - the fenced-retry section gains: the immutable input manifest and secret-delivery lease enforce the same forbidden-host denylist.

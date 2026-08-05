@@ -1,8 +1,8 @@
 # Wave-two local core gate (G2) — security review record
 
-Status: gate PASSED after finding resolution. Audience: gate reviewers. Pinned ref: `origin/release/3.1` at `c23487b50a610bbc6908eb04c9e80545263a92fc`.
+Status: gate PASSED after finding resolution. Audience: gate reviewers. Pinned ref: `origin/release/3.0` at `c23487b50a610bbc6908eb04c9e80545263a92fc`.
 
-The wave-two local execution-assurance core is integrated on `release/3.1`. An independent adversarial security review of the integrated core was performed (reviewer pass, not the implementation generator alone); findings were resolved and re-verified on the merged head before the gate was recorded.
+The wave-two local execution-assurance core is integrated on `release/3.0`. An independent adversarial security review of the integrated core was performed (reviewer pass, not the implementation generator alone); findings were resolved and re-verified on the merged head before the gate was recorded.
 
 ## Integrated surface
 

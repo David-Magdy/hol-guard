@@ -1,10 +1,10 @@
-# Execution assurance 3.1 launch runbook
+# Execution assurance 3.0 launch runbook
 
 Status: final acceptance checklist. This runbook validates a release candidate; it does not authorize deployment or enable a production feature flag.
 
 ## Preconditions
 
-- Candidate is built from the intended 3.1 release commit in a clean worktree.
+- Candidate is built from the intended 3.0 release commit in a clean worktree.
 - Python, Bun, and platform-tool versions match the repository configuration.
 - Provider binaries and images are pinned by immutable digest. Never substitute a tag during verification.
 - Test identities, workspaces, devices, keys, policies, receipts, and leases are synthetic and isolated from production.
@@ -57,10 +57,10 @@ The `mdm-artifacts.yml` run is blocking only when its Ubuntu 22.04/24.04, macOS 
 
 Validate these transitions with synthetic data:
 
-- 2.x client with no assurance fields against a 3.1 service: accepted under documented compatibility defaults; never displayed as verified assurance.
-- 3.1 client against legacy or capability-limited provider: capability negotiation produces a refusal or explicit lower-assurance result; never a silent downgrade.
-- 3.1 receipt and lease replay: duplicate delivery is idempotent, forks are refused, and terminal state cannot regress.
-- Feature disabled after 3.1 data exists: existing evidence remains readable under retention policy, new authority is not granted, and rollback does not delete audit records.
+- 2.x client with no assurance fields against a 3.0 service: accepted under documented compatibility defaults; never displayed as verified assurance.
+- 3.0 client against legacy or capability-limited provider: capability negotiation produces a refusal or explicit lower-assurance result; never a silent downgrade.
+- 3.0 receipt and lease replay: duplicate delivery is idempotent, forks are refused, and terminal state cannot regress.
+- Feature disabled after 3.0 data exists: existing evidence remains readable under retention policy, new authority is not granted, and rollback does not delete audit records.
 
 Rollback means disable routing to the new capability and restore the prior compatible application version. It does not mean deleting receipts, rewriting lineage, bypassing fencing generations, or downgrading stored assurance claims.
 

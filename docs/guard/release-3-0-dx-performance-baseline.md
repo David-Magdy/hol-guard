@@ -1,6 +1,6 @@
-# `release/3.1` DX and performance baseline
+# `release/3.0` DX and performance baseline
 
-Status: wave-zero baseline. Audience: execution-assurance gate reviewers. Pinned ref: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`. Measured on macOS (Apple M4 Max), single process, synthetic workspace.
+Status: wave-zero baseline. Audience: execution-assurance gate reviewers. Source evidence snapshot: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`; release identity migrated to 3.0 and revalidated in PR #1901. Measured on macOS (Apple M4 Max), single process, synthetic workspace.
 
 Privacy-safe aggregate measurements only. No raw user inbox data, command content, or machine paths are included; the corpus below uses synthetic commands.
 

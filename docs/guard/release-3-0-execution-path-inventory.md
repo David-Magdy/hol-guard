@@ -1,6 +1,6 @@
-# `release/3.1` execution-path inventory
+# `release/3.0` execution-path inventory
 
-Status: wave-zero baseline inventory. Audience: execution-assurance implementers and gate reviewers. Pinned ref: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`.
+Status: wave-zero baseline inventory. Audience: execution-assurance implementers and gate reviewers. Source evidence snapshot: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`; release identity migrated to 3.0 and revalidated in PR #1901.
 
 This document is the versioned execution-path matrix for HOL Guard: every distinct path by which Guard intercepts, evaluates, or executes an action, with its entry point, execution owner, failure mode, and actual guarantee.
 
@@ -27,6 +27,6 @@ This document is the versioned execution-path matrix for HOL Guard: every distin
 
 ## Notes for gate reviewers
 
-- Harness ownership grades are recorded separately in `release-3-1-harness-grades.md`.
-- `sandbox-required` consumer semantics are recorded in `release-3-1-sandbox-required-consumers.md`.
+- Harness ownership grades are recorded separately in `release-3-0-harness-grades.md`.
+- `sandbox-required` consumer semantics are recorded in `release-3-0-sandbox-required-consumers.md`.
 - This inventory is descriptive of current behavior; it does not authorize new execution paths.

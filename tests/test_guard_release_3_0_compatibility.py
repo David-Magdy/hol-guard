@@ -1,9 +1,9 @@
-"""Compatibility characterization tests pinning the 2.1/2.2 -> 3.1 contracts.
+"""Compatibility characterization tests pinning the 2.1/2.2 -> 3.0 contracts.
 
 These tests are written as characterization tests: they pin observable contract
 behavior that a 2.1/2.2 client depends on, and they fail if a future change
 breaks that contract. They are the executable evidence behind
-``docs/guard/release-3-1-compatibility-evidence.md``.
+``docs/guard/release-3-0-compatibility-evidence.md``.
 
 Covered contracts:
 - The surface-schema advertised method list and the runtime ``SERVER_METHODS``
@@ -31,7 +31,7 @@ from codex_plugin_scanner.guard.store_receipt_rollups import backfill_receipt_ro
 from .test_guard_receipt_persistence import _make_receipt
 
 # Methods a 2.x client can rely on being present after the handshake. These are
-# the runtime-implemented methods that existed across the 2.2 -> 3.1 boundary.
+# the runtime-implemented methods that existed across the 2.2 -> 3.0 boundary.
 _NEGOTIATED_RUNTIME_METHODS = (
     "initialize",
     "session/list",

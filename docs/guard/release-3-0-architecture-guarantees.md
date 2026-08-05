@@ -1,6 +1,6 @@
-# `release/3.1` architecture and guarantee matrix
+# `release/3.0` architecture and guarantee matrix
 
-Status: wave-zero baseline. Audience: execution-assurance implementers and gate reviewers. Pinned ref: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`.
+Status: wave-zero baseline. Audience: execution-assurance implementers and gate reviewers. Source evidence snapshot: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`; release identity migrated to 3.0 and revalidated in PR #1901.
 
 A process/function view of HOL Guard that keeps the five enforcement-adjacent planes distinct — harness hooks, the analysis decode scanner, OS containment, MDM/EDR, and evidence/Cloud — with the guarantee each actually provides.
 
@@ -61,11 +61,11 @@ A process/function view of HOL Guard that keeps the five enforcement-adjacent pl
 3. Evidence/Cloud (6, 9) is an evidence and policy-distribution plane; Cloud is observe-only for fleet truth and does not execute local workloads.
 4. `sandbox-required` (plane 2) routes to OS containment (plane 5) and is never satisfied by the analysis decode scanner (plane 3).
 
-## Terminology (see `release-3-1-terminology.md`)
+## Terminology (see `release-3-0-terminology.md`)
 
 The word "sandbox" is reserved for OS-enforced execution containment (Seatbelt/Bubblewrap). The decode scanner is not a sandbox: it never executes. `sandbox-required` is an action-lattice directive, not a component name.
 
 ## Notes
 
 - This document describes current architecture; it does not authorize new planes or remote execution.
-- Containment guarantee detail lives in `release-3-1-containment-baseline.md`; execution paths in `release-3-1-execution-path-inventory.md`.
+- Containment guarantee detail lives in `release-3-0-containment-baseline.md`; execution paths in `release-3-0-execution-path-inventory.md`.

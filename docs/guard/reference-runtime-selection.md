@@ -1,10 +1,10 @@
 # Reference runtime selection — gVisor
 
-Status: selected for the Guard 3.1 alpha reference path. Audience: gate reviewers and provider maintainers. Date: 2026-08-01.
+Status: selected for the Guard 3.0 alpha reference path. Audience: gate reviewers and provider maintainers. Date: 2026-08-01.
 
 ## Decision
 
-Guard selects **gVisor `runsc` with the `systrap` platform** as the single Linux reference runtime for the 3.1 alpha assurance gate. Kubernetes `RuntimeClass` remains the orchestration adapter and the OCI adapter remains the plan/evidence boundary; neither is itself the selected runtime.
+Guard selects **gVisor `runsc` with the `systrap` platform** as the single Linux reference runtime for the 3.0 alpha assurance gate. Kubernetes `RuntimeClass` remains the orchestration adapter and the OCI adapter remains the plan/evidence boundary; neither is itself the selected runtime.
 
 This decision authorizes validation of the pinned reference path. It does not authorize release, deployment, privileged installation, or a production feature flag.
 
@@ -29,7 +29,7 @@ gVisor reduces direct host-kernel syscall exposure by interposing its user-space
 
 ## Alternate runtime characterization — Kata Containers
 
-Kata Containers is a credible stronger-isolation candidate because each workload can execute behind a lightweight virtual-machine boundary. It is **not selected for the 3.1 alpha**. Selecting Kata would add materially different prerequisites and trust surfaces:
+Kata Containers is a credible stronger-isolation candidate because each workload can execute behind a lightweight virtual-machine boundary. It is **not selected for the 3.0 alpha**. Selecting Kata would add materially different prerequisites and trust surfaces:
 
 - KVM or another supported hypervisor, including nested-virtualization availability in test infrastructure;
 - pinned guest kernel, initrd/rootfs or image, hypervisor, runtime shim, and configuration provenance;

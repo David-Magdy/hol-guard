@@ -44,7 +44,7 @@ def test_windows_version_resource_preserves_alpha_version(tmp_path: Path) -> Non
             sys.executable,
             "scripts/mdm/windows/write-version-info.py",
             "--version",
-            "3.1.0a7",
+            "3.0.0a7",
             "--output",
             str(output),
         ],
@@ -52,8 +52,8 @@ def test_windows_version_resource_preserves_alpha_version(tmp_path: Path) -> Non
     )
 
     payload = output.read_text()
-    assert "prodvers=(3, 1, 0, 7)" in payload
-    assert "StringStruct('ProductVersion', '3.1.0a7')" in payload
+    assert "prodvers=(3, 0, 0, 7)" in payload
+    assert "StringStruct('ProductVersion', '3.0.0a7')" in payload
 
 
 def test_windows_active_setup_expands_user_environment() -> None:
@@ -253,7 +253,7 @@ def test_windows_native_verification_uses_pinned_powershell_and_safe_process_con
         return_value=subprocess.CompletedProcess(
             ["powershell.exe"],
             0,
-            '{"Status":"Valid","Thumbprint":"0123456789ABCDEF0123456789ABCDEF01234567","Version":"3.1.0a1"}',
+            '{"Status":"Valid","Thumbprint":"0123456789ABCDEF0123456789ABCDEF01234567","Version":"3.0.0a1"}',
             "",
         )
     )
@@ -277,7 +277,7 @@ def test_windows_native_verification_uses_pinned_powershell_and_safe_process_con
         "SystemRoot": r"D:\Windows",
         "WINDIR": r"D:\Windows",
     }
-    assert result.version == "3.1.0a1"
+    assert result.version == "3.0.0a1"
 
 
 def test_windows_native_verification_fails_closed_without_publisher_pin(tmp_path: Path) -> None:
@@ -297,7 +297,7 @@ def test_macos_native_verification_fails_closed_without_team_id(tmp_path: Path) 
 def test_macos_native_verification_requires_matching_team_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run = Mock(
         side_effect=[
-            subprocess.CompletedProcess(["pkgutil"], 0, plistlib.dumps({"pkg-version": "3.1.0a1"}), b""),
+            subprocess.CompletedProcess(["pkgutil"], 0, plistlib.dumps({"pkg-version": "3.0.0a1"}), b""),
             subprocess.CompletedProcess(["codesign", "--verify"], 0, b"", b""),
             subprocess.CompletedProcess(
                 ["codesign", "-d"],
@@ -312,7 +312,7 @@ def test_macos_native_verification_requires_matching_team_id(tmp_path: Path, mon
     result = native._verify_macos(tmp_path, expected_team_id="TEAM123")
 
     assert result.healthy
-    assert result.version == "3.1.0a1"
+    assert result.version == "3.0.0a1"
 
 
 def test_macos_native_verification_rejects_missing_receipt_version(
@@ -338,7 +338,7 @@ def test_macos_native_verification_rejects_missing_team_identifier(
 ) -> None:
     run = Mock(
         side_effect=[
-            subprocess.CompletedProcess(["pkgutil"], 0, plistlib.dumps({"pkg-version": "3.1.0a1"}), b""),
+            subprocess.CompletedProcess(["pkgutil"], 0, plistlib.dumps({"pkg-version": "3.0.0a1"}), b""),
             subprocess.CompletedProcess(["codesign", "--verify"], 0, b"", b""),
             subprocess.CompletedProcess(["codesign", "-d"], 0, "", "Executable=/path/hol-guard\n"),
         ]
@@ -358,7 +358,7 @@ def test_windows_native_verification_rejects_unpinned_valid_signer(
         return_value=subprocess.CompletedProcess(
             ["powershell.exe"],
             0,
-            '{"Status":"Valid","Thumbprint":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","Version":"3.1.0a1"}',
+            '{"Status":"Valid","Thumbprint":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","Version":"3.0.0a1"}',
             "",
         )
     )

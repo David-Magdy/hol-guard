@@ -1,6 +1,6 @@
 # Guard Cloud control and evidence paths inventory
 
-Status: wave-zero baseline. Audience: execution-assurance gate reviewers. Pinned refs: `hol-points-portal` `main` at `8d6d20daae94144bcda4e61f7fb575437751b8db`; HOL Guard `release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`.
+Status: wave-zero baseline. Audience: execution-assurance gate reviewers. Pinned refs: `hol-points-portal` `main` at `8d6d20daae94144bcda4e61f7fb575437751b8db`; HOL Guard source snapshot `release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`, migrated to release 3.0 in PR #1901.
 
 Maps Guard Cloud policy distribution, identity, device, evidence, command, session, protection, remediation, incident, notification, and MDM/EDR paths to their routes, repositories, schemas, and UI, with workspace/tenant authorization.
 
@@ -26,7 +26,7 @@ Every Guard Cloud route resolves an actor through `resolveGuardActor()` (`src/li
 
 ## Capability negotiation
 
-Cloud ships new policy fields and routes behind entitlement/allowlist and client capability negotiation, reusing the existing `commandPatternExpressions` capability pattern rather than a separate feature-flag subsystem. Cloud never emits an isolation requirement to a client that did not advertise the compatible 3.1 contract version. Existing 2.1/2.2 clients retain current policy, receipt, runtime-session, protection, and approval behavior.
+Cloud ships new policy fields and routes behind entitlement/allowlist and client capability negotiation, reusing the existing `commandPatternExpressions` capability pattern rather than a separate feature-flag subsystem. Cloud never emits an isolation requirement to a client that did not advertise the compatible 3.0 contract version. Existing 2.1/2.2 clients retain current policy, receipt, runtime-session, protection, and approval behavior.
 
 ## Notes
 

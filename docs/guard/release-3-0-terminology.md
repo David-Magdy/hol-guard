@@ -1,6 +1,6 @@
-# `release/3.1` "sandbox" terminology audit
+# `release/3.0` "sandbox" terminology audit
 
-Status: wave-zero baseline. Audience: execution-assurance gate reviewers. Pinned ref: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`.
+Status: wave-zero baseline. Audience: execution-assurance gate reviewers. Source evidence snapshot: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`; release identity migrated to 3.0 and revalidated in PR #1901.
 
 Audit of "sandbox" usage across docs and UI, correcting or qualifying misleading uses without breaking public CLI/API compatibility.
 

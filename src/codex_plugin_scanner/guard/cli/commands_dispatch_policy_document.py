@@ -135,7 +135,7 @@ def _run_guard_policy_document_command(
                     "message": (
                         f"Valid Guard policy: {document.metadata.id} ({len(compiled)} rows)"
                         if local_store_error is None
-                        else f"Valid Guard 3.1 policy: {document.metadata.id}"
+                        else f"Valid Guard 3.0 policy: {document.metadata.id}"
                     ),
                 },
                 as_json=as_json,

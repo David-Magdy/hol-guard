@@ -119,7 +119,7 @@ def _snapshot(sequence: int = 0, previous_digest: str | None = None) -> LocalInt
                     "installationGeneration": _GENERATION_ID,
                 },
                 "product": {
-                    "version": "3.1.0a1",
+                    "version": "3.0.0a1",
                     "buildId": None,
                     "sourceCommit": None,
                     "packageIdentity": "test",

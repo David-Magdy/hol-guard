@@ -163,7 +163,7 @@ def _snapshot() -> dict[str, object]:
             "installationGeneration": "2" * 32,
         },
         "product": {
-            "version": "3.1.0a1",
+            "version": "3.0.0a1",
             "buildId": None,
             "sourceCommit": None,
             "packageIdentity": "test",

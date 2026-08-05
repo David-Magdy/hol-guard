@@ -100,13 +100,13 @@ def test_snapshot_never_upgrades_incomplete_managed_evidence(tmp_path: Path, mon
     monkeypatch.setattr(
         integrity,
         "verify_release_manifest",
-        lambda *_args, **_kwargs: ManifestVerification("healthy", "release_manifest_valid", "3.1.0a1", "b1"),
+        lambda *_args, **_kwargs: ManifestVerification("healthy", "release_manifest_valid", "3.0.0a1", "b1"),
     )
     monkeypatch.setattr(
         integrity,
         "verify_native_install",
         lambda *_args, **_kwargs: NativeInstallVerification(
-            "healthy", "native_install_valid", "org.hol.guard", "valid", "3.1.0a1"
+            "healthy", "native_install_valid", "org.hol.guard", "valid", "3.0.0a1"
         ),
     )
     monkeypatch.setattr(
@@ -120,7 +120,7 @@ def test_snapshot_never_upgrades_incomplete_managed_evidence(tmp_path: Path, mon
     assert snapshot["assuranceLevel"] == "user-managed"
     assert snapshot["healthy"] is False
     assert snapshot["remediationClass"] == "user-reinstall"
-    assert snapshot["product"]["version"] == "3.1.0a1"
+    assert snapshot["product"]["version"] == "3.0.0a1"
 
 
 def test_snapshot_projects_acl_tamper_without_exposing_surface_paths(
@@ -285,7 +285,7 @@ def test_snapshot_binds_manifest_to_native_package_and_managed_minimum(
         schema_version=MDM_POLICY_SCHEMA_VERSION,
         settings={},
         locked_settings=frozenset(),
-        update=ManagedUpdatePolicy(owner="mdm", minimum_version="3.1.0a1"),
+        update=ManagedUpdatePolicy(owner="mdm", minimum_version="3.0.0a1"),
         integrity_trust=ManagedIntegrityTrust(
             release_public_keys={"release-1": b"r" * 32},
             macos_team_id="TEAM123",
@@ -295,7 +295,7 @@ def test_snapshot_binds_manifest_to_native_package_and_managed_minimum(
 
     def fake_verify(*_args: object, **kwargs: object) -> ManifestVerification:
         captured.update(kwargs)
-        return ManifestVerification("healthy", "release_manifest_valid", "3.1.0a1", "build-1")
+        return ManifestVerification("healthy", "release_manifest_valid", "3.0.0a1", "build-1")
 
     monkeypatch.setattr(integrity, "default_machine_paths", lambda: _paths(tmp_path))
     monkeypatch.setattr(
@@ -307,7 +307,7 @@ def test_snapshot_binds_manifest_to_native_package_and_managed_minimum(
         integrity,
         "verify_native_install",
         lambda _root, **_kwargs: NativeInstallVerification(
-            "healthy", "native_install_valid", "org.hol.guard", "valid", "3.1.0a1"
+            "healthy", "native_install_valid", "org.hol.guard", "valid", "3.0.0a1"
         ),
     )
     monkeypatch.setattr(integrity, "verify_release_manifest", fake_verify)
@@ -315,8 +315,8 @@ def test_snapshot_binds_manifest_to_native_package_and_managed_minimum(
     integrity.machine_integrity_snapshot()
 
     assert captured["expected_installer_identity"] == "org.hol.guard"
-    assert captured["expected_native_version"] == "3.1.0a1"
-    assert captured["minimum_version"] == "3.1.0a1"
+    assert captured["expected_native_version"] == "3.0.0a1"
+    assert captured["minimum_version"] == "3.0.0a1"
 
 
 def test_snapshot_normalizes_probe_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

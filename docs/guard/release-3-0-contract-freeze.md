@@ -1,8 +1,8 @@
-# `release/3.1` execution-assurance contract freeze (wave one)
+# `release/3.0` execution-assurance contract freeze (wave one)
 
-Status: contract freeze candidate for the G1 gate. Audience: execution-assurance gate reviewers and wave-two implementers. Pinned ref: `origin/release/3.1` at `97e2408a629acd4946db0677abd4022027d421f4`.
+Status: contract freeze candidate for the G1 gate. Audience: execution-assurance gate reviewers and wave-two implementers. Source evidence snapshot: `origin/release/3.1` at `97e2408a629acd4946db0677abd4022027d421f4`; release identity migrated to 3.0 and revalidated in PR #1901.
 
-This freezes the execution-assurance contract set as schema specifications. It reuses existing types wherever one exists and introduces new types only where no home exists. Every new contract is explicitly 3.1 alpha and capability-negotiated. Nothing here is implemented in this wave; wave two implements against these frozen schemas.
+This freezes the execution-assurance contract set as schema specifications. It reuses existing types wherever one exists and introduces new types only where no home exists. Every new contract is explicitly 3.0 alpha and capability-negotiated. Nothing here is implemented in this wave; wave two implements against these frozen schemas.
 
 ## Security objectives and non-goals
 
@@ -14,7 +14,7 @@ Objectives (invariants to hold under the threat model):
 4. Secret values never enter `DecisionContext`, `EvidenceSummary`, logs, trace baggage, or Cloud evidence. Only secret handles cross a boundary.
 5. Existing 2.1/2.2 local policy, receipt, runtime-session, protection, and approval behavior is preserved.
 
-Non-goals for the 3.1 alpha: remote workload grants/execution beyond the separately gated Phase 3 capability; VS Code Copilot extension-host interception; production GA; any TestPyPI/PyPI publish or deploy.
+Non-goals for the 3.0 alpha: remote workload grants/execution beyond the separately gated Phase 3 capability; VS Code Copilot extension-host interception; production GA; any TestPyPI/PyPI publish or deploy.
 
 Attacker capabilities: malicious workspace/repository/dependency/plugin/skill/MCP server; malicious local standard user; compromised or stale provider endpoint/image; cross-tenant attacker; network attacker replaying/substituting attestations; malicious or buggy harness integration; operator misconfiguration. Out of scope: an attacker with root/admin on the local host (they can delete Guard and forge local health; Guard does not claim protection against a fully privileged local adversary).
 
@@ -32,7 +32,7 @@ The assurance model is a partial-order tuple, not an ordinal:
 
 `AtomicGuarantee` is a bounded, versioned enum value plus an enforcement record. Frozen guarantee kinds: `filesystem`, `secret`, `network`, `process`, `privilege`, `resource`, `kernel_hardware`, `identity`, `output`, `cleanup`, `tenant`. Each carries: `kind`, `enforced: bool`, `evidence_ref` (opaque), `boundary: GuardExecutionAssuranceBoundary`. Compatibility rule: unknown future guarantee kinds are forward-compatible (parseable) but cannot satisfy an existing requirement. The schema is versioned (`guard.atomic-guarantee.v1`); bounded (fixed kind set, max evidence ref length).
 
-Reference mapping to today's containment (`release-3-1-containment-baseline.md`): `filesystem`/`network`/`process`/`privilege`/`resource`/`output`/`cleanup`/`identity` map to the Seatbelt/Bubblewrap enforcement cells; `secret` maps to the env-scrub/secret-handle cells; `kernel_hardware` and `tenant` are not enforced by the local reference backend and are recorded as absent, not inferred.
+Reference mapping to today's containment (`release-3-0-containment-baseline.md`): `filesystem`/`network`/`process`/`privilege`/`resource`/`output`/`cleanup`/`identity` map to the Seatbelt/Bubblewrap enforcement cells; `secret` maps to the env-scrub/secret-handle cells; `kernel_hardware` and `tenant` are not enforced by the local reference backend and are recorded as absent, not inferred.
 
 ## Execution-context schema
 
@@ -78,4 +78,4 @@ Provider health is a typed state machine: `unknown`, `verifying`, `healthy`, `de
 
 ## Freeze conditions
 
-Every contract above is explicitly `*.v1` 3.1 alpha, capability-negotiated. Forward compatibility requires an explicitly negotiated schema version; unknown security fields fail closed. Local and Cloud share one versioned contract source — no hand-maintained divergent enums. This freeze was adjudicated by the abuse-case review in `release-3-1-contract-freeze-abuse-review.md` (findings F1/F2 amended above).
+Every contract above is explicitly `*.v1` 3.0 alpha, capability-negotiated. Forward compatibility requires an explicitly negotiated schema version; unknown security fields fail closed. Local and Cloud share one versioned contract source — no hand-maintained divergent enums. This freeze was adjudicated by the abuse-case review in `release-3-0-contract-freeze-abuse-review.md` (findings F1/F2 amended above).

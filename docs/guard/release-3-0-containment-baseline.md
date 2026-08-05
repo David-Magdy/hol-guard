@@ -1,6 +1,6 @@
-# `release/3.1` isolation implementations and containment baseline
+# `release/3.0` isolation implementations and containment baseline
 
-Status: wave-zero baseline. Audience: execution-assurance gate reviewers. Pinned ref: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`.
+Status: wave-zero baseline. Audience: execution-assurance gate reviewers. Source evidence snapshot: `origin/release/3.1` at `10348fd40fa53ef60d9363bb6c37591b8bb60a61`; release identity migrated to 3.0 and revalidated in PR #1901.
 
 Characterizes every isolation implementation by actual enforced behavior, then records the macOS/Linux containment guarantee matrix. Guarantees are derived from the enforcement code, never inferred from class or file names.
 

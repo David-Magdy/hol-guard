@@ -56,12 +56,12 @@ def _context(tmp_path: Path) -> HarnessContext:
 @pytest.mark.parametrize(
     ("health", "candidate_version", "expected"),
     (
-        (AuthorityHealth.PROTECTED, "3.0.9", True),
-        (AuthorityHealth.TAMPERED, "3.0.9", True),
-        (AuthorityHealth.DEGRADED_ACKNOWLEDGED, "3.0.9", True),
-        (AuthorityHealth.UNENROLLED, "3.0.9", False),
-        (AuthorityHealth.PROTECTED, "3.1.0", False),
-        (AuthorityHealth.PROTECTED, "3.1.1", False),
+        (AuthorityHealth.PROTECTED, "2.9.9", True),
+        (AuthorityHealth.TAMPERED, "2.9.9", True),
+        (AuthorityHealth.DEGRADED_ACKNOWLEDGED, "2.9.9", True),
+        (AuthorityHealth.UNENROLLED, "2.9.9", False),
+        (AuthorityHealth.PROTECTED, "3.0.0", False),
+        (AuthorityHealth.PROTECTED, "3.0.1", False),
     ),
 )
 def test_extension_control_authority_blocks_only_downgrades_after_enrollment(
@@ -84,7 +84,7 @@ def test_extension_control_authority_blocks_only_downgrades_after_enrollment(
         update_commands._authority_blocks_downgrade(
             store,
             guard_home=tmp_path,
-            current_version="3.1.0",
+            current_version="3.0.0",
             candidate_version=candidate_version,
         )
         is expected
@@ -95,11 +95,11 @@ def test_update_blocks_protected_authority_downgrade_before_installer_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    wheel = tmp_path / "hol_guard-3.0.9-py3-none-any.whl"
+    wheel = tmp_path / "hol_guard-2.9.9-py3-none-any.whl"
     wheel.write_bytes(b"fake-wheel")
     guard_home = tmp_path / "guard-home"
-    monkeypatch.setattr(update_commands, "_current_version", lambda: "3.1.0")
-    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "3.1.0")
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "3.0.0")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "3.0.0")
     monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
     monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
     monkeypatch.setattr(

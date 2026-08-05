@@ -229,7 +229,7 @@ def test_observer_and_remediation_authorities_are_separate_and_allowlisted() -> 
         "deviceId": "device-a",
         "installationGeneration": "2" * 32,
         "action": "repair",
-        "targetVersion": "3.1.0a6",
+        "targetVersion": "3.0.0a6",
         "idempotencyKey": "repair-device-a-generation-2",
         "issuedAt": "2026-07-18T22:00:00Z",
         "validForSeconds": 900,

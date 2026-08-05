@@ -1,4 +1,4 @@
-"""Portable command-pattern policy expressions for HOL Guard 3.1.
+"""Portable command-pattern policy expressions for HOL Guard 3.0.
 
 Expressions deliberately operate on normalized command text. Regex and glob operators
 use this module's bounded dialect, so policy validation and runtime evaluation cannot drift.

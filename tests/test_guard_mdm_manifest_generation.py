@@ -15,7 +15,7 @@ def _command(root: Path, runtime: Path, output: Path) -> list[str]:
         "--runtime-root",
         str(runtime),
         "--version",
-        "3.1.0a1",
+        "3.0.0a1",
         "--build-id",
         "build-1",
         "--platform",
