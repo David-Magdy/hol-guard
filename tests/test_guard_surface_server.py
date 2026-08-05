@@ -1001,6 +1001,13 @@ class TestGuardSurfaceServer:
             )
             with urllib.request.urlopen(hook_request, timeout=5) as response:
                 hook_payload = json.loads(response.read().decode("utf-8"))
+            if hook_payload.get("reason") == "HOL Guard could not complete isolated local hook review safely.":
+                assert daemon._server.hook_process_runner.wait_for_capacity(  # pyright: ignore[reportPrivateUsage]
+                    minimum_workers=1,
+                    timeout_seconds=15,
+                )
+                with urllib.request.urlopen(hook_request, timeout=5) as response:
+                    hook_payload = json.loads(response.read().decode("utf-8"))
         finally:
             daemon.stop()
 
@@ -1928,6 +1935,7 @@ class TestGuardSurfaceServer:
     )
     def test_guard_daemon_normalizes_decision_lane_event_aliases(self, event_key: str, event_value: str) -> None:
         assert daemon_server_module._GuardDaemonHandler._runtime_hook_lane({event_key: event_value}) == "decision"
+
     def test_guard_daemon_claude_hook_endpoint_preserves_workspace_none_sentinel(self, tmp_path) -> None:
         store = GuardStore(tmp_path / "guard-home")
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
