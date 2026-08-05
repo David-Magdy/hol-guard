@@ -14811,9 +14811,9 @@ def test_runtime_hook_saved_allow_invalidates_when_path_resolves_executable_else
     )
 
     assert first_rc == 1
-    assert first_output["policy_action"] == "review"
+    assert first_output["policy_action"] == "block"
     assert second_rc == 1
-    assert second_output["policy_action"] == "review"
+    assert second_output["policy_action"] == "block"
     assert second_output["approval_reuse"]["status"] == "rejected"
     assert second_output["approval_reuse"]["reason_code"] == "approval_reuse_identity_changed"
     assert all(not marker.exists() for marker in execution_markers)
