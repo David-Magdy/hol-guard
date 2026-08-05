@@ -14278,12 +14278,12 @@ def test_runtime_hook_saved_v1_allow_satisfies_exact_unchanged_current_review(tm
     _build_guard_fixture(home_dir, workspace_dir)
     _write_text(
         home_dir / "config.toml",
-        'approval_wait_timeout_seconds = 0\n[risk_actions]\ndestructive_shell = "review"\n',
+        'approval_wait_timeout_seconds = 0\n[risk_actions]\nlocal_secret_read = "review"\n',
     )
     event = {
         "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": {"command": "rm -rf build"},
+        "tool_name": "Read",
+        "tool_input": {"path": ".env"},
         "source_scope": "project",
     }
 

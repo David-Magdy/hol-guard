@@ -8380,17 +8380,21 @@ class GuardDaemonServer:
         while not self._shutdown_started.is_set():
             with self._server.active_stream_clients_lock:
                 active_stream_clients = self._server.active_stream_clients
-            pending_live_requests = self._server.store.list_approval_requests(
-                status="pending",
-                limit=1,
-            )
-            cloud_profile = self._server.store.get_cloud_sync_profile()
-            workspace_id = cloud_profile.get("workspace_id") if isinstance(cloud_profile, dict) else None
-            outbox_status = self._server.store.live_request_outbox_status(
-                now=_now(),
-                workspace_id=workspace_id,
-            )
-            outbox_depth = outbox_status["depth"]
+            try:
+                pending_live_requests = self._server.store.list_approval_requests(
+                    status="pending",
+                    limit=1,
+                )
+                cloud_profile = self._server.store.get_cloud_sync_profile()
+                workspace_id = cloud_profile.get("workspace_id") if isinstance(cloud_profile, dict) else None
+                outbox_status = self._server.store.live_request_outbox_status(
+                    now=_now(),
+                    workspace_id=workspace_id,
+                )
+                outbox_depth = outbox_status["depth"]
+            except sqlite3.OperationalError:
+                time.sleep(_GUARD_DAEMON_IDLE_POLL_INTERVAL_SECONDS)
+                continue
             if (
                 active_stream_clients > 0
                 or pending_live_requests
