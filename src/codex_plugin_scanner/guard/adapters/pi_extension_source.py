@@ -213,7 +213,7 @@ def managed_extension_source(
         "        return {\n"
         "          response: null,\n"
         '          recoveryKind: "authenticated-control-plane-failure",\n'
-        "        body: daemonPayload,\n"
+        "        };\n"
         "      }\n"
         "      return {\n"
         "        response: {\n"

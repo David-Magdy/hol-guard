@@ -378,6 +378,7 @@ class TestPiInstall:
         assert "serializedPayload, cwd, GUARD_DAEMON_TIMEOUT_MS, deadlineAt" in text
         assert "parsedPayload.guard_remaining_ms" in text
         assert "body: daemonPayload" in text
+        assert 'recoveryKind: "authenticated-control-plane-failure",\n        };' in text
         assert "const response = await runGuard(" in text
         assert "if (result.error) {" in text
         assert "const errorMessage = result.error.message;" in text
