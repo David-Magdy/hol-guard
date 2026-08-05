@@ -193,6 +193,83 @@ def test_update_failure_redacts_output_and_returns_retry_command(monkeypatch: py
     assert payload["binary_diagnostics"]["path_status"] == "path_mismatch"
 
 
+def test_update_defers_when_latest_release_is_still_propagating(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.2.1")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda command, **_: subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            "ERROR: No matching distribution found for hol-guard==2.2.3",
+        ),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False)
+
+    assert exit_code == 0
+    assert payload["status"] == "deferred"
+    assert payload["reason_code"] == "update_release_propagating"
+    assert payload["changed"] is False
+    assert "current installation remains active" in str(payload["message"])
+    assert "retry_command" not in payload
+
+
+def test_update_recovers_from_broken_pipx_launcher_with_trusted_python(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    resulting_versions = iter(("2.2.1", "2.2.3"))
+    monkeypatch.setattr(
+        update_commands,
+        "_current_version_from_subprocess",
+        lambda *_args, **_kwargs: next(resulting_versions),
+    )
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(update_commands.sys, "executable", "/opt/guard/bin/python")
+    monkeypatch.setattr(update_commands, "_refresh_package_shims_after_update", lambda **_: (None, None))
+    monkeypatch.setattr(update_commands, "_repair_supported_harnesses", lambda **_: ([], []))
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[0] == "pipx":
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                "ModuleNotFoundError: No module named 'pipx'",
+            )
+        return subprocess.CompletedProcess(command, 0, "installed hol-guard 2.2.3", "")
+
+    monkeypatch.setattr(update_commands.subprocess, "run", fake_run)
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False)
+
+    assert exit_code == 0
+    assert payload["status"] == "updated"
+    assert payload["installer_recovery"] == "trusted_python_pip"
+    assert commands == [
+        ["pipx", "install", "--force", "hol-guard==2.2.3"],
+        [
+            "/opt/guard/bin/python",
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "hol-guard==2.2.3",
+        ],
+    ]
+
+
 def test_update_binary_diagnostics_accepts_same_environment_script(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update_commands, "_current_version", lambda: "2.0.0")
     monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
