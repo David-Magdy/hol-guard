@@ -2373,6 +2373,9 @@ def test_evaluate_package_request_artifact_requires_review_for_malformed_registr
     assert result.decision == "ask"
     assert result.policy_action == "require-reapproval"
     assert any(reason["code"] == "unidentified_package" for reason in result.reasons)
+    messages = " ".join(reason["message"] for reason in result.reasons)
+    assert "Guard Cloud is optional" in messages
+    assert "approve it once if you trust it" in messages
 
 
 def test_evaluate_package_request_artifact_blocks_hoisted_lockfile_match(

@@ -336,6 +336,7 @@ args = ["workspace-skill.js", "--changed"]
         assert rc == 0
         assert output["cloud_state"] == "local_only"
         assert output["sync_configured"] is False
+        assert "Guard Cloud is optional" in output["cloud_state_detail"]
         assert output["connect_url"] == "https://hol.org/guard/connect"
         assert output["dashboard_url"] == "https://hol.org/guard"
         assert output["inbox_url"] == "https://hol.org/guard/inbox"

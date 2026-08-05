@@ -2117,7 +2117,7 @@ def _cloud_sync_health_label(state: str) -> str:
         "pending": "Cloud sync pending",
         "failed": "Cloud sync needs attention",
         "degraded": "Cloud sync degraded",
-        "disabled": "Cloud sync disabled",
+        "disabled": "Cloud optional",
         "stale": "Cloud sync stale",
     }
     return labels.get(state, "Cloud sync pending")
@@ -2153,7 +2153,7 @@ def _cloud_sync_health_detail(
             "Review local protection health separately."
         )
     if state == "disabled":
-        return "Cloud sync is disabled. Review local protection health separately or connect for shared team proof."
+        return "Local Guard is active. Cloud sync is optional and currently off; connect it for shared team proof."
     if state == "stale":
         return "Cloud has not seen fresh local proof recently. Keep this runtime open or run sync again."
     if pending_events == 1:
@@ -2213,7 +2213,7 @@ def _runtime_cloud_state_detail(
             "This machine is connected to Guard Cloud. Open Home, Inbox, or Fleet in the portal "
             "to continue with shared review and proof."
         )
-    return "Guard is running on this machine. Review protection health locally or connect for shared team memory."
+    return "Guard is running locally. Guard Cloud is optional; connect it for shared review, sync, and team memory."
 
 
 def _resolve_guard_urls(sync_url: object) -> tuple[str, str, str, str]:

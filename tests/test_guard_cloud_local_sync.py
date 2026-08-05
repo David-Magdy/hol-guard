@@ -502,6 +502,10 @@ def test_runtime_snapshot_exposes_local_device_without_cloud_pairing(tmp_path: P
         "local_registered": True,
     }
     assert snapshot["latest_connect_state"] is None
+    assert snapshot["cloud_sync_health"]["state"] == "disabled"
+    assert snapshot["cloud_sync_health"]["label"] == "Cloud optional"
+    assert "Local Guard is active" in snapshot["cloud_sync_health"]["detail"]
+    assert "Guard Cloud is optional" in snapshot["cloud_state_detail"]
     assert snapshot["proof_status"] == {
         "state": "not_connected",
         "label": "Cloud proof not started",

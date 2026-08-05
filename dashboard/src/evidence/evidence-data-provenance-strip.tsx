@@ -18,7 +18,7 @@ export function EvidenceDataProvenanceStrip({
   const beyondSample = analytics.total > sampleCount;
   const cloudNote =
     runtime?.cloud_state === "local_only"
-      ? "Guard Cloud not connected."
+      ? "Cloud sync optional and off."
       : runtime?.cloud_state === "paired_active" && runtime?.cloud_sync_health?.label !== "Synced"
         ? runtime?.cloud_sync_health?.label
         : null;
