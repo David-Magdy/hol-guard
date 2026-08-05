@@ -83,12 +83,14 @@ jobs:
             src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
             tests/test_guard_desktop_contract.py
 
-      - name: Run contract and evidence tests
+      - name: Run Desktop contract tests
+        run: uv run --no-sync pytest tests/test_guard_desktop_contract.py --tb=short
+
+      - name: Validate source-bound decision evidence
+        run: uv run --no-sync pytest tests/test_guard_command_decision_diff.py::test_report_is_exactly_reproducible_and_source_bound --tb=short
+
+      - name: Validate test-suite ratchet
         run: |
-          uv run --no-sync pytest \
-            tests/test_guard_desktop_contract.py \
-            tests/test_guard_command_decision_diff.py::test_report_is_exactly_reproducible_and_source_bound \
-            --tb=short
           uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
           uv run --no-sync python scripts/ci/test_suite_ratchet.py \
             --baseline ci/test-suite-ratchet-baseline.json \
