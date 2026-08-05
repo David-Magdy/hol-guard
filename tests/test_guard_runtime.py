@@ -1387,8 +1387,8 @@ clearer UX and an implementation plan with technical references.
 
         assert rc == 1
         assert output["artifact_type"] == "tool_action_request"
-        assert output["policy_action"] == "require-reapproval"
-        assert output["approval_requests"]
+        assert output["policy_action"] == "block"
+        assert output["approval_requests"] == []
 
     def test_codex_pre_tool_use_blocks_fd_search_path_sensitive_dir_exec(
         self,
@@ -20058,8 +20058,8 @@ def test_hermes_pretool_blocks_docker_sensitive_command_requests(tmp_path, capsy
 
     assert rc == 1
     assert output["artifact_type"] == "tool_action_request"
-    assert output["policy_action"] == "require-reapproval"
-    assert output["approval_delivery"]["destination"] == "harness"
+    assert output["policy_action"] == "block"
+    assert "approval_delivery" not in output
     assert "docker" in output["risk_summary"].lower()
 
 

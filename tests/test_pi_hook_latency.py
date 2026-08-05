@@ -74,7 +74,7 @@ def test_review_required_pi_hook_returns_before_worker_deadline(tmp_path: Path) 
     guard_home = tmp_path / "guard-home"
     store = GuardStore(guard_home)
     (guard_home / "config.toml").write_text(
-        'security_level = "custom"\n[risk_actions]\ndestructive_shell = "review"\n',
+        'security_level = "custom"\n[risk_actions]\nlocal_secret_read = "review"\n',
         encoding="utf-8",
     )
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
@@ -91,8 +91,8 @@ def test_review_required_pi_hook_returns_before_worker_deadline(tmp_path: Path) 
         data=json.dumps(
             {
                 "hook_event_name": "PreToolUse",
-                "tool_name": "Bash",
-                "tool_input": {"command": "rm -rf build"},
+                "tool_name": "Read",
+                "tool_input": {"path": "~/.ssh/config"},
             }
         ).encode(),
         headers={"Content-Type": "application/json", "X-Guard-Token": _daemon_internals(daemon).auth_token},
