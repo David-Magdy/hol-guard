@@ -15478,6 +15478,7 @@ def test_guard_hook_codex_falls_back_to_native_deny_after_daemon_request_failure
 
         def queue_blocked_operation(self, **_kwargs):
             raise RuntimeError("Guard daemon request failed: timed out")
+
     monkeypatch.setattr(
         runtime_review_module,
         "load_guard_surface_daemon_client",
@@ -20253,9 +20254,7 @@ def test_guard_hook_flags_shell_variable_data_flow_without_legacy_runtime_artifa
     assert output["artifact_type"] == "tool_action_request"
     assert output["policy_action"] == "block"
     assert output["approval_requests"] == []
-    assert any(
-        signal["signal_id"].startswith("data-flow:") for signal in output["decision_v2_json"]["signals"]
-    )
+    assert any(signal["signal_id"].startswith("data-flow:") for signal in output["decision_v2_json"]["signals"])
 
 
 def test_guard_hook_data_flow_policy_overrides_weaker_requested_action(tmp_path, capsys, monkeypatch):

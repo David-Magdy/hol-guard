@@ -794,6 +794,11 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
         artifact.publisher,
     )
     command_action_floor = _runtime_artifact_command_action_floor(artifact)
+    pytest_restricted_sandbox = (
+        artifact.metadata.get("action_class") == "pytest repository-code execution"
+        and artifact.metadata.get("reason_code") == "pytest_restricted_profile_required"
+        and isinstance(artifact.metadata.get("restricted_profile_version"), str)
+    )
 
     def with_config_policy(action: GuardAction) -> GuardAction:
         # Artifact/publisher/harness settings are more-specific resolutions of
@@ -802,8 +807,7 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
         current_config_action = configured_override if configured_override is not None else config.default_action
         effective_command_floor = (
             None
-            if action == "sandbox-required"
-            and artifact.metadata.get("action_class") == "pytest repository-code execution"
+            if action == "sandbox-required" and pytest_restricted_sandbox
             else command_action_floor
         )
         actions = (action, current_config_action, effective_command_floor)
@@ -824,8 +828,7 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
             return with_config_policy(most_restrictive_guard_action(*resolved_actions))
     guard_default_action = _runtime_artifact_guard_default_action(artifact)
     if (
-        guard_default_action == "sandbox-required"
-        and artifact.metadata.get("action_class") == "pytest repository-code execution"
+        guard_default_action == "sandbox-required" and pytest_restricted_sandbox
     ):
         return with_config_policy(guard_default_action)
     risk_actions = [resolve_risk_action(config, risk_class, harness=canonical_harness) for risk_class in risk_classes]
