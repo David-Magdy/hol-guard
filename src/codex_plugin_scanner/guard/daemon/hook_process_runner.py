@@ -367,6 +367,8 @@ class HookProcessRunner:
             retirement_threads = list(self._retirement_threads)
             self._recovery_event.set()
         for slot in slots:
+            if not slot.isolation_ready and not slot.pre_isolation_contained:
+                _ = hook_worker_became_isolated(slot, _HOOK_PROCESS_READY_TIMEOUT_SECONDS)
             _ = self._retire_slot(slot, graceful=True)
         for retirement_thread in retirement_threads:
             if retirement_thread is not threading.current_thread():

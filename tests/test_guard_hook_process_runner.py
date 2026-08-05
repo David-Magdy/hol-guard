@@ -1012,6 +1012,31 @@ def test_close_retains_worker_when_guardian_identity_is_lost(tmp_path: Path) -> 
     assert runner.close_contained()
 
 
+def test_close_waits_for_inflight_worker_isolation_before_retirement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=0.5)
+    runner.start()
+    assert runner.wait_for_capacity(minimum_workers=1, timeout_seconds=10)
+    slot = runner._slots.get_nowait()  # pyright: ignore[reportPrivateUsage]
+    runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
+    slot.isolation_ready = False
+    slot.pre_isolation_contained = False
+    isolation_waits: list[float] = []
+
+    def complete_isolation(candidate: HookWorkerSlot, timeout: float) -> bool:
+        isolation_waits.append(timeout)
+        candidate.isolation_ready = True
+        return True
+
+    monkeypatch.setattr(hook_runner_module, "hook_worker_became_isolated", complete_isolation)
+
+    assert runner.close_contained()
+    assert isolation_waits == [hook_runner_module._HOOK_PROCESS_READY_TIMEOUT_SECONDS]
+    assert runner.stats()["workers"] == 0
+
+
 def test_close_retains_uncontained_worker_for_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
