@@ -16,7 +16,6 @@ on:
   push:
     branches:
       - main
-      - desktop/3.0-contracts
     paths:
       - src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py
       - src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py
@@ -30,7 +29,7 @@ on:
       - .github/workflows/desktop-contract-ci.yml
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: desktop-contract-${{ github.ref }}
@@ -57,21 +56,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen --extra dev --python 3.12
-
-      - name: Refresh source-bound evidence on the implementation branch
-        if: github.event_name == 'push' && github.ref == 'refs/heads/desktop/3.0-contracts'
-        run: |
-          uv run --no-sync python tests/guard_command_decision_diff.py --write
-          python - <<'PY'
-          import json
-          from pathlib import Path
-
-          path = Path("ci/test-suite-ratchet-baseline.json")
-          payload = json.loads(path.read_text(encoding="utf-8"))
-          payload["maximum_collected_cases"] = 13886
-          payload["maximum_test_source_lines"] = 304037
-          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-          PY
 
       - name: Validate formatting and lint
         run: |
@@ -118,17 +102,3 @@ jobs:
               "incompatible",
           }
           PY
-
-      - name: Commit refreshed evidence
-        if: github.event_name == 'push' && github.ref == 'refs/heads/desktop/3.0-contracts'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tests/fixtures/guard-command-corpus/decision-diff-report.json ci/test-suite-ratchet-baseline.json
-          if git diff --cached --quiet; then
-            echo "Evidence is current"
-            exit 0
-          fi
-          git commit -m "test: refresh Desktop contract evidence"
-          git pull --rebase origin desktop/3.0-contracts
-          git push origin HEAD:desktop/3.0-contracts
