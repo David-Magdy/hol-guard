@@ -18,9 +18,7 @@ def build_network_status(
     supervisor_health: NetworkSupervisorHealth | None = None,
 ) -> dict[str, object]:
     resolved = profiles if profiles is not None else default_platform_profiles()
-    migrated = (
-        migrate_new_network_domain_action(legacy_domain_action) if legacy_domain_action is not None else None
-    )
+    migrated = migrate_new_network_domain_action(legacy_domain_action) if legacy_domain_action is not None else None
     status: dict[str, object] = {
         "schema": "guard.network-status.v1",
         "backends": [

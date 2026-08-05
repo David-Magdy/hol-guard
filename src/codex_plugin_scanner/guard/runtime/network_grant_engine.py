@@ -43,10 +43,7 @@ class ScopedNetworkGrant:
             raise ValueError("port must be within 1..65535")
         if type(self.issued_at_epoch_ms) is not int or self.issued_at_epoch_ms <= 0:
             raise ValueError("issued_at_epoch_ms must be positive")
-        if (
-            type(self.expires_at_epoch_ms) is not int
-            or self.expires_at_epoch_ms <= self.issued_at_epoch_ms
-        ):
+        if type(self.expires_at_epoch_ms) is not int or self.expires_at_epoch_ms <= self.issued_at_epoch_ms:
             raise ValueError("expires_at_epoch_ms must follow issue time")
         if not isinstance(cast(object, self.use), GrantUse):
             raise ValueError("use must be exact")
@@ -113,20 +110,14 @@ class ScopedGrantEngine:
 
     def revoke_tree(self, process_tree: ProcessTreeIdentity) -> int:
         doomed = [
-            grant_id
-            for grant_id, grant in self._grants.items()
-            if grant.process_tree_digest == process_tree.digest
+            grant_id for grant_id, grant in self._grants.items() if grant.process_tree_digest == process_tree.digest
         ]
         for grant_id in doomed:
             del self._grants[grant_id]
         return len(doomed)
 
     def expire(self, *, now_epoch_ms: int) -> int:
-        doomed = [
-            grant_id
-            for grant_id, grant in self._grants.items()
-            if now_epoch_ms >= grant.expires_at_epoch_ms
-        ]
+        doomed = [grant_id for grant_id, grant in self._grants.items() if now_epoch_ms >= grant.expires_at_epoch_ms]
         for grant_id in doomed:
             del self._grants[grant_id]
         return len(doomed)

@@ -41,11 +41,7 @@ class DestinationCorrelator:
         )
 
     def expire(self, *, now_epoch_ms: int) -> int:
-        expired = [
-            digest
-            for digest, binding in self._bindings.items()
-            if now_epoch_ms >= binding.expires_at_epoch_ms
-        ]
+        expired = [digest for digest, binding in self._bindings.items() if now_epoch_ms >= binding.expires_at_epoch_ms]
         for digest in expired:
             del self._bindings[digest]
         return len(expired)

@@ -117,8 +117,7 @@ def detect_proxy_tunnel(
         if any(word == "--proxy" or word.startswith("--proxy=") for word in words):
             findings.add(ProxyTunnelFinding("proxy", "command", "--proxy"))
         has_ssh_forward = any(
-            word in {"-D", "-L", "-R", "-W"} or word.startswith(("-D", "-L", "-R", "-W"))
-            for word in words[1:]
+            word in {"-D", "-L", "-R", "-W"} or word.startswith(("-D", "-L", "-R", "-W")) for word in words[1:]
         )
         if executable == "ssh" and has_ssh_forward:
             findings.add(ProxyTunnelFinding("tunnel", "command", "ssh-forward"))

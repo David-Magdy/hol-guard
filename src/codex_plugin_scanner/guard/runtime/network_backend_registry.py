@@ -42,11 +42,7 @@ class NetworkBackendRegistry:
     def profiles(self, platform: PlatformFamily | None = None) -> tuple[PlatformCapabilityProfile, ...]:
         return tuple(
             sorted(
-                (
-                    profile
-                    for profile in self._profiles.values()
-                    if platform is None or profile.platform is platform
-                ),
+                (profile for profile in self._profiles.values() if platform is None or profile.platform is platform),
                 key=lambda profile: profile.backend_id,
             )
         )

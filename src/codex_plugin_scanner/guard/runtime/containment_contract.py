@@ -38,6 +38,7 @@ class ContainmentNetworkMode(str, Enum):
     OFFLINE = "offline"
     GUARDED_PROXY = "guarded-proxy"
 
+
 class ContainmentFailure(str, Enum):
     UNSUPPORTED_PLATFORM = "unsupported-platform"
     BACKEND_UNAVAILABLE = "backend-unavailable"
