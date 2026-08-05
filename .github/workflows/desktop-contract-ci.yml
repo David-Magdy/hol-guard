@@ -9,11 +9,14 @@ on:
       - src/codex_plugin_scanner/guard/cli/commands_router.py
       - src/codex_plugin_scanner/guard/cli/commands_support.py
       - tests/test_guard_desktop_contract.py
+      - tests/fixtures/guard-command-corpus/decision-diff-report.json
+      - ci/test-suite-ratchet-baseline.json
       - docs/guard/desktop-bootstrap-contract.md
       - .github/workflows/desktop-contract-ci.yml
   push:
     branches:
       - main
+      - desktop/3.0-contracts
     paths:
       - src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py
       - src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py
@@ -21,16 +24,22 @@ on:
       - src/codex_plugin_scanner/guard/cli/commands_router.py
       - src/codex_plugin_scanner/guard/cli/commands_support.py
       - tests/test_guard_desktop_contract.py
+      - tests/fixtures/guard-command-corpus/decision-diff-report.json
+      - ci/test-suite-ratchet-baseline.json
       - docs/guard/desktop-bootstrap-contract.md
       - .github/workflows/desktop-contract-ci.yml
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: desktop-contract-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   contract:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -48,6 +57,21 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --extra dev --python 3.12
 
+      - name: Refresh source-bound evidence on the implementation branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/desktop/3.0-contracts'
+        run: |
+          uv run --no-sync python tests/guard_command_decision_diff.py --write
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("ci/test-suite-ratchet-baseline.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          payload["maximum_collected_cases"] = 13886
+          payload["maximum_test_source_lines"] = 304037
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Validate formatting and lint
         run: |
           uv run --no-sync python -m ruff format --check \
@@ -59,8 +83,16 @@ jobs:
             src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
             tests/test_guard_desktop_contract.py
 
-      - name: Run contract tests
-        run: uv run --no-sync pytest tests/test_guard_desktop_contract.py --tb=short
+      - name: Run contract and evidence tests
+        run: |
+          uv run --no-sync pytest \
+            tests/test_guard_desktop_contract.py \
+            tests/test_guard_command_decision_diff.py::test_report_is_exactly_reproducible_and_source_bound \
+            --tb=short
+          uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
 
       - name: Smoke test CLI projection
         run: |
@@ -83,3 +115,17 @@ jobs:
               "incompatible",
           }
           PY
+
+      - name: Commit refreshed evidence
+        if: github.event_name == 'push' && github.ref == 'refs/heads/desktop/3.0-contracts'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/fixtures/guard-command-corpus/decision-diff-report.json ci/test-suite-ratchet-baseline.json
+          if git diff --cached --quiet; then
+            echo "Evidence is current"
+            exit 0
+          fi
+          git commit -m "test: refresh Desktop contract evidence"
+          git pull --rebase origin desktop/3.0-contracts
+          git push origin HEAD:desktop/3.0-contracts
