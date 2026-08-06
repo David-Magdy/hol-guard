@@ -75,7 +75,7 @@ const PROOFS = {{
   posttool: {json.dumps(proof_post)},
 }};
 
-function proof(name) {{
+function proof(name, outcome) {{
   try {{
     const target = PROOFS[name];
     mkdirSync(dirname(target), {{ recursive: true }});
@@ -84,6 +84,7 @@ function proof(name) {{
       schema_version: 1,
       source: "cline-plugin",
       proof: name,
+      outcome,
       timestamp: Date.now() / 1000,
     }}));
     renameSync(temporary, target);
@@ -260,26 +261,39 @@ const plugin = {{
   manifest: {{ capabilities: ["hooks"] }},
   hooks: {{
     async beforeRun() {{
-      proof("loaded");
+      proof("loaded", "loaded");
       return undefined;
     }},
     async beforeTool({{ toolCall, input }}) {{
       const decision = invokeGuard("PreToolUse", toolCall, input, undefined);
-      if (!decision.ok) return {{ skip: true, reason: decision.reason }};
-      proof("pretool");
-      if (!guardBlocks(decision.payload)) return undefined;
+      if (!decision.ok) {{
+        proof("pretool", "blocked");
+        return {{ skip: true, reason: decision.reason }};
+      }}
+      if (!guardBlocks(decision.payload)) {{
+        proof("pretool", "allowed");
+        return undefined;
+      }}
+      proof("pretool", "blocked");
       return {{ skip: true, reason: guardReason(decision.payload) || "HOL Guard blocked this action." }};
     }},
     async afterTool({{ toolCall, input, result }}) {{
       const decision = invokeGuard("PostToolUse", toolCall, input, result);
-      if (!decision.ok) return blockedResult(decision.reason, result?.metadata);
-      proof("posttool");
+      if (!decision.ok) {{
+        proof("posttool", "replaced");
+        return blockedResult(decision.reason, result?.metadata);
+      }}
       const replacement = reviewedOutput(decision.payload);
       if (guardBlocks(decision.payload)) {{
+        proof("posttool", "replaced");
         const reason = guardReason(decision.payload) || "HOL Guard withheld this tool result.";
         return blockedResult(reason, result?.metadata);
       }}
-      if (replacement !== undefined) return {{ result: {{ ...result, output: replacement }} }};
+      if (replacement !== undefined) {{
+        proof("posttool", "replaced");
+        return {{ result: {{ ...result, output: replacement }} }};
+      }}
+      proof("posttool", "unchanged");
       return undefined;
     }},
   }},
@@ -355,6 +369,7 @@ def _proof_state(context: HarnessContext, name: str) -> dict[str, object]:
         "fresh": fresh,
         "live": fresh and payload.get("source") == "cline-plugin",
         "proof": name,
+        "outcome": payload.get("outcome"),
     }
 
 
@@ -373,20 +388,23 @@ def cline_plugin_state(context: HarnessContext) -> dict[str, object]:
     loaded = _proof_state(context, "loaded")
     pretool = _proof_state(context, "pretool")
     posttool = _proof_state(context, "posttool")
+    pretool_blocking_proven = pretool.get("live") is True and pretool.get("outcome") == "blocked"
+    posttool_replacement_proven = posttool.get("live") is True and posttool.get("outcome") == "replaced"
     return {
         "installed": installed,
         "integrity_ok": integrity_ok,
         "loaded_proof": loaded,
         "live_pretool_proof": pretool,
         "live_posttool_proof": posttool,
-        "pretool_blocking_proven": pretool.get("live") is True,
-        "posttool_replacement_proven": posttool.get("live") is True,
+        "pretool_blocking_proven": pretool_blocking_proven,
+        "posttool_replacement_proven": posttool_replacement_proven,
         "post_tool_output_mediation": "replaceable",
         "ready": bool(
             integrity_ok
             and loaded.get("live") is True
-            and pretool.get("live") is True
-            and posttool.get("live") is True
+            and loaded.get("outcome") == "loaded"
+            and pretool_blocking_proven
+            and posttool_replacement_proven
         ),
     }
 
