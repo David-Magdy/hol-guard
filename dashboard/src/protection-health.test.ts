@@ -84,6 +84,38 @@ const snapshot = { protection_health: scoped };
 assert.equal(protectionHealthFor(snapshot, "codex").state, "protected");
 assert.equal(protectionHealthFor(snapshot, "unknown").state, "degraded");
 
+const appSharedProofPending = checks("unknown");
+appSharedProofPending[PROTECTION_CHECK_IDS.indexOf("harness_hooks")] = {
+  check_id: "harness_hooks",
+  status: "pass",
+  reason_code: "hooks_verified",
+};
+const ompPendingProof = normalizeProtectionHealth({
+  ...payload(appSharedProofPending),
+  apps: [{ harness: "omp", ...payload(appSharedProofPending) }],
+});
+assert.equal(
+  protectionHealthFor({ protection_health: ompPendingProof }, "omp").state,
+  "partial",
+  "a verified app hook is not degraded only because shared proofs are still pending",
+);
+assert.match(
+  protectionHealthFor({ protection_health: ompPendingProof }, "omp").detail,
+  /shared local protection proof is still pending/,
+);
+
+const appHookFailure = [...appSharedProofPending];
+appHookFailure[PROTECTION_CHECK_IDS.indexOf("harness_hooks")] = {
+  check_id: "harness_hooks",
+  status: "fail",
+  reason_code: "hook_verification_failed",
+};
+const ompFailedHook = normalizeProtectionHealth({
+  ...payload(appHookFailure),
+  apps: [{ harness: "omp", ...payload(appHookFailure) }],
+});
+assert.equal(protectionHealthFor({ protection_health: ompFailedHook }, "omp").state, "degraded");
+
 const degradedHealth = normalizeProtectionHealth(payload(decisionFailure));
 const contradictorySnapshot: Pick<GuardRuntimeSnapshot, "protection_health"> = {
   protection_health: {
