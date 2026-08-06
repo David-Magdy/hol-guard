@@ -95,12 +95,14 @@ def test_expired_cloud_entitlement_does_not_block_existing_local_repair() -> Non
     assert package_firewall_operation_allowed(entitlement, "test", has_installed_managers=True) is False
 
 
-def test_preflight_rejects_home_and_filesystem_root_but_allows_project(tmp_path: Path) -> None:
-    home = tmp_path / "home"
+def test_preflight_rejects_home_ancestors_and_filesystem_root_but_allows_project(tmp_path: Path) -> None:
+    account_root = tmp_path / "accounts"
+    home = account_root / "home"
     project = home / "src" / "project"
     project.mkdir(parents=True)
 
     assert _unsafe_broad_preflight_target(home, home_dir=home) is True
+    assert _unsafe_broad_preflight_target(account_root, home_dir=home) is True
     assert _unsafe_broad_preflight_target(Path(home.anchor), home_dir=home) is True
     assert _unsafe_broad_preflight_target(project, home_dir=home) is False
 
