@@ -144,9 +144,12 @@ assert.equal(
   "setup",
 );
 
+const appSource = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
 const appDetailSource = readFileSync(new URL("./apps/app-detail-workspace.tsx", import.meta.url), "utf8");
 const fleetSource = readFileSync(new URL("./fleet-workspace.tsx", import.meta.url), "utf8");
 const reviewStatesSource = readFileSync(new URL("./review-states.tsx", import.meta.url), "utf8");
+assert.match(appSource, /const handleRepairProtection = useCallback/);
+assert.match(appSource, /onRepairProtection=\{handleRepairProtection\}/);
 assert.match(appDetailSource, /Install state" value=\{active \? "Installed"/);
 assert.match(appDetailSource, /protectionHealthFor\(runtime, harness\)/);
 assert.match(fleetSource, /resolveAppStatus\(install, appProtection,/);
