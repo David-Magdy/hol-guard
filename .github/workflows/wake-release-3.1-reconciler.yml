@@ -4,6 +4,8 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
+  issues:
+    types: [opened]
   pull_request:
     paths:
       - .github/workflows/wake-release-3.1-reconciler.yml
@@ -14,7 +16,9 @@ permissions:
 
 jobs:
   wake:
-    if: github.event_name == 'workflow_run'
+    if: >-
+      github.event_name == 'workflow_run' ||
+      (github.event_name == 'issues' && startsWith(github.event.issue.title, '[release-reconcile]'))
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch release/3.1 reconciler
