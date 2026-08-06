@@ -313,7 +313,7 @@ jobs:
               raise SystemExit(f"Apple notarization was not accepted: {payload.get('status', 'unknown')}")
           PY
 
-      - name: Verify local immutable binary and Apple team
+      - name: Verify local immutable binary and Apple trust
         if: steps.release.outputs.available == 'true'
         env:
           CORE_VERSION: ${{ steps.release.outputs.version }}
@@ -325,7 +325,9 @@ jobs:
           chmod 0755 "$BINARY"
           codesign --verify --strict --verbose=2 "$BINARY"
           codesign --display --verbose=4 "$BINARY" 2> "$RUNNER_TEMP/codesign.txt"
+          grep -F "Authority=Developer ID Application:" "$RUNNER_TEMP/codesign.txt"
           grep -Fx "TeamIdentifier=$APPLE_TEAM_ID" "$RUNNER_TEMP/codesign.txt"
+          spctl --assess --type execute --verbose=4 "$BINARY"
           cp "$BINARY" "$VERIFY"
           chmod 0755 "$VERIFY"
           codesign --verify --strict --verbose=2 "$VERIFY"
