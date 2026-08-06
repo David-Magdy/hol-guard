@@ -199,7 +199,9 @@ class ClineHarnessAdapter(HarnessAdapter):
     def install(self, context: HarnessContext, *, surface: str = "auto") -> dict[str, object]:
         selected_surface = _surface(surface, default="auto")
         hosts = detect_cline_hosts(context)
-        requested_transport = selected_surface if selected_surface in {"hooks", "plugin"} else self._auto_transport(hosts)
+        requested_transport = (
+            selected_surface if selected_surface in {"hooks", "plugin"} else self._auto_transport(hosts)
+        )
         try:
             transport_manifest = self._reconcile_transport(context, requested_transport)
         except RuntimeError:
@@ -267,7 +269,8 @@ class ClineHarnessAdapter(HarnessAdapter):
         if selected_surface in {"auto", "all"}:
             mcp_result = restore_cline_mcp_proxies(context)
         complete = all(
-            result is None or result.get("complete", True) is True for result in (hook_result, plugin_result, mcp_result)
+            result is None or result.get("complete", True) is True
+            for result in (hook_result, plugin_result, mcp_result)
         )
         if complete and selected_surface in {"auto", "all"} and _adapter_state_path(context).is_file():
             _adapter_state_path(context).unlink()
@@ -307,7 +310,9 @@ class ClineHarnessAdapter(HarnessAdapter):
                 "Native PostToolUse is observation-only; use the plugin transport for model-visible output replacement."
             )
         if hosts.jetbrains_paths:
-            blind_spots.append("JetBrains runtime protection is unverified until Guard observes a live pre-tool deny proof.")
+            blind_spots.append(
+                "JetBrains runtime protection is unverified until Guard observes a live pre-tool deny proof."
+            )
         return blind_spots
 
     def runtime_probe(self, context: HarnessContext) -> dict[str, object] | None:

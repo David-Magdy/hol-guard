@@ -98,7 +98,7 @@ def _hook_source(context: HarnessContext, *, event_name: str, guard_cli: list[st
     proof = str(_proof_path(context, event_name))
     adapter_state = str(_adapter_state_path(context))
     blocking = event_name == "PreToolUse"
-    return f'''# {_MARKER}
+    return f"""# {_MARKER}
 from __future__ import annotations
 import json, os, subprocess, sys, time
 from pathlib import Path
@@ -226,7 +226,7 @@ def main():
     else: emit({{"cancel":False,"contextModification":why if denied else ""}})
     return 0
 if __name__=="__main__": raise SystemExit(main())
-'''
+"""
 
 
 def _posix_wrapper(*, worker: Path, python: str) -> str:

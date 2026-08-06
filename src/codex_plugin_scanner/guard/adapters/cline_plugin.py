@@ -65,7 +65,7 @@ def _plugin_source(context: HarnessContext, guard_cli: list[str]) -> str:
     proof_pre = str(_proof_path(context, "pretool"))
     proof_post = str(_proof_path(context, "posttool"))
     adapter_state = str(_adapter_state_path(context))
-    return f'''// {_MANAGED_MARKER}
+    return f"""// {_MANAGED_MARKER}
 // schema_version={_SCHEMA_VERSION}
 import {{ spawnSync }} from "node:child_process";
 import {{ mkdirSync, readFileSync, renameSync, writeFileSync }} from "node:fs";
@@ -329,7 +329,7 @@ const plugin = {{
 }};
 
 export default plugin;
-'''
+"""
 
 
 def _package_json() -> str:
