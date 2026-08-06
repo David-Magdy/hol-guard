@@ -11,6 +11,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from .base import HarnessContext
+from .cline_paths import cline_plugin_root as _resolve_cline_plugin_root
 from .guard_cli_attestation import resolve_attested_guard_cli
 
 _MANAGED_MARKER = "HOL_GUARD_MANAGED_CLINE_PLUGIN_V1"
@@ -23,7 +24,7 @@ _PROOF_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 
 def cline_plugin_root(context: HarnessContext) -> Path:
-    return context.home_dir / ".cline" / "plugins" / _PLUGIN_NAME
+    return _resolve_cline_plugin_root(context)
 
 
 def _state_path(context: HarnessContext) -> Path:
