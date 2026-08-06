@@ -318,12 +318,28 @@ jobs:
         run: |
           set -euo pipefail
           BINARY="$RUNNER_TEMP/dist/hol-guard-core-${CORE_VERSION}-${RELEASE_TARGET}"
+          VERIFY="$RUNNER_TEMP/dist/hol-guard"
           chmod 0755 "$BINARY"
           codesign --verify --strict --verbose=2 "$BINARY"
-          test "$("$BINARY" --version | sed -E 's/^hol-guard[[:space:]]+//')" = "$CORE_VERSION"
+          cp "$BINARY" "$VERIFY"
+          chmod 0755 "$VERIFY"
+          codesign --verify --strict --verbose=2 "$VERIFY"
+          test "$("$VERIFY" --version | sed -E 's/^hol-guard[[:space:]]+//')" = "$CORE_VERSION"
           export HOL_GUARD_HOME="$RUNNER_TEMP/verify-home"
           mkdir -p "$HOL_GUARD_HOME"
-          "$BINARY" desktop bootstrap --json > "$RUNNER_TEMP/bootstrap.json"
+          "$VERIFY" desktop bootstrap --json > "$RUNNER_TEMP/bootstrap.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads((Path(os.environ["RUNNER_TEMP"]) / "bootstrap.json").read_text())
+          if payload.get("schema") != "guard-desktop-bootstrap.v1":
+              raise SystemExit("Immutable Core does not expose the Desktop bootstrap contract")
+          if payload.get("coreVersion") != os.environ["CORE_VERSION"]:
+              raise SystemExit("Immutable Core returned the wrong version")
+          PY
+          rm -f "$VERIFY"
 
       - name: Download or create signed update manifest
         if: steps.release.outputs.available == 'true' && steps.existing.outputs.attestation_present != 'true'
