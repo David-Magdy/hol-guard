@@ -188,7 +188,7 @@ function invokeGuard(eventName, toolCall, input, result) {{
     if (Buffer.byteLength(encoded, "utf8") > MAX_BYTES) {{
       return {{ ok: false, reason: "HOL Guard rejected an oversized Cline plugin request." }};
     }}
-    const child = spawnSync(GUARD_CLI[0], [...GUARD_CLI.slice(1), "hook", "--harness", "cline", "--json"], {{
+    const child = spawnSync(GUARD_CLI[0], [...GUARD_CLI.slice(1), "--harness", "cline", "--json"], {{
       input: encoded,
       encoding: "utf8",
       timeout: TIMEOUT_MS,
@@ -292,7 +292,7 @@ def install_cline_plugin(context: HarnessContext) -> dict[str, object]:
     if index_path.exists() and not _is_managed_plugin(index_path):
         raise RuntimeError(f"Cline plugin path is user-owned; Guard will not overwrite {index_path}")
     attested = resolve_attested_guard_cli(context)
-    source = _plugin_source(context, list(attested.command))
+    source = _plugin_source(context, [*attested.command, "guard", "hook"])
     root.mkdir(parents=True, exist_ok=True)
     _atomic_write(index_path, source)
     _atomic_write(package_path, _package_json())
