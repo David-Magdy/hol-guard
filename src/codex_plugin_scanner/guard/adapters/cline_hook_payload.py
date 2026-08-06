@@ -334,10 +334,6 @@ def _normalized_tool(name: str | None, tool_input: dict[str, object]) -> tuple[s
         if len(commands) == 1:
             normalized_input["command"] = commands[0]
         elif len(commands) > 1:
-            # Cline's current Core executes run_commands entries concurrently.
-            # Store an exact JSON descriptor for action identity rather than
-            # inventing shell sequencing semantics. The managed bridge fans the
-            # commands out to Guard independently before execution.
             normalized_input["command"] = "cline-parallel:" + json.dumps(commands, separators=(",", ":"))
             normalized_input["cline_parallel_commands"] = commands
         return "bash", normalized_input
@@ -366,8 +362,6 @@ def _normalized_tool(name: str | None, tool_input: dict[str, object]) -> tuple[s
     if lowered in _NETWORK_TOOLS:
         urls = _urls_from_input(normalized_input)
         if urls:
-            # A command-like descriptor feeds existing host extraction without
-            # embedding credentials after shared redaction.
             normalized_input.setdefault("command", " ".join(urls))
         return "network_request", normalized_input
 
@@ -393,8 +387,6 @@ def prepare_cline_hook_payload(payload: Mapping[str, object]) -> dict[str, objec
         return normalized
 
     if event_name not in {"PreToolUse", "PostToolUse"}:
-        # Do not dereference Cline's PreCompact context_json_path or
-        # context_raw_path. They are intentionally evidence-only in 3.1.
         return normalized
 
     current_name, current_raw_input, current_output = _current_tool(payload, event_name)
@@ -407,6 +399,8 @@ def prepare_cline_hook_payload(payload: Mapping[str, object]) -> dict[str, objec
         raw_input = payload.get("tool_input", payload.get("arguments", {}))
     tool_input = _input_object(original_name, raw_input)
     tool_name, tool_input = _normalized_tool(original_name, tool_input)
+    if event_name == "PreToolUse" and tool_input.get("cline_action_bearing_unknown") is True:
+        raise ClinePayloadError(f"Cline action-bearing tool is not mapped safely: {original_name or 'unknown'}")
     if tool_name:
         normalized["tool_name"] = tool_name
     if tool_input:
@@ -437,13 +431,20 @@ def normalize_cline_payload(
 
     from ..runtime import actions as runtime_actions
 
-    return runtime_actions._normalize_action_payload(  # pyright: ignore[reportPrivateUsage]
-        prepare_cline_hook_payload(payload),
+    prepared = prepare_cline_hook_payload(payload)
+    envelope = runtime_actions._normalize_action_payload(  # pyright: ignore[reportPrivateUsage]
+        prepared,
         harness="cline",
         default_event_name=None,
         workspace=workspace,
         home_dir=home_dir,
     )
+    original_tool = _string(_mapping(prepared.get("tool_input")).get("cline_tool_name"))
+    if original_tool and original_tool.lower() in _NETWORK_TOOLS:
+        from dataclasses import replace
+
+        return replace(envelope, action_type="network_request")
+    return envelope
 
 
 def register_cline_action_normalizer() -> None:
