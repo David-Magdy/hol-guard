@@ -6,6 +6,8 @@ on:
     types: [completed]
   release:
     types: [published]
+  issues:
+    types: [opened]
   push:
     branches:
       - main
@@ -27,6 +29,11 @@ jobs:
     name: Dispatch Desktop Core alpha feed
     if: >-
       github.event_name == 'push' ||
+      (github.event_name == 'issues' &&
+       (github.event.issue.author_association == 'OWNER' ||
+        github.event.issue.author_association == 'MEMBER' ||
+        github.event.issue.author_association == 'COLLABORATOR') &&
+       startsWith(github.event.issue.title, '[desktop-core-feed]')) ||
       (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'alpha/v3.')) ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
