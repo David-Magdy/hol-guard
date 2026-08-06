@@ -1,8 +1,8 @@
 """Canonical dashboard launcher service.
 
-Single entry point for opening the local Guard dashboard from both the
-CLI (``hol-guard dashboard``) and the tray icon (``Open HOL Guard``).
-Both callers must use this service — never duplicate the launch logic.
+Single entry point for opening the local Guard dashboard from the CLI and other
+trusted local launch surfaces. Callers must use this service rather than
+duplicating authentication and browser-launch logic.
 
 Security contract:
     - Daemon auth tokens are loaded in-process and placed only in the
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 from .daemon.manager import ensure_guard_daemon, load_guard_daemon_auth_token
 from .local_dashboard_session import build_local_dashboard_session_token
 from .runtime.surface_server import GuardSurfaceRuntime
-from .tray.security import sanitize_secret
+from .secret_redaction import sanitize_secret
 
 # ---------------------------------------------------------------------------
 # Result type
@@ -86,8 +86,7 @@ def open_dashboard(
 ) -> DashboardLaunchResult:
     """Open the local Guard dashboard in the default browser.
 
-    This is the canonical launcher. Both ``hol-guard dashboard`` and the
-    tray icon's ``Open HOL Guard`` call this function. It:
+    This is the canonical launcher for trusted local callers. It:
 
     1. Ensures the local daemon is running (starts it if needed).
     2. Loads the daemon auth token from trusted storage.
@@ -153,9 +152,8 @@ def open_dashboard(
         )
 
         # 4. Open via surface runtime with deduplication. Wrap in try so any
-        # unexpected failure (e.g. surface runtime raising) is normalized into
-        # a clean redacted error payload instead of propagating to the caller
-        # (which would crash the tray's open callback).
+        # unexpected failure is normalized into a clean redacted error payload
+        # instead of propagating to a local UI caller.
         surface_runtime = GuardSurfaceRuntime(store)
         try:
             open_result = surface_runtime.ensure_surface(
