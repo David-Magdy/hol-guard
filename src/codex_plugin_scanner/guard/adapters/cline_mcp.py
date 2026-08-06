@@ -11,15 +11,10 @@ from pathlib import Path
 from ..aibom_detection import enrich_mcp_server_metadata
 from ..launcher import merge_guard_launcher_env
 from ..models import GuardArtifact, HarnessDetection
+from ..redaction import redact_text
 from ..runtime.mcp_skill_firewall import enrich_artifact_with_mcp_skill_firewall
 from .base import HarnessContext
-from .mcp_servers import (
-    ManagedMcpServer,
-    is_guard_proxy_command,
-    managed_stdio_servers,
-    proxy_cli_args,
-    proxy_process_env,
-)
+from .mcp_servers import ManagedMcpServer, is_guard_proxy_command, proxy_cli_args, proxy_process_env
 
 
 def _cline_dir(context: HarnessContext) -> Path:
@@ -40,9 +35,32 @@ def cline_mcp_settings_candidates(context: HarnessContext) -> tuple[Path, ...]:
         (
             cline_dir / "data" / "settings" / "cline_mcp_settings.json",
             cline_dir / "settings" / "cline_mcp_settings.json",
-            home / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
-            home / ".config" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
-            home / "AppData" / "Roaming" / "Code" / "User" / "globalStorage" / "saoudrizwan.claude-dev" / "settings" / "cline_mcp_settings.json",
+            home
+            / "Library"
+            / "Application Support"
+            / "Code"
+            / "User"
+            / "globalStorage"
+            / "saoudrizwan.claude-dev"
+            / "settings"
+            / "cline_mcp_settings.json",
+            home
+            / ".config"
+            / "Code"
+            / "User"
+            / "globalStorage"
+            / "saoudrizwan.claude-dev"
+            / "settings"
+            / "cline_mcp_settings.json",
+            home
+            / "AppData"
+            / "Roaming"
+            / "Code"
+            / "User"
+            / "globalStorage"
+            / "saoudrizwan.claude-dev"
+            / "settings"
+            / "cline_mcp_settings.json",
         )
     )
     unique: list[Path] = []
@@ -81,7 +99,43 @@ def _string_env(value: object) -> dict[str, str]:
     }
 
 
+def _server_args(raw: dict[str, object]) -> tuple[str, ...]:
+    value = raw.get("args")
+    return tuple(item for item in value if isinstance(item, str)) if isinstance(value, list) else ()
+
+
+def _transport(raw: dict[str, object]) -> str:
+    transport = raw.get("type") or raw.get("transport")
+    url = raw.get("url") or raw.get("endpoint")
+    if isinstance(transport, str) and transport.strip():
+        return transport.strip().lower()
+    return "http" if isinstance(url, str) and url.strip() else "stdio"
+
+
+def _managed_server(path: Path, name: str, raw: dict[str, object]) -> ManagedMcpServer | None:
+    command = raw.get("command")
+    if not isinstance(command, str) or not command.strip() or raw.get("disabled") is True:
+        return None
+    args = _server_args(raw)
+    transport = _transport(raw)
+    if transport not in {"stdio", "local"} or is_guard_proxy_command(command, args):
+        return None
+    return ManagedMcpServer(
+        harness="cline",
+        name=name,
+        source_scope="global",
+        config_path=str(path),
+        command=command,
+        args=args,
+        transport=transport,
+        env=_string_env(raw.get("env", raw.get("environment"))),
+        enabled=True,
+    )
+
+
 def detect_cline_mcp(context: HarnessContext) -> HarnessDetection:
+    """Discover Cline MCP registrations without persisting secret values."""
+
     artifacts: list[GuardArtifact] = []
     found: list[str] = []
     for path in cline_mcp_settings_candidates(context):
@@ -92,14 +146,14 @@ def detect_cline_mcp(context: HarnessContext) -> HarnessDetection:
             continue
         found.append(str(path))
         _server_key, servers = _servers_object(payload)
-        for name, raw in servers.items():
-            if not isinstance(raw, dict):
+        for name, raw_value in servers.items():
+            if not isinstance(raw_value, dict):
                 continue
+            raw = {str(key): value for key, value in raw_value.items() if isinstance(key, str)}
             command = raw.get("command")
-            args_value = raw.get("args")
-            args = tuple(item for item in args_value if isinstance(item, str)) if isinstance(args_value, list) else ()
+            args = _server_args(raw)
+            safe_args = tuple(redact_text(item).text for item in args)
             url = raw.get("url") or raw.get("endpoint")
-            transport = raw.get("type") or raw.get("transport")
             environment = _string_env(raw.get("env", raw.get("environment")))
             raw_headers = raw.get("headers")
             headers = (
@@ -107,15 +161,10 @@ def detect_cline_mcp(context: HarnessContext) -> HarnessDetection:
                 if isinstance(raw_headers, dict)
                 else {}
             )
-            normalized_transport = (
-                str(transport).strip().lower()
-                if isinstance(transport, str) and transport.strip()
-                else ("http" if isinstance(url, str) and url.strip() else "stdio")
-            )
+            transport = _transport(raw)
             metadata = enrich_mcp_server_metadata(
                 {
                     "name": name,
-                    "env": environment,
                     "env_keys": sorted(environment),
                     "headers_keys": sorted(headers),
                     "enabled": raw.get("disabled") is not True,
@@ -125,10 +174,10 @@ def detect_cline_mcp(context: HarnessContext) -> HarnessDetection:
                     ),
                 },
                 command=command if isinstance(command, str) else None,
-                args=args,
+                args=safe_args,
                 url=url if isinstance(url, str) else None,
-                transport=normalized_transport,
-                configured_headers=headers,
+                transport=transport,
+                configured_headers={key: "[configured]" for key in headers},
             )
             artifacts.append(
                 enrich_artifact_with_mcp_skill_firewall(
@@ -140,9 +189,9 @@ def detect_cline_mcp(context: HarnessContext) -> HarnessDetection:
                         source_scope="global",
                         config_path=str(path),
                         command=command if isinstance(command, str) else None,
-                        args=args,
+                        args=safe_args,
                         url=url if isinstance(url, str) else None,
-                        transport=normalized_transport,
+                        transport=transport,
                         metadata=metadata,
                     )
                 )
@@ -173,7 +222,10 @@ def _sha(data: bytes) -> str:
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.hol-guard.tmp-{os.getpid()}")
-    temporary.write_bytes(data)
+    with temporary.open("wb") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, path)
 
 
@@ -190,35 +242,39 @@ def _proxy_entry(context: HarnessContext, server: ManagedMcpServer) -> dict[str,
         "args": args,
         "type": "stdio",
     }
-    env = merge_guard_launcher_env(proxy_process_env(server.env))
-    if env:
-        entry["env"] = env
+    environment = merge_guard_launcher_env(proxy_process_env(server.env))
+    if environment:
+        entry["env"] = environment
     return entry
 
 
 def install_cline_mcp_proxies(context: HarnessContext) -> dict[str, object]:
-    detection = detect_cline_mcp(context)
-    by_path: dict[str, list[ManagedMcpServer]] = {}
-    for server in managed_stdio_servers(detection):
-        by_path.setdefault(server.config_path, []).append(server)
+    """Proxy eligible local stdio servers while keeping raw secret values in-memory only."""
+
     changed: list[str] = []
     managed_servers: list[str] = []
-    skipped_remote = [
-        artifact.name
-        for artifact in detection.artifacts
-        if artifact.artifact_type == "mcp_server"
-        and artifact.command is None
-        and isinstance(artifact.url, str)
-        and artifact.url.strip()
-    ]
-    for path_text, servers in by_path.items():
-        path = Path(path_text)
-        resolved_home = context.home_dir.resolve(strict=False)
-        if not path.resolve(strict=False).is_relative_to(resolved_home):
+    skipped_remote: list[str] = []
+    for path in cline_mcp_settings_candidates(context):
+        if not path.is_file() or not path.resolve(strict=False).is_relative_to(context.home_dir.resolve(strict=False)):
+            continue
+        payload = _json_object(path)
+        if not payload:
+            continue
+        key, entries = _servers_object(payload)
+        replacements: dict[str, object] = {}
+        for name, raw_value in entries.items():
+            if not isinstance(raw_value, dict):
+                continue
+            raw = {str(item_key): value for item_key, value in raw_value.items() if isinstance(item_key, str)}
+            server = _managed_server(path, name, raw)
+            if server is not None:
+                replacements[name] = _proxy_entry(context, server)
+                managed_servers.append(name)
+            elif _transport(raw) not in {"stdio", "local"}:
+                skipped_remote.append(name)
+        if not replacements:
             continue
         original_bytes = path.read_bytes()
-        payload = _json_object(path)
-        key, entries = _servers_object(payload)
         backup_path = _backup_path(context, path)
         if not backup_path.exists():
             backup_payload = {
@@ -229,11 +285,7 @@ def install_cline_mcp_proxies(context: HarnessContext) -> dict[str, object]:
                 "managed_sha256": None,
             }
             _atomic_write_bytes(backup_path, (json.dumps(backup_payload, sort_keys=True) + "\n").encode("utf-8"))
-        for server in servers:
-            if server.name not in entries or not isinstance(entries[server.name], dict):
-                continue
-            entries[server.name] = _proxy_entry(context, server)
-            managed_servers.append(server.name)
+        entries.update(replacements)
         payload[key] = entries
         managed_bytes = (json.dumps(payload, indent=2) + "\n").encode("utf-8")
         _atomic_write_bytes(path, managed_bytes)
@@ -266,17 +318,8 @@ def cline_mcp_proxy_state(context: HarnessContext) -> dict[str, object]:
                     pass
             matched = isinstance(managed_sha, str) and current_sha == managed_sha
             ready = ready and matched
-            records.append(
-                {
-                    "config_path": config_value,
-                    "managed_integrity_ok": matched,
-                }
-            )
-    return {
-        "configured": bool(records),
-        "ready": ready if records else True,
-        "configs": records,
-    }
+            records.append({"config_path": config_value, "managed_integrity_ok": matched})
+    return {"configured": bool(records), "ready": ready if records else True, "configs": records}
 
 
 def restore_cline_mcp_proxies(context: HarnessContext) -> dict[str, object]:
