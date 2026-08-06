@@ -16,8 +16,9 @@ from .guard_cli_attestation import resolve_attested_guard_cli
 _MANAGED_MARKER = "HOL_GUARD_MANAGED_CLINE_PLUGIN_V1"
 _SCHEMA_VERSION = 1
 _PLUGIN_NAME = "hol-guard"
-_PLUGIN_TIMEOUT_MS = 12_000
-_MAX_PAYLOAD_BYTES = 1024 * 1024
+_PLUGIN_TIMEOUT_MS = 9_000
+_MAX_PAYLOAD_BYTES = 256 * 1024
+_MAX_PRETOOL_INPUT_BYTES = 64 * 1024
 _PROOF_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 
@@ -36,7 +37,10 @@ def _proof_path(context: HarnessContext, name: str) -> Path:
 def _atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.hol-guard.tmp-{os.getpid()}")
-    temporary.write_text(content, encoding="utf-8")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, path)
 
 
@@ -64,6 +68,7 @@ import {{ dirname }} from "node:path";
 const GUARD_CLI = {json.dumps(guard_cli)};
 const TIMEOUT_MS = {_PLUGIN_TIMEOUT_MS};
 const MAX_BYTES = {_MAX_PAYLOAD_BYTES};
+const MAX_PRETOOL_INPUT_BYTES = {_MAX_PRETOOL_INPUT_BYTES};
 const PROOFS = {{
   loaded: {json.dumps(proof_loaded)},
   pretool: {json.dumps(proof_pre)},
@@ -84,6 +89,14 @@ function proof(name) {{
     renameSync(temporary, target);
   }} catch {{
     // Proof persistence is diagnostic; enforcement still follows Guard's decision.
+  }}
+}}
+
+function jsonBytes(value) {{
+  try {{
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  }} catch {{
+    return Number.POSITIVE_INFINITY;
   }}
 }}
 
@@ -182,6 +195,9 @@ function payloadsForGuard(eventName, toolCall, input, result) {{
 }}
 
 function invokeGuard(eventName, toolCall, input, result) {{
+  if (eventName === "PreToolUse" && jsonBytes(input) > MAX_PRETOOL_INPUT_BYTES) {{
+    return {{ ok: false, reason: "HOL Guard rejected an oversized Cline pre-tool request." }};
+  }}
   let lastPayload;
   for (const payload of payloadsForGuard(eventName, toolCall, input, result)) {{
     const encoded = JSON.stringify(payload);
