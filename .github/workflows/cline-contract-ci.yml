@@ -1,0 +1,148 @@
+name: Cline adapter contract
+
+on:
+  pull_request:
+    branches:
+      - release/3.1
+    paths:
+      - src/codex_plugin_scanner/guard/adapters/cline*.py
+      - src/codex_plugin_scanner/guard/adapters/__init__.py
+      - src/codex_plugin_scanner/guard/cli/install_commands.py
+      - src/codex_plugin_scanner/guard/cli/commands_parser_local.py
+      - tests/test_cline_*.py
+      - docs/guard/cline-local-protection-contract.md
+      - docs/guard/harness-support.md
+      - dashboard/src/apps/app-catalog.ts
+      - dashboard/src/apps/harness-setup-target.ts
+      - ci/test-suite-ratchet-baseline.json
+      - .github/workflows/cline-contract-ci.yml
+  push:
+    branches:
+      - release/3.1
+    paths:
+      - src/codex_plugin_scanner/guard/adapters/cline*.py
+      - src/codex_plugin_scanner/guard/adapters/__init__.py
+      - src/codex_plugin_scanner/guard/cli/install_commands.py
+      - src/codex_plugin_scanner/guard/cli/commands_parser_local.py
+      - tests/test_cline_*.py
+      - docs/guard/cline-local-protection-contract.md
+      - docs/guard/harness-support.md
+      - dashboard/src/apps/app-catalog.ts
+      - dashboard/src/apps/harness-setup-target.ts
+      - ci/test-suite-ratchet-baseline.json
+      - .github/workflows/cline-contract-ci.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cline-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Validate Cline Python formatting
+        run: >-
+          uv run --no-sync python -m ruff format --check
+          src/codex_plugin_scanner/guard/adapters/cline.py
+          src/codex_plugin_scanner/guard/adapters/cline_bridge.py
+          src/codex_plugin_scanner/guard/adapters/cline_contract.py
+          src/codex_plugin_scanner/guard/adapters/cline_detection.py
+          src/codex_plugin_scanner/guard/adapters/cline_hook_payload.py
+          src/codex_plugin_scanner/guard/adapters/cline_hooks.py
+          src/codex_plugin_scanner/guard/adapters/cline_mcp.py
+          src/codex_plugin_scanner/guard/adapters/cline_plugin.py
+          tests/test_cline_payload_contract.py
+          tests/test_cline_hook_transports.py
+          tests/test_cline_mcp.py
+
+      - name: Lint Cline Python
+        run: >-
+          uv run --no-sync python -m ruff check
+          src/codex_plugin_scanner/guard/adapters/cline.py
+          src/codex_plugin_scanner/guard/adapters/cline_bridge.py
+          src/codex_plugin_scanner/guard/adapters/cline_contract.py
+          src/codex_plugin_scanner/guard/adapters/cline_detection.py
+          src/codex_plugin_scanner/guard/adapters/cline_hook_payload.py
+          src/codex_plugin_scanner/guard/adapters/cline_hooks.py
+          src/codex_plugin_scanner/guard/adapters/cline_mcp.py
+          src/codex_plugin_scanner/guard/adapters/cline_plugin.py
+          tests/test_cline_payload_contract.py
+          tests/test_cline_hook_transports.py
+          tests/test_cline_mcp.py
+
+      - name: Run Cline adapter contract tests
+        run: >-
+          uv run --no-sync pytest
+          tests/test_cline_payload_contract.py
+          tests/test_cline_hook_transports.py
+          tests/test_cline_mcp.py
+          --tb=short
+
+  package:
+    name: package and inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Smoke test built wheel
+        shell: bash
+        run: |
+          wheel=$(find dist -maxdepth 1 -name 'hol_guard-*.whl' -print -quit)
+          test -n "$wheel"
+          uv tool run --from "$wheel" hol-guard --version
+
+      - name: Validate test-suite ratchet
+        run: |
+          uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
