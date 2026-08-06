@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -24,7 +25,8 @@ _EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "TaskStart", "TaskEr
 
 
 def cline_hook_roots(context: HarnessContext) -> tuple[Path, ...]:
-    """Return roots accepted by both the VS Code hook runtime and Cline Core."""
+    """Return roots accepted by the VS Code hook runtime and Cline Core."""
+
     return (context.home_dir / "Documents" / "Cline" / "Hooks", context.home_dir / ".cline" / "hooks")
 
 
@@ -37,7 +39,7 @@ def _proof_path(context: HarnessContext, event: str) -> Path:
 
 
 def _worker_path(context: HarnessContext, event: str) -> Path:
-    return context.guard_home / "managed" / "cline" / "windows-hooks" / f"{event}.py"
+    return context.guard_home / "managed" / "cline" / "hook-workers" / f"{event}.py"
 
 
 def _managed(path: Path) -> bool:
@@ -49,6 +51,7 @@ def _managed(path: Path) -> bool:
 
 def _slot_for_event(root: Path, event: str, *, windows: bool | None = None) -> Path:
     """Return Cline's canonical slot, refusing to replace a user hook."""
+
     is_windows = os.name == "nt" if windows is None else windows
     path = root / f"{event}{'.ps1' if is_windows else ''}"
     if path.exists() and not _managed(path):
@@ -73,19 +76,19 @@ def _safe_destination(path: Path, context: HarnessContext) -> None:
 
 def _write(path: Path, text: str, *, executable: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.hol-guard.tmp-{os.getpid()}")
-    temp.write_text(text, encoding="utf-8")
+    temporary = path.with_name(f".{path.name}.hol-guard.tmp-{os.getpid()}")
+    temporary.write_text(text, encoding="utf-8")
     if executable and os.name != "nt":
-        temp.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-    os.replace(temp, path)
+        temporary.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    os.replace(temporary, path)
 
 
 def _hook_source(context: HarnessContext, *, event_name: str, guard_cli: list[str]) -> str:
-    """Generate the bounded Python worker used by POSIX hooks and Windows wrappers."""
+    """Generate the bounded Python worker invoked by platform launchers."""
+
     proof = str(_proof_path(context, event_name))
     blocking = event_name == "PreToolUse"
-    return f'''#!/usr/bin/env python3
-# {_MARKER}
+    return f'''# {_MARKER}
 from __future__ import annotations
 import json, os, subprocess, sys, time
 from pathlib import Path
@@ -194,6 +197,17 @@ if __name__=="__main__": raise SystemExit(main())
 '''
 
 
+def _posix_wrapper(*, worker: Path, python: str) -> str:
+    return "\n".join(
+        (
+            "#!/bin/sh",
+            f"# {_MARKER}",
+            f"exec {shlex.quote(python)} -I -s {shlex.quote(str(worker))}",
+            "",
+        )
+    )
+
+
 def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -246,9 +260,11 @@ def _hook_command(path: Path) -> list[str]:
 
 
 def install_cline_hooks(context: HarnessContext) -> dict[str, object]:
-    """Install Cline global hooks, then run a synthetic wire-contract canary."""
+    """Install global Cline hooks, then run a synthetic wire-contract canary."""
+
     attested = resolve_attested_guard_cli(context)
     guard = [*attested.command, "guard", "hook"]
+    interpreter = str(attested.python.executable)
     root = cline_hook_roots(context)[0]
     paths: dict[str, str] = {}
     digests: dict[str, str] = {}
@@ -256,21 +272,21 @@ def install_cline_hooks(context: HarnessContext) -> dict[str, object]:
     worker_digests: dict[str, str] = {}
     for event in _EVENTS:
         slot = _slot_for_event(root, event)
+        worker = _worker_path(context, event)
         _safe_destination(slot, context)
+        _safe_destination(worker, context)
         worker_source = _hook_source(context, event_name=event, guard_cli=guard)
+        _write(worker, worker_source)
         if os.name == "nt":
-            worker = _worker_path(context, event)
-            _safe_destination(worker, context)
-            _write(worker, worker_source)
-            wrapper = _powershell_wrapper(worker=worker, python=guard[0], blocking=event == "PreToolUse")
-            _write(slot, wrapper)
-            workers[event] = str(worker)
-            worker_digests[event] = sha256(worker_source.encode()).hexdigest()
-            digests[event] = sha256(wrapper.encode()).hexdigest()
+            launcher = _powershell_wrapper(worker=worker, python=interpreter, blocking=event == "PreToolUse")
+            _write(slot, launcher)
         else:
-            _write(slot, worker_source, executable=True)
-            digests[event] = sha256(worker_source.encode()).hexdigest()
+            launcher = _posix_wrapper(worker=worker, python=interpreter)
+            _write(slot, launcher, executable=True)
         paths[event] = str(slot)
+        digests[event] = sha256(launcher.encode()).hexdigest()
+        workers[event] = str(worker)
+        worker_digests[event] = sha256(worker_source.encode()).hexdigest()
     state = {
         "schema_version": _SCHEMA,
         "transport": "hooks",
@@ -314,7 +330,15 @@ def run_cline_hook_canary(context: HarnessContext) -> dict[str, object]:
     }
     env = {**os.environ, "HOL_GUARD_CLINE_CANARY": "1"}
     try:
-        result = subprocess.run(command, input=json.dumps(payload), capture_output=True, text=True, timeout=_TIMEOUT + 2, env=env, check=False)
+        result = subprocess.run(
+            command,
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT + 2,
+            env=env,
+            check=False,
+        )
         output = json.loads(result.stdout.strip())
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         return {"ok": False, "reason": type(exc).__name__}
@@ -334,6 +358,7 @@ def _proof_state(context: HarnessContext, event: str) -> dict[str, object]:
 def cline_native_hook_state(context: HarnessContext) -> dict[str, object]:
     state = _load_state(context)
     paths, digests = state.get("paths"), state.get("sha256")
+    workers, worker_digests = state.get("workers"), state.get("worker_sha256")
     missing: list[str] = []
     modified: list[str] = []
     if not isinstance(paths, dict) or not isinstance(digests, dict):
@@ -353,19 +378,23 @@ def cline_native_hook_state(context: HarnessContext) -> dict[str, object]:
             missing.append(event)
         elif actual != digest:
             modified.append(event)
-    workers, worker_digests = state.get("workers"), state.get("worker_sha256")
-    if isinstance(workers, dict) and isinstance(worker_digests, dict):
-        for event, value in workers.items():
-            digest = worker_digests.get(event)
+    if not isinstance(workers, dict) or not isinstance(worker_digests, dict):
+        missing.extend(f"{event}:worker" for event in _EVENTS)
+    else:
+        for event in _EVENTS:
+            value, digest = workers.get(event), worker_digests.get(event)
             if not isinstance(value, str) or not isinstance(digest, str):
                 missing.append(f"{event}:worker")
                 continue
+            worker = Path(value)
             try:
-                actual = sha256(Path(value).read_bytes()).hexdigest()
+                actual = sha256(worker.read_bytes()).hexdigest()
             except OSError:
                 missing.append(f"{event}:worker")
                 continue
-            if actual != digest:
+            if not _managed(worker):
+                missing.append(f"{event}:worker")
+            elif actual != digest:
                 modified.append(f"{event}:worker")
     canary = run_cline_hook_canary(context) if not missing and not modified else {"ok": False}
     pre, post = _proof_state(context, "PreToolUse"), _proof_state(context, "PostToolUse")
@@ -407,7 +436,18 @@ def uninstall_cline_hooks(context: HarnessContext) -> dict[str, object]:
                 retained.append(str(path))
     if not retained and _state_path(context).is_file():
         _state_path(context).unlink()
-    return {"transport": "hooks", "removed": removed, "retained_modified_or_unowned": retained, "complete": not retained}
+    return {
+        "transport": "hooks",
+        "removed": removed,
+        "retained_modified_or_unowned": retained,
+        "complete": not retained,
+    }
 
 
-__all__ = ["cline_hook_roots", "cline_native_hook_state", "install_cline_hooks", "run_cline_hook_canary", "uninstall_cline_hooks"]
+__all__ = [
+    "cline_hook_roots",
+    "cline_native_hook_state",
+    "install_cline_hooks",
+    "run_cline_hook_canary",
+    "uninstall_cline_hooks",
+]
