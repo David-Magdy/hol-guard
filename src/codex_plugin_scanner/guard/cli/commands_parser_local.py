@@ -87,7 +87,7 @@ def _configure_guard_local_parsers(
         app_parser.add_argument("harness")
         _add_guard_common_args(app_parser, suppress_defaults=True)
         app_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
-        app_parser.add_argument("--surface", choices=("editor", "cli"))
+        app_parser.add_argument("--surface", choices=("editor", "cli", "auto", "hooks", "plugin", "all"))
         if app_command in {"connect", "repair"}:
             app_parser.add_argument("--dry-run", action="store_true")
         if app_command == "disconnect":
