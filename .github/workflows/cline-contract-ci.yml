@@ -11,9 +11,13 @@ on:
       - src/codex_plugin_scanner/guard/cli/install_commands.py
       - src/codex_plugin_scanner/guard/cli/commands_parser_local.py
       - src/codex_plugin_scanner/guard/cli/commands_support_interaction.py
+      - src/codex_plugin_scanner/guard/product_model.py
+      - src/codex_plugin_scanner/guard/schemas/guard_product_model_v1.json
       - tests/test_cline_*.py
+      - tests/fixtures/cline/**
       - docs/guard/cline-local-protection-contract.md
       - docs/guard/cline-security-closure.md
+      - docs/guard/cline-upstream-evidence.md
       - docs/guard/harness-support.md
       - dashboard/src/apps/app-catalog.ts
       - dashboard/src/apps/harness-setup-target.ts
@@ -29,9 +33,13 @@ on:
       - src/codex_plugin_scanner/guard/cli/install_commands.py
       - src/codex_plugin_scanner/guard/cli/commands_parser_local.py
       - src/codex_plugin_scanner/guard/cli/commands_support_interaction.py
+      - src/codex_plugin_scanner/guard/product_model.py
+      - src/codex_plugin_scanner/guard/schemas/guard_product_model_v1.json
       - tests/test_cline_*.py
+      - tests/fixtures/cline/**
       - docs/guard/cline-local-protection-contract.md
       - docs/guard/cline-security-closure.md
+      - docs/guard/cline-upstream-evidence.md
       - docs/guard/harness-support.md
       - dashboard/src/apps/app-catalog.ts
       - dashboard/src/apps/harness-setup-target.ts
@@ -89,6 +97,8 @@ jobs:
           tests/test_cline_hook_transports.py
           tests/test_cline_mcp.py
           tests/test_cline_completion_gates.py
+          tests/test_cline_fixture_contract.py
+          tests/test_cline_surface_dispatch.py
 
       - name: Lint Cline Python
         run: >-
@@ -105,6 +115,8 @@ jobs:
           tests/test_cline_hook_transports.py
           tests/test_cline_mcp.py
           tests/test_cline_completion_gates.py
+          tests/test_cline_fixture_contract.py
+          tests/test_cline_surface_dispatch.py
 
       - name: Run Cline adapter contract tests
         run: >-
@@ -113,6 +125,8 @@ jobs:
           tests/test_cline_hook_transports.py
           tests/test_cline_mcp.py
           tests/test_cline_completion_gates.py
+          tests/test_cline_fixture_contract.py
+          tests/test_cline_surface_dispatch.py
           --tb=short
 
   package:
