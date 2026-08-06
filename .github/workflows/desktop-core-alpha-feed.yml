@@ -169,7 +169,7 @@ jobs:
           enable-cache: true
 
       - name: Fetch exact tagged Core source
-        if: steps.release.outputs.available == 'true' && steps.existing.outputs.attestation_present != 'true'
+        if: steps.release.outputs.available == 'true'
         id: source
         env:
           CORE_TAG: ${{ steps.release.outputs.tag }}
@@ -186,7 +186,7 @@ jobs:
           echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Download existing immutable binary
-        if: steps.release.outputs.available == 'true' && steps.existing.outputs.attestation_present != 'true' && steps.existing.outputs.binary_present == 'true'
+        if: steps.release.outputs.available == 'true' && steps.existing.outputs.binary_present == 'true'
         env:
           CORE_TAG: ${{ steps.release.outputs.tag }}
           CORE_VERSION: ${{ steps.release.outputs.version }}
@@ -244,7 +244,7 @@ jobs:
           export HOL_GUARD_HOME="$RUNNER_TEMP/smoke-home"
           mkdir -p "$HOL_GUARD_HOME"
           "$BUILT" desktop bootstrap --json > "$RUNNER_TEMP/bootstrap.json"
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -267,7 +267,7 @@ jobs:
           KEYCHAIN="$RUNNER_TEMP/core-update.keychain-db"
           KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
           export APPLE_CERTIFICATE
-          python - <<'PY'
+          python3 - <<'PY'
           import base64
           import os
           from pathlib import Path
@@ -303,7 +303,7 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --wait \
             --output-format json > "$RUNNER_TEMP/notary-result.json"
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -314,7 +314,7 @@ jobs:
           PY
 
       - name: Verify local immutable binary and Apple team
-        if: steps.release.outputs.available == 'true' && steps.existing.outputs.attestation_present != 'true'
+        if: steps.release.outputs.available == 'true'
         env:
           CORE_VERSION: ${{ steps.release.outputs.version }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -333,7 +333,7 @@ jobs:
           export HOL_GUARD_HOME="$RUNNER_TEMP/verify-home"
           mkdir -p "$HOL_GUARD_HOME"
           "$VERIFY" desktop bootstrap --json > "$RUNNER_TEMP/bootstrap.json"
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -347,7 +347,7 @@ jobs:
           rm -f "$VERIFY"
 
       - name: Download or create update manifest
-        if: steps.release.outputs.available == 'true' && steps.existing.outputs.attestation_present != 'true'
+        if: steps.release.outputs.available == 'true'
         env:
           CORE_VERSION: ${{ steps.release.outputs.version }}
           CORE_TAG: ${{ steps.release.outputs.tag }}
@@ -366,7 +366,7 @@ jobs:
               --dir "$DIST"
           else
             export BINARY MANIFEST
-            python - <<'PY'
+            python3 - <<'PY'
           import hashlib
           import json
           import os
@@ -393,7 +393,7 @@ jobs:
           fi
 
           export BINARY MANIFEST
-          python - <<'PY'
+          python3 - <<'PY'
           import hashlib
           import json
           import os
@@ -440,7 +440,7 @@ jobs:
           gh release view "$CORE_TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             > "$RUNNER_TEMP/final-assets.json"
           export BASE
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -461,8 +461,8 @@ jobs:
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: |
-            ${{ runner.temp }}/dist/hol-guard-core-${{ steps.release.outputs.version }}-aarch64-apple-darwin
-            ${{ runner.temp }}/dist/hol-guard-core-${{ steps.release.outputs.version }}-aarch64-apple-darwin.json
+            ${{ runner.temp }}/dist/hol-guard-core-${{ steps.release.outputs.version }}-${{ env.RELEASE_TARGET }}
+            ${{ runner.temp }}/dist/hol-guard-core-${{ steps.release.outputs.version }}-${{ env.RELEASE_TARGET }}.json
 
       - name: Record completed provenance
         if: steps.release.outputs.available == 'true' && steps.existing.outputs.attestation_present != 'true'
@@ -475,7 +475,7 @@ jobs:
           set -euo pipefail
           MARKER="$RUNNER_TEMP/dist/hol-guard-core-${CORE_VERSION}-${RELEASE_TARGET}.attested.json"
           export MARKER
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import os
           from datetime import datetime, timezone
