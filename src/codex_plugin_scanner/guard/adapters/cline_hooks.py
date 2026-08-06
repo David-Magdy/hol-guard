@@ -35,6 +35,10 @@ def _state_path(context: HarnessContext) -> Path:
     return context.guard_home / "managed" / "cline" / "native-hooks-state.json"
 
 
+def _adapter_state_path(context: HarnessContext) -> Path:
+    return context.guard_home / "managed" / "cline" / "adapter-state.json"
+
+
 def _proof_path(context: HarnessContext, event: str) -> Path:
     return context.guard_home / "managed" / "cline" / "proofs" / f"native-{event.lower()}.json"
 
@@ -91,19 +95,27 @@ def _hook_source(context: HarnessContext, *, event_name: str, guard_cli: list[st
     """Generate the bounded Python worker invoked by platform launchers."""
 
     proof = str(_proof_path(context, event_name))
+    adapter_state = str(_adapter_state_path(context))
     blocking = event_name == "PreToolUse"
     return f'''# {_MARKER}
 from __future__ import annotations
 import json, os, subprocess, sys, time
 from pathlib import Path
 EVENT={event_name!r}; BLOCKING={blocking!r}; MAX_BYTES={_MAX_BYTES}; MAX_PRETOOL_BYTES={_MAX_PRETOOL_BYTES}; MAX_DEPTH={_MAX_DEPTH}; TIMEOUT={_TIMEOUT}
-GUARD={guard_cli!r}; PROOF=Path({proof!r})
+GUARD={guard_cli!r}; PROOF=Path({proof!r}); ADAPTER_STATE=Path({adapter_state!r})
 
 def emit(value):
     sys.stdout.write(json.dumps(value,separators=(",",":"))+"\\n"); sys.stdout.flush()
 
 def fail(message):
     emit({{"cancel": bool(BLOCKING), "errorMessage": message if BLOCKING else "", "contextModification": message}})
+
+def active_transport():
+    if os.environ.get("HOL_GUARD_CLINE_CANARY")=="1": return "hooks"
+    try: value=json.loads(ADAPTER_STATE.read_text(encoding="utf-8"))
+    except (OSError,json.JSONDecodeError): return None
+    transport=value.get("active_transport") if isinstance(value,dict) else None
+    return transport if isinstance(transport,str) else None
 
 def depth_ok(value):
     stack=[(value,1)]
@@ -195,6 +207,11 @@ def main():
     except (UnicodeDecodeError,json.JSONDecodeError): fail("HOL Guard could not parse the Cline hook request safely."); return 0
     if not isinstance(value,dict) or not depth_ok(value): fail("HOL Guard rejected an invalid Cline hook request."); return 0
     if not pretool_size_ok(value): fail("HOL Guard rejected an oversized Cline pre-tool request."); return 0
+    transport=active_transport()
+    if transport!="hooks":
+        if transport is None: fail("HOL Guard Cline transport state is unavailable; this action was not allowed to proceed safely.")
+        else: emit({{"cancel":False,"errorMessage":"","contextModification":""}})
+        return 0
     denied=False; why=""
     for item in command_payloads(value):
         try: result=subprocess.run([*GUARD,"--harness","cline","--json"],input=json.dumps(item),capture_output=True,text=True,timeout=TIMEOUT,check=False)
