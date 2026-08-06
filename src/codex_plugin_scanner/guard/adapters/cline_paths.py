@@ -46,4 +46,43 @@ def cline_plugin_root(context: HarnessContext) -> Path:
     return cline_data_dir(context) / "plugins" / "hol-guard"
 
 
-__all__ = ["cline_data_dir", "cline_hook_roots", "cline_plugin_root"]
+def is_cline_owned_path(context: HarnessContext, path: Path) -> bool:
+    """Return true when a path is inside the user's home or configured Cline data root."""
+
+    candidate = path.resolve(strict=False)
+    roots = (context.home_dir.resolve(strict=False), cline_data_dir(context).resolve(strict=False))
+    return any(candidate == root or candidate.is_relative_to(root) for root in roots)
+
+
+def ensure_safe_cline_destination(context: HarnessContext, path: Path) -> None:
+    """Reject writes outside known roots or through an existing symlink ancestor."""
+
+    home = context.home_dir.resolve(strict=False)
+    guard_home = context.guard_home.resolve(strict=False)
+    data_root = cline_data_dir(context).resolve(strict=False)
+    parent = path.parent.resolve(strict=False)
+    permitted_roots = (home, guard_home, data_root)
+    if not any(parent == root or parent.is_relative_to(root) for root in permitted_roots):
+        raise RuntimeError("Cline destination escapes Guard-managed or configured Cline roots")
+
+    lexical_roots = {context.home_dir.absolute(), context.guard_home.absolute(), cline_data_dir(context).absolute()}
+    current = path.parent.absolute()
+    while True:
+        if current.exists() and current.is_symlink():
+            raise RuntimeError(f"Cline destination parent is a symlink: {current}")
+        if current in lexical_roots:
+            break
+        if current == current.parent:
+            raise RuntimeError("Cline destination could not be anchored to a trusted root")
+        current = current.parent
+    if path.exists() and path.is_symlink():
+        raise RuntimeError(f"Cline destination is a symlink: {path}")
+
+
+__all__ = [
+    "cline_data_dir",
+    "cline_hook_roots",
+    "cline_plugin_root",
+    "ensure_safe_cline_destination",
+    "is_cline_owned_path",
+]
