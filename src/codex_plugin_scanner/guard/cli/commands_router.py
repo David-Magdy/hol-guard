@@ -22,7 +22,7 @@ _EARLY_HANDLERS = {
     "pytest-contained": "_run_guard_pytest_contained_command",
     "verified-read": "_run_guard_verified_read_command",
     "scan": "_run_guard_scan_command",
-    "preflight": "_run_guard_preflight_command",
+    "preflight": "_run_guard_safe_preflight_command",
     "mcp": "_run_guard_mcp_command",
 }
 
@@ -97,6 +97,17 @@ def _normalize_guard_handler_result(result: object) -> int:
     return result if isinstance(result, int) else 1
 
 
+def _invoke_guard_handler(handler: object, args: argparse.Namespace, **kwargs: object) -> int:
+    if not callable(handler):
+        return 1
+    try:
+        result = handler(args, **kwargs)
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
+    return _normalize_guard_handler_result(result)
+
+
 def _should_prime_policy_integrity(args: argparse.Namespace) -> bool:
     """Prime local integrity state in the long-lived daemon process."""
 
@@ -118,8 +129,12 @@ def run_guard_command(
     "Execute a Guard subcommand."
     handler = _resolve_guard_handler(_EARLY_HANDLERS, args.guard_command)
     if callable(handler):
-        result = handler(args, input_text=input_text, output_stream=output_stream)
-        return _normalize_guard_handler_result(result)
+        return _invoke_guard_handler(
+            handler,
+            args,
+            input_text=input_text,
+            output_stream=output_stream,
+        )
 
     home_override = getattr(args, "home", None)
     guard_home = resolve_guard_home(getattr(args, "guard_home", None) or home_override)
@@ -148,7 +163,8 @@ def run_guard_command(
 
     handler = _resolve_guard_handler(_PRESTORE_HANDLERS, args.guard_command)
     if callable(handler):
-        result = handler(
+        return _invoke_guard_handler(
+            handler,
             args,
             guard_home=guard_home,
             workspace=workspace,
@@ -156,7 +172,6 @@ def run_guard_command(
             input_text=input_text,
             output_stream=output_stream,
         )
-        return _normalize_guard_handler_result(result)
 
     source = getattr(args, "source", "default")
     try:
@@ -174,7 +189,8 @@ def run_guard_command(
 
     handler = _resolve_guard_handler(_COMMON_HANDLERS, args.guard_command)
     if callable(handler):
-        result = handler(
+        return _invoke_guard_handler(
+            handler,
             args,
             guard_home=guard_home,
             workspace=workspace,
@@ -184,7 +200,6 @@ def run_guard_command(
             input_text=input_text,
             output_stream=output_stream,
         )
-        return _normalize_guard_handler_result(result)
     return 1
 
 __all__ = [

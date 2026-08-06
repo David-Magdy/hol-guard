@@ -31,6 +31,7 @@ from . import commands_support_connect as _commands_support_connect
 from . import commands_support_service as _commands_support_service
 from . import commands_verified_read as _commands_verified_read
 from . import commands_contained_write as _commands_contained_write
+from . import commands_preflight as _commands_preflight
 from . import commands_dispatch_local as _commands_dispatch_local
 from . import commands_dispatch_mdm as _commands_dispatch_mdm
 from . import commands_dispatch_proxy as _commands_dispatch_proxy
@@ -70,6 +71,7 @@ _SOURCE_MODULES: tuple[ModuleType, ...] = (
     _commands_support_service,
     _commands_verified_read,
     _commands_contained_write,
+    _commands_preflight,
     _commands_dispatch_local,
     _commands_dispatch_mdm,
     _commands_dispatch_proxy,
