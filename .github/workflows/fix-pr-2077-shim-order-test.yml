@@ -1,0 +1,88 @@
+name: Fix PR 2077 shim ordering assertion
+
+on:
+  push:
+    branches:
+      - chore/rebuild-pr-2077-clean
+    paths:
+      - .github/workflows/fix-pr-2077-shim-order-test.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-pr-2077-shim-order-test
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: desktop/3.0-contracts
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Update stale source-order assertion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/test_guard_package_shims.py")
+          text = path.read_text(encoding="utf-8")
+          old = '    guard_index = shim_source.index("guard_process = subprocess.run")\n'
+          new = '    guard_index = shim_source.index("guard_process = _run_guard_with_store_lock_retry")\n'
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one stale source assertion, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
+      - name: Install frozen dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Validate affected behavior and release gates
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -m ruff format --check tests/test_guard_package_shims.py
+          uv run --no-sync python -m ruff check tests/test_guard_package_shims.py
+          uv run --no-sync pytest \
+            tests/test_guard_package_shims.py::test_package_shim_tries_owned_containment_before_guard_review \
+            tests/test_guard_package_shims.py::test_package_manager_shim_waits_out_transient_store_writer_lock \
+            --tb=short
+          uv run --no-sync pytest tests/test_guard_desktop_contract.py --tb=short
+          uv run --no-sync python tests/guard_command_decision_diff.py --check
+          uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
+          rm test-inventory.json
+
+      - name: Publish validated product tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: e1b3c7181153d2c2b28eac32018f637024f9f29c
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_guard_package_shims.py
+          git diff --cached --check
+          git commit -m "test(guard): update package-shim ordering assertion"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin HEAD:refs/heads/chore/pr-2077-shim-order-test-fix
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
