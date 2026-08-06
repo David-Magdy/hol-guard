@@ -30,6 +30,40 @@ _HARNESS_OBSERVED_COPY = {
 }
 
 
+def _apply_adapter_management(
+    adapter: HarnessAdapter,
+    context: HarnessContext,
+    *,
+    active: bool,
+    surface: str | None,
+) -> dict[str, object]:
+    """Apply one adapter mutation while honoring declared surface capabilities."""
+
+    if surface is None:
+        if isinstance(adapter, CursorHarnessAdapter):
+            selected_surface = cursor_install_surface(None)
+            return (
+                adapter.install(context, surface=selected_surface)
+                if active
+                else adapter.uninstall(context, surface=selected_surface)
+            )
+        return adapter.install(context) if active else adapter.uninstall(context)
+
+    setup_contract = adapter.setup_contract()
+    if surface not in setup_contract.surface_capabilities:
+        raise ValueError(f"Unsupported {setup_contract.display_name} surface: {surface}")
+    if isinstance(adapter, CursorHarnessAdapter):
+        selected_surface = cursor_install_surface(surface)
+        return (
+            adapter.install(context, surface=selected_surface)
+            if active
+            else adapter.uninstall(context, surface=selected_surface)
+        )
+    if active:
+        return adapter.install(context, surface=surface)  # type: ignore[call-arg]
+    return adapter.uninstall(context, surface=surface)  # type: ignore[call-arg]
+
+
 def apply_managed_install(
     command: str,
     requested_harness: str | None,
@@ -47,15 +81,12 @@ def apply_managed_install(
     for harness in targets:
         adapter = get_adapter(harness)
         canonical_harness = adapter.harness
-        if isinstance(adapter, CursorHarnessAdapter):
-            selected_surface = cursor_install_surface(surface)
-            manifest = (
-                adapter.install(context, surface=selected_surface)
-                if active
-                else adapter.uninstall(context, surface=selected_surface)
-            )
-        else:
-            manifest = adapter.install(context) if active else adapter.uninstall(context)
+        manifest = _apply_adapter_management(
+            adapter,
+            context,
+            active=active,
+            surface=surface,
+        )
         if active:
             manifest = bind_managed_install_proof(manifest, context)
         store.set_managed_install(canonical_harness, active, workspace, manifest, now)
