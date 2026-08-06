@@ -135,6 +135,11 @@ def test_backend_receipt_payload_excludes_signature_but_binds_authority() -> Non
             {
                 BackendCapability.RECEIPTS,
                 BackendCapability.TCP_DESTINATION,
+                BackendCapability.DENY_ALL,
+                BackendCapability.ATOMIC_POLICY,
+                BackendCapability.FORCED_BROKER_ROUTING,
+                BackendCapability.RESOLVER_ROUTE_ATTESTATION,
+                BackendCapability.DOH_CLASSIFICATION_OR_APP_INTENT,
                 BackendCapability.UDP_DESTINATION,
                 BackendCapability.DNS_CORRELATION,
                 BackendCapability.PROCESS_TREE,
@@ -149,6 +154,13 @@ def test_backend_receipt_payload_excludes_signature_but_binds_authority() -> Non
         **{**{field: getattr(receipt, field) for field in receipt.__dataclass_fields__}, "signature": "other-signature"}
     )
     assert receipt.signed_payload_digest == changed_signature.signed_payload_digest
+    changed_capabilities = BackendReceipt(
+        **{
+            **{field: getattr(receipt, field) for field in receipt.__dataclass_fields__},
+            "capabilities": receipt.capabilities | {BackendCapability.OBSERVE},
+        }
+    )
+    assert receipt.signed_payload_digest != changed_capabilities.signed_payload_digest
     assert not receipt_authority_current(receipt, None, now_epoch_ms=_NOW)
     unverified = ReceiptVerification(
         canonical_digest(receipt),

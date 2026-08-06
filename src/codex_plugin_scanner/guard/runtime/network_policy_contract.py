@@ -61,6 +61,8 @@ class EnforcementGrade(str, Enum):
     OBSERVE = "observe"
     DENY_ALL = "deny-all"
     PROXY_ONLY = "proxy-only"
+    TCP_IP_DESTINATION_ENFORCED = "tcp-ip-destination-enforced"
+    UDP_DNS_DESTINATION_ENFORCED = "udp-dns-destination-enforced"
     DESTINATION_ENFORCED = "destination-enforced"
 
 
@@ -74,6 +76,25 @@ class BackendCapability(str, Enum):
     PROCESS_TREE = "process-tree"
     ATOMIC_POLICY = "atomic-policy"
     RECEIPTS = "receipts"
+    FORCED_BROKER_ROUTING = "forced-broker-routing"
+    RESOLVER_ROUTE_ATTESTATION = "resolver-route-attestation"
+    DOH_CLASSIFICATION_OR_APP_INTENT = "doh-classification-or-app-intent"
+
+
+_UDP_DNS_CAPABILITIES: Final[frozenset[BackendCapability]] = frozenset(
+    {
+        BackendCapability.DENY_ALL,
+        BackendCapability.TCP_DESTINATION,
+        BackendCapability.UDP_DESTINATION,
+        BackendCapability.DNS_CORRELATION,
+        BackendCapability.PROCESS_TREE,
+        BackendCapability.ATOMIC_POLICY,
+        BackendCapability.RECEIPTS,
+        BackendCapability.FORCED_BROKER_ROUTING,
+        BackendCapability.RESOLVER_ROUTE_ATTESTATION,
+        BackendCapability.DOH_CLASSIFICATION_OR_APP_INTENT,
+    }
+)
 
 
 _GRADE_REQUIREMENTS: Final[dict[EnforcementGrade, frozenset[BackendCapability]]] = {
@@ -81,15 +102,17 @@ _GRADE_REQUIREMENTS: Final[dict[EnforcementGrade, frozenset[BackendCapability]]]
     EnforcementGrade.OBSERVE: frozenset({BackendCapability.OBSERVE}),
     EnforcementGrade.DENY_ALL: frozenset({BackendCapability.DENY_ALL}),
     EnforcementGrade.PROXY_ONLY: frozenset({BackendCapability.PROXY_ONLY, BackendCapability.PROCESS_TREE}),
-    EnforcementGrade.DESTINATION_ENFORCED: frozenset(
+    EnforcementGrade.TCP_IP_DESTINATION_ENFORCED: frozenset(
         {
+            BackendCapability.DENY_ALL,
             BackendCapability.TCP_DESTINATION,
-            BackendCapability.UDP_DESTINATION,
-            BackendCapability.DNS_CORRELATION,
             BackendCapability.PROCESS_TREE,
+            BackendCapability.ATOMIC_POLICY,
             BackendCapability.RECEIPTS,
         }
     ),
+    EnforcementGrade.UDP_DNS_DESTINATION_ENFORCED: _UDP_DNS_CAPABILITIES,
+    EnforcementGrade.DESTINATION_ENFORCED: _UDP_DNS_CAPABILITIES,
 }
 
 
