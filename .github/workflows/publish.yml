@@ -53,10 +53,27 @@ jobs:
           fetch-tags: true
           path: release-tooling
           persist-credentials: false
-      - name: Check out exact package source
+      - name: Check out dispatched package source
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.expected_sha || github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.inputs.expected_sha }}
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+      - name: Check out pull-request package source
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+      - name: Check out pushed package source
+        if: github.event_name == 'push'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           path: source
           persist-credentials: false
