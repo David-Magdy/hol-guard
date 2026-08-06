@@ -50,6 +50,7 @@ jobs:
         with:
           ref: release/3.1
           fetch-depth: 0
+          fetch-tags: true
           path: release-tooling
           persist-credentials: false
       - name: Check out exact package source
@@ -99,6 +100,7 @@ jobs:
               echo "3.1 alphas must run from refs/heads/release/3.1" >&2
               exit 1
             fi
+            git -C release-tooling fetch --force --tags origin
             git -C release-tooling fetch --no-tags origin "+refs/heads/release/3.1:refs/remotes/origin/release/3.1"
             if ! git -C release-tooling merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/release/3.1; then
               echo "Requested source is not in release/3.1 history" >&2
@@ -186,10 +188,11 @@ jobs:
         run: |
           set -euo pipefail
           tag="alpha/v${VERSION}"
-          existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.sha' 2>/dev/null || true)
+          encoded_tag=${tag//\//%2F}
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${encoded_tag}" --jq '.object.sha' 2>/dev/null || true)
           if [[ -z "$existing" ]]; then
             gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${tag}" -f sha="$SOURCE_SHA" >/dev/null
-            existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.sha')
+            existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${encoded_tag}" --jq '.object.sha')
           fi
           if [[ "$existing" != "$SOURCE_SHA" ]]; then
             echo "Alpha tag is already bound to a different source" >&2
@@ -343,7 +346,26 @@ jobs:
         run: |
           set -euo pipefail
           tag="alpha/v${VERSION}"
-          if gh release view "$tag" >/dev/null 2>&1; then
+          if release_json=$(gh release view "$tag" --json targetCommitish,isDraft,isPrerelease 2>/dev/null); then
+            target=$(jq -r '.targetCommitish' <<< "$release_json")
+            if ! jq -e '.isDraft == false and .isPrerelease == true' <<< "$release_json" >/dev/null; then
+              echo "Existing alpha release is not a published prerelease" >&2
+              exit 1
+            fi
+            if [[ "$target" != "$SOURCE_SHA" ]]; then
+              echo "Existing alpha release targets a different source" >&2
+              exit 1
+            fi
+            existing_dir=$(mktemp -d)
+            gh release download "$tag" --dir "$existing_dir"
+            mapfile -d '' local_files < <(find dist -maxdepth 1 -type f -print0 | sort -z)
+            mapfile -d '' remote_files < <(find "$existing_dir" -maxdepth 1 -type f -print0 | sort -z)
+            [[ "${#local_files[@]}" -gt 0 && "${#local_files[@]}" == "${#remote_files[@]}" ]]
+            for local_file in "${local_files[@]}"; do
+              remote_file="$existing_dir/$(basename "$local_file")"
+              [[ -f "$remote_file" ]]
+              cmp --silent "$local_file" "$remote_file"
+            done
             exit 0
           fi
           body=$(mktemp)
