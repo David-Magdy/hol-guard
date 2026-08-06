@@ -14,19 +14,15 @@ from ..models import GuardArtifact, HarnessDetection
 from ..redaction import redact_text
 from ..runtime.mcp_skill_firewall import enrich_artifact_with_mcp_skill_firewall
 from .base import HarnessContext
+from .cline_paths import cline_data_dir
 from .mcp_servers import ManagedMcpServer, is_guard_proxy_command, proxy_cli_args, proxy_process_env
-
-
-def _cline_dir(context: HarnessContext) -> Path:
-    configured = os.environ.get("CLINE_DIR", "").strip()
-    return Path(configured).expanduser() if configured else context.home_dir / ".cline"
 
 
 def cline_mcp_settings_candidates(context: HarnessContext) -> tuple[Path, ...]:
     """Return current and legacy Cline MCP settings paths without executing Cline."""
 
     explicit = os.environ.get("CLINE_MCP_SETTINGS_PATH", "").strip()
-    cline_dir = _cline_dir(context)
+    cline_dir = cline_data_dir(context)
     home = context.home_dir
     paths: list[Path] = []
     if explicit:
