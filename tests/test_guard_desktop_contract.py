@@ -187,7 +187,7 @@ def test_desktop_command_remains_hidden_from_root_usage() -> None:
     assert ",desktop," not in parser.format_usage()
 
 
-def test_receipt_summary_uses_global_latest_timestamp_when_day_is_empty(tmp_path) -> None:
+def test_receipt_summary_uses_global_latest_and_counts_warnings_as_approved(tmp_path) -> None:
     from codex_plugin_scanner.guard.models import GuardReceipt
     from codex_plugin_scanner.guard.store import GuardStore
 
@@ -217,4 +217,31 @@ def test_receipt_summary_uses_global_latest_timestamp_when_day_is_empty(tmp_path
         "blocked": 0,
         "approved": 0,
         "latest_at": timestamp,
+    }
+
+    warning_timestamp = "2026-08-06T12:00:00+00:00"
+    store.add_receipt(
+        GuardReceipt(
+            receipt_id="warning-receipt-in-day-window",
+            timestamp=warning_timestamp,
+            harness="codex",
+            artifact_id="codex:project:warning",
+            artifact_hash="sha256:warning",
+            policy_decision="warn",
+            capabilities_summary="warning",
+            changed_capabilities=(),
+            provenance_summary="test",
+        )
+    )
+
+    warning_summary = store.receipt_summary_between(
+        start_at="2026-08-06T00:00:00+00:00",
+        before_at="2026-08-07T00:00:00+00:00",
+    )
+
+    assert warning_summary == {
+        "total": 1,
+        "blocked": 0,
+        "approved": 1,
+        "latest_at": warning_timestamp,
     }

@@ -681,7 +681,7 @@ class StoreReceiptsRuntimeMixin:
                 select
                   count(*) as total,
                   coalesce(sum(case when s.policy_decision = 'block' then 1 else 0 end), 0) as blocked,
-                  coalesce(sum(case when s.policy_decision = 'allow' then 1 else 0 end), 0) as approved,
+                  coalesce(sum(case when s.policy_decision in ('allow', 'warn') then 1 else 0 end), 0) as approved,
                   (select max(timestamp) from runtime_receipts) as latest_at
                 from runtime_receipts r
                 join receipt_rollup_actions s on s.receipt_id = r.receipt_id
