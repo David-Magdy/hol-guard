@@ -54,7 +54,7 @@ Guard records separate, bounded proof records for:
 - plugin `beforeTool`
 - plugin `afterTool`
 
-Synthetic installation canaries prove only the generated bridge contract. They do not count as live Cline runtime proof. A protection status becomes ready only after the required live proof has been observed and the managed files still match their recorded integrity digests.
+Synthetic installation canaries prove only the generated bridge contract. They do not count as live Cline runtime proof. Native pre-tool readiness requires an actual blocked live Cline call; ordinary allowed traffic does not prove blocking. Plugin full coverage requires both an actual blocked pre-tool call and an actual model-visible post-tool replacement/withheld result, plus a live load proof and current file integrity.
 
 Run:
 
@@ -62,7 +62,7 @@ Run:
 hol-guard apps test cline
 ```
 
-If proof is missing or stale, run a safe Cline tool action and test again.
+If proof is missing or stale, exercise the corresponding bounded live Cline deny/replacement check and test again. Do not treat a synthetic installation canary as live IDE evidence.
 
 ## MCP protection
 
@@ -75,6 +75,10 @@ Before changing an MCP settings file, Guard stores the exact original text in it
 Guard does not overwrite user-owned Cline hooks or plugins. If Cline's canonical hook slot is already occupied by an unmanaged hook on a surface where the host supports only one hook in that slot, installation stops and reports the conflict.
 
 Managed Cline hook, plugin, and MCP files are integrity-bound. Modified or replaced managed files are reported as broken protection and are not silently trusted.
+
+## Security closure and rollback
+
+The release/3.0 proof semantics, managed state and backup locations, boundary matrix, rollback path, and MCP restoration rules are recorded in [Cline security closure and rollback](./cline-security-closure.md).
 
 ## Known boundaries
 
