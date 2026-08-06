@@ -193,11 +193,11 @@ def command_payloads(value):
     return out or [value]
 
 def proof(outcome):
+    if os.environ.get("HOL_GUARD_CLINE_CANARY")=="1": return
     try:
         PROOF.parent.mkdir(parents=True,exist_ok=True)
-        source="synthetic" if os.environ.get("HOL_GUARD_CLINE_CANARY")=="1" else "cline"
         temp=PROOF.with_name(PROOF.name+".tmp")
-        temp.write_text(json.dumps({{"schema_version":1,"event":EVENT,"source":source,"outcome":outcome,"timestamp":time.time()}},sort_keys=True),encoding="utf-8")
+        temp.write_text(json.dumps({{"schema_version":1,"event":EVENT,"source":"cline","outcome":outcome,"timestamp":time.time()}},sort_keys=True),encoding="utf-8")
         os.replace(temp,PROOF)
     except OSError: pass
 
@@ -268,7 +268,7 @@ def _powershell_wrapper(*, worker: Path, python: str, blocking: bool) -> str:
             "  }",
             "  [Console]::Out.WriteLine($Text)",
             "} catch {",
-            f"  @{{cancel={cancel};errorMessage={_ps_quote(message)};contextModification={_ps_quote(message)}}} | ConvertTo-Json -Compress",
+            f"    @{{cancel={cancel};errorMessage={_ps_quote(message)};contextModification={_ps_quote(message)}}} | ConvertTo-Json -Compress",
             "}",
             "exit 0",
             "",
