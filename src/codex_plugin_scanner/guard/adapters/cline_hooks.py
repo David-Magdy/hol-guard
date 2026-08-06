@@ -27,7 +27,6 @@ _NATIVE_EVENTS = (
     "TaskError",
     "SessionShutdown",
 )
-_NONBLOCKING_EVENTS = frozenset(set(_NATIVE_EVENTS) - {"PreToolUse"})
 _SUPPORTED_SUFFIXES = ("", ".py")
 
 
@@ -284,7 +283,7 @@ def main():
     for guard_payload in guard_payloads(payload):
         try:
             result = subprocess.run(
-                [*GUARD_CLI, "hook", "--harness", "cline", "--json"],
+                [*GUARD_CLI, "--harness", "cline", "--json"],
                 input=json.dumps(guard_payload),
                 capture_output=True,
                 text=True,
@@ -332,7 +331,7 @@ def install_cline_hooks(context: HarnessContext) -> dict[str, object]:
     """Install Guard-owned Cline file hooks without overwriting user files."""
 
     attested = resolve_attested_guard_cli(context)
-    guard_cli = list(attested.command)
+    guard_cli = [*attested.command, "guard", "hook"]
     root = cline_hook_roots(context)[0]
     _safe_parent(root / "PreToolUse", home_dir=context.home_dir)
     root.mkdir(parents=True, exist_ok=True)
