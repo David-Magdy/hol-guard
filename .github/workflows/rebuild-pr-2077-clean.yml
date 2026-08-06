@@ -76,7 +76,42 @@ jobs:
 
           git diff --binary "$PINNED_MAIN_BASE" "$SOURCE_HEAD" -- "${contract_paths[@]}" > /tmp/desktop-contract.patch
           test -s /tmp/desktop-contract.patch
+
+          set +e
           git apply --3way --index /tmp/desktop-contract.patch
+          apply_status=$?
+          set -e
+          if [ "$apply_status" -ne 0 ]; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            expected_conflict="src/codex_plugin_scanner/guard/cli/commands_router.py"
+            if [ "$conflicts" != "$expected_conflict" ]; then
+              echo "Unexpected contract transplant conflicts:" >&2
+              printf '%s\n' "$conflicts" >&2
+              exit 1
+            fi
+
+            git show "$RELEASE_HEAD:$expected_conflict" > "$expected_conflict"
+            python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/codex_plugin_scanner/guard/cli/commands_router.py')
+          text = path.read_text(encoding='utf-8')
+          anchor = '    "bootstrap": "_run_guard_bootstrap_command",\n'
+          addition = '    "desktop": "_run_guard_desktop_command",\n'
+          if text.count(anchor) != 1:
+              raise SystemExit(f'expected one bootstrap router anchor, found {text.count(anchor)}')
+          if addition in text:
+              raise SystemExit('desktop router entry already present unexpectedly')
+          path.write_text(text.replace(anchor, anchor + addition, 1), encoding='utf-8')
+          PY
+            git add "$expected_conflict"
+          fi
+
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo "Unresolved contract transplant conflicts remain" >&2
+            git diff --name-only --diff-filter=U >&2
+            exit 1
+          fi
 
           python - <<'PY'
           from pathlib import Path
