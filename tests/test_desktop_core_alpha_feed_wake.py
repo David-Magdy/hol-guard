@@ -17,9 +17,10 @@ def test_desktop_core_feed_wake_is_narrow_and_least_privilege() -> None:
     value = yaml.safe_load(text)
     events = value[True]
     workflow_path = ".github/workflows/wake-desktop-core-alpha-feed.yml"
-    assert set(events) == {"workflow_run", "release", "push", "pull_request"}
+    assert set(events) == {"workflow_run", "release", "issues", "push", "pull_request"}
     assert events["workflow_run"] == {"workflows": ["Publish to PyPI"], "types": ["completed"]}
     assert events["release"] == {"types": ["published"]}
+    assert events["issues"] == {"types": ["opened"]}
     assert events["push"] == {"branches": ["main"], "paths": [workflow_path]}
     assert events["pull_request"] == {"paths": [workflow_path]}
     assert value["permissions"] == {"contents": "read"}
@@ -33,6 +34,11 @@ def test_desktop_core_feed_wake_is_narrow_and_least_privilege() -> None:
     condition = " ".join(wake["if"].split())
     assert condition == (
         "github.event_name == 'push' || "
+        "(github.event_name == 'issues' && "
+        "(github.event.issue.author_association == 'OWNER' || "
+        "github.event.issue.author_association == 'MEMBER' || "
+        "github.event.issue.author_association == 'COLLABORATOR') && "
+        "startsWith(github.event.issue.title, '[desktop-core-feed]')) || "
         "(github.event_name == 'release' && startsWith(github.event.release.tag_name, 'alpha/v3.')) || "
         "(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && "
         "github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'release/3.'))"
