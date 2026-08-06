@@ -179,12 +179,12 @@ def command_payloads(value):
         out.append({{"hookName":"PreToolUse","hook_event_name":"PreToolUse","tool_call":{{"id":current.get("id","") if isinstance(current,dict) else "","name":"run_command","input":{{"command":item}}}}}})
     return out or [value]
 
-def proof():
+def proof(outcome):
     try:
         PROOF.parent.mkdir(parents=True,exist_ok=True)
         source="synthetic" if os.environ.get("HOL_GUARD_CLINE_CANARY")=="1" else "cline"
         temp=PROOF.with_name(PROOF.name+".tmp")
-        temp.write_text(json.dumps({{"schema_version":1,"event":EVENT,"source":source,"timestamp":time.time()}},sort_keys=True),encoding="utf-8")
+        temp.write_text(json.dumps({{"schema_version":1,"event":EVENT,"source":source,"outcome":outcome,"timestamp":time.time()}},sort_keys=True),encoding="utf-8")
         os.replace(temp,PROOF)
     except OSError: pass
 
@@ -202,7 +202,8 @@ def main():
         decision=parse_output(result.stdout)
         if decision is None: fail("HOL Guard returned an invalid decision; this Cline action was not allowed to proceed."); return 0
         if blocked(decision): denied=True; why=reason(decision); break
-    proof()
+    outcome="blocked" if BLOCKING and denied else "allowed" if BLOCKING else "observed"
+    proof(outcome)
     if BLOCKING: emit({{"cancel":denied,"errorMessage":why if denied else "","contextModification":why if denied else ""}})
     else: emit({{"cancel":False,"contextModification":why if denied else ""}})
     return 0
@@ -365,7 +366,13 @@ def _proof_state(context: HarnessContext, event: str) -> dict[str, object]:
         return {"present": False, "fresh": False, "live": False}
     timestamp = value.get("timestamp") if isinstance(value, dict) else None
     fresh = isinstance(timestamp, (int, float)) and time.time() - float(timestamp) <= _PROOF_MAX_AGE
-    return {"present": True, "fresh": fresh, "live": fresh and value.get("source") == "cline", "event": event}
+    return {
+        "present": True,
+        "fresh": fresh,
+        "live": fresh and value.get("source") == "cline",
+        "event": event,
+        "outcome": value.get("outcome"),
+    }
 
 
 def cline_native_hook_state(context: HarnessContext) -> dict[str, object]:
@@ -411,18 +418,20 @@ def cline_native_hook_state(context: HarnessContext) -> dict[str, object]:
                 modified.append(f"{event}:worker")
     canary = run_cline_hook_canary(context) if not missing and not modified else {"ok": False}
     pre, post = _proof_state(context, "PreToolUse"), _proof_state(context, "PostToolUse")
+    pretool_blocking_proven = pre.get("live") is True and pre.get("outcome") == "blocked"
+    posttool_observation_proven = post.get("live") is True and post.get("outcome") == "observed"
     return {
         "installed": not missing,
         "integrity_ok": not missing and not modified,
         "synthetic_canary_ok": canary.get("ok") is True,
         "live_pretool_proof": pre,
         "live_posttool_proof": post,
-        "pretool_blocking_proven": pre.get("live") is True,
-        "posttool_observation_proven": post.get("live") is True,
+        "pretool_blocking_proven": pretool_blocking_proven,
+        "posttool_observation_proven": posttool_observation_proven,
         "post_tool_output_mediation": "observation-only",
         "missing_events": missing,
         "modified_events": modified,
-        "ready": not missing and not modified and canary.get("ok") is True and pre.get("live") is True,
+        "ready": not missing and not modified and canary.get("ok") is True and pretool_blocking_proven,
     }
 
 
