@@ -99,6 +99,7 @@ jobs:
           tests/test_cline_completion_gates.py
           tests/test_cline_fixture_contract.py
           tests/test_cline_surface_dispatch.py
+          tests/test_cline_transport_arbitration.py
 
       - name: Lint Cline Python
         run: >-
@@ -117,6 +118,7 @@ jobs:
           tests/test_cline_completion_gates.py
           tests/test_cline_fixture_contract.py
           tests/test_cline_surface_dispatch.py
+          tests/test_cline_transport_arbitration.py
 
       - name: Run Cline adapter contract tests
         run: >-
@@ -127,6 +129,7 @@ jobs:
           tests/test_cline_completion_gates.py
           tests/test_cline_fixture_contract.py
           tests/test_cline_surface_dispatch.py
+          tests/test_cline_transport_arbitration.py
           --tb=short
 
   package:
