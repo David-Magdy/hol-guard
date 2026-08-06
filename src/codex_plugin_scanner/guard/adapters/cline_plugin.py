@@ -158,32 +158,56 @@ function mapParameters(input) {{
   if (!input || typeof input !== "object" || Array.isArray(input)) return {{}};
   const output = {{}};
   for (const [key, value] of Object.entries(input)) {{
-    output[key] = typeof value === "string" ? value : JSON.stringify(value);
+    if (typeof value === "string") {{
+      output[key] = value;
+    }} else {{
+      output[key] = JSON.stringify(value);
+    }}
   }}
   return output;
 }}
 
 function payloadsForGuard(eventName, toolCall, input, result) {{
-  const current = eventName === "PostToolUse"
-    ? {{ id: toolCall?.toolCallId ?? "", name: toolCall?.toolName ?? "unknown", input, output: result?.output }}
-    : {{ id: toolCall?.toolCallId ?? "", name: toolCall?.toolName ?? "unknown", input }};
-  const base = {{
-    hookName: eventName,
-    hook_event_name: eventName,
-    ...(eventName === "PostToolUse" ? {{ tool_result: current }} : {{ tool_call: current }}),
-    ...(eventName === "PostToolUse"
-      ? {{ postToolUse: {{ toolName: current.name, parameters: mapParameters(input), result: typeof result?.output === "string" ? result.output : JSON.stringify(result?.output), success: result?.isError !== true, executionTimeMs: 0 }} }}
-      : {{ preToolUse: {{ toolName: current.name, parameters: mapParameters(input) }} }}),
-  }};
+  const id = toolCall?.toolCallId ?? "";
+  const name = toolCall?.toolName ?? "unknown";
+  let current;
+  const base = {{ hookName: eventName, hook_event_name: eventName }};
+  if (eventName === "PostToolUse") {{
+    current = {{ id, name, input, output: result?.output }};
+    let resultText;
+    if (typeof result?.output === "string") {{
+      resultText = result.output;
+    }} else {{
+      resultText = JSON.stringify(result?.output);
+    }}
+    base.tool_result = current;
+    base.postToolUse = {{
+      toolName: current.name,
+      parameters: mapParameters(input),
+      result: resultText,
+      success: result?.isError !== true,
+      executionTimeMs: 0,
+    }};
+  }} else {{
+    current = {{ id, name, input }};
+    base.tool_call = current;
+    base.preToolUse = {{ toolName: current.name, parameters: mapParameters(input) }};
+  }}
   if (eventName !== "PreToolUse" || current.name !== "run_commands") return [base];
-  let commands = input && typeof input === "object" && !Array.isArray(input)
-    ? (input.commands ?? input.command ?? input.cmd)
-    : input;
+  let commands = input;
+  if (input && typeof input === "object" && !Array.isArray(input)) {{
+    commands = input.commands ?? input.command ?? input.cmd;
+  }}
   if (typeof commands === "string") commands = [commands];
   if (!Array.isArray(commands)) return [base];
   const expanded = [];
   for (const item of commands) {{
-    const command = typeof item === "string" ? item : (item && typeof item === "object" ? (item.command ?? item.cmd) : undefined);
+    let command;
+    if (typeof item === "string") {{
+      command = item;
+    }} else if (item && typeof item === "object") {{
+      command = item.command ?? item.cmd;
+    }}
     if (typeof command !== "string" || !command.trim()) continue;
     expanded.push({{
       hookName: eventName,
@@ -191,7 +215,8 @@ function payloadsForGuard(eventName, toolCall, input, result) {{
       tool_call: {{ id: current.id, name: "run_command", input: {{ command }} }},
     }});
   }}
-  return expanded.length ? expanded : [base];
+  if (expanded.length) return expanded;
+  return [base];
 }}
 
 function invokeGuard(eventName, toolCall, input, result) {{
@@ -224,6 +249,12 @@ function invokeGuard(eventName, toolCall, input, result) {{
   return {{ ok: true, payload: lastPayload ?? {{}} }};
 }}
 
+function blockedResult(reason, metadata) {{
+  const safeResult = {{ output: reason, isError: true }};
+  if (metadata) safeResult.metadata = metadata;
+  return {{ result: safeResult }};
+}}
+
 const plugin = {{
   name: "hol-guard",
   manifest: {{ capabilities: ["hooks"] }},
@@ -241,34 +272,14 @@ const plugin = {{
     }},
     async afterTool({{ toolCall, input, result }}) {{
       const decision = invokeGuard("PostToolUse", toolCall, input, result);
-      if (!decision.ok) {{
-        return {{
-          result: {{
-            output: decision.reason,
-            isError: true,
-            ...(result?.metadata ? {{ metadata: result.metadata }} : {{}}),
-          }},
-        }};
-      }}
+      if (!decision.ok) return blockedResult(decision.reason, result?.metadata);
       proof("posttool");
       const replacement = reviewedOutput(decision.payload);
       if (guardBlocks(decision.payload)) {{
-        return {{
-          result: {{
-            output: guardReason(decision.payload) || "HOL Guard withheld this tool result.",
-            isError: true,
-            ...(result?.metadata ? {{ metadata: result.metadata }} : {{}}),
-          }},
-        }};
+        const reason = guardReason(decision.payload) || "HOL Guard withheld this tool result.";
+        return blockedResult(reason, result?.metadata);
       }}
-      if (replacement !== undefined) {{
-        return {{
-          result: {{
-            ...result,
-            output: replacement,
-          }},
-        }};
-      }}
+      if (replacement !== undefined) return {{ result: {{ ...result, output: replacement }} }};
       return undefined;
     }},
   }},
