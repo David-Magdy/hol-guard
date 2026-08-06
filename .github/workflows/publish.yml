@@ -186,10 +186,10 @@ jobs:
         run: |
           set -euo pipefail
           tag="alpha/v${VERSION}"
-          existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag#alpha/}" --jq '.object.sha' 2>/dev/null || true)
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.sha' 2>/dev/null || true)
           if [[ -z "$existing" ]]; then
             gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${tag}" -f sha="$SOURCE_SHA" >/dev/null
-            existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag#alpha/}" --jq '.object.sha')
+            existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.sha')
           fi
           if [[ "$existing" != "$SOURCE_SHA" ]]; then
             echo "Alpha tag is already bound to a different source" >&2
@@ -267,11 +267,11 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
           version: "0.9.26"
-      - uses: actions/download-artifact@3e5f45b2cfb9172054d4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: distributions
           path: dist/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054d4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: distribution-sha256
       - name: Verify immutable TestPyPI-proven bytes
@@ -321,11 +321,11 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054d4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: distributions
           path: dist/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054d4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: distribution-sha256
       - name: Verify release bytes
