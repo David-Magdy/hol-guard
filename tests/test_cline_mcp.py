@@ -36,6 +36,19 @@ def test_cline_mcp_proxy_install_preserves_remote_and_restores_exact_text(tmp_pa
 
     detection = detect_cline_mcp(context)
     assert {artifact.name for artifact in detection.artifacts} == {"local", "remote"}
+    evidence_text = json.dumps(
+        [
+            {
+                "name": artifact.name,
+                "args": artifact.args,
+                "metadata": artifact.metadata,
+            }
+            for artifact in detection.artifacts
+        ],
+        sort_keys=True,
+    )
+    assert "secret" not in evidence_text
+    assert "TOKEN" in evidence_text
 
     result = install_cline_mcp_proxies(context)
     assert result["managed_servers"] == ["local"]
