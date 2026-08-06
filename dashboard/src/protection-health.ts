@@ -37,11 +37,32 @@ function copyForState(state: GuardProtectionState): { label: string; detail: str
   return { label: "Degraded", detail: "One or more required protection checks failed or remain unproven." };
 }
 
+function appCopyForState(state: GuardProtectionState): { label: string; detail: string } {
+  if (state === "protected") {
+    return copyForState(state);
+  }
+  if (state === "partial") {
+    return {
+      label: "Partially protected",
+      detail: "The app hook is active. Some shared local protection proof is still pending.",
+    };
+  }
+  return { label: "Degraded", detail: "The app hook or another required protection check failed." };
+}
+
 function deriveState(checks: GuardProtectionCheck[]): GuardProtectionState {
   const byId = new Map(checks.map((check) => [check.check_id, check.status]));
   if (checks.some((check) => check.status === "fail")) return "degraded";
   if (!CORE_CHECK_IDS.every((checkId) => byId.get(checkId) === "pass")) return "degraded";
   return byId.get("decision_stream") === "pass" ? "protected" : "partial";
+}
+
+function deriveAppState(checks: GuardProtectionCheck[]): GuardProtectionState {
+  const byId = new Map(checks.map((check) => [check.check_id, check.status]));
+  if (checks.some((check) => check.status === "fail")) return "degraded";
+  if (byId.get("harness_hooks") !== "pass") return "degraded";
+  const allCoreChecksPass = CORE_CHECK_IDS.every((checkId) => byId.get(checkId) === "pass");
+  return allCoreChecksPass && byId.get("decision_stream") === "pass" ? "protected" : "partial";
 }
 
 function normalizeCheck(value: unknown): GuardProtectionCheck | null {
@@ -80,6 +101,18 @@ function healthFromChecks(checks: GuardProtectionCheck[]): Omit<GuardProtectionH
   };
 }
 
+function appHealthFromChecks(checks: GuardProtectionCheck[]): Omit<GuardProtectionAppHealth, "harness"> {
+  const state = deriveAppState(checks);
+  const copy = appCopyForState(state);
+  return {
+    state,
+    ...copy,
+    evidence_gap: checks.some((check) => check.status === "unknown"),
+    checks,
+    reason_codes: checks.map((check) => check.reason_code),
+  };
+}
+
 function fallbackChecks(): GuardProtectionCheck[] {
   return PROTECTION_CHECK_IDS.map((checkId) => ({
     check_id: checkId,
@@ -102,7 +135,7 @@ function normalizeApp(value: unknown): GuardProtectionAppHealth | null {
   if (typeof harness !== "string" || harness.length > 64 || !STABLE_ID.test(harness)) return null;
   const checks = normalizeChecks(value.checks);
   if (checks === null) return null;
-  return { harness, ...healthFromChecks(checks) };
+  return { harness, ...appHealthFromChecks(checks) };
 }
 
 export function normalizeProtectionHealth(value: unknown): GuardProtectionHealth {
@@ -169,6 +202,6 @@ export function protectionHealthFor(
   if (harness === null) return health;
   const scoped = health.apps.find((app) => app.harness === harness);
   if (scoped) return scoped;
-  const fallback = healthFromChecks(fallbackChecks());
+  const fallback = appHealthFromChecks(fallbackChecks());
   return { harness: STABLE_ID.test(harness) && harness.length <= 64 ? harness : "unknown", ...fallback };
 }
