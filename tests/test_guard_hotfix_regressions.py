@@ -7,10 +7,14 @@ import json
 from io import StringIO
 from pathlib import Path
 
+from codex_plugin_scanner.guard import approvals as approvals_module
+from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.cli import commands_preflight, commands_router
 from codex_plugin_scanner.guard.cli.commands_preflight import _unsafe_broad_preflight_target
+from codex_plugin_scanner.guard.managed_install_proof import bind_managed_install_proof
 from codex_plugin_scanner.guard.package_firewall_entitlement import package_firewall_operation_allowed
 from codex_plugin_scanner.guard.package_shim_status import enrich_package_shim_status_payload
+from codex_plugin_scanner.guard.store import GuardStore
 
 
 def _orphaned_shim_status(shim_dir: Path) -> dict[str, object]:
@@ -93,6 +97,20 @@ def test_expired_cloud_entitlement_does_not_block_existing_local_repair() -> Non
     assert package_firewall_operation_allowed(entitlement, "repair", has_installed_managers=False) is False
     assert package_firewall_operation_allowed(entitlement, "install", has_installed_managers=True) is False
     assert package_firewall_operation_allowed(entitlement, "test", has_installed_managers=True) is False
+
+
+def test_omp_managed_install_proof_is_recognized_as_live_hook(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    hook_path = tmp_path / "home" / ".omp" / "agent" / "extensions" / "hol-guard.ts"
+    hook_path.parent.mkdir(parents=True)
+    hook_path.write_text("export const guard = true;\n", encoding="utf-8")
+    context = HarnessContext(home_dir=tmp_path / "home", workspace_dir=None, guard_home=store.guard_home)
+    manifest = bind_managed_install_proof({"config_path": str(hook_path)}, context)
+
+    assert approvals_module._live_hook_verification(
+        [{"harness": "omp", "active": True, "manifest": manifest}],
+        store,
+    ) == {"omp": True}
 
 
 def test_preflight_rejects_home_ancestors_and_filesystem_root_but_allows_project(tmp_path: Path) -> None:
