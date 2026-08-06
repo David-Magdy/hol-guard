@@ -156,12 +156,26 @@ def enrich_package_shim_status_payload(
                     "recovered_without_manifest": True,
                 }
             )
+        path_contains_shim_dir = bool(status.get("path_contains_shim_dir"))
+        shell_profile_configured = bool(status.get("shell_profile_configured"))
+        recovered_path_status = str(status.get("path_status") or "missing_from_path")
+        process_path_status = str(status.get("process_path_status") or "missing")
+        if path_contains_shim_dir:
+            recovered_path_status = "in_path"
+            process_path_status = "active"
+        elif shell_profile_configured:
+            recovered_path_status = "restart_required"
+            process_path_status = "profile_staged"
         status = {
             **status,
             "active_managers": active_managers,
             "installed_managers": installed_managers,
             "manager_details": manager_details,
+            "path_status": recovered_path_status,
+            "process_path_status": process_path_status,
+            "process_restart_required": recovered_path_status == "restart_required",
             "recovered_managers": recovered_managers,
+            "restart_shell_required": recovered_path_status == "restart_required",
         }
         path_broken_managers = sorted(set(path_broken_managers).union(recovered_managers))
 
