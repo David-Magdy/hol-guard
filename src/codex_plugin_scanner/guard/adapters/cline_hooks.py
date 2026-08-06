@@ -17,9 +17,10 @@ from .guard_cli_attestation import resolve_attested_guard_cli
 
 _MARKER = "HOL_GUARD_MANAGED_CLINE_HOOK_V1"
 _SCHEMA = 1
-_MAX_BYTES = 1024 * 1024
+_MAX_BYTES = 256 * 1024
+_MAX_PRETOOL_BYTES = 64 * 1024
 _MAX_DEPTH = 48
-_TIMEOUT = 12
+_TIMEOUT = 9
 _PROOF_MAX_AGE = 7 * 24 * 60 * 60
 _EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "TaskStart", "TaskError", "SessionShutdown")
 
@@ -77,7 +78,10 @@ def _safe_destination(path: Path, context: HarnessContext) -> None:
 def _write(path: Path, text: str, *, executable: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.hol-guard.tmp-{os.getpid()}")
-    temporary.write_text(text, encoding="utf-8")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
     if executable and os.name != "nt":
         temporary.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
     os.replace(temporary, path)
@@ -92,7 +96,7 @@ def _hook_source(context: HarnessContext, *, event_name: str, guard_cli: list[st
 from __future__ import annotations
 import json, os, subprocess, sys, time
 from pathlib import Path
-EVENT={event_name!r}; BLOCKING={blocking!r}; MAX_BYTES={_MAX_BYTES}; MAX_DEPTH={_MAX_DEPTH}; TIMEOUT={_TIMEOUT}
+EVENT={event_name!r}; BLOCKING={blocking!r}; MAX_BYTES={_MAX_BYTES}; MAX_PRETOOL_BYTES={_MAX_PRETOOL_BYTES}; MAX_DEPTH={_MAX_DEPTH}; TIMEOUT={_TIMEOUT}
 GUARD={guard_cli!r}; PROOF=Path({proof!r})
 
 def emit(value):
@@ -109,6 +113,14 @@ def depth_ok(value):
         if isinstance(item,dict): stack.extend((v,depth+1) for v in item.values())
         elif isinstance(item,list): stack.extend((v,depth+1) for v in item)
     return True
+
+def pretool_size_ok(value):
+    if EVENT!="PreToolUse": return True
+    current=value.get("tool_call"); legacy=value.get("preToolUse")
+    action=current if isinstance(current,dict) else legacy if isinstance(legacy,dict) else value
+    try: encoded=json.dumps(action,separators=(",",":"),ensure_ascii=True).encode("utf-8")
+    except (TypeError,ValueError): return False
+    return len(encoded)<=MAX_PRETOOL_BYTES
 
 def parse_output(text):
     text=text.strip()
@@ -182,6 +194,7 @@ def main():
     try: value=json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError,json.JSONDecodeError): fail("HOL Guard could not parse the Cline hook request safely."); return 0
     if not isinstance(value,dict) or not depth_ok(value): fail("HOL Guard rejected an invalid Cline hook request."); return 0
+    if not pretool_size_ok(value): fail("HOL Guard rejected an oversized Cline pre-tool request."); return 0
     denied=False; why=""
     for item in command_payloads(value):
         try: result=subprocess.run([*GUARD,"--harness","cline","--json"],input=json.dumps(item),capture_output=True,text=True,timeout=TIMEOUT,check=False)
@@ -335,7 +348,7 @@ def run_cline_hook_canary(context: HarnessContext) -> dict[str, object]:
             input=json.dumps(payload),
             capture_output=True,
             text=True,
-            timeout=_TIMEOUT + 2,
+            timeout=_TIMEOUT + 1,
             env=env,
             check=False,
         )
