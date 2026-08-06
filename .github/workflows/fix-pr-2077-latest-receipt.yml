@@ -1,0 +1,143 @@
+name: Fix PR 2077 latest receipt aggregate
+
+on:
+  push:
+    branches:
+      - chore/rebuild-pr-2077-clean
+    paths:
+      - .github/workflows/fix-pr-2077-latest-receipt.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-pr-2077-latest-receipt
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: desktop/3.0-contracts
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Apply reviewed aggregate fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          store_path = Path("src/codex_plugin_scanner/guard/store_receipts.py")
+          store_text = store_path.read_text(encoding="utf-8")
+          old = """                  max(r.timestamp) as latest_at
+                from runtime_receipts r
+                join receipt_rollup_actions s on s.receipt_id = r.receipt_id
+                where r.timestamp >= ? and r.timestamp < ?
+"""
+          new = """                  (select max(timestamp) from runtime_receipts) as latest_at
+                from runtime_receipts r
+                join receipt_rollup_actions s on s.receipt_id = r.receipt_id
+                where r.timestamp >= ? and r.timestamp < ?
+"""
+          if store_text.count(old) != 1:
+              raise SystemExit(f"expected one receipt summary query, found {store_text.count(old)}")
+          store_path.write_text(store_text.replace(old, new, 1), encoding="utf-8")
+
+          test_path = Path("tests/test_guard_desktop_contract.py")
+          test_text = test_path.read_text(encoding="utf-8")
+          marker = "def test_receipt_summary_uses_global_latest_timestamp_when_day_is_empty"
+          if marker in test_text:
+              raise SystemExit("latest receipt regression test already exists")
+          addition = '''
+
+
+def test_receipt_summary_uses_global_latest_timestamp_when_day_is_empty(tmp_path) -> None:
+    from codex_plugin_scanner.guard.models import GuardReceipt
+    from codex_plugin_scanner.guard.store import GuardStore
+
+    store = GuardStore(tmp_path / "guard")
+    timestamp = "2026-08-05T23:59:00+00:00"
+    store.add_receipt(
+        GuardReceipt(
+            receipt_id="receipt-before-day-window",
+            timestamp=timestamp,
+            harness="codex",
+            artifact_id="codex:project:test",
+            artifact_hash="sha256:test",
+            policy_decision="allow",
+            capabilities_summary="none",
+            changed_capabilities=(),
+            provenance_summary="test",
+        )
+    )
+
+    summary = store.receipt_summary_between(
+        start_at="2026-08-06T00:00:00+00:00",
+        before_at="2026-08-07T00:00:00+00:00",
+    )
+
+    assert summary == {
+        "total": 0,
+        "blocked": 0,
+        "approved": 0,
+        "latest_at": timestamp,
+    }
+'''
+          test_path.write_text(test_text.rstrip() + addition + "\n", encoding="utf-8")
+          PY
+
+      - name: Install frozen dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Validate fix
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -m ruff format \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+          uv run --no-sync python -m ruff format --check \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+          uv run --no-sync python -m ruff check \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+          uv run --no-sync pytest tests/test_guard_desktop_contract.py --tb=short
+          uv run --no-sync python tests/guard_command_decision_diff.py --check
+          uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
+          rm test-inventory.json
+
+      - name: Commit and push fix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: a29abae42d7bcb34d02f23729bff55d3cff0f079
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+          git diff --cached --check
+          git commit -m "fix(desktop): preserve global latest receipt timestamp"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin HEAD:refs/heads/desktop/3.0-contracts
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
