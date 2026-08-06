@@ -38,11 +38,20 @@ def test_publisher_serializes_the_release_train() -> None:
 
 def test_build_uses_current_tooling_and_exact_source_separately() -> None:
     steps = workflow()["jobs"]["build"]["steps"]
-    checkouts = [step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")]
-    assert checkouts[0]["with"]["ref"] == "release/3.1"
-    assert checkouts[0]["with"]["path"] == "release-tooling"
-    assert "expected_sha" in checkouts[1]["with"]["ref"]
-    assert checkouts[1]["with"]["path"] == "source"
+    by_name = {step.get("name"): step for step in steps}
+    tooling = by_name["Check out current release tooling"]
+    assert tooling["with"]["ref"] == "release/3.1"
+    assert tooling["with"]["path"] == "release-tooling"
+    dispatched = by_name["Check out dispatched package source"]
+    pull_request = by_name["Check out pull-request package source"]
+    pushed = by_name["Check out pushed package source"]
+    assert dispatched["if"] == "github.event_name == 'workflow_dispatch'"
+    assert dispatched["with"]["ref"] == "${{ github.event.inputs.expected_sha }}"
+    assert pull_request["if"] == "github.event_name == 'pull_request'"
+    assert pull_request["with"]["ref"] == "${{ github.event.pull_request.head.sha }}"
+    assert pushed["if"] == "github.event_name == 'push'"
+    assert pushed["with"]["ref"] == "${{ github.sha }}"
+    assert {dispatched["with"]["path"], pull_request["with"]["path"], pushed["with"]["path"]} == {"source"}
 
 
 def test_build_uses_frozen_release_dependencies() -> None:
@@ -72,10 +81,11 @@ def test_source_must_remain_in_release_history() -> None:
 
 def test_dispatch_can_publish_an_older_ancestor() -> None:
     build = workflow()["jobs"]["build"]
-    checkout = next(step for step in build["steps"] if step.get("name") == "Check out exact package source")
-    assert "expected_sha" in checkout["with"]["ref"]
+    checkout = next(step for step in build["steps"] if step.get("name") == "Check out dispatched package source")
+    assert checkout["with"]["ref"] == "${{ github.event.inputs.expected_sha }}"
     run = next(step["run"] for step in build["steps"] if step.get("name") == "Compute immutable alpha version")
     assert 'EXPECTED_SHA" != "$SOURCE_SHA' in run
+    assert 'merge-base --is-ancestor "$SOURCE_SHA"' in run
 
 
 def test_push_reuses_source_alpha_reservation() -> None:
