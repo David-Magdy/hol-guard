@@ -1,9 +1,9 @@
 name: Hotfix dashboard asset build
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/guard-local-protection-hotfixes
+      - main
 
 permissions:
   contents: write
