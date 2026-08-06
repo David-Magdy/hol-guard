@@ -63,7 +63,9 @@ def cline_hook_roots(context: HarnessContext) -> tuple[Path, ...]:
 def cline_plugin_root(context: HarnessContext) -> Path:
     """Return the Guard-owned plugin root under Cline's selected data directory."""
 
-    return cline_data_dir(context) / "plugins" / "hol-guard"
+    root = cline_data_dir(context) / "plugins" / "hol-guard"
+    ensure_safe_cline_destination(context, root / "index.js")
+    return root
 
 
 def is_cline_owned_path(context: HarnessContext, path: Path) -> bool:
