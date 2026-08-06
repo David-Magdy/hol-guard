@@ -13,7 +13,7 @@ from .commands_support_interaction import _emit, _run_consumer_scan_with_mode
 
 
 def _unsafe_broad_preflight_target(target: Path, *, home_dir: Path) -> bool:
-    """Reject roots that make an omitted/`.` preflight traverse an entire account or filesystem."""
+    """Reject roots that make preflight traverse an entire account or filesystem."""
 
     try:
         resolved_target = target.resolve()
@@ -21,7 +21,13 @@ def _unsafe_broad_preflight_target(target: Path, *, home_dir: Path) -> bool:
     except (OSError, RuntimeError):
         return True
     filesystem_root = Path(resolved_target.anchor).resolve()
-    return resolved_target in {resolved_home, filesystem_root}
+    if resolved_target == filesystem_root:
+        return True
+    try:
+        resolved_home.relative_to(resolved_target)
+    except ValueError:
+        return False
+    return True
 
 
 def _emit_preflight(
