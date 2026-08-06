@@ -6,11 +6,14 @@ on:
       - release/3.0
     paths:
       - src/codex_plugin_scanner/guard/adapters/cline*.py
+      - src/codex_plugin_scanner/guard/adapters/contracts.py
       - src/codex_plugin_scanner/guard/adapters/__init__.py
       - src/codex_plugin_scanner/guard/cli/install_commands.py
       - src/codex_plugin_scanner/guard/cli/commands_parser_local.py
+      - src/codex_plugin_scanner/guard/cli/commands_support_interaction.py
       - tests/test_cline_*.py
       - docs/guard/cline-local-protection-contract.md
+      - docs/guard/cline-security-closure.md
       - docs/guard/harness-support.md
       - dashboard/src/apps/app-catalog.ts
       - dashboard/src/apps/harness-setup-target.ts
@@ -21,11 +24,14 @@ on:
       - release/3.0
     paths:
       - src/codex_plugin_scanner/guard/adapters/cline*.py
+      - src/codex_plugin_scanner/guard/adapters/contracts.py
       - src/codex_plugin_scanner/guard/adapters/__init__.py
       - src/codex_plugin_scanner/guard/cli/install_commands.py
       - src/codex_plugin_scanner/guard/cli/commands_parser_local.py
+      - src/codex_plugin_scanner/guard/cli/commands_support_interaction.py
       - tests/test_cline_*.py
       - docs/guard/cline-local-protection-contract.md
+      - docs/guard/cline-security-closure.md
       - docs/guard/harness-support.md
       - dashboard/src/apps/app-catalog.ts
       - dashboard/src/apps/harness-setup-target.ts
@@ -82,6 +88,7 @@ jobs:
           tests/test_cline_payload_contract.py
           tests/test_cline_hook_transports.py
           tests/test_cline_mcp.py
+          tests/test_cline_completion_gates.py
 
       - name: Lint Cline Python
         run: >-
@@ -97,6 +104,7 @@ jobs:
           tests/test_cline_payload_contract.py
           tests/test_cline_hook_transports.py
           tests/test_cline_mcp.py
+          tests/test_cline_completion_gates.py
 
       - name: Run Cline adapter contract tests
         run: >-
@@ -104,6 +112,7 @@ jobs:
           tests/test_cline_payload_contract.py
           tests/test_cline_hook_transports.py
           tests/test_cline_mcp.py
+          tests/test_cline_completion_gates.py
           --tb=short
 
   package:
@@ -133,12 +142,52 @@ jobs:
       - name: Build wheel and source distribution
         run: uv build
 
-      - name: Smoke test built wheel
+      - name: Smoke test built wheel and Cline lifecycle
         shell: bash
         run: |
+          set -euo pipefail
           wheel=$(find dist -maxdepth 1 -name 'hol_guard-*.whl' -print -quit)
           test -n "$wheel"
           uv tool run --from "$wheel" hol-guard --version
+
+          export HOME="$RUNNER_TEMP/cline-wheel-home"
+          export HOL_GUARD_HOME="$HOME/.hol-guard"
+          mkdir -p "$HOME"
+
+          uv tool run --from "$wheel" hol-guard apps connect cline --surface hooks --dry-run --json > "$RUNNER_TEMP/cline-dry-run.json"
+          test ! -e "$HOME/Documents/Cline/Hooks/PreToolUse"
+
+          uv venv "$RUNNER_TEMP/cline-wheel-venv" --python 3.12
+          uv pip install --python "$RUNNER_TEMP/cline-wheel-venv/bin/python" "$wheel"
+          "$RUNNER_TEMP/cline-wheel-venv/bin/python" - <<'PY'
+          from pathlib import Path
+          import os
+
+          from codex_plugin_scanner.guard.adapters.base import HarnessContext
+          from codex_plugin_scanner.guard.adapters.cline import ClineHarnessAdapter
+
+          home = Path(os.environ["HOME"])
+          guard_home = Path(os.environ["HOL_GUARD_HOME"])
+          workspace = home / "workspace"
+          workspace.mkdir(parents=True, exist_ok=True)
+          context = HarnessContext(home_dir=home, workspace_dir=workspace, guard_home=guard_home)
+          adapter = ClineHarnessAdapter()
+
+          manifest = adapter.install(context, surface="hooks")
+          assert manifest["active_transport"] == "hooks"
+          probe = adapter.runtime_probe(context)
+          assert probe is not None
+          hooks = probe["native_hooks"]
+          assert hooks["installed"] is True
+          assert hooks["synthetic_canary_ok"] is True
+          # Synthetic package smoke must never masquerade as live Cline proof.
+          assert hooks["pretool_blocking_proven"] is False
+          assert hooks["ready"] is False
+
+          result = adapter.uninstall(context, surface="all")
+          assert result["complete"] is True
+          PY
+          test ! -e "$HOME/Documents/Cline/Hooks/PreToolUse"
 
       - name: Validate test-suite ratchet
         run: |
