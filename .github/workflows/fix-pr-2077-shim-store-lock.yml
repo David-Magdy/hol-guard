@@ -1,0 +1,131 @@
+name: Fix PR 2077 package shim store lock
+
+on:
+  push:
+    branches:
+      - chore/rebuild-pr-2077-clean
+    paths:
+      - .github/workflows/fix-pr-2077-shim-store-lock.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fix-pr-2077-shim-store-lock
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: desktop/3.0-contracts
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Add bounded package-shim Guard retry
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/codex_plugin_scanner/guard/shims.py")
+          text = path.read_text(encoding="utf-8")
+
+          import_anchor = '            "import sys",\n            "from pathlib import Path",\n'
+          import_replacement = '            "import sys",\n            "import time",\n            "from pathlib import Path",\n'
+          if text.count(import_anchor) != 1:
+              raise SystemExit(f"expected one generated shim import anchor, found {text.count(import_anchor)}")
+          text = text.replace(import_anchor, import_replacement, 1)
+
+          constant_anchor = (
+              f'            f"shim_probe = os.environ.get({{SHIM_PROBE_ENV_VAR!r}}) == {{SHIM_PROBE_ENV_VALUE!r}}",\n'
+              '            "def _real_manager_launch():",\n'
+          )
+          constant_replacement = (
+              f'            f"shim_probe = os.environ.get({{SHIM_PROBE_ENV_VAR!r}}) == {{SHIM_PROBE_ENV_VALUE!r}}",\n'
+              '            f"store_lock_retry_timeout_seconds = {SQLITE_CONNECT_TIMEOUT_SECONDS!r}",\n'
+              '            "store_lock_retry_delay_seconds = 0.1",\n'
+              '            "def _real_manager_launch():",\n'
+          )
+          if text.count(constant_anchor) != 1:
+              raise SystemExit(f"expected one generated shim constant anchor, found {text.count(constant_anchor)}")
+          text = text.replace(constant_anchor, constant_replacement, 1)
+
+          execution_anchor = (
+              '            "guard_kwargs = {\'capture_output\': True, \'text\': True, \'env\': guard_env}",\n'
+              '            "if guard_has_explicit_workspace:",\n'
+              '            "    guard_kwargs[\'cwd\'] = guard_cli_cwd",\n'
+              '            "try:",\n'
+              '            "    guard_process = subprocess.run([*guard_command, *guard_args], **guard_kwargs)",\n'
+          )
+          execution_replacement = (
+              '            "guard_kwargs = {\'capture_output\': True, \'text\': True, \'env\': guard_env}",\n'
+              '            "if guard_has_explicit_workspace:",\n'
+              '            "    guard_kwargs[\'cwd\'] = guard_cli_cwd",\n'
+              '            "def _run_guard_with_store_lock_retry(command, kwargs):",\n'
+              '            "    deadline = time.monotonic() + store_lock_retry_timeout_seconds",\n'
+              '            "    while True:",\n'
+              '            "        result = subprocess.run(command, **kwargs)",\n'
+              '            "        stderr = result.stderr or \'\'",\n'
+              '            "        if result.returncode == 0 or \'database is locked\' not in stderr.lower():",\n'
+              '            "            return result",\n'
+              '            "        remaining_seconds = deadline - time.monotonic()",\n'
+              '            "        if remaining_seconds <= 0:",\n'
+              '            "            return result",\n'
+              '            "        time.sleep(min(store_lock_retry_delay_seconds, remaining_seconds))",\n'
+              '            "try:",\n'
+              '            "    guard_process = _run_guard_with_store_lock_retry(",\n'
+              '            "        [*guard_command, *guard_args], guard_kwargs",\n'
+              '            "    )",\n'
+          )
+          if text.count(execution_anchor) != 1:
+              raise SystemExit(f"expected one generated shim execution anchor, found {text.count(execution_anchor)}")
+          path.write_text(text.replace(execution_anchor, execution_replacement, 1), encoding="utf-8")
+          PY
+
+      - name: Install frozen dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Validate focused regression
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -m ruff format src/codex_plugin_scanner/guard/shims.py
+          uv run --no-sync python -m ruff format --check src/codex_plugin_scanner/guard/shims.py
+          uv run --no-sync python -m ruff check src/codex_plugin_scanner/guard/shims.py
+          uv run --no-sync pytest \
+            tests/test_guard_package_shims.py::test_package_manager_shim_waits_out_transient_store_writer_lock \
+            --tb=short
+          uv run --no-sync pytest \
+            tests/test_guard_package_shims.py \
+            -k 'shim_probe or transient_store_writer_lock' \
+            --tb=short
+
+      - name: Publish validated product commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: 78a2550a13e98cf977199dafc73fbe92ed3e57e8
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/codex_plugin_scanner/guard/shims.py
+          git diff --cached --check
+          git commit -m "fix(guard): retry package shim evaluation after store lock"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push --force origin HEAD:refs/heads/chore/pr-2077-shim-lock-fix
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
