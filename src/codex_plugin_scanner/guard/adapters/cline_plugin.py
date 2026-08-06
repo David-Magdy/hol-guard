@@ -30,6 +30,10 @@ def _state_path(context: HarnessContext) -> Path:
     return context.guard_home / "managed" / "cline" / "plugin-state.json"
 
 
+def _adapter_state_path(context: HarnessContext) -> Path:
+    return context.guard_home / "managed" / "cline" / "adapter-state.json"
+
+
 def _proof_path(context: HarnessContext, name: str) -> Path:
     return context.guard_home / "managed" / "cline" / "proofs" / f"plugin-{name}.json"
 
@@ -59,16 +63,18 @@ def _plugin_source(context: HarnessContext, guard_cli: list[str]) -> str:
     proof_loaded = str(_proof_path(context, "loaded"))
     proof_pre = str(_proof_path(context, "pretool"))
     proof_post = str(_proof_path(context, "posttool"))
+    adapter_state = str(_adapter_state_path(context))
     return f'''// {_MANAGED_MARKER}
 // schema_version={_SCHEMA_VERSION}
 import {{ spawnSync }} from "node:child_process";
-import {{ mkdirSync, renameSync, writeFileSync }} from "node:fs";
+import {{ mkdirSync, readFileSync, renameSync, writeFileSync }} from "node:fs";
 import {{ dirname }} from "node:path";
 
 const GUARD_CLI = {json.dumps(guard_cli)};
 const TIMEOUT_MS = {_PLUGIN_TIMEOUT_MS};
 const MAX_BYTES = {_MAX_PAYLOAD_BYTES};
 const MAX_PRETOOL_INPUT_BYTES = {_MAX_PRETOOL_INPUT_BYTES};
+const ADAPTER_STATE = {json.dumps(adapter_state)};
 const PROOFS = {{
   loaded: {json.dumps(proof_loaded)},
   pretool: {json.dumps(proof_pre)},
@@ -91,6 +97,16 @@ function proof(name, outcome) {{
   }} catch {{
     // Proof persistence is diagnostic; enforcement still follows Guard's decision.
   }}
+}}
+
+function activeTransport() {{
+  try {{
+    const state = JSON.parse(readFileSync(ADAPTER_STATE, "utf8"));
+    if (state && typeof state === "object" && typeof state.active_transport === "string") {{
+      return state.active_transport;
+    }}
+  }} catch {{}}
+  return undefined;
 }}
 
 function jsonBytes(value) {{
@@ -265,6 +281,12 @@ const plugin = {{
       return undefined;
     }},
     async beforeTool({{ toolCall, input }}) {{
+      const active = activeTransport();
+      if (active !== "plugin") {{
+        if (active !== undefined) return undefined;
+        proof("pretool", "blocked");
+        return {{ skip: true, reason: "HOL Guard Cline transport state is unavailable; this action was not allowed to proceed safely." }};
+      }}
       const decision = invokeGuard("PreToolUse", toolCall, input, undefined);
       if (!decision.ok) {{
         proof("pretool", "blocked");
@@ -278,6 +300,12 @@ const plugin = {{
       return {{ skip: true, reason: guardReason(decision.payload) || "HOL Guard blocked this action." }};
     }},
     async afterTool({{ toolCall, input, result }}) {{
+      const active = activeTransport();
+      if (active !== "plugin") {{
+        if (active !== undefined) return undefined;
+        proof("posttool", "replaced");
+        return blockedResult("HOL Guard Cline transport state is unavailable; this tool result was withheld.", result?.metadata);
+      }}
       const decision = invokeGuard("PostToolUse", toolCall, input, result);
       if (!decision.ok) {{
         proof("posttool", "replaced");
