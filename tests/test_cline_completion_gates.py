@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from hashlib import sha256
 from pathlib import Path
 
@@ -15,7 +16,11 @@ from codex_plugin_scanner.guard.adapters.cline_hooks import _hook_source
 from codex_plugin_scanner.guard.adapters.cline_plugin import _plugin_source, cline_plugin_state
 from codex_plugin_scanner.guard.adapters.contracts import contract_for
 from codex_plugin_scanner.guard.cli.commands_support_interaction import _apps_disconnect_confirm_command
-from codex_plugin_scanner.guard.product_model import SUPPORTED_HARNESS_VALUES
+from codex_plugin_scanner.guard.product_model import (
+    CANONICAL_HARNESS_VALUES,
+    SUPPORTED_HARNESS_VALUES,
+    export_product_model_v1,
+)
 
 
 def _context(tmp_path: Path) -> HarnessContext:
@@ -25,6 +30,12 @@ def _context(tmp_path: Path) -> HarnessContext:
     workspace.mkdir(parents=True)
     guard_home.mkdir(parents=True)
     return HarnessContext(home_dir=home, workspace_dir=workspace, guard_home=guard_home)
+
+
+def _activate(context: HarnessContext, transport: str) -> None:
+    path = context.guard_home / "managed" / "cline" / "adapter-state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema_version": 1, "active_transport": transport}) + "\n", encoding="utf-8")
 
 
 def _fake_guard(tmp_path: Path) -> Path:
@@ -81,7 +92,18 @@ def test_cline_is_in_static_supported_contracts() -> None:
     assert contract_for("cline-cli") is contract
     assert contract_for("cline-vscode") is contract
     assert contract.surface_capabilities == ("auto", "hooks", "plugin", "cli", "all")
+    assert "cline" in CANONICAL_HARNESS_VALUES
     assert "cline" in SUPPORTED_HARNESS_VALUES
+
+
+def test_checked_product_schema_matches_exported_cline_membership() -> None:
+    schema_path = Path(__file__).parents[1] / "src" / "codex_plugin_scanner" / "guard" / "schemas" / "guard_product_model_v1.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    exported = export_product_model_v1()
+    assert schema["canonical_harnesses"] == exported["canonical_harnesses"]
+    assert schema["supported_harnesses"] == exported["supported_harnesses"]
+    assert "cline" in schema["canonical_harnesses"]
+    assert "cline" in schema["supported_harnesses"]
 
 
 def test_apps_parser_accepts_every_cline_transport_surface() -> None:
@@ -100,6 +122,7 @@ def test_disconnect_confirmation_preserves_exact_cline_surface() -> None:
 
 def test_native_proof_requires_actual_block_outcome(tmp_path: Path) -> None:
     context = _context(tmp_path)
+    _activate(context, "hooks")
     guard = _fake_guard(tmp_path)
     source = _hook_source(context, event_name="PreToolUse", guard_cli=[sys.executable, str(guard)])
     allowed = _run_native(
@@ -125,6 +148,7 @@ def test_native_proof_requires_actual_block_outcome(tmp_path: Path) -> None:
 
 def test_plugin_proofs_distinguish_allow_block_and_replacement(tmp_path: Path) -> None:
     context = _context(tmp_path)
+    _activate(context, "plugin")
     guard = _fake_guard(tmp_path)
     source = _plugin_source(context, [sys.executable, str(guard)])
 
@@ -193,8 +217,6 @@ def test_plugin_ready_requires_block_and_replacement_proofs(tmp_path: Path) -> N
     )
     proof_root = context.guard_home / "managed" / "cline" / "proofs"
     proof_root.mkdir(parents=True)
-
-    import time
 
     now = time.time()
     for name, outcome in (("loaded", "loaded"), ("pretool", "allowed"), ("posttool", "unchanged")):
