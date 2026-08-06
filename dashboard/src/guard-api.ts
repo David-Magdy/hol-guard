@@ -77,9 +77,6 @@ import type {
   DecisionScope,
   RiskSignalV2Category,
   RiskSignalV2Severity,
-  TrayAction,
-  TrayLifecycleResultPayload,
-  TrayStatusPayload,
 } from "./guard-types";
 import {
   getDemoDiff,
@@ -3332,43 +3329,6 @@ export async function setupDesktopNotifications(): Promise<GuardNotificationSetu
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({})
-  });
-}
-
-// ── Tray icon lifecycle ────────────────────────────────────────────────────
-
-export async function fetchTrayStatus(): Promise<TrayStatusPayload> {
-  if (isGuardDemoMode()) {
-    return {
-      state: "absent",
-      capability: {
-        platform: "macos",
-        backend: "appkit",
-        supported: true,
-        reason: "ok",
-        details: "macOS with appkit backend",
-      },
-      locator: null,
-    };
-  }
-  return readJson<TrayStatusPayload>("/v1/tray/status");
-}
-
-export async function runTrayAction(action: TrayAction): Promise<TrayLifecycleResultPayload> {
-  if (isGuardDemoMode()) {
-    return {
-      ok: true,
-      state: action === "stop" ? "absent" : "running",
-      reason: "ok",
-      message: `Tray ${action} (demo)`,
-      recovery_command: null,
-      process: null,
-    };
-  }
-  return readJson<TrayLifecycleResultPayload>(`/v1/tray/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
   });
 }
 

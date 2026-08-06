@@ -23,7 +23,7 @@ Preserve the starting release history, merge current `main`, apply the 3.0 ident
 
 ## Contract preservation
 
-- Keep policy, receipt, runtime-session, protection, approval, extension-control, attestation, daemon/tray, Cloud sync, and dashboard contracts.
+- Keep policy, receipt, runtime-session, protection, approval, extension-control, attestation, daemon/Desktop boundary, Cloud sync, and dashboard contracts.
 - Do not broaden containment eligibility or reinterpret isolation as approval.
 - Harnesses that cannot enforce authenticated local decisions remain degraded or unsupported for mandatory assurance.
 - See `release-3-0-compatibility-evidence.md` for focused compatibility proof.
