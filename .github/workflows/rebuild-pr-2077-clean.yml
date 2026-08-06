@@ -1,0 +1,240 @@
+name: Rebuild PR 2077 cleanly
+
+on:
+  push:
+    branches:
+      - chore/rebuild-pr-2077-clean
+    paths:
+      - .github/workflows/rebuild-pr-2077-clean.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rebuild-pr-2077-clean
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out trusted staging branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: chore/rebuild-pr-2077-clean
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Apply only the reviewed Desktop contract patch
+        env:
+          RELEASE_HEAD: dc4aca7ae5ca1ff9f6c380b728ac65f9da22e3ba
+          MAIN_BASE: 38254383ca5e4910b4881a4b2fc2d289782a00ee
+          SOURCE_HEAD: 6ef3559a5d0a00dbab614593575e77b8f4a10c53
+        run: |
+          set -euo pipefail
+          git fetch origin \
+            main \
+            release/3.0 \
+            desktop/3.0-contracts-source \
+            desktop/3.0-contracts
+
+          test "$(git rev-parse origin/release/3.0)" = "$RELEASE_HEAD"
+          test "$(git rev-parse origin/main)" = "$MAIN_BASE"
+          test "$(git rev-parse origin/desktop/3.0-contracts-source)" = "$SOURCE_HEAD"
+
+          git switch --detach "$RELEASE_HEAD"
+          git switch -c rebuild-pr-2077
+
+          contract_paths=(
+            .github/workflows/desktop-contract-ci.yml
+            docs/guard/desktop-bootstrap-contract.md
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py
+            src/codex_plugin_scanner/guard/cli/commands_parser.py
+            src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py
+            src/codex_plugin_scanner/guard/cli/commands_router.py
+            src/codex_plugin_scanner/guard/cli/commands_support.py
+            src/codex_plugin_scanner/guard/store_approval_facade.py
+            src/codex_plugin_scanner/guard/store_approvals.py
+            src/codex_plugin_scanner/guard/store_receipts.py
+            tests/test_guard_desktop_contract.py
+          )
+
+          git diff --binary "$MAIN_BASE" "$SOURCE_HEAD" -- "${contract_paths[@]}" > /tmp/desktop-contract.patch
+          test -s /tmp/desktop-contract.patch
+          git apply --3way --index /tmp/desktop-contract.patch
+
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/desktop-contract-ci.yml')
+          text = workflow.read_text(encoding='utf-8')
+          old = '  push:\n    branches:\n      - main\n'
+          new = '  push:\n    branches:\n      - release/3.0\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one main push branch, found {text.count(old)}')
+          workflow.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Install frozen dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Format and lint contract sources
+        run: |
+          uv run --no-sync python -m ruff format \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/cli/commands_router.py \
+            src/codex_plugin_scanner/guard/cli/commands_support.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+          uv run --no-sync python -m ruff format --check \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/cli/commands_router.py \
+            src/codex_plugin_scanner/guard/cli/commands_support.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+          uv run --no-sync python -m ruff check \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/cli/commands_router.py \
+            src/codex_plugin_scanner/guard/cli/commands_support.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/test_guard_desktop_contract.py
+
+      - name: Regenerate source-bound evidence and suite ratchet
+        run: |
+          set -euo pipefail
+          uv run --no-sync python tests/guard_command_decision_diff.py --write
+          uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory_path = Path('test-inventory.json')
+          baseline_path = Path('ci/test-suite-ratchet-baseline.json')
+          inventory = json.loads(inventory_path.read_text(encoding='utf-8'))
+          baseline = json.loads(baseline_path.read_text(encoding='utf-8'))
+          cases = inventory['inventory']['collected_cases']
+          lines = inventory['test_source_lines']
+          baseline['maximum_collected_cases'] = max(baseline['maximum_collected_cases'], cases)
+          baseline['maximum_test_source_lines'] = max(baseline['maximum_test_source_lines'], lines)
+          baseline_path.write_text(json.dumps(baseline, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          PY
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
+          rm test-inventory.json
+
+      - name: Validate Desktop contract and privacy boundary
+        run: |
+          set -euo pipefail
+          uv run --no-sync pytest tests/test_guard_desktop_contract.py --tb=short
+          uv run --no-sync python tests/guard_command_decision_diff.py --check
+          export HOL_GUARD_HOME="$RUNNER_TEMP/guard-home"
+          mkdir -p "$HOL_GUARD_HOME"
+          uv run --no-sync hol-guard desktop bootstrap --json > "$RUNNER_TEMP/desktop-bootstrap.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads((Path(os.environ['RUNNER_TEMP']) / 'desktop-bootstrap.json').read_text(encoding='utf-8'))
+          assert payload['schema'] == 'guard-desktop-bootstrap.v1'
+          assert payload['status'] in {
+              'ready',
+              'attention_required',
+              'setup_required',
+              'runtime_unavailable',
+              'incompatible',
+          }
+          serialized = json.dumps(payload, sort_keys=True).lower()
+          for forbidden in (
+              'access_token',
+              'refresh_token',
+              'authorization',
+              'raw_command',
+              'config_path',
+              'shim_path',
+              'guard_home',
+              'session_token',
+          ):
+              assert forbidden not in serialized
+          PY
+
+      - name: Verify focused clean diff
+        run: |
+          set -euo pipefail
+          git add -A
+          git diff --cached --check
+          changed="$(git diff --cached --name-only | sort)"
+          allowed="$(printf '%s\n' \
+            .github/workflows/desktop-contract-ci.yml \
+            ci/test-suite-ratchet-baseline.json \
+            docs/guard/desktop-bootstrap-contract.md \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_router.py \
+            src/codex_plugin_scanner/guard/cli/commands_support.py \
+            src/codex_plugin_scanner/guard/store_approval_facade.py \
+            src/codex_plugin_scanner/guard/store_approvals.py \
+            src/codex_plugin_scanner/guard/store_receipts.py \
+            tests/fixtures/guard-command-corpus/decision-diff-report.json \
+            tests/test_guard_desktop_contract.py | sort)"
+          unexpected="$(comm -23 <(printf '%s\n' "$changed") <(printf '%s\n' "$allowed"))"
+          if [ -n "$unexpected" ]; then
+            echo "Unexpected files in clean Desktop contract diff:" >&2
+            printf '%s\n' "$unexpected" >&2
+            exit 1
+          fi
+          for required in \
+            .github/workflows/desktop-contract-ci.yml \
+            docs/guard/desktop-bootstrap-contract.md \
+            src/codex_plugin_scanner/guard/cli/commands_dispatch_desktop.py \
+            src/codex_plugin_scanner/guard/cli/commands_parser_desktop.py \
+            tests/test_guard_desktop_contract.py; do
+            printf '%s\n' "$changed" | grep -Fx "$required" >/dev/null
+          done
+
+      - name: Commit and replace polluted PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_OLD_HEAD: 6ef3559a5d0a00dbab614593575e77b8f4a10c53
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat(desktop): add privacy-safe bootstrap contract" \
+            -m "Add a hidden, versioned, bounded Core projection for the separate HOL Guard Desktop application without moving enforcement authority or credentials into the native shell."
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          remote_head="$(git ls-remote origin refs/heads/desktop/3.0-contracts | cut -f1)"
+          if [ "$remote_head" != "$EXPECTED_OLD_HEAD" ]; then
+            echo "PR branch moved during rebuild; refusing to overwrite $remote_head" >&2
+            exit 1
+          fi
+          git push \
+            --force-with-lease="refs/heads/desktop/3.0-contracts:${EXPECTED_OLD_HEAD}" \
+            origin HEAD:refs/heads/desktop/3.0-contracts
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
