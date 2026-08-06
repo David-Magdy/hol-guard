@@ -35,6 +35,7 @@ def test_cline_adapter_registry_aliases_and_contract() -> None:
         ("editor", {"path": "src/app.py", "content": "x"}, "file_write"),
         ("apply_patch", {"patch": "*** Update File: src/app.py"}, "file_write"),
         ("use_mcp_tool", {"server_name": "demo", "tool_name": "write"}, "mcp_tool"),
+        ("fetch_web_content", {"url": "https://example.invalid/data"}, "network_request"),
     ],
 )
 def test_cline_typed_tool_payloads_normalize(tool_name: str, tool_input: dict[str, object], expected_type: str) -> None:
@@ -69,6 +70,16 @@ def test_cline_current_and_legacy_payload_conflict_is_rejected() -> None:
                     "toolName": "run_commands",
                     "parameters": {"commands": json.dumps(["echo legacy"])},
                 },
+            }
+        )
+
+
+def test_cline_unknown_action_bearing_tool_fails_closed() -> None:
+    with pytest.raises(ClinePayloadError):
+        normalize_cline_payload(
+            {
+                "hookName": "PreToolUse",
+                "tool_call": {"name": "future_dangerous_tool", "input": {"command": "echo hi"}},
             }
         )
 
