@@ -39,7 +39,7 @@ def test_release_branches_run_ci_and_pr_canaries() -> None:
     assert "tags" not in publish[True]["push"]
 
 
-def test_main_pushes_publish_stable_while_tag_pushes_cannot_publish() -> None:
+def test_release_branch_pushes_publish_alpha_while_main_pushes_publish_stable() -> None:
     workflow = _workflow(PUBLISH_WORKFLOW)
     jobs = workflow["jobs"]
 
@@ -49,7 +49,10 @@ def test_main_pushes_publish_stable_while_tag_pushes_cannot_publish() -> None:
         "release-alpha",
         "publish-container",
     ):
-        assert "github.event_name == 'workflow_dispatch'" in jobs[job_name]["if"]
+        condition = jobs[job_name]["if"]
+        assert "github.event_name == 'workflow_dispatch'" in condition
+        assert "github.event_name == 'push'" in condition
+        assert "github.ref == 'refs/heads/release/3.0'" in condition
     for job_name in ("publish-main-testpypi", "publish-main-pypi", "release-main"):
         condition = jobs[job_name]["if"]
         assert "github.event_name == 'push'" in condition
@@ -72,6 +75,11 @@ def test_main_push_build_computes_a_registry_derived_stable_version() -> None:
     stamp_run = stamp_step["run"]
 
     assert 'VERSION="$BASE_VERSION"' in compute_run
+    assert 'elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/release/3.0" ]]' in compute_run
+    assert 'SOURCE_SHA" != "$GITHUB_SHA"' in compute_run
+    assert 'TRAIN="3.0"' in compute_run
+    assert "compute_alpha_release_version.py" in compute_run
+    assert "validate_alpha_release.py" in compute_run
     assert 'CHANNEL="integration"' in compute_run
     assert 'elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]' in compute_run
     assert 'elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]' in compute_run
@@ -178,6 +186,7 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     assert jobs["publish-alpha-pypi"]["needs"] == [
         "build",
         "alpha-cross-platform",
+        "reserve-alpha-tag",
         "publish-alpha-testpypi",
     ]
     for job_name in (
@@ -195,6 +204,21 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
 
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "skip-existing" not in workflow_text
+
+def test_alpha_tag_reservation_binds_version_to_build_source() -> None:
+    workflow = _workflow(PUBLISH_WORKFLOW)
+    job = workflow["jobs"]["reserve-alpha-tag"]
+
+    assert job["needs"] == ["build"]
+    assert job["permissions"] == {"contents": "write"}
+    assert "needs.build.outputs.channel == 'alpha'" in job["if"]
+    reservation_run = next(
+        step["run"] for step in job["steps"] if step.get("name") == "Reserve exact alpha tag"
+    )
+    assert 'tag="alpha/v${VERSION}"' in reservation_run
+    assert 'refs/tags/${tag}' in reservation_run
+    assert '-f sha="$SOURCE_SHA"' in reservation_run
+    assert 'remote_tag_sha" != "$SOURCE_SHA"' in reservation_run
 
 
 def test_publish_jobs_use_registered_protected_environments() -> None:
@@ -352,13 +376,14 @@ def test_release_tags_are_bound_to_the_exact_published_source() -> None:
     assert "--verify-tag" in main_release_run
 
 
-def test_release_30_dispatch_remains_alpha_only_while_main_is_stable() -> None:
+def test_release_30_alpha_branch_remains_alpha_while_main_is_stable() -> None:
     workflow = _workflow(PUBLISH_WORKFLOW)
     jobs = workflow["jobs"]
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
 
     assert "channel == 'alpha'" in jobs["release-alpha"]["if"]
-    assert "github.event_name == 'workflow_dispatch'" in jobs["release-alpha"]["if"]
+    assert "github.event_name == 'push'" in jobs["release-alpha"]["if"]
+    assert "refs/heads/release/3.0" in jobs["release-alpha"]["if"]
     assert "channel == 'stable'" in jobs["publish-container"]["if"]
     assert jobs["publish-container"]["needs"] == [
         "build",

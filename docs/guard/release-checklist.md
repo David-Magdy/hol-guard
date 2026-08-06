@@ -46,12 +46,13 @@ Guard uses two isolated release lines:
 
 1. Merge the intended changes and the latest compatible `main` fixes into `release/3.0`.
 2. Wait for the standard Linux and cross-platform CI jobs on the branch to pass.
-3. Run the `Publish to PyPI` workflow from `release/3.0` with `release_channel=alpha`, `release_train=3.0`, a new `release_version` such as `3.0.0a1`, and `expected_sha` set to the authorized branch commit.
-4. Confirm the workflow's Linux suite, Windows suite, package checks, and PyPI trusted publish all pass.
-5. Verify the generated `alpha/v<VERSION>` GitHub prerelease and install the exact version in a clean environment.
-6. Record compatibility findings against the alpha without changing the default 2.x installer path.
+3. A push to `release/3.0` automatically computes the next unused `3.0.0aN` version from PyPI, TestPyPI, and existing alpha tags, reserves `alpha/v<VERSION>` against the exact branch commit, and publishes the verified artifact to both registries.
+4. For an explicitly authorized replay or fixed version, run the `Publish to PyPI` workflow from `release/3.0` with `release_channel=alpha`, `release_train=3.0`, a new `release_version` such as `3.0.0a1`, and `expected_sha` set to the authorized branch commit.
+5. Confirm the workflow's Linux suite, Windows suite, package checks, and PyPI trusted publish all pass.
+6. Verify the generated `alpha/v<VERSION>` GitHub prerelease and install the exact version in a clean environment.
+7. Record compatibility findings against the alpha without changing the default 2.x installer path.
 
-The workflow rejects alpha versions outside the 3.x line, rejects non-alpha prerelease types, rejects alpha publishes from any other branch, and prevents alpha artifacts from entering the stable repository-version synchronization flow.
+The workflow rejects alpha versions outside the 3.x line, rejects non-alpha prerelease types, rejects alpha publishes from any other branch, binds every tag and artifact to the exact branch commit, and prevents alpha artifacts from entering the stable repository-version synchronization flow.
 
 ### Continue 2.x maintenance
 
