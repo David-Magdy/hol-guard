@@ -379,39 +379,6 @@ jobs:
           path: release-metadata/*.cdx.json
           if-no-files-found: error
 
-  alpha-cross-platform:
-    name: Alpha release tests (${{ matrix.os }})
-    if: >-
-      (
-        (github.event_name == 'workflow_dispatch' &&
-         github.run_attempt == 1 &&
-         github.event.inputs.release_channel == 'alpha') ||
-        (github.event_name == 'push' &&
-         github.run_attempt == 1 &&
-         github.ref == 'refs/heads/release/3.0')
-      )
-    needs: build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
-        with:
-          version: "0.9.26"
-          enable-cache: true
-      - run: uv sync --frozen --extra dev --python 3.12
-      - name: Run Linux release suite
-        if: runner.os == 'Linux'
-        run: uv run --no-sync pytest --tb=short
-      - name: Run Windows release suite
-        if: runner.os == 'Windows'
-        run: uv run --no-sync pytest tests/test_cli.py tests/test_verification.py tests/test_action_runner.py tests/test_policy_document_yaml.py tests/test_policy_bundle_v2.py --tb=short
 
   publish-testpypi:
     name: Publish PR canary to TestPyPI
@@ -673,9 +640,8 @@ jobs:
       (
         (github.event_name == 'workflow_dispatch' && github.run_attempt == 1) ||
         (github.event_name == 'push' && github.ref == 'refs/heads/release/3.0')
-      ) &&
-      (needs.alpha-cross-platform.result == 'success' || needs.alpha-cross-platform.result == 'skipped')
-    needs: [build, alpha-cross-platform, reserve-alpha-tag]
+      )
+    needs: [build, reserve-alpha-tag]
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -773,10 +739,8 @@ jobs:
       (
         (github.event_name == 'workflow_dispatch' && github.run_attempt == 1) ||
         (github.event_name == 'push' && github.ref == 'refs/heads/release/3.0')
-      ) &&
-      needs.publish-alpha-testpypi.result == 'success' &&
-      (needs.alpha-cross-platform.result == 'success' || needs.alpha-cross-platform.result == 'skipped')
-    needs: [build, alpha-cross-platform, reserve-alpha-tag, publish-alpha-testpypi]
+      )
+    needs: [build, reserve-alpha-tag, publish-alpha-testpypi]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

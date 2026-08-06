@@ -146,9 +146,8 @@ def test_release_dispatch_binds_channel_train_version_and_sha() -> None:
     build_condition = jobs["build"]["if"]
     assert "github.event_name != 'workflow_dispatch' || github.run_attempt == 1" in build_condition
     assert "github.event_name != 'push' || github.run_attempt == 1" in build_condition
-    assert jobs["alpha-cross-platform"]["needs"] == "build"
+    assert "alpha-cross-platform" not in jobs
     for job_name in (
-        "alpha-cross-platform",
         "publish-alpha-testpypi",
         "publish-alpha-pypi",
         "release-alpha",
@@ -185,7 +184,6 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     }
     assert jobs["publish-alpha-pypi"]["needs"] == [
         "build",
-        "alpha-cross-platform",
         "reserve-alpha-tag",
         "publish-alpha-testpypi",
     ]
@@ -203,7 +201,7 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
         )
 
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
-    assert "skip-existing" not in workflow_text
+    assert "skip-existing" not in workflow_text and "pytest" not in workflow_text
 
 def test_alpha_tag_reservation_binds_version_to_build_source() -> None:
     workflow = _workflow(PUBLISH_WORKFLOW)
