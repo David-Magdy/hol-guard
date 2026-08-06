@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import subprocess
 import webbrowser
 from collections.abc import Mapping
+from pathlib import Path
 
 
 def open_browser_url(url: str) -> bool:
     """Open *url* and report whether a browser launch was accepted.
 
-    Linux environments without a graphical session cannot open a local dashboard.
-    Avoid invoking a browser there, where Chromium sandbox diagnostics would otherwise
-    be written to the caller's terminal.
+    Linux environments without a graphical session or usable unprivileged user
+    namespaces cannot safely launch Chromium-family browsers. Avoid invoking a
+    browser there, where sandbox diagnostics would otherwise be written to the
+    caller's terminal by a detached browser process.
     """
 
     if platform.system() == "Linux":
@@ -27,6 +30,8 @@ def open_browser_url(url: str) -> bool:
 
 def _open_linux_browser_url(url: str, *, environ: Mapping[str, str] | None = None) -> bool:
     if not _has_linux_graphical_session(environ or os.environ):
+        return False
+    if not _linux_user_namespace_available():
         return False
     try:
         process = subprocess.Popen(
@@ -46,3 +51,40 @@ def _open_linux_browser_url(url: str, *, environ: Mapping[str, str] | None = Non
 
 def _has_linux_graphical_session(environ: Mapping[str, str]) -> bool:
     return bool(environ.get("DISPLAY") or environ.get("WAYLAND_DISPLAY"))
+
+
+def _linux_user_namespace_available() -> bool:
+    """Return whether a Chromium-style unprivileged user namespace can be created.
+
+    Kernel settings are cheap negative signals. When the ``unshare`` utility is
+    present, perform one silent bounded probe so container/seccomp EPERM failures
+    are detected before a browser process is started. If the utility is absent,
+    leave browser selection to the desktop rather than making an unsupported
+    assumption about the kernel.
+    """
+
+    for sysctl_path in (
+        Path("/proc/sys/kernel/unprivileged_userns_clone"),
+        Path("/proc/sys/user/max_user_namespaces"),
+    ):
+        try:
+            if sysctl_path.is_file() and sysctl_path.read_text(encoding="utf-8").strip() == "0":
+                return False
+        except OSError:
+            continue
+
+    unshare = shutil.which("unshare")
+    if unshare is None:
+        return True
+    try:
+        result = subprocess.run(
+            [unshare, "--user", "--map-root-user", "true"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=0.5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
