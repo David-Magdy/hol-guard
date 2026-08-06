@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
+from io import StringIO
 from pathlib import Path
 
-from codex_plugin_scanner.guard.cli import commands_router
+from codex_plugin_scanner.guard.cli import commands_preflight, commands_router
 from codex_plugin_scanner.guard.cli.commands_preflight import _unsafe_broad_preflight_target
 from codex_plugin_scanner.guard.package_firewall_entitlement import package_firewall_operation_allowed
 from codex_plugin_scanner.guard.package_shim_status import enrich_package_shim_status_payload
@@ -101,6 +103,44 @@ def test_preflight_rejects_home_and_filesystem_root_but_allows_project(tmp_path:
     assert _unsafe_broad_preflight_target(home, home_dir=home) is True
     assert _unsafe_broad_preflight_target(Path(home.anchor), home_dir=home) is True
     assert _unsafe_broad_preflight_target(project, home_dir=home) is False
+
+
+def test_preflight_resolution_failure_honors_json_output_stream(monkeypatch) -> None:
+    def fail_resolve(_path: Path, *_args: object, **_kwargs: object) -> Path:
+        raise OSError("unresolvable")
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+    output = StringIO()
+    args = argparse.Namespace(target=".", json=True, cisco_mode="off", harness=None, enforce=False)
+
+    exit_code = commands_preflight._run_guard_safe_preflight_command(args, output_stream=output)
+
+    assert exit_code == 2
+    payload = json.loads(output.getvalue())
+    assert payload["error"] == "preflight_target_unresolvable"
+    assert "unresolvable" in payload["message"]
+
+
+def test_preflight_success_honors_output_stream(monkeypatch, tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setattr(
+        commands_preflight,
+        "_run_consumer_scan_with_mode",
+        lambda *_args, **_kwargs: {"install_verdict": {"action": "allow"}, "result": "ok"},
+    )
+    monkeypatch.setattr(
+        commands_preflight,
+        "_emit",
+        lambda _name, payload, _json_output: print(json.dumps(payload, sort_keys=True)),
+    )
+    output = StringIO()
+    args = argparse.Namespace(target=str(project), json=True, cisco_mode="off", harness=None, enforce=False)
+
+    exit_code = commands_preflight._run_guard_safe_preflight_command(args, output_stream=output)
+
+    assert exit_code == 0
+    assert json.loads(output.getvalue())["result"] == "ok"
 
 
 def test_router_converts_keyboard_interrupt_to_exit_130(capsys) -> None:
