@@ -29,6 +29,12 @@ def _context(tmp_path: Path) -> HarnessContext:
     return HarnessContext(home_dir=home, workspace_dir=workspace, guard_home=guard_home)
 
 
+def _activate(context: HarnessContext, transport: str) -> None:
+    path = context.guard_home / "managed" / "cline" / "adapter-state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema_version": 1, "active_transport": transport}) + "\n", encoding="utf-8")
+
+
 def _fake_guard(tmp_path: Path) -> Path:
     path = tmp_path / "fake_guard.py"
     path.write_text(
@@ -109,6 +115,7 @@ def test_windows_wrapper_uses_isolated_python_and_fails_closed() -> None:
 
 def test_native_pretool_fails_closed_when_guard_is_unavailable(tmp_path: Path) -> None:
     context = _context(tmp_path)
+    _activate(context, "hooks")
     source = _hook_source(context, event_name="PreToolUse", guard_cli=[str(tmp_path / "missing")])
     result = _run_hook(
         source,
@@ -121,6 +128,7 @@ def test_native_pretool_fails_closed_when_guard_is_unavailable(tmp_path: Path) -
 
 def test_native_pretool_fans_out_cline_parallel_commands(tmp_path: Path) -> None:
     context = _context(tmp_path)
+    _activate(context, "hooks")
     guard = _fake_guard(tmp_path)
     log = tmp_path / "guard.jsonl"
     source = _hook_source(context, event_name="PreToolUse", guard_cli=[sys.executable, str(guard)])
@@ -140,6 +148,7 @@ def test_native_pretool_fans_out_cline_parallel_commands(tmp_path: Path) -> None
 
 def test_native_pretool_rejects_oversized_input_before_guard(tmp_path: Path) -> None:
     context = _context(tmp_path)
+    _activate(context, "hooks")
     guard = _fake_guard(tmp_path)
     source = _hook_source(context, event_name="PreToolUse", guard_cli=[sys.executable, str(guard)])
     result = _run_hook(
@@ -152,6 +161,7 @@ def test_native_pretool_rejects_oversized_input_before_guard(tmp_path: Path) -> 
 
 def test_generated_plugin_syntax_pretool_block_and_posttool_replacement(tmp_path: Path) -> None:
     context = _context(tmp_path)
+    _activate(context, "plugin")
     guard = _fake_guard(tmp_path)
     source = _plugin_source(context, [sys.executable, str(guard)])
     node = shutil.which("node")
