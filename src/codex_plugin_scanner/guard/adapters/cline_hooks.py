@@ -13,6 +13,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from .base import HarnessContext
+from .cline_paths import cline_hook_roots as _resolve_cline_hook_roots
 from .guard_cli_attestation import resolve_attested_guard_cli
 
 _MARKER = "HOL_GUARD_MANAGED_CLINE_HOOK_V1"
@@ -26,9 +27,9 @@ _EVENTS = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "TaskStart", "TaskEr
 
 
 def cline_hook_roots(context: HarnessContext) -> tuple[Path, ...]:
-    """Return roots accepted by the VS Code hook runtime and Cline Core."""
+    """Return global hook roots accepted by Cline UI and data-dir runtimes."""
 
-    return (context.home_dir / "Documents" / "Cline" / "Hooks", context.home_dir / ".cline" / "hooks")
+    return _resolve_cline_hook_roots(context)
 
 
 def _state_path(context: HarnessContext) -> Path:
