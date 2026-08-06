@@ -12,6 +12,7 @@ import pytest
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.adapters.cline_hooks import (
     _hook_source,
+    _posix_wrapper,
     _powershell_wrapper,
     _slot_for_event,
     cline_hook_roots,
@@ -90,6 +91,13 @@ def test_native_hook_slots_are_platform_canonical_and_non_destructive(tmp_path: 
     (root / "PreToolUse").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     with pytest.raises(RuntimeError):
         _slot_for_event(root, "PreToolUse", windows=False)
+
+
+def test_posix_wrapper_pins_python_and_isolation_flags() -> None:
+    source = _posix_wrapper(worker=Path("/guard/worker.py"), python="/runtime/python")
+    assert source.startswith("#!/bin/sh\n")
+    assert "exec /runtime/python -I -s /guard/worker.py" in source
+    assert "/usr/bin/env python" not in source
 
 
 def test_windows_wrapper_uses_isolated_python_and_fails_closed() -> None:
