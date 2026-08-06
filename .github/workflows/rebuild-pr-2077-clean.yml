@@ -39,20 +39,23 @@ jobs:
 
       - name: Apply only the reviewed Desktop contract patch
         env:
-          RELEASE_HEAD: dc4aca7ae5ca1ff9f6c380b728ac65f9da22e3ba
-          MAIN_BASE: 38254383ca5e4910b4881a4b2fc2d289782a00ee
+          RELEASE_HEAD: 3203d506e0f4a9d1d7f62d114588d42e33235338
+          PINNED_MAIN_BASE: 38254383ca5e4910b4881a4b2fc2d289782a00ee
           SOURCE_HEAD: 6ef3559a5d0a00dbab614593575e77b8f4a10c53
         run: |
           set -euo pipefail
           git fetch origin \
-            main \
             release/3.0 \
             desktop/3.0-contracts-source \
             desktop/3.0-contracts
 
-          test "$(git rev-parse origin/release/3.0)" = "$RELEASE_HEAD"
-          test "$(git rev-parse origin/main)" = "$MAIN_BASE"
-          test "$(git rev-parse origin/desktop/3.0-contracts-source)" = "$SOURCE_HEAD"
+          actual_release="$(git rev-parse origin/release/3.0)"
+          actual_source="$(git rev-parse origin/desktop/3.0-contracts-source)"
+          echo "release/3.0=$actual_release"
+          echo "contract-source=$actual_source"
+          test "$actual_release" = "$RELEASE_HEAD"
+          test "$actual_source" = "$SOURCE_HEAD"
+          git cat-file -e "$PINNED_MAIN_BASE^{commit}"
 
           git switch --detach "$RELEASE_HEAD"
           git switch -c rebuild-pr-2077
@@ -71,7 +74,7 @@ jobs:
             tests/test_guard_desktop_contract.py
           )
 
-          git diff --binary "$MAIN_BASE" "$SOURCE_HEAD" -- "${contract_paths[@]}" > /tmp/desktop-contract.patch
+          git diff --binary "$PINNED_MAIN_BASE" "$SOURCE_HEAD" -- "${contract_paths[@]}" > /tmp/desktop-contract.patch
           test -s /tmp/desktop-contract.patch
           git apply --3way --index /tmp/desktop-contract.patch
 
