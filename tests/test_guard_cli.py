@@ -8488,13 +8488,11 @@ url = http://127.0.0.1:8787/guard-canary
             "apps",
             "cloud",
             "notifications",
-            "tray",
         ]
         assert output["dashboard"] == {"skipped": True, "reason": "needs_approval"}
         assert output["apps"] == {"skipped": True, "reason": "needs_approval"}
         assert output["cloud"] == {"skipped": True, "reason": "needs_approval"}
         assert output["desktop_notifications"] == {"skipped": True, "reason": "needs_approval"}
-        assert output["tray"] == {"skipped": True, "reason": "needs_approval"}
         assert output["next_command"] == "hol-guard init --yes"
 
     def test_guard_init_runs_apps_cloud_notifications_and_dashboard_with_yes(self, tmp_path, capsys, monkeypatch):
@@ -8567,36 +8565,12 @@ url = http://127.0.0.1:8787/guard-canary
 
         monkeypatch.setattr(guard_commands_module, "ensure_desktop_notification_setup", fake_setup)
 
-        # Mock tray lifecycle so init doesn't shell out on CI (no display).
-        from unittest.mock import MagicMock as _MagicMock
-
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        mock_adapter = _MagicMock()
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: mock_adapter,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            lambda *a, **kw: None,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            _MagicMock(return_value=_MagicMock(ok=True)),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
-
         rc = main(["guard", "init", "--yes", "--home", str(home_dir), "--guard-home", str(guard_home), "--json"])
         output = json.loads(capsys.readouterr().out)
 
         assert rc == 0
         assert output["mode"] == "auto_approved"
         assert [step["decision"] for step in output["plan"]] == [
-            "approved",
             "approved",
             "approved",
             "approved",
@@ -8647,27 +8621,6 @@ url = http://127.0.0.1:8787/guard-canary
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("notification permission failed")),
         )
 
-        # Tray step runs even after init_failed (loop continues). Mock it.
-        from unittest.mock import MagicMock as _MagicMock
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: _MagicMock(),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            lambda *a, **kw: None,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            _MagicMock(return_value=_MagicMock(ok=True)),
-        )
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
         rc = main(["guard", "init", "--yes", "--home", str(home_dir), "--guard-home", str(guard_home), "--json"])
         output = json.loads(capsys.readouterr().out)
 
@@ -8740,29 +8693,6 @@ url = http://127.0.0.1:8787/guard-canary
             ),
         )
 
-        # Tray step runs even after a step fails (loop continues). Mock it
-        # so init doesn't write a real autostart file on Linux CI.
-        from unittest.mock import MagicMock as _MagicMock
-
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: _MagicMock(),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            lambda *a, **kw: None,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            _MagicMock(return_value=_MagicMock(ok=True)),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
-
         rc = main(["guard", "init", "--yes", "--home", str(home_dir), "--guard-home", str(guard_home), "--json"])
         output = json.loads(capsys.readouterr().out)
 
@@ -8804,28 +8734,6 @@ url = http://127.0.0.1:8787/guard-canary
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("notification permission failed")),
         )
 
-        # Tray step runs even after notification failure. Mock it.
-        from unittest.mock import MagicMock as _MagicMock
-
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: _MagicMock(),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            lambda *a, **kw: None,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            _MagicMock(return_value=_MagicMock(ok=True)),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
-
         rc = main(["guard", "init", "--yes", "--home", str(home_dir), "--guard-home", str(guard_home)])
         output = capsys.readouterr().out
 
@@ -8837,7 +8745,7 @@ url = http://127.0.0.1:8787/guard-canary
     def test_guard_init_interactive_no_skips_only_cloud_step(self, tmp_path, capsys, monkeypatch):
         home_dir = tmp_path / "home"
         guard_home = tmp_path / "guard-home"
-        answers = iter(["y", "y", "n", "y", "n"])
+        answers = iter(["y", "y", "n", "y"])
         dashboard_calls: list[str] = []
         install_calls: list[bool] = []
         notification_calls: list[bool] = []
@@ -8891,14 +8799,6 @@ url = http://127.0.0.1:8787/guard-canary
 
         monkeypatch.setattr(guard_commands_module, "ensure_desktop_notification_setup", fake_setup)
 
-        # Tray step: user skips it ("n"). Mock detect_platform_adapter so the
-        # skip path doesn't shell out on CI.
-        from unittest.mock import MagicMock as _MagicMock
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: _MagicMock(),
-        )
         rc = main(["guard", "init", "--home", str(home_dir), "--guard-home", str(guard_home)])
         output = capsys.readouterr().out
 
@@ -8913,7 +8813,7 @@ url = http://127.0.0.1:8787/guard-canary
         home_dir = tmp_path / "home"
         guard_home = tmp_path / "guard-home"
         events: list[str] = []
-        answers = iter(["y", "y", "y", "y", "y"])
+        answers = iter(["y", "y", "y", "y"])
 
         monkeypatch.setattr(guard_commands_module.sys.stdin, "isatty", lambda: True)
 
@@ -8969,38 +8869,6 @@ url = http://127.0.0.1:8787/guard-canary
 
         monkeypatch.setattr(guard_commands_module, "ensure_desktop_notification_setup", fake_setup)
 
-        # Mock tray lifecycle so interactive init doesn't shell out on CI.
-        from unittest.mock import MagicMock as _MagicMock
-
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        mock_adapter = _MagicMock()
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: mock_adapter,
-        )
-
-        def fake_install_registration(*_a, **_kw):
-            events.append("run:tray-install")
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            fake_install_registration,
-        )
-
-        def fake_start_tray(*_a, **_kw):
-            events.append("run:tray-start")
-            return _MagicMock(ok=True)
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            fake_start_tray,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
-
         rc = main(["guard", "init", "--home", str(home_dir), "--guard-home", str(guard_home)])
 
         assert rc == 0
@@ -9014,9 +8882,6 @@ url = http://127.0.0.1:8787/guard-canary
             "run:cloud",
             "prompt:notifications",
             "run:notifications",
-            "prompt:tray",
-            "run:tray-install",
-            "run:tray-start",
         ]
 
     def test_guard_init_skip_flags_do_not_run_install_cloud_or_notifications(self, tmp_path, capsys, monkeypatch):
@@ -9059,7 +8924,6 @@ url = http://127.0.0.1:8787/guard-canary
                 "--skip-apps",
                 "--skip-cloud",
                 "--skip-notifications",
-                "--skip-tray",
                 "--home",
                 str(home_dir),
                 "--guard-home",
@@ -9076,7 +8940,6 @@ url = http://127.0.0.1:8787/guard-canary
             "skipped": True,
             "reason": "skip_notifications",
         }
-        assert output["tray"] == {"skipped": True, "reason": "skip_tray"}
 
     def test_guard_admin_alias_opens_local_approval_center(self, tmp_path, capsys, monkeypatch):
         home_dir = tmp_path / "home"
