@@ -256,23 +256,19 @@ jobs:
             printf '%s\n' "$changed" | grep -Fx "$required" >/dev/null
           done
 
-      - name: Commit and replace polluted PR branch
+      - name: Publish validated product commit for final GitHub assembly
         env:
           GH_TOKEN: ${{ github.token }}
-          EXPECTED_OLD_HEAD: 6ef3559a5d0a00dbab614593575e77b8f4a10c53
+          RELEASE_HEAD: 3203d506e0f4a9d1d7f62d114588d42e33235338
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git restore --staged .github/workflows/desktop-contract-ci.yml
           git commit -m "feat(desktop): add privacy-safe bootstrap contract" \
             -m "Add a hidden, versioned, bounded Core projection for the separate HOL Guard Desktop application without moving enforcement authority or credentials into the native shell."
+          test "$(git rev-parse HEAD^)" = "$RELEASE_HEAD"
+          test ! -e "$(git rev-parse --git-dir)/MERGE_HEAD"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          remote_head="$(git ls-remote origin refs/heads/desktop/3.0-contracts | cut -f1)"
-          if [ "$remote_head" != "$EXPECTED_OLD_HEAD" ]; then
-            echo "PR branch moved during rebuild; refusing to overwrite $remote_head" >&2
-            exit 1
-          fi
-          git push \
-            --force-with-lease="refs/heads/desktop/3.0-contracts:${EXPECTED_OLD_HEAD}" \
-            origin HEAD:refs/heads/desktop/3.0-contracts
+          git push --force origin HEAD:refs/heads/chore/pr-2077-clean-product
           git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
