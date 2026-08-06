@@ -331,14 +331,15 @@ def package_firewall_operation_allowed(
     normalized_operation = operation.strip().lower()
     if normalized_operation in {"status", "connect", "open-shell"}:
         return True
+    # Existing local protection must remain repairable even when Cloud access
+    # needs reconnecting or the paid entitlement cannot currently be proven.
+    # This does not authorize new installs, tests, audits, or policy sync.
+    if normalized_operation in {"repair", "remove"}:
+        return has_installed_managers
     reason = str(entitlement.get("reason") or "").strip().lower()
     if reason == "guard_cloud_reconnect_required":
         return False
-    if bool(entitlement.get("allowed")):
-        return True
-    if normalized_operation in {"repair", "remove"}:
-        return has_installed_managers
-    return False
+    return bool(entitlement.get("allowed"))
 
 
 def package_firewall_block_details(entitlement: dict[str, object]) -> tuple[int, str, str]:
