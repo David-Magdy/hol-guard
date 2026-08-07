@@ -88,7 +88,8 @@ class StorePortableProjectMemoryMixin:
         consume_one_shot: bool = True,
     ) -> PolicyDecisionLookupResult:
         portable_workspace = self._portable_project_workspace(workspace)
-        if portable_workspace is None:
+        normalized_workspace = workspace.strip() if isinstance(workspace, str) else None
+        if portable_workspace is None or portable_workspace == normalized_workspace:
             return super().resolve_policy_decision_lookup(
                 harness,
                 artifact_id,
