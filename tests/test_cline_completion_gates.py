@@ -78,8 +78,8 @@ def _run_plugin(source: str, tmp_path: Path, expression: str) -> object:
     plugin.write_text(source, encoding="utf-8")
     code = (
         'import { pathToFileURL } from "node:url";'
-        f'const plugin=(await import(pathToFileURL({json.dumps(str(plugin))}).href)).default;'
-        f'const result=await ({expression});console.log(JSON.stringify(result ?? null));'
+        f"const plugin=(await import(pathToFileURL({json.dumps(str(plugin))}).href)).default;"
+        f"const result=await ({expression});console.log(JSON.stringify(result ?? null));"
     )
     result = subprocess.run([node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
@@ -97,7 +97,9 @@ def test_cline_is_in_static_supported_contracts() -> None:
 
 
 def test_checked_product_schema_matches_exported_cline_membership() -> None:
-    schema_path = Path(__file__).parents[1] / "src" / "codex_plugin_scanner" / "guard" / "schemas" / "guard_product_model_v1.json"
+    schema_path = (
+        Path(__file__).parents[1] / "src" / "codex_plugin_scanner" / "guard" / "schemas" / "guard_product_model_v1.json"
+    )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     exported = export_product_model_v1()
     assert schema["canonical_harnesses"] == exported["canonical_harnesses"]

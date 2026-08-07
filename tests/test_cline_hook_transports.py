@@ -38,7 +38,7 @@ def _activate(context: HarnessContext, transport: str) -> None:
 def _fake_guard(tmp_path: Path) -> Path:
     path = tmp_path / "fake_guard.py"
     path.write_text(
-        '''from __future__ import annotations
+        """from __future__ import annotations
 import json, os, sys
 payload=json.load(sys.stdin)
 log=os.environ.get("CLINE_TEST_LOG")
@@ -47,7 +47,7 @@ if log:
 text=json.dumps(payload,sort_keys=True)
 if "BLOCK_ME" in text or "SECRET_OUTPUT" in text: print(json.dumps({"decision":"block","reason":"blocked by test"}))
 else: print(json.dumps({"decision":"allow"}))
-''',
+""",
         encoding="utf-8",
     )
     return path
@@ -76,10 +76,12 @@ def _run_plugin(source: str, tmp_path: Path, expression: str) -> subprocess.Comp
     path.write_text(source, encoding="utf-8")
     code = (
         'import { pathToFileURL } from "node:url";'
-        f'const plugin=(await import(pathToFileURL({json.dumps(str(path))}).href)).default;'
-        f'const result=await ({expression});console.log(JSON.stringify(result));'
+        f"const plugin=(await import(pathToFileURL({json.dumps(str(path))}).href)).default;"
+        f"const result=await ({expression});console.log(JSON.stringify(result));"
     )
-    return subprocess.run([node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=10, check=False)
+    return subprocess.run(
+        [node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=10, check=False
+    )
 
 
 def test_native_hook_root_matches_vscode_and_core_global_directory(tmp_path: Path) -> None:

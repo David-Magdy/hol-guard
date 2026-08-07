@@ -33,13 +33,13 @@ def _fake_guard(tmp_path: Path) -> tuple[Path, Path]:
     path = tmp_path / "fake_guard.py"
     log = tmp_path / "guard-calls.jsonl"
     path.write_text(
-        '''from __future__ import annotations
+        """from __future__ import annotations
 import json, os, sys
 payload=json.load(sys.stdin)
 with open(os.environ["CLINE_TEST_LOG"],"a",encoding="utf-8") as handle:
     handle.write(json.dumps(payload,sort_keys=True)+"\\n")
 print(json.dumps({"decision":"block","reason":"blocked by arbitration test"}))
-''',
+""",
         encoding="utf-8",
     )
     return path, log
@@ -69,8 +69,8 @@ def _run_plugin(source: str, tmp_path: Path, expression: str, *, log: Path) -> o
     plugin.write_text(source, encoding="utf-8")
     code = (
         'import { pathToFileURL } from "node:url";'
-        f'const plugin=(await import(pathToFileURL({json.dumps(str(plugin))}).href)).default;'
-        f'const result=await ({expression});console.log(JSON.stringify(result ?? null));'
+        f"const plugin=(await import(pathToFileURL({json.dumps(str(plugin))}).href)).default;"
+        f"const result=await ({expression});console.log(JSON.stringify(result ?? null));"
     )
     result = subprocess.run(
         [node, "--input-type=module", "-e", code],
