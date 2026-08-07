@@ -23,10 +23,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin main fix/protection-repair-dashboard-regressions
-          BASE_HEAD="$(git rev-parse origin/fix/protection-repair-dashboard-regressions)"
-          echo "$BASE_HEAD" >/tmp/pr-head
-          git reset --hard "$BASE_HEAD"
+          git reset --hard origin/fix/protection-repair-dashboard-regressions
           test "$(git merge-base origin/main HEAD)" = "$(git rev-parse origin/main)"
           git checkout f3ddae8806ef91463e28a0c30f21247ea5d066d5 -- src/codex_plugin_scanner/guard/local_trust_contract.py
           python - <<'PY'
@@ -35,11 +35,14 @@ jobs:
           text=p.read_text(encoding='utf-8')
           old='''        runtime_override = state.get("runtime_protection")\n        if runtime_override in ("protected", "degraded", "unknown"):\n            runtime_protection = runtime_override\n        cloud_override = state.get("cloud_policies")\n'''
           new='''        runtime_override = state.get("runtime_protection")\n        if runtime_override in ("protected", "degraded", "unknown"):\n            runtime_protection = runtime_override\n        remembered_rules_override = state.get("remembered_rules")\n        if remembered_rules_override in ("enforced", "disabled_degraded", "unknown"):\n            remembered_rules = remembered_rules_override\n        cloud_override = state.get("cloud_policies")\n'''
-          if old not in text:
-              raise SystemExit('trust override anchor missing')
-          p.write_text(text.replace(old,new,1), encoding='utf-8')
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('trust override anchor missing')
+              p.write_text(text.replace(old,new,1), encoding='utf-8')
           PY
           git diff --check
+          git add src/codex_plugin_scanner/guard/local_trust_contract.py
+          git commit -m 'fix(guard): restore complete local trust contract'
       - name: Focused validation
         shell: bash
         run: |
@@ -49,19 +52,14 @@ jobs:
           uv run --no-sync ruff check src/codex_plugin_scanner/guard/local_trust_contract.py src/codex_plugin_scanner/guard/store_policy_integrity_backend.py tests/test_guard_policy_integrity.py tests/test_guard_policy_integrity_local_vault.py
           uv run --no-sync ruff format --check src/codex_plugin_scanner/guard/local_trust_contract.py src/codex_plugin_scanner/guard/store_policy_integrity_backend.py tests/test_guard_policy_integrity.py tests/test_guard_policy_integrity_local_vault.py
           uv run --no-sync pytest -q tests/test_guard_policy_integrity.py tests/test_guard_policy_integrity_local_vault.py tests/test_guard_approval_reuse.py tests/test_guard_github_workflow_authorization.py tests/test_guard_manifest_install_firewall.py tests/test_guard_mcp_package_proxy_phase14.py tests/test_guard_workflow_capabilities.py tests/test_guard_workflow_capability_authority_tamper.py tests/test_guard_workflow_capability_hardening.py --tb=short
-      - name: Push if live head stayed stable
+      - name: Rebase over concurrent no-op commits and push
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git fetch origin fix/protection-repair-dashboard-regressions
-          test "$(git rev-parse origin/fix/protection-repair-dashboard-regressions)" = "$(cat /tmp/pr-head)"
-          git add src/codex_plugin_scanner/guard/local_trust_contract.py
-          git diff --cached --check
-          if git diff --cached --quiet; then exit 0; fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(guard): restore complete local trust contract'
+          git rebase origin/fix/protection-repair-dashboard-regressions
+          git diff origin/fix/protection-repair-dashboard-regressions..HEAD --check
           auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
           git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${auth}" push origin HEAD:fix/protection-repair-dashboard-regressions
