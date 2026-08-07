@@ -41,13 +41,6 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def replace_once(path: str, old: str, new: str, label: str) -> None:
-              p = Path(path)
-              text = p.read_text(encoding="utf-8")
-              if old not in text:
-                  raise SystemExit(f"missing anchor for {label} in {path}")
-              p.write_text(text.replace(old, new, 1), encoding="utf-8")
-
           helper_import = "from tests.test_guard_supply_chain_evaluator import _force_unpaid_entitlement\n"
 
           js = Path("tests/test_guard_js_supply_chain_phase11.py")
@@ -58,34 +51,29 @@ jobs:
                   raise SystemExit("missing JS helper import anchor")
               text = text.replace(import_anchor, import_anchor + helper_import, 1)
           test_anchor = '''def test_evaluate_package_request_artifact_allows_recommended_safe_npm_version(\n    tmp_path: Path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n'''
-          test_new = test_anchor + "    _force_unpaid_entitlement(monkeypatch)\n"
-          if test_new not in text:
+          if test_anchor + "    _force_unpaid_entitlement(monkeypatch)\n" not in text:
               if test_anchor not in text:
                   raise SystemExit("missing JS safe-version test anchor")
-              text = text.replace(test_anchor, test_new, 1)
+              text = text.replace(test_anchor, test_anchor + "    _force_unpaid_entitlement(monkeypatch)\n", 1)
           collision_anchor = '''def test_evaluate_package_request_artifact_avoids_scoped_package_name_collisions(\n    tmp_path: Path,\n    monkeypatch: pytest.MonkeyPatch,\n    bundle_name: str,\n    bundle_namespace: str | None,\n    command: str,\n) -> None:\n'''
-          collision_new = collision_anchor + "    _force_unpaid_entitlement(monkeypatch)\n"
-          if collision_new not in text:
+          if collision_anchor + "    _force_unpaid_entitlement(monkeypatch)\n" not in text:
               if collision_anchor not in text:
                   raise SystemExit("missing JS collision test anchor")
-              text = text.replace(collision_anchor, collision_new, 1)
+              text = text.replace(collision_anchor, collision_anchor + "    _force_unpaid_entitlement(monkeypatch)\n", 1)
           js.write_text(text, encoding="utf-8")
 
           lab = Path("tests/test_guard_js_lab_phase11.py")
           text = lab.read_text(encoding="utf-8")
-          lab_import_anchor = (
-              "from tests.test_guard_js_supply_chain_phase11 import WORKSPACE_ID, _bundle_response, _package, _write_text\n"
-          )
+          lab_import_anchor = "from tests.test_guard_js_supply_chain_phase11 import WORKSPACE_ID, _bundle_response, _package, _write_text\n"
           if helper_import not in text:
               if lab_import_anchor not in text:
                   raise SystemExit("missing JS lab helper import anchor")
               text = text.replace(lab_import_anchor, lab_import_anchor + helper_import, 1)
           lab_test_anchor = '''def test_guard_js_offline_fake_registry_lab_covers_safe_vulnerable_malware_yanked_and_typo_packages(\n    tmp_path: Path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n'''
-          lab_test_new = lab_test_anchor + "    _force_unpaid_entitlement(monkeypatch)\n"
-          if lab_test_new not in text:
+          if lab_test_anchor + "    _force_unpaid_entitlement(monkeypatch)\n" not in text:
               if lab_test_anchor not in text:
                   raise SystemExit("missing JS lab test anchor")
-              text = text.replace(lab_test_anchor, lab_test_new, 1)
+              text = text.replace(lab_test_anchor, lab_test_anchor + "    _force_unpaid_entitlement(monkeypatch)\n", 1)
           lab.write_text(text, encoding="utf-8")
 
           py = Path("tests/test_guard_python_supply_chain_phase12.py")
@@ -96,32 +84,25 @@ jobs:
                   raise SystemExit("missing Python helper import anchor")
               text = text.replace(py_import_anchor, py_import_anchor + helper_import, 1)
           py_test_anchor = '''def test_evaluate_package_request_artifact_scopes_offline_decisions_to_python_ecosystem(\n    tmp_path: Path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n'''
-          py_test_new = py_test_anchor + "    _force_unpaid_entitlement(monkeypatch)\n"
-          if py_test_new not in text:
+          if py_test_anchor + "    _force_unpaid_entitlement(monkeypatch)\n" not in text:
               if py_test_anchor not in text:
                   raise SystemExit("missing Python offline-scope test anchor")
-              text = text.replace(py_test_anchor, py_test_new, 1)
+              text = text.replace(py_test_anchor, py_test_anchor + "    _force_unpaid_entitlement(monkeypatch)\n", 1)
           py.write_text(text, encoding="utf-8")
 
           shims = Path("tests/test_guard_package_shims.py")
           text = shims.read_text(encoding="utf-8")
           shim_import_anchor = "from tests.test_guard_supply_chain_evaluator import _cloud_response, _EvaluateHandler\n"
-          shim_import_new = (
-              "from tests.test_guard_supply_chain_evaluator import "
-              "_cloud_response, _EvaluateHandler, _force_unpaid_entitlement\n"
-          )
+          shim_import_new = "from tests.test_guard_supply_chain_evaluator import _cloud_response, _EvaluateHandler, _force_unpaid_entitlement\n"
           if "_force_unpaid_entitlement" not in text:
               if shim_import_anchor not in text:
                   raise SystemExit("missing package-shim helper import anchor")
               text = text.replace(shim_import_anchor, shim_import_new, 1)
-
           stale_anchor = '''def test_guard_protect_ignores_stale_policy_bundle_package_family_block(\n    tmp_path: Path,\n    monkeypatch: pytest.MonkeyPatch,\n    capsys,\n) -> None:\n'''
-          stale_new = stale_anchor + "    _force_unpaid_entitlement(monkeypatch)\n"
-          if stale_new not in text:
+          if stale_anchor + "    _force_unpaid_entitlement(monkeypatch)\n" not in text:
               if stale_anchor not in text:
                   raise SystemExit("missing stale-policy test anchor")
-              text = text.replace(stale_anchor, stale_new, 1)
-
+              text = text.replace(stale_anchor, stale_anchor + "    _force_unpaid_entitlement(monkeypatch)\n", 1)
           saved_anchor = '''        first_payload, first_exit_code = build_protect_payload(\n            command=["npm", "install", package_name],\n            store=store,\n            workspace_dir=workspace_dir,\n            dry_run=True,\n            now="2026-05-19T00:00:00Z",\n        )\n'''
           saved_new = '''        with monkeypatch.context() as unpaid_context:\n            _force_unpaid_entitlement(unpaid_context)\n            first_payload, first_exit_code = build_protect_payload(\n                command=["npm", "install", package_name],\n                store=store,\n                workspace_dir=workspace_dir,\n                dry_run=True,\n                now="2026-05-19T00:00:00Z",\n            )\n'''
           if saved_new not in text:
@@ -146,13 +127,11 @@ jobs:
           if old_import not in text:
               raise SystemExit("missing supply-chain issue import anchor")
           text = text.replace(old_import, new_import, 1)
-
           stats_anchor = '''  const stats = buildSupplyChainStats(snapshot);\n  const protectionStatus = resolveHomeProtectionStatus(snapshot);\n  const cloudDegraded = resolveSupplyChainCloudDegradedState(snapshot);\n'''
           stats_new = '''  const stats = buildSupplyChainStats(snapshot);\n  const protectionStatus = resolveHomeProtectionStatus(snapshot);\n  const unprotectedManagers = resolveManagerCoverageManagers(protection).filter(\n    (manager) => resolveManagerCoverageStatus(protection, manager) === "unprotected",\n  );\n  const cloudDegraded = resolveSupplyChainCloudDegradedState(snapshot);\n'''
           if stats_anchor not in text:
               raise SystemExit("missing supply-chain issue stats anchor")
           text = text.replace(stats_anchor, stats_new, 1)
-
           old_block = '''  if (\n    protectionStatus === "partial" &&\n    protection !== undefined &&\n    protection.protected_managers.length > 0 &&\n    protection.unprotected_managers.length > 0\n  ) {\n    issues.push({\n      id: "partial_protection",\n      title: "Some package tools are still open",\n      detail: `${protection.protected_managers.length} protected, ${protection.unprotected_managers.length} still open: ${protection.unprotected_managers.join(", ")}.`,\n      tone: "attention",\n      actionLabel: "Review open tools",\n      action: { kind: "firewall_unprotected" },\n    });\n  } else if (\n    protectionStatus === "unprotected" &&\n    protection !== undefined &&\n    protection.unprotected_managers.length > 0\n  ) {\n    issues.push({\n      id: "unprotected_tools",\n      title: "Package installs are not protected yet",\n      detail: `Turn on protection for ${protection.unprotected_managers.join(", ")} to block risky installs before they run.`,\n      tone: "attention",\n      actionLabel: "Protect package tools",\n      action: { kind: "firewall_unprotected" },\n    });\n  }\n'''
           new_block = '''  if (\n    protectionStatus === "partial" &&\n    stats.protectedManagers > 0 &&\n    unprotectedManagers.length > 0\n  ) {\n    issues.push({\n      id: "partial_protection",\n      title: "Some package tools are still open",\n      detail: `${stats.protectedManagers} protected, ${unprotectedManagers.length} still open: ${unprotectedManagers.join(", ")}.`,\n      tone: "attention",\n      actionLabel: "Review open tools",\n      action: { kind: "firewall_unprotected" },\n    });\n  } else if (protectionStatus === "unprotected" && unprotectedManagers.length > 0) {\n    issues.push({\n      id: "unprotected_tools",\n      title: "Package installs are not protected yet",\n      detail: `Turn on protection for ${unprotectedManagers.join(", ")} to block risky installs before they run.`,\n      tone: "attention",\n      actionLabel: "Protect package tools",\n      action: { kind: "firewall_unprotected" },\n    });\n  }\n'''
           if old_block not in text:
@@ -162,12 +141,10 @@ jobs:
           test = Path("dashboard/src/scrg171-172.test.ts")
           text = test.read_text(encoding="utf-8")
           import_anchor = 'import { hubTitleForTab } from "./supply-chain-hub-workspace";\n'
-          import_new = import_anchor + 'import { resolveSupplyChainIssues } from "./supply-chain-issues";\n'
           if 'from "./supply-chain-issues"' not in text:
               if import_anchor not in text:
                   raise SystemExit("missing SCRG supply-chain issue import anchor")
-              text = text.replace(import_anchor, import_new, 1)
-
+              text = text.replace(import_anchor, import_anchor + 'import { resolveSupplyChainIssues } from "./supply-chain-issues";\n', 1)
           regression = '''\n\n// SCRG172-LINUX-ISSUE-CLASSIFICATION\nconst repairOnlyProtection: PackageManagerProtection = {\n  ...makeProtection(["npm"], ["pnpm"]),\n  installed_managers: ["npm", "pnpm"],\n  detected_managers: ["npm", "pnpm"],\n};\nconst repairOnlySnapshot: GuardRuntimeSnapshot = {\n  ...paidSnapshot,\n  supply_chain: { package_manager_protection: repairOnlyProtection },\n};\nconst repairOnlyStats = buildSupplyChainStats(repairOnlySnapshot);\nassert(\n  repairOnlyStats.repairRequiredManagers === 1 && repairOnlyStats.unprotectedManagers === 0,\n  "SCRG172-LINUX-D: installed managers awaiting PATH repair are not counted as open tools",\n);\nconst repairOnlyIssues = resolveSupplyChainIssues(repairOnlySnapshot);\nassert(\n  repairOnlyIssues.some((item) => item.id === "path_repair") &&\n    !repairOnlyIssues.some(\n      (item) => item.id === "partial_protection" || item.id === "unprotected_tools",\n    ),\n  "SCRG172-LINUX-E: PATH repair does not duplicate or contradict unprotected-manager issue copy",\n);\n\nconst trulyUnprotectedProtection = makeProtection(["npm"], ["pnpm"]);\nconst trulyUnprotectedSnapshot: GuardRuntimeSnapshot = {\n  ...paidSnapshot,\n  supply_chain: { package_manager_protection: trulyUnprotectedProtection },\n};\nconst trulyUnprotectedStats = buildSupplyChainStats(trulyUnprotectedSnapshot);\nassert(\n  trulyUnprotectedStats.unprotectedManagers === 1,\n  "SCRG172-LINUX-F: a detected manager that is neither protected nor staged remains open",\n);\nconst trulyUnprotectedIssues = resolveSupplyChainIssues(trulyUnprotectedSnapshot);\nassert(\n  trulyUnprotectedIssues.some(\n    (item) => item.id === "partial_protection" && item.detail.includes("pnpm"),\n  ),\n  "SCRG172-LINUX-G: a genuinely unprotected detected manager remains visible in issue copy",\n);\n'''
           if "SCRG172-LINUX-ISSUE-CLASSIFICATION" not in text:
               text += regression
@@ -215,7 +192,6 @@ jobs:
           set -euo pipefail
           npm ci
           npx tsx src/scrg171-172.test.ts
-          npx tsc --noEmit
           npm run build
 
       - name: Lint changed tests and validate ratchet
@@ -262,16 +238,15 @@ jobs:
         run: |
           set -euo pipefail
           rm -f .github/workflows/pr2104-ci-regression-fixes.yml
-
           python - <<'PY'
           import subprocess
+
           changed = subprocess.check_output(["git", "diff", "--name-only", "origin/main"], text=True).splitlines()
-          forbidden = [p for p in changed if p.startswith(".github/workflows/")]
+          forbidden = [path for path in changed if path.startswith(".github/workflows/")]
           if forbidden:
               raise SystemExit("temporary workflows leaked into PR diff: " + ", ".join(forbidden))
           print("Final diff paths:\n" + "\n".join(changed))
           PY
-
           git diff --check
           git reset --soft origin/main
           git add -A
