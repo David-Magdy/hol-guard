@@ -1,0 +1,35 @@
+name: Fix Cline Windows contract
+
+on:
+  push:
+    branches:
+      - fix/release-3.0-cline-dashboard-contract
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+
+      - name: Apply Windows-safe Cline fixes
+        shell: bash
+        run: |
+          python -c 'from pathlib import Path; p=Path("src/codex_plugin_scanner/guard/adapters/cline_hooks.py"); s=p.read_text(); old="f\"exec {shlex.quote(python)} -I -s {shlex.quote(str(worker))}\""; new="f\"exec {shlex.quote(python)} -I -s {shlex.quote(worker.as_posix())}\""; assert old in s; p.write_text(s.replace(old,new,1))'
+          python -c 'from pathlib import Path; p=Path("src/codex_plugin_scanner/guard/adapters/cline_plugin.py"); s=p.read_text(); old="with temporary.open(\"w\", encoding=\"utf-8\") as handle:"; new="with temporary.open(\"w\", encoding=\"utf-8\", newline=\"\\n\") as handle:"; assert old in s; p.write_text(s.replace(old,new,1))'
+          python -c 'from pathlib import Path; p=Path("tests/test_cline_completion_gates.py"); s=p.read_text(); old="    index.write_text(source, encoding=\"utf-8\")\n"; new="    index.write_bytes(source.encode(\"utf-8\"))\n"; assert old in s; p.write_text(s.replace(old,new,1))'
+
+      - name: Commit Windows contract fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/codex_plugin_scanner/guard/adapters/cline_hooks.py src/codex_plugin_scanner/guard/adapters/cline_plugin.py tests/test_cline_completion_gates.py
+          git commit -m "fix(cline): preserve plugin integrity on Windows"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
