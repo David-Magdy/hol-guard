@@ -14,29 +14,48 @@ from codex_plugin_scanner.guard.codex_hook_manifest import CodexHookManifestSpec
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and permission semantics are required")
 
 
-def _site_packages_file(tmp_path: Path, name: str = "codex_daemon_hook_bridge.py") -> Path:
-    path = (
-        tmp_path
-        / "venv"
-        / "lib"
-        / "python3.12"
-        / "site-packages"
-        / "codex_plugin_scanner"
-        / "guard"
-        / "adapters"
-        / name
-    )
+def _package_root(tmp_path: Path, package_dir: str = "site-packages") -> Path:
+    return tmp_path / "venv" / "lib" / "python3.12" / package_dir
+
+
+def _packaged_file(
+    tmp_path: Path,
+    *,
+    package_dir: str = "site-packages",
+    name: str = "codex_daemon_hook_bridge.py",
+) -> tuple[Path, Path]:
+    root = _package_root(tmp_path, package_dir)
+    path = root / "codex_plugin_scanner" / "guard" / "adapters" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("# packaged fixture\n", encoding="utf-8")
     path.chmod(0o664)
-    return path
+    return root, path
+
+
+def _trust_package_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    monkeypatch.setattr(integrity, "_python_package_roots", lambda: (root.resolve(strict=False),))
 
 
 def test_packaged_bridge_accepts_private_group_write_in_site_packages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bridge = _site_packages_file(tmp_path)
+    root, bridge = _packaged_file(tmp_path)
+    _trust_package_root(monkeypatch, root)
+    monkeypatch.setattr(integrity, "_owner_is_only_group_member", lambda owner_uid, group_gid: True)
+
+    metadata = validate_regular_file(bridge, role="bridge", executable_required=False)
+
+    assert metadata.st_uid == os.getuid()
+    assert stat.S_IMODE(metadata.st_mode) == 0o664
+
+
+def test_packaged_bridge_accepts_private_group_write_in_dist_packages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, bridge = _packaged_file(tmp_path, package_dir="dist-packages")
+    _trust_package_root(monkeypatch, root)
     monkeypatch.setattr(integrity, "_owner_is_only_group_member", lambda owner_uid, group_gid: True)
 
     metadata = validate_regular_file(bridge, role="bridge", executable_required=False)
@@ -49,8 +68,27 @@ def test_packaged_bridge_rejects_shared_group_write_in_site_packages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    bridge = _site_packages_file(tmp_path)
+    root, bridge = _packaged_file(tmp_path)
+    _trust_package_root(monkeypatch, root)
     monkeypatch.setattr(integrity, "_owner_is_only_group_member", lambda owner_uid, group_gid: False)
+
+    with pytest.raises(CodexHookIntegrityError, match="writable by another user") as error:
+        validate_regular_file(bridge, role="bridge", executable_required=False)
+
+    assert error.value.reason == "codex_hook_bridge_permissions_unsafe"
+
+
+def test_named_site_packages_directory_is_not_enough_to_trust_group_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trusted_root = _package_root(tmp_path)
+    _trust_package_root(monkeypatch, trusted_root)
+    bridge = tmp_path / "home" / "site-packages" / "codex_daemon_hook_bridge.py"
+    bridge.parent.mkdir(parents=True)
+    bridge.write_text("# lookalike fixture\n", encoding="utf-8")
+    bridge.chmod(0o664)
+    monkeypatch.setattr(integrity, "_owner_is_only_group_member", lambda owner_uid, group_gid: True)
 
     with pytest.raises(CodexHookIntegrityError, match="writable by another user") as error:
         validate_regular_file(bridge, role="bridge", executable_required=False)
@@ -62,6 +100,8 @@ def test_non_package_bridge_still_rejects_group_write_even_for_private_group(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    trusted_root = _package_root(tmp_path)
+    _trust_package_root(monkeypatch, trusted_root)
     bridge = tmp_path / "codex_daemon_hook_bridge.py"
     bridge.write_text("# unpackaged fixture\n", encoding="utf-8")
     bridge.chmod(0o664)
@@ -77,6 +117,8 @@ def test_manifest_build_accepts_private_group_pipx_style_packaged_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    package_root = _package_root(tmp_path)
+    _trust_package_root(monkeypatch, package_root)
     monkeypatch.setattr(integrity, "_owner_is_only_group_member", lambda owner_uid, group_gid: True)
     home_dir = tmp_path / "home"
     guard_home = home_dir / ".hol-guard"
@@ -90,7 +132,7 @@ def test_manifest_build_accepts_private_group_pipx_style_packaged_files(
     interpreter.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     interpreter.chmod(0o755)
 
-    package_root = tmp_path / "venv" / "lib" / "python3.12" / "site-packages" / "codex_plugin_scanner"
+    scanner_root = package_root / "codex_plugin_scanner"
     roles = (
         "bridge",
         "bridge_runtime",
@@ -103,7 +145,7 @@ def test_manifest_build_accepts_private_group_pipx_style_packaged_files(
     )
     packaged_files: list[tuple[str, Path]] = []
     for role in roles:
-        path = package_root / f"{role}.py"
+        path = scanner_root / f"{role}.py"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"# {role}\n", encoding="utf-8")
         path.chmod(0o664)
