@@ -431,7 +431,7 @@ def cline_plugin_state(context: HarnessContext) -> dict[str, object]:
     expected = state.get("index_sha256")
     integrity_ok = False
     installed = isinstance(index_path_value, str) and Path(index_path_value).is_file()
-    if installed and isinstance(expected, str):
+    if isinstance(index_path_value, str) and installed and isinstance(expected, str):
         path = Path(index_path_value)
         try:
             integrity_ok = _is_managed_plugin(path) and sha256(path.read_bytes()).hexdigest() == expected
