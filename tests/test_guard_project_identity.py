@@ -30,7 +30,18 @@ def _git(workspace: Path, *arguments: str) -> None:
     )
 
 
-def _init_repository(workspace: Path, remote: str) -> None:
+def _mark_clone_provenance(workspace: Path, remote: str) -> None:
+    """Make the fixture model Git's initial clone reflog without network access."""
+    head_log = workspace / ".git" / "logs" / "HEAD"
+    lines = head_log.read_text(encoding="utf-8").splitlines()
+    assert lines
+    metadata, separator, _message = lines[0].partition("\t")
+    assert separator
+    lines[0] = f"{metadata}\tclone: from {remote}"
+    head_log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _init_repository(workspace: Path, remote: str, *, verified_clone: bool = True) -> None:
     workspace.mkdir(parents=True)
     _git(workspace, "init")
     _git(workspace, "config", "user.email", "guard@example.invalid")
@@ -39,6 +50,8 @@ def _init_repository(workspace: Path, remote: str) -> None:
     _git(workspace, "add", "README.md")
     _git(workspace, "commit", "-m", "initial")
     _git(workspace, "remote", "add", "origin", remote)
+    if verified_clone:
+        _mark_clone_provenance(workspace, remote)
 
 
 def _bind_cloud_workspace(store: GuardStore) -> None:
@@ -199,6 +212,27 @@ def test_portable_project_identity_matches_across_clone_locations(
     assert str(second) not in second_identity
 
 
+def test_spoofed_origin_without_clone_provenance_cannot_claim_portable_identity(tmp_path: Path) -> None:
+    trusted = tmp_path / "trusted" / "repo"
+    unrelated = tmp_path / "unrelated" / "repo"
+    remote = "https://github.com/example/trusted-repository.git"
+    _init_repository(trusted, remote)
+    _init_repository(unrelated, remote, verified_clone=False)
+
+    assert resolve_portable_project_identity(trusted) is not None
+    assert resolve_portable_project_identity(unrelated) is None
+
+
+def test_portable_identity_accepts_legal_valueless_git_config_keys(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    _init_repository(repository, "https://example.invalid/owner/repository.git")
+    config_path = repository / ".git" / "config"
+    with config_path.open("a", encoding="utf-8") as handle:
+        handle.write("\n[guard-test]\n\tbare\n")
+
+    assert resolve_portable_project_identity(repository) is not None
+
+
 def test_portable_project_identity_preserves_monorepo_subproject_scope(tmp_path: Path) -> None:
     repository = tmp_path / "repo"
     _init_repository(repository, "https://example.invalid/owner/repository.git")
@@ -340,3 +374,50 @@ def test_portable_selector_does_not_turn_one_shot_approval_into_sticky_memory(tm
 
     assert first == "allow"
     assert second is None
+
+
+def test_direct_portable_selector_consumes_only_one_one_shot_per_operation(tmp_path: Path) -> None:
+    workspace = tmp_path / "repo"
+    _init_repository(workspace, "git@example.invalid:owner/repository.git")
+    project_identity = resolve_portable_project_identity(workspace)
+    assert project_identity is not None
+
+    store = GuardStore(tmp_path / "guard-home")
+    for request_id in ("request-portable-1", "request-portable-2"):
+        store.record_local_once_approval(
+            request_id=request_id,
+            harness="codex",
+            artifact_id="tool:portable-once",
+            artifact_hash="sha256:portable-once",
+            workspace=project_identity,
+            publisher=None,
+            action="allow",
+            created_at=_NOW,
+            expires_at="2026-08-08T20:00:00+00:00",
+        )
+
+    first = store.resolve_policy(
+        "codex",
+        "tool:portable-once",
+        artifact_hash="sha256:portable-once",
+        workspace=project_identity,
+        now=_NOW,
+    )
+    second = store.resolve_policy(
+        "codex",
+        "tool:portable-once",
+        artifact_hash="sha256:portable-once",
+        workspace=project_identity,
+        now="2026-08-07T20:01:00+00:00",
+    )
+    third = store.resolve_policy(
+        "codex",
+        "tool:portable-once",
+        artifact_hash="sha256:portable-once",
+        workspace=project_identity,
+        now="2026-08-07T20:02:00+00:00",
+    )
+
+    assert first == "allow"
+    assert second == "allow"
+    assert third is None
