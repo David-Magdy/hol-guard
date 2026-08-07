@@ -11,6 +11,7 @@ PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "publish.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 CODEOWNERS = ROOT / ".github" / "CODEOWNERS"
 RELEASE_BRANCHES = ["main", "release/3.0", "release/3.1"]
+PR_CANARY_BRANCHES = ["main", "release/3.0"]
 RELEASE_MAINTAINERS = {"@kantorcodes", "@deep-purple-boots"}
 
 
@@ -33,9 +34,9 @@ def test_release_branches_run_ci_and_pr_canaries() -> None:
     publish = _workflow(PUBLISH_WORKFLOW)
 
     assert ci[True]["push"]["branches"] == RELEASE_BRANCHES
-    assert ci[True]["pull_request"]["branches"] == RELEASE_BRANCHES
+    assert ci[True]["pull_request"]["branches"] == PR_CANARY_BRANCHES
     assert publish[True]["push"]["branches"] == RELEASE_BRANCHES
-    assert publish[True]["pull_request"]["branches"] == RELEASE_BRANCHES
+    assert publish[True]["pull_request"]["branches"] == PR_CANARY_BRANCHES
     assert "tags" not in publish[True]["push"]
 
 
