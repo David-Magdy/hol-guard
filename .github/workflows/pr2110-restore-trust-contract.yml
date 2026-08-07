@@ -1,3 +1,4 @@
+# Re-run after the PR head stabilized; this workflow is temporary and never enters the PR diff.
 name: Restore PR 2110 trust contract
 
 on:
