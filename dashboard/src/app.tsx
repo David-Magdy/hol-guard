@@ -19,13 +19,15 @@ import {
   guardAwareHref,
   bulkAllowReadOnce,
   repairApprovalCenter,
+  repairProtectionCheck,
   resolveRequestWithQueueResult,
   retryResume,
+  runHarnessAction,
 } from "./guard-api";
 import { ApprovalCenterLayout, type BulkGateCredentials } from "./approval-center-layout";
 import type { AppView } from "./approval-center-primitives";
 import { buildClearPayload } from "./clear-policy-payload";
-import { normalizeHarnessSlug } from "./approval-center-utils";
+import { harnessDisplayName, normalizeHarnessSlug } from "./approval-center-utils";
 import { ErrorBoundary } from "./error-boundary";
 import { selectNextAfterResolution } from "./queue-state";
 import { useRouteFocus } from "./use-route-focus";
@@ -781,6 +783,32 @@ export function App() {
     }
   }, []);
 
+  const handleRepairProtection = useCallback(async (harnesses: string[]) => {
+    const failures: string[] = [];
+    try {
+      await repairApprovalCenter();
+    } catch {
+      failures.push("local runtime");
+    }
+    for (const harness of harnesses) {
+      try {
+        await runHarnessAction({ harness, action: "repair", dryRun: false });
+      } catch {
+        failures.push(`${harnessDisplayName(harness)} hooks`);
+      }
+    }
+    try {
+      await repairProtectionCheck("all");
+    } catch (error: unknown) {
+      failures.push(error instanceof Error ? error.message : "integrity protection");
+    }
+    await refreshStateAfterAction();
+    if (failures.length > 0) {
+      throw new Error(`Repair paused at ${failures.join(", ")}. Retry repair to continue from this page.`);
+    }
+    return "Automatic repairs completed. Guard rechecked every protection layer below.";
+  }, [refreshStateAfterAction]);
+
   const appDetailContent = useMemo(() => {
     if (view !== "app-detail" || !appDetailHarness || runtime.kind !== "ready") {
       return null;
@@ -905,6 +933,7 @@ export function App() {
               onConnectHarness={handleConnectHarness}
               onTestHarness={handleTestHarness}
               onRepairHarness={handleRepairHarness}
+              onRepairProtection={handleRepairProtection}
               onOpenAppDetail={handleOpenAppDetail}
             />
           </Suspense>
