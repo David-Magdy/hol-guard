@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from contextlib import suppress
 from hashlib import sha256
 from pathlib import Path
 
@@ -308,10 +309,8 @@ def cline_mcp_proxy_state(context: HarnessContext) -> dict[str, object]:
             managed_sha = backup.get("managed_sha256")
             current_sha = None
             if isinstance(config_value, str) and Path(config_value).is_file():
-                try:
+                with suppress(OSError):
                     current_sha = _sha(Path(config_value).read_bytes())
-                except OSError:
-                    pass
             matched = isinstance(managed_sha, str) and current_sha == managed_sha
             ready = ready and matched
             records.append({"config_path": config_value, "managed_integrity_ok": matched})
@@ -346,10 +345,8 @@ def restore_cline_mcp_proxies(context: HarnessContext) -> dict[str, object]:
         restored.append(str(path))
         backup_path.unlink()
     if not retained:
-        try:
+        with suppress(OSError):
             backup_root.rmdir()
-        except OSError:
-            pass
     return {"restored": restored, "retained_modified": retained, "complete": not retained}
 
 
