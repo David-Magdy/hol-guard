@@ -60,6 +60,8 @@ from .update_subprocess import (
 _ALREADY_CURRENT_HINTS = (
     "already at latest version",
     "already up-to-date",
+    "nothing to upgrade",
+    "is pinned to",
 )
 _PIPX_LAUNCHER_FAILURE_HINTS = (
     "ModuleNotFoundError: No module named 'pipx'",
@@ -770,14 +772,18 @@ def run_guard_update(
         if len(repaired_installs) == 1:
             payload["managed_install"] = repaired_installs[0]
     if context is not None:
-        daemon_refresh, daemon_refresh_note = refresh_guard_daemon_after_update(
-            context,
-            update_context=update_context,
-        )
+        package_changed = _version_changed(current_version, resulting_version)
+        if package_changed:
+            daemon_refresh, daemon_refresh_note = refresh_guard_daemon_after_update(
+                context,
+                update_context=update_context,
+            )
+        else:
+            daemon_refresh, daemon_refresh_note = None, None
         if daemon_refresh is not None:
             payload["daemon_refresh"] = daemon_refresh
         _append_payload_note(payload, daemon_refresh_note)
-        if daemon_refresh_required and not (
+        if daemon_refresh_required and package_changed and not (
             isinstance(daemon_refresh, dict) and daemon_refresh.get("status") == "restarted"
         ):
             payload.update(
@@ -1017,6 +1023,14 @@ def _success_status(payload: dict[str, object]) -> str:
         and current_version != resulting_version
     ):
         return "updated"
+    if (
+        current_version
+        and resulting_version
+        and current_version != "unknown"
+        and resulting_version != "unknown"
+        and current_version == resulting_version
+    ):
+        return "current"
     output_text = str(payload.get("stdout") or "").lower()
     if any(hint in output_text for hint in _ALREADY_CURRENT_HINTS):
         return "current"
