@@ -39,9 +39,10 @@ def _owner_is_only_group_member(owner_uid: int, group_gid: int) -> bool:
     """Return whether a POSIX group is provably private to one file owner.
 
     Linux distributions commonly create one primary group per user and pair it
-    with a 0002 umask, which produces user-owned 0664 config files.  The group
-    write bit is safe only when NSS can prove that no other account belongs to
-    that group.  Lookup failures remain fail-closed.
+    with a 0002 umask.  That can produce user-owned 0664 config files and
+    package modules extracted by pip/pipx.  The group write bit is safe only
+    when NSS can prove that no other account belongs to that group.  Lookup
+    failures remain fail-closed.
     """
 
     try:
@@ -55,6 +56,12 @@ def _owner_is_only_group_member(owner_uid: int, group_gid: int) -> bool:
     except (ImportError, KeyError, OSError):
         return False
     return member_names == {owner.pw_name}
+
+
+def _is_installed_python_package_file(path: Path) -> bool:
+    """Return whether a file lives under a conventional Python package root."""
+
+    return any(part in {"site-packages", "dist-packages"} for part in path.parts)
 
 
 def canonical_path(path: Path) -> str:
@@ -274,14 +281,14 @@ def validate_regular_file(path: Path, *, role: str, executable_required: bool) -
             # root:root layout.
             or (metadata.st_uid == 0 and metadata.st_gid == 0)
         )
-        trusted_config_group_write = (
-            role == "config_target"
-            and current_uid is not None
+        trusted_user_private_group_write = (
+            current_uid is not None
             and metadata.st_uid == current_uid
+            and (role == "config_target" or _is_installed_python_package_file(path))
             and _owner_is_only_group_member(current_uid, metadata.st_gid)
         )
         unsafe_group_write = bool(mode & stat.S_IWGRP) and not (
-            trusted_interpreter_group_write or trusted_config_group_write
+            trusted_interpreter_group_write or trusted_user_private_group_write
         )
         if mode & stat.S_IWOTH or unsafe_group_write:
             raise CodexHookIntegrityError(
