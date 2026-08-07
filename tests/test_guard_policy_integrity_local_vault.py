@@ -34,7 +34,7 @@ def test_linux_policy_integrity_uses_local_vault_without_system_keyring(
     store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
 
     assert isinstance(store._policy_integrity_secret_store, EncryptedFileSecretStore)
-    before = store.get_policy_integrity_status(include_items=False)
+    before = store.get_policy_integrity_status()
     assert before["mode"] == "degraded"
 
     repaired = store.setup_policy_integrity(now="2026-08-07T20:00:00Z", include_items=False)
