@@ -3772,7 +3772,7 @@ def test_no_keyring_local_vault_keeps_persistent_local_allow_authoritative(
     )
     verify = store.verify_policy_integrity()
 
-    assert resolved is not None
+    assert resolved == "allow"
     assert verify["mode"] == "protected"
     assert verify["counts"]["valid"] == 1
 
