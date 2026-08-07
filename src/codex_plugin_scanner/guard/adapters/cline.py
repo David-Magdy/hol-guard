@@ -131,11 +131,13 @@ class ClineHarnessAdapter(HarnessAdapter):
         warnings: list[str] = []
         if hook_state.get("installed") and plugin_state.get("installed"):
             warnings.append(
-                "Guard found both managed Cline enforcement transports. Run `hol-guard apps repair cline` to restore one transport."
+                "Guard found both managed Cline enforcement transports. "
+                "Run `hol-guard apps repair cline` to restore one transport."
             )
         if hosts.jetbrains_paths:
             warnings.append(
-                "Cline JetBrains was detected, but Guard does not mark that IDE protected until a live pre-tool deny proof is observed."
+                "Cline JetBrains was detected, but Guard does not mark that IDE protected until a live pre-tool "
+                "deny proof is observed."
             )
         return HarnessDetection(
             harness=self.harness,
@@ -199,7 +201,9 @@ class ClineHarnessAdapter(HarnessAdapter):
     def install(self, context: HarnessContext, *, surface: str = "auto") -> dict[str, object]:
         selected_surface = _surface(surface, default="auto")
         hosts = detect_cline_hosts(context)
-        requested_transport = selected_surface if selected_surface in {"hooks", "plugin"} else self._auto_transport(hosts)
+        requested_transport = (
+            selected_surface if selected_surface in {"hooks", "plugin"} else self._auto_transport(hosts)
+        )
         try:
             transport_manifest = self._reconcile_transport(context, requested_transport)
         except RuntimeError:
@@ -267,13 +271,14 @@ class ClineHarnessAdapter(HarnessAdapter):
         if selected_surface in {"auto", "all"}:
             mcp_result = restore_cline_mcp_proxies(context)
         complete = all(
-            result is None or result.get("complete", True) is True for result in (hook_result, plugin_result, mcp_result)
+            result is None or result.get("complete", True) is True
+            for result in (hook_result, plugin_result, mcp_result)
         )
         if complete and selected_surface in {"auto", "all"} and _adapter_state_path(context).is_file():
             _adapter_state_path(context).unlink()
         return {
             "harness": self.harness,
-            "active": False if selected_surface in {"auto", "all"} and complete else True,
+            "active": not (selected_surface in {"auto", "all"} and complete),
             "surface": selected_surface,
             "native_hooks": hook_result,
             "plugin": plugin_result,
@@ -307,7 +312,9 @@ class ClineHarnessAdapter(HarnessAdapter):
                 "Native PostToolUse is observation-only; use the plugin transport for model-visible output replacement."
             )
         if hosts.jetbrains_paths:
-            blind_spots.append("JetBrains runtime protection is unverified until Guard observes a live pre-tool deny proof.")
+            blind_spots.append(
+                "JetBrains runtime protection is unverified until Guard observes a live pre-tool deny proof."
+            )
         return blind_spots
 
     def runtime_probe(self, context: HarnessContext) -> dict[str, object] | None:
@@ -342,7 +349,8 @@ class ClineHarnessAdapter(HarnessAdapter):
         state = runtime_probe.get("plugin") if transport == "plugin" else runtime_probe.get("native_hooks")
         if isinstance(state, dict) and state.get("ready") is not True:
             warnings.append(
-                "Cline protection is installed but live runtime proof is pending or stale. Run a safe Cline tool action, then `hol-guard apps test cline`."
+                "Cline protection is installed but live runtime proof is pending or stale. "
+                "Run a safe Cline tool action, then `hol-guard apps test cline`."
             )
         if runtime_probe.get("jetbrains_detected") is True:
             warnings.append("Cline JetBrains remains unverified until a live pre-tool proof is recorded.")

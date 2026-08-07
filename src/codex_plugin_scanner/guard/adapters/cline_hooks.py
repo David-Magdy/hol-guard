@@ -98,135 +98,266 @@ def _hook_source(context: HarnessContext, *, event_name: str, guard_cli: list[st
     proof = str(_proof_path(context, event_name))
     adapter_state = str(_adapter_state_path(context))
     blocking = event_name == "PreToolUse"
-    return f'''# {_MARKER}
+    return f"""# {_MARKER}
 from __future__ import annotations
-import json, os, subprocess, sys, time
+import json
+import os
+import subprocess
+import sys
+import time
 from pathlib import Path
-EVENT={event_name!r}; BLOCKING={blocking!r}; MAX_BYTES={_MAX_BYTES}; MAX_PRETOOL_BYTES={_MAX_PRETOOL_BYTES}; MAX_DEPTH={_MAX_DEPTH}; TIMEOUT={_TIMEOUT}
-GUARD={guard_cli!r}; PROOF=Path({proof!r}); ADAPTER_STATE=Path({adapter_state!r})
+
+EVENT={event_name!r}
+BLOCKING={blocking!r}
+MAX_BYTES={_MAX_BYTES}
+MAX_PRETOOL_BYTES={_MAX_PRETOOL_BYTES}
+MAX_DEPTH={_MAX_DEPTH}
+TIMEOUT={_TIMEOUT}
+GUARD={guard_cli!r}
+PROOF=Path({proof!r})
+ADAPTER_STATE=Path({adapter_state!r})
+
 
 def emit(value):
-    sys.stdout.write(json.dumps(value,separators=(",",":"))+"\\n"); sys.stdout.flush()
+    sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\\n")
+    sys.stdout.flush()
+
 
 def fail(message):
-    emit({{"cancel": bool(BLOCKING), "errorMessage": message if BLOCKING else "", "contextModification": message}})
+    emit({{
+        "cancel": bool(BLOCKING),
+        "errorMessage": message if BLOCKING else "",
+        "contextModification": message,
+    }})
+
 
 def active_transport():
-    if os.environ.get("HOL_GUARD_CLINE_CANARY")=="1": return "hooks"
-    try: value=json.loads(ADAPTER_STATE.read_text(encoding="utf-8"))
-    except (OSError,json.JSONDecodeError): return None
-    transport=value.get("active_transport") if isinstance(value,dict) else None
-    return transport if isinstance(transport,str) else None
+    if os.environ.get("HOL_GUARD_CLINE_CANARY") == "1":
+        return "hooks"
+    try:
+        value = json.loads(ADAPTER_STATE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    transport = value.get("active_transport") if isinstance(value, dict) else None
+    return transport if isinstance(transport, str) else None
+
 
 def depth_ok(value):
-    stack=[(value,1)]
+    stack = [(value, 1)]
     while stack:
-        item,depth=stack.pop()
-        if depth>MAX_DEPTH: return False
-        if isinstance(item,dict): stack.extend((v,depth+1) for v in item.values())
-        elif isinstance(item,list): stack.extend((v,depth+1) for v in item)
+        item, depth = stack.pop()
+        if depth > MAX_DEPTH:
+            return False
+        if isinstance(item, dict):
+            stack.extend((nested, depth + 1) for nested in item.values())
+        elif isinstance(item, list):
+            stack.extend((nested, depth + 1) for nested in item)
     return True
 
+
 def pretool_size_ok(value):
-    if EVENT!="PreToolUse": return True
-    current=value.get("tool_call"); legacy=value.get("preToolUse")
-    action=current if isinstance(current,dict) else legacy if isinstance(legacy,dict) else value
-    try: encoded=json.dumps(action,separators=(",",":"),ensure_ascii=True).encode("utf-8")
-    except (TypeError,ValueError): return False
-    return len(encoded)<=MAX_PRETOOL_BYTES
+    if EVENT != "PreToolUse":
+        return True
+    current = value.get("tool_call")
+    legacy = value.get("preToolUse")
+    if isinstance(current, dict):
+        action = current
+    elif isinstance(legacy, dict):
+        action = legacy
+    else:
+        action = value
+    try:
+        encoded = json.dumps(action, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    except (TypeError, ValueError):
+        return False
+    return len(encoded) <= MAX_PRETOOL_BYTES
+
 
 def parse_output(text):
-    text=text.strip()
-    for candidate in [text,*reversed([line.strip() for line in text.splitlines() if line.strip()])]:
-        if not candidate.startswith("{{"): continue
-        try: value=json.loads(candidate)
-        except json.JSONDecodeError: continue
-        if isinstance(value,dict): return value
+    text = text.strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for candidate in [text, *reversed(lines)]:
+        if not candidate.startswith("{{"):
+            continue
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
     return None
 
+
 def reason(value):
-    for key in ("reason","stopReason","review_hint","systemMessage","message","error"):
-        item=value.get(key)
-        if isinstance(item,str) and item.strip(): return item.strip()
-    specific=value.get("hookSpecificOutput")
-    if isinstance(specific,dict):
-        for key in ("permissionDecisionReason","additionalContext"):
-            item=specific.get(key)
-            if isinstance(item,str) and item.strip(): return item.strip()
-        nested=specific.get("decision")
-        if isinstance(nested,dict) and isinstance(nested.get("message"),str): return nested["message"].strip()
+    for key in ("reason", "stopReason", "review_hint", "systemMessage", "message", "error"):
+        item = value.get(key)
+        if isinstance(item, str) and item.strip():
+            return item.strip()
+    specific = value.get("hookSpecificOutput")
+    if isinstance(specific, dict):
+        for key in ("permissionDecisionReason", "additionalContext"):
+            item = specific.get(key)
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+        nested = specific.get("decision")
+        if isinstance(nested, dict) and isinstance(nested.get("message"), str):
+            return nested["message"].strip()
     return "HOL Guard blocked this action."
 
+
 def blocked(value):
-    if value.get("blocked") is True or value.get("continue") is False: return True
-    decision=value.get("decision")
-    if isinstance(decision,str) and decision.lower() in {{"deny","block","ask"}}: return True
-    action=value.get("policy_action",value.get("policyAction"))
-    if isinstance(action,str) and action.lower() in {{"review","require-reapproval","sandbox-required","block"}}: return True
-    specific=value.get("hookSpecificOutput")
-    if isinstance(specific,dict):
-        permission=specific.get("permissionDecision")
-        if isinstance(permission,str) and permission.lower() in {{"deny","block","ask"}}: return True
-        nested=specific.get("decision")
-        if isinstance(nested,dict) and isinstance(nested.get("behavior"),str) and nested["behavior"].lower() in {{"deny","block","ask"}}: return True
+    if value.get("blocked") is True or value.get("continue") is False:
+        return True
+    decision = value.get("decision")
+    if isinstance(decision, str) and decision.lower() in {{"deny", "block", "ask"}}:
+        return True
+    action = value.get("policy_action", value.get("policyAction"))
+    if isinstance(action, str):
+        if action.lower() in {{"review", "require-reapproval", "sandbox-required", "block"}}:
+            return True
+    specific = value.get("hookSpecificOutput")
+    if isinstance(specific, dict):
+        permission = specific.get("permissionDecision")
+        if isinstance(permission, str) and permission.lower() in {{"deny", "block", "ask"}}:
+            return True
+        nested = specific.get("decision")
+        if isinstance(nested, dict):
+            behavior = nested.get("behavior")
+            if isinstance(behavior, str) and behavior.lower() in {{"deny", "block", "ask"}}:
+                return True
     return False
 
+
 def command_payloads(value):
-    if EVENT!="PreToolUse": return [value]
-    current=value.get("tool_call"); legacy=value.get("preToolUse")
-    name=current.get("name") if isinstance(current,dict) else None
-    if name is None and isinstance(legacy,dict): name=legacy.get("toolName")
-    if name!="run_commands": return [value]
-    raw=current.get("input") if isinstance(current,dict) else None
-    if raw is None and isinstance(legacy,dict): raw=legacy.get("parameters")
-    commands=raw.get("commands",raw.get("command",raw.get("cmd"))) if isinstance(raw,dict) else raw
-    if isinstance(commands,str):
-        try: commands=json.loads(commands)
-        except json.JSONDecodeError: commands=[commands]
-    if isinstance(commands,str): commands=[commands]
-    if not isinstance(commands,list): return [value]
-    out=[]
+    if EVENT != "PreToolUse":
+        return [value]
+    current = value.get("tool_call")
+    legacy = value.get("preToolUse")
+    name = current.get("name") if isinstance(current, dict) else None
+    if name is None and isinstance(legacy, dict):
+        name = legacy.get("toolName")
+    if name != "run_commands":
+        return [value]
+    raw = current.get("input") if isinstance(current, dict) else None
+    if raw is None and isinstance(legacy, dict):
+        raw = legacy.get("parameters")
+    commands = raw
+    if isinstance(raw, dict):
+        commands = raw.get("commands", raw.get("command", raw.get("cmd")))
+    if isinstance(commands, str):
+        try:
+            commands = json.loads(commands)
+        except json.JSONDecodeError:
+            commands = [commands]
+    if isinstance(commands, str):
+        commands = [commands]
+    if not isinstance(commands, list):
+        return [value]
+    command_id = ""
+    if isinstance(current, dict):
+        command_id = current.get("id", "")
+    out = []
     for item in commands:
-        if isinstance(item,dict): item=item.get("command",item.get("cmd"))
-        if not isinstance(item,str) or not item.strip(): continue
-        out.append({{"hookName":"PreToolUse","hook_event_name":"PreToolUse","tool_call":{{"id":current.get("id","") if isinstance(current,dict) else "","name":"run_command","input":{{"command":item}}}}}})
+        if isinstance(item, dict):
+            item = item.get("command", item.get("cmd"))
+        if not isinstance(item, str) or not item.strip():
+            continue
+        out.append({{
+            "hookName": "PreToolUse",
+            "hook_event_name": "PreToolUse",
+            "tool_call": {{
+                "id": command_id,
+                "name": "run_command",
+                "input": {{"command": item}},
+            }},
+        }})
     return out or [value]
 
+
 def proof(outcome):
-    if os.environ.get("HOL_GUARD_CLINE_CANARY")=="1": return
+    if os.environ.get("HOL_GUARD_CLINE_CANARY") == "1":
+        return
     try:
-        PROOF.parent.mkdir(parents=True,exist_ok=True)
-        temp=PROOF.with_name(PROOF.name+".tmp")
-        temp.write_text(json.dumps({{"schema_version":1,"event":EVENT,"source":"cline","outcome":outcome,"timestamp":time.time()}},sort_keys=True),encoding="utf-8")
-        os.replace(temp,PROOF)
-    except OSError: pass
+        PROOF.parent.mkdir(parents=True, exist_ok=True)
+        temp = PROOF.with_name(PROOF.name + ".tmp")
+        payload = {{
+            "schema_version": 1,
+            "event": EVENT,
+            "source": "cline",
+            "outcome": outcome,
+            "timestamp": time.time(),
+        }}
+        temp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        os.replace(temp, PROOF)
+    except OSError:
+        pass
+
 
 def main():
-    raw=sys.stdin.buffer.read(MAX_BYTES+1)
-    if len(raw)>MAX_BYTES: fail("HOL Guard rejected an oversized Cline hook request."); return 0
-    try: value=json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError,json.JSONDecodeError): fail("HOL Guard could not parse the Cline hook request safely."); return 0
-    if not isinstance(value,dict) or not depth_ok(value): fail("HOL Guard rejected an invalid Cline hook request."); return 0
-    if not pretool_size_ok(value): fail("HOL Guard rejected an oversized Cline pre-tool request."); return 0
-    transport=active_transport()
-    if transport!="hooks":
-        if transport is None: fail("HOL Guard Cline transport state is unavailable; this action was not allowed to proceed safely.")
-        else: emit({{"cancel":False,"errorMessage":"","contextModification":""}})
+    raw = sys.stdin.buffer.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        fail("HOL Guard rejected an oversized Cline hook request.")
         return 0
-    denied=False; why=""
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("HOL Guard could not parse the Cline hook request safely.")
+        return 0
+    if not isinstance(value, dict) or not depth_ok(value):
+        fail("HOL Guard rejected an invalid Cline hook request.")
+        return 0
+    if not pretool_size_ok(value):
+        fail("HOL Guard rejected an oversized Cline pre-tool request.")
+        return 0
+    transport = active_transport()
+    if transport != "hooks":
+        if transport is None:
+            fail("HOL Guard Cline transport state is unavailable; this action was not allowed to proceed safely.")
+        else:
+            emit({{"cancel": False, "errorMessage": "", "contextModification": ""}})
+        return 0
+    denied = False
+    why = ""
     for item in command_payloads(value):
-        try: result=subprocess.run([*GUARD,"--harness","cline","--json"],input=json.dumps(item),capture_output=True,text=True,timeout=TIMEOUT,check=False)
-        except (OSError,subprocess.SubprocessError): fail("HOL Guard evaluation was unavailable; this Cline action was not allowed to proceed."); return 0
-        decision=parse_output(result.stdout)
-        if decision is None: fail("HOL Guard returned an invalid decision; this Cline action was not allowed to proceed."); return 0
-        if blocked(decision): denied=True; why=reason(decision); break
-    outcome="blocked" if BLOCKING and denied else "allowed" if BLOCKING else "observed"
+        try:
+            result = subprocess.run(
+                [*GUARD, "--harness", "cline", "--json"],
+                input=json.dumps(item),
+                capture_output=True,
+                text=True,
+                timeout=TIMEOUT,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            fail("HOL Guard evaluation was unavailable; this Cline action was not allowed to proceed.")
+            return 0
+        decision = parse_output(result.stdout)
+        if decision is None:
+            fail("HOL Guard returned an invalid decision; this Cline action was not allowed to proceed.")
+            return 0
+        if blocked(decision):
+            denied = True
+            why = reason(decision)
+            break
+    if BLOCKING:
+        outcome = "blocked" if denied else "allowed"
+    else:
+        outcome = "observed"
     proof(outcome)
-    if BLOCKING: emit({{"cancel":denied,"errorMessage":why if denied else "","contextModification":why if denied else ""}})
-    else: emit({{"cancel":False,"contextModification":why if denied else ""}})
+    if BLOCKING:
+        emit({{
+            "cancel": denied,
+            "errorMessage": why if denied else "",
+            "contextModification": why if denied else "",
+        }})
+    else:
+        emit({{"cancel": False, "contextModification": why if denied else ""}})
     return 0
-if __name__=="__main__": raise SystemExit(main())
-'''
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"""
 
 
 def _posix_wrapper(*, worker: Path, python: str) -> str:
@@ -234,7 +365,7 @@ def _posix_wrapper(*, worker: Path, python: str) -> str:
         (
             "#!/bin/sh",
             f"# {_MARKER}",
-            f"exec {shlex.quote(python)} -I -s {shlex.quote(str(worker))}",
+            f"exec {shlex.quote(python)} -I -s {shlex.quote(worker.as_posix())}",
             "",
         )
     )
@@ -251,6 +382,11 @@ def _powershell_wrapper(*, worker: Path, python: str, blocking: bool) -> str:
         else "HOL Guard hook diagnostic: evaluation was unavailable."
     )
     cancel = "$true" if blocking else "$false"
+    failure_payload = (
+        f"@{{cancel={cancel};"
+        f"errorMessage={_ps_quote(message)};"
+        f"contextModification={_ps_quote(message)}}} | ConvertTo-Json -Compress"
+    )
     return "\n".join(
         (
             f"# {_MARKER}",
@@ -263,12 +399,12 @@ def _powershell_wrapper(*, worker: Path, python: str, blocking: bool) -> str:
             "  $Code = $LASTEXITCODE",
             "  $Text = ($Lines -join [Environment]::NewLine)",
             "  if ($Code -ne 0 -or [string]::IsNullOrWhiteSpace($Text)) {",
-            f"    @{{cancel={cancel};errorMessage={_ps_quote(message)};contextModification={_ps_quote(message)}}} | ConvertTo-Json -Compress",
+            "    " + failure_payload,
             "    exit 0",
             "  }",
             "  [Console]::Out.WriteLine($Text)",
             "} catch {",
-            f"    @{{cancel={cancel};errorMessage={_ps_quote(message)};contextModification={_ps_quote(message)}}} | ConvertTo-Json -Compress",
+            "    " + failure_payload,
             "}",
             "exit 0",
             "",

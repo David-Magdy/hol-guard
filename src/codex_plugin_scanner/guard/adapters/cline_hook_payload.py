@@ -426,7 +426,7 @@ def normalize_cline_payload(
     *,
     workspace: Path | str | None = None,
     home_dir: Path | str | None = None,
-) -> "GuardActionEnvelope":
+) -> GuardActionEnvelope:
     """Normalize Cline onto Guard's canonical typed action envelope."""
 
     from ..runtime import actions as runtime_actions

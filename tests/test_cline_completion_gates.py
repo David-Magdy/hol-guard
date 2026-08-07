@@ -78,8 +78,8 @@ def _run_plugin(source: str, tmp_path: Path, expression: str) -> object:
     plugin.write_text(source, encoding="utf-8")
     code = (
         'import { pathToFileURL } from "node:url";'
-        f'const plugin=(await import(pathToFileURL({json.dumps(str(plugin))}).href)).default;'
-        f'const result=await ({expression});console.log(JSON.stringify(result ?? null));'
+        f"const plugin=(await import(pathToFileURL({json.dumps(str(plugin))}).href)).default;"
+        f"const result=await ({expression});console.log(JSON.stringify(result ?? null));"
     )
     result = subprocess.run([node, "--input-type=module", "-e", code], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
@@ -97,7 +97,9 @@ def test_cline_is_in_static_supported_contracts() -> None:
 
 
 def test_checked_product_schema_matches_exported_cline_membership() -> None:
-    schema_path = Path(__file__).parents[1] / "src" / "codex_plugin_scanner" / "guard" / "schemas" / "guard_product_model_v1.json"
+    schema_path = (
+        Path(__file__).parents[1] / "src" / "codex_plugin_scanner" / "guard" / "schemas" / "guard_product_model_v1.json"
+    )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     exported = export_product_model_v1()
     assert schema["canonical_harnesses"] == exported["canonical_harnesses"]
@@ -156,7 +158,10 @@ def test_plugin_proofs_distinguish_allow_block_and_replacement(tmp_path: Path) -
         _run_plugin(
             source,
             tmp_path,
-            'plugin.hooks.beforeTool({toolCall:{toolCallId:"1",toolName:"run_commands"},input:{commands:["echo safe"]}})',
+            (
+                'plugin.hooks.beforeTool({toolCall:{toolCallId:"1",toolName:"run_commands"},'
+                'input:{commands:["echo safe"]}})'
+            ),
         )
         is None
     )
@@ -197,7 +202,7 @@ def test_plugin_ready_requires_block_and_replacement_proofs(tmp_path: Path) -> N
     root.mkdir(parents=True)
     index = root / "index.js"
     source = "// HOL_GUARD_MANAGED_CLINE_PLUGIN_V1\nexport default {};\n"
-    index.write_text(source, encoding="utf-8")
+    index.write_bytes(source.encode("utf-8"))
     package = root / "package.json"
     package.write_text('{"name":"hol-guard-cline-plugin"}\n', encoding="utf-8")
     state_path = context.guard_home / "managed" / "cline" / "plugin-state.json"

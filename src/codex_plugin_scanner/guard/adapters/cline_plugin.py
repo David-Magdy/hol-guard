@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import time
+from contextlib import suppress
 from hashlib import sha256
 from pathlib import Path
 
@@ -42,7 +43,7 @@ def _proof_path(context: HarnessContext, name: str) -> Path:
 def _atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.hol-guard.tmp-{os.getpid()}")
-    with temporary.open("w", encoding="utf-8") as handle:
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(content)
         handle.flush()
         os.fsync(handle.fileno())
@@ -65,7 +66,7 @@ def _plugin_source(context: HarnessContext, guard_cli: list[str]) -> str:
     proof_pre = str(_proof_path(context, "pretool"))
     proof_post = str(_proof_path(context, "posttool"))
     adapter_state = str(_adapter_state_path(context))
-    return f'''// {_MANAGED_MARKER}
+    return f"""// {_MANAGED_MARKER}
 // schema_version={_SCHEMA_VERSION}
 import {{ spawnSync }} from "node:child_process";
 import {{ mkdirSync, readFileSync, renameSync, writeFileSync }} from "node:fs";
@@ -76,6 +77,8 @@ const TIMEOUT_MS = {_PLUGIN_TIMEOUT_MS};
 const MAX_BYTES = {_MAX_PAYLOAD_BYTES};
 const MAX_PRETOOL_INPUT_BYTES = {_MAX_PRETOOL_INPUT_BYTES};
 const ADAPTER_STATE = {json.dumps(adapter_state)};
+const BLOCK_DECISIONS = ["deny", "block", "ask"];
+const REVIEW_ACTIONS = ["review", "require-reapproval", "sandbox-required", "block"];
 const PROOFS = {{
   loaded: {json.dumps(proof_loaded)},
   pretool: {json.dumps(proof_pre)},
@@ -142,8 +145,8 @@ function guardReason(payload) {{
     for (const key of ["permissionDecisionReason", "additionalContext"]) {{
       if (typeof specific[key] === "string" && specific[key].trim()) return specific[key].trim();
     }}
-    if (specific.decision && typeof specific.decision === "object" && typeof specific.decision.message === "string") {{
-      return specific.decision.message.trim();
+    if (specific.decision && typeof specific.decision === "object") {{
+      if (typeof specific.decision.message === "string") return specific.decision.message.trim();
     }}
   }}
   return undefined;
@@ -152,14 +155,22 @@ function guardReason(payload) {{
 function guardBlocks(payload) {{
   if (!payload || typeof payload !== "object") return true;
   if (payload.blocked === true || payload.continue === false) return true;
-  if (typeof payload.decision === "string" && ["deny", "block", "ask"].includes(payload.decision.toLowerCase())) return true;
+  if (typeof payload.decision === "string") {{
+    if (BLOCK_DECISIONS.includes(payload.decision.toLowerCase())) return true;
+  }}
   const action = payload.policy_action ?? payload.policyAction;
-  if (typeof action === "string" && ["review", "require-reapproval", "sandbox-required", "block"].includes(action.toLowerCase())) return true;
+  if (typeof action === "string") {{
+    if (REVIEW_ACTIONS.includes(action.toLowerCase())) return true;
+  }}
   const specific = payload.hookSpecificOutput;
   if (specific && typeof specific === "object") {{
-    if (typeof specific.permissionDecision === "string" && ["deny", "block", "ask"].includes(specific.permissionDecision.toLowerCase())) return true;
+    if (typeof specific.permissionDecision === "string") {{
+      if (BLOCK_DECISIONS.includes(specific.permissionDecision.toLowerCase())) return true;
+    }}
     const nested = specific.decision;
-    if (nested && typeof nested === "object" && typeof nested.behavior === "string" && ["deny", "block", "ask"].includes(nested.behavior.toLowerCase())) return true;
+    if (nested && typeof nested === "object" && typeof nested.behavior === "string") {{
+      if (BLOCK_DECISIONS.includes(nested.behavior.toLowerCase())) return true;
+    }}
   }}
   return false;
 }}
@@ -254,12 +265,20 @@ function invokeGuard(eventName, toolCall, input, result) {{
       maxBuffer: MAX_BYTES * 2,
       windowsHide: true,
     }});
-    if (child.error || child.signal || (typeof child.status === "number" && child.status !== 0 && !String(child.stdout ?? "").trim())) {{
-      return {{ ok: false, reason: "HOL Guard evaluation was unavailable; this Cline action was not allowed to proceed." }};
+    const badExit = typeof child.status === "number" && child.status !== 0;
+    const missingOutput = !String(child.stdout ?? "").trim();
+    if (child.error || child.signal || (badExit && missingOutput)) {{
+      return {{
+        ok: false,
+        reason: "HOL Guard evaluation was unavailable; this Cline action was not allowed to proceed.",
+      }};
     }}
     const parsed = extractJson(child.stdout);
     if (!parsed) {{
-      return {{ ok: false, reason: "HOL Guard returned an invalid decision; this Cline action was not allowed to proceed." }};
+      return {{
+        ok: false,
+        reason: "HOL Guard returned an invalid decision; this Cline action was not allowed to proceed.",
+      }};
     }}
     lastPayload = parsed;
     if (guardBlocks(parsed)) return {{ ok: true, payload: parsed }};
@@ -286,7 +305,10 @@ const plugin = {{
       if (active !== "plugin") {{
         if (active !== undefined) return undefined;
         proof("pretool", "blocked");
-        return {{ skip: true, reason: "HOL Guard Cline transport state is unavailable; this action was not allowed to proceed safely." }};
+        return {{
+          skip: true,
+          reason: "HOL Guard Cline transport state is unavailable; this action was not allowed to proceed safely.",
+        }};
       }}
       const decision = invokeGuard("PreToolUse", toolCall, input, undefined);
       if (!decision.ok) {{
@@ -305,7 +327,8 @@ const plugin = {{
       if (active !== "plugin") {{
         if (active !== undefined) return undefined;
         proof("posttool", "replaced");
-        return blockedResult("HOL Guard Cline transport state is unavailable; this tool result was withheld.", result?.metadata);
+        const reason = "HOL Guard Cline transport state is unavailable; this tool result was withheld.";
+        return blockedResult(reason, result?.metadata);
       }}
       const decision = invokeGuard("PostToolUse", toolCall, input, result);
       if (!decision.ok) {{
@@ -329,7 +352,7 @@ const plugin = {{
 }};
 
 export default plugin;
-'''
+"""
 
 
 def _package_json() -> str:
@@ -408,7 +431,7 @@ def cline_plugin_state(context: HarnessContext) -> dict[str, object]:
     expected = state.get("index_sha256")
     integrity_ok = False
     installed = isinstance(index_path_value, str) and Path(index_path_value).is_file()
-    if installed and isinstance(expected, str):
+    if isinstance(index_path_value, str) and installed and isinstance(expected, str):
         path = Path(index_path_value)
         try:
             integrity_ok = _is_managed_plugin(path) and sha256(path.read_bytes()).hexdigest() == expected
@@ -487,10 +510,8 @@ def uninstall_cline_plugin(context: HarnessContext) -> dict[str, object]:
                 removed.append(str(package_path))
     root = cline_plugin_root(context)
     if not retained and root.is_dir():
-        try:
+        with suppress(OSError):
             root.rmdir()
-        except OSError:
-            pass
     if not retained and _state_path(context).is_file():
         _state_path(context).unlink()
     return {

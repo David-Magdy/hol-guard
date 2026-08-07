@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..adapters import get_adapter, list_adapters
 from ..adapters.base import HarnessAdapter, HarnessContext
+from ..adapters.cline import ClineHarnessAdapter
 from ..adapters.contracts import contract_for
 from ..adapters.cursor import CursorHarnessAdapter
 from ..agent_safety_guidance import install_agent_safety_guidance, uninstall_agent_safety_guidance
@@ -59,9 +60,9 @@ def _apply_adapter_management(
             if active
             else adapter.uninstall(context, surface=selected_surface)
         )
-    if active:
-        return adapter.install(context, surface=surface)  # type: ignore[call-arg]
-    return adapter.uninstall(context, surface=surface)  # type: ignore[call-arg]
+    if isinstance(adapter, ClineHarnessAdapter):
+        return adapter.install(context, surface=surface) if active else adapter.uninstall(context, surface=surface)
+    raise ValueError(f"Unsupported {setup_contract.display_name} surface: {surface}")
 
 
 def apply_managed_install(
