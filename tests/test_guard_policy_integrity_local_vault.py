@@ -48,6 +48,7 @@ def test_linux_system_keyring_remains_authoritative_for_policy_integrity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Once available, the OS keyring remains the single authoritative integrity store.
     monkeypatch.setattr(policy_integrity_backend_module.sys, "platform", "linux", raising=False)
     monkeypatch.setattr(
         SystemKeyringSecretStore,
