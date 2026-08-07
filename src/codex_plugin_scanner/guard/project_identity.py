@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 PORTABLE_PROJECT_IDENTITY_PREFIX = "git-project:v1:"
 _GIT_CONFIG_MAX_BYTES = 1024 * 1024
+_GIT_REFLOG_MAX_BYTES = 4 * 1024 * 1024
 _SCP_REMOTE_PATTERN = re.compile(r"^(?:[^@/]+@)?([^:/]+):(.+)$")
 _CASE_INSENSITIVE_REMOTE_PATH_HOSTS = frozenset({"github.com", "www.github.com"})
 _DEFAULT_REMOTE_PORTS = {
@@ -24,6 +25,7 @@ _DEFAULT_REMOTE_PORTS = {
     "https": 443,
     "ssh": 22,
 }
+_CLONE_REFLOG_PREFIX = "clone: from "
 
 
 def is_portable_project_identity(value: object) -> bool:
@@ -36,13 +38,16 @@ def is_portable_project_identity(value: object) -> bool:
 
 
 def resolve_portable_project_identity(workspace: str | Path | None) -> str | None:
-    """Return a stable opaque identity for a Git project with an origin remote.
+    """Return a stable opaque identity for a Git project with verified clone provenance.
 
     The identity is stable across clone locations when the clones share the
-    same canonical origin remote. Discovery reads Git metadata directly and
+    same canonical origin remote. Guard also requires the repository's initial
+    HEAD reflog to attest that Git cloned the repository from that same
+    canonical remote. A mutable ``origin`` URL by itself is never enough to
+    inherit portable allow authority. Discovery reads Git metadata directly and
     never launches a subprocess, so Guard's live enforcement path keeps its
-    block-before-subprocess invariant. Repositories without an origin and
-    non-Git workspaces return ``None`` rather than widening project scope.
+    block-before-subprocess invariant. Repositories without verifiable clone
+    provenance fail closed to existing local-only project scope.
     """
     workspace_path = _workspace_path(workspace)
     if workspace_path is None:
@@ -51,10 +56,10 @@ def resolve_portable_project_identity(workspace: str | Path | None) -> str | Non
     repository = _discover_git_repository(workspace_path)
     if repository is None:
         return None
-    repository_root, config_path = repository
+    repository_root, config_path, provenance_logs = repository
     remote = _read_origin_remote(config_path)
     anchor = _canonical_remote(remote)
-    if anchor is None:
+    if anchor is None or _verified_clone_remote_anchor(provenance_logs) != anchor:
         return None
 
     relative_workspace = _relative_workspace(workspace_path, repository_root)
@@ -92,18 +97,21 @@ def _workspace_path(workspace: str | Path | None) -> Path | None:
     return Path(workspace.strip()).expanduser().resolve(strict=False)
 
 
-def _discover_git_repository(workspace: Path) -> tuple[Path, Path] | None:
+def _discover_git_repository(workspace: Path) -> tuple[Path, Path, tuple[Path, ...]] | None:
     current = workspace if workspace.is_dir() else workspace.parent
     for repository_root in (current, *current.parents):
         marker = repository_root / ".git"
         if marker.is_dir():
-            return repository_root, marker / "config"
-        if marker.is_file():
+            git_dir = marker
+        elif marker.is_file():
             git_dir = _read_gitdir_pointer(marker)
             if git_dir is None:
                 return None
-            common_dir = _read_common_git_dir(git_dir)
-            return repository_root, common_dir / "config"
+        else:
+            continue
+        common_dir = _read_common_git_dir(git_dir)
+        provenance_logs = tuple(dict.fromkeys((git_dir / "logs" / "HEAD", common_dir / "logs" / "HEAD")))
+        return repository_root, common_dir / "config", provenance_logs
     return None
 
 
@@ -146,13 +154,39 @@ def _read_origin_remote(config_path: Path) -> str | None:
     except (OSError, UnicodeError):
         return None
 
-    parser = configparser.RawConfigParser(interpolation=None, strict=False)
+    parser = configparser.RawConfigParser(interpolation=None, strict=False, allow_no_value=True)
     try:
         parser.read_string(content)
     except configparser.Error:
         return None
     value = parser.get('remote "origin"', "url", fallback=None)
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _verified_clone_remote_anchor(log_paths: tuple[Path, ...]) -> str | None:
+    """Return the canonical remote attested by Git's initial clone reflog entry."""
+    for log_path in log_paths:
+        try:
+            if log_path.stat().st_size > _GIT_REFLOG_MAX_BYTES:
+                continue
+            content = log_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        for line in content.splitlines():
+            metadata, separator, message = line.partition("\t")
+            if not separator or not message.startswith(_CLONE_REFLOG_PREFIX):
+                continue
+            fields = metadata.split()
+            if len(fields) < 2:
+                continue
+            previous_oid = fields[0]
+            if not previous_oid or set(previous_oid) != {"0"}:
+                continue
+            clone_remote = message[len(_CLONE_REFLOG_PREFIX) :].strip()
+            anchor = _canonical_remote(clone_remote)
+            if anchor is not None:
+                return anchor
+    return None
 
 
 def _canonical_remote(remote: str | None) -> str | None:
