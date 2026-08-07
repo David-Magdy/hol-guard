@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pytest import MonkeyPatch
 
+from codex_plugin_scanner.guard.cli.oauth_client import generate_dpop_key_pair
 from codex_plugin_scanner.guard.policy_bundle_decisions import build_policy_bundle_decisions
 from codex_plugin_scanner.guard.policy_bundle_parser import policy_bundle_acceptance_checkpoint
 from codex_plugin_scanner.guard.project_identity import (
@@ -38,6 +39,20 @@ def _init_repository(workspace: Path, remote: str) -> None:
     _git(workspace, "add", "README.md")
     _git(workspace, "commit", "-m", "initial")
     _git(workspace, "remote", "add", "origin", remote)
+
+
+def _bind_cloud_workspace(store: GuardStore) -> None:
+    dpop_key_material = generate_dpop_key_pair()
+    store.set_oauth_local_credentials(
+        issuer="https://hol.org",
+        client_id="guard-local-daemon",
+        refresh_token="project-memory-test-refresh-token",
+        dpop_private_key_pem=dpop_key_material.private_key_pem,
+        dpop_public_jwk=dpop_key_material.public_jwk,
+        dpop_public_jwk_thumbprint=dpop_key_material.public_jwk_thumbprint,
+        workspace_id=_WORKSPACE_ID,
+        now=_NOW,
+    )
 
 
 def _record_project_operation(store: GuardStore, workspace: Path) -> dict[str, object]:
@@ -123,6 +138,7 @@ def _activate_project_memory_bundle(
     store: GuardStore,
     bundle: dict[str, object],
 ) -> None:
+    _bind_cloud_workspace(store)
     device = store.get_device_metadata()
     applied = store.apply_policy_bundle_authority(
         build_policy_bundle_decisions(
