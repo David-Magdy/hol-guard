@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 
 from .project_identity import (
     enrich_project_identity_metadata,
     is_portable_project_identity,
+    portable_project_identity_revision,
     resolve_portable_project_identity,
 )
 from .store_base import PolicyDecisionLookupResult
@@ -19,24 +19,9 @@ _PROJECT_IDENTITY_CACHE_MAX_ITEMS = 128
 _PROJECT_IDENTITY_CACHE: dict[tuple[str, int], str] = {}
 
 
-def _git_config_revision(workspace: str) -> int | None:
-    path = Path(workspace).expanduser().resolve(strict=False)
-    current = path if path.is_dir() else path.parent
-    for candidate in (current, *current.parents):
-        marker = candidate / ".git"
-        if not marker.is_dir():
-            continue
-        config = marker / "config"
-        try:
-            return config.stat().st_mtime_ns
-        except OSError:
-            return None
-    return None
-
-
 def _cached_portable_project_identity(workspace: str) -> str | None:
-    """Cache only successful identities and invalidate them when Git config changes."""
-    revision = _git_config_revision(workspace)
+    """Cache only successful identities and invalidate on any identity metadata change."""
+    revision = portable_project_identity_revision(workspace)
     if revision is None:
         return resolve_portable_project_identity(workspace)
     cache_key = (workspace, revision)
