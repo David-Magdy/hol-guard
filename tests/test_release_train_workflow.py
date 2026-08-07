@@ -187,6 +187,7 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
         "reserve-alpha-tag",
         "publish-alpha-testpypi",
     ]
+    assert "needs.publish-alpha-testpypi.result == 'success'" in jobs["publish-alpha-pypi"]["if"]
     for job_name in (
         "publish-alpha-testpypi",
         "publish-alpha-pypi",

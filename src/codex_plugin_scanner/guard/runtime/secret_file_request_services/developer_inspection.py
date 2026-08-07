@@ -53,6 +53,15 @@ from .shell_static_safety import (
 )
 from .shell_tokenization import _shell_segment_primary_command
 
+_READ_ONLY_SEARCH_FILE_INPUT_FLAGS = frozenset({"-f", "--file", "--ignore-file"})
+_GREP_SHORT_VALUE_FLAGS = frozenset({"A", "B", "C", "D", "d", "e", "f", "m"})
+_READ_ONLY_SEARCH_SHORT_VALUE_FLAGS = {
+    "grep": _GREP_SHORT_VALUE_FLAGS,
+    "egrep": _GREP_SHORT_VALUE_FLAGS,
+    "fgrep": _GREP_SHORT_VALUE_FLAGS,
+    "rg": frozenset({"A", "B", "C", "E", "M", "T", "d", "e", "f", "g", "j", "m", "r", "t"}),
+}
+
 
 class DeveloperShellEffect(str, Enum):
     """Effects that may participate in a silently verified inspection chain."""
@@ -190,6 +199,11 @@ def _compound_developer_effect_graph(
             continue
         if (
             command_name in _READ_ONLY_LOOKUP_COMMANDS
+            and not (
+                command_name == "rg"
+                and not _ripgrep_config_is_disabled(args)
+                and any(token.startswith("RIPGREP_CONFIG_PATH=") for token in segment.tokens[:command_index])
+            )
             and _read_only_lookup_primary_segment_is_safe(
                 command_name,
                 args,
@@ -357,10 +371,48 @@ def _read_only_lookup_search_args_are_safe(
     execution_flags = _READ_ONLY_SEARCH_EXECUTION_FLAGS.get(command, frozenset())
     if any(arg in execution_flags or any(arg.startswith(f"{flag}=") for flag in execution_flags) for arg in args):
         return False
+    if _read_only_lookup_search_uses_file_input(command, args):
+        return False
+    if command == "rg" and os.environ.get("RIPGREP_CONFIG_PATH") and not _ripgrep_config_is_disabled(args):
+        return False
     targets = [arg for arg in args if arg and not arg.startswith("-")]
     return len(targets) < 2 or all(
         _read_only_lookup_target_is_safe(target, allow_dirs=True, home_dir=home_dir) for target in targets[1:]
     )
+
+
+def _read_only_lookup_search_uses_file_input(command: str, args: list[str]) -> bool:
+    value_flags = _READ_ONLY_SEARCH_SHORT_VALUE_FLAGS.get(command, frozenset())
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--":
+            break
+        if arg in _READ_ONLY_SEARCH_FILE_INPUT_FLAGS:
+            return True
+        if arg.startswith(("--file=", "--ignore-file=")):
+            return True
+        if not arg.startswith("-") or arg.startswith("--") or arg == "-":
+            continue
+        cluster = arg[1:]
+        for index, flag in enumerate(cluster):
+            if flag == "f":
+                return True
+            if flag in value_flags:
+                skip_next = index == len(cluster) - 1
+                break
+    return False
+
+
+def _ripgrep_config_is_disabled(args: list[str]) -> bool:
+    for arg in args:
+        if arg == "--":
+            return False
+        if arg == "--no-config":
+            return True
+    return False
 
 
 def _read_only_lookup_fd_args_are_safe(args: list[str], *, home_dir: Path | None = None) -> bool:

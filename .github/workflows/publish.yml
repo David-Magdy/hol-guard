@@ -29,6 +29,7 @@ on:
     branches: [main, release/3.0, release/3.1]
   pull_request:
     branches: [main, release/3.0]
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
@@ -80,7 +81,8 @@ jobs:
     name: Build + Verify
     if: >-
       (github.event_name != 'workflow_dispatch' || github.run_attempt == 1) &&
-      (github.event_name != 'push' || github.run_attempt == 1)
+      (github.event_name != 'push' || github.run_attempt == 1) &&
+      (github.event.action != 'labeled' || github.event.label.name == 'publish-testpypi-canary')
     needs: authorize-release
     runs-on: ubuntu-latest
     outputs:
@@ -739,6 +741,7 @@ jobs:
       vars.RELEASE_PUBLISHING_ENABLED == 'true' &&
       needs.build.result == 'success' &&
       needs.reserve-alpha-tag.result == 'success' &&
+      needs.publish-alpha-testpypi.result == 'success' &&
       needs.build.outputs.channel == 'alpha' &&
       (
         (github.event_name == 'workflow_dispatch' && github.run_attempt == 1) ||
