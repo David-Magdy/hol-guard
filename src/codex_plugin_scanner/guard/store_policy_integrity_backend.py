@@ -1,10 +1,9 @@
 """Platform policy-integrity secret-store selection.
 
 Keep local policy integrity usable on desktop Linux even when the Python keyring
-backend is missing or unavailable.  The encrypted per-user store is already the
-canonical no-prompt local-vault backend on macOS; on non-macOS platforms we
-pair an available system keyring with the same local fallback, or use the local
-vault directly when no keyring backend exists.
+backend is missing or unavailable. When a system keyring is available it remains
+the authoritative rollback-control backend; only hosts without a usable keyring
+fall back to Guard's owner-only encrypted local vault.
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ from pathlib import Path
 from .store_base import (
     _POLICY_INTEGRITY_SERVICE_NAME,
     EncryptedFileSecretStore,
-    FallbackSecretStore,
     SecretStore,
     SystemKeyringSecretStore,
 )
@@ -37,13 +35,9 @@ def build_policy_integrity_secret_store(
             allow_system_keyring=allow_system_keyring,
         )
 
-    fallback_store = EncryptedFileSecretStore(guard_home)
     if SystemKeyringSecretStore._backend_is_available():
-        return FallbackSecretStore(
-            SystemKeyringSecretStore(service_name=_POLICY_INTEGRITY_SERVICE_NAME),
-            fallback_store,
-        )
-    return fallback_store
+        return SystemKeyringSecretStore(service_name=_POLICY_INTEGRITY_SERVICE_NAME)
+    return EncryptedFileSecretStore(guard_home)
 
 
 __all__ = ["build_policy_integrity_secret_store"]
