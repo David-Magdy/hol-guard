@@ -1,0 +1,52 @@
+name: Refresh Cline test formatting
+
+on:
+  push:
+    branches:
+      - fix/release-3.0-cline-dashboard-contract
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Format Cline contract tests
+        run: >-
+          uv run --no-sync python -m ruff format
+          tests/test_cline_completion_gates.py
+          tests/test_cline_hook_transports.py
+          tests/test_cline_transport_arbitration.py
+
+      - name: Commit canonical formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_cline_completion_gates.py tests/test_cline_hook_transports.py tests/test_cline_transport_arbitration.py
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "style(cline): format contract tests"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
