@@ -17783,6 +17783,47 @@ async function repairApprovalCenter() {
   }
   return response.json();
 }
+class GuardProtectionRepairError extends Error {
+  status;
+  code;
+  repairScope;
+  constructor(status, payload) {
+    const message = payload === null ? null : stringValue$1(payload.message);
+    super(message ?? `Protection repair failed with ${status}`);
+    this.name = "GuardProtectionRepairError";
+    this.status = status;
+    this.code = payload === null ? null : stringValue$1(payload.error);
+    this.repairScope = payload?.repair_scope === "local_integrity" ? "local_integrity" : null;
+  }
+}
+async function repairProtectionCheck(checkId) {
+  if (isGuardDemoMode()) {
+    return {
+      repaired: true,
+      repair_scope: "local_integrity",
+      check_ids: [checkId],
+      message: "Protection restored."
+    };
+  }
+  const response = await fetchWithGuardAuth("/v1/protection/repair", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ check_id: checkId })
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new GuardProtectionRepairError(response.status, isRecord$1(payload) ? payload : null);
+  }
+  if (!isRecord$1(payload) || payload.repaired !== true || payload.repair_scope !== "local_integrity" || !Array.isArray(payload.check_ids)) {
+    throw new Error("Guard returned an invalid protection repair result.");
+  }
+  return {
+    repaired: true,
+    repair_scope: "local_integrity",
+    check_ids: payload.check_ids.filter((value) => typeof value === "string"),
+    message: stringValue$1(payload.message) ?? "Protection restored."
+  };
+}
 function normalizeGuardUpdateVersionCheck(raw) {
   const value = isRecord$1(raw) ? raw : {};
   return {
@@ -30177,6 +30218,31 @@ function App() {
       navigate(`/apps/${encodeURIComponent(slug)}?tab=settings`);
     }
   }, []);
+  const handleRepairProtection = reactExports.useCallback(async (harnesses) => {
+    const failures = [];
+    try {
+      await repairApprovalCenter();
+    } catch {
+      failures.push("local runtime");
+    }
+    for (const harness of harnesses) {
+      try {
+        await runHarnessAction({ harness, action: "repair", dryRun: false });
+      } catch {
+        failures.push(`${harnessDisplayName(harness)} hooks`);
+      }
+    }
+    try {
+      await repairProtectionCheck("all");
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : "integrity protection");
+    }
+    await refreshStateAfterAction();
+    if (failures.length > 0) {
+      throw new Error(`Repair paused at ${failures.join(", ")}. Retry repair to continue from this page.`);
+    }
+    return "Automatic repairs completed. Guard rechecked every protection layer below.";
+  }, [refreshStateAfterAction]);
   const appDetailContent = reactExports.useMemo(() => {
     if (view !== "app-detail" || !appDetailHarness || runtime.kind !== "ready") {
       return null;
@@ -30294,6 +30360,7 @@ function App() {
             onConnectHarness: handleConnectHarness,
             onTestHarness: handleTestHarness,
             onRepairHarness: handleRepairHarness,
+            onRepairProtection: handleRepairProtection,
             onOpenAppDetail: handleOpenAppDetail
           }
         ) }) : null,
