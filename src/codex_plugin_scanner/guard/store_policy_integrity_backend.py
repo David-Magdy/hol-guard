@@ -13,11 +13,13 @@ import sys
 from pathlib import Path
 
 from .store_base import (
+    _POLICY_INTEGRITY_SERVICE_NAME,
     EncryptedFileSecretStore,
     FallbackSecretStore,
     SecretStore,
     SystemKeyringSecretStore,
-    _POLICY_INTEGRITY_SERVICE_NAME,
+)
+from .store_base import (
     _build_policy_integrity_secret_store as _base_policy_integrity_secret_store,
 )
 
