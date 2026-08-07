@@ -43,7 +43,7 @@ def _proof_path(context: HarnessContext, name: str) -> Path:
 def _atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.hol-guard.tmp-{os.getpid()}")
-    with temporary.open("w", encoding="utf-8") as handle:
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(content)
         handle.flush()
         os.fsync(handle.fileno())

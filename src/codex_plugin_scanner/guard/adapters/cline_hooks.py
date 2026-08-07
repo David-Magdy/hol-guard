@@ -365,7 +365,7 @@ def _posix_wrapper(*, worker: Path, python: str) -> str:
         (
             "#!/bin/sh",
             f"# {_MARKER}",
-            f"exec {shlex.quote(python)} -I -s {shlex.quote(str(worker))}",
+            f"exec {shlex.quote(python)} -I -s {shlex.quote(worker.as_posix())}",
             "",
         )
     )
