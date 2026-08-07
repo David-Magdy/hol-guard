@@ -1,0 +1,48 @@
+name: Prepare release 3.0 workflow fixes
+
+on:
+  push:
+    branches:
+      - fix/release-3.0-cline-dashboard-contract
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Restrict PR gates to active release train
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          for name in ("ci.yml", "publish.yml"):
+              path = Path(".github/workflows") / name
+              text = path.read_text(encoding="utf-8")
+              old = "  pull_request:\n    branches: [main, release/3.0, release/3.1]\n"
+              new = "  pull_request:\n    branches: [main, release/3.0]\n"
+              if text.count(old) != 1:
+                  raise RuntimeError(f"expected exactly one PR branch filter in {path}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
+      - name: Stage exact corrected workflow files
+        shell: bash
+        run: |
+          mkdir -p corrected-workflows
+          cp .github/workflows/ci.yml corrected-workflows/ci.yml
+          cp .github/workflows/publish.yml corrected-workflows/publish.yml
+
+      - name: Upload corrected workflows
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-3.0-workflow-fixes
+          path: corrected-workflows/
+          if-no-files-found: error
