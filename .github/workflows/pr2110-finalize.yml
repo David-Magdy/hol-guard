@@ -33,6 +33,8 @@ jobs:
           set -euo pipefail
           EXPECTED_PR=9e45a12c5dddd9b6ac0efd117ececa1a6ce4b823
           EXPECTED_MAIN=ef62e2ad56ccd6c62ab45eed0d6fa7e46707d4f0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main fix/protection-repair-dashboard-regressions
           test "$(git rev-parse origin/fix/protection-repair-dashboard-regressions)" = "$EXPECTED_PR"
           test "$(git rev-parse origin/main)" = "$EXPECTED_MAIN"
@@ -135,8 +137,6 @@ jobs:
           git status --short
           git add -A
           git diff --cached --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "merge: refresh PR 2110 against main"
           auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
           git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${auth}" \
