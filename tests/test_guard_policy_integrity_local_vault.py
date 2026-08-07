@@ -11,7 +11,6 @@ from codex_plugin_scanner.guard import store_policy_integrity_backend as policy_
 from codex_plugin_scanner.guard.local_trust_controller import resolve_passive_trust_state
 from codex_plugin_scanner.guard.store import (
     EncryptedFileSecretStore,
-    FallbackSecretStore,
     GuardStore,
     SystemKeyringSecretStore,
 )
@@ -45,7 +44,7 @@ def test_linux_policy_integrity_uses_local_vault_without_system_keyring(
     assert repaired["trust_status"]["remembered_rules"] == "enforced"
 
 
-def test_linux_keyring_keeps_encrypted_policy_integrity_fallback(
+def test_linux_system_keyring_remains_authoritative_for_policy_integrity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -57,11 +56,8 @@ def test_linux_keyring_keeps_encrypted_policy_integrity_fallback(
     )
 
     store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
-    secret_store = store._policy_integrity_secret_store
 
-    assert isinstance(secret_store, FallbackSecretStore)
-    assert isinstance(secret_store.primary, SystemKeyringSecretStore)
-    assert isinstance(secret_store.fallback, EncryptedFileSecretStore)
+    assert isinstance(store._policy_integrity_secret_store, SystemKeyringSecretStore)
 
 
 def test_doctor_can_report_protected_after_linux_local_vault_repair(
