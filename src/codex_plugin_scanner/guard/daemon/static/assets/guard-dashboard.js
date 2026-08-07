@@ -24180,15 +24180,33 @@ function Sparkline({ items, days = 7 }) {
       days,
       " days"
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-10 w-full items-end gap-1", children: buckets.map((count, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
       "div",
       {
-        className: "flex-1 rounded-sm bg-brand-blue/20 transition-all hover:bg-brand-blue/30",
-        style: { height: `${Math.max(count / max * 100, count > 0 ? 8 : 4)}%` },
-        title: `${count} action${count !== 1 ? "s" : ""}`
-      },
-      i
-    )) })
+        className: "flex h-14 w-full items-end gap-1",
+        role: "img",
+        "aria-label": `Guard activity over the last ${days} days`,
+        children: buckets.map((count, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: "flex min-w-0 flex-1 flex-col items-center justify-end gap-1",
+            title: `${count} action${count !== 1 ? "s" : ""}`,
+            children: [
+              count > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] font-semibold leading-none text-slate-500", children: count }) : null,
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "div",
+                {
+                  className: "w-full rounded-sm bg-brand-blue/20 transition-all hover:bg-brand-blue/30",
+                  style: { height: `${Math.max(count / max * 32, count > 0 ? 4 : 2)}px` },
+                  "aria-hidden": "true"
+                }
+              )
+            ]
+          },
+          i
+        ))
+      }
+    )
   ] });
 }
 const PAGE_SIZE$1 = 50;
