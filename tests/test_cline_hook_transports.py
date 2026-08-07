@@ -177,7 +177,10 @@ def test_generated_plugin_syntax_pretool_block_and_posttool_replacement(tmp_path
     before = _run_plugin(
         source,
         tmp_path,
-        'plugin.hooks.beforeTool({toolCall:{toolCallId:"1",toolName:"run_commands"},input:{commands:["echo safe","BLOCK_ME"]}})',
+        (
+            'plugin.hooks.beforeTool({toolCall:{toolCallId:"1",toolName:"run_commands"},'
+            'input:{commands:["echo safe","BLOCK_ME"]}})'
+        ),
     )
     assert before.returncode == 0, before.stderr
     assert json.loads(before.stdout) == {"skip": True, "reason": "blocked by test"}

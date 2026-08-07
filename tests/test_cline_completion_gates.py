@@ -158,7 +158,10 @@ def test_plugin_proofs_distinguish_allow_block_and_replacement(tmp_path: Path) -
         _run_plugin(
             source,
             tmp_path,
-            'plugin.hooks.beforeTool({toolCall:{toolCallId:"1",toolName:"run_commands"},input:{commands:["echo safe"]}})',
+            (
+                'plugin.hooks.beforeTool({toolCall:{toolCallId:"1",toolName:"run_commands"},'
+                'input:{commands:["echo safe"]}})'
+            ),
         )
         is None
     )
