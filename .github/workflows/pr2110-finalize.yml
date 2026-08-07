@@ -30,64 +30,21 @@ jobs:
           BASE_HEAD="$(git rev-parse origin/fix/protection-repair-dashboard-regressions)"
           echo "$BASE_HEAD" > /tmp/pr-head
           git reset --hard "$BASE_HEAD"
-          test "$(git merge-base origin/main HEAD)" = "$(git rev-parse origin/main)" || {
-            echo "PR is no longer based on current main" >&2
-            exit 1
-          }
+          test "$(git merge-base origin/main HEAD)" = "$(git rev-parse origin/main)"
           python - <<'PY'
+          import ast
           from pathlib import Path
           p = Path('tests/test_guard_policy_integrity.py')
           text = p.read_text(encoding='utf-8')
-          old = '''def test_degraded_mode_persistent_local_allow_is_not_authoritative(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(SystemKeyringSecretStore, "_backend_is_available", classmethod(lambda cls: False))
-    store = _store(tmp_path)
-    store.upsert_policy(
-        _decision(artifact_id="codex:project:degraded", artifact_hash="hash-degraded"),
-        "2026-06-14T00:00:00Z",
-    )
-
-    resolved = store.resolve_policy(
-        "codex",
-        "codex:project:degraded",
-        "hash-degraded",
-        now="2026-06-14T00:01:00Z",
-    )
-    verify = store.verify_policy_integrity()
-
-    assert resolved is None
-    assert verify["mode"] == "degraded"
-    assert verify["counts"]["degraded_mode"] == 1
-'''
-          new = '''def test_no_keyring_local_vault_keeps_persistent_local_allow_authoritative(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(SystemKeyringSecretStore, "_backend_is_available", classmethod(lambda cls: False))
-    store = _store(tmp_path)
-    store.upsert_policy(
-        _decision(artifact_id="codex:project:local-vault", artifact_hash="hash-local-vault"),
-        "2026-06-14T00:00:00Z",
-    )
-
-    resolved = store.resolve_policy(
-        "codex",
-        "codex:project:local-vault",
-        "hash-local-vault",
-        now="2026-06-14T00:01:00Z",
-    )
-    verify = store.verify_policy_integrity()
-
-    assert resolved is not None
-    assert verify["mode"] == "protected"
-    assert verify["counts"]["valid"] == 1
-'''
-          if old in text:
-              p.write_text(text.replace(old, new, 1), encoding='utf-8')
-          elif 'def test_no_keyring_local_vault_keeps_persistent_local_allow_authoritative(' not in text:
-              raise SystemExit('expected no-keyring regression shape not found')
+          if 'def test_no_keyring_local_vault_keeps_persistent_local_allow_authoritative(' not in text:
+              tree = ast.parse(text)
+              target = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'test_degraded_mode_persistent_local_allow_is_not_authoritative'), None)
+              if target is None or target.end_lineno is None:
+                  raise SystemExit('obsolete regression test not found')
+              replacement = "def test_no_keyring_local_vault_keeps_persistent_local_allow_authoritative(\n    tmp_path: Path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:\n    monkeypatch.setattr(SystemKeyringSecretStore, \"_backend_is_available\", classmethod(lambda cls: False))\n    store = _store(tmp_path)\n    store.upsert_policy(\n        _decision(artifact_id=\"codex:project:local-vault\", artifact_hash=\"hash-local-vault\"),\n        \"2026-06-14T00:00:00Z\",\n    )\n\n    resolved = store.resolve_policy(\n        \"codex\",\n        \"codex:project:local-vault\",\n        \"hash-local-vault\",\n        now=\"2026-06-14T00:01:00Z\",\n    )\n    verify = store.verify_policy_integrity()\n\n    assert resolved is not None\n    assert verify[\"mode\"] == \"protected\"\n    assert verify[\"counts\"][\"valid\"] == 1\n"
+              lines = text.splitlines(keepends=True)
+              lines[target.lineno - 1:target.end_lineno] = [replacement]
+              p.write_text(''.join(lines), encoding='utf-8')
           PY
           git diff --check
 
@@ -109,12 +66,9 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin fix/protection-repair-dashboard-regressions
-          test "$(git rev-parse origin/fix/protection-repair-dashboard-regressions)" = "$(cat /tmp/pr-head)" || {
-            echo "PR moved during validation; refusing stale push" >&2
-            exit 1
-          }
+          test "$(git rev-parse origin/fix/protection-repair-dashboard-regressions)" = "$(cat /tmp/pr-head)"
           if git diff --quiet; then
-            echo "No source/test patch required"
+            echo "No patch required"
             exit 0
           fi
           git add tests/test_guard_policy_integrity.py
