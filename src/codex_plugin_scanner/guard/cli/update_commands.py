@@ -783,8 +783,10 @@ def run_guard_update(
         if daemon_refresh is not None:
             payload["daemon_refresh"] = daemon_refresh
         _append_payload_note(payload, daemon_refresh_note)
-        if daemon_refresh_required and package_changed and not (
-            isinstance(daemon_refresh, dict) and daemon_refresh.get("status") == "restarted"
+        if (
+            daemon_refresh_required
+            and package_changed
+            and not (isinstance(daemon_refresh, dict) and daemon_refresh.get("status") == "restarted")
         ):
             payload.update(
                 {
