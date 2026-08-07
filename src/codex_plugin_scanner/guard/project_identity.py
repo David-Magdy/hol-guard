@@ -37,6 +37,28 @@ def is_portable_project_identity(value: object) -> bool:
     )
 
 
+def portable_project_identity_revision(workspace: str | Path | None) -> int | None:
+    """Return a cache revision covering every Git metadata input to project identity."""
+    workspace_path = _workspace_path(workspace)
+    if workspace_path is None:
+        return None
+    repository = _discover_git_repository(workspace_path)
+    if repository is None:
+        return None
+    _repository_root, config_path, provenance_logs = repository
+    fingerprints: list[str] = []
+    for candidate in (config_path, *provenance_logs):
+        try:
+            stat = candidate.stat()
+        except OSError:
+            continue
+        fingerprints.append(f"{candidate}:{stat.st_mtime_ns}:{stat.st_size}")
+    if not fingerprints:
+        return None
+    digest = hashlib.sha256("\n".join(fingerprints).encode()).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=False)
+
+
 def resolve_portable_project_identity(workspace: str | Path | None) -> str | None:
     """Return a stable opaque identity for a Git project with verified clone provenance.
 
