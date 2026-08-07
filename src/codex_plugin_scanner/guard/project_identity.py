@@ -1,0 +1,218 @@
+"""Portable project identity for cross-device Guard decision memory.
+
+Project-scoped memory must not depend on where a repository is cloned on one
+machine. This module derives an opaque identity from Git repository metadata
+while keeping local filesystem paths out of the identity itself.
+"""
+
+from __future__ import annotations
+
+import configparser
+import hashlib
+import re
+from collections.abc import Mapping
+from pathlib import Path
+from urllib.parse import urlsplit
+
+PORTABLE_PROJECT_IDENTITY_PREFIX = "git-project:v1:"
+_GIT_CONFIG_MAX_BYTES = 1024 * 1024
+_SCP_REMOTE_PATTERN = re.compile(r"^(?:[^@/]+@)?([^:/]+):(.+)$")
+_CASE_INSENSITIVE_REMOTE_PATH_HOSTS = frozenset({"github.com", "www.github.com"})
+_DEFAULT_REMOTE_PORTS = {
+    "git": 9418,
+    "http": 80,
+    "https": 443,
+    "ssh": 22,
+}
+
+
+def is_portable_project_identity(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and value.startswith(PORTABLE_PROJECT_IDENTITY_PREFIX)
+        and len(value) == len(PORTABLE_PROJECT_IDENTITY_PREFIX) + 64
+        and all(character in "0123456789abcdef" for character in value[-64:])
+    )
+
+
+def resolve_portable_project_identity(workspace: str | Path | None) -> str | None:
+    """Return a stable opaque identity for a Git project with an origin remote.
+
+    The identity is stable across clone locations when the clones share the
+    same canonical origin remote. Discovery reads Git metadata directly and
+    never launches a subprocess, so Guard's live enforcement path keeps its
+    block-before-subprocess invariant. Repositories without an origin and
+    non-Git workspaces return ``None`` rather than widening project scope.
+    """
+    workspace_path = _workspace_path(workspace)
+    if workspace_path is None:
+        return None
+
+    repository = _discover_git_repository(workspace_path)
+    if repository is None:
+        return None
+    repository_root, config_path = repository
+    remote = _read_origin_remote(config_path)
+    anchor = _canonical_remote(remote)
+    if anchor is None:
+        return None
+
+    relative_workspace = _relative_workspace(workspace_path, repository_root)
+    digest = hashlib.sha256(f"{anchor}\n{relative_workspace}".encode()).hexdigest()
+    return f"{PORTABLE_PROJECT_IDENTITY_PREFIX}{digest}"
+
+
+def resolve_project_identity_from_metadata(metadata: Mapping[str, object]) -> str | None:
+    """Resolve explicit project identity first, upgrading path-like ids when possible."""
+    explicit = _first_string(metadata, "project_id", "projectId")
+    if explicit and not _looks_like_local_path(explicit):
+        return explicit
+
+    workspace = _first_string(metadata, "workspace_path", "workspacePath") or explicit
+    portable = resolve_portable_project_identity(workspace)
+    if portable is not None:
+        return portable
+    return explicit
+
+
+def enrich_project_identity_metadata(metadata: Mapping[str, object]) -> dict[str, object]:
+    """Return metadata with the canonical project identity in ``project_id``."""
+    enriched = {str(key): value for key, value in metadata.items()}
+    project_identity = resolve_project_identity_from_metadata(metadata)
+    if project_identity is not None:
+        enriched["project_id"] = project_identity
+    return enriched
+
+
+def _workspace_path(workspace: str | Path | None) -> Path | None:
+    if isinstance(workspace, Path):
+        return workspace.expanduser().resolve(strict=False)
+    if not isinstance(workspace, str) or not workspace.strip():
+        return None
+    return Path(workspace.strip()).expanduser().resolve(strict=False)
+
+
+def _discover_git_repository(workspace: Path) -> tuple[Path, Path] | None:
+    current = workspace if workspace.is_dir() else workspace.parent
+    for repository_root in (current, *current.parents):
+        marker = repository_root / ".git"
+        if marker.is_dir():
+            return repository_root, marker / "config"
+        if marker.is_file():
+            git_dir = _read_gitdir_pointer(marker)
+            if git_dir is None:
+                return None
+            common_dir = _read_common_git_dir(git_dir)
+            return repository_root, common_dir / "config"
+    return None
+
+
+def _read_gitdir_pointer(marker: Path) -> Path | None:
+    try:
+        value = marker.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    prefix = "gitdir:"
+    if not value.lower().startswith(prefix):
+        return None
+    raw_path = value[len(prefix) :].strip()
+    if not raw_path:
+        return None
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = marker.parent / candidate
+    return candidate.resolve(strict=False)
+
+
+def _read_common_git_dir(git_dir: Path) -> Path:
+    commondir = git_dir / "commondir"
+    try:
+        raw_path = commondir.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return git_dir
+    if not raw_path:
+        return git_dir
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = git_dir / candidate
+    return candidate.resolve(strict=False)
+
+
+def _read_origin_remote(config_path: Path) -> str | None:
+    try:
+        if config_path.stat().st_size > _GIT_CONFIG_MAX_BYTES:
+            return None
+        content = config_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+    parser = configparser.RawConfigParser(interpolation=None, strict=False)
+    try:
+        parser.read_string(content)
+    except configparser.Error:
+        return None
+    value = parser.get('remote "origin"', "url", fallback=None)
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _canonical_remote(remote: str | None) -> str | None:
+    if not isinstance(remote, str) or not remote.strip():
+        return None
+    value = remote.strip()
+    host: str | None = None
+    path: str | None = None
+
+    if "://" in value:
+        parsed = urlsplit(value)
+        scheme = parsed.scheme.lower()
+        if scheme == "file" or not parsed.hostname:
+            return None
+        host = parsed.hostname.lower()
+        try:
+            port = parsed.port
+        except ValueError:
+            return None
+        if port is not None and port != _DEFAULT_REMOTE_PORTS.get(scheme):
+            host = f"{host}:{port}"
+        path = parsed.path
+    else:
+        match = _SCP_REMOTE_PATTERN.match(value)
+        if match:
+            host = match.group(1).lower()
+            path = match.group(2)
+
+    if not host or not path:
+        return None
+    normalized_path = path.strip().strip("/")
+    if normalized_path.lower().endswith(".git"):
+        normalized_path = normalized_path[:-4]
+    normalized_host = host.split(":", maxsplit=1)[0]
+    if normalized_host in _CASE_INSENSITIVE_REMOTE_PATH_HOSTS or normalized_host.endswith(".ghe.com"):
+        normalized_path = normalized_path.lower()
+    if not normalized_path:
+        return None
+    return f"remote:{host}/{normalized_path}"
+
+
+def _relative_workspace(workspace: Path, repository_root: Path) -> str:
+    try:
+        relative = workspace.relative_to(repository_root)
+    except ValueError:
+        return "."
+    value = relative.as_posix().strip()
+    return value or "."
+
+
+def _first_string(metadata: Mapping[str, object], *keys: str) -> str | None:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _looks_like_local_path(value: str) -> bool:
+    normalized = value.strip()
+    if normalized.startswith(("/", "~/", "./", "../", "\\\\")):
+        return True
+    return len(normalized) >= 3 and normalized[1:3] in {":\\", ":/"}

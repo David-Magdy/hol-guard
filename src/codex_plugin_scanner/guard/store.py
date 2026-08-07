@@ -26,6 +26,7 @@ from .store_evidence_facade import StoreEvidenceMixin
 from .store_inventory import StoreInventoryMixin
 from .store_live_request_outbox import StoreLiveRequestOutboxMixin
 from .store_oauth import StoreOAuthConnectMixin
+from .store_portable_project_memory import StorePortableProjectMemoryMixin
 from .store_policy import StorePolicyMixin
 from .store_policy_integrity_runtime import StorePolicyIntegrityAdminMixin
 from .store_read_state import StoreReadStateMixin
@@ -57,6 +58,7 @@ class GuardStore(
     StoreStorageMaintenanceMixin,
     StoreCommandShadowMixin,
     StoreInventoryMixin,
+    StorePortableProjectMemoryMixin,
     StorePolicyMixin,
     StorePolicyIntegrityAdminMixin,
     StoreCloudEventsMixin,
