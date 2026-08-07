@@ -1,0 +1,89 @@
+name: Fix Cline basedpyright closure
+
+on:
+  push:
+    branches:
+      - fix/release-3.0-cline-dashboard-contract
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+
+      - name: Apply scoped typing fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          install_path = Path("src/codex_plugin_scanner/guard/cli/install_commands.py")
+          text = install_path.read_text(encoding="utf-8")
+          old_import = "from ..adapters.contracts import contract_for\nfrom ..adapters.cursor import CursorHarnessAdapter\n"
+          new_import = (
+              "from ..adapters.cline import ClineHarnessAdapter\n"
+              "from ..adapters.contracts import contract_for\n"
+              "from ..adapters.cursor import CursorHarnessAdapter\n"
+          )
+          if old_import not in text:
+              raise SystemExit("install_commands import anchor not found")
+          text = text.replace(old_import, new_import, 1)
+          old_dispatch = '''    if isinstance(adapter, CursorHarnessAdapter):
+        selected_surface = cursor_install_surface(surface)
+        return (
+            adapter.install(context, surface=selected_surface)
+            if active
+            else adapter.uninstall(context, surface=selected_surface)
+        )
+    if active:
+        return adapter.install(context, surface=surface)  # type: ignore[call-arg]
+    return adapter.uninstall(context, surface=surface)  # type: ignore[call-arg]
+'''
+          new_dispatch = '''    if isinstance(adapter, CursorHarnessAdapter):
+        selected_surface = cursor_install_surface(surface)
+        return (
+            adapter.install(context, surface=selected_surface)
+            if active
+            else adapter.uninstall(context, surface=selected_surface)
+        )
+    if isinstance(adapter, ClineHarnessAdapter):
+        return adapter.install(context, surface=surface) if active else adapter.uninstall(context, surface=surface)
+    raise ValueError(f"Unsupported {setup_contract.display_name} surface: {surface}")
+'''
+          if old_dispatch not in text:
+              raise SystemExit("install_commands dispatch anchor not found")
+          install_path.write_text(text.replace(old_dispatch, new_dispatch, 1), encoding="utf-8")
+
+          plugin_path = Path("src/codex_plugin_scanner/guard/adapters/cline_plugin.py")
+          text = plugin_path.read_text(encoding="utf-8")
+          old_state = '''    installed = isinstance(index_path_value, str) and Path(index_path_value).is_file()
+    if installed and isinstance(expected, str):
+        path = Path(index_path_value)
+'''
+          new_state = '''    installed = isinstance(index_path_value, str) and Path(index_path_value).is_file()
+    if isinstance(index_path_value, str) and installed and isinstance(expected, str):
+        path = Path(index_path_value)
+'''
+          if old_state not in text:
+              raise SystemExit("cline_plugin narrowing anchor not found")
+          plugin_path.write_text(text.replace(old_state, new_state, 1), encoding="utf-8")
+          PY
+
+      - name: Commit scoped typing fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/codex_plugin_scanner/guard/cli/install_commands.py src/codex_plugin_scanner/guard/adapters/cline_plugin.py
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "fix(cline): satisfy surface dispatch typing"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
