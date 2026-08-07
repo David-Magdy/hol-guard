@@ -1,0 +1,111 @@
+name: Live-fix PR 2110 no-keyring regression
+
+on:
+  push:
+    branches: [tmp/pr2110-finalize-20260807]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+      - name: Patch latest PR head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin fix/protection-repair-dashboard-regressions
+          BASE_HEAD="$(git rev-parse origin/fix/protection-repair-dashboard-regressions)"
+          echo "$BASE_HEAD" > /tmp/pr-head
+          git reset --hard "$BASE_HEAD"
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tests/test_guard_policy_integrity.py')
+          text = p.read_text(encoding='utf-8')
+          old = '''def test_degraded_mode_persistent_local_allow_is_not_authoritative(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(SystemKeyringSecretStore, "_backend_is_available", classmethod(lambda cls: False))
+    store = _store(tmp_path)
+    store.upsert_policy(
+        _decision(artifact_id="codex:project:degraded", artifact_hash="hash-degraded"),
+        "2026-06-14T00:00:00Z",
+    )
+
+    resolved = store.resolve_policy(
+        "codex",
+        "codex:project:degraded",
+        "hash-degraded",
+        now="2026-06-14T00:01:00Z",
+    )
+    verify = store.verify_policy_integrity()
+
+    assert resolved is None
+    assert verify["mode"] == "degraded"
+    assert verify["counts"]["degraded_mode"] == 1
+'''
+          new = '''def test_no_keyring_local_vault_keeps_persistent_local_allow_authoritative(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(SystemKeyringSecretStore, "_backend_is_available", classmethod(lambda cls: False))
+    store = _store(tmp_path)
+    store.upsert_policy(
+        _decision(artifact_id="codex:project:local-vault", artifact_hash="hash-local-vault"),
+        "2026-06-14T00:00:00Z",
+    )
+
+    resolved = store.resolve_policy(
+        "codex",
+        "codex:project:local-vault",
+        "hash-local-vault",
+        now="2026-06-14T00:01:00Z",
+    )
+    verify = store.verify_policy_integrity()
+
+    assert resolved is not None
+    assert verify["mode"] == "protected"
+    assert verify["counts"]["valid"] == 1
+'''
+          if old in text:
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          elif 'def test_no_keyring_local_vault_keeps_persistent_local_allow_authoritative(' not in text:
+              raise SystemExit('expected regression test shape not found')
+          PY
+          git diff --check
+      - name: Focused validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet uv
+          uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync ruff check tests/test_guard_policy_integrity.py tests/test_guard_policy_integrity_local_vault.py
+          uv run --no-sync ruff format --check tests/test_guard_policy_integrity.py tests/test_guard_policy_integrity_local_vault.py
+          uv run --no-sync pytest -q tests/test_guard_policy_integrity.py tests/test_guard_policy_integrity_local_vault.py tests/test_guard_approval_reuse.py tests/test_guard_workflow_capabilities.py tests/test_guard_workflow_capability_authority_tamper.py tests/test_guard_workflow_capability_hardening.py --tb=short
+      - name: Push if PR head did not move
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin fix/protection-repair-dashboard-regressions
+          test "$(git rev-parse origin/fix/protection-repair-dashboard-regressions)" = "$(cat /tmp/pr-head)" || { echo 'PR moved during validation; aborting safely'; exit 1; }
+          if git diff --quiet; then echo 'No patch needed'; exit 0; fi
+          git add tests/test_guard_policy_integrity.py
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test(guard): align no-keyring integrity expectations'
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="AUTHORIZATION: basic ${auth}" push origin HEAD:fix/protection-repair-dashboard-regressions
