@@ -1,7 +1,7 @@
 import { r as reactExports, bI as fetchSupplyChainBundle, j as jsxRuntimeExports, S as SectionLabel, k as EmptyState, b0 as HiMiniArrowTopRightOnSquare, ak as Tag, t as formatRelativeTime, M as Badge, K as HiMiniExclamationTriangle, aY as HiMiniBugAnt, at as guardActionPresentation, bJ as isSupplyChainScannerEvidence, bK as isBlockedGuardAction, aI as HiMiniArrowPath, bL as HiMiniDocumentMagnifyingGlass, bM as HiMiniShieldExclamation, bN as HiMiniComputerDesktop, C as HiMiniCloud, m as HiMiniCheckCircle, P as HiMiniWrenchScrewdriver, A as ActionButton, z as HiMiniChevronDown, Q as HiMiniExclamationCircle, be as fetchReceipts, U as HiMiniXCircle, e as harnessDisplayName, y as HiMiniChevronUp } from "../guard-dashboard.js";
 import { resolveFeedStaleness } from "./feed-health-workspace.js";
 import { r as resolveHomeProtectionStatus } from "./home-protection-module.js";
-import { b as buildSupplyChainStats } from "./supply-chain-protection-stats.js";
+import { b as buildSupplyChainStats, r as resolveManagerCoverageManagers } from "./supply-chain-protection-stats.js";
 import { s as supplyChainFixAllIsPending, a as supplyChainFixAllButtonLabel, S as SUPPLY_CHAIN_WORKSPACE_SHELL_CLASS } from "./supply-chain-hub-workspace.js";
 function SeverityBadge({ severity }) {
   const tone = severity === "critical" || severity === "high" ? "destructive" : severity === "medium" ? "attention" : "default";
@@ -559,8 +559,9 @@ function resolveSupplyChainIssues(snapshot) {
       action: { kind: "firewall_unprotected" }
     });
   } else if (stats.repairRequiredManagers > 0) {
+    const coverageManagers = new Set(resolveManagerCoverageManagers(protection));
     const managers = protection !== void 0 ? protection.installed_managers.filter(
-      (manager) => !protection.protected_managers.includes(manager)
+      (manager) => coverageManagers.has(manager) && !protection.protected_managers.includes(manager)
     ) : [];
     const managerLabel = managers.length > 0 ? managers.join(", ") : "installed tools";
     issues.push({

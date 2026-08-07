@@ -46,6 +46,7 @@ const makeProtection = (
   shell_profile_path: "/mock-home/.zshrc",
   shim_dir: "/usr/local/hol-guard/shims",
   supported_managers: [...protected_managers, ...unprotected_managers],
+  detected_managers: [...protected_managers, ...unprotected_managers],
   installed_managers: protected_managers,
   active_managers: protected_managers,
   missing_shims: [],
@@ -427,3 +428,69 @@ verifyLoaderTypeShape(loadAuditPage as () => Promise<AuditPageData>, "loadAuditP
 verifyLoaderTypeShape(loadEvidencePage as () => Promise<EvidencePageData>, "loadEvidencePage");
 verifyLoaderTypeShape(loadPolicyPage as () => Promise<PolicyPageData>, "loadPolicyPage");
 verifyLoaderTypeShape(loadFeedPage as () => Promise<FeedPageData>, "loadFeedPage");
+
+
+// SCRG172-LINUX-MISSING-DETECTION
+const missingDetectedProtection = makeProtection(["npm"], []);
+delete missingDetectedProtection.detected_managers;
+missingDetectedProtection.supported_managers = ["npm", "bun", "cargo"];
+const missingDetectedSnapshot: GuardRuntimeSnapshot = {
+  ...paidSnapshot,
+  supply_chain: { package_manager_protection: missingDetectedProtection },
+};
+const missingDetectedStats = buildSupplyChainStats(missingDetectedSnapshot);
+assert(
+  missingDetectedStats.protectedManagers === 0
+    && missingDetectedStats.stagedManagers === 0
+    && missingDetectedStats.repairRequiredManagers === 0
+    && missingDetectedStats.unprotectedManagers === 0,
+  "SCRG172-LINUX-MISSING-A: missing detection data yields no package-manager coverage counts",
+);
+const missingDetectedAudit = deriveFrontendAuditResults([], missingDetectedSnapshot);
+assert(
+  !missingDetectedAudit.some((item) => item.id === "unprotected-bun" || item.id === "unprotected-cargo"),
+  "SCRG172-LINUX-MISSING-B: support-matrix-only managers never create remediation findings",
+);
+
+// SCRG172-LINUX-DETECTED-COVERAGE
+const linuxDetectedProtection: PackageManagerProtection = {
+  ...makeProtection(
+    ["npm", "npx", "pip", "pip3", "pipx"],
+    [
+      "brew",
+      "bun",
+      "bundle",
+      "bunx",
+      "cargo",
+      "composer",
+      "go",
+      "gradle",
+      "mvn",
+      "pipenv",
+      "pnpm",
+      "poetry",
+      "uv",
+      "uvx",
+      "yarn",
+    ],
+  ),
+  detected_managers: ["npm", "npx", "pnpm"],
+};
+const linuxDetectedSnapshot: GuardRuntimeSnapshot = {
+  ...paidSnapshot,
+  supply_chain: { package_manager_protection: linuxDetectedProtection },
+};
+const linuxDetectedStats = buildSupplyChainStats(linuxDetectedSnapshot);
+assert(
+  linuxDetectedStats.protectedManagers === 2 && linuxDetectedStats.unprotectedManagers === 1,
+  "SCRG172-LINUX-A: package health counts only managers detected on this machine",
+);
+const linuxDetectedAudit = deriveFrontendAuditResults([], linuxDetectedSnapshot);
+assert(
+  linuxDetectedAudit.some((item) => item.title === "pnpm is not intercepted by Guard"),
+  "SCRG172-LINUX-B: the actually installed unprotected manager remains visible",
+);
+assert(
+  !linuxDetectedAudit.some((item) => item.title === "brew is not intercepted by Guard"),
+  "SCRG172-LINUX-C: absent supported managers do not create degraded audit findings",
+);

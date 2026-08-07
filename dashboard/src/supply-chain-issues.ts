@@ -1,6 +1,9 @@
 import { resolveFeedStaleness } from "./feed-health-workspace";
 import { resolveHomeProtectionStatus } from "./home-protection-module";
-import { buildSupplyChainStats } from "./supply-chain-protection-stats";
+import {
+  buildSupplyChainStats,
+  resolveManagerCoverageManagers,
+} from "./supply-chain-protection-stats";
 import { resolveSupplyChainCloudDegradedState } from "./supply-chain-evidence-rail";
 import type { GuardRuntimeSnapshot } from "./guard-types";
 
@@ -52,10 +55,12 @@ export function resolveSupplyChainIssues(snapshot: GuardRuntimeSnapshot): Supply
       action: { kind: "firewall_unprotected" },
     });
   } else if (stats.repairRequiredManagers > 0) {
+    const coverageManagers = new Set(resolveManagerCoverageManagers(protection));
     const managers =
       protection !== undefined
         ? protection.installed_managers.filter(
-            (manager) => !protection.protected_managers.includes(manager),
+            (manager) =>
+              coverageManagers.has(manager) && !protection.protected_managers.includes(manager),
           )
         : [];
     const managerLabel = managers.length > 0 ? managers.join(", ") : "installed tools";
