@@ -12,6 +12,8 @@ import hmac
 import os
 import shlex
 import stat
+import sys
+import sysconfig
 from pathlib import Path
 
 
@@ -58,10 +60,69 @@ def _owner_is_only_group_member(owner_uid: int, group_gid: int) -> bool:
     return member_names == {owner.pw_name}
 
 
-def _is_installed_python_package_file(path: Path) -> bool:
-    """Return whether a file lives under a conventional Python package root."""
+def _python_package_roots() -> tuple[Path, ...]:
+    """Return package roots belonging to the running Python installation.
 
-    return any(part in {"site-packages", "dist-packages"} for part in path.parts)
+    ``sysconfig`` supplies the authoritative purelib/platlib locations for the
+    active interpreter.  The explicit prefix-derived candidates cover common
+    POSIX venv and distro layouts, including Debian/Ubuntu ``dist-packages``,
+    without trusting an arbitrary directory merely because it has a familiar
+    basename.
+    """
+
+    roots: set[Path] = set()
+
+    def add_root(value: str | Path | None) -> None:
+        if value is None:
+            return
+        try:
+            roots.add(Path(value).expanduser().resolve(strict=False))
+        except (OSError, RuntimeError):
+            return
+
+    try:
+        configured_paths = sysconfig.get_paths()
+    except (AttributeError, OSError, ValueError):
+        configured_paths = {}
+    for key in ("purelib", "platlib"):
+        value = configured_paths.get(key)
+        if isinstance(value, str) and value:
+            add_root(value)
+
+    version_dirs = {
+        f"python{sys.version_info.major}",
+        f"python{sys.version_info.major}.{sys.version_info.minor}",
+    }
+    for prefix_value in {sys.prefix, sys.exec_prefix}:
+        if not prefix_value:
+            continue
+        try:
+            prefix = Path(prefix_value).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            continue
+        for lib_dir in ("lib", "lib64"):
+            for version_dir in version_dirs:
+                for package_dir in ("site-packages", "dist-packages"):
+                    add_root(prefix / lib_dir / version_dir / package_dir)
+
+    return tuple(sorted(roots, key=str))
+
+
+def _is_installed_python_package_file(path: Path) -> bool:
+    """Return whether a file is under a package root for this interpreter."""
+
+    try:
+        canonical = path.expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+    for root in _python_package_roots():
+        try:
+            relative = canonical.relative_to(root)
+        except ValueError:
+            continue
+        if relative.parts:
+            return True
+    return False
 
 
 def canonical_path(path: Path) -> str:
