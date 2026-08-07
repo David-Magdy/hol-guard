@@ -205,6 +205,19 @@ def _load_trust_backend_result(result_file: Path) -> tuple[bool, object]:
     return ok, value
 
 
+def select_trust_backend(
+    backends: tuple[TrustBackend, ...],
+    *,
+    passive: bool,
+) -> TrustBackend | None:
+    """Select highest-priority supported backend, gating passive use on no-UI safety."""
+
+    candidates = [backend for backend in backends if backend.supported and (not passive or backend.passive_no_ui_safe)]
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda backend: (-backend.priority, backend.name))[0]
+
+
 def run_trust_backend_check(
     operation: Callable[[], _TrustResult],
     *,
