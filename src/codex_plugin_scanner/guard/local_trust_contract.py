@@ -205,19 +205,6 @@ def _load_trust_backend_result(result_file: Path) -> tuple[bool, object]:
     return ok, value
 
 
-def select_trust_backend(
-    backends: tuple[TrustBackend, ...],
-    *,
-    passive: bool,
-) -> TrustBackend | None:
-    """Select highest-priority supported backend, gating passive use on no-UI safety."""
-
-    candidates = [backend for backend in backends if backend.supported and (not passive or backend.passive_no_ui_safe)]
-    if not candidates:
-        return None
-    return sorted(candidates, key=lambda backend: (-backend.priority, backend.name))[0]
-
-
 def run_trust_backend_check(
     operation: Callable[[], _TrustResult],
     *,
@@ -336,6 +323,9 @@ class TrustStatus:
         runtime_override = state.get("runtime_protection")
         if runtime_override in ("protected", "degraded", "unknown"):
             runtime_protection = runtime_override
+        remembered_rules_override = state.get("remembered_rules")
+        if remembered_rules_override in ("enforced", "disabled_degraded", "unknown"):
+            remembered_rules = remembered_rules_override
         cloud_override = state.get("cloud_policies")
         if cloud_override in ("available", "setup_unavailable", "unknown"):
             cloud_policies: CloudPoliciesStatus = cloud_override
