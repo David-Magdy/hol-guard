@@ -100,16 +100,32 @@ jobs:
           test ! -e "$proof_dir/plugin-loaded.json"
           test ! -e "$proof_dir/plugin-pretool.json"
           test ! -e "$proof_dir/plugin-posttool.json"
-          set +e
-          hol-guard apps test cline --json > "$RUNNER_TEMP/post-reinstall.json"
-          status=$?
-          set -e
-          test "$status" -ne 0
+          hol-guard apps test cline --json > "$RUNNER_TEMP/post-reinstall.json" || true
           python - "$RUNNER_TEMP/post-reinstall.json" <<'PY'
           import json, sys
           payload = json.load(open(sys.argv[1], encoding='utf-8'))
-          text = json.dumps(payload)
-          assert '"ready": true' not in text.lower(), payload
+
+          plugins = []
+          def collect(value):
+              if isinstance(value, dict):
+                  plugin = value.get('plugin')
+                  if isinstance(plugin, dict):
+                      plugins.append(plugin)
+                  for item in value.values():
+                      collect(item)
+              elif isinstance(value, list):
+                  for item in value:
+                      collect(item)
+
+          collect(payload)
+          assert plugins, payload
+          for plugin in plugins:
+              assert plugin.get('ready') is not True, plugin
+              assert plugin.get('pretool_blocking_proven') is not True, plugin
+              assert plugin.get('posttool_replacement_proven') is not True, plugin
+              assert plugin.get('loaded_proof', {}).get('present') is False, plugin
+              assert plugin.get('live_pretool_proof', {}).get('present') is False, plugin
+              assert plugin.get('live_posttool_proof', {}).get('present') is False, plugin
           PY
 
       - name: Safe live Cline tool action passes
