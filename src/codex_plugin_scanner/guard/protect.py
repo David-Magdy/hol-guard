@@ -129,7 +129,8 @@ def build_protect_payload(
     request = parse_protect_command(command)
     advisories = store.list_cached_advisories(limit=None)
     cached_verdict = evaluate_protect_request(request, advisories)
-    cached_gate = cached_verdict.blocking
+    observe_mode = config is not None and config.mode == "observe"
+    cached_gate = cached_verdict.blocking and not observe_mode
     cached_policy_context = _cached_advisory_policy_context(cached_verdict)
     from .local_supply_chain import build_package_protect_payload
 
@@ -155,7 +156,8 @@ def build_protect_payload(
     if package_payload is not None:
         current_cached_verdict = evaluate_protect_request(request, store.list_cached_advisories(limit=None))
         if (
-            current_cached_verdict.blocking
+            not observe_mode
+            and current_cached_verdict.blocking
             and package_payload[0].get("executed") is False
             and not _package_payload_uses_saved_approval(package_payload[0])
         ):
@@ -167,7 +169,7 @@ def build_protect_payload(
                 now=now,
             )
         return package_payload
-    verdict = cached_verdict
+    verdict = _observe_only_verdict(cached_verdict) if observe_mode else cached_verdict
     receipt = _build_install_receipt(request, verdict)
     payload: dict[str, object] = {
         "generated_at": now,
@@ -179,6 +181,10 @@ def build_protect_payload(
         "receipt": receipt.to_dict(),
         "matched_advisories": list(verdict.matched_advisories),
     }
+    if observe_mode and cached_verdict.blocking:
+        payload["observed_verdict"] = cached_verdict.to_dict()
+        payload["verdict"]["observed_action"] = cached_verdict.action
+        payload["verdict"]["observe_mode"] = True
     if verdict.blocking or dry_run:
         store.add_receipt(receipt)
         store.add_event(
@@ -242,6 +248,19 @@ def build_protect_payload(
             now,
         )
     return (payload, int(execution.returncode))
+
+
+def _observe_only_verdict(verdict: ProtectVerdict) -> ProtectVerdict:
+    """Project a watch-only verdict to execution while retaining observed evidence separately."""
+
+    if not verdict.blocking:
+        return verdict
+    return ProtectVerdict(
+        "allow",
+        f"Watch only observed a `{verdict.action}` install decision. HOL Guard allowed the command to continue.",
+        verdict.risk_signals,
+        verdict.matched_advisories,
+    )
 
 
 def _cached_advisory_policy_context(verdict: ProtectVerdict) -> dict[str, object]:
