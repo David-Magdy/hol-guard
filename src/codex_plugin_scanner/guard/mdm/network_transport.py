@@ -12,7 +12,6 @@ import subprocess
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from typing import IO
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -20,8 +19,8 @@ from urllib3.poolmanager import ProxyManager
 
 from .contracts import ManagedNetworkPolicy
 from .network_credentials import read_proxy_credential_record
-from .network_proxy import ManagedExplicitProxyHandler
 from .network_trust import ManagedTrustError, build_managed_ssl_context
+from .network_urlopen import ManagedOpener, ManagedResponse, ManagedUrlOpener
 from .policy import load_managed_policy
 
 _PUBLIC_REGISTRIES = frozenset(
@@ -246,30 +245,30 @@ def managed_opener(
     policy: ManagedNetworkPolicy | None = None,
     *,
     redirect_handler: urllib.request.HTTPRedirectHandler | None = None,
-) -> urllib.request.OpenerDirector:
+) -> ManagedOpener:
     resolved = policy or active_network_policy()
     proxies = proxy_map(resolved)
-    proxy_handler: urllib.request.BaseHandler
-    if resolved.proxy_mode == "explicit":
-        proxy_handler = ManagedExplicitProxyHandler(proxies)
-    else:
-        proxy_handler = urllib.request.ProxyHandler(proxies)
-    handlers: list[urllib.request.BaseHandler] = [
-        proxy_handler,
-        urllib.request.HTTPSHandler(context=managed_ssl_context(resolved)),
+    context = managed_ssl_context(resolved)
+    direct_handlers: list[urllib.request.BaseHandler] = [
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPSHandler(context=context),
     ]
     if redirect_handler is not None:
-        handlers.append(redirect_handler)
+        direct_handlers.append(redirect_handler)
+    proxy_headers: dict[str, str] = {}
     if resolved.proxy_mode == "explicit":
         selected = proxies.get("https")
         if selected is not None:
             credentials = load_proxy_credentials(selected)
             if credentials is not None:
-                password_manager = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-                password_manager.add_password(None, selected, credentials.username, credentials.password)
-                handlers.insert(1, urllib.request.ProxyBasicAuthHandler(password_manager))
-                handlers.insert(2, urllib.request.ProxyDigestAuthHandler(password_manager))
-    return urllib.request.build_opener(*handlers)
+                proxy_headers["Proxy-Authorization"] = basic_proxy_authorization(credentials)
+    return ManagedUrlOpener(
+        direct_opener=urllib.request.build_opener(*direct_handlers),
+        proxy_urls=proxies,
+        ssl_context=context,
+        proxy_headers=proxy_headers,
+        allow_redirects=redirect_handler is None,
+    )
 
 
 def managed_urlopen(
@@ -277,7 +276,7 @@ def managed_urlopen(
     *,
     timeout: float | None = None,
     policy: ManagedNetworkPolicy | None = None,
-) -> IO[bytes]:
+) -> ManagedResponse:
     resolved, managed = resolved_network_policy(policy)
     validate_destination(request_url(request), resolved)
     if (
