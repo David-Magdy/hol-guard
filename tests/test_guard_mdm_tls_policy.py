@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import ssl
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -38,15 +40,14 @@ def _test_ca() -> tuple[bytes, bytes]:
     )
 
 
-def _trusted_fingerprints(context: object) -> set[str]:
-    get_ca_certs = getattr(context, "get_ca_certs")
-    certificates = get_ca_certs(binary_form=True)
+def _trusted_fingerprints(context: ssl.SSLContext) -> set[str]:
+    certificates = context.get_ca_certs(binary_form=True)
     return {hashlib.sha256(certificate).hexdigest() for certificate in certificates}
 
 
 def test_shell_ca_overrides_are_ignored_but_managed_ca_is_additive(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pem, der = _test_ca()
     ambient_bundle = tmp_path / "ambient-ca.pem"
