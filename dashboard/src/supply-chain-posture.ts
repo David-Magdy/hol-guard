@@ -45,14 +45,6 @@ export function resolveSupplyChainPostureAlerts(
       detail: `Guard set up protection for ${managerLabel}, but the active Guard session still needs a quick repair. Tap Fix PATH in the firewall panel, then finish activation here.`,
       tone: "attention",
     });
-  } else if (protection?.path_status === "restart_required" || stats.stagedManagers > 0) {
-    alerts.push({
-      kind: "path_repair",
-      title: "Finish activation in Guard",
-      detail:
-        "Guard saved your shell setup. Finish activation here, then run a protection check from the firewall panel.",
-      tone: "blue",
-    });
   }
 
   if (
