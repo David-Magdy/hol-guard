@@ -70,6 +70,7 @@ jobs:
           PY
 
           uv sync --frozen --extra dev --group dev
+          uv run ruff check --fix src/codex_plugin_scanner/guard/cli/install_commands.py tests/test_cline_completion_gates.py
           uv run ruff format src/codex_plugin_scanner/guard/cli/install_commands.py tests/test_cline_completion_gates.py
           uv run ruff check src/codex_plugin_scanner/guard/cli/install_commands.py tests/test_cline_completion_gates.py
           uv run pytest -q tests/test_cline_completion_gates.py
