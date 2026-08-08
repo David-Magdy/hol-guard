@@ -189,6 +189,7 @@ def _canonical_remote(remote: str | None) -> str | None:
         return None
     value = remote.strip()
     host: str | None = None
+    path_case_host: str | None = None
     path: str | None = None
 
     if "://" in value:
@@ -196,7 +197,9 @@ def _canonical_remote(remote: str | None) -> str | None:
         scheme = parsed.scheme.lower()
         if scheme == "file" or not parsed.hostname:
             return None
-        host = parsed.hostname.lower()
+        hostname = parsed.hostname.lower()
+        path_case_host = hostname
+        host = f"[{hostname}]" if ":" in hostname else hostname
         try:
             port = parsed.port
         except ValueError:
@@ -208,15 +211,15 @@ def _canonical_remote(remote: str | None) -> str | None:
         match = _SCP_REMOTE_PATTERN.match(value)
         if match:
             host = match.group(1).lower()
+            path_case_host = host
             path = match.group(2)
 
-    if not host or not path:
+    if not host or not path or not path_case_host:
         return None
     normalized_path = path.strip().strip("/")
     if normalized_path.lower().endswith(".git"):
         normalized_path = normalized_path[:-4]
-    normalized_host = host.split(":", maxsplit=1)[0]
-    if normalized_host in _CASE_INSENSITIVE_REMOTE_PATH_HOSTS or normalized_host.endswith(".ghe.com"):
+    if path_case_host in _CASE_INSENSITIVE_REMOTE_PATH_HOSTS or path_case_host.endswith(".ghe.com"):
         normalized_path = normalized_path.lower()
     if not normalized_path:
         return None
