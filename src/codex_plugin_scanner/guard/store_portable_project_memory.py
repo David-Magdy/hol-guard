@@ -66,6 +66,27 @@ def _portable_lookup_without_permission_elevation(
     return lookup
 
 
+def _without_authority_revision(lookup: PolicyDecisionLookupResult) -> PolicyDecisionLookupResult:
+    """Remove the preview-only authority revision from an enforcement result."""
+    decision = lookup.get("decision")
+    if not isinstance(decision, dict) or "_approval_authority_revision" not in decision:
+        return lookup
+    sanitized_decision = dict(decision)
+    sanitized_decision.pop("_approval_authority_revision", None)
+    return {**lookup, "decision": sanitized_decision}
+
+
+def _restrictive_only_lookup(lookup: PolicyDecisionLookupResult) -> PolicyDecisionLookupResult:
+    """Fail closed after a saved allow cannot be atomically claimed."""
+    decision = lookup.get("decision")
+    sanitized = _without_authority_revision(lookup)
+    if not isinstance(decision, dict):
+        return sanitized
+    if guard_action_severity(decision.get("action"), unknown_action="block") >= _PORTABLE_PERMISSION_FLOOR:
+        return sanitized
+    return {**sanitized, "decision": None}
+
+
 # Store mixins are composed dynamically in ``GuardStore``. Sibling mixins use
 # the same file-level pyright setting because ``super()`` members are supplied
 # by the final MRO rather than a direct base class.
@@ -127,9 +148,11 @@ class StorePortableProjectMemoryMixin:
         )
         normalized_workspace = workspace.strip() if isinstance(workspace, str) else None
         if portable_workspace == normalized_workspace:
-            return portable_preview
+            return portable_preview if not consume_one_shot else _without_authority_revision(portable_preview)
 
-        local_lookup = super().resolve_policy_decision_lookup(
+        # Preview local authority as well. A local one-shot must not be claimed
+        # before a stronger portable restriction has had a chance to win.
+        local_preview = super().resolve_policy_decision_lookup(
             harness,
             artifact_id,
             artifact_hash=artifact_hash,
@@ -137,9 +160,37 @@ class StorePortableProjectMemoryMixin:
             publisher=publisher,
             now=now,
             runtime_exact_match_context=runtime_exact_match_context,
-            consume_one_shot=consume_one_shot,
+            consume_one_shot=False,
         )
-        return _most_restrictive_policy_lookup([local_lookup, portable_preview])
+        effective_preview = _most_restrictive_policy_lookup([local_preview, portable_preview])
+        if not consume_one_shot:
+            return effective_preview
+
+        effective_decision = effective_preview.get("decision")
+        if not isinstance(effective_decision, dict) or effective_decision.get("action") != "allow":
+            return _without_authority_revision(effective_preview)
+
+        # Portable permission-lowering decisions were removed above, so any
+        # effective allow came from local authority. Claim that exact preview
+        # atomically. The embedded authority revision prevents a stale allow
+        # from surviving a concurrent policy or approval change.
+        if self.claim_approval_reuse_decision(effective_decision, now=now):
+            return _without_authority_revision(effective_preview)
+
+        # Authority changed between preview and claim. Recompute without
+        # consuming anything and retain only restrictive policy; a permission
+        # can be presented again on the caller's next approval cycle.
+        refreshed = self.resolve_policy_decision_lookup(
+            harness,
+            artifact_id,
+            artifact_hash=artifact_hash,
+            workspace=workspace,
+            publisher=publisher,
+            now=now,
+            runtime_exact_match_context=runtime_exact_match_context,
+            consume_one_shot=False,
+        )
+        return _restrictive_only_lookup(refreshed)
 
     @staticmethod
     def _portable_project_workspace(workspace: str | None) -> str | None:
