@@ -89,12 +89,16 @@ export function resolveSupplyChainWorkspaceHero(
 
   const openIssueCount = options?.openIssueCount ?? 0;
   if (openIssueCount > 0) {
+    const issueSummary = `${openIssueCount} setup step${openIssueCount === 1 ? "" : "s"} need attention on this device.`;
     return {
       cloudMode: snapshot.cloud_state,
       cloudLabel: cloudLabel(snapshot),
       protectionStatus,
       title: "Work through the steps below",
-      detail: `${openIssueCount} setup step${openIssueCount === 1 ? "" : "s"} need attention on this device.`,
+      detail:
+        protectionStatus === "staged"
+          ? `${issueSummary} ${protectionDetail(snapshot, protectionStatus)}`
+          : issueSummary,
       tone: protectionTone(protectionStatus),
       statLine: `${stats.protectedManagers} protected · ${stats.unprotectedManagers} open · ${preventedLabel}`,
     };
