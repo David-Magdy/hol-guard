@@ -1,22 +1,45 @@
-name: MDM evidence probe
+name: MDM evidence refresh
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/mdm-evidence-probe.yml"
-      - "src/codex_plugin_scanner/guard/runtime/verified_github_reads.py"
-      - "tests/test_guard_verified_reads.py"
-  workflow_dispatch:
+  push:
+    branches:
+      - fix/mdm-r005-enterprise-networking
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  source-digests:
+  refresh:
+    if: github.repository == 'hashgraph-online/hol-guard' && github.ref == 'refs/heads/fix/mdm-r005-enterprise-networking'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-      - name: Print source evidence digests
+        with:
+          ref: fix/mdm-r005-enterprise-networking
+          fetch-depth: 1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+      - name: Refresh and verify source-bound evidence
         run: |
-          sha256sum src/codex_plugin_scanner/guard/runtime/verified_github_reads.py
-          sha256sum tests/test_guard_verified_reads.py
+          set -euo pipefail
+          uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync python tests/guard_command_decision_diff.py --write
+          uv run --no-sync python tests/guard_command_decision_diff.py --check
+          git rm .github/workflows/mdm-evidence-probe.yml
+          mapfile -t changed < <(git status --short | sed -E 's/^...//' | sort)
+          expected=(
+            '.github/workflows/mdm-evidence-probe.yml'
+            'tests/fixtures/guard-command-corpus/decision-diff-report.json'
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          if [[ "${changed[*]}" != "${expected_sorted[*]}" ]]; then
+            printf 'unexpected changed paths:\n%s\n' "${changed[*]}" >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tests/fixtures/guard-command-corpus/decision-diff-report.json
+          git commit -m 'test(desktop): refresh source-bound decision evidence'
+          git push origin HEAD:fix/mdm-r005-enterprise-networking
