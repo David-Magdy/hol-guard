@@ -8,7 +8,9 @@ import {
   CODEX_RESUME_STATUSES
 } from "./guard-types";
 import { computeTrendBuckets } from "./evidence/evidence-metrics";
+import { normalizeOperatorHealth } from "./operator-health";
 import { normalizeProtectionHealth, protectionHeadlineFor } from "./protection-health";
+export { normalizeOperatorHealth } from "./operator-health";
 import {
   AUTHORITATIVE_DECISION_INCONSISTENT,
   guardActionDisposition,
@@ -157,6 +159,7 @@ type RuntimeSnapshotPayload = Omit<
   | "supply_chain"
   | "managed_installs"
   | "cloud_command_capability"
+  | "operator_health"
   | "protection_health"
   | "runtime_state"
   | "latest_receipts"
@@ -169,6 +172,7 @@ type RuntimeSnapshotPayload = Omit<
   supply_chain?: unknown;
   managed_installs?: unknown;
   cloud_command_capability?: unknown;
+  operator_health?: unknown;
   protection_health?: unknown;
   runtime_state?: unknown;
 };
@@ -1664,6 +1668,7 @@ export function normalizeRuntimeSnapshot(snapshot: RuntimeSnapshotPayload): Guar
     supply_chain: normalizeSupplyChainSnapshot(snapshot.supply_chain),
     managed_installs: normalizeManagedInstalls(snapshot.managed_installs),
     cloud_command_capability: normalizeCloudCommandCapability(snapshot.cloud_command_capability),
+    operator_health: normalizeOperatorHealth(snapshot.operator_health),
     protection_health: protectionHealth,
   };
 }
