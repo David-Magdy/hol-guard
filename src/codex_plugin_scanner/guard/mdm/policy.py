@@ -78,6 +78,8 @@ def _optional_https_url(value: object, name: str) -> str | None:
     if parsed.scheme.lower() != "https" or not parsed.netloc or parsed.hostname is None:
         raise ManagedPolicyError(f"{name} must be an absolute HTTPS URL")
     if parsed.username is not None or parsed.password is not None:
+        if name == "network.proxyUrl":
+            raise ManagedPolicyError("network proxy credentials are forbidden in managed policy")
         raise ManagedPolicyError(f"{name} credentials are forbidden in managed policy")
     if "?" in url or "#" in url:
         raise ManagedPolicyError(f"{name} must not contain a query or fragment")
