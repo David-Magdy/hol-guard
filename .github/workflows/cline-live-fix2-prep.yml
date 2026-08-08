@@ -1,0 +1,108 @@
+name: Temporary Cline live post-tool fix prep
+
+on:
+  push:
+    branches:
+      - fix/release-3.0-cline-live-policy
+    paths:
+      - .github/workflows/cline-live-fix2-prep.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out fix branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Apply Cline ingress and post-tool fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          hook_command = Path('src/codex_plugin_scanner/guard/cli/commands_hook.py')
+          text = hook_command.read_text(encoding='utf-8')
+          anchor = '''    if _canonical_harness_name(args.harness) == "cursor":\n        from ..adapters.cursor_hooks import prepare_cursor_hook_payload\n\n        payload = _normalize_hook_payload(prepare_cursor_hook_payload(payload), harness=args.harness)\n'''
+          insertion = '''    if _canonical_harness_name(args.harness) == "cline":\n        from ..adapters.cline_hook_payload import prepare_cline_hook_payload\n\n        payload = _normalize_hook_payload(prepare_cline_hook_payload(payload), harness=args.harness)\n'''
+          if anchor not in text:
+              raise SystemExit('cursor preparation anchor not found')
+          if insertion not in text:
+              text = text.replace(anchor, insertion + anchor, 1)
+          hook_command.write_text(text, encoding='utf-8')
+
+          artifacts = Path('src/codex_plugin_scanner/guard/cli/commands_support_runtime_artifacts.py')
+          text = artifacts.read_text(encoding='utf-8')
+          old = 'if harness in {"codex", "pi", "omp"} and event_name == "PostToolUse":'
+          new = 'if harness in {"codex", "cline", "pi", "omp"} and event_name == "PostToolUse":'
+          if old not in text:
+              raise SystemExit('post-tool harness gate not found')
+          text = text.replace(old, new, 1)
+          old_label = 'harness_label = {"pi": "Pi", "omp": "Oh My Pi"}.get(canonical_harness, "Codex")'
+          new_label = 'harness_label = {"cline": "Cline", "pi": "Pi", "omp": "Oh My Pi"}.get(canonical_harness, "Codex")'
+          if old_label not in text:
+              raise SystemExit('post-tool harness label not found')
+          artifacts.write_text(text.replace(old_label, new_label, 1), encoding='utf-8')
+
+          tests = Path('tests/test_cline_completion_gates.py')
+          test_text = tests.read_text(encoding='utf-8')
+          marker = 'def test_real_guard_policy_withholds_cline_credential_output'
+          if marker not in test_text:
+              test_text += '''\n\ndef test_real_guard_policy_withholds_cline_credential_output(tmp_path: Path) -> None:\n    context = _context(tmp_path)\n    source_path = context.workspace_dir / "public.txt"\n    source_path.write_text("AKIAABCDEFGHIJKLMNOP\\n", encoding="utf-8")\n    command = f"cat {source_path}"\n    payload = {\n        "hookName": "PostToolUse",\n        "hook_event_name": "PostToolUse",\n        "tool_result": {\n            "id": "cline-live-posttool-regression",\n            "name": "run_commands",\n            "input": {"commands": [command]},\n            "output": "AKIAABCDEFGHIJKLMNOP",\n        },\n    }\n    env = dict(os.environ)\n    env["HOME"] = str(context.home_dir)\n    env["HOL_GUARD_HOME"] = str(context.guard_home)\n    result = subprocess.run(\n        [\n            sys.executable,\n            "-m",\n            "codex_plugin_scanner.cli",\n            "guard",\n            "hook",\n            "--harness",\n            "cline",\n            "--json",\n        ],\n        cwd=context.workspace_dir,\n        env=env,\n        input=json.dumps(payload),\n        capture_output=True,\n        text=True,\n        timeout=30,\n        check=False,\n    )\n    assert result.returncode == 1, result.stdout + result.stderr\n    response = json.loads(result.stdout)\n    assert response["policy_action"] == "require-reapproval"\n    assert ":tool-output:" in response["artifact_id"]\n    assert response["policy_composition"]["current_config_action"] == "require-reapproval"\n    serialized = json.dumps(response)\n    assert "AKIAABCDEFGHIJKLMNOP" not in serialized\n'''
+          tests.write_text(test_text, encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Format and lint changed Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -m ruff format \
+            src/codex_plugin_scanner/guard/cli/commands_hook.py \
+            src/codex_plugin_scanner/guard/cli/commands_support_hook_payload.py \
+            src/codex_plugin_scanner/guard/cli/commands_support_runtime_artifacts.py \
+            tests/test_cline_completion_gates.py
+          uv run --no-sync python -m ruff check \
+            src/codex_plugin_scanner/guard/cli/commands_hook.py \
+            src/codex_plugin_scanner/guard/cli/commands_support_hook_payload.py \
+            src/codex_plugin_scanner/guard/cli/commands_support_runtime_artifacts.py \
+            tests/test_cline_completion_gates.py
+          git diff --check
+
+      - name: Run focused Cline completion gates
+        run: uv run --no-sync pytest tests/test_cline_completion_gates.py --tb=short
+
+      - name: Commit validated fixes and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cline-live-fix2-prep.yml
+          git add \
+            src/codex_plugin_scanner/guard/cli/commands_hook.py \
+            src/codex_plugin_scanner/guard/cli/commands_support_hook_payload.py \
+            src/codex_plugin_scanner/guard/cli/commands_support_runtime_artifacts.py \
+            tests/test_cline_completion_gates.py
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(cline): enforce live secret mediation"
+          git push origin HEAD:fix/release-3.0-cline-live-policy
