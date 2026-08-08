@@ -1,17 +1,18 @@
-name: MDM network import sentinel
+name: MDM collection sentinel
 
 on:
   pull_request:
     paths:
       - "src/codex_plugin_scanner/guard/mdm/**"
-      - "scripts/mdm/check-network-import.py"
+      - "tests/test_guard_mdm_network.py"
+      - "tests/test_guard_mdm_adapter_conformance.py"
       - ".github/workflows/mdm-import-sentinel.yml"
 
 permissions:
   contents: read
 
 jobs:
-  import-sentinel:
+  collection-sentinel:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -20,10 +21,8 @@ jobs:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
       - run: uv sync --python 3.12 --extra dev --frozen
-      - id: sentinel
-        run: uv run --python 3.12 --no-sync python scripts/mdm/check-network-import.py
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: mdm-network-import-${{ steps.sentinel.outputs.result }}
-          path: mdm-import-sentinel.txt
-          retention-days: 1
+      - run: >-
+          uv run --python 3.12 --no-sync pytest
+          -p no:cacheprovider --tb=short -q --collect-only
+          tests/test_guard_mdm_network.py
+          tests/test_guard_mdm_adapter_conformance.py
