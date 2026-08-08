@@ -74,12 +74,7 @@ def _owner_is_only_group_member(owner_uid: int, group_gid: int) -> bool:
         # Empty NSS listing cannot prove absence of other primary members. Accept
         # only the classic user-private-group convention (group name == username,
         # matching primary gid, empty gr_mem). Partial non-empty listings fail closed.
-        return (
-            not accounts
-            and not group.gr_mem
-            and group.gr_name == owner.pw_name
-            and owner.pw_gid == group_gid
-        )
+        return not accounts and not group.gr_mem and group.gr_name == owner.pw_name and owner.pw_gid == group_gid
     except (ImportError, KeyError, OSError):
         return False
 
