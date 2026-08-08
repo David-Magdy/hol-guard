@@ -27,6 +27,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import ProxyManager
 
 from .contracts import ManagedNetworkPolicy, ProxyMode
+from .network_proxy import ManagedExplicitProxyHandler
 from .network_trust import ManagedTrustError, build_managed_ssl_context
 from .policy import load_managed_policy
 
@@ -340,8 +341,13 @@ def managed_opener(
 ) -> urllib.request.OpenerDirector:
     resolved = policy or active_network_policy()
     proxies = _proxy_map(resolved)
+    proxy_handler: urllib.request.BaseHandler
+    if resolved.proxy_mode == "explicit":
+        proxy_handler = ManagedExplicitProxyHandler(proxies)
+    else:
+        proxy_handler = urllib.request.ProxyHandler(proxies)
     handlers: list[urllib.request.BaseHandler] = [
-        urllib.request.ProxyHandler(proxies),
+        proxy_handler,
         urllib.request.HTTPSHandler(context=managed_ssl_context(resolved)),
     ]
     if redirect_handler is not None:
