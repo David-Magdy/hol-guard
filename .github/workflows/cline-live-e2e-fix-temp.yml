@@ -31,14 +31,25 @@ jobs:
           version: "0.9.26"
           enable-cache: true
 
-      - name: Apply candidate Cline post-tool mediation fix
+      - name: Apply candidate Cline CLI integration fix
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          path = Path('src/codex_plugin_scanner/guard/cli/commands_support_runtime_artifacts.py')
-          text = path.read_text(encoding='utf-8')
+
+          hook_command = Path('src/codex_plugin_scanner/guard/cli/commands_hook.py')
+          text = hook_command.read_text(encoding='utf-8')
+          anchor = '''    if _canonical_harness_name(args.harness) == "cursor":\n        from ..adapters.cursor_hooks import prepare_cursor_hook_payload\n\n        payload = _normalize_hook_payload(prepare_cursor_hook_payload(payload), harness=args.harness)\n'''
+          insertion = '''    if _canonical_harness_name(args.harness) == "cline":\n        from ..adapters.cline_hook_payload import prepare_cline_hook_payload\n\n        payload = _normalize_hook_payload(prepare_cline_hook_payload(payload), harness=args.harness)\n'''
+          if anchor not in text:
+              raise SystemExit('cursor preparation anchor not found')
+          if insertion not in text:
+              text = text.replace(anchor, insertion + anchor, 1)
+          hook_command.write_text(text, encoding='utf-8')
+
+          artifacts = Path('src/codex_plugin_scanner/guard/cli/commands_support_runtime_artifacts.py')
+          text = artifacts.read_text(encoding='utf-8')
           old = 'if harness in {"codex", "pi", "omp"} and event_name == "PostToolUse":'
           new = 'if harness in {"codex", "cline", "pi", "omp"} and event_name == "PostToolUse":'
           if old not in text:
@@ -48,10 +59,10 @@ jobs:
           new_label = 'harness_label = {"cline": "Cline", "pi": "Pi", "omp": "Oh My Pi"}.get(canonical_harness, "Codex")'
           if old_label not in text:
               raise SystemExit('post-tool harness label not found')
-          path.write_text(text.replace(old_label, new_label, 1), encoding='utf-8')
+          artifacts.write_text(text.replace(old_label, new_label, 1), encoding='utf-8')
           PY
           git diff --check
-          git diff -- src/codex_plugin_scanner/guard/cli/commands_support_runtime_artifacts.py
+          git diff -- src/codex_plugin_scanner/guard/cli/commands_hook.py src/codex_plugin_scanner/guard/cli/commands_support_runtime_artifacts.py
 
       - name: Build and install candidate wheel
         shell: bash
