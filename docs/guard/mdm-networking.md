@@ -19,7 +19,7 @@ Raw `requests`, `urllib`, and `http.client` transports are confined to the manag
 
 `network.proxyMode=explicit` requires `network.proxyUrl` to be a credential-free HTTPS proxy origin. Paths, queries, fragments, whitespace, invalid ports, and embedded user information are rejected. Explicit proxy routing does not honor `NO_PROXY`, so a shell variable cannot bypass administrator policy.
 
-Proxy credentials are never accepted in managed policy, CLI arguments, proxy URLs, status, diagnostics, receipts, or user-readable Guard files. When proxy authentication is required, Guard reads an optional record from the operating system keyring service `hol-guard-enterprise-proxy-v1`; the key is the SHA-256 digest of the normalized credential-free proxy origin. The record is a bounded JSON object containing only `username` and `password`. Provisioning that keyring record is an administrator/OS credential-management operation outside the Guard policy contract. Guard exposes only whether authentication material was available, never the credential value.
+Proxy credentials are never accepted in managed policy, CLI arguments, proxy URLs, status, diagnostics, receipts, or user-readable Guard files. When proxy authentication is required, Guard reads an optional record from native OS credential storage under service identifier `hol-guard-enterprise-proxy-v1`: macOS Keychain, Windows Credential Manager, or Linux Secret Service. The lookup key is the SHA-256 digest of the normalized credential-free proxy origin. The record is a bounded JSON object containing only `username` and `password`. Provisioning that record is an administrator/OS credential-management operation outside the Guard policy contract. Guard exposes only whether authentication material was available, never the credential value.
 
 ## TLS and private CAs
 
@@ -29,7 +29,7 @@ Public roots are loaded explicitly and platform roots are added without consulti
 
 ## Daemon authority
 
-Detached and login-started daemon environments strip ambient proxy variables. Every external daemon request resolves managed policy from the same machine authority as foreground Guard commands. The managed `requests` transport also sets `trust_env=false`, and the managed urllib transport builds proxy/TLS handlers from policy instead of the shell environment. Local daemon IPC remains authenticated loopback traffic and is intentionally not sent through an enterprise proxy.
+Detached and login-started daemon environments strip ambient proxy variables. Every external daemon request resolves managed policy from the same machine authority as foreground Guard commands. The managed `requests` transport also sets `trust_env=false`, and the urllib-compatible transport uses a policy-owned direct opener or HTTPS proxy tunnel rather than shell proxy state. Local daemon IPC remains authenticated loopback traffic and is intentionally not sent through an enterprise proxy.
 
 ## Diagnostics
 
