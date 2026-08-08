@@ -87,4 +87,20 @@ if old_dependency_contract not in tests:
     raise SystemExit('alpha dependency contract not found')
 tests = tests.replace(old_dependency_contract, new_dependency_contract, 1)
 
+old_registry_assert = '    assert "git ls-remote --exit-code origin" in alpha_run\n'
+new_registry_assert = '''    assert "git fetch --no-tags origin" in alpha_run
+    assert "git merge-base --is-ancestor" in alpha_run
+'''
+if old_registry_assert not in tests:
+    raise SystemExit('alpha registry revalidation assertion not found')
+tests = tests.replace(old_registry_assert, new_registry_assert, 1)
+
+old_source_assert = '    assert \'git ls-remote --exit-code origin "$train_ref"\' in alpha_test_run\n'
+new_source_assert = '''    assert "git fetch --no-tags origin" in alpha_test_run
+    assert "git merge-base --is-ancestor" in alpha_test_run
+'''
+if old_source_assert not in tests:
+    raise SystemExit('alpha source branch assertion not found')
+tests = tests.replace(old_source_assert, new_source_assert, 1)
+
 TESTS.write_text(tests, encoding='utf-8')
