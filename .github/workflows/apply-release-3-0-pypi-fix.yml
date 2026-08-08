@@ -1,4 +1,4 @@
-name: Apply release/3.0 PyPI recovery patch
+name: Apply release 3.0 PyPI recovery patch
 
 on:
   push:
@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   patch-and-test:
+    if: github.ref == 'refs/heads/fix/release-3-0-pypi-direct'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -19,96 +20,27 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
-          python-version: "3.12"
+          python-version: '3.12'
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
-          version: "0.9.26"
-      - name: Apply focused alpha publication fix
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          workflow_path = Path('.github/workflows/publish.yml')
-          text = workflow_path.read_text(encoding='utf-8')
-
-          old = "      (github.event_name != 'push' || github.run_attempt == 1) &&\n"
-          if old not in text:
-              raise SystemExit('push rerun build gate not found')
-          text = text.replace(old, '', 1)
-
-          anchor = "  publish-alpha-testpypi:\n    name: Verify alpha artifact on TestPyPI\n    if: >-\n      always() &&\n      vars.RELEASE_PUBLISHING_ENABLED == 'true' &&\n"
-          replacement = anchor + "      vars.ALPHA_TESTPYPI_ENABLED == 'true' &&\n"
-          if anchor not in text:
-              raise SystemExit('alpha TestPyPI job anchor not found')
-          text = text.replace(anchor, replacement, 1)
-
-          dependency = "      needs.publish-alpha-testpypi.result == 'success' &&\n"
-          if text.count(dependency) != 1:
-              raise SystemExit(f'expected one TestPyPI production dependency, found {text.count(dependency)}')
-          text = text.replace(dependency, '', 1)
-
-          needs = "    needs: [build, reserve-alpha-tag, publish-alpha-testpypi]\n"
-          if text.count(needs) != 1:
-              raise SystemExit(f'expected one alpha publish needs list, found {text.count(needs)}')
-          text = text.replace(needs, "    needs: [build, reserve-alpha-tag]\n", 1)
-
-          head_check = '''          train_ref="refs/heads/release/${TRAIN}"
-          remote_train_sha=$(git ls-remote --exit-code origin "$train_ref" | awk '{print $1}')
-          if [[ "$remote_train_sha" != "$SOURCE_SHA" ]]; then
-            echo "Alpha publication source is no longer the release train head" >&2
-            exit 1
-          fi
-'''
-          ancestor_check = '''          train_ref="refs/heads/release/${TRAIN}"
-          git fetch --no-tags origin "+${train_ref}:refs/remotes/origin/release/${TRAIN}"
-          if ! git merge-base --is-ancestor "$SOURCE_SHA" "refs/remotes/origin/release/${TRAIN}"; then
-            echo "Alpha publication source is no longer part of the release train" >&2
-            exit 1
-          fi
-'''
-          count = text.count(head_check)
-          if count != 2:
-              raise SystemExit(f'expected two alpha head checks, found {count}')
-          text = text.replace(head_check, ancestor_check)
-
-          workflow_path.write_text(text, encoding='utf-8')
-
-          test_path = Path('tests/test_release_train_workflow.py')
-          tests = test_path.read_text(encoding='utf-8')
-          tests = tests.replace(
-              '    assert "github.event_name != \'push\' || github.run_attempt == 1" in build_condition\n',
-              '    assert "github.event_name != \'push\' || github.run_attempt == 1" not in build_condition\n',
-              1,
-          )
-          tests = tests.replace(
-              '''    assert jobs["publish-alpha-pypi"]["needs"] == [
-        "build",
-        "reserve-alpha-tag",
-        "publish-alpha-testpypi",
-    ]
-    assert "needs.publish-alpha-testpypi.result == 'success'" in jobs["publish-alpha-pypi"]["if"]
-''',
-              '''    assert jobs["publish-alpha-pypi"]["needs"] == ["build", "reserve-alpha-tag"]
-    assert "needs.publish-alpha-testpypi.result == 'success'" not in jobs["publish-alpha-pypi"]["if"]
-    assert "vars.ALPHA_TESTPYPI_ENABLED == 'true'" in jobs["publish-alpha-testpypi"]["if"]
-''',
-              1,
-          )
-          test_path.write_text(tests, encoding='utf-8')
-          PY
+          version: '0.9.26'
+      - name: Apply patch
+        run: python scripts/release/apply_release_3_0_pypi_fix.py
       - name: Sync test environment
         run: uv sync --frozen --extra dev --extra publish --extra cisco
       - name: Validate release contracts
         run: |
           uv run --no-sync python -m pytest -q tests/test_release_train_workflow.py --tb=short
-          uv run --no-sync ruff check tests/test_release_train_workflow.py
-          uv run --no-sync ruff format --check tests/test_release_train_workflow.py
+          uv run --no-sync ruff check tests/test_release_train_workflow.py scripts/release/apply_release_3_0_pypi_fix.py
+          uv run --no-sync ruff format --check tests/test_release_train_workflow.py scripts/release/apply_release_3_0_pypi_fix.py
           git diff --check
       - name: Commit validated patch
         run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add .github/workflows/publish.yml tests/test_release_train_workflow.py
-          git diff --cached --quiet && exit 0
-          git commit -m "fix(release): bypass exhausted alpha TestPyPI gate"
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'fix(release): bypass exhausted alpha TestPyPI gate'
           git push origin HEAD:fix/release-3-0-pypi-direct
