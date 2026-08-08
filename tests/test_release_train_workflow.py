@@ -76,7 +76,9 @@ def test_main_push_build_computes_a_registry_derived_stable_version() -> None:
     stamp_run = stamp_step["run"]
 
     assert 'VERSION="$BASE_VERSION"' in compute_run
-    assert 'elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" =~ ^refs/heads/release/3\\.[0-9]+$ ]]' in compute_run
+    assert (
+        'elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" =~ ^refs/heads/release/3\\.[0-9]+$ ]]' in compute_run
+    )
     assert 'SOURCE_SHA" != "$GITHUB_SHA"' in compute_run
     assert 'TRAIN="${GITHUB_REF#refs/heads/release/}"' in compute_run
     assert "compute_alpha_release_version.py" in compute_run
@@ -145,7 +147,7 @@ def test_release_dispatch_binds_channel_train_version_and_sha() -> None:
     assert jobs["build"]["needs"] == "authorize-release"
     build_condition = jobs["build"]["if"]
     assert "github.event_name != 'workflow_dispatch' || github.run_attempt == 1" in build_condition
-    assert "github.event_name != 'push' || github.run_attempt == 1" in build_condition
+    assert "github.event_name != 'push' || github.run_attempt == 1" not in build_condition
     assert "alpha-cross-platform" not in jobs
     for job_name in (
         "publish-alpha-testpypi",
@@ -182,12 +184,9 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     assert "distribution-sha256" in {
         step.get("with", {}).get("name") for step in jobs["build"]["steps"] if isinstance(step, dict)
     }
-    assert jobs["publish-alpha-pypi"]["needs"] == [
-        "build",
-        "reserve-alpha-tag",
-        "publish-alpha-testpypi",
-    ]
-    assert "needs.publish-alpha-testpypi.result == 'success'" in jobs["publish-alpha-pypi"]["if"]
+    assert jobs["publish-alpha-pypi"]["needs"] == ["build", "reserve-alpha-tag"]
+    assert "needs.publish-alpha-testpypi.result == 'success'" not in jobs["publish-alpha-pypi"]["if"]
+    assert "vars.ALPHA_TESTPYPI_ENABLED == 'true'" in jobs["publish-alpha-testpypi"]["if"]
     for job_name in (
         "publish-alpha-testpypi",
         "publish-alpha-pypi",
@@ -204,6 +203,7 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "skip-existing" not in workflow_text and "pytest" not in workflow_text
 
+
 def test_alpha_tag_reservation_binds_version_to_build_source() -> None:
     workflow = _workflow(PUBLISH_WORKFLOW)
     job = workflow["jobs"]["reserve-alpha-tag"]
@@ -211,11 +211,9 @@ def test_alpha_tag_reservation_binds_version_to_build_source() -> None:
     assert job["needs"] == ["build"]
     assert job["permissions"] == {"contents": "write"}
     assert "needs.build.outputs.channel == 'alpha'" in job["if"]
-    reservation_run = next(
-        step["run"] for step in job["steps"] if step.get("name") == "Reserve exact alpha tag"
-    )
+    reservation_run = next(step["run"] for step in job["steps"] if step.get("name") == "Reserve exact alpha tag")
     assert 'tag="alpha/v${VERSION}"' in reservation_run
-    assert 'refs/tags/${tag}' in reservation_run
+    assert "refs/tags/${tag}" in reservation_run
     assert '-f sha="$SOURCE_SHA"' in reservation_run
     assert 'remote_tag_sha" != "$SOURCE_SHA"' in reservation_run
 
@@ -297,7 +295,8 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
         if step.get("name") == "Revalidate alpha publication authorization"
     )
     assert "list-versions --registry pypi" in alpha_run
-    assert "git ls-remote --exit-code origin" in alpha_run
+    assert "git fetch --no-tags origin" in alpha_run
+    assert "git merge-base --is-ancestor" in alpha_run
     assert "validate_alpha_release.py" in alpha_run
     assert "refs/tags/alpha/v${VERSION}" in alpha_run
     assert 'awk -v candidate="$VERSION"' in alpha_run
@@ -332,7 +331,8 @@ def test_release_tags_are_bound_to_the_exact_published_source() -> None:
         for step in jobs["publish-alpha-testpypi"]["steps"]
         if step.get("name") == "Revalidate alpha source before TestPyPI"
     )
-    assert 'git ls-remote --exit-code origin "$train_ref"' in alpha_test_run
+    assert "git fetch --no-tags origin" in alpha_test_run
+    assert "git merge-base --is-ancestor" in alpha_test_run
     assert "refs/tags/alpha/v${VERSION}" in alpha_test_run
     assert '[[ -n "$remote_alpha_tag_sha" && "$remote_alpha_tag_sha" != "$SOURCE_SHA" ]]' in alpha_test_run
 
