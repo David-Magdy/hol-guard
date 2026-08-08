@@ -575,15 +575,6 @@ function resolveSupplyChainIssues(snapshot) {
       actionLabel: "Repair PATH in firewall",
       action: { kind: "firewall_repair" }
     });
-  } else if (protection?.path_status === "restart_required" || stats.stagedManagers > 0) {
-    issues.push({
-      id: "path_restart",
-      title: "Finish activation in Guard",
-      detail: "Guard saved your shell setup. Finish activation here, then run a protection check from this dashboard.",
-      tone: "blue",
-      actionLabel: "Finish activation",
-      action: { kind: "activate_runtime" }
-    });
   }
   if (protectionStatus === "partial" && stats.protectedManagers > 0 && unprotectedManagers.length > 0) {
     issues.push({
@@ -643,7 +634,7 @@ function protectionDetail(snapshot, status) {
     return `${protection.unprotected_managers.length} tool${protection.unprotected_managers.length === 1 ? "" : "s"} still open: ${protection.unprotected_managers.join(", ")}.`;
   }
   if (status === "staged") {
-    return "Guard saved your shell setup. Finish activation here, then run a protection check.";
+    return "Guard saved your shell setup. Open a new terminal or restart AI apps so the updated PATH takes effect, then refresh status here.";
   }
   if (status === "unprotected") {
     return "Turn on protection for npm, pip, and other tools in the firewall panel below.";
@@ -676,14 +667,17 @@ function resolveSupplyChainWorkspaceHero(snapshot, options) {
   const protectionStatus = resolveHomeProtectionStatus(snapshot);
   const stats = buildSupplyChainStats(snapshot);
   const preventedLabel = stats.preventedInstalls > 0 ? `${stats.preventedInstalls} blocked install${stats.preventedInstalls === 1 ? "" : "s"}` : "No blocked installs yet";
+  const stagedGuidance = protectionStatus === "staged" ? protectionDetail(snapshot, protectionStatus) : null;
   const openIssueCount = options?.openIssueCount ?? 0;
   if (openIssueCount > 0) {
+    const issueSummary = `${openIssueCount} setup step${openIssueCount === 1 ? "" : "s"} ${openIssueCount === 1 ? "needs" : "need"} attention on this device.`;
     return {
       cloudMode: snapshot.cloud_state,
       cloudLabel: cloudLabel(snapshot),
       protectionStatus,
       title: "Work through the steps below",
-      detail: `${openIssueCount} setup step${openIssueCount === 1 ? "" : "s"} need attention on this device.`,
+      detail: stagedGuidance ? `${issueSummary} ${stagedGuidance}` : issueSummary,
+      stagedGuidance,
       tone: protectionTone(protectionStatus),
       statLine: `${stats.protectedManagers} protected · ${stats.unprotectedManagers} open · ${preventedLabel}`
     };
@@ -694,6 +688,7 @@ function resolveSupplyChainWorkspaceHero(snapshot, options) {
     protectionStatus,
     title: protectionTitle(protectionStatus),
     detail: protectionDetail(snapshot, protectionStatus),
+    stagedGuidance,
     tone: protectionTone(protectionStatus),
     statLine: `${stats.protectedManagers} protected · ${stats.unprotectedManagers} open · ${preventedLabel}`
   };
@@ -774,7 +769,12 @@ function SupplyChainWorkspaceHero({ hero, compact = false }) {
 function recoverySummary(issueCount) {
   return `Fix ${issueCount} open issue${issueCount === 1 ? "" : "s"} in one guided pass. Guard repairs package tools, activates routing, refreshes safety intelligence, and rechecks status.`;
 }
-function SupplyChainRecovery({ issues, state, onFixAll }) {
+function SupplyChainRecovery({
+  issues,
+  state,
+  onFixAll,
+  guidance = null
+}) {
   const [detailsOpen, setDetailsOpen] = reactExports.useState(false);
   const handleDetailsToggle = reactExports.useCallback(() => {
     setDetailsOpen((open) => !open);
@@ -800,7 +800,15 @@ function SupplyChainRecovery({ issues, state, onFixAll }) {
               ),
               /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-sm font-semibold text-brand-dark", children: "Restore supply-chain protection" })
             ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-3xl text-sm text-slate-600", children: recoverySummary(issues.length) })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-3xl text-sm text-slate-600", children: recoverySummary(issues.length) }),
+            guidance ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "p",
+              {
+                className: "mt-2 max-w-3xl text-sm font-medium text-brand-primary",
+                "data-testid": "supply-chain-restart-guidance",
+                children: guidance
+              }
+            ) : null
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: onFixAll, disabled: pending, "aria-busy": pending, children: supplyChainFixAllButtonLabel(state.phase) })
         ] }),
@@ -987,7 +995,8 @@ function SupplyChainWorkspace({
       {
         issues: supplyChainIssues,
         state: fixAllState,
-        onFixAll
+        onFixAll,
+        guidance: workspaceHero.stagedGuidance
       }
     ) : /* @__PURE__ */ jsxRuntimeExports.jsx(SupplyChainWorkspaceHero, { hero: workspaceHero }),
     supplyChainIssues.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(SupplyChainCloudCapabilitiesPanel, { state: cloudCapabilities }) : null,

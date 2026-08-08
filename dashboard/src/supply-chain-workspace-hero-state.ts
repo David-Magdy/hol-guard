@@ -8,6 +8,7 @@ export type SupplyChainWorkspaceHeroState = {
   protectionStatus: HomeProtectionStatus;
   title: string;
   detail: string;
+  stagedGuidance: string | null;
   tone: "green" | "blue" | "attention" | "slate";
   statLine: string;
 };
@@ -44,7 +45,7 @@ function protectionDetail(
     } still open: ${protection.unprotected_managers.join(", ")}.`;
   }
   if (status === "staged") {
-    return "Guard saved your shell setup. Finish activation here, then run a protection check.";
+    return "Guard saved your shell setup. Open a new terminal or restart AI apps so the updated PATH takes effect, then refresh status here.";
   }
   if (status === "unprotected") {
     return "Turn on protection for npm, pip, and other tools in the firewall panel below.";
@@ -86,15 +87,19 @@ export function resolveSupplyChainWorkspaceHero(
     stats.preventedInstalls > 0
       ? `${stats.preventedInstalls} blocked install${stats.preventedInstalls === 1 ? "" : "s"}`
       : "No blocked installs yet";
+  const stagedGuidance =
+    protectionStatus === "staged" ? protectionDetail(snapshot, protectionStatus) : null;
 
   const openIssueCount = options?.openIssueCount ?? 0;
   if (openIssueCount > 0) {
+    const issueSummary = `${openIssueCount} setup step${openIssueCount === 1 ? "" : "s"} ${openIssueCount === 1 ? "needs" : "need"} attention on this device.`;
     return {
       cloudMode: snapshot.cloud_state,
       cloudLabel: cloudLabel(snapshot),
       protectionStatus,
       title: "Work through the steps below",
-      detail: `${openIssueCount} setup step${openIssueCount === 1 ? "" : "s"} need attention on this device.`,
+      detail: stagedGuidance ? `${issueSummary} ${stagedGuidance}` : issueSummary,
+      stagedGuidance,
       tone: protectionTone(protectionStatus),
       statLine: `${stats.protectedManagers} protected · ${stats.unprotectedManagers} open · ${preventedLabel}`,
     };
@@ -106,6 +111,7 @@ export function resolveSupplyChainWorkspaceHero(
     protectionStatus,
     title: protectionTitle(protectionStatus),
     detail: protectionDetail(snapshot, protectionStatus),
+    stagedGuidance,
     tone: protectionTone(protectionStatus),
     statLine: `${stats.protectedManagers} protected · ${stats.unprotectedManagers} open · ${preventedLabel}`,
   };
