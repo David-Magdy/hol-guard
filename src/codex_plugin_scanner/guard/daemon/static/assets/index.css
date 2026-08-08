@@ -5372,6 +5372,10 @@
       }
     }
 
+    .hover\:bg-slate-800:hover {
+      background-color: var(--color-slate-800);
+    }
+
     .hover\:bg-surface-1:hover {
       background-color: var(--surface-1);
     }

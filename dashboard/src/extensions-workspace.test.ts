@@ -1,6 +1,44 @@
 import assert from "node:assert/strict";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
-import { buildExtensionMutation } from "./extensions-workspace";
+import {
+  buildExtensionMutation,
+  ExtensionStatusBanner,
+  extensionRecoveryAction,
+} from "./extensions-workspace";
+
+assert.equal(extensionRecoveryAction("protected"), null);
+assert.deepEqual(extensionRecoveryAction("unenrolled"), {
+  title: "Finish local enrollment",
+  copyLabel: "Copy enrollment command",
+  description: "Authenticate in this device's terminal to protect extension settings, then check again.",
+  command: "hol-guard guard command controls enroll",
+});
+assert.deepEqual(extensionRecoveryAction("tampered"), {
+  title: "Repair extension controls",
+  copyLabel: "Copy repair command",
+  description:
+    "Guard locked these settings after detecting damaged authority data. Authenticate in this device's terminal to rebuild the trusted authority, then check again.",
+  command: "hol-guard guard command controls recover-authority",
+});
+
+const recoveryMarkup = renderToStaticMarkup(createElement(ExtensionStatusBanner, {
+  effective: {
+    schema_version: "1.0.0",
+    health: "tampered",
+    revision: 4,
+    catalog_digest: "a".repeat(64),
+    global_lockdown: false,
+    controls: [],
+    failures: [{ code: "anchor_mismatch", detail: "Authority anchor does not match." }],
+    layers: [],
+  },
+  onRetry: () => undefined,
+}));
+assert.match(recoveryMarkup, /hol-guard guard command controls recover-authority/);
+assert.match(recoveryMarkup, /Copy repair command/);
+assert.match(recoveryMarkup, /Check again/);
 
 const state = {
   kind: "ready" as const,
@@ -52,4 +90,3 @@ assert.equal(state.effective.layers[0]?.controls.length, 1, "builder must not mu
 const lockdown = buildExtensionMutation(state, { globalLockdown: true });
 assert.equal(lockdown.layers[0]?.global_lockdown, true);
 assert.equal(lockdown.layers[0]?.controls[0]?.target_id, "existing");
-

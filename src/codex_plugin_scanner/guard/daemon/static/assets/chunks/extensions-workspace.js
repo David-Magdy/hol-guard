@@ -1,4 +1,4 @@
-import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, ao as HiMiniArrowPath, Z as HiMiniLockClosed, x as HiMiniChevronUp, y as HiMiniChevronDown, l as HiMiniCheckCircle, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, ap as HiMiniPuzzlePiece, w as HiMiniXMark } from "../guard-dashboard.js";
+import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, ao as HiMiniArrowPath, Z as HiMiniLockClosed, x as HiMiniChevronUp, y as HiMiniChevronDown, l as HiMiniCheckCircle, ap as HiMiniPuzzlePiece, w as HiMiniXMark } from "../guard-dashboard.js";
 class ExtensionControlApiError extends Error {
   constructor(message, status, code, recoveryAction) {
     super(message);
@@ -44,6 +44,23 @@ function applyExtensionMutation(payload) {
     body: JSON.stringify(payload)
   });
 }
+function extensionRecoveryAction(health) {
+  if (health === "protected") return null;
+  if (health === "tampered") {
+    return {
+      title: "Repair extension controls",
+      copyLabel: "Copy repair command",
+      description: "Guard locked these settings after detecting damaged authority data. Authenticate in this device's terminal to rebuild the trusted authority, then check again.",
+      command: "hol-guard guard command controls recover-authority"
+    };
+  }
+  return {
+    title: "Finish local enrollment",
+    copyLabel: "Copy enrollment command",
+    description: "Authenticate in this device's terminal to protect extension settings, then check again.",
+    command: "hol-guard guard command controls enroll"
+  };
+}
 function randomToken() {
   return crypto.randomUUID().replaceAll("-", "");
 }
@@ -87,24 +104,46 @@ function effectiveState(effective, extension) {
   );
   return extension.required || control?.state !== "disabled";
 }
-function StatusBanner({ effective }) {
-  if (effective.health === "protected") {
+function ExtensionStatusBanner(props) {
+  const [copyState, setCopyState] = reactExports.useState("idle");
+  const recovery = extensionRecoveryAction(props.effective.health);
+  const handleCopy = reactExports.useCallback(async () => {
+    if (!recovery) return;
+    try {
+      await navigator.clipboard.writeText(recovery.command);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }, [recovery]);
+  if (props.effective.health === "protected") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "size-5 shrink-0", "aria-hidden": "true" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Protected authority" }),
         " · revision ",
-        effective.revision
+        props.effective.revision
       ] })
     ] });
   }
-  const tampered = effective.health === "tampered";
+  const tampered = props.effective.health === "tampered";
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `rounded-2xl border p-5 ${tampered ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: `mt-0.5 size-6 shrink-0 ${tampered ? "text-red-600" : "text-amber-600"}`, "aria-hidden": "true" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "font-semibold text-slate-950", children: tampered ? "Extension controls are locked" : "Finish local enrollment" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-6 text-slate-700", children: tampered ? "Guard detected authority integrity damage. Mutations remain blocked until local recovery completes." : "Enrollment requires direct confirmation in the device terminal. The dashboard cannot collect or relay this proof." }),
-      !tampered ? /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "mt-3 block w-fit rounded-lg bg-slate-950 px-3 py-2 text-xs text-white", children: "hol-guard guard command controls enroll" }) : null
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "font-semibold text-slate-950", children: recovery?.title }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-6 text-slate-700", children: recovery?.description }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "mt-3 block overflow-x-auto rounded-lg bg-slate-950 px-3 py-2 text-xs text-white", children: recovery?.command }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: handleCopy, className: "inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800", children: [
+          copyState === "copied" ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniClipboardDocumentCheck, { className: "size-4", "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniClipboard, { className: "size-4", "aria-hidden": "true" }),
+          copyState === "copied" ? "Copied" : recovery?.copyLabel
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onRetry, className: "inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "size-4", "aria-hidden": "true" }),
+          "Check again"
+        ] }),
+        copyState === "failed" ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { role: "status", className: "text-sm text-red-700", children: "Copy failed. Select the command above." }) : null
+      ] })
     ] })
   ] }) });
 }
@@ -270,7 +309,7 @@ function ExtensionsWorkspace() {
         state.effective.global_lockdown ? "Disable lockdown" : "Enable lockdown"
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(StatusBanner, { effective: state.effective }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionStatusBanner, { effective: state.effective, onRetry: load }) }),
     state.effective.global_lockdown ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 flex items-center gap-3 rounded-2xl bg-slate-950 px-4 py-3 text-sm text-white", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniLockClosed, { className: "size-5" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
@@ -320,6 +359,8 @@ function ExtensionsWorkspace() {
   ] });
 }
 export {
+  ExtensionStatusBanner,
   ExtensionsWorkspace,
-  buildExtensionMutation
+  buildExtensionMutation,
+  extensionRecoveryAction
 };
