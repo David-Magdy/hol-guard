@@ -293,3 +293,49 @@ def test_real_guard_policy_requires_review_for_cline_env_read(tmp_path: Path) ->
     assert response["policy_action"] == "require-reapproval"
     assert response["artifact_id"].startswith("cline:project:file-read:")
     assert response["policy_composition"]["current_config_action"] == "require-reapproval"
+
+
+def test_real_guard_policy_withholds_cline_credential_output(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    source_path = context.workspace_dir / "public.txt"
+    source_path.write_text("AKIAABCDEFGHIJKLMNOP\n", encoding="utf-8")
+    command = f"cat {source_path}"
+    payload = {
+        "hookName": "PostToolUse",
+        "hook_event_name": "PostToolUse",
+        "tool_result": {
+            "id": "cline-live-posttool-regression",
+            "name": "run_commands",
+            "input": {"commands": [command]},
+            "output": "AKIAABCDEFGHIJKLMNOP",
+        },
+    }
+    env = dict(os.environ)
+    env["HOME"] = str(context.home_dir)
+    env["HOL_GUARD_HOME"] = str(context.guard_home)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "codex_plugin_scanner.cli",
+            "guard",
+            "hook",
+            "--harness",
+            "cline",
+            "--json",
+        ],
+        cwd=context.workspace_dir,
+        env=env,
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    response = json.loads(result.stdout)
+    assert response["policy_action"] == "require-reapproval"
+    assert ":tool-output:" in response["artifact_id"]
+    assert response["policy_composition"]["current_config_action"] == "require-reapproval"
+    serialized = json.dumps(response)
+    assert "AKIAABCDEFGHIJKLMNOP" not in serialized
