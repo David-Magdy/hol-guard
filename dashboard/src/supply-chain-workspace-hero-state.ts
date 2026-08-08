@@ -8,6 +8,7 @@ export type SupplyChainWorkspaceHeroState = {
   protectionStatus: HomeProtectionStatus;
   title: string;
   detail: string;
+  stagedGuidance: string | null;
   tone: "green" | "blue" | "attention" | "slate";
   statLine: string;
 };
@@ -86,6 +87,8 @@ export function resolveSupplyChainWorkspaceHero(
     stats.preventedInstalls > 0
       ? `${stats.preventedInstalls} blocked install${stats.preventedInstalls === 1 ? "" : "s"}`
       : "No blocked installs yet";
+  const stagedGuidance =
+    protectionStatus === "staged" ? protectionDetail(snapshot, protectionStatus) : null;
 
   const openIssueCount = options?.openIssueCount ?? 0;
   if (openIssueCount > 0) {
@@ -95,10 +98,8 @@ export function resolveSupplyChainWorkspaceHero(
       cloudLabel: cloudLabel(snapshot),
       protectionStatus,
       title: "Work through the steps below",
-      detail:
-        protectionStatus === "staged"
-          ? `${issueSummary} ${protectionDetail(snapshot, protectionStatus)}`
-          : issueSummary,
+      detail: stagedGuidance ? `${issueSummary} ${stagedGuidance}` : issueSummary,
+      stagedGuidance,
       tone: protectionTone(protectionStatus),
       statLine: `${stats.protectedManagers} protected · ${stats.unprotectedManagers} open · ${preventedLabel}`,
     };
@@ -110,6 +111,7 @@ export function resolveSupplyChainWorkspaceHero(
     protectionStatus,
     title: protectionTitle(protectionStatus),
     detail: protectionDetail(snapshot, protectionStatus),
+    stagedGuidance,
     tone: protectionTone(protectionStatus),
     statLine: `${stats.protectedManagers} protected · ${stats.unprotectedManagers} open · ${preventedLabel}`,
   };
