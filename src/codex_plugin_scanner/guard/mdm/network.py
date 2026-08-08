@@ -24,8 +24,10 @@ import keyring
 import requests
 from keyring.errors import KeyringError
 from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import ProxyManager
 
 from .contracts import ManagedNetworkPolicy, ProxyMode
+from .network_trust import ManagedTrustError, build_managed_ssl_context
 from .policy import load_managed_policy
 
 _PUBLIC_REGISTRIES = frozenset(
@@ -325,23 +327,10 @@ def managed_ssl_context(policy: ManagedNetworkPolicy | None = None) -> ssl.SSLCo
     """Create mandatory TLS verification with an optional additive private CA."""
 
     resolved = policy or active_network_policy()
-    context = ssl.create_default_context()
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    if resolved.ca_bundle_path is not None:
-        bundle = Path(resolved.ca_bundle_path)
-        if not bundle.is_absolute() or bundle.is_symlink() or not bundle.is_file():
-            raise ManagedNetworkError("managed_ca_bundle_invalid")
-        if platform.system() != "Windows":
-            try:
-                if bundle.stat().st_mode & 0o022:
-                    raise ManagedNetworkError("managed_ca_bundle_invalid")
-            except OSError as exc:
-                raise ManagedNetworkError("managed_ca_bundle_invalid") from exc
-        try:
-            context.load_verify_locations(cafile=str(bundle))
-        except (OSError, ssl.SSLError) as exc:
-            raise ManagedNetworkError("managed_ca_bundle_invalid") from exc
-    return context
+    try:
+        return build_managed_ssl_context(resolved.ca_bundle_path)
+    except ManagedTrustError as exc:
+        raise ManagedNetworkError(str(exc)) from exc
 
 
 def managed_opener(policy: ManagedNetworkPolicy | None = None) -> urllib.request.OpenerDirector:
@@ -398,7 +387,7 @@ class _ManagedHTTPAdapter(HTTPAdapter):
             pool_kwargs["ssl_context"] = self._managed_context
         super().init_poolmanager(connections, maxsize, block=block, **pool_kwargs)
 
-    def proxy_manager_for(self, proxy: str, **proxy_kwargs: object) -> object:
+    def proxy_manager_for(self, proxy: str, **proxy_kwargs: object) -> ProxyManager:
         if self._managed_context is not None:
             proxy_kwargs["ssl_context"] = self._managed_context
             proxy_kwargs["proxy_ssl_context"] = self._managed_context
@@ -420,9 +409,7 @@ def managed_requests_session(policy: ManagedNetworkPolicy | None = None) -> requ
         session.proxies.update(proxies)
     elif managed and resolved.proxy_mode in {"none", "system"}:
         session.proxies.update({"http": "", "https": ""})
-    context: ssl.SSLContext | None = None
-    if resolved.ca_bundle_path is not None:
-        context = managed_ssl_context(resolved)
+    context: ssl.SSLContext | None = managed_ssl_context(resolved) if managed else None
     proxy_authorization: str | None = None
     if resolved.proxy_mode == "explicit":
         selected = proxies.get("https")
