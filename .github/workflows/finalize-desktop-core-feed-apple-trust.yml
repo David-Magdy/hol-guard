@@ -30,6 +30,21 @@ jobs:
           enable-cache: true
       - name: Apply deterministic Apple-trust refactor
         run: python3 -I scripts/release/finalize_desktop_core_feed_apple_trust.py
+      - name: Normalize generated discovery fixture
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("tests/test_desktop_core_alpha_feed_security.py")
+          text = path.read_text(encoding="utf-8")
+          bad = '''        "alpha/v3.0.0a8
+          alpha/v3.1.0a10
+          alpha/v3.0.0a9
+          ",'''
+          good = '        "alpha/v3.0.0a8\\nalpha/v3.1.0a10\\nalpha/v3.0.0a9\\n",'
+          if bad not in text:
+              raise SystemExit("generated discovery fixture did not match expected malformed form")
+          path.write_text(text.replace(bad, good, 1), encoding="utf-8")
+          PY
       - name: Validate focused release contracts
         run: |
           set -euo pipefail
