@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import http.client
 import json
 import platform
 import re
@@ -16,6 +15,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.message import Message
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import IO, Literal
@@ -436,10 +436,11 @@ def managed_requests_session(policy: ManagedNetworkPolicy | None = None) -> requ
 
 
 def _response_date_header(response: object) -> str | None:
-    if isinstance(response, http.client.HTTPResponse):
-        return response.getheader("Date")
     if isinstance(response, urllib.error.HTTPError):
         return response.headers.get("Date")
+    headers = getattr(response, "headers", None)
+    if isinstance(headers, Message):
+        return headers.get("Date")
     return None
 
 
@@ -480,12 +481,35 @@ def _diagnostic_result(
     )
 
 
+def _diagnostic_endpoint(endpoint: str) -> urllib.parse.SplitResult | None:
+    if endpoint != endpoint.strip() or any(character.isspace() for character in endpoint):
+        return None
+    try:
+        parsed = urllib.parse.urlsplit(endpoint)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.hostname is None
+        or not parsed.netloc
+        or parsed.netloc.endswith(":")
+        or port == 0
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return parsed
+
+
 def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None) -> NetworkDiagnostic:
     resolved = policy or active_network_policy()
-    parsed = urllib.parse.urlsplit(endpoint)
-    hostname = parsed.hostname
+    parsed = _diagnostic_endpoint(endpoint)
     direct_proxy = ProxyDiagnostic(resolved.proxy_mode, False, None, "not-tested", False)
-    if parsed.scheme != "https" or hostname is None:
+    if parsed is None or parsed.hostname is None:
         return _diagnostic_result(
             endpoint="redacted",
             dns="invalid",
@@ -495,6 +519,7 @@ def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None)
             reachability="not-tested",
             reason_code="endpoint_invalid",
         )
+    hostname = parsed.hostname
     endpoint_label = hostname.lower()
     try:
         _validate_destination(endpoint, resolved)
@@ -508,29 +533,33 @@ def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None)
             reachability="blocked",
             reason_code=str(exc),
         )
+
+    dns: DnsDiagnosticState = "ok"
     try:
         socket.getaddrinfo(hostname, parsed.port or 443, type=socket.SOCK_STREAM)
     except socket.gaierror:
-        return _diagnostic_result(
-            endpoint=endpoint_label,
-            dns="failed",
-            proxy=direct_proxy,
-            tls="not-tested",
-            clock="not-tested",
-            reachability="failed",
-            reason_code="dns_resolution_failed",
-        )
+        dns = "failed"
 
     proxy, proxy_error = _proxy_diagnostic(resolved, parsed.scheme)
     if proxy_error is not None:
         return _diagnostic_result(
             endpoint=endpoint_label,
-            dns="ok",
+            dns=dns,
             proxy=proxy,
             tls="not-tested",
             clock="not-tested",
             reachability="failed",
             reason_code=proxy_error,
+        )
+    if dns == "failed" and not proxy.selected:
+        return _diagnostic_result(
+            endpoint=endpoint_label,
+            dns=dns,
+            proxy=proxy,
+            tls="not-tested",
+            clock="not-tested",
+            reachability="failed",
+            reason_code="dns_resolution_failed",
         )
 
     request = urllib.request.Request(endpoint, method="HEAD")
@@ -540,7 +569,7 @@ def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None)
             if clock == "skewed":
                 return _diagnostic_result(
                     endpoint=endpoint_label,
-                    dns="ok",
+                    dns=dns,
                     proxy=proxy,
                     tls="trusted",
                     clock=clock,
@@ -550,7 +579,7 @@ def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None)
                 )
             return _diagnostic_result(
                 endpoint=endpoint_label,
-                dns="ok",
+                dns=dns,
                 proxy=proxy,
                 tls="trusted",
                 clock=clock,
@@ -562,7 +591,7 @@ def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None)
         if exc.code == 407:
             return _diagnostic_result(
                 endpoint=endpoint_label,
-                dns="ok",
+                dns=dns,
                 proxy=proxy,
                 tls="not-tested",
                 clock="not-tested",
@@ -573,7 +602,7 @@ def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None)
         if clock == "skewed":
             return _diagnostic_result(
                 endpoint=endpoint_label,
-                dns="ok",
+                dns=dns,
                 proxy=proxy,
                 tls="trusted",
                 clock=clock,
@@ -583,7 +612,7 @@ def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None)
             )
         return _diagnostic_result(
             endpoint=endpoint_label,
-            dns="ok",
+            dns=dns,
             proxy=proxy,
             tls="trusted",
             clock=clock,
@@ -604,7 +633,7 @@ def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None)
             tls = "not-tested"
         return _diagnostic_result(
             endpoint=endpoint_label,
-            dns="ok",
+            dns=dns,
             proxy=proxy,
             tls=tls,
             clock="not-tested",
@@ -614,7 +643,7 @@ def diagnose_endpoint(endpoint: str, policy: ManagedNetworkPolicy | None = None)
     except ManagedNetworkError as exc:
         return _diagnostic_result(
             endpoint=endpoint_label,
-            dns="ok",
+            dns=dns,
             proxy=proxy,
             tls="not-tested",
             clock="not-tested",
