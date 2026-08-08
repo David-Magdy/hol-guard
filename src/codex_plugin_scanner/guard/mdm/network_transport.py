@@ -219,7 +219,7 @@ def load_proxy_credentials(proxy_url: str) -> ProxyCredentials | None:
 
 
 def basic_proxy_authorization(credentials: ProxyCredentials) -> str:
-    token = base64.b64encode(f"{credentials.username}:{credentials.password}".encode("utf-8")).decode("ascii")
+    token = base64.b64encode(f"{credentials.username}:{credentials.password}".encode()).decode("ascii")
     return f"Basic {token}"
 
 
