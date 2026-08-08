@@ -81,6 +81,18 @@ def test_feed_uses_apple_trust_and_no_redundant_manifest_key() -> None:
     assert 'grep -F "source=Notarized Developer ID"' in text
 
 
+def test_macos_feed_avoids_bash4_only_builtins_and_binds_mode() -> None:
+    text = workflow_text()
+    job = publish_job()
+    assert "mapfile " not in text
+    assert "readarray " not in text
+    steps = {step.get("name"): step for step in job["steps"]}
+    manifest = steps["Create or validate update manifest"]
+    assert manifest["env"]["MODE"] == "${{ steps.existing.outputs.mode }}"
+    assert 'test "$WHEEL_COUNT" -eq 1' in text
+    assert 'test -f "$WHEEL"' in text
+
+
 def test_existing_asset_set_is_all_or_nothing(tmp_path: Path, capsys) -> None:
     namespace = runpy.run_path(str(TOOL))
     assets = tmp_path / "assets.txt"
