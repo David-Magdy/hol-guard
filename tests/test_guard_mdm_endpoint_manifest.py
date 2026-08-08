@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from codex_plugin_scanner.guard.mdm import network as network_module
+from codex_plugin_scanner.guard.mdm import network_transport as transport_module
 
 
 def _manifest() -> dict[str, object]:
@@ -62,7 +62,7 @@ def test_required_guard_cloud_is_separate_from_optional_public_registries() -> N
     assert "Guard Cloud" in str(cloud["purpose"])
     assert "Local enforcement continues" in str(cloud["offlineFallback"])
 
-    public_registries = network_module._PUBLIC_REGISTRIES
+    public_registries = transport_module._PUBLIC_REGISTRIES
     assert public_registries <= by_host.keys()
     for hostname in public_registries:
         endpoint = by_host[hostname]
