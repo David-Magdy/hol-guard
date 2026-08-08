@@ -7,6 +7,7 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import Message
@@ -113,9 +114,14 @@ def _proxy_diagnostic(policy: ManagedNetworkPolicy, endpoint_scheme: str) -> tup
 
 def _response_date_header(response: object) -> str | None:
     headers = response.headers if isinstance(response, urllib.error.HTTPError) else getattr(response, "headers", None)
-    if not isinstance(headers, Message):
-        return None
-    value = headers.get("Date")
+    value: object | None = None
+    if isinstance(headers, Message):
+        value = headers.get("Date")
+    elif isinstance(headers, Mapping):
+        for name, candidate in headers.items():
+            if isinstance(name, str) and name.casefold() == "date":
+                value = candidate
+                break
     return value if isinstance(value, str) else None
 
 
