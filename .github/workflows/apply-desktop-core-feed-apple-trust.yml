@@ -1,0 +1,53 @@
+name: Apply Desktop Core feed Apple trust refactor
+
+on:
+  push:
+    branches:
+      - fix/desktop-core-feed-apple-trust-3-0
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: github.ref == 'refs/heads/fix/desktop-core-feed-apple-trust-3-0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/desktop-core-feed-apple-trust-3-0
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: '0.9.26'
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.24.2'
+          cache: false
+      - name: Apply refactor
+        run: python scripts/release/apply_desktop_core_feed_apple_trust.py
+      - name: Sync test environment
+        run: uv sync --frozen --extra dev --extra publish --extra cisco
+      - name: Format and validate
+        run: |
+          uv run --no-sync ruff format scripts/release/desktop_core_alpha_feed.py tests/test_desktop_core_alpha_feed_security.py
+          uv run --no-sync ruff check scripts/release/desktop_core_alpha_feed.py tests/test_desktop_core_alpha_feed_security.py
+          uv run --no-sync ruff format --check scripts/release/desktop_core_alpha_feed.py tests/test_desktop_core_alpha_feed_security.py
+          uv run --no-sync pytest -q tests/test_desktop_core_alpha_feed_security.py --tb=short
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/desktop-core-alpha-feed.yml
+          git diff --check
+      - name: Commit validated refactor
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/desktop-core-alpha-feed.yml scripts/release/desktop_core_alpha_feed.py tests/test_desktop_core_alpha_feed_security.py
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'fix(release): align Desktop Core feed with Apple trust model'
+          git push origin HEAD:fix/desktop-core-feed-apple-trust-3-0
