@@ -93,6 +93,7 @@ SUITES = (
         (
             "tests/test_guard_mdm_network.py",
             "tests/test_guard_mdm_network_integration.py",
+            "tests/test_guard_mdm_network_urlopen.py",
             "tests/test_guard_mdm_tls_policy.py",
             "tests/test_guard_mdm_http_inventory.py",
             "tests/test_guard_mdm_bridge_network.py",
