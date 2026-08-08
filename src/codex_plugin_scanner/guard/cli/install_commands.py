@@ -248,6 +248,21 @@ def build_harness_verification(
         verification.update(_opencode_protection_checks(context, store))
     if adapter.harness == "grok":
         verification.update(_grok_protection_checks(context))
+    if isinstance(adapter, ClineHarnessAdapter):
+        runtime_probe = adapter.runtime_probe(context)
+        verification["runtime"] = runtime_probe or {}
+        verification["warnings"] = adapter.diagnostic_warnings(adapter.detect(context), runtime_probe)
+        active_transport = runtime_probe.get("active_transport") if isinstance(runtime_probe, dict) else None
+        requested_transport = surface if surface in {"hooks", "plugin"} else active_transport
+        state_key = "plugin" if requested_transport == "plugin" else "native_hooks"
+        runtime_state = runtime_probe.get(state_key) if isinstance(runtime_probe, dict) else None
+        verification["active_transport"] = active_transport
+        verification["requested_transport"] = requested_transport
+        verification["ready"] = bool(
+            requested_transport == active_transport
+            and isinstance(runtime_state, dict)
+            and runtime_state.get("ready") is True
+        )
     payload: dict[str, object] = {
         "harness": adapter.harness,
         "safe": True,
