@@ -111,7 +111,10 @@ def test_distribution_version_is_stamped_in_exact_source_tree() -> None:
     step = next(
         step for step in workflow()["jobs"]["build"]["steps"] if step.get("name") == "Stamp exact package version"
     )
-    assert "--repo-root source" in step["run"]
+    assert step["working-directory"] == "source"
+    assert step["run"] == (
+        'uv run --no-sync python ../release-tooling/scripts/sync_repo_version.py --repo-root . --version "$VERSION"'
+    )
 
 
 def test_publication_reuses_one_build_artifact() -> None:
