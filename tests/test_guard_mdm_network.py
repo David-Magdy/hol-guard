@@ -163,7 +163,7 @@ def test_disabled_public_registry_fails_before_network() -> None:
 
 def test_blocked_public_registry_diagnostic_is_stable_and_offline() -> None:
     result = diagnose_endpoint(
-        "https://pypi.org/pypi/hol-guard/json",
+        "https://pypi.org",
         ManagedNetworkPolicy(proxy_mode="none", allow_public_registries=False),
     )
 
@@ -197,18 +197,43 @@ def test_system_proxy_rejects_embedded_credentials(monkeypatch: pytest.MonkeyPat
         managed_requests_session(ManagedNetworkPolicy(proxy_mode="system"))
 
 
-def test_detached_daemon_does_not_inherit_shell_proxy_authority(
+def test_detached_daemon_does_not_inherit_shell_network_authority(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("HTTP_PROXY", "http://unmanaged.example:8080")
-    monkeypatch.setenv("HTTPS_PROXY", "http://unmanaged.example:8443")
-    monkeypatch.setenv("NO_PROXY", "*")
+    ambient = {
+        "HTTP_PROXY": "http://unmanaged.example:8080",
+        "HTTPS_PROXY": "http://unmanaged.example:8443",
+        "ALL_PROXY": "http://unmanaged.example:8888",
+        "NO_PROXY": "*",
+        "SSL_CERT_FILE": str(tmp_path / "ambient-ca.pem"),
+        "SSL_CERT_DIR": str(tmp_path / "ambient-ca-dir"),
+        "REQUESTS_CA_BUNDLE": str(tmp_path / "requests-ca.pem"),
+        "CURL_CA_BUNDLE": str(tmp_path / "curl-ca.pem"),
+    }
+    for key, value in ambient.items():
+        monkeypatch.setenv(key, value)
+
     env = daemon_manager._daemon_launcher_env(home_dir=tmp_path)
 
-    assert "HTTP_PROXY" not in env
-    assert "HTTPS_PROXY" not in env
-    assert "NO_PROXY" not in env
+    for key in ambient:
+        assert key not in env
+
+
+def test_diagnostic_rejects_secret_bearing_or_non_origin_endpoints() -> None:
+    secret = "synthetic-endpoint-secret"
+    for endpoint in (
+        f"https://user:{secret}@guard.example",
+        f"https://guard.example/path/{secret}",
+        f"https://guard.example?token={secret}",
+        f"https://guard.example#{secret}",
+        "http://guard.example",
+    ):
+        result = diagnose_endpoint(endpoint, ManagedNetworkPolicy(proxy_mode="none"))
+        payload = json.dumps(result.to_dict(), sort_keys=True)
+        assert result.reason_code == "endpoint_invalid"
+        assert result.endpoint == "redacted"
+        assert secret not in payload
 
 
 def test_diagnostic_reports_dns_failure_without_exception_detail(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -222,6 +247,32 @@ def test_diagnostic_reports_dns_failure_without_exception_detail(monkeypatch: py
     assert result.reason_code == "dns_resolution_failed"
     assert result.dns == "failed"
     assert "synthetic-sensitive-dns-detail" not in payload
+
+
+def test_proxy_routing_can_succeed_when_destination_dns_is_unavailable_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def resolve(host: str, *_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
+        if host == "guard.example":
+            raise network_module.socket.gaierror("destination unavailable locally")
+        if host == "proxy.example":
+            return [(object(),)]
+        raise AssertionError(host)
+
+    monkeypatch.setattr(network_module.keyring, "get_password", lambda _service, _key: None)
+    monkeypatch.setattr(network_module.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(network_module, "managed_urlopen", lambda *_args, **_kwargs: _FakeResponse())
+    result = diagnose_endpoint(
+        "https://guard.example",
+        ManagedNetworkPolicy(proxy_mode="explicit", proxy_url="https://proxy.example:8443"),
+    )
+
+    assert result.reason_code == "endpoint_reachable"
+    assert result.dns == "failed"
+    assert result.proxy.selected is True
+    assert result.proxy.dns == "ok"
+    assert result.tls == "trusted"
+    assert result.reachability == "reachable"
 
 
 def test_diagnostic_reports_proxy_resolution_failure(monkeypatch: pytest.MonkeyPatch) -> None:
