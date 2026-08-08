@@ -151,6 +151,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          uv sync --frozen --extra dev
           uv run --frozen ruff format --check \
             src/codex_plugin_scanner/guard/adapters/cline_plugin.py \
             src/codex_plugin_scanner/guard/cli/commands_hook.py \
