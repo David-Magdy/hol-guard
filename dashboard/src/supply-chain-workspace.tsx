@@ -215,6 +215,7 @@ export function SupplyChainWorkspace({
           issues={supplyChainIssues}
           state={fixAllState}
           onFixAll={onFixAll}
+          guidance={workspaceHero.stagedGuidance}
         />
       ) : (
         <SupplyChainWorkspaceHero hero={workspaceHero} />

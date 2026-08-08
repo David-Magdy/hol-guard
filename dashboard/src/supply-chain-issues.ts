@@ -12,8 +12,7 @@ export type SupplyChainIssueAction =
   | { kind: "connect" }
   | { kind: "firewall_unprotected" }
   | { kind: "firewall_repair" }
-  | { kind: "firewall_audit" }
-  | { kind: "activate_runtime" };
+  | { kind: "firewall_audit" };
 
 export type SupplyChainIssue = {
   id: string;
@@ -75,16 +74,6 @@ export function resolveSupplyChainIssues(snapshot: GuardRuntimeSnapshot): Supply
       tone: "attention",
       actionLabel: "Repair PATH in firewall",
       action: { kind: "firewall_repair" },
-    });
-  } else if (protection?.path_status === "restart_required" || stats.stagedManagers > 0) {
-    issues.push({
-      id: "path_restart",
-      title: "Finish activation in Guard",
-      detail:
-        "Guard saved your shell setup. Finish activation here, then run a protection check from this dashboard.",
-      tone: "blue",
-      actionLabel: "Finish activation",
-      action: { kind: "activate_runtime" },
     });
   }
 
