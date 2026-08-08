@@ -6,18 +6,31 @@ import ssl
 import sys
 from pathlib import Path
 
-from requests.certs import where as requests_ca_bundle
+import requests.certs as requests_certs
 
 
 class ManagedTrustError(RuntimeError):
     """A managed TLS trust source is unavailable or invalid."""
 
 
+def _requests_ca_bundle() -> Path:
+    where = getattr(requests_certs, "where", None)
+    if not callable(where):
+        raise ManagedTrustError("managed_system_trust_invalid")
+    value = where()
+    if not isinstance(value, str) or not value:
+        raise ManagedTrustError("managed_system_trust_invalid")
+    try:
+        return Path(value).resolve(strict=True)
+    except OSError as exc:
+        raise ManagedTrustError("managed_system_trust_invalid") from exc
+
+
 def _load_public_and_system_trust(context: ssl.SSLContext) -> None:
     """Load public and platform roots without honoring shell CA overrides."""
 
+    public_bundle = _requests_ca_bundle()
     try:
-        public_bundle = Path(requests_ca_bundle()).resolve(strict=True)
         context.load_verify_locations(cafile=str(public_bundle))
     except (OSError, ssl.SSLError) as exc:
         raise ManagedTrustError("managed_system_trust_invalid") from exc
