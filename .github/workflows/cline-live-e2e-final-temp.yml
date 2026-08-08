@@ -78,8 +78,9 @@ jobs:
 
           cline auth --provider ollama --apikey ollama-local --modelid qwen3:1.7b
           hol-guard apps connect cline --surface plugin --json | tee "$RUNNER_TEMP/connect.json"
-          cline plugin list | tee "$RUNNER_TEMP/plugin-list.txt"
-          grep -qi 'hol-guard' "$RUNNER_TEMP/plugin-list.txt"
+          test -f "$HOME/.cline/plugins/hol-guard/index.js"
+          test -f "$HOME/.cline/plugins/hol-guard/package.json"
+          grep -Fq 'hol-guard' "$HOME/.cline/plugins/hol-guard/package.json"
 
       - name: Safe live Cline tool action passes
         shell: bash
@@ -173,8 +174,21 @@ jobs:
           python - "$RUNNER_TEMP/final.json" <<'PY'
           import json, sys
           payload = json.load(open(sys.argv[1], encoding='utf-8'))
-          assert payload.get('ready') is True or payload.get('active') is True, payload
-          text = json.dumps(payload)
-          assert 'plugin-pretool' in text or 'live_pretool' in text or 'pretool' in text.lower()
-          assert 'plugin-posttool' in text or 'posttool' in text.lower()
+
+          def ready_plugin(value):
+              if isinstance(value, dict):
+                  plugin = value.get('plugin')
+                  if isinstance(plugin, dict):
+                      if (
+                          plugin.get('ready') is True
+                          and plugin.get('pretool_blocking_proven') is True
+                          and plugin.get('posttool_replacement_proven') is True
+                      ):
+                          return True
+                  return any(ready_plugin(item) for item in value.values())
+              if isinstance(value, list):
+                  return any(ready_plugin(item) for item in value)
+              return False
+
+          assert ready_plugin(payload), payload
           PY
