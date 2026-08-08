@@ -59,10 +59,9 @@ def _portable_lookup_without_permission_elevation(
     decision = lookup.get("decision")
     if not isinstance(decision, dict):
         return lookup
-    if decision.get("approval_id") is not None or guard_action_severity(
-        decision.get("action"),
-        unknown_action="block",
-    ) < _PORTABLE_PERMISSION_FLOOR:
+    approval_id = decision.get("approval_id")
+    action_severity = guard_action_severity(decision.get("action"), unknown_action="block")
+    if approval_id is not None or action_severity < _PORTABLE_PERMISSION_FLOOR:
         return {**lookup, "decision": None}
     return lookup
 
@@ -73,10 +72,7 @@ def _portable_lookup_without_permission_elevation(
 class StorePortableProjectMemoryMixin:
     """Add restrictive portable Git project policy without weakening local scope."""
 
-    def get_guard_operation_for_approval_request(
-        self,
-        request_id: str,
-    ) -> dict[str, object] | None:
+    def get_guard_operation_for_approval_request(self, request_id: str) -> dict[str, object] | None:
         operation = super().get_guard_operation_for_approval_request(request_id)
         if not isinstance(operation, dict):
             return operation
@@ -150,8 +146,4 @@ class StorePortableProjectMemoryMixin:
         if not isinstance(workspace, str) or not workspace.strip():
             return None
         normalized = workspace.strip()
-        return (
-            normalized
-            if is_portable_project_identity(normalized)
-            else _cached_portable_project_identity(normalized)
-        )
+        return normalized if is_portable_project_identity(normalized) else _cached_portable_project_identity(normalized)
