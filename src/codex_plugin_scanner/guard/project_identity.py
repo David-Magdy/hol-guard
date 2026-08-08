@@ -126,6 +126,21 @@ def _workspace_path(workspace: str | Path | None) -> Path | None:
     return Path(workspace.strip()).expanduser().resolve(strict=False)
 
 
+def _metadata_file_is_workspace_local(git_dir: Path, candidate: Path) -> bool:
+    """Require Git identity inputs to be regular files beneath a non-symlink path."""
+    try:
+        relative = candidate.relative_to(git_dir)
+    except ValueError:
+        return False
+
+    current = git_dir
+    for part in relative.parts[:-1]:
+        current = current / part
+        if current.is_symlink() or not current.is_dir():
+            return False
+    return not candidate.is_symlink() and candidate.is_file()
+
+
 def _discover_git_repository(workspace: Path) -> tuple[Path, Path, tuple[Path, ...]] | None:
     current = workspace if workspace.is_dir() else workspace.parent
     for repository_root in (current, *current.parents):
@@ -137,7 +152,13 @@ def _discover_git_repository(workspace: Path) -> tuple[Path, Path, tuple[Path, .
             return None
         if not marker.is_dir():
             continue
-        return repository_root, marker / "config", (marker / "logs" / "HEAD",)
+        config_path = marker / "config"
+        head_log_path = marker / "logs" / "HEAD"
+        if not _metadata_file_is_workspace_local(marker, config_path):
+            return None
+        if not _metadata_file_is_workspace_local(marker, head_log_path):
+            return None
+        return repository_root, config_path, (head_log_path,)
     return None
 
 
