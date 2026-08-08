@@ -156,11 +156,12 @@ def test_repo_controlled_surfaces_prefer_cisco_extra_where_supported() -> None:
     assert "uv sync --extra dev --extra cisco --group cisco-mcp" in contributing
 
 
-def test_publish_workflow_builds_only_guard_and_scanner_packages() -> None:
+def test_release_3_1_publish_workflow_builds_only_guard_distribution() -> None:
     publish_workflow = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
 
-    assert "Build Guard package (hol-guard)" in publish_workflow
-    assert "Build scanner package (plugin-scanner)" in publish_workflow
+    assert "Build Guard distribution" in publish_workflow
+    assert "Build scanner package" not in publish_workflow
+    assert "plugin_scanner-*" not in publish_workflow
     assert "Build codex compatibility alias" not in publish_workflow
     assert 'name = "codex-plugin-scanner"' not in publish_workflow
     assert 'codex-plugin-scanner = "codex_plugin_scanner.cli:main"' not in publish_workflow
