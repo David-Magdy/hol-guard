@@ -13,8 +13,8 @@ from email.message import Message
 from email.utils import parsedate_to_datetime
 from typing import Literal
 
-from .contracts import ManagedNetworkPolicy, ProxyMode
 from . import network_transport as transport
+from .contracts import ManagedNetworkPolicy, ProxyMode
 
 _MAX_CLOCK_SKEW_SECONDS = 300
 
