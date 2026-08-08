@@ -28,6 +28,9 @@ jobs:
         run: python scripts/release/apply_release_3_0_pypi_fix.py
       - name: Sync test environment
         run: uv sync --frozen --extra dev --extra publish --extra cisco
+      - name: Format patched contracts
+        run: |
+          uv run --no-sync ruff format tests/test_release_train_workflow.py scripts/release/apply_release_3_0_pypi_fix.py
       - name: Validate release contracts
         run: |
           uv run --no-sync python -m pytest -q tests/test_release_train_workflow.py --tb=short
