@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import ssl
 import urllib.error
 import urllib.parse
@@ -18,6 +19,8 @@ from urllib3.response import BaseHTTPResponse
 class ManagedResponse(Protocol):
     headers: Mapping[str, str]
     status: int
+
+    def geturl(self) -> str: ...
 
     def read(self, amt: int | None = None) -> bytes: ...
 
@@ -44,10 +47,14 @@ class ManagedOpener(Protocol):
 class _UrllibResponse:
     """Small response adapter exposing the urllib surface Guard call sites use."""
 
-    def __init__(self, response: BaseHTTPResponse) -> None:
+    def __init__(self, response: BaseHTTPResponse, url: str) -> None:
         self._response = response
+        self._url = url
         self.headers: Mapping[str, str] = response.headers
         self.status = response.status
+
+    def geturl(self) -> str:
+        return self._url
 
     def read(self, amt: int | None = None) -> bytes:
         return self._response.read(amt)
@@ -67,6 +74,25 @@ class _UrllibResponse:
         self.close()
 
 
+class _UrllibErrorBody(io.RawIOBase):
+    """Streaming IO adapter for urllib HTTPError without buffering an error body."""
+
+    def __init__(self, response: BaseHTTPResponse) -> None:
+        super().__init__()
+        self._response = response
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        return self._response.read(None if size < 0 else size)
+
+    def close(self) -> None:
+        if not self.closed:
+            self._response.close()
+        super().close()
+
+
 def _message_headers(headers: Mapping[str, str]) -> Message:
     message = Message()
     for name, value in headers.items():
@@ -78,7 +104,9 @@ def _request_parts(
     request: str | urllib.request.Request,
 ) -> tuple[str, str, bytes | None, dict[str, str]]:
     if isinstance(request, urllib.request.Request):
-        return request.full_url, request.get_method(), request.data, dict(request.header_items())
+        data = request.data
+        body = None if data is None else bytes(data)
+        return request.full_url, request.get_method(), body, dict(request.header_items())
     return request, "GET", None, {}
 
 
@@ -141,9 +169,9 @@ class ManagedUrlOpener:
                 response.status,
                 str(response.reason or "managed_http_error"),
                 _message_headers(response.headers),
-                response,
+                _UrllibErrorBody(response),
             )
-        return _UrllibResponse(response)
+        return _UrllibResponse(response, url)
 
 
 __all__ = ["ManagedOpener", "ManagedResponse", "ManagedUrlOpener"]
