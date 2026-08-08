@@ -68,10 +68,18 @@ def _owner_is_only_group_member(owner_uid: int, group_gid: int) -> bool:
         other_members = member_names - {owner.pw_name}
         if other_members:
             return False
-        if accounts or member_names:
+        # Proven private membership: the owner is listed and no one else is.
+        if owner.pw_name in member_names:
             return True
-        # Empty NSS account listing: accept only classic user-private groups.
-        return group.gr_name == owner.pw_name and owner.pw_gid == group_gid and not group.gr_mem
+        # Empty NSS listing cannot prove absence of other primary members. Accept
+        # only the classic user-private-group convention (group name == username,
+        # matching primary gid, empty gr_mem). Partial non-empty listings fail closed.
+        return (
+            not accounts
+            and not group.gr_mem
+            and group.gr_name == owner.pw_name
+            and owner.pw_gid == group_gid
+        )
     except (ImportError, KeyError, OSError):
         return False
 
@@ -112,9 +120,11 @@ def _python_package_roots() -> tuple[Path, ...]:
 
         getsitepackages = getattr(site, "getsitepackages", None)
         if callable(getsitepackages):
-            for value in getsitepackages():
-                if isinstance(value, str) and value:
-                    add_root(value)
+            site_packages = getsitepackages()
+            if isinstance(site_packages, (list, tuple)):
+                for value in site_packages:
+                    if isinstance(value, str) and value:
+                        add_root(value)
         getusersitepackages = getattr(site, "getusersitepackages", None)
         if callable(getusersitepackages):
             user_site = getusersitepackages()
