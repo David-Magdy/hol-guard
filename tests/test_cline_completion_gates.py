@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -246,3 +247,49 @@ def test_plugin_ready_requires_block_and_replacement_proofs(tmp_path: Path) -> N
     assert state["pretool_blocking_proven"] is True
     assert state["posttool_replacement_proven"] is True
     assert state["ready"] is True
+
+
+def test_real_guard_policy_requires_review_for_cline_env_read(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    secret_path = context.workspace_dir / ".env"
+    secret_path.write_text("OPENAI_API_KEY=HOL_GUARD_CLINE_TEST_ONLY\n", encoding="utf-8")
+    payload = {
+        "hookName": "PreToolUse",
+        "hook_event_name": "PreToolUse",
+        "tool_call": {
+            "id": "cline-live-regression",
+            "name": "read_files",
+            "input": {"path": str(secret_path)},
+        },
+        "preToolUse": {
+            "toolName": "read_files",
+            "parameters": {"path": str(secret_path)},
+        },
+    }
+    env = dict(os.environ)
+    env["HOME"] = str(context.home_dir)
+    env["HOL_GUARD_HOME"] = str(context.guard_home)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "codex_plugin_scanner.cli",
+            "guard",
+            "hook",
+            "--harness",
+            "cline",
+            "--json",
+        ],
+        cwd=context.workspace_dir,
+        env=env,
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    response = json.loads(result.stdout)
+    assert response["policy_action"] == "require-reapproval"
+    assert response["artifact_id"].startswith("cline:project:file-read:")
+    assert response["policy_composition"]["current_config_action"] == "require-reapproval"
