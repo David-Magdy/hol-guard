@@ -87,7 +87,6 @@ def test_raw_http_clients_are_confined_to_enterprise_transport_or_loopback_ipc()
 def test_external_runtime_paths_import_the_managed_transport() -> None:
     expected_managed_paths = {
         "cli/connect_flow.py",
-        "cli/oauth_client.py",
         "cli/remote_pair_flow.py",
         "cli/update_commands.py",
         "local_supply_chain.py",
