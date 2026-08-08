@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import io
 import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
-from email.message import Message
 from typing import Protocol
 
 from urllib3 import ProxyManager
@@ -74,38 +72,21 @@ class _UrllibResponse:
         self.close()
 
 
-class _UrllibErrorBody(io.RawIOBase):
-    """Streaming IO adapter for urllib HTTPError without buffering an error body."""
-
-    def __init__(self, response: BaseHTTPResponse) -> None:
-        super().__init__()
-        self._response = response
-
-    def readable(self) -> bool:
-        return True
-
-    def read(self, size: int = -1) -> bytes:
-        return self._response.read(None if size < 0 else size)
-
-    def close(self) -> None:
-        if not self.closed:
-            self._response.close()
-        super().close()
-
-
-def _message_headers(headers: Mapping[str, str]) -> Message:
-    message = Message()
-    for name, value in headers.items():
-        message[name] = value
-    return message
-
-
 def _request_parts(
     request: str | urllib.request.Request,
 ) -> tuple[str, str, bytes | None, dict[str, str]]:
     if isinstance(request, urllib.request.Request):
         data = request.data
-        body = None if data is None else bytes(data)
+        if data is None:
+            body = None
+        elif isinstance(data, bytes):
+            body = data
+        elif isinstance(data, bytearray):
+            body = bytes(data)
+        elif isinstance(data, memoryview):
+            body = data.tobytes()
+        else:
+            raise ValueError("managed_request_body_must_be_bytes")
         return request.full_url, request.get_method(), body, dict(request.header_items())
     return request, "GET", None, {}
 
@@ -164,12 +145,16 @@ class ManagedUrlOpener:
         except Urllib3HTTPError as exc:
             raise urllib.error.URLError("managed_proxy_request_failed") from exc
         if response.status >= 400 or (not self._allow_redirects and 300 <= response.status < 400):
+            status = response.status
+            reason = str(response.reason or "managed_http_error")
+            response_headers = response.headers
+            response.close()
             raise urllib.error.HTTPError(
                 url,
-                response.status,
-                str(response.reason or "managed_http_error"),
-                _message_headers(response.headers),
-                _UrllibErrorBody(response),
+                status,
+                reason,
+                response_headers,
+                None,
             )
         return _UrllibResponse(response, url)
 
