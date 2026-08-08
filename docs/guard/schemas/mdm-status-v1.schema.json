@@ -61,6 +61,7 @@
             "managed_system_proxy_invalid",
             "managed_proxy_credentials_forbidden",
             "managed_proxy_credentials_invalid",
+            "managed_system_trust_invalid",
             "managed_ca_bundle_invalid",
             "proxy_resolution_failed",
             "proxy_auth_required",
