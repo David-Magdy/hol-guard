@@ -1,4 +1,8 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { IDLE_SUPPLY_CHAIN_FIX_ALL_STATE } from "./supply-chain-fix-all";
 import { resolveSupplyChainIssues } from "./supply-chain-issues";
+import { SupplyChainRecovery } from "./supply-chain-recovery";
 import { resolveSupplyChainWorkspaceHero } from "./supply-chain-workspace-hero-state";
 import type { GuardRuntimeSnapshot, PackageManagerProtection } from "./guard-types";
 
@@ -18,6 +22,7 @@ const makeProtection = (
   shell_profile_path: null,
   shim_dir: "/shims",
   supported_managers: ["npm", "pip", "pnpm"],
+  detected_managers: ["npm", "pip", "pnpm"],
   installed_managers: [],
   active_managers: [],
   missing_shims: [],
@@ -89,6 +94,22 @@ const localPartialSnapshot: GuardRuntimeSnapshot = {
   ...baseSnapshot,
   supply_chain: {
     package_manager_protection: makeProtection({
+      detected_managers: [
+        "npm",
+        "pip",
+        "pnpm",
+        "yarn",
+        "go",
+        "cargo",
+        "gradle",
+        "bun",
+        "bundle",
+        "composer",
+        "mvn",
+        "npx",
+        "pip3",
+        "poetry",
+      ],
       protected_managers: ["npm", "pip", "pnpm", "yarn", "go", "cargo", "gradle"],
       unprotected_managers: ["bun", "bundle", "composer", "mvn", "npx", "pip3", "poetry"],
       installed_managers: ["npm"],
@@ -112,34 +133,83 @@ assert(
   "SCSR170-C: issue focus avoids repeating hero posture title",
 );
 
-const pairedPartialIssues = resolveSupplyChainIssues({
+const pairedPartialSnapshot: GuardRuntimeSnapshot = {
   ...localPartialSnapshot,
   cloud_state: "paired_active",
   cloud_state_label: "Connected",
-});
+};
+const pairedPartialIssues = resolveSupplyChainIssues(pairedPartialSnapshot);
 assert(
   pairedPartialIssues.length === 1 && pairedPartialIssues[0]?.id === "partial_protection",
   "SCSR170-D: paired cloud skips connect issue",
 );
+const singleIssueHero = resolveSupplyChainWorkspaceHero(pairedPartialSnapshot, {
+  openIssueCount: pairedPartialIssues.length,
+});
+assert(
+  singleIssueHero.detail.includes("1 setup step needs attention"),
+  "SCSR170-E: singular setup-step summary uses singular verb agreement",
+);
 
-const restartRequiredIssues = resolveSupplyChainIssues({
+const restartRequiredSnapshot: GuardRuntimeSnapshot = {
   ...baseSnapshot,
   cloud_state: "paired_active",
   cloud_state_label: "Connected",
   supply_chain: {
     package_manager_protection: makeProtection({
+      detected_managers: ["npm"],
       installed_managers: ["npm"],
       path_contains_shim_dir: false,
       path_status: "restart_required",
       restart_shell_required: true,
     }),
   },
+};
+const restartRequiredIssues = resolveSupplyChainIssues(restartRequiredSnapshot);
+assert(
+  restartRequiredIssues.length === 0,
+  "SCSR170-F: staged shell restart is not reported as another repairable Fix all issue",
+);
+const restartRequiredHero = resolveSupplyChainWorkspaceHero(restartRequiredSnapshot, {
+  openIssueCount: restartRequiredIssues.length,
 });
 assert(
-  restartRequiredIssues.some(
-    (issue) => issue.id === "path_restart" && issue.action.kind === "activate_runtime",
-  ),
-  "SCSR170-E: restart-required recovery activates the Guard runtime instead of opening a terminal",
+  restartRequiredHero.protectionStatus === "staged" &&
+    restartRequiredHero.title === "Finish setup in a new terminal" &&
+    restartRequiredHero.detail.includes("Open a new terminal or restart AI apps"),
+  "SCSR170-G: staged repair completion gives the non-repair restart instruction",
+);
+
+const mixedRestartSnapshot: GuardRuntimeSnapshot = {
+  ...restartRequiredSnapshot,
+  cloud_state: "local_only",
+  cloud_state_label: "On this device only",
+};
+const mixedRestartIssues = resolveSupplyChainIssues(mixedRestartSnapshot);
+assert(
+  mixedRestartIssues.some((issue) => issue.id === "cloud_connect"),
+  "SCSR170-H: mixed staged state keeps unrelated actionable issues",
+);
+const mixedRestartHero = resolveSupplyChainWorkspaceHero(mixedRestartSnapshot, {
+  openIssueCount: mixedRestartIssues.length,
+});
+assert(
+  mixedRestartHero.title === "Work through the steps below" &&
+    mixedRestartHero.detail.includes("Open a new terminal or restart AI apps"),
+  "SCSR170-I: mixed staged state preserves restart guidance in resolved state",
+);
+const mixedRecoveryMarkup = renderToStaticMarkup(
+  createElement(SupplyChainRecovery, {
+    issues: mixedRestartIssues,
+    state: IDLE_SUPPLY_CHAIN_FIX_ALL_STATE,
+    onFixAll: () => undefined,
+    guidance: mixedRestartHero.stagedGuidance,
+  }),
+);
+assert(
+  mixedRecoveryMarkup.includes('data-testid="supply-chain-restart-guidance"') &&
+    mixedRecoveryMarkup.includes("Open a new terminal or restart AI apps"),
+  "SCSR170-J: mixed recovery UI visibly renders staged restart guidance",
 );
 
 const compactHero = resolveSupplyChainWorkspaceHero(localPartialSnapshot, {
@@ -147,11 +217,11 @@ const compactHero = resolveSupplyChainWorkspaceHero(localPartialSnapshot, {
 });
 assert(
   compactHero.title === "Work through the steps below",
-  "SCSR170-F: compact hero defers detail to issue carousel",
+  "SCSR170-K: compact hero defers detail to issue carousel",
 );
 assert(
-  compactHero.detail.includes("2 setup steps"),
-  "SCSR170-G: compact hero summarizes open issue count",
+  compactHero.detail.includes("2 setup steps need attention"),
+  "SCSR170-L: plural setup-step summary uses plural verb agreement",
 );
 
 const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
@@ -177,7 +247,7 @@ const staleIssues = resolveSupplyChainIssues({
 });
 assert(
   staleIssues.some((issue) => issue.id === "stale_intel" && issue.action.kind === "firewall_audit"),
-  "SCSR170-H: stale intel issue routes to workspace audit",
+  "SCSR170-M: stale intel issue routes to workspace audit",
 );
 
 console.log("supply-chain-issues.test.ts: all assertions passed");
