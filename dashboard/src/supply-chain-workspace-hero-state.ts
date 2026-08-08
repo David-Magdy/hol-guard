@@ -92,7 +92,7 @@ export function resolveSupplyChainWorkspaceHero(
 
   const openIssueCount = options?.openIssueCount ?? 0;
   if (openIssueCount > 0) {
-    const issueSummary = `${openIssueCount} setup step${openIssueCount === 1 ? "" : "s"} need attention on this device.`;
+    const issueSummary = `${openIssueCount} setup step${openIssueCount === 1 ? "" : "s"} ${openIssueCount === 1 ? "needs" : "need"} attention on this device.`;
     return {
       cloudMode: snapshot.cloud_state,
       cloudLabel: cloudLabel(snapshot),
