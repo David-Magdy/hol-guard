@@ -229,7 +229,7 @@ def network_lab(tmp_path: Path) -> Iterator[_NetworkLab]:
     proxy_thread.start()
     try:
         yield _NetworkLab(
-            target_url=f"https://127.0.0.1:{origin_port}/health",
+            target_url=f"https://127.0.0.1:{origin_port}",
             proxy_url=f"https://127.0.0.1:{proxy.bound_port}",
             ca_bundle=ca_path,
             proxy_state=proxy_state,
@@ -252,6 +252,7 @@ def test_direct_networking_and_private_ca_are_real_tls(network_lab: _NetworkLab)
     diagnostic = diagnose_endpoint(network_lab.target_url, policy)
     assert diagnostic.reason_code == "endpoint_reachable"
     assert diagnostic.tls == "trusted"
+    assert diagnostic.clock == "ok"
     assert diagnostic.reachability == "reachable"
 
 
