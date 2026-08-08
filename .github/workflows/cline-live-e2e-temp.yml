@@ -83,8 +83,9 @@ jobs:
           mkdir -p "$HOME/workspace"
 
           # Cline 3.0.51 requires --apikey for non-interactive quick setup even
-          # for Ollama. Ollama ignores this local placeholder credential.
-          cline auth --provider ollama --apikey ollama-local --modelid qwen3:4b --baseurl http://127.0.0.1:11434
+          # for Ollama. Ollama ignores this local placeholder credential. Native
+          # Ollama uses its standard local endpoint and rejects --baseurl.
+          cline auth --provider ollama --apikey ollama-local --modelid qwen3:4b
           cline doctor || true
           hol-guard apps connect cline --surface plugin --json | tee "$RUNNER_TEMP/guard-connect.json"
           hol-guard apps test cline --json | tee "$RUNNER_TEMP/guard-prelive.json" || true
