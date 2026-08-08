@@ -50,9 +50,10 @@ def test_network_diagnose_is_prompt_free_stable_json_even_without_json_flag(
 
     monkeypatch.setattr("builtins.input", reject_prompt)
 
-    first_exit = cli.main(["mdm", "network-diagnose", "--endpoint", "https://guard.example"])
+    args = ["guard", "mdm", "network-diagnose", "--endpoint", "https://guard.example"]
+    first_exit = cli.main(args)
     first_output = capsys.readouterr().out.strip()
-    second_exit = cli.main(["mdm", "network-diagnose", "--endpoint", "https://guard.example"])
+    second_exit = cli.main(args)
     second_output = capsys.readouterr().out.strip()
 
     assert first_exit == 0
@@ -81,7 +82,7 @@ def test_network_diagnose_exception_is_redacted_and_machine_readable(
 
     monkeypatch.setattr(commands_dispatch_mdm, "load_managed_policy", fail_policy_load)
 
-    exit_code = cli.main(["mdm", "network-diagnose", "--endpoint", "https://guard.example"])
+    exit_code = cli.main(["guard", "mdm", "network-diagnose", "--endpoint", "https://guard.example"])
     output = capsys.readouterr().out.strip()
     payload = json.loads(output)
 
