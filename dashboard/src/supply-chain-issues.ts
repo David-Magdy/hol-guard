@@ -12,8 +12,7 @@ export type SupplyChainIssueAction =
   | { kind: "connect" }
   | { kind: "firewall_unprotected" }
   | { kind: "firewall_repair" }
-  | { kind: "firewall_audit" }
-  | { kind: "activate_runtime" };
+  | { kind: "firewall_audit" };
 
 export type SupplyChainIssue = {
   id: string;
