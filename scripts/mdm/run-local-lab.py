@@ -71,8 +71,30 @@ SUITES = (
     ),
     Suite(
         "enterprise-network",
-        ("managed-policy", "proxy", "private-ca", "tls", "offline"),
-        ("tests/test_guard_mdm_network.py", "tests/test_guard_mdm_policy.py"),
+        (
+            "managed-policy",
+            "direct-network",
+            "system-proxy",
+            "explicit-proxy",
+            "authenticated-proxy",
+            "private-ca",
+            "tls",
+            "diagnostics",
+            "endpoint-manifest",
+            "internal-mirror",
+            "signed-cache",
+            "offline-lifecycle",
+        ),
+        (
+            "tests/test_guard_mdm_network.py",
+            "tests/test_guard_mdm_network_policy_contract.py",
+            "tests/test_guard_mdm_network_cli.py",
+            "tests/test_guard_mdm_endpoint_manifest.py",
+            "tests/test_guard_mdm_policy.py",
+            "tests/test_guard_mdm_offline_lifecycle.py",
+            "tests/test_guard_update_isolation.py",
+            "tests/test_guard_supply_chain_bundle.py",
+        ),
     ),
 )
 
