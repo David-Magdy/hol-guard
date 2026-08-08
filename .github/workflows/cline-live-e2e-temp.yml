@@ -1,4 +1,4 @@
-name: Temporary Cline decision diagnostic
+name: Temporary Cline exact hook diagnostic
 
 on:
   push:
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 jobs:
-  decision-probe:
+  exact-hook-probe:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -45,7 +45,7 @@ jobs:
           "$RUNNER_TEMP/guard-venv/bin/pip" install "$wheel"
           "$RUNNER_TEMP/guard-venv/bin/hol-guard" --version
 
-      - name: Reproduce exact Cline read_files decision
+      - name: Run exact generated Cline Guard command
         shell: bash
         run: |
           set -euo pipefail
@@ -79,41 +79,30 @@ jobs:
           echo '=== exact Cline payload ==='
           cat "$RUNNER_TEMP/cline-read-payload.json"
           echo
-          echo '=== Guard decision ==='
+          echo '=== Guard hook decision ==='
           set +e
-          hol-guard --harness cline --json < "$RUNNER_TEMP/cline-read-payload.json" | tee "$RUNNER_TEMP/cline-read-decision.json"
-          status=${PIPESTATUS[0]}
+          hol-guard guard hook --harness cline --json < "$RUNNER_TEMP/cline-read-payload.json" \
+            >"$RUNNER_TEMP/cline-read-stdout.txt" 2>"$RUNNER_TEMP/cline-read-stderr.txt"
+          status=$?
           set -e
           echo "Guard exit status: $status"
+          echo '--- stdout ---'
+          cat "$RUNNER_TEMP/cline-read-stdout.txt"
+          echo '--- stderr ---'
+          cat "$RUNNER_TEMP/cline-read-stderr.txt"
+          test -s "$RUNNER_TEMP/cline-read-stdout.txt"
 
-      - name: Inspect normalized Cline action and sensitive-request extraction
+      - name: Exercise generated plugin block parser against exact decision
         shell: bash
         run: |
           set -euo pipefail
           export HOME="$RUNNER_TEMP/cline-decision-home"
           export HOL_GUARD_HOME="$HOME/.hol-guard"
-          export PYTHONPATH="$RUNNER_TEMP/guard-venv/lib/python3.12/site-packages"
-          cd "$HOME/workspace"
-          "$RUNNER_TEMP/guard-venv/bin/python" - <<'PY'
-          import json
-          from pathlib import Path
-          from codex_plugin_scanner.guard.adapters.cline_hook_payload import prepare_cline_hook_payload, normalize_cline_payload
-          from codex_plugin_scanner.guard.runtime.secret_file_requests import extract_sensitive_file_read_request_from_action
-
-          target = str(Path.cwd() / '.env')
-          payload = {
-              'hookName': 'PreToolUse',
-              'hook_event_name': 'PreToolUse',
-              'tool_call': {'id': 'live-diagnostic', 'name': 'read_files', 'input': {'path': target}},
-              'preToolUse': {'toolName': 'read_files', 'parameters': {'path': target}},
-          }
-          prepared = prepare_cline_hook_payload(payload)
-          action = normalize_cline_payload(payload, workspace=Path.cwd(), home_dir=Path.home())
-          print('prepared=', json.dumps(prepared, sort_keys=True, default=str))
-          print('action=', action)
-          try:
-              request = extract_sensitive_file_read_request_from_action(action)
-          except TypeError:
-              request = extract_sensitive_file_read_request_from_action(action, workspace=Path.cwd(), home_dir=Path.home())
-          print('sensitive_request=', request)
-          PY
+          export PATH="$RUNNER_TEMP/guard-venv/bin:$PATH"
+          mkdir -p "$HOME/.cline"
+          hol-guard apps connect cline --surface plugin --json > "$RUNNER_TEMP/connect.json"
+          plugin="$HOME/.cline/plugins/hol-guard/index.js"
+          test -f "$plugin"
+          grep -F 'guard", "hook"' "$plugin" || true
+          grep -F 'policy_action' "$plugin"
+          grep -F 'decision_v2_json' "$plugin" || true
