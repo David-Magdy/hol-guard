@@ -113,7 +113,10 @@ jobs:
                   _run_plugin(
                       source,
                       tmp_path,
-                      'plugin.hooks.afterTool({toolCall:{toolCallId:"4b",toolName:"read_files"},input:{paths:["README.md"]},result:{output:"safe again",isError:false}})',
+                      (
+                          'plugin.hooks.afterTool({toolCall:{toolCallId:"4b",toolName:"read_files"},'
+                          'input:{paths:["README.md"]},result:{output:"safe again",isError:false}})'
+                      ),
                   )
                   is None
               )
