@@ -34,6 +34,7 @@ type LoadState =
 type PendingChange = { extension: ExtensionCatalogItem; enabled: boolean } | { globalLockdown: boolean };
 
 export type ExtensionRecoveryAction = {
+  copyLabel: string;
   command: string;
   description: string;
   title: string;
@@ -46,6 +47,7 @@ export function extensionRecoveryAction(
   if (health === "tampered") {
     return {
       title: "Repair extension controls",
+      copyLabel: "Copy repair command",
       description:
         "Guard locked these settings after detecting damaged authority data. Authenticate in this device's terminal to rebuild the trusted authority, then check again.",
       command: "hol-guard guard command controls recover-authority",
@@ -53,6 +55,7 @@ export function extensionRecoveryAction(
   }
   return {
     title: "Finish local enrollment",
+    copyLabel: "Copy enrollment command",
     description:
       "Authenticate in this device's terminal to protect extension settings, then check again.",
     command: "hol-guard guard command controls enroll",
@@ -141,7 +144,7 @@ export function ExtensionStatusBanner(props: { effective: EffectiveExtensionCont
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button type="button" onClick={handleCopy} className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
               {copyState === "copied" ? <HiMiniClipboardDocumentCheck className="size-4" aria-hidden="true" /> : <HiMiniClipboard className="size-4" aria-hidden="true" />}
-              {copyState === "copied" ? "Copied" : "Copy repair command"}
+              {copyState === "copied" ? "Copied" : recovery?.copyLabel}
             </button>
             <button type="button" onClick={props.onRetry} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
               <HiMiniArrowPath className="size-4" aria-hidden="true" />

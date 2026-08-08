@@ -49,12 +49,14 @@ function extensionRecoveryAction(health) {
   if (health === "tampered") {
     return {
       title: "Repair extension controls",
+      copyLabel: "Copy repair command",
       description: "Guard locked these settings after detecting damaged authority data. Authenticate in this device's terminal to rebuild the trusted authority, then check again.",
       command: "hol-guard guard command controls recover-authority"
     };
   }
   return {
     title: "Finish local enrollment",
+    copyLabel: "Copy enrollment command",
     description: "Authenticate in this device's terminal to protect extension settings, then check again.",
     command: "hol-guard guard command controls enroll"
   };
@@ -134,7 +136,7 @@ function ExtensionStatusBanner(props) {
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-2", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: handleCopy, className: "inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800", children: [
           copyState === "copied" ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniClipboardDocumentCheck, { className: "size-4", "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniClipboard, { className: "size-4", "aria-hidden": "true" }),
-          copyState === "copied" ? "Copied" : "Copy repair command"
+          copyState === "copied" ? "Copied" : recovery?.copyLabel
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onRetry, className: "inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "size-4", "aria-hidden": "true" }),

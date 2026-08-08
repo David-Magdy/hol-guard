@@ -11,11 +11,13 @@ import {
 assert.equal(extensionRecoveryAction("protected"), null);
 assert.deepEqual(extensionRecoveryAction("unenrolled"), {
   title: "Finish local enrollment",
+  copyLabel: "Copy enrollment command",
   description: "Authenticate in this device's terminal to protect extension settings, then check again.",
   command: "hol-guard guard command controls enroll",
 });
 assert.deepEqual(extensionRecoveryAction("tampered"), {
   title: "Repair extension controls",
+  copyLabel: "Copy repair command",
   description:
     "Guard locked these settings after detecting damaged authority data. Authenticate in this device's terminal to rebuild the trusted authority, then check again.",
   command: "hol-guard guard command controls recover-authority",
