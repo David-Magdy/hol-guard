@@ -82,7 +82,9 @@ jobs:
           export PATH="$RUNNER_TEMP/guard-venv/bin:$PATH"
           mkdir -p "$HOME/workspace"
 
-          cline auth --provider ollama --modelid qwen3:4b --baseurl http://127.0.0.1:11434
+          # Cline 3.0.51 requires --apikey for non-interactive quick setup even
+          # for Ollama. Ollama ignores this local placeholder credential.
+          cline auth --provider ollama --apikey ollama-local --modelid qwen3:4b --baseurl http://127.0.0.1:11434
           cline doctor || true
           hol-guard apps connect cline --surface plugin --json | tee "$RUNNER_TEMP/guard-connect.json"
           hol-guard apps test cline --json | tee "$RUNNER_TEMP/guard-prelive.json" || true
