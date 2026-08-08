@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import ssl
 import urllib.error
 import urllib.parse
@@ -12,6 +13,7 @@ from typing import Protocol
 
 from urllib3 import ProxyManager
 from urllib3.exceptions import HTTPError as Urllib3HTTPError
+from urllib3.exceptions import SSLError as Urllib3SSLError
 from urllib3.response import BaseHTTPResponse
 
 
@@ -78,6 +80,24 @@ def _message_headers(headers: Mapping[str, str]) -> Message:
     for name, value in headers.items():
         message[name] = value
     return message
+
+
+def _contains_tls_failure(error: BaseException) -> bool:
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        identity = id(current)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if isinstance(current, (ssl.SSLError, Urllib3SSLError)):
+            return True
+        for attribute in ("reason", "original_error", "__cause__", "__context__"):
+            nested = getattr(current, attribute, None)
+            if isinstance(nested, BaseException):
+                pending.append(nested)
+    return False
 
 
 def _request_parts(
@@ -162,18 +182,21 @@ class ManagedUrlOpener:
                     timeout=timeout,
                 )
         except Urllib3HTTPError as exc:
+            if _contains_tls_failure(exc):
+                raise urllib.error.URLError(ssl.SSLError("managed_tls_request_failed")) from exc
             raise urllib.error.URLError("managed_proxy_request_failed") from exc
         if response.status >= 400 or (not self._allow_redirects and 300 <= response.status < 400):
             status = response.status
             reason = str(response.reason or "managed_http_error")
             response_headers = _message_headers(response.headers)
+            response_body = response.read()
             response.close()
             raise urllib.error.HTTPError(
                 url,
                 status,
                 reason,
                 response_headers,
-                None,
+                io.BytesIO(response_body),
             )
         return _UrllibResponse(response, url)
 
