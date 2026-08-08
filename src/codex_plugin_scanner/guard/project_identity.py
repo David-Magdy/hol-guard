@@ -130,10 +130,10 @@ def _discover_git_repository(workspace: Path) -> tuple[Path, Path, tuple[Path, .
     current = workspace if workspace.is_dir() else workspace.parent
     for repository_root in (current, *current.parents):
         marker = repository_root / ".git"
-        if marker.is_file():
-            # A gitdir pointer can target metadata owned by an unrelated
-            # workspace. Portable identity is optional, so fail closed rather
-            # than treating external Git metadata as project authority.
+        if marker.is_file() or marker.is_symlink():
+            # A gitdir pointer or symlink can target metadata owned by an
+            # unrelated workspace. Portable identity is optional, so fail
+            # closed rather than treating external Git metadata as authority.
             return None
         if not marker.is_dir():
             continue
