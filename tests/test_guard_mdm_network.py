@@ -15,7 +15,8 @@ import certifi
 import pytest
 
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager
-from codex_plugin_scanner.guard.mdm import network as network_module
+from codex_plugin_scanner.guard.mdm import network_diagnostics as diagnostics_module
+from codex_plugin_scanner.guard.mdm import network_transport as transport_module
 from codex_plugin_scanner.guard.mdm.contracts import ManagedNetworkPolicy
 from codex_plugin_scanner.guard.mdm.network import (
     ManagedNetworkError,
@@ -47,7 +48,7 @@ def test_tls_verification_cannot_be_disabled() -> None:
 
 
 def test_explicit_proxy_is_applied_without_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(network_module.keyring, "get_password", lambda _service, _key: None)
+    monkeypatch.setattr(transport_module, "read_proxy_credential_record", lambda _key: None)
     policy = ManagedNetworkPolicy(proxy_mode="explicit", proxy_url="https://proxy.example:8443")
     session = managed_requests_session(policy)
     assert session.proxies == {
@@ -84,12 +85,12 @@ def test_authenticated_proxy_uses_os_keyring_without_secret_leakage(monkeypatch:
     username = "synthetic-proxy-user"
     password = "synthetic-proxy-password"
     monkeypatch.setattr(
-        network_module.keyring,
-        "get_password",
-        lambda _service, _key: json.dumps({"username": username, "password": password}),
+        transport_module,
+        "read_proxy_credential_record",
+        lambda _key: json.dumps({"username": username, "password": password}),
     )
-    monkeypatch.setattr(network_module.socket, "getaddrinfo", lambda *_args, **_kwargs: [(object(),)])
-    monkeypatch.setattr(network_module, "managed_urlopen", lambda *_args, **_kwargs: _FakeResponse())
+    monkeypatch.setattr(diagnostics_module.socket, "getaddrinfo", lambda *_args, **_kwargs: [(object(),)])
+    monkeypatch.setattr(transport_module, "managed_urlopen", lambda *_args, **_kwargs: _FakeResponse())
     policy = ManagedNetworkPolicy(proxy_mode="explicit", proxy_url="https://proxy.example:8443")
 
     session = managed_requests_session(policy)
@@ -116,7 +117,7 @@ def test_authenticated_proxy_uses_os_keyring_without_secret_leakage(monkeypatch:
 
 def test_invalid_keyring_proxy_credentials_fail_with_redacted_reason(monkeypatch: pytest.MonkeyPatch) -> None:
     secret = "synthetic-secret-material"
-    monkeypatch.setattr(network_module.keyring, "get_password", lambda _service, _key: f"not-json-{secret}")
+    monkeypatch.setattr(transport_module, "read_proxy_credential_record", lambda _key: f"not-json-{secret}")
     policy = ManagedNetworkPolicy(proxy_mode="explicit", proxy_url="https://proxy.example:8443")
 
     with pytest.raises(ManagedNetworkError) as error:
@@ -177,7 +178,7 @@ def test_managed_system_proxy_uses_platform_configuration_not_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        network_module,
+        transport_module,
         "platform_system_proxies",
         lambda: {"https": "http://system-proxy.example:8080"},
     )
@@ -189,7 +190,7 @@ def test_managed_system_proxy_uses_platform_configuration_not_environment(
 
 def test_system_proxy_rejects_embedded_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        network_module,
+        transport_module,
         "platform_system_proxies",
         lambda: {"https": "http://user:secret@system-proxy.example:8080"},
     )
@@ -238,9 +239,9 @@ def test_diagnostic_rejects_secret_bearing_or_non_origin_endpoints() -> None:
 
 def test_diagnostic_reports_dns_failure_without_exception_detail(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_dns(*_args: object, **_kwargs: object) -> object:
-        raise network_module.socket.gaierror("synthetic-sensitive-dns-detail")
+        raise diagnostics_module.socket.gaierror("synthetic-sensitive-dns-detail")
 
-    monkeypatch.setattr(network_module.socket, "getaddrinfo", fail_dns)
+    monkeypatch.setattr(diagnostics_module.socket, "getaddrinfo", fail_dns)
     result = diagnose_endpoint("https://guard.example", ManagedNetworkPolicy(proxy_mode="none"))
     payload = json.dumps(result.to_dict(), sort_keys=True)
 
@@ -254,14 +255,14 @@ def test_proxy_routing_can_succeed_when_destination_dns_is_unavailable_locally(
 ) -> None:
     def resolve(host: str, *_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
         if host == "guard.example":
-            raise network_module.socket.gaierror("destination unavailable locally")
+            raise diagnostics_module.socket.gaierror("destination unavailable locally")
         if host == "proxy.example":
             return [(object(),)]
         raise AssertionError(host)
 
-    monkeypatch.setattr(network_module.keyring, "get_password", lambda _service, _key: None)
-    monkeypatch.setattr(network_module.socket, "getaddrinfo", resolve)
-    monkeypatch.setattr(network_module, "managed_urlopen", lambda *_args, **_kwargs: _FakeResponse())
+    monkeypatch.setattr(transport_module, "read_proxy_credential_record", lambda _key: None)
+    monkeypatch.setattr(diagnostics_module.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(transport_module, "managed_urlopen", lambda *_args, **_kwargs: _FakeResponse())
     result = diagnose_endpoint(
         "https://guard.example",
         ManagedNetworkPolicy(proxy_mode="explicit", proxy_url="https://proxy.example:8443"),
@@ -283,10 +284,10 @@ def test_diagnostic_reports_proxy_resolution_failure(monkeypatch: pytest.MonkeyP
         calls += 1
         if calls == 1:
             return [(object(),)]
-        raise network_module.socket.gaierror("proxy detail")
+        raise diagnostics_module.socket.gaierror("proxy detail")
 
-    monkeypatch.setattr(network_module.keyring, "get_password", lambda _service, _key: None)
-    monkeypatch.setattr(network_module.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(transport_module, "read_proxy_credential_record", lambda _key: None)
+    monkeypatch.setattr(diagnostics_module.socket, "getaddrinfo", resolve)
     result = diagnose_endpoint(
         "https://guard.example",
         ManagedNetworkPolicy(proxy_mode="explicit", proxy_url="https://proxy.example:8443"),
@@ -299,12 +300,12 @@ def test_diagnostic_reports_proxy_resolution_failure(monkeypatch: pytest.MonkeyP
 
 
 def test_diagnostic_reports_tls_failure_without_certificate_detail(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(network_module.socket, "getaddrinfo", lambda *_args, **_kwargs: [(object(),)])
+    monkeypatch.setattr(diagnostics_module.socket, "getaddrinfo", lambda *_args, **_kwargs: [(object(),)])
 
     def fail_tls(*_args: object, **_kwargs: object) -> _FakeResponse:
         raise urllib.error.URLError(ssl.SSLCertVerificationError(1, "synthetic certificate secret"))
 
-    monkeypatch.setattr(network_module, "managed_urlopen", fail_tls)
+    monkeypatch.setattr(transport_module, "managed_urlopen", fail_tls)
     result = diagnose_endpoint("https://guard.example", ManagedNetworkPolicy(proxy_mode="none"))
     payload = json.dumps(result.to_dict(), sort_keys=True)
 
@@ -318,12 +319,12 @@ def test_clock_skew_uses_http_date_with_stable_reason(monkeypatch: pytest.Monkey
     headers = Message()
     headers["Date"] = format_datetime(datetime.now(timezone.utc) - timedelta(minutes=20), usegmt=True)
     response = urllib.error.HTTPError("https://guard.example", 503, "unavailable", headers, None)
-    monkeypatch.setattr(network_module.socket, "getaddrinfo", lambda *_args, **_kwargs: [(object(),)])
+    monkeypatch.setattr(diagnostics_module.socket, "getaddrinfo", lambda *_args, **_kwargs: [(object(),)])
 
     def fail_with_http_status(*_args: object, **_kwargs: object) -> _FakeResponse:
         raise response
 
-    monkeypatch.setattr(network_module, "managed_urlopen", fail_with_http_status)
+    monkeypatch.setattr(transport_module, "managed_urlopen", fail_with_http_status)
     result = diagnose_endpoint("https://guard.example", ManagedNetworkPolicy(proxy_mode="none"))
 
     assert result.reason_code == "clock_skew_detected"
@@ -338,12 +339,12 @@ def test_http_error_still_proves_endpoint_and_tls_reachability(monkeypatch: pyte
     headers = Message()
     headers["Date"] = format_datetime(datetime.now(timezone.utc), usegmt=True)
     response = urllib.error.HTTPError("https://guard.example", 401, "unauthorized", headers, None)
-    monkeypatch.setattr(network_module.socket, "getaddrinfo", lambda *_args, **_kwargs: [(object(),)])
+    monkeypatch.setattr(diagnostics_module.socket, "getaddrinfo", lambda *_args, **_kwargs: [(object(),)])
 
     def fail_with_http_status(*_args: object, **_kwargs: object) -> _FakeResponse:
         raise response
 
-    monkeypatch.setattr(network_module, "managed_urlopen", fail_with_http_status)
+    monkeypatch.setattr(transport_module, "managed_urlopen", fail_with_http_status)
     result = diagnose_endpoint("https://guard.example", ManagedNetworkPolicy(proxy_mode="none"))
 
     assert result.reason_code == "endpoint_reachable"
@@ -374,7 +375,7 @@ def test_windows_system_proxy_falls_back_to_machine_scope(monkeypatch: pytest.Mo
         QueryValueEx=lambda _key, _name: next(values),
     )
     monkeypatch.setitem(sys.modules, "winreg", fake_winreg)
-    monkeypatch.setattr(network_module.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(transport_module.platform, "system", lambda: "Windows")
 
     assert platform_system_proxies() == {
         "http": "http://proxy.example:8080",
