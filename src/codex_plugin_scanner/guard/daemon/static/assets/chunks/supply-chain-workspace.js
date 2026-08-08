@@ -575,15 +575,6 @@ function resolveSupplyChainIssues(snapshot) {
       actionLabel: "Repair PATH in firewall",
       action: { kind: "firewall_repair" }
     });
-  } else if (protection?.path_status === "restart_required" || stats.stagedManagers > 0) {
-    issues.push({
-      id: "path_restart",
-      title: "Finish activation in Guard",
-      detail: "Guard saved your shell setup. Finish activation here, then run a protection check from this dashboard.",
-      tone: "blue",
-      actionLabel: "Finish activation",
-      action: { kind: "activate_runtime" }
-    });
   }
   if (protectionStatus === "partial" && stats.protectedManagers > 0 && unprotectedManagers.length > 0) {
     issues.push({
@@ -643,7 +634,7 @@ function protectionDetail(snapshot, status) {
     return `${protection.unprotected_managers.length} tool${protection.unprotected_managers.length === 1 ? "" : "s"} still open: ${protection.unprotected_managers.join(", ")}.`;
   }
   if (status === "staged") {
-    return "Guard saved your shell setup. Finish activation here, then run a protection check.";
+    return "Guard saved your shell setup. Open a new terminal or restart AI apps so the updated PATH takes effect, then refresh status here.";
   }
   if (status === "unprotected") {
     return "Turn on protection for npm, pip, and other tools in the firewall panel below.";
