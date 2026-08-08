@@ -1,4 +1,8 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { IDLE_SUPPLY_CHAIN_FIX_ALL_STATE } from "./supply-chain-fix-all";
 import { resolveSupplyChainIssues } from "./supply-chain-issues";
+import { SupplyChainRecovery } from "./supply-chain-recovery";
 import { resolveSupplyChainWorkspaceHero } from "./supply-chain-workspace-hero-state";
 import type { GuardRuntimeSnapshot, PackageManagerProtection } from "./guard-types";
 
@@ -184,7 +188,20 @@ const mixedRestartHero = resolveSupplyChainWorkspaceHero(mixedRestartSnapshot, {
 assert(
   mixedRestartHero.title === "Work through the steps below" &&
     mixedRestartHero.detail.includes("Open a new terminal or restart AI apps"),
-  "SCSR170-H: mixed staged state preserves visible restart guidance",
+  "SCSR170-H: mixed staged state preserves restart guidance in resolved state",
+);
+const mixedRecoveryMarkup = renderToStaticMarkup(
+  createElement(SupplyChainRecovery, {
+    issues: mixedRestartIssues,
+    state: IDLE_SUPPLY_CHAIN_FIX_ALL_STATE,
+    onFixAll: () => undefined,
+    guidance: mixedRestartHero.stagedGuidance,
+  }),
+);
+assert(
+  mixedRecoveryMarkup.includes('data-testid="supply-chain-restart-guidance"') &&
+    mixedRecoveryMarkup.includes("Open a new terminal or restart AI apps"),
+  "SCSR170-I: mixed recovery UI visibly renders staged restart guidance",
 );
 
 const compactHero = resolveSupplyChainWorkspaceHero(localPartialSnapshot, {
@@ -192,11 +209,11 @@ const compactHero = resolveSupplyChainWorkspaceHero(localPartialSnapshot, {
 });
 assert(
   compactHero.title === "Work through the steps below",
-  "SCSR170-I: compact hero defers detail to issue carousel",
+  "SCSR170-J: compact hero defers detail to issue carousel",
 );
 assert(
   compactHero.detail.includes("2 setup steps"),
-  "SCSR170-J: compact hero summarizes open issue count",
+  "SCSR170-K: compact hero summarizes open issue count",
 );
 
 const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
@@ -222,7 +239,7 @@ const staleIssues = resolveSupplyChainIssues({
 });
 assert(
   staleIssues.some((issue) => issue.id === "stale_intel" && issue.action.kind === "firewall_audit"),
-  "SCSR170-K: stale intel issue routes to workspace audit",
+  "SCSR170-L: stale intel issue routes to workspace audit",
 );
 
 console.log("supply-chain-issues.test.ts: all assertions passed");
