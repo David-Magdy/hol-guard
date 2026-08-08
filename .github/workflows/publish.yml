@@ -165,9 +165,10 @@ jobs:
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
           echo "Resolved $SOURCE_SHA -> $VERSION ($CHANNEL)"
       - name: Stamp exact package version
+        working-directory: source
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: python3 release-tooling/scripts/sync_repo_version.py --repo-root source --version "$VERSION"
+        run: uv run --no-sync python ../release-tooling/scripts/sync_repo_version.py --repo-root . --version "$VERSION"
       - name: Build Guard distribution
         working-directory: source
         run: uv run --no-sync python -m build --wheel --sdist --outdir "$GITHUB_WORKSPACE/dist"
