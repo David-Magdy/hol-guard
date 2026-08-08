@@ -18,6 +18,7 @@ const makeProtection = (
   shell_profile_path: null,
   shim_dir: "/shims",
   supported_managers: ["npm", "pip", "pnpm"],
+  detected_managers: ["npm", "pip", "pnpm"],
   installed_managers: [],
   active_managers: [],
   missing_shims: [],
@@ -89,6 +90,22 @@ const localPartialSnapshot: GuardRuntimeSnapshot = {
   ...baseSnapshot,
   supply_chain: {
     package_manager_protection: makeProtection({
+      detected_managers: [
+        "npm",
+        "pip",
+        "pnpm",
+        "yarn",
+        "go",
+        "cargo",
+        "gradle",
+        "bun",
+        "bundle",
+        "composer",
+        "mvn",
+        "npx",
+        "pip3",
+        "poetry",
+      ],
       protected_managers: ["npm", "pip", "pnpm", "yarn", "go", "cargo", "gradle"],
       unprotected_managers: ["bun", "bundle", "composer", "mvn", "npx", "pip3", "poetry"],
       installed_managers: ["npm"],
@@ -122,24 +139,33 @@ assert(
   "SCSR170-D: paired cloud skips connect issue",
 );
 
-const restartRequiredIssues = resolveSupplyChainIssues({
+const restartRequiredSnapshot: GuardRuntimeSnapshot = {
   ...baseSnapshot,
   cloud_state: "paired_active",
   cloud_state_label: "Connected",
   supply_chain: {
     package_manager_protection: makeProtection({
+      detected_managers: ["npm"],
       installed_managers: ["npm"],
       path_contains_shim_dir: false,
       path_status: "restart_required",
       restart_shell_required: true,
     }),
   },
+};
+const restartRequiredIssues = resolveSupplyChainIssues(restartRequiredSnapshot);
+assert(
+  restartRequiredIssues.length === 0,
+  "SCSR170-E: staged shell restart is not reported as another repairable Fix all issue",
+);
+const restartRequiredHero = resolveSupplyChainWorkspaceHero(restartRequiredSnapshot, {
+  openIssueCount: restartRequiredIssues.length,
 });
 assert(
-  restartRequiredIssues.some(
-    (issue) => issue.id === "path_restart" && issue.action.kind === "activate_runtime",
-  ),
-  "SCSR170-E: restart-required recovery activates the Guard runtime instead of opening a terminal",
+  restartRequiredHero.protectionStatus === "staged" &&
+    restartRequiredHero.title === "Finish setup in a new terminal" &&
+    restartRequiredHero.detail.includes("Open a new terminal or restart AI apps"),
+  "SCSR170-F: staged repair completion gives the non-repair restart instruction",
 );
 
 const compactHero = resolveSupplyChainWorkspaceHero(localPartialSnapshot, {
@@ -147,11 +173,11 @@ const compactHero = resolveSupplyChainWorkspaceHero(localPartialSnapshot, {
 });
 assert(
   compactHero.title === "Work through the steps below",
-  "SCSR170-F: compact hero defers detail to issue carousel",
+  "SCSR170-G: compact hero defers detail to issue carousel",
 );
 assert(
   compactHero.detail.includes("2 setup steps"),
-  "SCSR170-G: compact hero summarizes open issue count",
+  "SCSR170-H: compact hero summarizes open issue count",
 );
 
 const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
@@ -177,7 +203,7 @@ const staleIssues = resolveSupplyChainIssues({
 });
 assert(
   staleIssues.some((issue) => issue.id === "stale_intel" && issue.action.kind === "firewall_audit"),
-  "SCSR170-H: stale intel issue routes to workspace audit",
+  "SCSR170-I: stale intel issue routes to workspace audit",
 );
 
 console.log("supply-chain-issues.test.ts: all assertions passed");
