@@ -93,7 +93,7 @@ def test_trusted_pip_bootstrap_uses_validated_pipx_shared_path_without_site_hook
     pip_package.mkdir()
     (pip_package / "__init__.py").write_text("", encoding="utf-8")
     (pip_package / "__main__.py").write_text(
-        "import json, sys\nassert sys.prefix != sys.base_prefix, (sys.prefix, sys.base_prefix)\nprint(json.dumps({'marker': 'pipx-shared-pip', 'argv': sys.argv[1:]}))\n",
+        f"import json, sys\nassert sys.prefix == {str(python.parent.parent)!r}, (sys.prefix, sys.base_prefix)\nprint(json.dumps({{'marker': 'pipx-shared-pip', 'argv': sys.argv[1:]}}))\n",
         encoding="utf-8",
     )
     hook_marker = tmp_path / "pth-hook-ran"
