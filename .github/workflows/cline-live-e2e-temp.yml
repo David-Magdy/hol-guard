@@ -45,7 +45,7 @@ jobs:
           "$RUNNER_TEMP/guard-venv/bin/pip" install "$wheel"
           "$RUNNER_TEMP/guard-venv/bin/hol-guard" --version
 
-      - name: Run exact generated Cline Guard command
+      - name: Run exact attested Cline Guard command
         shell: bash
         run: |
           set -euo pipefail
@@ -76,13 +76,12 @@ jobs:
           print(json.dumps(payload, separators=(',', ':')))
           PY
 
-          echo '=== exact Cline payload ==='
-          cat "$RUNNER_TEMP/cline-read-payload.json"
-          echo
-          echo '=== Guard hook decision ==='
           set +e
-          hol-guard guard hook --harness cline --json < "$RUNNER_TEMP/cline-read-payload.json" \
-            >"$RUNNER_TEMP/cline-read-stdout.txt" 2>"$RUNNER_TEMP/cline-read-stderr.txt"
+          "$RUNNER_TEMP/guard-venv/bin/python" -I -s -m codex_plugin_scanner.cli \
+            guard hook --harness cline --json \
+            < "$RUNNER_TEMP/cline-read-payload.json" \
+            > "$RUNNER_TEMP/cline-read-stdout.txt" \
+            2> "$RUNNER_TEMP/cline-read-stderr.txt"
           status=$?
           set -e
           echo "Guard exit status: $status"
@@ -92,7 +91,7 @@ jobs:
           cat "$RUNNER_TEMP/cline-read-stderr.txt"
           test -s "$RUNNER_TEMP/cline-read-stdout.txt"
 
-      - name: Exercise generated plugin block parser against exact decision
+      - name: Show generated plugin launcher and parser coverage
         shell: bash
         run: |
           set -euo pipefail
@@ -103,6 +102,5 @@ jobs:
           hol-guard apps connect cline --surface plugin --json > "$RUNNER_TEMP/connect.json"
           plugin="$HOME/.cline/plugins/hol-guard/index.js"
           test -f "$plugin"
-          grep -F 'guard", "hook"' "$plugin" || true
+          grep -F 'codex_plugin_scanner.cli' "$plugin"
           grep -F 'policy_action' "$plugin"
-          grep -F 'decision_v2_json' "$plugin" || true
