@@ -32,6 +32,7 @@ def test_network_diagnose_process_is_prompt_free_json_and_redacts_endpoint_secre
             sys.executable,
             "-m",
             "codex_plugin_scanner.cli",
+            "guard",
             "mdm",
             "network-diagnose",
             "--endpoint",
