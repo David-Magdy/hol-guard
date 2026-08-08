@@ -113,14 +113,14 @@ def try_read_verified_public_github_pull_request(
         repository_payload = _public_get_json(
             repository_url,
             timeout_seconds=bounded_timeout,
-            opener=opener,
+            tls_context=opener,
         )
         if repository_payload.get("private") is not False:
             return None
         observed_name = repository_payload.get("full_name")
         if not isinstance(observed_name, str) or observed_name.casefold() != full_name.casefold():
             return None
-        pull_payload = _public_get_json(pull_url, timeout_seconds=bounded_timeout, opener=opener)
+        pull_payload = _public_get_json(pull_url, timeout_seconds=bounded_timeout, tls_context=opener)
         if pull_payload.get("number") != pull_number or not _pull_belongs_to_repository(pull_payload, full_name):
             return None
         if not _valid_pull_fields(pull_payload):
@@ -174,7 +174,7 @@ def _public_get_json(
     url: str,
     *,
     timeout_seconds: float,
-    opener: urllib.request.OpenerDirector,
+    tls_context: urllib.request.OpenerDirector,
 ) -> dict[str, object]:
     if not url.startswith(f"{_API_ORIGIN}/") or "?" in url or "#" in url:
         raise ValueError("GitHub URL must use the exact public API origin")
@@ -187,7 +187,7 @@ def _public_get_json(
         },
         method="GET",
     )
-    raw_response = opener.open(request, timeout=timeout_seconds)  # pyright: ignore[reportAny]
+    raw_response = tls_context.open(request, timeout=timeout_seconds)  # pyright: ignore[reportAny]
     response = cast(_UrlResponse, raw_response)
     try:
         if response.status != 200 or response.geturl() != url:
