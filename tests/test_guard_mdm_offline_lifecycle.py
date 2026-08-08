@@ -33,11 +33,14 @@ _NETWORK_COMMAND_PATTERN = re.compile(
     r"(?:https?://|\bcurl\b|\bwget\b|\bInvoke-WebRequest\b|\bInvoke-RestMethod\b|"
     r"\bStart-BitsTransfer\b|\bbitsadmin\b)"
 )
+_ALLOWED_STATIC_URLS = ("http://wixtoolset.org/schemas/v4/wxs",)
 
 
 def test_native_install_upgrade_rollback_and_uninstall_scripts_have_no_network_dependency() -> None:
     for path in _NATIVE_INSTALL_RUNTIME_FILES:
         text = path.read_text(encoding="utf-8")
+        for allowed in _ALLOWED_STATIC_URLS:
+            text = text.replace(allowed, "")
         assert _NETWORK_COMMAND_PATTERN.search(text) is None, path
 
 
