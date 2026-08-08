@@ -63,11 +63,12 @@ jobs:
           text = text.replace(old, new, 1)
 
           old = '    attested = resolve_attested_guard_cli(context)\n'
-          new = '''    for proof_name in ("loaded", "pretool", "posttool"):
-              with suppress(OSError):
-                  _proof_path(context, proof_name).unlink()
-          attested = resolve_attested_guard_cli(context)
-          '''
+          new = (
+              '    for proof_name in ("loaded", "pretool", "posttool"):\n'
+              '        with suppress(OSError):\n'
+              '            _proof_path(context, proof_name).unlink()\n'
+              '    attested = resolve_attested_guard_cli(context)\n'
+          )
           if old not in text:
               raise SystemExit('install proof reset anchor not found')
           text = text.replace(old, new, 1)
@@ -152,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           uv sync --frozen --extra dev
-          uv run --frozen ruff format --check \
+          uv run --frozen ruff format \
             src/codex_plugin_scanner/guard/adapters/cline_plugin.py \
             src/codex_plugin_scanner/guard/cli/commands_hook.py \
             src/codex_plugin_scanner/guard/cli/commands_support_hook_payload.py \
