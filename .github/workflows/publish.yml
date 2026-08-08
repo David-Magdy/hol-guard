@@ -81,7 +81,6 @@ jobs:
     name: Build + Verify
     if: >-
       (github.event_name != 'workflow_dispatch' || github.run_attempt == 1) &&
-      (github.event_name != 'push' || github.run_attempt == 1) &&
       (github.event.action != 'labeled' || github.event.label.name == 'publish-testpypi-canary')
     needs: authorize-release
     runs-on: ubuntu-latest
@@ -640,6 +639,7 @@ jobs:
     if: >-
       always() &&
       vars.RELEASE_PUBLISHING_ENABLED == 'true' &&
+      vars.ALPHA_TESTPYPI_ENABLED == 'true' &&
       needs.build.result == 'success' &&
       needs.reserve-alpha-tag.result == 'success' &&
       needs.build.outputs.channel == 'alpha' &&
@@ -678,9 +678,9 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           train_ref="refs/heads/release/${TRAIN}"
-          remote_train_sha=$(git ls-remote --exit-code origin "$train_ref" | awk '{print $1}')
-          if [[ "$remote_train_sha" != "$SOURCE_SHA" ]]; then
-            echo "Alpha publication source is no longer the release train head" >&2
+          git fetch --no-tags origin "+${train_ref}:refs/remotes/origin/release/${TRAIN}"
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" "refs/remotes/origin/release/${TRAIN}"; then
+            echo "Alpha publication source is no longer part of the release train" >&2
             exit 1
           fi
           remote_alpha_tag_sha=$(git ls-remote origin "refs/tags/alpha/v${VERSION}" | awk '{print $1}')
@@ -741,13 +741,12 @@ jobs:
       vars.RELEASE_PUBLISHING_ENABLED == 'true' &&
       needs.build.result == 'success' &&
       needs.reserve-alpha-tag.result == 'success' &&
-      needs.publish-alpha-testpypi.result == 'success' &&
       needs.build.outputs.channel == 'alpha' &&
       (
         (github.event_name == 'workflow_dispatch' && github.run_attempt == 1) ||
         (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/3.'))
       )
-    needs: [build, reserve-alpha-tag, publish-alpha-testpypi]
+    needs: [build, reserve-alpha-tag]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -768,7 +767,7 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: distribution-sha256
-      - name: Verify the TestPyPI-proven artifact
+      - name: Verify immutable build artifact
         run: sha256sum --check distribution-sha256.txt
       - name: Keep only the Guard release distribution
         run: rm -f dist/plugin_scanner-* dist/plugin-scanner-*
@@ -797,9 +796,9 @@ jobs:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           train_ref="refs/heads/release/${TRAIN}"
-          remote_train_sha=$(git ls-remote --exit-code origin "$train_ref" | awk '{print $1}')
-          if [[ "$remote_train_sha" != "$SOURCE_SHA" ]]; then
-            echo "Alpha publication source is no longer the release train head" >&2
+          git fetch --no-tags origin "+${train_ref}:refs/remotes/origin/release/${TRAIN}"
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" "refs/remotes/origin/release/${TRAIN}"; then
+            echo "Alpha publication source is no longer part of the release train" >&2
             exit 1
           fi
           remote_alpha_tag_sha=$(git ls-remote origin "refs/tags/alpha/v${VERSION}" | awk '{print $1}')
