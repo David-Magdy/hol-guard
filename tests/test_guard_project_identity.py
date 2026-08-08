@@ -223,6 +223,46 @@ def test_spoofed_origin_without_clone_provenance_cannot_claim_portable_identity(
     assert resolve_portable_project_identity(unrelated) is None
 
 
+def test_forged_clone_metadata_cannot_grant_portable_permission(tmp_path: Path) -> None:
+    trusted = tmp_path / "trusted" / "repo"
+    forged = tmp_path / "forged" / "repo"
+    remote = "https://github.com/example/trusted-repository.git"
+    _init_repository(trusted, remote)
+    _init_repository(forged, remote)
+
+    trusted_identity = resolve_portable_project_identity(trusted)
+    forged_identity = resolve_portable_project_identity(forged)
+    assert trusted_identity is not None
+    assert forged_identity == trusted_identity
+
+    store = GuardStore(tmp_path / "guard-forged")
+    bundle = _signed_project_memory_bundle(
+        ("portable-allow", "allow", trusted_identity),
+    )
+    _activate_project_memory_bundle(store, bundle)
+
+    assert (
+        store.resolve_policy(
+            "codex",
+            "tool:read",
+            workspace=str(forged),
+            now=_NOW,
+            consume_one_shot=False,
+        )
+        is None
+    )
+
+
+def test_gitdir_pointer_cannot_claim_external_repository_identity(tmp_path: Path) -> None:
+    trusted = tmp_path / "trusted" / "repo"
+    pointer = tmp_path / "pointer"
+    _init_repository(trusted, "https://github.com/example/trusted-repository.git")
+    pointer.mkdir()
+    (pointer / ".git").write_text(f"gitdir: {trusted / '.git'}\n", encoding="utf-8")
+
+    assert resolve_portable_project_identity(pointer) is None
+
+
 def test_portable_identity_accepts_legal_valueless_git_config_keys(tmp_path: Path) -> None:
     repository = tmp_path / "repo"
     _init_repository(repository, "https://example.invalid/owner/repository.git")
@@ -274,7 +314,7 @@ def test_non_git_workspace_has_no_portable_identity(tmp_path: Path) -> None:
     assert resolve_portable_project_identity(workspace) is None
 
 
-def test_project_memory_created_on_one_clone_reuses_on_another_clone(tmp_path: Path) -> None:
+def test_restrictive_project_memory_created_on_one_clone_reuses_on_another_clone(tmp_path: Path) -> None:
     first = tmp_path / "laptop-a" / "repo"
     second = tmp_path / "laptop-b" / "repo"
     remote = "git@example.invalid:owner/repository.git"
@@ -290,7 +330,7 @@ def test_project_memory_created_on_one_clone_reuses_on_another_clone(tmp_path: P
 
     target_store = GuardStore(tmp_path / "guard-b")
     bundle = _signed_project_memory_bundle(
-        ("remember-project", "allow", str(project_identity)),
+        ("remember-project", "block", str(project_identity)),
     )
     _activate_project_memory_bundle(target_store, bundle)
 
@@ -302,7 +342,7 @@ def test_project_memory_created_on_one_clone_reuses_on_another_clone(tmp_path: P
             now=_NOW,
             consume_one_shot=False,
         )
-        == "allow"
+        == "block"
     )
 
 
@@ -376,7 +416,7 @@ def test_portable_selector_does_not_turn_one_shot_approval_into_sticky_memory(tm
     assert second is None
 
 
-def test_direct_portable_selector_consumes_only_one_one_shot_per_operation(tmp_path: Path) -> None:
+def test_direct_portable_selector_does_not_apply_one_shot_permission(tmp_path: Path) -> None:
     workspace = tmp_path / "repo"
     _init_repository(workspace, "git@example.invalid:owner/repository.git")
     project_identity = resolve_portable_project_identity(workspace)
@@ -418,6 +458,6 @@ def test_direct_portable_selector_consumes_only_one_one_shot_per_operation(tmp_p
         now="2026-08-07T20:02:00+00:00",
     )
 
-    assert first == "allow"
-    assert second == "allow"
+    assert first is None
+    assert second is None
     assert third is None

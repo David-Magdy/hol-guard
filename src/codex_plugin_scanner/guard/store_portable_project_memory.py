@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from .action_lattice import guard_action_severity
 from .project_identity import (
     enrich_project_identity_metadata,
     is_portable_project_identity,
@@ -17,6 +18,7 @@ from .store_policy import _most_restrictive_policy_lookup
 
 _PROJECT_IDENTITY_CACHE_MAX_ITEMS = 128
 _PROJECT_IDENTITY_CACHE: dict[tuple[str, int], str] = {}
+_PORTABLE_PERMISSION_FLOOR = guard_action_severity("review")
 
 
 def _cached_portable_project_identity(workspace: str) -> str | None:
@@ -43,11 +45,33 @@ def _cached_portable_project_identity(workspace: str) -> str | None:
     return identity
 
 
+def _portable_lookup_without_permission_elevation(
+    lookup: PolicyDecisionLookupResult,
+) -> PolicyDecisionLookupResult:
+    """Keep portable selectors restrictive-only and never reuse one-shot authority.
+
+    Git metadata lives inside the workspace and can be forged by that
+    workspace. A portable selector is therefore useful for carrying managed
+    restrictions across clones, but it cannot safely prove that a permissive
+    approval belongs to the current local workspace. Local-path authority is
+    the only source allowed to lower enforcement below review.
+    """
+    decision = lookup.get("decision")
+    if not isinstance(decision, dict):
+        return lookup
+    if decision.get("approval_id") is not None or guard_action_severity(
+        decision.get("action"),
+        unknown_action="block",
+    ) < _PORTABLE_PERMISSION_FLOOR:
+        return {**lookup, "decision": None}
+    return lookup
+
+
 # Store mixins are composed dynamically in ``GuardStore``. Sibling mixins use
 # the same file-level pyright setting because ``super()`` members are supplied
 # by the final MRO rather than a direct base class.
 class StorePortableProjectMemoryMixin:
-    """Add a portable Git project selector without removing local path scope."""
+    """Add restrictive portable Git project policy without weakening local scope."""
 
     def get_guard_operation_for_approval_request(self, request_id: str) -> dict[str, object] | None:
         operation = super().get_guard_operation_for_approval_request(request_id)
@@ -73,8 +97,7 @@ class StorePortableProjectMemoryMixin:
         consume_one_shot: bool = True,
     ) -> PolicyDecisionLookupResult:
         portable_workspace = self._portable_project_workspace(workspace)
-        normalized_workspace = workspace.strip() if isinstance(workspace, str) else None
-        if portable_workspace is None or portable_workspace == normalized_workspace:
+        if portable_workspace is None:
             return super().resolve_policy_decision_lookup(
                 harness,
                 artifact_id,
@@ -86,18 +109,13 @@ class StorePortableProjectMemoryMixin:
                 consume_one_shot=consume_one_shot,
             )
 
-        if not consume_one_shot:
-            local_preview = super().resolve_policy_decision_lookup(
-                harness,
-                artifact_id,
-                artifact_hash=artifact_hash,
-                workspace=workspace,
-                publisher=publisher,
-                now=now,
-                runtime_exact_match_context=runtime_exact_match_context,
-                consume_one_shot=False,
-            )
-            portable_preview = super().resolve_policy_decision_lookup(
+        # Portable Git metadata is classification, not authentication. Always
+        # inspect portable authority without consuming it, then discard any
+        # one-shot or permission-lowering decision before composition. This
+        # prevents a forged repository identity from inheriting an allow/warn
+        # or burning reusable one-shot authority belonging to another clone.
+        portable_preview = _portable_lookup_without_permission_elevation(
+            super().resolve_policy_decision_lookup(
                 harness,
                 artifact_id,
                 artifact_hash=artifact_hash,
@@ -107,12 +125,12 @@ class StorePortableProjectMemoryMixin:
                 runtime_exact_match_context=runtime_exact_match_context,
                 consume_one_shot=False,
             )
-            return _most_restrictive_policy_lookup([local_preview, portable_preview])
+        )
+        normalized_workspace = workspace.strip() if isinstance(workspace, str) else None
+        if portable_workspace == normalized_workspace:
+            return portable_preview
 
-        # Both selectors describe the same attempted operation. Consume any
-        # matching one-shot authority on both selectors before composing the
-        # result so an equal or weaker approval cannot leak into a later action.
-        live_local = super().resolve_policy_decision_lookup(
+        local_lookup = super().resolve_policy_decision_lookup(
             harness,
             artifact_id,
             artifact_hash=artifact_hash,
@@ -120,19 +138,9 @@ class StorePortableProjectMemoryMixin:
             publisher=publisher,
             now=now,
             runtime_exact_match_context=runtime_exact_match_context,
-            consume_one_shot=True,
+            consume_one_shot=consume_one_shot,
         )
-        live_portable = super().resolve_policy_decision_lookup(
-            harness,
-            artifact_id,
-            artifact_hash=artifact_hash,
-            workspace=portable_workspace,
-            publisher=publisher,
-            now=now,
-            runtime_exact_match_context=runtime_exact_match_context,
-            consume_one_shot=True,
-        )
-        return _most_restrictive_policy_lookup([live_local, live_portable])
+        return _most_restrictive_policy_lookup([local_lookup, portable_preview])
 
     @staticmethod
     def _portable_project_workspace(workspace: str | None) -> str | None:

@@ -1,8 +1,10 @@
 """Portable project identity for cross-device Guard decision memory.
 
 Project-scoped memory must not depend on where a repository is cloned on one
-machine. This module derives an opaque identity from Git repository metadata
-while keeping local filesystem paths out of the identity itself.
+machine. This module derives an opaque classification from Git repository
+metadata while keeping local filesystem paths out of the identity itself.
+Repository-controlled metadata is not an authentication boundary; callers must
+never use the identity alone to grant permissive authority.
 """
 
 from __future__ import annotations
@@ -60,16 +62,21 @@ def portable_project_identity_revision(workspace: str | Path | None) -> int | No
 
 
 def resolve_portable_project_identity(workspace: str | Path | None) -> str | None:
-    """Return a stable opaque identity for a Git project with verified clone provenance.
+    """Return a stable opaque classification for a conventional Git project.
 
     The identity is stable across clone locations when the clones share the
-    same canonical origin remote. Guard also requires the repository's initial
-    HEAD reflog to attest that Git cloned the repository from that same
-    canonical remote. A mutable ``origin`` URL by itself is never enough to
-    inherit portable allow authority. Discovery reads Git metadata directly and
-    never launches a subprocess, so Guard's live enforcement path keeps its
-    block-before-subprocess invariant. Repositories without verifiable clone
-    provenance fail closed to existing local-only project scope.
+    same canonical origin remote. The initial HEAD reflog is used only as a
+    consistency signal that the configured origin matches the clone metadata;
+    both files are repository-controlled and therefore do not authenticate the
+    workspace. Permission-bearing callers must independently prevent portable
+    identity from elevating authority. Discovery reads Git metadata directly
+    and never launches a subprocess, preserving Guard's live enforcement
+    block-before-subprocess invariant.
+
+    Linked-worktree/external ``gitdir`` layouts deliberately fail closed here.
+    A workspace-local ``.git`` directory is required so an unrelated workspace
+    cannot point at another readable repository's metadata and inherit its
+    portable selector.
     """
     workspace_path = _workspace_path(workspace)
     if workspace_path is None:
@@ -81,7 +88,7 @@ def resolve_portable_project_identity(workspace: str | Path | None) -> str | Non
     repository_root, config_path, provenance_logs = repository
     remote = _read_origin_remote(config_path)
     anchor = _canonical_remote(remote)
-    if anchor is None or _verified_clone_remote_anchor(provenance_logs) != anchor:
+    if anchor is None or _clone_remote_anchor(provenance_logs) != anchor:
         return None
 
     relative_workspace = _relative_workspace(workspace_path, repository_root)
@@ -123,49 +130,15 @@ def _discover_git_repository(workspace: Path) -> tuple[Path, Path, tuple[Path, .
     current = workspace if workspace.is_dir() else workspace.parent
     for repository_root in (current, *current.parents):
         marker = repository_root / ".git"
-        if marker.is_dir():
-            git_dir = marker
-        elif marker.is_file():
-            git_dir = _read_gitdir_pointer(marker)
-            if git_dir is None:
-                return None
-        else:
+        if marker.is_file():
+            # A gitdir pointer can target metadata owned by an unrelated
+            # workspace. Portable identity is optional, so fail closed rather
+            # than treating external Git metadata as project authority.
+            return None
+        if not marker.is_dir():
             continue
-        common_dir = _read_common_git_dir(git_dir)
-        provenance_logs = tuple(dict.fromkeys((git_dir / "logs" / "HEAD", common_dir / "logs" / "HEAD")))
-        return repository_root, common_dir / "config", provenance_logs
+        return repository_root, marker / "config", (marker / "logs" / "HEAD",)
     return None
-
-
-def _read_gitdir_pointer(marker: Path) -> Path | None:
-    try:
-        value = marker.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeError):
-        return None
-    prefix = "gitdir:"
-    if not value.lower().startswith(prefix):
-        return None
-    raw_path = value[len(prefix) :].strip()
-    if not raw_path:
-        return None
-    candidate = Path(raw_path).expanduser()
-    if not candidate.is_absolute():
-        candidate = marker.parent / candidate
-    return candidate.resolve(strict=False)
-
-
-def _read_common_git_dir(git_dir: Path) -> Path:
-    commondir = git_dir / "commondir"
-    try:
-        raw_path = commondir.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeError):
-        return git_dir
-    if not raw_path:
-        return git_dir
-    candidate = Path(raw_path).expanduser()
-    if not candidate.is_absolute():
-        candidate = git_dir / candidate
-    return candidate.resolve(strict=False)
 
 
 def _read_origin_remote(config_path: Path) -> str | None:
@@ -185,8 +158,8 @@ def _read_origin_remote(config_path: Path) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _verified_clone_remote_anchor(log_paths: tuple[Path, ...]) -> str | None:
-    """Return the canonical remote attested by Git's initial clone reflog entry."""
+def _clone_remote_anchor(log_paths: tuple[Path, ...]) -> str | None:
+    """Return the canonical remote recorded by Git's initial clone reflog entry."""
     for log_path in log_paths:
         try:
             if log_path.stat().st_size > _GIT_REFLOG_MAX_BYTES:
