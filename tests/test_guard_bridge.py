@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -116,10 +115,10 @@ def test_webhook_backend_rejects_unsafe_urls(scheme: str, host: str, path: str):
 def test_webhook_backend_redacts_artifact_details_by_default(monkeypatch):
     backend = WebhookBackend("https://hooks.example.test/guard")
     request = _build_pending_request()
-    post_calls: list[tuple[str, bytes, dict[str, str], int]] = []
+    post_calls: list[tuple[str, dict[str, object], int]] = []
 
-    def fake_post(url: str, *, data: bytes, headers: dict[str, str], timeout: int):
-        post_calls.append((url, data, headers, timeout))
+    def fake_post(url: str, *, json: dict[str, object], timeout: int):
+        post_calls.append((url, json, timeout))
         return SimpleNamespace(status_code=200)
 
     monkeypatch.setattr(
@@ -131,15 +130,16 @@ def test_webhook_backend_redacts_artifact_details_by_default(monkeypatch):
     sent = backend.send_notification(request, "raw notification with artifact details")
 
     assert sent is True
-    assert len(post_calls) == 1
-    url, body, headers, timeout = post_calls[0]
-    assert url == "https://hooks.example.test/guard"
-    assert json.loads(body) == {
-        "text": "HOL Guard approval pending. Review locally to see artifact details.",
-        "request_id": "req-bridge",
-    }
-    assert headers == {"Content-Type": "application/json"}
-    assert timeout == 10
+    assert post_calls == [
+        (
+            "https://hooks.example.test/guard",
+            {
+                "text": "HOL Guard approval pending. Review locally to see artifact details.",
+                "request_id": "req-bridge",
+            },
+            10,
+        )
+    ]
 
 
 def test_guard_bridge_cli_can_opt_into_artifact_details(tmp_path, monkeypatch):
