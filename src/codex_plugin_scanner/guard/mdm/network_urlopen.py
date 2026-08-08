@@ -7,6 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
+from email.message import Message
 from typing import Protocol
 
 from urllib3 import ProxyManager
@@ -70,6 +71,13 @@ class _UrllibResponse:
         traceback: object | None,
     ) -> None:
         self.close()
+
+
+def _message_headers(headers: Mapping[str, str]) -> Message:
+    message = Message()
+    for name, value in headers.items():
+        message[name] = value
+    return message
 
 
 def _request_parts(
@@ -147,7 +155,7 @@ class ManagedUrlOpener:
         if response.status >= 400 or (not self._allow_redirects and 300 <= response.status < 400):
             status = response.status
             reason = str(response.reason or "managed_http_error")
-            response_headers = response.headers
+            response_headers = _message_headers(response.headers)
             response.close()
             raise urllib.error.HTTPError(
                 url,
