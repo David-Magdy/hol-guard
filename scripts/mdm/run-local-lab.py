@@ -95,6 +95,7 @@ SUITES = (
             "tests/test_guard_mdm_bridge_network.py",
             "tests/test_guard_mdm_network_policy_contract.py",
             "tests/test_guard_mdm_network_cli.py",
+            "tests/test_guard_mdm_network_cli_process.py",
             "tests/test_guard_mdm_endpoint_manifest.py",
             "tests/test_guard_mdm_policy.py",
             "tests/test_guard_mdm_offline_lifecycle.py",
