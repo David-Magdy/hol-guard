@@ -112,12 +112,15 @@ def _proxy_diagnostic(policy: ManagedNetworkPolicy, endpoint_scheme: str) -> tup
 
 
 def _response_date_header(response: object) -> str | None:
+    headers: object
     if isinstance(response, urllib.error.HTTPError):
-        return response.headers.get("Date")
-    headers = getattr(response, "headers", None)
-    if isinstance(headers, Message):
-        return headers.get("Date")
-    return None
+        headers = response.headers
+    else:
+        headers = getattr(response, "headers", None)
+    if not isinstance(headers, Message):
+        return None
+    value = headers.get("Date")
+    return value if isinstance(value, str) else None
 
 
 def _clock_diagnostic(response: object) -> tuple[ClockDiagnosticState, int | None]:
