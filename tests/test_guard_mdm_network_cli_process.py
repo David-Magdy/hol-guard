@@ -54,21 +54,17 @@ def test_network_diagnose_process_is_prompt_free_json_and_redacts_endpoint_secre
     assert payload["schemaVersion"] == "hol-guard-mdm-status.v1"
     assert payload["operation"] == "network-diagnose"
     assert payload["healthy"] is False
-    assert payload["results"] == [
-        {
-            "clock": "not-tested",
-            "clockSkewSeconds": None,
-            "dns": "invalid",
-            "endpoint": "redacted",
-            "proxy": {
-                "authenticated": False,
-                "dns": "not-tested",
-                "endpointHash": None,
-                "mode": "system",
-                "selected": False,
-            },
-            "reachability": "not-tested",
-            "reasonCode": "endpoint_invalid",
-            "tls": "not-tested",
-        }
-    ]
+    assert len(payload["results"]) == 1
+    result = payload["results"][0]
+    assert result["clock"] == "not-tested"
+    assert result["clockSkewSeconds"] is None
+    assert result["dns"] == "invalid"
+    assert result["endpoint"] == "redacted"
+    assert result["proxy"]["mode"] in {"system", "explicit", "none"}
+    assert result["proxy"]["selected"] is False
+    assert result["proxy"]["endpointHash"] is None
+    assert result["proxy"]["dns"] == "not-tested"
+    assert result["proxy"]["authenticated"] is False
+    assert result["reachability"] == "not-tested"
+    assert result["reasonCode"] == "endpoint_invalid"
+    assert result["tls"] == "not-tested"

@@ -337,6 +337,7 @@ def managed_requests_session(policy: ManagedNetworkPolicy | None = None) -> requ
             if credentials is not None:
                 proxy_authorization = basic_proxy_authorization(credentials)
     if context is not None or proxy_authorization is not None:
+        session.mount("http://", _ManagedHTTPAdapter(context, proxy_authorization))
         session.mount("https://", _ManagedHTTPAdapter(context, proxy_authorization))
     session.verify = True
     return session

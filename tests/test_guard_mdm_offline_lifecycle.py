@@ -34,6 +34,13 @@ _NETWORK_COMMAND_PATTERN = re.compile(
     r"\bStart-BitsTransfer\b|\bbitsadmin\b)"
 )
 _ALLOWED_STATIC_URLS = ("http://wixtoolset.org/schemas/v4/wxs",)
+_FORBIDDEN_GUARD_NETWORK_PREFIX = "codex_plugin_scanner.guard.mdm.network"
+
+
+def _is_forbidden_guard_network_import(module: str, *, relative: bool = False) -> bool:
+    if module.startswith(_FORBIDDEN_GUARD_NETWORK_PREFIX):
+        return True
+    return relative and (module == "network" or module.startswith("network_"))
 
 
 def test_native_install_upgrade_rollback_and_uninstall_scripts_have_no_network_dependency() -> None:
@@ -46,7 +53,6 @@ def test_native_install_upgrade_rollback_and_uninstall_scripts_have_no_network_d
 
 def test_mdm_lifecycle_modules_do_not_import_network_clients() -> None:
     forbidden_roots = {"http", "requests", "socket", "urllib"}
-    forbidden_guard_module = "codex_plugin_scanner.guard.mdm.network"
 
     for path in _OFFLINE_LIFECYCLE_MODULES:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -54,10 +60,11 @@ def test_mdm_lifecycle_modules_do_not_import_network_clients() -> None:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     assert alias.name.split(".", 1)[0] not in forbidden_roots, (path, alias.name)
+                    assert not _is_forbidden_guard_network_import(alias.name), (path, alias.name)
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 assert module.split(".", 1)[0] not in forbidden_roots, (path, module)
-                assert module != forbidden_guard_module and not module.endswith(".mdm.network"), (path, module)
+                assert not _is_forbidden_guard_network_import(module, relative=node.level > 0), (path, module)
 
 
 def test_native_package_builders_stage_runtime_before_packaging() -> None:

@@ -16,6 +16,7 @@ from email.message import Message
 from pathlib import Path
 from typing import IO, Final, cast
 
+from ..mdm.contracts import ManagedNetworkPolicy
 from ..mdm.network import active_network_policy, managed_opener
 from ..mdm.network_urlopen import ManagedOpener
 from .effect_contract import (
@@ -92,7 +93,11 @@ def try_read_verified_public_github_pull_request(
         normalized_fields = _validate_request(owner, repository, pull_number, fields)
         source_digest = _source_digest()
         network_policy = active_network_policy()
-        network_policy_digest = verified_read_digest(network_policy.to_dict())
+        ca_bundle_digest = _ca_bundle_digest(network_policy)
+        network_policy_identity = network_policy.to_dict()
+        if ca_bundle_digest is not None:
+            network_policy_identity["caBundleSha256"] = ca_bundle_digest
+        network_policy_digest = verified_read_digest(network_policy_identity)
         opener = managed_opener(network_policy, redirect_handler=_RejectRedirects())
         full_name = f"{owner}/{repository}"
         repository_url = f"{_API_ORIGIN}/repos/{owner}/{repository}"
@@ -100,20 +105,20 @@ def try_read_verified_public_github_pull_request(
         repository_payload = _public_get_json(
             repository_url,
             timeout_seconds=bounded_timeout,
-            tls_context=opener,
+            opener=opener,
         )
         if repository_payload.get("private") is not False:
             return None
         observed_name = repository_payload.get("full_name")
         if not isinstance(observed_name, str) or observed_name.casefold() != full_name.casefold():
             return None
-        pull_payload = _public_get_json(pull_url, timeout_seconds=bounded_timeout, tls_context=opener)
+        pull_payload = _public_get_json(pull_url, timeout_seconds=bounded_timeout, opener=opener)
         if pull_payload.get("number") != pull_number or not _pull_belongs_to_repository(pull_payload, full_name):
             return None
         if not _valid_pull_fields(pull_payload):
             return None
         output = {field: pull_payload.get(field) for field in normalized_fields}
-        if _source_digest() != source_digest:
+        if _source_digest() != source_digest or _ca_bundle_digest(network_policy) != ca_bundle_digest:
             return None
     except (OSError, RuntimeError, TypeError, ValueError, urllib.error.URLError):
         return None
@@ -161,7 +166,7 @@ def _public_get_json(
     url: str,
     *,
     timeout_seconds: float,
-    tls_context: ManagedOpener,
+    opener: ManagedOpener,
 ) -> dict[str, object]:
     if not url.startswith(f"{_API_ORIGIN}/") or "?" in url or "#" in url:
         raise ValueError("GitHub URL must use the exact public API origin")
@@ -174,7 +179,7 @@ def _public_get_json(
         },
         method="GET",
     )
-    response = tls_context.open(request, timeout=timeout_seconds)
+    response = opener.open(request, timeout=timeout_seconds)
     try:
         if response.status != 200 or response.geturl() != url:
             raise ValueError("GitHub public read did not return the exact resource")
@@ -296,6 +301,13 @@ def _decision(proof: PositiveProof) -> EffectDecision:
 
 def _source_digest() -> str:
     _payload, digest = _bounded_identity_file(Path(__file__))
+    return digest
+
+
+def _ca_bundle_digest(policy: ManagedNetworkPolicy) -> str | None:
+    if policy.ca_bundle_path is None:
+        return None
+    _payload, digest = _bounded_identity_file(Path(policy.ca_bundle_path))
     return digest
 
 

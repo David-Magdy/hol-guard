@@ -134,9 +134,9 @@ def _failed_tests(output: str) -> tuple[str, ...]:
         line = raw_line.strip()
         if not (line.startswith("FAILED tests/") or line.startswith("ERROR tests/")):
             continue
-        node_id = line.split(" - ", 1)[0].split(" ", 1)[1]
+        node_id = line.split(" - ", 1)[0].split(" ", 1)[1][:200]
         if node_id not in failures:
-            failures.append(node_id[:200])
+            failures.append(node_id)
         if len(failures) == 20:
             break
     return tuple(failures)

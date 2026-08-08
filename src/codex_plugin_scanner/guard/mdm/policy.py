@@ -184,7 +184,7 @@ def parse_managed_policy(payload: object) -> ManagedPolicy:
     if unknown_network:
         raise ManagedPolicyError(f"unknown network keys: {', '.join(sorted(unknown_network))}")
     proxy_mode = network_raw.get("proxyMode", "system")
-    if proxy_mode not in {"system", "explicit", "none"}:
+    if not isinstance(proxy_mode, str) or proxy_mode not in {"system", "explicit", "none"}:
         raise ManagedPolicyError("network.proxyMode is invalid")
     proxy_mode = cast(ProxyMode, proxy_mode)
     proxy_url = _optional_proxy_url(network_raw.get("proxyUrl"))

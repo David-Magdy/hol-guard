@@ -140,16 +140,27 @@ class ManagedUrlOpener:
         proxy_url = self._proxy_urls.get(scheme)
         if proxy_url is None:
             return self._direct_opener.open(request, timeout=timeout)
+        manager = self._manager(proxy_url)
         try:
-            response = self._manager(proxy_url).request(
-                method,
-                url,
-                body=body,
-                headers=headers,
-                preload_content=False,
-                redirect=self._allow_redirects,
-                timeout=timeout,
-            )
+            if timeout is None:
+                response = manager.request(
+                    method,
+                    url,
+                    body=body,
+                    headers=headers,
+                    preload_content=False,
+                    redirect=self._allow_redirects,
+                )
+            else:
+                response = manager.request(
+                    method,
+                    url,
+                    body=body,
+                    headers=headers,
+                    preload_content=False,
+                    redirect=self._allow_redirects,
+                    timeout=timeout,
+                )
         except Urllib3HTTPError as exc:
             raise urllib.error.URLError("managed_proxy_request_failed") from exc
         if response.status >= 400 or (not self._allow_redirects and 300 <= response.status < 400):

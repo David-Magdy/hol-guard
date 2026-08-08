@@ -87,5 +87,12 @@ def test_network_diagnose_exception_is_redacted_and_machine_readable(
     payload = json.loads(output)
 
     assert exit_code == 2
+    _status_validator().validate(payload)
     assert payload["reasonCodes"] == ["network_diagnose_failed"]
+    assert payload["managedPolicy"] == {
+        "status": "invalid",
+        "source": "redacted",
+        "reasonCode": "network_diagnose_failed",
+    }
+    assert payload["results"] == []
     assert secret not in output

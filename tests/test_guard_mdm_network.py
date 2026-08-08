@@ -11,8 +11,8 @@ from email.utils import format_datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-import certifi
 import pytest
+from requests.certs import where as requests_ca_bundle
 
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager
 from codex_plugin_scanner.guard.mdm import network_diagnostics as diagnostics_module
@@ -58,6 +58,8 @@ def test_explicit_proxy_is_applied_without_credentials(monkeypatch: pytest.Monke
     assert "Proxy-Authorization" not in session.headers
     assert session.verify is True
     assert session.trust_env is False
+    assert session.adapters["http://"].__class__.__name__ == "_ManagedHTTPAdapter"
+    assert session.adapters["https://"].__class__.__name__ == "_ManagedHTTPAdapter"
 
 
 @pytest.mark.parametrize(
@@ -111,8 +113,9 @@ def test_authenticated_proxy_uses_os_keyring_without_secret_leakage(monkeypatch:
     assert password not in public
     assert "proxy.example" not in json.dumps(result.to_dict(), sort_keys=True)
     assert "Proxy-Authorization" not in session.headers
-    proxy_headers = session.adapters["https://"].proxy_headers(session.proxies["https"])
-    assert proxy_headers["Proxy-Authorization"].startswith("Basic ")
+    for prefix in ("http://", "https://"):
+        proxy_headers = session.adapters[prefix].proxy_headers(session.proxies[prefix.removesuffix("://")])
+        assert proxy_headers["Proxy-Authorization"].startswith("Basic ")
 
 
 def test_invalid_keyring_proxy_credentials_fail_with_redacted_reason(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,18 +143,18 @@ def test_private_ca_must_be_an_absolute_trusted_file(tmp_path: Path) -> None:
 
     if os.name != "nt":
         writable = tmp_path / "writable.pem"
-        writable.write_text(Path(certifi.where()).read_text(encoding="utf-8"), encoding="utf-8")
+        writable.write_text(Path(requests_ca_bundle()).read_text(encoding="utf-8"), encoding="utf-8")
         writable.chmod(0o666)
         with pytest.raises(ManagedNetworkError, match="managed_ca_bundle_invalid"):
             managed_ssl_context(ManagedNetworkPolicy(ca_bundle_path=str(writable)))
 
 
 def test_private_ca_is_added_without_replacing_public_trust() -> None:
-    session = managed_requests_session(ManagedNetworkPolicy(ca_bundle_path=certifi.where()))
+    session = managed_requests_session(ManagedNetworkPolicy(ca_bundle_path=requests_ca_bundle()))
 
     assert session.verify is True
     assert session.adapters["https://"].__class__.__name__ == "_ManagedHTTPAdapter"
-    context = managed_ssl_context(ManagedNetworkPolicy(ca_bundle_path=certifi.where()))
+    context = managed_ssl_context(ManagedNetworkPolicy(ca_bundle_path=requests_ca_bundle()))
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
 
@@ -277,14 +280,12 @@ def test_proxy_routing_can_succeed_when_destination_dns_is_unavailable_locally(
 
 
 def test_diagnostic_reports_proxy_resolution_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = 0
-
-    def resolve(*_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
+    def resolve(host: str, *_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
+        if host == "guard.example":
             return [(object(),)]
-        raise diagnostics_module.socket.gaierror("proxy detail")
+        if host == "proxy.example":
+            raise diagnostics_module.socket.gaierror("proxy detail")
+        raise AssertionError(host)
 
     monkeypatch.setattr(transport_module, "read_proxy_credential_record", lambda _key: None)
     monkeypatch.setattr(diagnostics_module.socket, "getaddrinfo", resolve)

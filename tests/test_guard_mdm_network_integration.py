@@ -124,8 +124,8 @@ class _ProxyHandler(socketserver.StreamRequestHandler):
             self.wfile.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             self.wfile.flush()
             state.successful_connects += 1
-            self.connection.setblocking(False)
-            upstream.setblocking(False)
+            self.connection.settimeout(5)
+            upstream.settimeout(5)
             sockets = (self.connection, upstream)
             while True:
                 readable, _, _ = select.select(sockets, (), (), 5)
@@ -134,7 +134,7 @@ class _ProxyHandler(socketserver.StreamRequestHandler):
                 for source in readable:
                     try:
                         data = source.recv(65536)
-                    except (BlockingIOError, ssl.SSLWantReadError):
+                    except (TimeoutError, ssl.SSLWantReadError):
                         continue
                     if not data:
                         return

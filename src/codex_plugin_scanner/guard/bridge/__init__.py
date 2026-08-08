@@ -22,6 +22,8 @@ from ..mdm.network import managed_requests_session
 from ..store import GuardStore
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_DAEMON_SESSION = requests.Session()
+_DAEMON_SESSION.trust_env = False
 
 
 @dataclass
@@ -270,7 +272,7 @@ class GuardBridge:
             print("[Guard Bridge] No daemon auth token found - skipping poll.", file=sys.stderr)
             return []
         try:
-            resp = requests.get(
+            resp = _DAEMON_SESSION.get(
                 f"{guard_url}/v1/requests",
                 headers={"X-Guard-Token": auth_token},
                 timeout=10,
@@ -291,7 +293,7 @@ class GuardBridge:
         if auth_token is None:
             return False
         try:
-            response = requests.post(
+            response = _DAEMON_SESSION.post(
                 f"{guard_url}/v1/requests/{request_id}/{action_path}",
                 json={
                     "scope": "artifact",

@@ -89,6 +89,8 @@ def test_guard_runtime_contains_no_tls_verification_bypass() -> None:
                         continue
                     if target.attr == "check_hostname" and isinstance(value, ast.Constant) and value.value is False:
                         violations.append(f"{path}: check_hostname=False")
+                    if target.attr == "verify" and isinstance(value, ast.Constant) and value.value is False:
+                        violations.append(f"{path}: verify=False")
                     if (
                         target.attr == "verify_mode"
                         and isinstance(value, ast.Attribute)

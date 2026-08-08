@@ -6,7 +6,7 @@ import ssl
 import sys
 from pathlib import Path
 
-import certifi
+from requests.certs import where as requests_ca_bundle
 
 
 class ManagedTrustError(RuntimeError):
@@ -17,7 +17,7 @@ def _load_public_and_system_trust(context: ssl.SSLContext) -> None:
     """Load public and platform roots without honoring shell CA overrides."""
 
     try:
-        public_bundle = Path(certifi.where()).resolve(strict=True)
+        public_bundle = Path(requests_ca_bundle()).resolve(strict=True)
         context.load_verify_locations(cafile=str(public_bundle))
     except (OSError, ssl.SSLError) as exc:
         raise ManagedTrustError("managed_system_trust_invalid") from exc

@@ -95,7 +95,7 @@ def _run_guard_mdm_command(
         elif command == "continuity-provision":
             payload = provision_machine_continuity()
         elif command == "status" and args.scope == "machine":
-            root = Path(args.machine_root).resolve() if getattr(args, "machine_root", None) else None
+            root = Path(str(args.machine_root)).resolve() if getattr(args, "machine_root", None) else None
             payload = machine_status(machine_root=root)
         else:
             if command == "status" and not getattr(args, "home", None):
@@ -137,6 +137,13 @@ def _run_guard_mdm_command(
             "healthy": False,
             "reasonCodes": [reason_code],
         }
+        if force_json:
+            payload["managedPolicy"] = {
+                "status": "invalid",
+                "source": "redacted",
+                "reasonCode": reason_code,
+            }
+            payload["results"] = []
         _emit_mdm(payload, bool(args.json) or force_json)
         return 2
     _emit_mdm(payload, bool(args.json) or force_json)

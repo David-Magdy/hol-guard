@@ -83,6 +83,16 @@ def test_explicit_proxy_requires_url_in_schema_and_runtime() -> None:
         parse_managed_policy(payload)
 
 
+@pytest.mark.parametrize("proxy_mode", ([], {}))
+def test_proxy_mode_must_be_a_valid_string(proxy_mode: object) -> None:
+    payload = _payload({"proxyMode": proxy_mode})
+
+    with pytest.raises(ValidationError):
+        _validator().validate(payload)
+    with pytest.raises(ManagedPolicyError, match=r"network\.proxyMode is invalid"):
+        parse_managed_policy(payload)
+
+
 def test_unknown_network_keys_fail_runtime_validation() -> None:
     payload = _payload({"proxyMode": "none", "credential": "must-not-be-accepted"})
 
@@ -95,5 +105,7 @@ def test_unknown_network_keys_fail_runtime_validation() -> None:
 def test_managed_ca_bundle_path_must_be_absolute() -> None:
     payload = _payload({"proxyMode": "none", "caBundlePath": "relative/private-ca.pem"})
 
+    with pytest.raises(ValidationError):
+        _validator().validate(payload)
     with pytest.raises(ManagedPolicyError, match=r"network\.caBundlePath must be absolute"):
         parse_managed_policy(payload)
