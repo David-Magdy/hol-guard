@@ -12,10 +12,12 @@ import stat
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from email.message import Message
 from pathlib import Path
-from typing import Final, Protocol, cast
+from typing import Final, IO, cast
 
 from ..mdm.network import active_network_policy, managed_opener
+from ..mdm.network_urlopen import ManagedOpener
 from .effect_contract import (
     ContainmentRequirement,
     DecisionBasis,
@@ -58,21 +60,6 @@ _REQUIREMENTS: Final = frozenset(
         ProofRequirement.EXPECTED_EFFECTS,
     }
 )
-
-
-class _Headers(Protocol):
-    def get(self, name: str, default: str | None = None) -> str | None: ...
-
-
-class _UrlResponse(Protocol):
-    status: int
-    headers: _Headers
-
-    def geturl(self) -> str: ...
-
-    def read(self, amount: int) -> bytes: ...
-
-    def close(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,7 +161,7 @@ def _public_get_json(
     url: str,
     *,
     timeout_seconds: float,
-    tls_context: urllib.request.OpenerDirector,
+    tls_context: ManagedOpener,
 ) -> dict[str, object]:
     if not url.startswith(f"{_API_ORIGIN}/") or "?" in url or "#" in url:
         raise ValueError("GitHub URL must use the exact public API origin")
@@ -187,8 +174,7 @@ def _public_get_json(
         },
         method="GET",
     )
-    raw_response = tls_context.open(request, timeout=timeout_seconds)  # pyright: ignore[reportAny]
-    response = cast(_UrlResponse, raw_response)
+    response = tls_context.open(request, timeout=timeout_seconds)
     try:
         if response.status != 200 or response.geturl() != url:
             raise ValueError("GitHub public read did not return the exact resource")
@@ -207,15 +193,15 @@ def _public_get_json(
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(  # pyright: ignore[reportImplicitOverride]
+    def redirect_request(
         self,
         req: urllib.request.Request,
-        fp: object,
+        fp: IO[bytes],
         code: int,
         msg: str,
-        headers: object,
+        headers: Message,
         newurl: str,
-    ) -> None:
+    ) -> urllib.request.Request | None:
         del req, fp, code, msg, headers, newurl
         return None
 
