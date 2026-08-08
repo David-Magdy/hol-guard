@@ -133,14 +133,22 @@ assert(
   "SCSR170-C: issue focus avoids repeating hero posture title",
 );
 
-const pairedPartialIssues = resolveSupplyChainIssues({
+const pairedPartialSnapshot: GuardRuntimeSnapshot = {
   ...localPartialSnapshot,
   cloud_state: "paired_active",
   cloud_state_label: "Connected",
-});
+};
+const pairedPartialIssues = resolveSupplyChainIssues(pairedPartialSnapshot);
 assert(
   pairedPartialIssues.length === 1 && pairedPartialIssues[0]?.id === "partial_protection",
   "SCSR170-D: paired cloud skips connect issue",
+);
+const singleIssueHero = resolveSupplyChainWorkspaceHero(pairedPartialSnapshot, {
+  openIssueCount: pairedPartialIssues.length,
+});
+assert(
+  singleIssueHero.detail.includes("1 setup step needs attention"),
+  "SCSR170-E: singular setup-step summary uses singular verb agreement",
 );
 
 const restartRequiredSnapshot: GuardRuntimeSnapshot = {
@@ -160,7 +168,7 @@ const restartRequiredSnapshot: GuardRuntimeSnapshot = {
 const restartRequiredIssues = resolveSupplyChainIssues(restartRequiredSnapshot);
 assert(
   restartRequiredIssues.length === 0,
-  "SCSR170-E: staged shell restart is not reported as another repairable Fix all issue",
+  "SCSR170-F: staged shell restart is not reported as another repairable Fix all issue",
 );
 const restartRequiredHero = resolveSupplyChainWorkspaceHero(restartRequiredSnapshot, {
   openIssueCount: restartRequiredIssues.length,
@@ -169,7 +177,7 @@ assert(
   restartRequiredHero.protectionStatus === "staged" &&
     restartRequiredHero.title === "Finish setup in a new terminal" &&
     restartRequiredHero.detail.includes("Open a new terminal or restart AI apps"),
-  "SCSR170-F: staged repair completion gives the non-repair restart instruction",
+  "SCSR170-G: staged repair completion gives the non-repair restart instruction",
 );
 
 const mixedRestartSnapshot: GuardRuntimeSnapshot = {
@@ -180,7 +188,7 @@ const mixedRestartSnapshot: GuardRuntimeSnapshot = {
 const mixedRestartIssues = resolveSupplyChainIssues(mixedRestartSnapshot);
 assert(
   mixedRestartIssues.some((issue) => issue.id === "cloud_connect"),
-  "SCSR170-G: mixed staged state keeps unrelated actionable issues",
+  "SCSR170-H: mixed staged state keeps unrelated actionable issues",
 );
 const mixedRestartHero = resolveSupplyChainWorkspaceHero(mixedRestartSnapshot, {
   openIssueCount: mixedRestartIssues.length,
@@ -188,7 +196,7 @@ const mixedRestartHero = resolveSupplyChainWorkspaceHero(mixedRestartSnapshot, {
 assert(
   mixedRestartHero.title === "Work through the steps below" &&
     mixedRestartHero.detail.includes("Open a new terminal or restart AI apps"),
-  "SCSR170-H: mixed staged state preserves restart guidance in resolved state",
+  "SCSR170-I: mixed staged state preserves restart guidance in resolved state",
 );
 const mixedRecoveryMarkup = renderToStaticMarkup(
   createElement(SupplyChainRecovery, {
@@ -201,7 +209,7 @@ const mixedRecoveryMarkup = renderToStaticMarkup(
 assert(
   mixedRecoveryMarkup.includes('data-testid="supply-chain-restart-guidance"') &&
     mixedRecoveryMarkup.includes("Open a new terminal or restart AI apps"),
-  "SCSR170-I: mixed recovery UI visibly renders staged restart guidance",
+  "SCSR170-J: mixed recovery UI visibly renders staged restart guidance",
 );
 
 const compactHero = resolveSupplyChainWorkspaceHero(localPartialSnapshot, {
@@ -209,11 +217,11 @@ const compactHero = resolveSupplyChainWorkspaceHero(localPartialSnapshot, {
 });
 assert(
   compactHero.title === "Work through the steps below",
-  "SCSR170-J: compact hero defers detail to issue carousel",
+  "SCSR170-K: compact hero defers detail to issue carousel",
 );
 assert(
-  compactHero.detail.includes("2 setup steps"),
-  "SCSR170-K: compact hero summarizes open issue count",
+  compactHero.detail.includes("2 setup steps need attention"),
+  "SCSR170-L: plural setup-step summary uses plural verb agreement",
 );
 
 const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
@@ -239,7 +247,7 @@ const staleIssues = resolveSupplyChainIssues({
 });
 assert(
   staleIssues.some((issue) => issue.id === "stale_intel" && issue.action.kind === "firewall_audit"),
-  "SCSR170-L: stale intel issue routes to workspace audit",
+  "SCSR170-M: stale intel issue routes to workspace audit",
 );
 
 console.log("supply-chain-issues.test.ts: all assertions passed");
