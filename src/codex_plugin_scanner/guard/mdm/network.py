@@ -333,13 +333,19 @@ def managed_ssl_context(policy: ManagedNetworkPolicy | None = None) -> ssl.SSLCo
         raise ManagedNetworkError(str(exc)) from exc
 
 
-def managed_opener(policy: ManagedNetworkPolicy | None = None) -> urllib.request.OpenerDirector:
+def managed_opener(
+    policy: ManagedNetworkPolicy | None = None,
+    *,
+    redirect_handler: urllib.request.HTTPRedirectHandler | None = None,
+) -> urllib.request.OpenerDirector:
     resolved = policy or active_network_policy()
     proxies = _proxy_map(resolved)
     handlers: list[urllib.request.BaseHandler] = [
         urllib.request.ProxyHandler(proxies),
         urllib.request.HTTPSHandler(context=managed_ssl_context(resolved)),
     ]
+    if redirect_handler is not None:
+        handlers.append(redirect_handler)
     if resolved.proxy_mode == "explicit":
         selected = proxies.get("https")
         if selected is not None:
