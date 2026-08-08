@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-from codex_plugin_scanner.guard.mdm import network as network_module
+from codex_plugin_scanner.guard.mdm import network_transport as transport_module
 from codex_plugin_scanner.guard.mdm.contracts import ManagedNetworkPolicy
 from codex_plugin_scanner.guard.mdm.network import diagnose_endpoint, managed_requests_session, managed_urlopen
 
@@ -274,7 +274,7 @@ def test_explicit_https_proxy_cannot_be_bypassed_by_no_proxy(
 ) -> None:
     monkeypatch.setenv("NO_PROXY", "*")
     monkeypatch.setenv("no_proxy", "*")
-    monkeypatch.setattr(network_module.keyring, "get_password", lambda _service, _key: None)
+    monkeypatch.setattr(transport_module, "read_proxy_credential_record", lambda _key: None)
     policy = ManagedNetworkPolicy(
         proxy_mode="explicit",
         proxy_url=network_lab.proxy_url,
@@ -293,7 +293,7 @@ def test_system_https_proxy_uses_real_proxy_tunnel(
 ) -> None:
     monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.delenv("no_proxy", raising=False)
-    monkeypatch.setattr(network_module, "platform_system_proxies", lambda: {"https": network_lab.proxy_url})
+    monkeypatch.setattr(transport_module, "platform_system_proxies", lambda: {"https": network_lab.proxy_url})
     policy = ManagedNetworkPolicy(proxy_mode="system", ca_bundle_path=str(network_lab.ca_bundle))
 
     with managed_urlopen(network_lab.target_url, timeout=5, policy=policy) as response:
@@ -313,9 +313,9 @@ def test_authenticated_proxy_uses_keyring_without_secret_in_public_state(
     monkeypatch.setenv("NO_PROXY", "*")
     monkeypatch.setenv("no_proxy", "*")
     monkeypatch.setattr(
-        network_module.keyring,
-        "get_password",
-        lambda _service, _key: json.dumps({"username": username, "password": password}),
+        transport_module,
+        "read_proxy_credential_record",
+        lambda _key: json.dumps({"username": username, "password": password}),
     )
     policy = ManagedNetworkPolicy(
         proxy_mode="explicit",
@@ -342,7 +342,7 @@ def test_real_proxy_outage_reports_redacted_failure(
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
         reservation.bind(("127.0.0.1", 0))
         unused_port = reservation.getsockname()[1]
-    monkeypatch.setattr(network_module.keyring, "get_password", lambda _service, _key: None)
+    monkeypatch.setattr(transport_module, "read_proxy_credential_record", lambda _key: None)
     policy = ManagedNetworkPolicy(
         proxy_mode="explicit",
         proxy_url=f"https://127.0.0.1:{unused_port}",
