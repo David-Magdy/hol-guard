@@ -74,7 +74,8 @@ class StorePortableProjectMemoryMixin:
     """Add restrictive portable Git project policy without weakening local scope."""
 
     def get_guard_operation_for_approval_request(
-        self, request_id: str
+        self,
+        request_id: str,
     ) -> dict[str, object] | None:
         operation = super().get_guard_operation_for_approval_request(request_id)
         if not isinstance(operation, dict):
