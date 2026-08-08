@@ -83,3 +83,5 @@ jobs:
               detail = exc.read(4096).decode("utf-8", errors="replace")
               raise SystemExit(f"Desktop Core feed dispatch returned HTTP {exc.code}: {detail}") from None
           PY
+
+# Low-privilege recovery wake: touching this workflow on main intentionally dispatches the feed.
