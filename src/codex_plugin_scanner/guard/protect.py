@@ -171,11 +171,15 @@ def build_protect_payload(
         return package_payload
     verdict = _observe_only_verdict(cached_verdict) if observe_mode else cached_verdict
     receipt = _build_install_receipt(request, verdict)
+    verdict_payload = verdict.to_dict()
+    if observe_mode and cached_verdict.blocking:
+        verdict_payload["observed_action"] = cached_verdict.action
+        verdict_payload["observe_mode"] = True
     payload: dict[str, object] = {
         "generated_at": now,
         "request": request.to_dict(),
         "targets": [target.to_dict() for target in request.targets],
-        "verdict": verdict.to_dict(),
+        "verdict": verdict_payload,
         "executed": False,
         "dry_run": dry_run,
         "receipt": receipt.to_dict(),
@@ -183,8 +187,6 @@ def build_protect_payload(
     }
     if observe_mode and cached_verdict.blocking:
         payload["observed_verdict"] = cached_verdict.to_dict()
-        payload["verdict"]["observed_action"] = cached_verdict.action
-        payload["verdict"]["observe_mode"] = True
     if verdict.blocking or dry_run:
         store.add_receipt(receipt)
         store.add_event(
