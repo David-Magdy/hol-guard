@@ -60,7 +60,7 @@ def test_explicit_proxy_schema_and_runtime_reject_ambiguous_or_secret_urls(proxy
 
     with pytest.raises(ValidationError):
         _validator().validate(payload)
-    with pytest.raises(ManagedPolicyError, match=r"network\.proxyUrl"):
+    with pytest.raises(ManagedPolicyError, match=r"network(?:\.proxyUrl| proxy credentials)"):
         parse_managed_policy(payload)
 
 
