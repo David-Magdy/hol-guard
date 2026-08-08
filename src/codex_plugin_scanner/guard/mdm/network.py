@@ -192,7 +192,7 @@ def _validated_proxy_url(value: str, *, require_https: bool, reason_code: str) -
     scheme = parsed.scheme.lower()
     if (require_https and scheme != "https") or (not require_https and scheme not in {"http", "https"}):
         raise ManagedNetworkError(reason_code)
-    if parsed.hostname is None or not parsed.netloc:
+    if parsed.hostname is None or not parsed.netloc or parsed.netloc.endswith(":") or port == 0:
         raise ManagedNetworkError(reason_code)
     if parsed.username is not None or parsed.password is not None:
         raise ManagedNetworkError("managed_proxy_credentials_forbidden")
