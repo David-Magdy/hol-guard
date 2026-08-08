@@ -84,6 +84,16 @@ def _optional_https_url(value: object, name: str) -> str | None:
     return url
 
 
+def _optional_proxy_url(value: object) -> str | None:
+    url = _optional_https_url(value, "network.proxyUrl")
+    if url is None:
+        return None
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.path not in {"", "/"} or parsed.netloc.endswith(":") or parsed.port == 0:
+        raise ManagedPolicyError("network.proxyUrl must be an absolute HTTPS proxy origin")
+    return url
+
+
 def _validate_settings(value: object) -> dict[str, object]:
     settings = dict(_expect_mapping(value, "settings"))
     try:
@@ -175,7 +185,7 @@ def parse_managed_policy(payload: object) -> ManagedPolicy:
     if proxy_mode not in {"system", "explicit", "none"}:
         raise ManagedPolicyError("network.proxyMode is invalid")
     proxy_mode = cast(ProxyMode, proxy_mode)
-    proxy_url = _optional_https_url(network_raw.get("proxyUrl"), "network.proxyUrl")
+    proxy_url = _optional_proxy_url(network_raw.get("proxyUrl"))
     if proxy_mode == "explicit" and proxy_url is None:
         raise ManagedPolicyError("network.proxyUrl is required for explicit proxy mode")
     if proxy_mode != "explicit" and proxy_url is not None:
