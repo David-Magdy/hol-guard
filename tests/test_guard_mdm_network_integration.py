@@ -213,6 +213,7 @@ def _write_certificates(tmp_path: Path) -> tuple[Path, Path, Path]:
 def network_lab(tmp_path: Path) -> Iterator[_NetworkLab]:
     ca_path, cert_path, key_path = _write_certificates(tmp_path)
     server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.minimum_version = ssl.TLSVersion.TLSv1_2
     server_context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
 
     origin = ThreadingHTTPServer(("127.0.0.1", 0), _OriginHandler)
