@@ -14,7 +14,7 @@ import urllib.request
 from dataclasses import dataclass
 from email.message import Message
 from pathlib import Path
-from typing import Final, IO, cast
+from typing import IO, Final, cast
 
 from ..mdm.network import active_network_policy, managed_opener
 from ..mdm.network_urlopen import ManagedOpener
