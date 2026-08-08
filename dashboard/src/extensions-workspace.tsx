@@ -4,6 +4,8 @@ import {
   HiMiniCheckCircle,
   HiMiniChevronDown,
   HiMiniChevronUp,
+  HiMiniClipboard,
+  HiMiniClipboardDocumentCheck,
   HiMiniExclamationTriangle,
   HiMiniLockClosed,
   HiMiniPuzzlePiece,
@@ -30,6 +32,32 @@ type LoadState =
   | { kind: "ready"; catalog: ExtensionCatalogResponse; effective: EffectiveExtensionControls };
 
 type PendingChange = { extension: ExtensionCatalogItem; enabled: boolean } | { globalLockdown: boolean };
+
+export type ExtensionRecoveryAction = {
+  command: string;
+  description: string;
+  title: string;
+};
+
+export function extensionRecoveryAction(
+  health: EffectiveExtensionControls["health"],
+): ExtensionRecoveryAction | null {
+  if (health === "protected") return null;
+  if (health === "tampered") {
+    return {
+      title: "Repair extension controls",
+      description:
+        "Guard locked these settings after detecting damaged authority data. Authenticate in this device's terminal to rebuild the trusted authority, then check again.",
+      command: "hol-guard guard command controls recover-authority",
+    };
+  }
+  return {
+    title: "Finish local enrollment",
+    description:
+      "Authenticate in this device's terminal to protect extension settings, then check again.",
+    command: "hol-guard guard command controls enroll",
+  };
+}
 
 function randomToken(): string {
   return crypto.randomUUID().replaceAll("-", "");
@@ -80,30 +108,47 @@ function effectiveState(effective: EffectiveExtensionControls, extension: Extens
   return extension.required || control?.state !== "disabled";
 }
 
-function StatusBanner({ effective }: { effective: EffectiveExtensionControls }) {
-  if (effective.health === "protected") {
+export function ExtensionStatusBanner(props: { effective: EffectiveExtensionControls; onRetry: () => void }) {
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const recovery = extensionRecoveryAction(props.effective.health);
+  const handleCopy = useCallback(async () => {
+    if (!recovery) return;
+    try {
+      await navigator.clipboard.writeText(recovery.command);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }, [recovery]);
+
+  if (props.effective.health === "protected") {
     return (
       <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
         <HiMiniShieldCheck className="size-5 shrink-0" aria-hidden="true" />
-        <span><strong>Protected authority</strong> · revision {effective.revision}</span>
+        <span><strong>Protected authority</strong> · revision {props.effective.revision}</span>
       </div>
     );
   }
-  const tampered = effective.health === "tampered";
+  const tampered = props.effective.health === "tampered";
   return (
     <div className={`rounded-2xl border p-5 ${tampered ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}>
       <div className="flex items-start gap-3">
         <HiMiniExclamationTriangle className={`mt-0.5 size-6 shrink-0 ${tampered ? "text-red-600" : "text-amber-600"}`} aria-hidden="true" />
-        <div>
-          <h2 className="font-semibold text-slate-950">{tampered ? "Extension controls are locked" : "Finish local enrollment"}</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-700">
-            {tampered
-              ? "Guard detected authority integrity damage. Mutations remain blocked until local recovery completes."
-              : "Enrollment requires direct confirmation in the device terminal. The dashboard cannot collect or relay this proof."}
-          </p>
-          {!tampered ? (
-            <code className="mt-3 block w-fit rounded-lg bg-slate-950 px-3 py-2 text-xs text-white">hol-guard guard command controls enroll</code>
-          ) : null}
+        <div className="min-w-0 flex-1">
+          <h2 className="font-semibold text-slate-950">{recovery?.title}</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-700">{recovery?.description}</p>
+          <code className="mt-3 block overflow-x-auto rounded-lg bg-slate-950 px-3 py-2 text-xs text-white">{recovery?.command}</code>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" onClick={handleCopy} className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+              {copyState === "copied" ? <HiMiniClipboardDocumentCheck className="size-4" aria-hidden="true" /> : <HiMiniClipboard className="size-4" aria-hidden="true" />}
+              {copyState === "copied" ? "Copied" : "Copy repair command"}
+            </button>
+            <button type="button" onClick={props.onRetry} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+              <HiMiniArrowPath className="size-4" aria-hidden="true" />
+              Check again
+            </button>
+            {copyState === "failed" ? <span role="status" className="text-sm text-red-700">Copy failed. Select the command above.</span> : null}
+          </div>
         </div>
       </div>
     </div>
@@ -253,7 +298,7 @@ export function ExtensionsWorkspace() {
         <div><p className="text-xs font-bold uppercase tracking-[0.22em] text-brand-blue">Command safety</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Extensions</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Inspect and govern the capabilities Guard uses to understand development commands.</p></div>
         <button type="button" onClick={toggleLockdown} disabled={locked} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold ${state.effective.global_lockdown ? "bg-red-700 text-white" : "border border-slate-300 bg-white text-slate-700"} disabled:opacity-50`}><HiMiniLockClosed className="size-4" />{state.effective.global_lockdown ? "Disable lockdown" : "Enable lockdown"}</button>
       </header>
-      <div className="mt-6"><StatusBanner effective={state.effective} /></div>
+      <div className="mt-6"><ExtensionStatusBanner effective={state.effective} onRetry={load} /></div>
       {state.effective.global_lockdown ? <div className="mt-4 flex items-center gap-3 rounded-2xl bg-slate-950 px-4 py-3 text-sm text-white"><HiMiniLockClosed className="size-5" /><span><strong>Global lockdown active.</strong> Optional extensions remain disabled regardless of individual settings.</span></div> : null}
       <section aria-labelledby="installed-extensions" className="mt-8"><div className="flex items-center justify-between"><h2 id="installed-extensions" className="text-lg font-semibold text-slate-950">Installed extensions</h2><span className="text-sm text-slate-500">{sortedExtensions.length} available</span></div><div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{sortedExtensions.map((extension) => <ExtensionCard key={extension.extension_id} extension={extension} enabled={effectiveState(state.effective, extension)} locked={locked || state.effective.global_lockdown} onChange={handleChange} />)}</div></section>
       <section className="mt-8 overflow-hidden rounded-3xl border border-slate-200 bg-white"><button type="button" onClick={toggleProvenance} aria-expanded={provenanceOpen} className="flex w-full items-center justify-between p-5 text-left"><span><span className="block font-semibold text-slate-950">Policy provenance</span><span className="mt-1 block text-sm text-slate-500">Catalog {state.catalog.catalog_digest.slice(0, 12)}… · {state.effective.layers.length} authority layer{state.effective.layers.length === 1 ? "" : "s"}</span></span>{provenanceOpen ? <HiMiniChevronUp className="size-5" /> : <HiMiniChevronDown className="size-5" />}</button>{provenanceOpen ? <div className="border-t border-slate-200 p-5"><div className="grid gap-3 sm:grid-cols-2">{state.effective.layers.map((layer: ExtensionControlLayer) => <div key={`${layer.kind}-${layer.catalog_digest}`} className="rounded-2xl bg-slate-50 p-4"><div className="flex items-center gap-2"><HiMiniCheckCircle className="size-5 text-emerald-600" /><strong className="text-sm text-slate-900">{layer.kind === "local-admin" ? "Local administrator" : "Signed cloud policy"}</strong></div><p className="mt-2 text-xs text-slate-500">{layer.controls.length} explicit controls · catalog {layer.catalog_digest.slice(0, 12)}…</p></div>)}</div></div> : null}</section>
