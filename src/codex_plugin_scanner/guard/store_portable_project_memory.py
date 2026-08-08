@@ -147,4 +147,8 @@ class StorePortableProjectMemoryMixin:
         if not isinstance(workspace, str) or not workspace.strip():
             return None
         normalized = workspace.strip()
-        return normalized if is_portable_project_identity(normalized) else _cached_portable_project_identity(normalized)
+        return (
+            normalized
+            if is_portable_project_identity(normalized)
+            else _cached_portable_project_identity(normalized)
+        )
