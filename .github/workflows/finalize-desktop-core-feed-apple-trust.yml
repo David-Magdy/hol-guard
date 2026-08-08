@@ -1,0 +1,49 @@
+name: Finalize Desktop Core feed Apple trust
+
+on:
+  push:
+    branches:
+      - ci/retrigger-desktop-core-feed-v2
+    paths:
+      - scripts/release/finalize_desktop_core_feed_apple_trust.py
+      - .github/workflows/finalize-desktop-core-feed-apple-trust.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ci/retrigger-desktop-core-feed-v2
+          persist-credentials: true
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Apply deterministic Apple-trust refactor
+        run: python3 -I scripts/release/finalize_desktop_core_feed_apple_trust.py
+      - name: Validate focused release contracts
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync pytest \
+            tests/test_desktop_core_alpha_feed_security.py \
+            tests/test_wake_desktop_core_alpha_feed_contract.py \
+            --tb=short -q
+          git diff --check
+      - name: Commit final source and remove one-shot tooling
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(release): align Desktop Core feed with Apple trust model"
+          git push origin HEAD:ci/retrigger-desktop-core-feed-v2
