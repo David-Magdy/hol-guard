@@ -150,8 +150,8 @@ const restartAlerts = resolveSupplyChainPostureAlerts({
   },
 });
 assert(
-  restartAlerts.some((alert) => alert.kind === "path_repair" && alert.tone === "blue"),
-  "SCSR161-B: restart-required PATH surfaces staged repair banner",
+  !restartAlerts.some((alert) => alert.kind === "path_repair"),
+  "SCSR161-B: staged shell restart does not reopen a repair posture banner",
 );
 
 const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
