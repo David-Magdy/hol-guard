@@ -17,13 +17,19 @@ type SupplyChainRecoveryProps = {
   issues: SupplyChainIssue[];
   state: SupplyChainFixAllState;
   onFixAll: () => void;
+  guidance?: string | null;
 };
 
 function recoverySummary(issueCount: number): string {
   return `Fix ${issueCount} open issue${issueCount === 1 ? "" : "s"} in one guided pass. Guard repairs package tools, activates routing, refreshes safety intelligence, and rechecks status.`;
 }
 
-export function SupplyChainRecovery({ issues, state, onFixAll }: SupplyChainRecoveryProps) {
+export function SupplyChainRecovery({
+  issues,
+  state,
+  onFixAll,
+  guidance = null,
+}: SupplyChainRecoveryProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const handleDetailsToggle = useCallback(() => {
     setDetailsOpen((open) => !open);
@@ -51,6 +57,14 @@ export function SupplyChainRecovery({ issues, state, onFixAll }: SupplyChainReco
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
             {recoverySummary(issues.length)}
           </p>
+          {guidance ? (
+            <p
+              className="mt-2 max-w-3xl text-sm font-medium text-brand-primary"
+              data-testid="supply-chain-restart-guidance"
+            >
+              {guidance}
+            </p>
+          ) : null}
         </div>
         <ActionButton onClick={onFixAll} disabled={pending} aria-busy={pending}>
           {supplyChainFixAllButtonLabel(state.phase)}
