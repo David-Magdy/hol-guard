@@ -1,0 +1,51 @@
+name: Debug full shard 4 SQLite lock
+
+on:
+  push:
+    branches: [debug/package-shim-sqlite-lock-trace]
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Install exact CI environment
+        run: uv sync --frozen --extra dev --python 3.12
+      - name: Enable traceback in checked-out CLI only
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/codex_plugin_scanner/cli.py')
+          text = path.read_text()
+          needle = '''        except Exception as exc:\n            print(str(exc), file=sys.stderr)\n            return 1\n'''
+          replacement = '''        except Exception as exc:\n            import traceback\n            traceback.print_exc()\n            print(str(exc), file=sys.stderr)\n            return 1\n'''
+          count = text.count(needle)
+          if count != 2:
+              raise SystemExit(f'expected 2 generic CLI catches, found {count}')
+          path.write_text(text.replace(needle, replacement))
+          PY
+      - name: Resolve exact shard 4 assignment
+        run: |
+          uv run --no-sync python scripts/ci/pytest_shard.py \
+            --shard-index 4 \
+            --shard-count 16 \
+            --granularity node \
+            --duration-manifest ci/pytest-duration-manifest.json.gz \
+            --max-manifest-age-days 28 > pytest-nodes.txt
+          test -s pytest-nodes.txt
+      - name: Run exact full shard with subprocess traceback
+        run: |
+          PYTHONPATH=scripts/ci uv run --no-sync pytest @pytest-nodes.txt --tb=short
