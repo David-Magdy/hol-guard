@@ -1,0 +1,83 @@
+name: Temporary Cline live policy fix prep
+
+on:
+  push:
+    branches:
+      - fix/release-3.0-cline-live-policy
+    paths:
+      - .github/workflows/cline-live-fix-prep.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out fix branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Apply minimal runtime fix and real-policy regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          hook = Path('src/codex_plugin_scanner/guard/cli/commands_support_hook_payload.py')
+          text = hook.read_text(encoding='utf-8')
+          needle = '        "codex",\n        "claude-code",\n'
+          replacement = '        "codex",\n        "cline",\n        "claude-code",\n'
+          if needle not in text:
+              raise SystemExit('expected action-envelope harness set not found')
+          hook.write_text(text.replace(needle, replacement, 1), encoding='utf-8')
+
+          tests = Path('tests/test_cline_completion_gates.py')
+          test_text = tests.read_text(encoding='utf-8')
+          if 'import os\n' not in test_text:
+              test_text = test_text.replace('import json\n', 'import json\nimport os\n', 1)
+          marker = 'def test_real_guard_policy_requires_review_for_cline_env_read'
+          if marker not in test_text:
+              test_text += '''\n\ndef test_real_guard_policy_requires_review_for_cline_env_read(tmp_path: Path) -> None:\n    context = _context(tmp_path)\n    secret_path = context.workspace_dir / ".env"\n    secret_path.write_text("OPENAI_API_KEY=HOL_GUARD_CLINE_TEST_ONLY\\n", encoding="utf-8")\n    payload = {\n        "hookName": "PreToolUse",\n        "hook_event_name": "PreToolUse",\n        "tool_call": {\n            "id": "cline-live-regression",\n            "name": "read_files",\n            "input": {"path": str(secret_path)},\n        },\n        "preToolUse": {\n            "toolName": "read_files",\n            "parameters": {"path": str(secret_path)},\n        },\n    }\n    env = dict(os.environ)\n    env["HOME"] = str(context.home_dir)\n    env["HOL_GUARD_HOME"] = str(context.guard_home)\n    result = subprocess.run(\n        [\n            sys.executable,\n            "-m",\n            "codex_plugin_scanner.cli",\n            "guard",\n            "hook",\n            "--harness",\n            "cline",\n            "--json",\n        ],\n        cwd=context.workspace_dir,\n        env=env,\n        input=json.dumps(payload),\n        capture_output=True,\n        text=True,\n        timeout=30,\n        check=False,\n    )\n    assert result.returncode == 0, result.stderr\n    response = json.loads(result.stdout)\n    assert response["policy_action"] == "require-reapproval"\n    assert response["artifact_id"].startswith("cline:project:file-read:")\n    assert response["policy_composition"]["current_config_action"] == "require-reapproval"\n'''
+          tests.write_text(test_text, encoding='utf-8')
+          PY
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Format and lint changed Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -m ruff format src/codex_plugin_scanner/guard/cli/commands_support_hook_payload.py tests/test_cline_completion_gates.py
+          uv run --no-sync python -m ruff check src/codex_plugin_scanner/guard/cli/commands_support_hook_payload.py tests/test_cline_completion_gates.py
+          git diff --check
+
+      - name: Run focused Cline completion gates
+        run: uv run --no-sync pytest tests/test_cline_completion_gates.py --tb=short
+
+      - name: Commit validated fix and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cline-live-fix-prep.yml
+          git add src/codex_plugin_scanner/guard/cli/commands_support_hook_payload.py tests/test_cline_completion_gates.py
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(cline): enforce typed runtime policy"
+          git push origin HEAD:fix/release-3.0-cline-live-policy
