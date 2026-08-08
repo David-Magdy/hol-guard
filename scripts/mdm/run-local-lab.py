@@ -76,6 +76,7 @@ SUITES = (
             "managed-policy",
             "http-inventory",
             "direct-network",
+            "proxy",
             "system-proxy",
             "explicit-proxy",
             "authenticated-proxy",
@@ -86,6 +87,7 @@ SUITES = (
             "guard-cloud-outage",
             "internal-mirror",
             "signed-cache",
+            "offline",
             "offline-lifecycle",
         ),
         (
