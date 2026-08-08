@@ -6,8 +6,9 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from email.message import Message
-from typing import Mapping, Protocol
+from typing import Protocol
 
 from urllib3 import ProxyManager
 from urllib3.exceptions import HTTPError as Urllib3HTTPError
