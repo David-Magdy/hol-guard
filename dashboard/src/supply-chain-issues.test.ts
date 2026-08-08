@@ -168,16 +168,35 @@ assert(
   "SCSR170-F: staged repair completion gives the non-repair restart instruction",
 );
 
+const mixedRestartSnapshot: GuardRuntimeSnapshot = {
+  ...restartRequiredSnapshot,
+  cloud_state: "local_only",
+  cloud_state_label: "On this device only",
+};
+const mixedRestartIssues = resolveSupplyChainIssues(mixedRestartSnapshot);
+assert(
+  mixedRestartIssues.some((issue) => issue.id === "cloud_connect"),
+  "SCSR170-G: mixed staged state keeps unrelated actionable issues",
+);
+const mixedRestartHero = resolveSupplyChainWorkspaceHero(mixedRestartSnapshot, {
+  openIssueCount: mixedRestartIssues.length,
+});
+assert(
+  mixedRestartHero.title === "Work through the steps below" &&
+    mixedRestartHero.detail.includes("Open a new terminal or restart AI apps"),
+  "SCSR170-H: mixed staged state preserves visible restart guidance",
+);
+
 const compactHero = resolveSupplyChainWorkspaceHero(localPartialSnapshot, {
   openIssueCount: localPartialIssues.length,
 });
 assert(
   compactHero.title === "Work through the steps below",
-  "SCSR170-G: compact hero defers detail to issue carousel",
+  "SCSR170-I: compact hero defers detail to issue carousel",
 );
 assert(
   compactHero.detail.includes("2 setup steps"),
-  "SCSR170-H: compact hero summarizes open issue count",
+  "SCSR170-J: compact hero summarizes open issue count",
 );
 
 const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
@@ -203,7 +222,7 @@ const staleIssues = resolveSupplyChainIssues({
 });
 assert(
   staleIssues.some((issue) => issue.id === "stale_intel" && issue.action.kind === "firewall_audit"),
-  "SCSR170-I: stale intel issue routes to workspace audit",
+  "SCSR170-K: stale intel issue routes to workspace audit",
 );
 
 console.log("supply-chain-issues.test.ts: all assertions passed");
