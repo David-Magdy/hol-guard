@@ -25,7 +25,7 @@ _RAW_HTTP_CALLS = frozenset(
 
 _RAW_HTTP_BOUNDARIES = frozenset(
     {
-        "mdm/network.py",
+        "mdm/network_transport.py",
         "daemon/client.py",
         "daemon/manager.py",
         "bridge/__init__.py",
@@ -80,7 +80,7 @@ def test_raw_http_clients_are_confined_to_enterprise_transport_or_loopback_ipc()
                 violations.append(f"{relative}:{node.lineno}:{call_name}")
 
     assert violations == []
-    assert "mdm/network.py" in observed_boundaries
+    assert "mdm/network_transport.py" in observed_boundaries
     assert "runtime/verified_github_reads.py" not in observed_boundaries
 
 
