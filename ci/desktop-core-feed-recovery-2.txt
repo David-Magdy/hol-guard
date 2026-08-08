@@ -1,1 +1,0 @@
-Recovery wake contract covered by tests/test_wake_desktop_core_alpha_feed_contract.py.
