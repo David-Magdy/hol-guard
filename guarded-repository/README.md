@@ -27,6 +27,7 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      artifact-metadata: write
       security-events: write
     uses: hashgraph-online/hol-guard/.github/workflows/guarded-repository.yml@release/3.0
     with:
@@ -47,10 +48,11 @@ permissions:
   contents: read
   id-token: write
   attestations: write
+  artifact-metadata: write
   security-events: write
 ```
 
-`security-events: write` is used only for the optional SARIF upload step. No repository-content write permission, issue permission, pull-request permission, package permission, or long-lived signing secret is required.
+`security-events: write` is used only for the optional SARIF upload step. `artifact-metadata: write` is required by GitHub's current attestation action. No repository-content write permission, issue permission, pull-request permission, package permission, or long-lived signing secret is required.
 
 ## Direct composite-action usage
 
