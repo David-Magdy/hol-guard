@@ -111,6 +111,8 @@ plugin-ecosystem-scanner = "codex_plugin_scanner.cli:main"
 [project.urls]
 Homepage = "https://hol.org/guard"
 Documentation = "https://github.com/hashgraph-online/hol-guard/tree/main/docs/guard"
+Research = "https://hol.org/guard/research"
+Corrections = "https://hol.org/guard/methodology/corrections"
 Repository = "https://github.com/hashgraph-online/hol-guard"
 Issues = "https://github.com/hashgraph-online/hol-guard/issues"
 Changelog = "https://github.com/hashgraph-online/hol-guard/releases"
