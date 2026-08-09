@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,7 @@ from .hook_source_read import (
     SOURCE_READ_MAX_SCAN_BYTES,
     evaluate_source_file_ref,
 )
+from .skill_paths import is_safe_pi_inline_resource_uri
 
 if TYPE_CHECKING:
     from ..config import GuardConfig
@@ -39,7 +41,7 @@ if TYPE_CHECKING:
 
 HOOK_ENGINE_TOTAL_BUDGET_MS = 9000
 HOOK_ENGINE_NORMAL_BUDGET_MS = 1000
-HOOK_SOURCE_FAST_PATH_BUDGET_MS = 250
+HOOK_SOURCE_FAST_PATH_BUDGET_MS = 1000
 HOOK_SCANNER_DEFAULT_BUDGET_MS = 750
 ARBITRARY_STDOUT_FULL_ALLOW_BYTES = 256 * 1024
 
@@ -102,25 +104,73 @@ class HookReviewEngine:
         Never raises. Any unexpected exception returns deny/block.
         """
         start = time.monotonic()
+        config: GuardConfig | None = None
+        response: HookReviewResponse
         try:
-            return self._review_inner(request, start=start)
+            config = self.config_loader(request.guard_home, request.cwd)
+            response = self._review_inner(request, config=config, start=start)
         except HookFailSafe as error:
-            return error.to_response()
-        except Exception:
-            return HookReviewResponse(
+            response = error.to_response()
+        except Exception as error:
+            self._record_failure("engine", error)
+            response = HookReviewResponse(
                 decision="deny",
                 reason="HOL Guard could not complete local hook review safely.",
                 model_output_action="block",
                 notice="warning",
                 reason_code="engine_exception",
             )
-        finally:
-            self._record_metrics(request, start)
+        if config is not None and config.mode == "observe" and request.event_name == "PostToolUse":
+            response = self._observe_only_response(request, response)
+        self._record_metrics(request, response, start)
+        return response
 
-    def _review_inner(self, request: HookReviewRequest, *, start: float) -> HookReviewResponse:
-        # Load config.
-        config = self.config_loader(request.guard_home, request.cwd)
+    @staticmethod
+    def _observe_only_response(
+        request: HookReviewRequest,
+        response: HookReviewResponse,
+    ) -> HookReviewResponse:
+        observed_policy_action = response.policy_action
+        if response.decision == "deny" and observed_policy_action is None:
+            observed_policy_action = "block"
+        output_sha256 = (
+            request.source_ref.output_sha256
+            if request.source_ref is not None
+            else request.output_summary.output_sha256
+            if request.output_summary is not None
+            else None
+        )
+        return HookReviewResponse(
+            decision="allow",
+            reason=None,
+            model_output_action="allow_original",
+            reviewed_output_sha256=output_sha256,
+            notice="none",
+            reason_code=(f"observe_{response.reason_code}" if response.decision == "deny" else response.reason_code),
+            policy_action="allow",
+            observed_policy_action=observed_policy_action,
+            observe_mode=True,
+        )
 
+    @staticmethod
+    def _scan_deadline(
+        start: float,
+        budget_ms: int = HOOK_SCANNER_DEFAULT_BUDGET_MS,
+        deadline_monotonic: float | None = None,
+    ) -> float:
+        deadline = min(
+            start + (HOOK_ENGINE_TOTAL_BUDGET_MS / 1000.0),
+            time.monotonic() + (budget_ms / 1000.0),
+        )
+        return min(deadline, deadline_monotonic) if deadline_monotonic is not None else deadline
+
+    def _review_inner(
+        self,
+        request: HookReviewRequest,
+        *,
+        config: GuardConfig,
+        start: float,
+    ) -> HookReviewResponse:
         # Normalize payload into action envelope.
         envelope = normalize_harness_payload(
             request.harness,
@@ -132,7 +182,11 @@ class HookReviewEngine:
 
         # Source-read fast path for PostToolUse with guard_source_ref.
         if request.event_name == "PostToolUse" and request.source_ref is not None:
-            deadline = start + (HOOK_SOURCE_FAST_PATH_BUDGET_MS / 1000.0)
+            deadline = self._scan_deadline(
+                start,
+                HOOK_SOURCE_FAST_PATH_BUDGET_MS,
+                request.deadline_monotonic,
+            )
             source_result = evaluate_source_file_ref(
                 request=request,
                 envelope=envelope,
@@ -165,7 +219,21 @@ class HookReviewEngine:
                     reason_code=source_result.reason_code,
                 )
 
-            # inconclusive: fall through to standard path below.
+            source_path = request.source_ref.tool_input_path or request.source_ref.path
+            target_paths = _target_paths(envelope)
+            if (
+                request.harness in {"pi", "omp"}
+                and len(target_paths) == 1
+                and source_path == target_paths[0]
+                and is_safe_pi_inline_resource_uri(source_path)
+            ):
+                # OMP virtual resources have no filesystem path Guard can
+                # independently re-read after the tool has resolved them.
+                return self._review_output_scan(request, envelope, config, start)
+
+            # Preserve the provenance boundary for ordinary paths, malformed
+            # virtual URIs, and failed source proofs.
+            return self._review_standard(request, envelope, config, start)
 
         # Server-side output scanning for PostToolUse without guard_source_ref.
         # This handles all harnesses that don't generate guard_source_ref
@@ -184,7 +252,7 @@ class HookReviewEngine:
         config: GuardConfig,
         start: float,
     ) -> HookReviewResponse:
-        """Scan full tool output for PostToolUse file operations without guard_source_ref.
+        """Scan full inline tool output for PostToolUse without guard_source_ref.
 
         This is the server-side fast path for all harnesses that do not
         generate ``guard_source_ref`` client-side (claude-code, codex,
@@ -192,29 +260,51 @@ class HookReviewEngine:
         payload, scans it for secrets, and returns ``allow_original``
         if clean.
 
-        Only file read/write actions are eligible — shell commands, MCP
-        tools, and other action types still need the full CLI policy/
-        permission/approval engine and fall through to ``_review_standard``.
+        PostToolUse observes output from an action that already ran. Applying
+        the pre-execution permission engine again creates duplicate approvals
+        and can stop every benign shell or MCP result. Scan any extractable
+        inline output here; allow output-free completions and keep oversized
+        or risky output on conservative paths.
         """
-        from .hook_output_text import extract_payload_output
-
-        action_type = getattr(envelope, "action_type", None)
-        if action_type not in {"file_read", "file_write"}:
-            return self._review_standard(request, envelope, config, start)
+        from .hook_output_text import PAYLOAD_OUTPUT_KEYS, extract_payload_output
 
         extracted = extract_payload_output(request.payload)
+        output_was_truncated = extracted.truncated or bool(
+            request.output_summary is not None and request.output_summary.excerpt_truncated
+        )
 
         if not extracted.text:
-            # No output text found in payload — fall back to excerpt path.
-            return self._review_standard(request, envelope, config, start)
+            if output_was_truncated:
+                return HookReviewResponse(
+                    decision="deny",
+                    reason=(
+                        "HOL Guard blocked this output because it could not be safely excerpted within local limits."
+                    ),
+                    model_output_action="block",
+                    notice="warning",
+                    reason_code="output_too_large",
+                )
+            if not any(key in request.payload for key in PAYLOAD_OUTPUT_KEYS):
+                return self._review_standard(request, envelope, config, start)
+            # The action already completed and produced nothing for the model.
+            # A second permission review cannot protect any output and only
+            # creates an unresolvable PostToolUse approval.
+            return HookReviewResponse(
+                decision="allow",
+                reason=None,
+                model_output_action="allow_original",
+                notice="none",
+                reason_code="output_empty_allow",
+                policy_action="allow",
+            )
 
         target_paths = _target_paths(envelope)
         scan_local_samples = should_unsuppress_local_sample_secrets_for_paths(target_paths, cwd=request.cwd)
 
-        if extracted.truncated:
+        if output_was_truncated:
             # Output too large to scan in full — scan the excerpt before returning.
             excerpt = extracted.text[:SOURCE_READ_FULL_MODEL_BYTES_P95_TARGET]
-            deadline = start + (HOOK_SCANNER_DEFAULT_BUDGET_MS / 1000.0)
+            deadline = self._scan_deadline(start, deadline_monotonic=request.deadline_monotonic)
             scan_result = self.scanner.scan_text(
                 excerpt,
                 local_content=scan_local_samples,
@@ -241,7 +331,7 @@ class HookReviewEngine:
             )
 
         # Scan the full output text.
-        deadline = start + (HOOK_SCANNER_DEFAULT_BUDGET_MS / 1000.0)
+        deadline = self._scan_deadline(start, deadline_monotonic=request.deadline_monotonic)
         scan_result = self.scanner.scan_text(
             extracted.text,
             local_content=scan_local_samples,
@@ -290,8 +380,7 @@ class HookReviewEngine:
 
         For MVP:
         - PreToolUse, UserPromptSubmit, PermissionRequest: return not_applicable.
-        - PostToolUse without source ref or inconclusive source ref:
-          return replace_with_reviewed_excerpt (conservative).
+        - PostToolUse reaching this path returns a reviewed excerpt.
         - Any scanner finding: deny/block.
         """
         if request.event_name != "PostToolUse":
@@ -316,7 +405,7 @@ class HookReviewEngine:
         if output_summary is not None and output_summary.text_excerpt:
             excerpt = output_summary.text_excerpt
             # Scan the excerpt for secrets.
-            deadline = start + (HOOK_SCANNER_DEFAULT_BUDGET_MS / 1000.0)
+            deadline = self._scan_deadline(start, deadline_monotonic=request.deadline_monotonic)
             scan_result = self.scanner.scan_text(
                 excerpt,
                 local_content=scan_local_samples,
@@ -360,28 +449,44 @@ class HookReviewEngine:
             reason_code="no_output_to_review",
         )
 
-    def _record_metrics(self, request: HookReviewRequest, start: float) -> None:
+    def _record_metrics(
+        self,
+        request: HookReviewRequest,
+        response: HookReviewResponse,
+        start: float,
+    ) -> None:
         """Record metrics without raw content."""
         if self.metrics is None:
             return
         latency_ms = (time.monotonic() - start) * 1000.0
         record = getattr(self.metrics, "record", None)
         if callable(record):
-            record(
-                harness=request.harness,
-                event_name=request.event_name,
-                route="engine",
-                payload_kind=request.payload_kind,
-                output_size=0,
-                latency_ms=latency_ms,
-                decision="unknown",
-                policy_action=None,
-                model_output_action="unknown",
-                reason_code="unknown",
-                cache_status="not_applicable",
-                fallback_kind="none",
-                scanner_bytes=0,
-            )
+            try:
+                record(
+                    harness=request.harness,
+                    event_name=request.event_name,
+                    route="engine",
+                    payload_kind=request.payload_kind,
+                    output_size=0,
+                    latency_ms=latency_ms,
+                    decision=response.decision,
+                    policy_action=response.observed_policy_action or response.policy_action,
+                    model_output_action=response.model_output_action,
+                    reason_code=response.reason_code,
+                    cache_status="not_applicable",
+                    fallback_kind="none",
+                    scanner_bytes=0,
+                )
+            except Exception as error:
+                self._record_failure("metrics", error)
+
+    def _record_failure(self, stage: str, error: Exception) -> None:
+        if self.metrics is None:
+            return
+        record_failure = getattr(self.metrics, "record_failure", None)
+        if callable(record_failure):
+            with suppress(Exception):
+                record_failure(stage=stage, exception_type=type(error).__name__)
 
 
 __all__ = [

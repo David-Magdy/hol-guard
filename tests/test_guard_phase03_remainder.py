@@ -76,9 +76,123 @@ def test_update_detects_uv_tool_install_and_pins_latest_version(monkeypatch: pyt
 
     assert exit_code == 0
     assert payload["installer"] == "uv"
-    assert payload["command"] == ["uv", "tool", "install", "--force", "hol-guard==2.0.10"]
+    assert payload["command"] == [
+        "uv",
+        "tool",
+        "install",
+        "--force",
+        "--refresh-package",
+        "hol-guard",
+        "hol-guard==2.0.10",
+    ]
     assert payload["retry_command"] == "hol-guard update"
     assert payload["binary_diagnostics"]["path_status"] == "uv_tool_shim_detected"
+
+
+def test_update_alpha_pins_latest_alpha_release(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(update_commands.sys, "prefix", "/opt/pipx/venvs/hol-guard")
+    monkeypatch.setattr(update_commands.shutil, "which", lambda name: f"/opt/bin/{name}")
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.0.1127")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_latest_alpha_version_from_pypi", lambda _current: "2.1.0a35")
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=True, include_alpha=True)
+
+    assert exit_code == 0
+    assert payload["command"] == [
+        "pipx",
+        "install",
+        "--force",
+        "hol-guard==2.1.0a35",
+        "--pip-args=--pre",
+    ]
+    assert payload["retry_command"] == "hol-guard update --alpha"
+    assert payload["release_channel"] == "alpha"
+    assert payload["version_check"]["release_channel"] == "alpha"
+
+
+def test_update_command_allows_prerelease_for_alpha_pins() -> None:
+    assert update_commands._update_command(
+        "uv",
+        use_pypi=True,
+        target_version="2.1.0a51",
+    ) == [
+        "uv",
+        "tool",
+        "install",
+        "--force",
+        "--refresh-package",
+        "hol-guard",
+        "--prerelease=allow",
+        "hol-guard==2.1.0a51",
+    ]
+    assert update_commands._update_command(
+        "pipx",
+        use_pypi=True,
+        target_version="2.1.0a51",
+    ) == ["pipx", "install", "--force", "hol-guard==2.1.0a51", "--pip-args=--pre"]
+    assert update_commands._update_command(
+        "pip",
+        use_pypi=True,
+        target_version="2.1.0a51",
+    )[-2:] == ["--pre", "hol-guard==2.1.0a51"]
+    assert update_commands._update_command(
+        "uv",
+        use_pypi=True,
+        target_version="2.0.1127",
+    ) == ["uv", "tool", "install", "--force", "--refresh-package", "hol-guard", "hol-guard==2.0.1127"]
+
+
+def test_latest_alpha_version_selects_newest_alpha_across_majors_and_skips_yanked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.0.1127")
+    monkeypatch.setattr(
+        update_commands,
+        "_last_pypi_payload",
+        {
+            "releases": {
+                "2.1.0a34": [{"yanked": False}],
+                "2.1.0a35": [{"yanked": False}],
+                "2.2.0a1": [{"yanked": True}],
+                "2.2.0b1": [{"yanked": False}],
+                "3.0.0a9": [{"yanked": False}],
+                "3.1.0a1": [{"yanked": False}],
+            }
+        },
+    )
+
+    assert update_commands._latest_alpha_version_from_pypi("2.0.1127") == "3.1.0a1"
+    assert update_commands._latest_alpha_version_from_pypi("2.2.15") == "3.1.0a1"
+
+
+def test_alpha_python_fallback_stays_on_alpha_channel(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.20")
+    monkeypatch.setattr(update_commands, "_runtime_python_version", lambda: "3.12.0")
+    monkeypatch.setattr(
+        update_commands,
+        "_last_pypi_payload",
+        {
+            "releases": {
+                "2.2.20": [{"yanked": False, "requires_python": ">=3.10"}],
+                "3.0.0a8": [{"yanked": False, "requires_python": ">=3.10"}],
+                "3.0.0a9": [{"yanked": False, "requires_python": ">=3.13"}],
+            }
+        },
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "_latest_alpha_version_from_pypi",
+        lambda _current: "3.0.0a9",
+    )
+
+    payload = update_commands._version_check_payload("2.2.15", include_alpha=True)
+
+    assert payload["release_channel"] == "alpha"
+    assert payload["status"] == "stale"
+    assert payload["latest_version"] == "3.0.0a8"
+    assert payload["pypi_latest_version"] == "3.0.0a9"
+    assert payload["pypi_latest_python_incompatible"] is True
 
 
 def test_update_version_check_marks_stale_local_install(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -563,3 +677,34 @@ def test_install_native_contract_output_prefers_native_hooks_for_supported_harne
     assert managed_install["native_hooks"] is True
     assert managed_install["primary_integration"] == "native_hooks"
     assert managed_install["manifest"]["mode"] == "codex-mcp-proxy"
+
+def test_success_status_treats_uv_pin_noop_as_current() -> None:
+    payload = {
+        "current_version": "3.0.0a9",
+        "resulting_version": "3.0.0a9",
+        "stdout": "",
+        "stderr": (
+            "Nothing to upgrade\n\n"
+            "hint: `hol-guard` is pinned to `3.0.0a9` "
+            "(installed with an exact version pin); reinstall with "
+            "`uv tool install hol-guard@latest` to upgrade to a new version."
+        ),
+        "version_check": {
+            "update_available": False,
+            "latest_version": "3.0.0a9",
+        },
+    }
+    assert update_commands._success_status(payload) == "current"
+    assert update_commands._version_changed("3.0.0a9", "3.0.0a9") is False
+
+
+def test_success_status_marks_equal_versions_current_without_installer_hints() -> None:
+    payload = {
+        "current_version": "3.0.0a9",
+        "resulting_version": "3.0.0a9",
+        "stdout": "some installer chatter",
+        "stderr": "",
+        "version_check": {"update_available": False, "latest_version": "3.0.0a9"},
+    }
+    assert update_commands._success_status(payload) == "current"
+

@@ -27,6 +27,23 @@ def _configure_guard_local_parsers(
     _add_guard_common_args(status_parser)
     status_parser.add_argument("--json", action="store_true")
 
+    network_parser = guard_subparsers.add_parser(
+        "network",
+        help="Inspect local network protection capabilities",
+    )
+    _add_guard_common_args(network_parser)
+    network_parser.add_argument("--json", action="store_true")
+    network_subparsers = network_parser.add_subparsers(
+        dest="network_command",
+        parser_class=FriendlyArgumentParser,
+    )
+    network_status_parser = network_subparsers.add_parser(
+        "status",
+        help="Show verified network mediation backends and grades",
+    )
+    _add_guard_common_args(network_status_parser, suppress_defaults=True)
+    network_status_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+
     dashboard_parser = guard_subparsers.add_parser(
         "dashboard",
         help="Open the local Guard dashboard in your browser",
@@ -45,11 +62,6 @@ def _configure_guard_local_parsers(
         "--skip-notifications",
         action="store_true",
         help="Do not initialize desktop notifications",
-    )
-    init_parser.add_argument(
-        "--skip-tray",
-        action="store_true",
-        help="Do not install the menu bar / tray icon",
     )
     init_parser.add_argument(
         "--yes",
@@ -75,7 +87,7 @@ def _configure_guard_local_parsers(
         app_parser.add_argument("harness")
         _add_guard_common_args(app_parser, suppress_defaults=True)
         app_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
-        app_parser.add_argument("--surface", choices=("editor", "cli"))
+        app_parser.add_argument("--surface", choices=("editor", "cli", "auto", "hooks", "plugin", "all"))
         if app_command in {"connect", "repair"}:
             app_parser.add_argument("--dry-run", action="store_true")
         if app_command == "disconnect":
@@ -114,6 +126,11 @@ def _configure_guard_local_parsers(
     )
     _add_guard_common_args(update_parser)
     update_parser.add_argument("--dry-run", action="store_true")
+    update_parser.add_argument(
+        "--alpha",
+        action="store_true",
+        help="Update to the newest alpha release on PyPI (may cross major versions)",
+    )
     update_parser.add_argument(
         "--wheel",
         help="Install a local HOL Guard wheel file, or the newest matching hol_guard-*.whl from a directory",
@@ -302,6 +319,14 @@ def _configure_guard_local_parsers(
         help="Enroll this local authority using direct terminal confirmation",
     )
     enroll_parser.add_argument("--actor", default="local-admin")
+    controls_subparsers.add_parser(
+        "recover-authority",
+        help="Authenticate and recover interrupted local authority state",
+    )
+    controls_subparsers.add_parser(
+        "acknowledge-degraded",
+        help="Authenticate and acknowledge degraded local authority mode",
+    )
 
     preflight_parser = guard_subparsers.add_parser(
         "preflight",
@@ -347,6 +372,11 @@ def _configure_guard_local_parsers(
     history_sub = history_parser.add_subparsers(dest="history_command", metavar="COMMAND")
     history_explain_parser = history_sub.add_parser("explain", help="Show insight and evidence for a receipt ID")
     history_explain_parser.add_argument("receipt_id", help="Receipt ID to explain")
+    history_explain_parser.add_argument(
+        "--script",
+        action="store_true",
+        help="Show only inline script bodies (heredocs) recorded with the receipt",
+    )
     history_explain_parser.add_argument("--json", action="store_true")
 
     inventory_parser = guard_subparsers.add_parser("inventory", help="List the local Guard artifact inventory")
@@ -411,75 +441,6 @@ def _configure_guard_local_parsers(
         _add_guard_common_args(policy_parser)
         policy_parser.add_argument("--json", action="store_true")
         policy_parser.set_defaults(policy_action=action)
-
-    tray_parser = guard_subparsers.add_parser(
-        "tray",
-        help="Manage the HOL Guard menu bar / system tray icon",
-    )
-    _add_guard_common_args(tray_parser)
-    tray_parser.add_argument("--json", action="store_true")
-    tray_subparsers = tray_parser.add_subparsers(
-        dest="tray_command",
-        required=True,
-        parser_class=FriendlyArgumentParser,
-    )
-
-    tray_status_parser = tray_subparsers.add_parser(
-        "status",
-        help="Show whether the tray icon is running and supported on this platform",
-    )
-    _add_guard_common_args(tray_status_parser)
-    tray_status_parser.add_argument("--json", action="store_true")
-
-    tray_start_parser = tray_subparsers.add_parser(
-        "start",
-        help="Start the tray icon process",
-    )
-    _add_guard_common_args(tray_start_parser)
-    tray_start_parser.add_argument("--force", action="store_true", help="Stop any existing tray before starting")
-    tray_start_parser.add_argument("--json", action="store_true")
-
-    tray_stop_parser = tray_subparsers.add_parser(
-        "stop",
-        help="Stop the running tray icon process",
-    )
-    _add_guard_common_args(tray_stop_parser)
-    tray_stop_parser.add_argument("--json", action="store_true")
-
-    tray_restart_parser = tray_subparsers.add_parser(
-        "restart",
-        help="Stop and start the tray icon process",
-    )
-    _add_guard_common_args(tray_restart_parser)
-    tray_restart_parser.add_argument("--json", action="store_true")
-
-    tray_repair_parser = tray_subparsers.add_parser(
-        "repair",
-        help="Reset tray state after crashes or corruption",
-    )
-    _add_guard_common_args(tray_repair_parser)
-    tray_repair_parser.add_argument("--json", action="store_true")
-
-    tray_install_parser = tray_subparsers.add_parser(
-        "install",
-        help="Install the tray icon to start automatically at login",
-    )
-    _add_guard_common_args(tray_install_parser)
-    tray_install_parser.add_argument("--no-run-at-login", action="store_true", help="Do not set run-at-login")
-    tray_install_parser.add_argument("--json", action="store_true")
-
-    tray_uninstall_parser = tray_subparsers.add_parser(
-        "uninstall",
-        help="Remove the tray icon from automatic login startup",
-    )
-    _add_guard_common_args(tray_uninstall_parser)
-    tray_uninstall_parser.add_argument("--json", action="store_true")
-
-    tray_run_parser = tray_subparsers.add_parser(
-        "run",
-        help=argparse.SUPPRESS,  # internal: run the tray icon in-process (called by start)
-    )
-    tray_run_parser.add_argument("--guard-home", required=True)
 
 __all__ = [
     "_configure_guard_local_parsers",

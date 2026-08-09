@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1192,7 +1193,7 @@ class TestGuardApprovals:
         assert second_retry is None
         assert changed_request is None
         ignored = store.list_events(event_name="rule.ignored.local_integrity")
-        assert any(event["payload"].get("source") == "approval-gate-once" for event in ignored)
+        assert any(event["payload"].get("source") == "approval-gate" for event in ignored)
 
     def test_guard_saved_scope_repairs_integrity_before_policy_write(self, tmp_path, monkeypatch):
         store = GuardStore(tmp_path / "guard-home")
@@ -1916,7 +1917,14 @@ class TestGuardApprovals:
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{daemon.port}/healthz", timeout=5):
                 pass
-            runtime_state = store.get_runtime_state()
+            deadline = time.monotonic() + 1
+            while True:
+                runtime_state = store.get_runtime_state()
+                if runtime_state is not None and runtime_state["last_heartbeat_at"] == "2026-04-11T00:05:00+00:00":
+                    break
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
         finally:
             daemon.stop()
 
@@ -2368,9 +2376,7 @@ class TestGuardApprovals:
 
     @pytest.mark.parametrize("action", ["approve", "block"])
     @pytest.mark.parametrize("scope", ["artifact", "workspace", "publisher", "harness", "global"])
-    def test_guard_daemon_resolution_route_accepts_all_scope_kinds_without_clearing_queue(
-        self, tmp_path, action, scope
-    ):
+    def test_guard_daemon_resolution_route_resolves_only_scope_covered_reviews(self, tmp_path, action, scope):
         store = GuardStore(tmp_path / "guard-home")
         workspace = tmp_path / "workspace"
         request_id = f"req-{action}-{scope}"
@@ -2444,9 +2450,14 @@ class TestGuardApprovals:
         assert payload["applied_scope"] == expected_scope
         assert payload["resolved_request"]["approval_url"] == "http://127.0.0.1/pending"
         assert payload["resolved_request"]["review_command"] == f"hol-guard approvals {action} {request_id}"
-        assert payload["remaining_pending_count"] == 1
-        assert payload["next_selectable_request_id"] == f"{request_id}-other"
-        assert store.get_approval_request(f"{request_id}-other")["status"] == "pending"
+        other_request_id = f"{request_id}-other"
+        resolves_publisher_match = action == "block" and scope == "publisher"
+        assert payload.get("resolved_scope_ids", []) == ([other_request_id] if resolves_publisher_match else [])
+        assert payload["remaining_pending_count"] == (0 if resolves_publisher_match else 1)
+        assert payload["next_selectable_request_id"] == (None if resolves_publisher_match else other_request_id)
+        assert store.get_approval_request(other_request_id)["status"] == (
+            "resolved" if resolves_publisher_match else "pending"
+        )
 
     def test_guard_daemon_approve_route_requires_auth_token(self, tmp_path):
         store = GuardStore(tmp_path / "guard-home")
@@ -3408,7 +3419,7 @@ class TestGuardApprovals:
             assert timeout == 30
             return SimpleNamespace(status_code=200, json=lambda: {"resolved": True})
 
-        monkeypatch.setattr(guard_bridge_module.requests, "post", fake_post)
+        monkeypatch.setattr(guard_bridge_module._DAEMON_SESSION, "post", fake_post)
 
         resolved = bridge._execute_resolution("approve", "req-bridge")
 

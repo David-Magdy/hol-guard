@@ -234,7 +234,7 @@ def test_snapshot_accepts_verified_update_version(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(
         integrity,
         "verify_release_manifest",
-        lambda *_args, **_kwargs: ManifestVerification("healthy", "release_manifest_valid", "3.1.0a2", "build-1"),
+        lambda *_args, **_kwargs: ManifestVerification("healthy", "release_manifest_valid", "3.0.0a2", "build-1"),
     )
 
     snapshot = integrity.machine_integrity_snapshot()

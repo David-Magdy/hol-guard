@@ -17,6 +17,10 @@ from codex_plugin_scanner.cli import main
 from codex_plugin_scanner.guard.approvals import apply_approval_resolution
 from codex_plugin_scanner.guard.cli import commands as guard_commands_module
 from codex_plugin_scanner.guard.runtime.signals import RiskSignalV2
+from codex_plugin_scanner.guard.runtime.supply_chain_package_eval import (
+    PackageRequestEvaluation,
+    SupplyChainUserCopy,
+)
 from codex_plugin_scanner.guard.store import GuardStore
 
 
@@ -397,7 +401,10 @@ def test_guard_hook_ask_package_live_wait_surfaces_approval_url(
     monkeypatch.setattr(guard_commands_module, "load_guard_surface_daemon_client", fail_daemon)
     opened_urls: list[str] = []
     resolved_request_ids: list[str] = []
-    monkeypatch.setattr(guard_commands_module.webbrowser, "open", opened_urls.append)
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.commands_support_interaction.open_browser_url",
+        lambda url: opened_urls.append(url) or True,
+    )
 
     def resolve_actual_exact_request(**kwargs: object) -> dict[str, object]:
         request_ids = kwargs.get("request_ids")
@@ -498,7 +505,10 @@ def test_guard_hook_ask_package_live_wait_caps_browser_approval_wait(
         raise RuntimeError("no daemon")
 
     monkeypatch.setattr(guard_commands_module, "load_guard_surface_daemon_client", fail_daemon)
-    monkeypatch.setattr(guard_commands_module.webbrowser, "open", lambda _url: None)
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.commands_support_interaction.open_browser_url",
+        lambda _url: False,
+    )
 
     def unresolved_wait(**kwargs: object) -> dict[str, object]:
         timeout_seconds = kwargs.get("timeout_seconds")
@@ -695,3 +705,152 @@ def test_guard_hook_keeps_data_flow_summary_when_package_warning_is_weaker(
     evidence = store.list_evidence()
     assert evidence
     assert evidence[0]["category"] == "supply-chain"
+
+
+def test_guard_hook_preserves_cloud_reconnect_guidance_for_compound_package_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home_dir = tmp_path / "home"
+    workspace_dir = tmp_path / "workspace"
+    install_prefix = workspace_dir / "npm"
+    workspace_dir.mkdir()
+    payload_path = workspace_dir / "hook-event.json"
+    _write_codex_pre_tool_payload(
+        payload_path,
+        workspace_dir,
+        f"npm install @example/plugin --prefix {install_prefix} --legacy-peer-deps",
+    )
+    (home_dir / "config.toml").parent.mkdir(parents=True)
+    (home_dir / "config.toml").write_text("approval_wait_timeout_seconds = 0\n", encoding="utf-8")
+    evaluation = PackageRequestEvaluation(
+        decision="ask",
+        policy_action="require-reapproval",
+        enforcement="premium_cloud",
+        entitlement_state="premium",
+        cache_status="cloud-error",
+        package_intent_hash="a" * 64,
+        policy_version="local:none",
+        bundle_version=None,
+        workspace_fingerprint=None,
+        reasons=(
+            {
+                "code": "cloud_auth_error",
+                "message": "Guard Cloud authorization expired.",
+                "severity": "medium",
+            },
+        ),
+        packages=(),
+        risk_summary="Guard paused the package request for review.",
+        user_copy=SupplyChainUserCopy(
+            title="Review required",
+            summary="Guard Cloud needs a fresh sign-in before shared review can resume.",
+            next_step="hol-guard connect",
+            dashboard_url=None,
+            harness_message="Guard kept this request local-only.",
+        ),
+    )
+    monkeypatch.setattr(
+        guard_commands_module,
+        "evaluate_package_request_artifact",
+        lambda *_args, **_kwargs: evaluation,
+    )
+    monkeypatch.setattr(guard_commands_module, "ensure_guard_daemon", lambda _home: "http://127.0.0.1:5474")
+    monkeypatch.setattr(
+        guard_commands_module,
+        "load_guard_surface_daemon_client",
+        lambda _home: (_ for _ in ()).throw(RuntimeError("no daemon client")),
+    )
+
+    rc = main(
+        [
+            "guard",
+            "hook",
+            "--harness",
+            "codex",
+            "--home",
+            str(home_dir),
+            "--workspace",
+            str(workspace_dir),
+            "--event-file",
+            str(payload_path),
+            "--json",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    decision = output["decision_v2_json"]
+    instruction = "Run `hol-guard connect` to reconnect Guard Cloud, then retry the same install."
+    assert instruction in decision["user_body"]
+    assert instruction in decision["harness_message"]
+    assert instruction in decision["dashboard_primary_detail"]
+    assert instruction in decision["retry_instruction"]
+    assert "Open HOL Guard" in decision["retry_instruction"]
+
+
+def test_guard_hook_does_not_tell_allowed_package_install_to_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home_dir = tmp_path / "home"
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    payload_path = workspace_dir / "hook-event.json"
+    _write_codex_pre_tool_payload(payload_path, workspace_dir, "npm install @example/plugin")
+    evaluation = PackageRequestEvaluation(
+        decision="allow",
+        policy_action="allow",
+        enforcement="local_bundle",
+        entitlement_state="premium",
+        cache_status="cloud-error",
+        package_intent_hash="a" * 64,
+        policy_version="local:test",
+        bundle_version="bundle-test",
+        workspace_fingerprint=None,
+        reasons=(
+            {
+                "code": "cloud_auth_error",
+                "message": "Guard Cloud authorization expired.",
+                "severity": "medium",
+            },
+        ),
+        packages=(),
+        risk_summary="Guard allowed the package request using local intelligence.",
+        user_copy=SupplyChainUserCopy(
+            title="Allowed by policy",
+            summary="Local package intelligence allowed this install.",
+            next_step="hol-guard connect",
+            dashboard_url=None,
+            harness_message="Reconnect Guard Cloud to restore shared review.",
+        ),
+    )
+    monkeypatch.setattr(
+        guard_commands_module,
+        "evaluate_package_request_artifact",
+        lambda *_args, **_kwargs: evaluation,
+    )
+
+    rc = main(
+        [
+            "guard",
+            "hook",
+            "--harness",
+            "codex",
+            "--home",
+            str(home_dir),
+            "--workspace",
+            str(workspace_dir),
+            "--event-file",
+            str(payload_path),
+            "--json",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert output["policy_action"] in {"allow", "warn"}
+    decision_copy = json.dumps(output["decision_v2_json"])
+    assert "retry the same install" not in decision_copy

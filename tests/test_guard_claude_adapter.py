@@ -375,8 +375,12 @@ def test_claude_daemon_hook_bridge_sends_guard_token_header(tmp_path, monkeypatc
         def geturl(self) -> str:
             return "http://127.0.0.1:5999/v1/hooks/claude-code?guard-home=x"
 
-        def read(self) -> bytes:
+        def read(self, amt: int = -1) -> bytes:
+            del amt
             return b"{}"
+
+        def close(self) -> None:
+            return None
 
     class FakeOpener:
         def open(self, request, timeout=30):

@@ -1,4 +1,5 @@
-import { r as reactExports, j as jsxRuntimeExports, at as fetchApprovalPage, au as fetchPolicy, s as guardActionDisposition, p as protectionHealthFor, av as HiMiniArrowLeft, c as HiMiniChevronRight, e as harnessDisplayName, n as GuardHero, P as ProofStrip, aw as HiMiniHome, L as HiMiniBolt, $ as HiMiniAdjustmentsHorizontal, A as ActionButton, S as SectionLabel, t as formatRelativeTime, K as HiMiniExclamationTriangle, ax as guardActionPresentation, M as Badge, ay as DEFAULT_FILTER_STATE, az as filterEvidence, aA as sortEvidence, aB as computeMetrics, aC as CommandActivityWorkspace, k as EmptyState, aD as EvidenceFilterBar, aE as EvidenceInsightStrip, aF as EvidenceActionList, aG as EvidenceActionDetail, I as useFocusTrap, aH as policyIdentityKey, C as HiMiniCloud, aI as HiMiniChartBar, an as Tag, m as HiMiniCheckCircle, R as HiMiniXCircle, aJ as runHarnessAction, aK as GuardHarnessActionError, aL as HiMiniRocketLaunch, q as HiMiniShieldCheck, ar as HiMiniArrowPath, aM as HiMiniTrash, aN as clearLabelForScope, aO as formatHarnessCommand } from "../guard-dashboard.js";
+import { r as reactExports, j as jsxRuntimeExports, aq as fetchApprovalPage, ar as fetchPolicy, q as guardActionDisposition, p as protectionHealthFor, as as HiMiniArrowLeft, c as HiMiniChevronRight, e as harnessDisplayName, m as GuardHero, Q as ProofStrip, at as HiMiniHome, K as HiMiniBolt, $ as HiMiniAdjustmentsHorizontal, S as SectionLabel, A as ActionButton, o as HiMiniShieldCheck, s as formatRelativeTime, J as HiMiniExclamationTriangle, au as guardActionPresentation, L as Badge, av as DEFAULT_FILTER_STATE, aw as filterEvidence, ax as sortEvidence, ay as computeMetrics, az as CommandActivityWorkspace, i as EmptyState, aA as EvidenceFilterBar, aB as EvidenceInsightStrip, aC as EvidenceActionList, aD as EvidenceActionDetail, F as useFocusTrap, aE as policyIdentityKey, B as HiMiniCloud, aF as HiMiniChartBar, aj as Tag, l as HiMiniCheckCircle, T as HiMiniXCircle, aG as runHarnessAction, aH as GuardHarnessActionError, aI as HiMiniRocketLaunch, ao as HiMiniArrowPath, aJ as HiMiniTrash, aK as clearLabelForScope, aL as formatHarnessCommand } from "../guard-dashboard.js";
+import { a as appSetupTarget } from "./harness-setup-target.js";
 function ActivityModeButton(props) {
   const active = props.mode === props.value;
   const handleClick = reactExports.useCallback(() => props.onChange(props.value), [props.onChange, props.value]);
@@ -401,7 +402,7 @@ function firstRunSteps(harness) {
   ];
 }
 function AppOverviewTab(props) {
-  const showFirstRunGuide = shouldShowFirstRunGuide({
+  const showFirstRunGuide = appSetupTarget(props.harness) === "harness" && shouldShowFirstRunGuide({
     status: props.status,
     totalActions: props.totalActions,
     inventoryCount: props.harnessInventory.length,
@@ -868,6 +869,40 @@ function PolicyDecisionRow(props) {
     )
   ] });
 }
+function OperationalSourceSetupPanel({ harness }) {
+  const target = appSetupTarget(harness);
+  const displayName = harnessDisplayName(harness);
+  if (target === "package-firewall") {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-2xl border border-brand-blue/15 bg-gradient-to-br from-brand-blue/[0.055] via-white to-brand-dark/[0.025] p-4 shadow-sm sm:p-5", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: "Package manager protection" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "mt-2 text-lg font-semibold text-brand-dark", children: harness === "bunx" ? "Protect bunx through the package firewall" : "Manage the package firewall in Supply Chain" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 max-w-2xl text-sm text-muted-foreground", children: [
+        displayName,
+        " is a package-security activity source, not an AI app harness. Use the package firewall controls to detect, install, test, or repair its managed shim."
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(ActionButton, { href: "/supply-chain", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "h-4 w-4", "aria-hidden": "true" }),
+        "Open package firewall"
+      ] }) })
+    ] });
+  }
+  if (target === "guard-settings") {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-2xl border border-brand-blue/15 bg-gradient-to-br from-brand-blue/[0.055] via-white to-brand-dark/[0.025] p-4 shadow-sm sm:p-5", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: "Local Guard source" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "mt-2 text-lg font-semibold text-brand-dark", children: "Guard CLI is already part of this local installation" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-2xl text-sm text-muted-foreground", children: "This page groups decisions emitted by Guard's own command-line protection. It does not need a separate app connector or harness configuration." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: "/settings", variant: "outline", children: "Open Guard settings" }) })
+    ] });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-2xl border border-slate-200 bg-slate-50/70 p-4 shadow-sm sm:p-5", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: "Recorded activity source" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("h3", { className: "mt-2 text-lg font-semibold text-brand-dark", children: [
+      "No app connector is required for ",
+      displayName
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-2xl text-sm text-muted-foreground", children: "Guard recorded activity under this source identifier, but it is not a locally installable AI app. Activity and remembered decisions remain available on this page." })
+  ] });
+}
 function AppSettingsTab(props) {
   const [showClearConfirm, setShowClearConfirm] = reactExports.useState(false);
   const [clearing, setClearing] = reactExports.useState(false);
@@ -909,7 +944,7 @@ function AppSettingsTab(props) {
   const clearAllButtonLabel = clearing ? "Clearing..." : "Clear decisions";
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)]", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-6", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
+      appSetupTarget(props.harness) === "harness" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
         HarnessSetupPanel,
         {
           harness: props.harness,
@@ -917,7 +952,7 @@ function AppSettingsTab(props) {
           status: props.status,
           onManagedInstallChanged: props.onManagedInstallChanged
         }
-      ),
+      ) : /* @__PURE__ */ jsxRuntimeExports.jsx(OperationalSourceSetupPanel, { harness: props.harness }),
       props.policyError && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-fade-in rounded-xl border border-brand-attention/10 bg-brand-attention/[0.03] p-4 sm:p-5", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "mt-0.5 h-5 w-5 shrink-0 text-brand-attention", "aria-hidden": "true" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1", children: [
@@ -1443,5 +1478,6 @@ function StatCard({
 }
 export {
   AppDetailWorkspace,
+  OperationalSourceSetupPanel,
   shouldShowFirstRunGuide
 };

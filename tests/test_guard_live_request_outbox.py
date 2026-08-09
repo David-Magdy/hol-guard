@@ -8,6 +8,7 @@ from codex_plugin_scanner.guard.models import GuardApprovalRequest
 from codex_plugin_scanner.guard.runtime import live_request_sync
 from codex_plugin_scanner.guard.store import GuardStore
 from codex_plugin_scanner.guard.store_live_request_outbox import (
+    _requeue_pending_live_requests,
     live_request_oauth_subject_hash,
     seed_live_request_outbox,
 )
@@ -83,6 +84,7 @@ def _request(
     summary: str = "Review test action",
     action_identity: str | None = None,
     queue_group_id: str | None = None,
+    workspace: str | None = None,
 ) -> GuardApprovalRequest:
     return GuardApprovalRequest(
         request_id=request_id,
@@ -101,6 +103,7 @@ def _request(
         queue_group_id=queue_group_id or request_id,
         trigger_summary=summary,
         last_seen_at=_NOW,
+        workspace=workspace,
     )
 
 
@@ -552,7 +555,7 @@ def test_legacy_outbox_reassignment_requires_exact_operator_confirmation(tmp_pat
         _oauth_state("workspace-default"),
         _NOW,
     )
-    store.add_approval_request(_request("request-legacy"), _NOW)
+    store.add_approval_request(_request("request-legacy", workspace="workspace-default"), _NOW)
     _replace_outbox_with_legacy_row(
         store,
         request_id="request-legacy",
@@ -587,6 +590,44 @@ def test_legacy_outbox_reassignment_requires_exact_operator_confirmation(tmp_pat
     assert len(rows) == 1
     assert rows[0]["oauth_source"] == "default"
     assert migrated_store.get_approval_request("request-legacy")["oauth_source"] == "default"
+
+
+def test_legacy_outbox_reassignment_rejects_cross_workspace_rows(tmp_path) -> None:
+    guard_home = tmp_path / "guard"
+    store = GuardStore(guard_home)
+    store.set_sync_payload(
+        "oauth_local_credentials",
+        _oauth_state("workspace-default"),
+        _NOW,
+    )
+    store.add_approval_request(_request("request-default", workspace="workspace-default"), _NOW)
+    store.add_approval_request(_request("request-other", workspace="workspace-other"), _NOW)
+    _replace_outbox_with_legacy_row(
+        store,
+        request_id="request-default",
+        workspace_id="workspace-previously-assumed",
+    )
+    _replace_outbox_with_legacy_row(
+        store,
+        request_id="request-other",
+        workspace_id="workspace-previously-assumed",
+    )
+
+    migrated_store = GuardStore(guard_home)
+
+    assert (
+        migrated_store.reassign_quarantined_live_request_outbox(
+            approved_source="default",
+            approved_workspace_id="workspace-default",
+        )
+        == 1
+    )
+    default_request = migrated_store.get_approval_request("request-default")
+    other_request = migrated_store.get_approval_request("request-other")
+    assert default_request is not None
+    assert other_request is not None
+    assert default_request["oauth_source"] == "default"
+    assert other_request["oauth_source"] is None
 
 
 def test_newer_mutation_preserves_retry_backoff(tmp_path) -> None:
@@ -783,6 +824,37 @@ def test_partial_acknowledgement_retries_only_rejected_event(tmp_path, monkeypat
     assert rows[0]["attempt_count"] == 1
 
 
+def test_partial_acknowledgement_preserves_sanitized_cloud_retry_reason(tmp_path, monkeypatch) -> None:
+    store = GuardStore(tmp_path / "guard")
+    store.add_approval_request(_request("request-rejected"), _NOW)
+    monkeypatch.setattr(
+        live_request_sync,
+        "_post_sync_events",
+        lambda *_args, **_kwargs: {
+            "accepted": 0,
+            "rejected": 1,
+            "perEventResults": [
+                {
+                    "index": 0,
+                    "accepted": False,
+                    "code": "oauth_subject_mismatch",
+                    "error": "binding rejected",
+                }
+            ],
+        },
+    )
+
+    result = live_request_sync.sync_live_requests_once(store, _sync_auth(store))
+
+    assert result["rejected"] == 1
+    assert result["errors"] == [
+        "1 live request events require retry. Cloud reported: oauth_subject_mismatch: binding rejected."
+    ]
+    state = store.get_sync_payload(live_request_sync.LIVE_REQUEST_SYNC_STATE_KEY)
+    assert isinstance(state, dict)
+    assert state["last_error"] == result["errors"][0]
+
+
 def test_terminal_rejections_are_acknowledged_while_transient_rejection_retries(
     tmp_path,
     monkeypatch,
@@ -910,3 +982,16 @@ def test_transient_newest_failures_do_not_reset_oldest_fairness_slot(
 def test_worker_safety_interval_is_subsecond() -> None:
     assert live_request_sync.DEFAULT_POLL_INTERVAL_SECONDS <= 0.1
     assert live_request_sync.LIVE_REQUEST_SYNC_BATCH_SIZE == 1
+
+
+def test_pending_requeue_opens_write_transaction_before_binding_read(tmp_path) -> None:
+    store = GuardStore(tmp_path / "guard")
+    statements: list[str] = []
+
+    with store._connect() as connection:
+        connection.set_trace_callback(statements.append)
+        _requeue_pending_live_requests(connection, source=store.guard_source, changed_at=_NOW)
+
+    normalized = [statement.strip().lower() for statement in statements]
+    assert normalized[0] == "begin immediate"
+    assert next(index for index, statement in enumerate(normalized) if "from sync_state" in statement) > 0

@@ -12,6 +12,8 @@ import hmac
 import os
 import shlex
 import stat
+import sys
+import sysconfig
 from pathlib import Path
 
 
@@ -33,6 +35,143 @@ def split_hook_command(command: object) -> list[str] | None:
         return shlex.split(command)
     except ValueError:
         return None
+
+
+def _owner_is_only_group_member(owner_uid: int, group_gid: int) -> bool:
+    """Return whether a POSIX group is provably private to one file owner.
+
+    Linux distributions commonly create one primary group per user and pair it
+    with a 0002 umask.  That can produce user-owned 0664 config files and
+    package modules extracted by pip/pipx.  The group write bit is safe only
+    when NSS can prove that no other account belongs to that group.  Lookup
+    failures remain fail-closed.
+
+    User-private groups often have an empty ``gr_mem`` list (membership is only
+    via ``pw_gid``).  Some restricted NSS configurations also return an empty
+    ``getpwall()`` result.  In that case the classic ``group name == username``
+    user-private-group convention plus matching primary gid is accepted; any
+    evidence of a second member still rejects.
+    """
+
+    try:
+        import grp
+        import pwd
+
+        owner = pwd.getpwuid(owner_uid)
+        group = grp.getgrgid(group_gid)
+        owner_in_group = owner.pw_gid == group_gid or owner.pw_name in set(group.gr_mem)
+        if not owner_in_group:
+            return False
+        accounts = pwd.getpwall()
+        member_names = set(group.gr_mem)
+        member_names.update(entry.pw_name for entry in accounts if entry.pw_gid == group_gid)
+        other_members = member_names - {owner.pw_name}
+        if other_members:
+            return False
+        # Proven private membership: the owner is listed and no one else is.
+        if owner.pw_name in member_names:
+            return True
+        # Empty NSS listing cannot prove absence of other primary members. Accept
+        # only the classic user-private-group convention (group name == username,
+        # matching primary gid, empty gr_mem). Partial non-empty listings fail closed.
+        return not accounts and not group.gr_mem and group.gr_name == owner.pw_name and owner.pw_gid == group_gid
+    except (ImportError, KeyError, OSError):
+        return False
+
+
+def _python_package_roots() -> tuple[Path, ...]:
+    """Return package roots belonging to the running Python installation.
+
+    ``sysconfig`` supplies the authoritative purelib/platlib locations for the
+    active interpreter.  The explicit prefix-derived candidates cover common
+    POSIX venv and distro layouts, including Debian/Ubuntu ``dist-packages``,
+    without trusting an arbitrary directory merely because it has a familiar
+    basename.  ``site`` and the installed ``codex_plugin_scanner`` location cover
+    pipx/venv layouts where the active purelib spelling differs from the path
+    that imported the package.
+    """
+
+    roots: set[Path] = set()
+
+    def add_root(value: str | Path | None) -> None:
+        if value is None:
+            return
+        try:
+            roots.add(Path(value).expanduser().resolve(strict=False))
+        except (OSError, RuntimeError):
+            return
+
+    try:
+        configured_paths = sysconfig.get_paths()
+    except (AttributeError, OSError, ValueError):
+        configured_paths = {}
+    for key in ("purelib", "platlib"):
+        value = configured_paths.get(key)
+        if isinstance(value, str) and value:
+            add_root(value)
+
+    try:
+        import site
+
+        getsitepackages = getattr(site, "getsitepackages", None)
+        if callable(getsitepackages):
+            site_packages = getsitepackages()
+            if isinstance(site_packages, (list, tuple)):
+                for value in site_packages:
+                    if isinstance(value, str) and value:
+                        add_root(value)
+        getusersitepackages = getattr(site, "getusersitepackages", None)
+        if callable(getusersitepackages):
+            user_site = getusersitepackages()
+            if isinstance(user_site, str) and user_site:
+                add_root(user_site)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+
+    try:
+        import codex_plugin_scanner
+
+        package_file = getattr(codex_plugin_scanner, "__file__", None)
+        if isinstance(package_file, str) and package_file:
+            # site-packages/codex_plugin_scanner/__init__.py -> site-packages
+            add_root(Path(package_file).expanduser().resolve(strict=False).parent.parent)
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+
+    version_dirs = {
+        f"python{sys.version_info.major}",
+        f"python{sys.version_info.major}.{sys.version_info.minor}",
+    }
+    for prefix_value in {sys.prefix, sys.exec_prefix}:
+        if not prefix_value:
+            continue
+        try:
+            prefix = Path(prefix_value).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            continue
+        for lib_dir in ("lib", "lib64"):
+            for version_dir in version_dirs:
+                for package_dir in ("site-packages", "dist-packages"):
+                    add_root(prefix / lib_dir / version_dir / package_dir)
+
+    return tuple(sorted(roots, key=str))
+
+
+def _is_installed_python_package_file(path: Path) -> bool:
+    """Return whether a file is under a package root for this interpreter."""
+
+    try:
+        canonical = path.expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+    for root in _python_package_roots():
+        try:
+            relative = canonical.relative_to(root)
+        except ValueError:
+            continue
+        if relative.parts:
+            return True
+    return False
 
 
 def canonical_path(path: Path) -> str:
@@ -252,7 +391,15 @@ def validate_regular_file(path: Path, *, role: str, executable_required: bool) -
             # root:root layout.
             or (metadata.st_uid == 0 and metadata.st_gid == 0)
         )
-        unsafe_group_write = bool(mode & stat.S_IWGRP) and not trusted_interpreter_group_write
+        trusted_user_private_group_write = (
+            current_uid is not None
+            and metadata.st_uid == current_uid
+            and (role == "config_target" or _is_installed_python_package_file(path))
+            and _owner_is_only_group_member(current_uid, metadata.st_gid)
+        )
+        unsafe_group_write = bool(mode & stat.S_IWGRP) and not (
+            trusted_interpreter_group_write or trusted_user_private_group_write
+        )
         if mode & stat.S_IWOTH or unsafe_group_write:
             raise CodexHookIntegrityError(
                 f"codex_hook_{role}_permissions_unsafe",

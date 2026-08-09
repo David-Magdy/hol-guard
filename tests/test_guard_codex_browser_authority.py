@@ -409,7 +409,7 @@ def test_current_terminal_block_is_not_queued_or_browser_approved(
 
     monkeypatch.setattr(guard_commands_module, "ensure_guard_daemon", unexpected)
     monkeypatch.setattr(guard_commands_module, "queue_blocked_approvals", unexpected)
-    monkeypatch.setattr(guard_commands_module, "wait_for_approval_requests", unexpected)
+    monkeypatch.setattr(interaction_module, "wait_for_approval_requests", unexpected)
     output = StringIO()
     stdout = StringIO()
     with redirect_stdout(stdout):

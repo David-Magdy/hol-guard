@@ -64,6 +64,8 @@ def _guard_service_sync_prerequisite_message() -> str:
     return "Hosted Guard runtime is not configured yet. Run `hol-guard connect` first."
 
 def _guard_service_sync_failure_message(error: GuardSyncNotConfiguredError) -> str:
+    if isinstance(error, GuardSyncEndpointUntrustedError):
+        return str(error)
     if isinstance(error, GuardSyncAuthorizationExpiredError):
         return str(error)
     return _guard_service_sync_prerequisite_message()
@@ -129,6 +131,8 @@ def _guard_sync_prerequisite_message() -> str:
     )
 
 def _guard_sync_failure_message(error: GuardSyncNotConfiguredError) -> str:
+    if isinstance(error, GuardSyncEndpointUntrustedError):
+        return str(error)
     if isinstance(error, GuardSyncAuthorizationExpiredError):
         return str(error)
     return _guard_sync_prerequisite_message()
@@ -192,6 +196,8 @@ def _matching_advisories(store: GuardStore, publisher: object) -> list[dict[str,
 
 def _handle_daemon_status(guard_home: Path, as_json: bool) -> int:
     from codex_plugin_scanner.version import __version__
+    from codex_plugin_scanner.guard.daemon.discovery import load_authenticated_daemon_state
+    from codex_plugin_scanner.guard.daemon.lifecycle_journal import load_daemon_lifecycle_events
 
     url = load_guard_daemon_url(guard_home)
     running = False
@@ -214,10 +220,15 @@ def _handle_daemon_status(guard_home: Path, as_json: bool) -> int:
                 running = True
         except Exception:
             pass
+    authenticated_state = load_authenticated_daemon_state(guard_home) if running else None
+    package_version = authenticated_state.get("package_version") if authenticated_state is not None else None
+    daemon_version = package_version if isinstance(package_version, str) and package_version else None
     payload: dict[str, object] = {
         "running": running,
         "guard_home": str(guard_home),
-        "version": __version__,
+        "version": daemon_version or ("unknown" if running else __version__),
+        "cli_version": __version__,
+        "daemon_version": daemon_version,
     }
     if port is not None:
         payload["port"] = port
@@ -225,6 +236,9 @@ def _handle_daemon_status(guard_home: Path, as_json: bool) -> int:
         payload["pid"] = pid
     if url is not None:
         payload["url"] = url
+    lifecycle_events = load_daemon_lifecycle_events(guard_home, limit=1)
+    if lifecycle_events:
+        payload["last_lifecycle_event"] = lifecycle_events[-1]
     _emit("daemon", payload, as_json)
     return 0
 

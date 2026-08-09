@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -173,6 +174,7 @@ def test_guard_codex_hook_command_uses_lightweight_authenticated_daemon_bridge(t
     assert bridge_config["state_path"] == str(guard_home / "daemon-state.json")
     assert bridge_config["manifest_path"].startswith(str(guard_home / "managed" / "codex"))
     assert bridge_config["query"].startswith("guard-home=")
+    assert parse_qs(bridge_config["query"])["home"] == [str(home_dir.resolve())]
     assert bridge_config["fallback_command"][:3] == [
         str(Path(sys.executable).absolute()),
         "-I",
@@ -180,6 +182,7 @@ def test_guard_codex_hook_command_uses_lightweight_authenticated_daemon_bridge(t
     ]
     assert bridge_config["fallback_command"][4:8] == ["guard", "hook", "--harness", "codex"]
     assert bridge_config["start_command"][:3] == [str(Path(sys.executable).absolute()), "-I", "-c"]
+    assert str(home_dir.resolve()) in bridge_config["start_command"][-1]
     assert bridge_config["hook_timeouts"]["PreToolUse"] > bridge_config["hook_timeouts"]["UserPromptSubmit"]
 
 
@@ -361,11 +364,13 @@ def test_guard_codex_install_and_uninstall_reject_manifest_from_another_workspac
         home_dir=home_dir,
         workspace_dir=tmp_path / "first-workspace",
         guard_home=guard_home,
+        workspace_override_explicit=True,
     )
     second_context = HarnessContext(
         home_dir=home_dir,
         workspace_dir=tmp_path / "second-workspace",
         guard_home=guard_home,
+        workspace_override_explicit=True,
     )
     adapter = CodexHarnessAdapter()
     adapter.install(first_context)
@@ -933,6 +938,7 @@ def test_guard_install_and_repair_codex_preserve_ambiguous_legacy_post_tool_hook
             workspace_dir=workspace_dir,
             guard_home=guard_home,
             home_override_explicit=True,
+            workspace_override_explicit=True,
         )
     )
 
@@ -1564,7 +1570,12 @@ def test_guard_install_codex_migrates_global_and_workspace_hooks_to_toml(tmp_pat
         'model = "gpt-5.3-codex"\n\n[features]\nhooks = true\n',
     )
     _write_text(workspace_dir / ".codex" / "config.toml", 'approval_policy = "never"\n')
-    context = HarnessContext(home_dir=home_dir, guard_home=home_dir, workspace_dir=workspace_dir)
+    context = HarnessContext(
+        home_dir=home_dir,
+        guard_home=home_dir,
+        workspace_dir=workspace_dir,
+        workspace_override_explicit=True,
+    )
     legacy_group = codex_adapter._managed_hook_groups(context)["PreToolUse"]
     _write_text(
         home_dir / ".codex" / "hooks.json",
@@ -1617,7 +1628,12 @@ def test_guard_install_codex_migrates_legacy_bash_only_managed_hook(tmp_path, ca
     home_dir = tmp_path / "home"
     workspace_dir = tmp_path / "workspace"
     _write_text(workspace_dir / ".codex" / "config.toml", 'approval_policy = "never"\n')
-    context = HarnessContext(home_dir=home_dir, guard_home=home_dir, workspace_dir=workspace_dir)
+    context = HarnessContext(
+        home_dir=home_dir,
+        guard_home=home_dir,
+        workspace_dir=workspace_dir,
+        workspace_override_explicit=True,
+    )
     legacy_group = codex_adapter._managed_hook_groups(context)["PreToolUse"]
     _write_text(
         workspace_dir / ".codex" / "hooks.json",

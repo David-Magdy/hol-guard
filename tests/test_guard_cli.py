@@ -31,6 +31,8 @@ from codex_plugin_scanner.guard.adapters.claude_code import CLAUDE_GUARD_DAEMON_
 from codex_plugin_scanner.guard.adapters.cursor_cli import CursorCliLaunchEntry
 from codex_plugin_scanner.guard.adapters.opencode import OpenCodeHarnessAdapter
 from codex_plugin_scanner.guard.cli import commands as guard_commands_module
+from codex_plugin_scanner.guard.cli import commands_support_connect as guard_connect_support_module
+from codex_plugin_scanner.guard.cli import commands_support_workspace as guard_workspace_support_module
 from codex_plugin_scanner.guard.cli import product as guard_product_module
 from codex_plugin_scanner.guard.cli import prompt as guard_prompt_module
 from codex_plugin_scanner.guard.cli import update_commands as guard_update_commands_module
@@ -870,14 +872,40 @@ class TestGuardCli:
         assert "hook" not in error_output
         assert "daemon" not in error_output
 
-    def test_root_guard_missing_subcommand_points_to_root_help(self, monkeypatch, capsys):
+    def test_bare_hol_guard_shows_help_without_side_effects(self, tmp_path, monkeypatch, capsys):
+        side_effects: list[str] = []
         monkeypatch.setattr(sys, "argv", ["hol-guard"])
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setattr(guard_commands_module.sys.stdin, "isatty", lambda: False)
+        monkeypatch.setattr(
+            guard_commands_module,
+            "ensure_guard_daemon",
+            lambda *_args, **_kwargs: side_effects.append("dashboard"),
+        )
+        monkeypatch.setattr(
+            guard_commands_module,
+            "apply_managed_install",
+            lambda *_args, **_kwargs: side_effects.append("apps"),
+        )
+        monkeypatch.setattr(
+            guard_commands_module,
+            "_run_guard_device_connect_flow",
+            lambda **_kwargs: side_effects.append("cloud"),
+        )
+        monkeypatch.setattr(
+            guard_commands_module,
+            "ensure_desktop_notification_setup",
+            lambda *_args, **_kwargs: side_effects.append("notifications"),
+        )
 
         with pytest.raises(SystemExit) as exc_info:
-            main([])
+            main()
 
-        assert exc_info.value.code == 2
-        assert "Run `hol-guard guard --help` to inspect available Guard commands." in capsys.readouterr().err
+        assert exc_info.value.code == 0
+        assert side_effects == []
+        output = capsys.readouterr().out
+        assert "usage: hol-guard" in output
+        assert "Run `hol-guard --help`" not in output
 
     def test_plugin_guard_program_routes_directly_to_guard_mode(self, monkeypatch) -> None:
         called: dict[str, object] = {}
@@ -3041,7 +3069,7 @@ args = ["workspace-skill.js", "--changed"]
         assert store.get_managed_install("claude-code") is not None
         assert store.get_managed_install("claude") is None
 
-    def test_guard_install_omp_alias_dry_run_returns_pi_setup_plan(self, tmp_path, capsys):
+    def test_guard_install_omp_alias_dry_run_returns_omp_setup_plan(self, tmp_path, capsys):
         home_dir = tmp_path / "home"
         workspace_dir = tmp_path / "workspace"
         home_dir.mkdir(parents=True, exist_ok=True)
@@ -3065,11 +3093,11 @@ args = ["workspace-skill.js", "--changed"]
 
         assert rc == 0
         assert output["dry_run"] is True
-        assert output["harness"] == "pi"
-        assert output["contract"]["harness"] == "pi"
+        assert output["harness"] == "omp"
+        assert output["contract"]["harness"] == "omp"
         assert "omp" in output["contract"]["install_aliases"]
         assert "oh-my-pi" in output["contract"]["install_aliases"]
-        assert store.get_managed_install("pi") is None
+        assert store.get_managed_install("omp") is None
 
     def test_guard_uninstall_claude_removes_legacy_claude_code_shim(self, tmp_path, capsys):
         home_dir = tmp_path / "home"
@@ -4012,6 +4040,7 @@ args = ["workspace-skill.js", "--changed"]
         monkeypatch.setattr(guard_update_commands_module.sys, "prefix", "/opt/guard-venv")
         monkeypatch.setattr(guard_update_commands_module.sys, "executable", "/opt/guard-venv/bin/python")
         monkeypatch.setattr(guard_update_commands_module, "_direct_url_payload", lambda: None)
+        monkeypatch.setattr(guard_update_commands_module, "_current_version", lambda: "2.0.18")
         monkeypatch.setattr(
             guard_update_commands_module, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.0.18"
         )
@@ -4022,9 +4051,10 @@ args = ["workspace-skill.js", "--changed"]
 
         assert rc == 0
         assert output["installer"] == "pip"
-        assert commands == [["/opt/guard-venv/bin/python", "-m", "pip", "install", "--upgrade", "hol-guard"]]
-        assert output["status"] == "updated"
-        assert output["stdout"] == "updated"
+        assert commands == []
+        assert output["status"] == "current"
+        assert output["changed"] is False
+        assert output["message"] == "HOL Guard is already current."
 
     def test_guard_update_uses_pipx_when_running_from_pipx(self, tmp_path, monkeypatch, capsys):
         home_dir = tmp_path / "home"
@@ -4037,6 +4067,7 @@ args = ["workspace-skill.js", "--changed"]
         monkeypatch.setattr(guard_update_commands_module.subprocess, "run", fake_run)
         monkeypatch.setattr(guard_update_commands_module.sys, "prefix", "/mock-home/.local/pipx/venvs/hol-guard")
         monkeypatch.setattr(guard_update_commands_module, "_direct_url_payload", lambda: None)
+        monkeypatch.setattr(guard_update_commands_module, "_current_version", lambda: "2.0.18")
         monkeypatch.setattr(
             guard_update_commands_module, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.0.18"
         )
@@ -4047,8 +4078,10 @@ args = ["workspace-skill.js", "--changed"]
 
         assert rc == 0
         assert output["installer"] == "pipx"
-        assert commands == [["pipx", "upgrade", "hol-guard"]]
-        assert output["status"] == "updated"
+        assert commands == []
+        assert output["status"] == "current"
+        assert output["changed"] is False
+        assert output["message"] == "HOL Guard is already current."
 
     def test_guard_update_pins_detected_stable_release_from_uv_canary(self, tmp_path, monkeypatch, capsys):
         home_dir = tmp_path / "home"
@@ -4072,7 +4105,17 @@ args = ["workspace-skill.js", "--changed"]
 
         assert rc == 0
         assert output["installer"] == "uv"
-        assert commands == [["uv", "tool", "install", "--force", "hol-guard==2.0.1092"]]
+        assert commands == [
+            [
+                "uv",
+                "tool",
+                "install",
+                "--force",
+                "--refresh-package",
+                "hol-guard",
+                "hol-guard==2.0.1092",
+            ]
+        ]
         assert output["resulting_version"] == "2.0.1092"
         assert output["status"] == "updated"
 
@@ -4106,12 +4149,10 @@ args = ["workspace-skill.js", "--changed"]
 
         assert rc == 0
         assert output["installer"] == "pipx"
-        assert commands == [["pipx", "upgrade", "hol-guard"]]
+        assert commands == []
         assert output["status"] == "current"
+        assert output["changed"] is False
         assert output["message"] == "HOL Guard is already current."
-        assert output["notes"] == ["upgrading shared libraries...", "upgrading hol-guard..."]
-        assert output["stdout"].startswith("hol-guard is already at latest version 2.0.36")
-        assert output["stderr"] == "upgrading shared libraries...\nupgrading hol-guard..."
 
     def test_guard_update_treats_first_install_as_updated_when_only_dependencies_are_current(
         self, tmp_path, monkeypatch, capsys
@@ -5325,9 +5366,9 @@ curl --data-binary @"$1" http://127.0.0.1:8787/guard-canary
         assert output["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
-        assert "Open HOL Guard to approve or keep this blocked" in reason
-        assert "http://127.0.0.1:" in reason
-        assert "Approve it in HOL Guard, then retry." not in reason
+        assert "HOL Guard blocked this action" in reason
+        assert "http://127.0.0.1:" not in reason
+        assert "approve" not in reason.lower()
 
     def test_guard_codex_hook_emits_json_denial_in_actual_codex_runtime(self, tmp_path, monkeypatch, capsys):
         home_dir = tmp_path / "home"
@@ -5361,9 +5402,9 @@ curl --data-binary @"$1" http://127.0.0.1:8787/guard-canary
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
         assert "destructive shell command" in reason
-        assert "Open HOL Guard to approve or keep this blocked" in reason
-        assert "http://127.0.0.1:" in reason
-        assert "Approve it in HOL Guard, then retry." not in reason
+        assert "HOL Guard blocked this action" in reason
+        assert "http://127.0.0.1:" not in reason
+        assert "approve" not in reason.lower()
 
     def test_guard_codex_hook_observe_mode_does_not_pause_risky_tool_use(self, tmp_path, capsys):
         home_dir = tmp_path / "home"
@@ -5392,8 +5433,7 @@ curl --data-binary @"$1" http://127.0.0.1:8787/guard-canary
         assert rc == 0
         assert captured.out == ""
         pending = store.list_approval_requests(limit=5)
-        assert len(pending) == 1
-        assert pending[0]["policy_action"] == "require-reapproval"
+        assert pending == []
 
     def test_guard_codex_pretooluse_returns_without_browser_wait_for_secret_exfil(self, tmp_path, monkeypatch, capsys):
         home_dir = tmp_path / "home"
@@ -5430,9 +5470,9 @@ curl --data-binary @"$1" http://127.0.0.1:8787/guard-canary
         assert output["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert output["hookSpecificOutput"]["permissionDecision"] == "deny"
         reason = output["hookSpecificOutput"]["permissionDecisionReason"]
-        assert "Open HOL Guard to approve or keep this blocked" in reason
-        assert "http://127.0.0.1:" in reason
-        assert "Approve it in HOL Guard, then retry." not in reason
+        assert "HOL Guard blocked this action" in reason
+        assert "http://127.0.0.1:" not in reason
+        assert "approve" not in reason.lower()
 
     def test_guard_codex_hook_blocks_curl_upload_file_path(self, tmp_path, capsys):
         home_dir = tmp_path / "home"
@@ -6866,6 +6906,31 @@ url = http://127.0.0.1:8787/guard-canary
         assert "stdout" in output
         assert "pipx could not upgrade hol-guard in the current environment" in output
 
+    def test_guard_update_deferred_output_keeps_propagation_detail_calm(self, capsys):
+        emit_guard_payload(
+            "update",
+            {
+                "current_version": "2.2.1",
+                "installer": "pipx",
+                "command": ["pipx", "install", "--force", "hol-guard==2.2.3"],
+                "dry_run": False,
+                "resulting_version": "2.2.1",
+                "status": "deferred",
+                "message": (
+                    "The newest HOL Guard release is still reaching PyPI. "
+                    "Your current installation remains active; try the update again shortly."
+                ),
+                "stderr": "ERROR: No matching distribution found for hol-guard==2.2.3",
+            },
+            False,
+        )
+
+        output = capsys.readouterr().out
+
+        assert "Guard update: deferred" in output
+        assert "current installation remains active" in output
+        assert "stderr" not in output
+
     def test_guard_uninstall_auto_detects_managed_harnesses(self, tmp_path, capsys):
         home_dir = tmp_path / "home"
         workspace_dir = tmp_path / "workspace"
@@ -7170,6 +7235,29 @@ url = http://127.0.0.1:8787/guard-canary
         assert payload["cloud_policy_rollout_state"] == "enforcing"
         assert payload["cloud_policy_sync_error"] == "auth_expired"
 
+    def test_guard_status_does_not_mask_current_auth_failure_with_stale_sync_success(self, tmp_path, capsys):
+        home_dir = tmp_path / "home"
+        store = GuardStore(home_dir)
+        _seed_guard_cloud(store)
+        store.set_sync_payload(
+            "sync_summary",
+            {"synced_at": "2026-05-01T00:00:00Z", "receipts_stored": 1},
+            "2026-05-01T00:00:00Z",
+        )
+        store.set_sync_payload(
+            "headless_app_sync_summary",
+            {"status": "auth_expired"},
+            "2026-05-01T01:00:00Z",
+        )
+
+        rc = main(["guard", "status", "--home", str(home_dir), "--json"])
+        payload = json.loads(capsys.readouterr().out)
+
+        assert rc == 0
+        assert payload["cloud_state"] == "local_only"
+        assert "repair" in str(payload["cloud_state_detail"]).lower()
+        assert payload["last_sync_at"] == "2026-05-01T00:00:00Z"
+
     def test_guard_status_rejects_digest_only_cached_bundle_metadata(self, tmp_path, capsys):
         home_dir = tmp_path / "home"
         store = GuardStore(home_dir)
@@ -7428,7 +7516,7 @@ url = http://127.0.0.1:8787/guard-canary
             del store, announce_copy, ci_safe, machine_label
             assert connect_url == "https://hol.org/guard/connect"
             assert wait_timeout_seconds == 180
-            assert open_browser is not None
+            assert open_browser is guard_connect_support_module.open_browser_url
             browser_opened = bool(open_browser("https://hol.org/guard/oauth/device"))
             return {
                 "status": "connected",
@@ -7441,7 +7529,11 @@ url = http://127.0.0.1:8787/guard-canary
 
         monkeypatch.setattr(guard_commands_module, "_run_guard_browser_connect_flow", unexpected_browser_flow)
         monkeypatch.setattr(guard_commands_module, "_run_guard_device_connect_flow", fake_device_flow)
-        monkeypatch.setattr(guard_commands_module.webbrowser, "open", lambda target: opened.append(target) or True)
+        monkeypatch.setattr(
+            guard_connect_support_module,
+            "open_browser_url",
+            lambda target: opened.append(target) or True,
+        )
 
         connect_rc = main(
             [
@@ -7488,22 +7580,21 @@ url = http://127.0.0.1:8787/guard-canary
             workspace_id="workspace-123",
             now="2026-06-01T00:00:00+00:00",
         )
+        expected_storage_health = store.get_oauth_local_credential_health()
+        monkeypatch.setattr(
+            GuardStore,
+            "get_oauth_local_credential_health",
+            lambda _store: expected_storage_health,
+        )
 
         status_rc = main(["guard", "status", "--home", str(home_dir), "--workspace", str(workspace_dir), "--json"])
         status_output = json.loads(capsys.readouterr().out)
 
         assert status_rc == 0
-        assert status_output["oauth_storage_health"] == {
-            "configured": True,
-            "state": "healthy",
-            "backend": "system-keyring",
-            "fallback_backend": "encrypted-file",
-            "issuer": "https://hol.org",
-            "client_id": "guard-local-daemon",
-            "grant_id": "grant-123",
-            "machine_id": "machine-123",
-            "workspace_id": "workspace-123",
-        }
+        assert status_output["oauth_storage_health"] == expected_storage_health
+        assert status_output["oauth_storage_health"]["configured"] is True
+        assert status_output["oauth_storage_health"]["state"] == "healthy"
+        assert "refresh-secret-value" not in json.dumps(status_output)
 
     def test_guard_connect_status_prefers_active_sync_over_expired_browser_pairing(self, tmp_path, capsys, monkeypatch):
         home_dir = tmp_path / "home"
@@ -8319,6 +8410,44 @@ url = http://127.0.0.1:8787/guard-canary
         assert output["reason"] == "opened"
         assert "notification_setup_started" not in output
 
+    def test_guard_daemon_ensure_releases_wake_reservation_after_failure(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        home_dir = tmp_path / "home"
+        guard_home = tmp_path / "guard-home"
+        cleared: list[tuple[Path, str]] = []
+
+        def fail_startup(_guard_home: Path, *, home_dir: Path | None = None) -> str:
+            assert _guard_home == guard_home
+            assert home_dir == tmp_path / "home"
+            raise RuntimeError("startup failed")
+
+        monkeypatch.setattr(guard_commands_module, "ensure_guard_daemon", fail_startup)
+        monkeypatch.setattr(
+            guard_commands_module,
+            "clear_guard_daemon_wake_reservation",
+            lambda home, *, token: cleared.append((home, token)) or True,
+        )
+
+        exit_code = main(
+            [
+                "guard",
+                "daemon",
+                "ensure",
+                "--home",
+                str(home_dir),
+                "--guard-home",
+                str(guard_home),
+                "--wake-token",
+                "wake-token",
+            ]
+        )
+
+        assert exit_code == 1
+        assert cleared == [(guard_home, "wake-token")]
+
     def test_guard_init_requires_progressive_approval_before_side_effects(self, tmp_path, capsys, monkeypatch):
         home_dir = tmp_path / "home"
         guard_home = tmp_path / "guard-home"
@@ -8362,13 +8491,11 @@ url = http://127.0.0.1:8787/guard-canary
             "apps",
             "cloud",
             "notifications",
-            "tray",
         ]
         assert output["dashboard"] == {"skipped": True, "reason": "needs_approval"}
         assert output["apps"] == {"skipped": True, "reason": "needs_approval"}
         assert output["cloud"] == {"skipped": True, "reason": "needs_approval"}
         assert output["desktop_notifications"] == {"skipped": True, "reason": "needs_approval"}
-        assert output["tray"] == {"skipped": True, "reason": "needs_approval"}
         assert output["next_command"] == "hol-guard init --yes"
 
     def test_guard_init_runs_apps_cloud_notifications_and_dashboard_with_yes(self, tmp_path, capsys, monkeypatch):
@@ -8411,15 +8538,16 @@ url = http://127.0.0.1:8787/guard-canary
             }
 
         monkeypatch.setattr(guard_commands_module, "apply_managed_install", fake_install)
-        monkeypatch.setattr(
-            guard_commands_module,
-            "_run_guard_device_connect_flow",
-            lambda **_kwargs: {
+
+        def fake_device_connect_flow(**kwargs: object) -> dict[str, object]:
+            assert kwargs["open_browser"] is guard_workspace_support_module.open_browser_url
+            return {
                 "connected": False,
                 "status": "waiting_for_browser",
                 "connect_url": "https://hol.org/guard/connect",
-            },
-        )
+            }
+
+        monkeypatch.setattr(guard_commands_module, "_run_guard_device_connect_flow", fake_device_connect_flow)
 
         def fake_setup(
             guard_home_path: Path,
@@ -8440,36 +8568,12 @@ url = http://127.0.0.1:8787/guard-canary
 
         monkeypatch.setattr(guard_commands_module, "ensure_desktop_notification_setup", fake_setup)
 
-        # Mock tray lifecycle so init doesn't shell out on CI (no display).
-        from unittest.mock import MagicMock as _MagicMock
-
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        mock_adapter = _MagicMock()
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: mock_adapter,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            lambda *a, **kw: None,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            _MagicMock(return_value=_MagicMock(ok=True)),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
-
         rc = main(["guard", "init", "--yes", "--home", str(home_dir), "--guard-home", str(guard_home), "--json"])
         output = json.loads(capsys.readouterr().out)
 
         assert rc == 0
         assert output["mode"] == "auto_approved"
         assert [step["decision"] for step in output["plan"]] == [
-            "approved",
             "approved",
             "approved",
             "approved",
@@ -8520,27 +8624,6 @@ url = http://127.0.0.1:8787/guard-canary
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("notification permission failed")),
         )
 
-        # Tray step runs even after init_failed (loop continues). Mock it.
-        from unittest.mock import MagicMock as _MagicMock
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: _MagicMock(),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            lambda *a, **kw: None,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            _MagicMock(return_value=_MagicMock(ok=True)),
-        )
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
         rc = main(["guard", "init", "--yes", "--home", str(home_dir), "--guard-home", str(guard_home), "--json"])
         output = json.loads(capsys.readouterr().out)
 
@@ -8613,29 +8696,6 @@ url = http://127.0.0.1:8787/guard-canary
             ),
         )
 
-        # Tray step runs even after a step fails (loop continues). Mock it
-        # so init doesn't write a real autostart file on Linux CI.
-        from unittest.mock import MagicMock as _MagicMock
-
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: _MagicMock(),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            lambda *a, **kw: None,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            _MagicMock(return_value=_MagicMock(ok=True)),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
-
         rc = main(["guard", "init", "--yes", "--home", str(home_dir), "--guard-home", str(guard_home), "--json"])
         output = json.loads(capsys.readouterr().out)
 
@@ -8677,28 +8737,6 @@ url = http://127.0.0.1:8787/guard-canary
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("notification permission failed")),
         )
 
-        # Tray step runs even after notification failure. Mock it.
-        from unittest.mock import MagicMock as _MagicMock
-
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: _MagicMock(),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            lambda *a, **kw: None,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            _MagicMock(return_value=_MagicMock(ok=True)),
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
-
         rc = main(["guard", "init", "--yes", "--home", str(home_dir), "--guard-home", str(guard_home)])
         output = capsys.readouterr().out
 
@@ -8710,7 +8748,7 @@ url = http://127.0.0.1:8787/guard-canary
     def test_guard_init_interactive_no_skips_only_cloud_step(self, tmp_path, capsys, monkeypatch):
         home_dir = tmp_path / "home"
         guard_home = tmp_path / "guard-home"
-        answers = iter(["y", "y", "n", "y", "n"])
+        answers = iter(["y", "y", "n", "y"])
         dashboard_calls: list[str] = []
         install_calls: list[bool] = []
         notification_calls: list[bool] = []
@@ -8764,14 +8802,6 @@ url = http://127.0.0.1:8787/guard-canary
 
         monkeypatch.setattr(guard_commands_module, "ensure_desktop_notification_setup", fake_setup)
 
-        # Tray step: user skips it ("n"). Mock detect_platform_adapter so the
-        # skip path doesn't shell out on CI.
-        from unittest.mock import MagicMock as _MagicMock
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: _MagicMock(),
-        )
         rc = main(["guard", "init", "--home", str(home_dir), "--guard-home", str(guard_home)])
         output = capsys.readouterr().out
 
@@ -8786,7 +8816,7 @@ url = http://127.0.0.1:8787/guard-canary
         home_dir = tmp_path / "home"
         guard_home = tmp_path / "guard-home"
         events: list[str] = []
-        answers = iter(["y", "y", "y", "y", "y"])
+        answers = iter(["y", "y", "y", "y"])
 
         monkeypatch.setattr(guard_commands_module.sys.stdin, "isatty", lambda: True)
 
@@ -8842,38 +8872,6 @@ url = http://127.0.0.1:8787/guard-canary
 
         monkeypatch.setattr(guard_commands_module, "ensure_desktop_notification_setup", fake_setup)
 
-        # Mock tray lifecycle so interactive init doesn't shell out on CI.
-        from unittest.mock import MagicMock as _MagicMock
-
-        from codex_plugin_scanner.guard.tray.contracts import TrayState
-
-        mock_adapter = _MagicMock()
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.platforms.detect_platform_adapter",
-            lambda: mock_adapter,
-        )
-
-        def fake_install_registration(*_a, **_kw):
-            events.append("run:tray-install")
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.install_registration",
-            fake_install_registration,
-        )
-
-        def fake_start_tray(*_a, **_kw):
-            events.append("run:tray-start")
-            return _MagicMock(ok=True)
-
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.start_tray",
-            fake_start_tray,
-        )
-        monkeypatch.setattr(
-            "codex_plugin_scanner.guard.tray.lifecycle.get_status",
-            _MagicMock(return_value=(TrayState.RUNNING, None, None)),
-        )
-
         rc = main(["guard", "init", "--home", str(home_dir), "--guard-home", str(guard_home)])
 
         assert rc == 0
@@ -8887,9 +8885,6 @@ url = http://127.0.0.1:8787/guard-canary
             "run:cloud",
             "prompt:notifications",
             "run:notifications",
-            "prompt:tray",
-            "run:tray-install",
-            "run:tray-start",
         ]
 
     def test_guard_init_skip_flags_do_not_run_install_cloud_or_notifications(self, tmp_path, capsys, monkeypatch):
@@ -8932,7 +8927,6 @@ url = http://127.0.0.1:8787/guard-canary
                 "--skip-apps",
                 "--skip-cloud",
                 "--skip-notifications",
-                "--skip-tray",
                 "--home",
                 str(home_dir),
                 "--guard-home",
@@ -8949,7 +8943,6 @@ url = http://127.0.0.1:8787/guard-canary
             "skipped": True,
             "reason": "skip_notifications",
         }
-        assert output["tray"] == {"skipped": True, "reason": "skip_tray"}
 
     def test_guard_admin_alias_opens_local_approval_center(self, tmp_path, capsys, monkeypatch):
         home_dir = tmp_path / "home"

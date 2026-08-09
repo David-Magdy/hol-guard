@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import importlib.metadata
 import io
 import json
 import os
@@ -117,6 +118,34 @@ _POLICY_BUNDLE_VERSIONS = ("guard-policy-bundle.v1", "guard-policy-bundle.v2")
 _POLICY_CONTRACTS = ("guard-policy-bundle/v1", "guard-policy-bundle/v2")
 _POLICY_YAML_IMPORT_ENV = "HOL_GUARD_POLICY_YAML_IMPORT"
 _POLICY_CANONICAL_ENFORCEMENT_ENV = "HOL_GUARD_POLICY_CANONICAL_ENFORCEMENT"
+
+
+def _hol_guard_runtime_source_sha256(package_root: Path | None = None) -> str:
+    resolved_package_root = package_root or Path(__file__).parents[2]
+    digest = hashlib.sha256()
+    for source_path in sorted(resolved_package_root.rglob("*.py")):
+        relative_path = source_path.relative_to(resolved_package_root).as_posix().encode("utf-8")
+        source_bytes = source_path.read_bytes()
+        digest.update(len(relative_path).to_bytes(8, "big"))
+        digest.update(relative_path)
+        digest.update(len(source_bytes).to_bytes(8, "big"))
+        digest.update(source_bytes)
+    return digest.hexdigest()
+
+
+def _hol_guard_runtime_package_identity() -> tuple[str | None, str] | None:
+    try:
+        source_sha256 = _hol_guard_runtime_source_sha256()
+    except OSError:
+        return None
+    try:
+        distribution_version = importlib.metadata.version("hol-guard")
+    except importlib.metadata.PackageNotFoundError:
+        distribution_version = None
+    return distribution_version, source_sha256
+
+
+_LOADED_HOL_GUARD_RUNTIME_PACKAGE_IDENTITY = _hol_guard_runtime_package_identity()
 
 
 def _canonical_policy_rollout_percentage() -> int:
@@ -885,6 +914,10 @@ _GUARD_EVENTS_ENDPOINT_UNAVAILABLE_RETRY_MINUTES = 5  # single 404 shouldn't dis
 
 class GuardSyncNotConfiguredError(RuntimeError):
     """Raised when Guard Cloud sync is requested before the machine is paired."""
+
+
+class GuardSyncEndpointUntrustedError(GuardSyncNotConfiguredError):
+    """Raised when a configured Guard Cloud endpoint fails trust validation."""
 
 
 class GuardSyncNotAvailableError(RuntimeError):
@@ -2685,6 +2718,7 @@ def sync_receipts(
     sync_url = _normalized_receipts_sync_url(_validate_guard_sync_url(_auth_context_sync_url(resolved_auth_context)))
     local_guard_online_at = _now()
     redaction_level = _resolve_cloud_receipt_redaction_level(store)
+    _ensure_live_request_privacy_projection(store, level=redaction_level, synced_at=local_guard_online_at)
     _ensure_relaxed_receipt_redaction_resync(store, level=redaction_level, synced_at=local_guard_online_at)
     prior_receipt_cursor = _receipt_sync_cursor_rowid(store)
     receipts = _receipt_sync_rows_for_upload(store, cursor_rowid=prior_receipt_cursor)
@@ -3023,9 +3057,15 @@ def sync_receipts(
     remote_policies_stored = 0
     remote_policy_sync_blocked = False
     if effective_policy_bundle is not None:
+        activation_keyring = store.get_sync_payload("policy_bundle_keyring")
+        if effective_policy_bundle is validated_policy_bundle and trusted_policy_bundle_keys:
+            activation_keyring = policy_bundle_keyring_payload(
+                trusted_policy_bundle_keys,
+                workspace_id=store.get_cloud_workspace_id(),
+            )
         activation_bundle, activation_reason, activation_keys = validate_synced_policy_bundle(
             effective_policy_bundle,
-            stored_keyring=store.get_sync_payload("policy_bundle_keyring"),
+            stored_keyring=activation_keyring,
             supply_chain_keyring=store.get_sync_payload("supply_chain_bundle_keyring"),
             managed_keyring_provenance=store.get_sync_payload(MANAGED_POLICY_BUNDLE_KEYRING_PROVENANCE_STATE_KEY),
             expected_workspace_id=store.get_cloud_workspace_id(),
@@ -3231,7 +3271,7 @@ def sync_receipts(
             "reason": "background_deferred",
             "message": (
                 "AIBOM inventory refresh is deferred to the Guard daemon background lane; "
-                "run hol-guard guard sync --deep to refresh now."
+                "run hol-guard sync --deep to refresh now."
             ),
         }
     if persist_sync_summary:
@@ -4227,8 +4267,35 @@ def _guard_oauth_reauthorization_message() -> str:
 
 def _guard_oauth_reconnect_after_revoked_message() -> str:
     return (
-        "Guard Cloud sign-in on this device is no longer valid. "
-        "Run `hol-guard disconnect` then `hol-guard connect` to sign in again."
+        "Guard Cloud sign-in on this device is no longer valid. Run `hol-guard connect` to repair it and sign in again."
+    )
+
+
+def _guard_runtime_was_upgraded() -> bool:
+    loaded_identity = _LOADED_HOL_GUARD_RUNTIME_PACKAGE_IDENTITY
+    if loaded_identity is None:
+        return True
+    return _hol_guard_runtime_package_identity() != loaded_identity
+
+
+def _guard_runtime_upgrade_restart_message() -> str:
+    return (
+        "HOL Guard was upgraded while this process was running. Restart the agent application "
+        "before Guard Cloud access resumes."
+    )
+
+
+def _guard_runtime_was_upgraded() -> bool:
+    loaded_identity = _LOADED_HOL_GUARD_RUNTIME_PACKAGE_IDENTITY
+    if loaded_identity is None:
+        return True
+    return _hol_guard_runtime_package_identity() != loaded_identity
+
+
+def _guard_runtime_upgrade_restart_message() -> str:
+    return (
+        "HOL Guard was upgraded while this process was running. Restart the agent application "
+        "before Guard Cloud access resumes."
     )
 
 
@@ -4270,7 +4337,7 @@ def clear_revoked_guard_oauth_sign_in(store: GuardStore) -> bool:
                 _resolve_guard_sync_auth_context_from_oauth_credentials(store, credentials)
             except GuardSyncAuthorizationExpiredError as error:
                 if _oauth_authorization_error_requires_fresh_sign_in(error):
-                    store.clear_oauth_local_credentials()
+                    store._clear_oauth_local_credentials_locked()
                     return True
                 return False
     except (RuntimeError, OSError, TimeoutError):
@@ -4281,10 +4348,25 @@ def clear_revoked_guard_oauth_sign_in(store: GuardStore) -> bool:
 def repair_guard_cloud_connect_storage(store: GuardStore) -> dict[str, object]:
     """Repair local OAuth storage without clearing sign-in state."""
     repaired_storage = store.repair_oauth_local_credential_storage_from_primary()
-    existing_sign_in_valid = store.get_oauth_local_credentials(allow_primary=True) is not None
+    credentials = store.get_oauth_local_credentials(allow_primary=True)
+    repaired_oauth_binding = False
+    claimed_live_requests = 0
+    if credentials is not None:
+        repaired_oauth_binding = _persist_recovered_oauth_binding(store, credentials)
+        binding = store.get_live_request_oauth_binding()
+        if binding is not None:
+            claimed_live_requests = store.claim_unowned_live_request_outbox(
+                workspace_id=binding["workspace_id"],
+                oauth_subject_hash=binding["oauth_subject_hash"],
+                machine_id=binding["machine_id"],
+                machine_installation_id=binding["machine_installation_id"],
+            )
+    existing_sign_in_valid = credentials is not None
     return {
         "cleared_stale_sign_in": False,
         "existing_sign_in_valid": existing_sign_in_valid,
+        "claimed_live_requests": claimed_live_requests,
+        "repaired_oauth_binding": repaired_oauth_binding,
         "repaired_storage": repaired_storage,
     }
 
@@ -4309,9 +4391,7 @@ def _validate_guard_sync_url(sync_url: str, *, issuer: str | None = None) -> str
     try:
         return validate_guard_sync_endpoint(sync_url, issuer=issuer)
     except ValueError as error:
-        if issuer is not None:
-            raise GuardSyncAuthorizationExpiredError(f"{_guard_oauth_reauthorization_message()} {error}") from error
-        raise GuardSyncNotConfiguredError(f"{_guard_sync_reconnect_message()} {error}") from error
+        raise GuardSyncEndpointUntrustedError(f"{_guard_sync_reconnect_message()} {error}") from error
 
 
 def _refresh_guard_oauth_access_token(
@@ -4321,6 +4401,8 @@ def _refresh_guard_oauth_access_token(
     refresh_token: str,
     dpop_key_material: GuardDpopKeyMaterial,
 ) -> dict[str, object]:
+    if _guard_runtime_was_upgraded():
+        raise GuardSyncNotAvailableError(_guard_runtime_upgrade_restart_message(), retryable=True)
     request_body = urllib.parse.urlencode(
         {
             "grant_type": "refresh_token",
@@ -4430,6 +4512,56 @@ def _decode_oauth_access_token_claims(access_token: str) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _nested_oauth_claim(claims: dict[str, object], section: str, key: str) -> str | None:
+    nested = claims.get(section)
+    if not isinstance(nested, dict):
+        return None
+    return _optional_string(nested.get(key))
+
+
+def _oauth_binding_metadata_from_access_token(credentials: dict[str, object]) -> dict[str, str]:
+    access_token = _optional_string(credentials.get("access_token"))
+    issuer = _optional_string(credentials.get("issuer"))
+    if access_token is None or issuer is None:
+        return {}
+    claims = _decode_oauth_access_token_claims(access_token)
+    token_issuer = _optional_string(claims.get("iss"))
+    if token_issuer is not None and token_issuer.rstrip("/") != issuer.rstrip("/"):
+        return {}
+    claimed = {
+        "grant_id": _nested_oauth_claim(claims, "grant", "grantId"),
+        "machine_id": _nested_oauth_claim(claims, "machine", "machineId"),
+        "workspace_id": _nested_oauth_claim(claims, "workspace", "workspaceId"),
+    }
+    if not all(claimed.values()):
+        return {}
+    for key, claimed_value in claimed.items():
+        existing_value = _optional_string(credentials.get(key))
+        if existing_value is not None and existing_value != claimed_value:
+            return {}
+    return {key: str(value) for key, value in claimed.items()}
+
+
+def _persist_recovered_oauth_binding(store: GuardStore, credentials: dict[str, object]) -> bool:
+    recovered = _oauth_binding_metadata_from_access_token(credentials)
+    if not recovered or all(_optional_string(credentials.get(key)) is not None for key in recovered):
+        return False
+    refresh_token = _optional_string(credentials.get("refresh_token"))
+    if refresh_token is None:
+        return False
+    _persist_rotated_oauth_refresh_token(
+        store=store,
+        credentials={
+            **credentials,
+            **{key: _optional_string(credentials.get(key)) or value for key, value in recovered.items()},
+        },
+        refresh_token=refresh_token,
+        access_token=_optional_string(credentials.get("access_token")),
+        access_token_expires_at=_optional_string(credentials.get("access_token_expires_at")),
+    )
+    return True
+
+
 def _oauth_access_token_expires_at(
     access_token: str,
     *,
@@ -4507,6 +4639,10 @@ def _persist_rotated_oauth_refresh_token(
         supply_chain_firewall = (
             credentials_supply_chain_firewall if isinstance(credentials_supply_chain_firewall, bool) else None
         )
+    effective_access_token = access_token or _optional_string(credentials.get("access_token"))
+    recovered_binding = _oauth_binding_metadata_from_access_token(
+        {**credentials, "access_token": effective_access_token}
+    )
     store.set_oauth_local_credentials(
         issuer=issuer,
         client_id=client_id,
@@ -4514,8 +4650,8 @@ def _persist_rotated_oauth_refresh_token(
         dpop_private_key_pem=dpop_private_key_pem,
         dpop_public_jwk={str(key): str(value) for key, value in dpop_public_jwk.items()},
         dpop_public_jwk_thumbprint=dpop_public_jwk_thumbprint,
-        grant_id=_optional_string(credentials.get("grant_id")),
-        machine_id=_optional_string(credentials.get("machine_id")),
+        grant_id=_optional_string(credentials.get("grant_id")) or recovered_binding.get("grant_id"),
+        machine_id=_optional_string(credentials.get("machine_id")) or recovered_binding.get("machine_id"),
         supply_chain_entitlement_expires_at=(
             _optional_string(package_firewall_entitlement.get("supply_chain_entitlement_expires_at"))
             if isinstance(package_firewall_entitlement, dict)
@@ -4527,11 +4663,11 @@ def _persist_rotated_oauth_refresh_token(
             if isinstance(package_firewall_entitlement, dict)
             else _optional_string(credentials.get("supply_chain_plan_id"))
         ),
-        workspace_id=_optional_string(credentials.get("workspace_id")),
+        workspace_id=_optional_string(credentials.get("workspace_id")) or recovered_binding.get("workspace_id"),
         cloud_user_profile=cloud_user_profile,
         runtime_id=_optional_string(credentials.get("runtime_id")),
         runtime_label=_optional_string(credentials.get("runtime_label")),
-        access_token=access_token,
+        access_token=effective_access_token,
         access_token_expires_at=access_token_expires_at,
         now=_now(),
         force_primary_secret_rewrite=force_primary_secret_rewrite,
@@ -4554,7 +4690,7 @@ def _resolve_guard_sync_auth_context_from_oauth_credentials(
     try:
         oauth_client = resolve_guard_oauth_client_config(issuer)
     except ValueError as error:
-        raise GuardSyncAuthorizationExpiredError(f"{_guard_oauth_reauthorization_message()} {error}") from error
+        raise GuardSyncEndpointUntrustedError(f"{_guard_sync_reconnect_message()} {error}") from error
     cached_access_token = (
         None if force_refresh else _cached_oauth_access_token(oauth_credentials, now=datetime.now(timezone.utc))
     )
@@ -4671,11 +4807,26 @@ def _resolve_guard_sync_auth_context(
         oauth_health = store.get_oauth_local_credential_health()
         oauth_credentials = store.get_oauth_local_credentials(allow_primary=allow_primary_repair)
         if oauth_credentials is not None:
-            return _resolve_guard_sync_auth_context_from_oauth_credentials(
-                store,
-                oauth_credentials,
-                force_refresh=force_refresh,
-            )
+            try:
+                return _resolve_guard_sync_auth_context_from_oauth_credentials(
+                    store,
+                    oauth_credentials,
+                    force_refresh=force_refresh,
+                )
+            except GuardSyncAuthorizationExpiredError as error:
+                if not _oauth_authorization_error_requires_fresh_sign_in(error):
+                    raise
+                store._clear_oauth_secret_payload_cache()
+                refreshed_credentials = store.get_oauth_local_credentials(allow_primary=allow_primary_repair)
+                if refreshed_credentials is None or _optional_string(
+                    refreshed_credentials.get("refresh_token")
+                ) == _optional_string(oauth_credentials.get("refresh_token")):
+                    raise
+                return _resolve_guard_sync_auth_context_from_oauth_credentials(
+                    store,
+                    refreshed_credentials,
+                    force_refresh=force_refresh,
+                )
         if bool(oauth_health.get("configured")):
             recoverable_credentials = store.get_recoverable_oauth_local_credentials()
             if recoverable_credentials is not None:
@@ -5708,6 +5859,7 @@ _RECEIPT_REDACTION_LEVEL_RANK: dict[str, int] = {
     "none": 2,
 }
 _RELAXED_RECEIPT_REDACTION_RESYNC_MARKER = "cloud_receipt_redaction_relaxed_resync_v1"
+_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER = "cloud_live_request_privacy_projection_v1"
 _RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER = "cloud_receipt_command_detail_backfill_v2"
 _RECEIPT_COMMAND_DETAIL_BACKFILL_FLAG = "__command_detail_backfill"
 
@@ -5754,6 +5906,8 @@ def _persist_cloud_receipt_redaction_level(store: GuardStore, *, level: str, syn
         {"level": level, "updated_at": synced_at},
         synced_at,
     )
+    if level != previous_level:
+        _requeue_live_request_privacy_projection(store, level=level, changed_at=synced_at)
     if _receipt_redaction_level_rank(level) > _receipt_redaction_level_rank("full"):
         store.set_sync_payload(
             _RELAXED_RECEIPT_REDACTION_RESYNC_MARKER,
@@ -5765,13 +5919,42 @@ def _persist_cloud_receipt_redaction_level(store: GuardStore, *, level: str, syn
 def _reset_cloud_receipt_redaction_authority(store: GuardStore, *, synced_at: str) -> None:
     """Reset relaxation bookkeeping when no signed override is effective."""
 
+    previous_level = _stored_cloud_receipt_redaction_level(store)
+    local_level = _local_receipt_redaction_level(store)
     store.set_sync_payload(
         "cloud_receipt_redaction_level",
-        {"level": _local_receipt_redaction_level(store), "updated_at": synced_at},
+        {"level": local_level, "updated_at": synced_at},
         synced_at,
     )
+    if previous_level is not None and previous_level != local_level:
+        _requeue_live_request_privacy_projection(store, level=local_level, changed_at=synced_at)
     store.delete_sync_payload(_RELAXED_RECEIPT_REDACTION_RESYNC_MARKER)
     store.delete_sync_payload(_RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER)
+
+
+def _ensure_live_request_privacy_projection(
+    store: GuardStore,
+    *,
+    level: str,
+    synced_at: str,
+) -> None:
+    marker = store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER)
+    if isinstance(marker, dict) and marker.get("level") == level:
+        return
+    _requeue_live_request_privacy_projection(store, level=level, changed_at=synced_at)
+
+
+def _requeue_live_request_privacy_projection(
+    store: GuardStore,
+    *,
+    level: str,
+    changed_at: str,
+) -> int:
+    return store.requeue_pending_live_requests_with_marker(
+        changed_at=changed_at,
+        marker_key=_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER,
+        marker_payload={"level": level, "updated_at": changed_at},
+    )
 
 
 def _ensure_relaxed_receipt_redaction_resync(

@@ -17,6 +17,7 @@ const makeProtection = (
   shell_profile_path: null,
   shim_dir: "/shims",
   supported_managers: ["npm", "pip"],
+  detected_managers: ["npm", "pip"],
   installed_managers: [],
   active_managers: [],
   missing_shims: [],
@@ -103,9 +104,10 @@ const repairAlerts = resolveSupplyChainPostureAlerts({
   ...baseSnapshot,
   supply_chain: {
     package_manager_protection: makeProtection({
+      detected_managers: ["pnpm"],
       installed_managers: ["pnpm"],
       protected_managers: [],
-      unprotected_managers: ["pnpm", "npm"],
+      unprotected_managers: ["pnpm"],
       supported_managers: ["pnpm", "npm"],
       path_status: "in_path",
     }),
@@ -141,6 +143,7 @@ const restartAlerts = resolveSupplyChainPostureAlerts({
   ...baseSnapshot,
   supply_chain: {
     package_manager_protection: makeProtection({
+      detected_managers: ["npm"],
       installed_managers: ["npm"],
       protected_managers: ["npm"],
       unprotected_managers: [],
@@ -150,8 +153,8 @@ const restartAlerts = resolveSupplyChainPostureAlerts({
   },
 });
 assert(
-  restartAlerts.some((alert) => alert.kind === "path_repair" && alert.tone === "blue"),
-  "SCSR161-B: restart-required PATH surfaces staged repair banner",
+  !restartAlerts.some((alert) => alert.kind === "path_repair"),
+  "SCSR161-B: staged shell restart does not reopen a repair posture banner",
 );
 
 const staleDate = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();

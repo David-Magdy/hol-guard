@@ -678,6 +678,7 @@ def test_pip_execution_argv_is_isolated_absolute_and_source_pinned(
         "-c",
         update_subprocess_module._TRUSTED_MODULE_BOOTSTRAP,
         json.dumps([str(path) for path in context.python_import_paths], separators=(",", ":")),
+        str(context.install_prefix),
         "pip",
         "--isolated",
         "--disable-pip-version-check",
@@ -685,6 +686,39 @@ def test_pip_execution_argv_is_isolated_absolute_and_source_pinned(
         "install",
         "--upgrade",
         "hol-guard",
+        "--index-url",
+        "https://packages.enterprise.example/simple",
+    ]
+
+
+def test_manager_recovery_pip_uses_authenticated_python_and_pinned_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context, _manager = _build_manager_context(
+        tmp_path,
+        monkeypatch,
+        "pipx",
+        source_url="https://packages.enterprise.example/simple",
+    )
+    display = [str(context.python.launch_path), "-m", "pip", "install", "hol-guard==2.2.3"]
+
+    command = context.build_python_pip_command(display)
+
+    assert command == [
+        str(context.python.launch_path),
+        *update_subprocess_module._trusted_python_flags(),
+        "-S",
+        "-c",
+        update_subprocess_module._TRUSTED_MODULE_BOOTSTRAP,
+        json.dumps([str(path) for path in context.python_import_paths], separators=(",", ":")),
+        str(context.install_prefix),
+        "pip",
+        "--isolated",
+        "--disable-pip-version-check",
+        "--no-input",
+        "install",
+        "hol-guard==2.2.3",
         "--index-url",
         "https://packages.enterprise.example/simple",
     ]
@@ -754,10 +788,6 @@ def test_pipx_execution_argv_is_absolute_and_source_pinned(
     assert command == [
         str(manager),
         "install",
-        "--backend",
-        "pip",
-        "--fetch-python",
-        "never",
         "--index-url",
         "https://pypi.org/simple",
         "--python",
@@ -842,7 +872,7 @@ def test_workspace_path_collision_is_excluded_and_never_executes(
 
 @pytest.mark.skipif(
     os.name == "nt",
-    reason="uses extensionless POSIX shebang files as the ambient and trusted manager fixtures",
+    reason="uses an extensionless POSIX shebang executable as the ambient and trusted manager fixtures",
 )
 def test_nonstandard_ambient_manager_path_is_rejected_without_workspace_context(
     tmp_path: Path,

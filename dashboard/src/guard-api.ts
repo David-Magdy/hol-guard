@@ -8,7 +8,9 @@ import {
   CODEX_RESUME_STATUSES
 } from "./guard-types";
 import { computeTrendBuckets } from "./evidence/evidence-metrics";
+import { normalizeOperatorHealth } from "./operator-health";
 import { normalizeProtectionHealth, protectionHeadlineFor } from "./protection-health";
+export { normalizeOperatorHealth } from "./operator-health";
 import {
   AUTHORITATIVE_DECISION_INCONSISTENT,
   guardActionDisposition,
@@ -63,6 +65,8 @@ import type {
   GuardRuntimeSnapshot,
   GuardCloudConnectStatusResponse,
   SupplyChainBundle,
+  SupplyChainRepairResult,
+  SupplyChainRepairStepFailure,
   SupplyChainSnapshot,
   GuardSettingsPayload,
   GuardSettingsExport,
@@ -75,9 +79,6 @@ import type {
   DecisionScope,
   RiskSignalV2Category,
   RiskSignalV2Severity,
-  TrayAction,
-  TrayLifecycleResultPayload,
-  TrayStatusPayload,
 } from "./guard-types";
 import {
   getDemoDiff,
@@ -90,6 +91,7 @@ import {
 
 const GUARD_TOKEN_PARAM = "guard-token";
 const GUARD_DAEMON_PARAM = "guardDaemon";
+const GUARD_UPDATE_CHANNEL_STORAGE_KEY = "guard-update-channel";
 const GUARD_SURFACE_PROTOCOL_VERSIONS = ["1.1", "1.0"] as const;
 const DEFAULT_GUARD_DAEMON_PORT = 4781;
 const GUARD_DAEMON_PORT_RANGE = 1000;
@@ -157,6 +159,7 @@ type RuntimeSnapshotPayload = Omit<
   | "supply_chain"
   | "managed_installs"
   | "cloud_command_capability"
+  | "operator_health"
   | "protection_health"
   | "runtime_state"
   | "latest_receipts"
@@ -169,6 +172,7 @@ type RuntimeSnapshotPayload = Omit<
   supply_chain?: unknown;
   managed_installs?: unknown;
   cloud_command_capability?: unknown;
+  operator_health?: unknown;
   protection_health?: unknown;
   runtime_state?: unknown;
 };
@@ -268,6 +272,24 @@ function saveBrowserStorage(getStorage: () => Storage, name: string, value: stri
 function saveGuardStorage(name: string, value: string): void {
   saveBrowserStorage(() => window.sessionStorage, name, value);
   saveBrowserStorage(() => window.localStorage, name, value);
+}
+
+function isGuardUpdateChannel(value: unknown): value is "stable" | "alpha" {
+  return value === "stable" || value === "alpha";
+}
+
+export function readRememberedGuardUpdateChannel(): "stable" | "alpha" | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const value = readGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY);
+  return isGuardUpdateChannel(value) ? value : null;
+}
+
+function rememberGuardUpdateChannel(channel: "stable" | "alpha"): void {
+  if (typeof window !== "undefined") {
+    saveGuardStorage(GUARD_UPDATE_CHANNEL_STORAGE_KEY, channel);
+  }
 }
 
 export function readGuardToken(): string | null {
@@ -955,7 +977,7 @@ export async function fetchCommandActivityApi(input: RequestInfo, init?: Request
 export async function fetchExtensionControlApi(input: RequestInfo, init?: RequestInit): Promise<Response> {
   const approvedPath =
     typeof input === "string" &&
-    /^\/v1\/extension-controls\/(?:catalog|effective|preview|apply|refresh)$/.test(input);
+    /^\/v1\/extension-controls\/(?:catalog|effective|preview|apply|refresh|recover-authority)$/.test(input);
   if (!approvedPath) {
     throw new Error("Invalid extension-control API path");
   }
@@ -1489,6 +1511,16 @@ function normalizeQueueSummary(raw: unknown, pendingCount: number): GuardQueueSu
   };
 }
 
+function normalizeProcessPathStatus(value: unknown): NonNullable<PackageManagerProtection["process_path_status"]> {
+  if (value === "active") {
+    return "active";
+  }
+  if (value === "profile_staged") {
+    return "profile_staged";
+  }
+  return "missing";
+}
+
 function normalizePackageManagerProtection(raw: unknown): PackageManagerProtection | undefined {
   if (!isRecord(raw)) {
     return undefined;
@@ -1499,15 +1531,19 @@ function normalizePackageManagerProtection(raw: unknown): PackageManagerProtecti
       : raw["path_status"] === "restart_required"
       ? "restart_required"
       : "missing_from_path";
+  const processPathStatus = normalizeProcessPathStatus(raw["process_path_status"]);
   const shimDir = typeof raw["shim_dir"] === "string" ? raw["shim_dir"] : "";
   return {
     path_status: pathStatus,
     path_contains_shim_dir: raw["path_contains_shim_dir"] === true,
     restart_shell_required: raw["restart_shell_required"] === true,
+    process_path_status: processPathStatus,
+    process_restart_required: raw["process_restart_required"] === true,
     shell_profile_configured: raw["shell_profile_configured"] === true,
     shell_profile_path: isStringOrNull(raw["shell_profile_path"]) ? raw["shell_profile_path"] : null,
     shim_dir: shimDir,
     supported_managers: normalizeStringArray(raw["supported_managers"]),
+    detected_managers: normalizeStringArray(raw["detected_managers"]),
     installed_managers: normalizeStringArray(raw["installed_managers"]),
     active_managers: normalizeStringArray(raw["active_managers"]),
     missing_shims: normalizeStringArray(raw["missing_shims"]),
@@ -1632,6 +1668,7 @@ export function normalizeRuntimeSnapshot(snapshot: RuntimeSnapshotPayload): Guar
     supply_chain: normalizeSupplyChainSnapshot(snapshot.supply_chain),
     managed_installs: normalizeManagedInstalls(snapshot.managed_installs),
     cloud_command_capability: normalizeCloudCommandCapability(snapshot.cloud_command_capability),
+    operator_health: normalizeOperatorHealth(snapshot.operator_health),
     protection_health: protectionHealth,
   };
 }
@@ -2592,6 +2629,67 @@ export async function createCloudExceptionRequest(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Command-policy exception requests (Phase 11)
+// ---------------------------------------------------------------------------
+
+export type GuardCommandPolicyRequestedDuration =
+  | "once"
+  | "session"
+  | "machine"
+  | "workspace"
+  | "30d"
+  | "90d";
+
+/**
+ * Input for a command-policy exception request. Carries ONLY correlation
+ * identifiers — never the raw command, regex, graph, or policy action.
+ * The Cloud re-fetches the bound pending command server-side.
+ */
+export type GuardCommandPolicyExceptionRequestInput = {
+  kind: "command-policy";
+  sourceLocalRequestId: string;
+  sourceMachineInstallationId: string;
+  workspaceId: string;
+  requestedDuration: GuardCommandPolicyRequestedDuration;
+  reason: string;
+  note?: string;
+};
+
+export type GuardCommandPolicyExceptionRequestResult =
+  | { status: "created"; requestId: string; proposalId: string; triageItemId: string | null }
+  | { status: "duplicate"; requestId: string; proposalId: string }
+  | { status: "rejected"; reason: string };
+
+/**
+ * Submit a command-policy exception request through the daemon proxy.
+ *
+ * The daemon validates the payload locally (no raw command/graph keys
+ * allowed), forces the local-request snapshot sync, then forwards to
+ * Cloud using the existing runtime sync auth. The Cloud re-fetches the
+ * bound pending command server-side using the correlation identifiers.
+ */
+export async function createCommandPolicyExceptionRequest(
+  input: GuardCommandPolicyExceptionRequestInput,
+): Promise<GuardCommandPolicyExceptionRequestResult> {
+  if (isGuardDemoMode()) {
+    return {
+      status: "created",
+      requestId: "demo-command-policy-request",
+      proposalId: "demo-policy-proposal",
+      triageItemId: null,
+    };
+  }
+  return readJson<GuardCommandPolicyExceptionRequestResult>("/v1/policy/cloud-exception-requests", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...guardAuthHeaders(),
+    },
+    body: JSON.stringify(input),
+  });
+}
+
 export async function fetchPolicies(): Promise<GuardPolicyDecision[]> {
   if (isGuardDemoMode()) {
     return getDemoPolicy("codex");
@@ -3020,6 +3118,62 @@ export async function repairApprovalCenter(): Promise<{ repaired: boolean; clear
   return response.json() as Promise<{ repaired: boolean; cleared: string[] }>;
 }
 
+export type GuardProtectionRepairResult = {
+  repaired: boolean;
+  repair_scope: "local_integrity";
+  check_ids: string[];
+  message: string;
+};
+
+export class GuardProtectionRepairError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  readonly repairScope: "local_integrity" | null;
+
+  constructor(status: number, payload: Record<string, unknown> | null) {
+    const message = payload === null ? null : stringValue(payload.message);
+    super(message ?? `Protection repair failed with ${status}`);
+    this.name = "GuardProtectionRepairError";
+    this.status = status;
+    this.code = payload === null ? null : stringValue(payload.error);
+    this.repairScope = payload?.repair_scope === "local_integrity" ? "local_integrity" : null;
+  }
+}
+
+export async function repairProtectionCheck(checkId: string): Promise<GuardProtectionRepairResult> {
+  if (isGuardDemoMode()) {
+    return {
+      repaired: true,
+      repair_scope: "local_integrity",
+      check_ids: [checkId],
+      message: "Protection restored.",
+    };
+  }
+  const response = await fetchWithGuardAuth("/v1/protection/repair", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ check_id: checkId }),
+  });
+  const payload = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) {
+    throw new GuardProtectionRepairError(response.status, isRecord(payload) ? payload : null);
+  }
+  if (
+    !isRecord(payload)
+    || payload.repaired !== true
+    || payload.repair_scope !== "local_integrity"
+    || !Array.isArray(payload.check_ids)
+  ) {
+    throw new Error("Guard returned an invalid protection repair result.");
+  }
+  return {
+    repaired: true,
+    repair_scope: "local_integrity",
+    check_ids: payload.check_ids.filter((value): value is string => typeof value === "string"),
+    message: stringValue(payload.message) ?? "Protection restored.",
+  };
+}
+
 function normalizeGuardUpdateVersionCheck(raw: unknown): GuardUpdateVersionCheck {
   const value = isRecord(raw) ? raw : {};
   return {
@@ -3032,7 +3186,10 @@ function normalizeGuardUpdateVersionCheck(raw: unknown): GuardUpdateVersionCheck
   };
 }
 
-export function normalizeGuardUpdateStatus(raw: unknown): GuardUpdateStatus {
+export function normalizeGuardUpdateStatus(
+  raw: unknown,
+  fallbackReleaseChannel: "stable" | "alpha" | null = null,
+): GuardUpdateStatus {
   const value = isRecord(raw) ? raw : {};
   const versionCheck = normalizeGuardUpdateVersionCheck(value.version_check);
   const currentVersion = stringValue(value.current_version) ?? versionCheck.current_version ?? "unknown";
@@ -3057,6 +3214,9 @@ export function normalizeGuardUpdateStatus(raw: unknown): GuardUpdateStatus {
     retry_command: typeof value.retry_command === "string" ? value.retry_command : undefined,
     update_attempt_message:
       typeof value.update_attempt_message === "string" ? value.update_attempt_message : undefined,
+    release_channel: isGuardUpdateChannel(value.release_channel)
+      ? value.release_channel
+      : (fallbackReleaseChannel ?? "stable"),
   };
 }
 
@@ -3078,8 +3238,15 @@ export async function fetchGuardUpdateStatus(): Promise<GuardUpdateStatus> {
       blocked_reason: null,
     });
   }
-  const payload = await readJson<unknown>("/v1/update/status");
-  return normalizeGuardUpdateStatus(payload);
+  const payload = await readJson<unknown>("/v1/update/status", { cache: "no-store" });
+  const declaredChannel = isRecord(payload) && isGuardUpdateChannel(payload.release_channel)
+    ? payload.release_channel
+    : null;
+  const status = normalizeGuardUpdateStatus(payload, readRememberedGuardUpdateChannel());
+  if (declaredChannel) {
+    rememberGuardUpdateChannel(declaredChannel);
+  }
+  return status;
 }
 
 export async function scheduleGuardUpdate(
@@ -3117,6 +3284,38 @@ export async function scheduleGuardUpdate(
   };
 }
 
+export type GuardUpdateChannelProof = {
+  approval_password?: string;
+  approval_totp_code?: string;
+};
+
+export async function setGuardUpdateChannel(
+  channel: "stable" | "alpha",
+  proof?: GuardUpdateChannelProof,
+): Promise<GuardUpdateStatus> {
+  if (isGuardDemoMode()) {
+    return normalizeGuardUpdateStatus({
+      ...(await fetchGuardUpdateStatus()),
+      release_channel: channel,
+    });
+  }
+  const response = await fetchWithGuardAuth("/v1/update/channel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ update_channel: channel, ...proof }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const value = isRecord(payload) ? payload : {};
+    throw new Error(stringValue(value.message) ?? `Update channel failed with ${response.status}`);
+  }
+  const declaredChannel = isRecord(payload) && isGuardUpdateChannel(payload.release_channel)
+    ? payload.release_channel
+    : channel;
+  rememberGuardUpdateChannel(declaredChannel);
+  return normalizeGuardUpdateStatus(payload, declaredChannel);
+}
+
 export async function setupDesktopNotifications(): Promise<GuardNotificationSetupResult> {
   if (isGuardDemoMode()) {
     return {
@@ -3136,43 +3335,6 @@ export async function setupDesktopNotifications(): Promise<GuardNotificationSetu
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({})
-  });
-}
-
-// ── Tray icon lifecycle ────────────────────────────────────────────────────
-
-export async function fetchTrayStatus(): Promise<TrayStatusPayload> {
-  if (isGuardDemoMode()) {
-    return {
-      state: "absent",
-      capability: {
-        platform: "macos",
-        backend: "appkit",
-        supported: true,
-        reason: "ok",
-        details: "macOS with appkit backend",
-      },
-      locator: null,
-    };
-  }
-  return readJson<TrayStatusPayload>("/v1/tray/status");
-}
-
-export async function runTrayAction(action: TrayAction): Promise<TrayLifecycleResultPayload> {
-  if (isGuardDemoMode()) {
-    return {
-      ok: true,
-      state: action === "stop" ? "absent" : "running",
-      reason: "ok",
-      message: `Tray ${action} (demo)`,
-      recovery_command: null,
-      process: null,
-    };
-  }
-  return readJson<TrayLifecycleResultPayload>(`/v1/tray/${action}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
   });
 }
 
@@ -3547,6 +3709,12 @@ export function normalizePackageFirewallStatus(value: unknown): PackageFirewallS
       : pathStatusValue === "restart_required"
       ? "restart_required"
       : "missing_from_path";
+  const processPathStatusValue = readPackageShimField(
+    shimStatus,
+    "process_path_status",
+    "processPathStatus",
+  );
+  const processPathStatus = normalizeProcessPathStatus(processPathStatusValue);
   const packageShims = normalizePackageShimEntries(record.package_shims, supportedManagers, rawPathStatus);
   const protectedManagers = packageShims
     .filter((shim) => shim.activation_state === "protected")
@@ -3562,16 +3730,20 @@ export function normalizePackageFirewallStatus(value: unknown): PackageFirewallS
       readPackageShimField(shimStatus, "path_contains_shim_dir", "pathContainsShimDir") === true,
     restart_shell_required:
       readPackageShimField(shimStatus, "restart_shell_required", "restartShellRequired") === true,
+    process_path_status: processPathStatus,
+    process_restart_required:
+      readPackageShimField(shimStatus, "process_restart_required", "processRestartRequired") === true,
     shell_profile_configured:
       readPackageShimField(shimStatus, "shell_profile_configured", "shellProfileConfigured") === true,
     shell_profile_path: isStringOrNull(shellProfilePath) ? (shellProfilePath as string | null) : null,
     shim_dir: stringValue(readPackageShimField(shimStatus, "shim_dir", "shimDir")) ?? "",
     supported_managers: supportedManagers,
+    detected_managers: detectedManagers,
     installed_managers: installedManagers,
     active_managers: activeManagers,
     missing_shims: missingManagers,
     protected_managers: protectedManagers,
-    unprotected_managers: supportedManagers.filter((manager) => !protectedSet.has(manager)),
+    unprotected_managers: detectedManagers.filter((manager) => !protectedSet.has(manager)),
   };
   return {
     actions: normalizePackageFirewallActions(record.actions),
@@ -3781,6 +3953,76 @@ export async function runPackageSync(credentials?: {
     );
   }
   return normalizePackageFirewallAction(payloadBody);
+}
+
+export async function repairSupplyChainProtection(credentials?: {
+  approval_password?: string;
+  approval_totp_code?: string;
+}): Promise<SupplyChainRepairResult> {
+  if (isGuardDemoMode()) {
+    return {
+      repaired: true,
+      completed_steps: ["package_shims", "runtime_activation", "intelligence_sync"],
+      failed_steps: [],
+      message: "Supply-chain protection restored and refreshed.",
+    };
+  }
+  const response = await fetchGuardApi("/v1/supply-chain/repair", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...guardAuthHeaders(),
+    },
+    body: JSON.stringify({
+      ...(credentials?.approval_password !== undefined
+        ? { approval_password: credentials.approval_password }
+        : {}),
+      ...(credentials?.approval_totp_code !== undefined
+        ? { approval_totp_code: credentials.approval_totp_code }
+        : {}),
+    }),
+  });
+  const payloadBody = (await response.json().catch(() => null)) as unknown;
+  if (!response.ok) {
+    throw new GuardHarnessActionError(
+      response.status,
+      isGuardHarnessActionErrorPayload(payloadBody) ? payloadBody : null,
+    );
+  }
+  if (!isRecord(payloadBody) || !isRecord(payloadBody.result)) {
+    throw new Error("Guard returned an invalid supply-chain repair result.");
+  }
+  const result = payloadBody.result;
+  const failures: SupplyChainRepairStepFailure[] = [];
+  if (Array.isArray(result.failed_steps)) {
+    for (const candidate of result.failed_steps) {
+      if (!isRecord(candidate)) continue;
+      const step = stringValue(candidate.step);
+      const message = stringValue(candidate.message);
+      if (
+        (step === "package_shims" ||
+          step === "runtime_activation" ||
+          step === "intelligence_sync") &&
+        message !== null
+      ) {
+        failures.push({ step, message });
+      }
+    }
+  }
+  const completedSteps = Array.isArray(result.completed_steps)
+    ? result.completed_steps.filter((value): value is string => typeof value === "string")
+    : [];
+  const requiredSteps = ["package_shims", "runtime_activation", "intelligence_sync"];
+  const completedWithoutFailures =
+    Array.isArray(result.failed_steps) &&
+    result.failed_steps.length === 0 &&
+    requiredSteps.every((step) => completedSteps.includes(step));
+  return {
+    repaired: result.repaired === true || (!("repaired" in result) && completedWithoutFailures),
+    completed_steps: completedSteps,
+    failed_steps: failures,
+    message: stringValue(result.message) ?? "Supply-chain repair finished.",
+  };
 }
 
 export type EvidencePageData = {

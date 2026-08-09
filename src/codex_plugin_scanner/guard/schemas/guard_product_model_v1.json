@@ -36,10 +36,12 @@
         "opencode",
         "copilot",
         "cursor",
+        "cline",
         "gemini",
         "hermes",
         "openclaw",
-        "pi"
+        "pi",
+        "omp"
     ],
     "supported_harnesses": [
         "codex",
@@ -47,6 +49,7 @@
         "opencode",
         "copilot",
         "cursor",
+        "cline",
         "gemini",
         "hermes",
         "openclaw",
@@ -54,6 +57,7 @@
         "kimi",
         "grok",
         "pi",
+        "omp",
         "zcode"
     ],
     "action_categories": [
@@ -328,6 +332,15 @@
             "persona": [
                 "solo",
                 "security_lead"
+            ],
+            "auth_required": true,
+            "writes_state": true
+        },
+        {
+            "route": "/extensions",
+            "persona": [
+                "solo",
+                "team_manager"
             ],
             "auth_required": true,
             "writes_state": true
@@ -625,6 +638,13 @@
         },
         {
             "path": "/v1/daemon/repair",
+            "method": "POST",
+            "category": "config",
+            "auth_required": true,
+            "writes_state": true
+        },
+        {
+            "path": "/v1/protection/repair",
             "method": "POST",
             "category": "config",
             "auth_required": true,

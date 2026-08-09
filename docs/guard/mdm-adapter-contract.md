@@ -1,6 +1,6 @@
 # HOL Guard MDM/EDR adapter contract
 
-Status: report-only alpha for release 3.1. This contract is vendor-neutral. Vendor names, API
+Status: report-only alpha for release 3.0. This contract is vendor-neutral. Vendor names, API
 objects, package queries, and deployment commands belong in adapter implementations, not Guard
 core.
 

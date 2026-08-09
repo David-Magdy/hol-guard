@@ -1,4 +1,4 @@
-import { j as jsxRuntimeExports, A as ActionButton, S as SectionLabel, K as HiMiniExclamationTriangle, ar as HiMiniArrowPath, m as HiMiniCheckCircle, bY as HiMiniSignal, R as HiMiniXCircle, aW as HiMiniClock, t as formatRelativeTime, M as Badge, an as Tag } from "../guard-dashboard.js";
+import { j as jsxRuntimeExports, A as ActionButton, S as SectionLabel, J as HiMiniExclamationTriangle, ao as HiMiniArrowPath, l as HiMiniCheckCircle, bV as HiMiniSignal, T as HiMiniXCircle, aQ as HiMiniClock, s as formatRelativeTime, L as Badge, aj as Tag } from "../guard-dashboard.js";
 function resolveFeedSourceMode(cloudState) {
   if (cloudState === "local_only") return "sample";
   if (cloudState === "paired_waiting") return "full";
@@ -58,7 +58,7 @@ function FeedHealthWorkspace({ snapshot, onOpenSettings }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-6", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-start justify-between gap-3", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-500", children: "Intel feed source mode, freshness, and cloud sync status." }) }),
-      onOpenSettings && /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { variant: "outline", onClick: onOpenSettings, children: "Open Settings" })
+      onOpenSettings && /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { variant: "outline", onClick: () => onOpenSettings(), children: "Open Settings" })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-2xl border border-slate-100 bg-white p-5 shadow-sm space-y-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
@@ -145,7 +145,7 @@ function FeedHealthWorkspace({ snapshot, onOpenSettings }) {
           children: snapshot.cloud_sync_health.label
         }
       ) }),
-      onOpenSettings && snapshot.cloud_state === "local_only" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { variant: "secondary", onClick: onOpenSettings, children: "Connect to cloud" }) })
+      onOpenSettings && snapshot.cloud_state === "local_only" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { variant: "secondary", onClick: () => onOpenSettings(), children: "Connect to cloud" }) })
     ] })
   ] });
 }

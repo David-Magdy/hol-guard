@@ -304,6 +304,43 @@ function blockedDescription(category: ReceiptCategory, app: string, name: string
   }
 }
 
+/**
+ * Detect whether an approval request represents a shell command.
+ * Checks the artifact type and action envelope for shell/command signals.
+ */
+function isShellCommandRequest(request: GuardApprovalRequest): boolean {
+  const artifactType = (request.artifact_type ?? "").toLowerCase();
+  const actionType = (request.action_envelope_json?.action_type ?? "").toLowerCase();
+  return (
+    actionType === "shell_command" ||
+    artifactType.includes("shell") ||
+    artifactType.includes("command")
+  );
+}
+
+function isPackageDependencyMutationRequest(request: GuardApprovalRequest): boolean {
+  const envelope = request.action_envelope_json;
+  const command = [envelope?.command, request.raw_command_text, request.launch_target]
+    .find((value) => value?.trim())
+    ?.trim();
+  if (command && /(?:&&|[;|]|\r?\n)/.test(command)) {
+    return false;
+  }
+
+  const intentKind = (envelope?.package_intent_kind ?? "").trim().toLowerCase();
+  if (intentKind === "install" || intentKind === "sync") {
+    return true;
+  }
+
+  if (!command) {
+    return false;
+  }
+
+  return /\b(?:npm|pnpm|yarn|bun|pip|pipx|uv|poetry|brew|cargo|gem|go)\s+(?:add|i|install|remove|uninstall|update|upgrade)\b/i.test(
+    command,
+  );
+}
+
 export function plainEnglishRequestTitle(request: GuardApprovalRequest): string {
   const category = detectCategory({
     ...request,
@@ -328,6 +365,9 @@ export function plainEnglishRequestTitle(request: GuardApprovalRequest): string 
     case "tool-call":
       return `${app} wants to use a tool`;
     default:
+      if (isShellCommandRequest(request)) {
+        return `${app} wants to run a shell command`;
+      }
       return `${app} wants to do something with ${name}`;
   }
 }
@@ -354,6 +394,12 @@ export function whyPaused(request: GuardApprovalRequest): string {
     case "tool-call":
       return "This uses an outside tool. Guard stops new tools by default.";
     default:
+      if (isPackageDependencyMutationRequest(request)) {
+        return "This package install mutates project dependencies and installed packages. Guard pauses dependency changes so you can review them before running.";
+      }
+      if (isShellCommandRequest(request)) {
+        return "This shell command has parts Guard could not fully inspect. Guard pauses these so you can review before running.";
+      }
       return "Guard paused this so you can review it first.";
   }
 }

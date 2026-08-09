@@ -7,8 +7,12 @@ import json
 from dataclasses import dataclass
 from typing import TypeAlias, cast
 
+from .runtime.command_expression import CommandExpression, command_expression_from_mapping
+from .runtime.network_policy_contract import NETWORK_POLICY_SCHEMA_VERSION
+
 POLICY_API_VERSION = "guard.hashgraphonline.com/v1alpha1"
 POLICY_KIND = "GuardPolicy"
+NETWORK_POLICY_SPEC_FIELD = "networkPolicy"
 POLICY_RULE_EFFECTS = ("allow", "block", "review", "ignore")
 POLICY_MODES = ("observe", "prompt", "enforce")
 POLICY_LIFETIME_MODES = ("once", "session", "project", "machine", "workspace", "team", "permanent", "until")
@@ -158,19 +162,28 @@ class PolicyDefaults:
 @dataclass(frozen=True, slots=True)
 class PolicyMatch:
     fields: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    command_expression: CommandExpression | None = None
     extensions: EncodedExtensions = ()
 
     @classmethod
     def from_mapping(cls, value: dict[str, object]) -> PolicyMatch:
+        commands = value.get("commands")
+        command_expression = command_expression_from_mapping(commands) if isinstance(commands, dict) else None
         fields = tuple(
             (key, tuple(str(item) for item in _sequence(value[key])))
             for key in POLICY_MATCH_FIELDS
             if isinstance(value.get(key), list)
         )
-        return cls(fields=fields, extensions=_encode_extensions(value, frozenset(POLICY_MATCH_FIELDS)))
+        return cls(
+            fields=fields,
+            command_expression=command_expression,
+            extensions=_encode_extensions(value, frozenset(POLICY_MATCH_FIELDS)),
+        )
 
     def to_mapping(self) -> dict[str, JsonValue]:
         result: dict[str, JsonValue] = {key: list(values) for key, values in self.fields}
+        if self.command_expression is not None:
+            result["commands"] = cast(dict[str, JsonValue], self.command_expression.to_mapping())
         return _with_extensions(result, self.extensions)
 
 
@@ -351,6 +364,20 @@ class GuardPolicyDocument:
             "spec": spec,
         }
         return _with_extensions(result, self.extensions)
+
+
+def guard_policy_network_extension(document: GuardPolicyDocument) -> dict[str, JsonValue] | None:
+    """Return the versioned network extension without creating a second policy authority."""
+
+    extensions = _decode_extensions(document.spec_extensions)
+    if NETWORK_POLICY_SPEC_FIELD not in extensions:
+        return None
+    extension = extensions[NETWORK_POLICY_SPEC_FIELD]
+    if not isinstance(extension, dict):
+        raise ValueError("networkPolicy must be an object")
+    if extension.get("schemaVersion") != NETWORK_POLICY_SCHEMA_VERSION:
+        raise ValueError("unsupported networkPolicy schemaVersion")
+    return extension
 
 
 def canonical_json_bytes(value: JsonValue) -> bytes:

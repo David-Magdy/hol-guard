@@ -1,6 +1,6 @@
 # ADR 0002: Self-protection evidence and remediation authority
 
-Status: accepted for `release/3.1` report-only alpha.
+Status: accepted for `release/3.0` report-only alpha.
 
 ## Context
 

@@ -9,7 +9,6 @@ import shlex
 import subprocess
 import sys
 import threading
-import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -28,6 +27,7 @@ from ..adapters.base import HarnessContext
 from ..approval_gate import ApprovalGateError
 from ..approval_scope_support import package_request_runtime_workspace_scope
 from ..approvals import approval_prompt_flow, build_approval_browser_url, first_approval_url, queue_blocked_approvals
+from ..browser_opener import open_browser_url
 from ..config import GuardConfig
 from ..daemon import ensure_guard_daemon
 from ..daemon.manager import load_guard_daemon_auth_token
@@ -619,7 +619,7 @@ class RuntimeMcpGuardProxy:
             browser_url=browser_url,
             approval_surface_policy=approval_surface_policy,
             open_key=open_key,
-            opener=webbrowser.open,
+            opener=open_browser_url,
         )
 
     def run_session(
@@ -1532,45 +1532,10 @@ class RuntimeMcpGuardProxy:
             authority = fresh_authority
             fresh_decision = fresh_authority.decision
             fresh_scanner_evidence = _tool_decision_scanner_evidence(fresh_decision)
-            if fresh_decision.saved_action == "block":
-                return self._stored_tool_block_response(
-                    message_id=message.get("id"),
-                    artifact=artifact,
-                    artifact_hash=tool_artifact_hash,
-                    tool_name=tool_name,
-                    params=params,
-                    signals=fresh_decision.signals,
-                    risk_categories=fresh_decision.risk_categories,
-                    scanner_evidence=fresh_scanner_evidence,
-                    package_request=False,
-                )
             fresh_policy_action = _enforcement_action(
                 fresh_decision.current_action or fresh_decision.action,
                 approval_decision=fresh_decision,
             )
-            if fresh_policy_action in {"block", "sandbox-required"}:
-                return self._terminal_tool_response(
-                    message_id=message.get("id"),
-                    artifact=artifact,
-                    artifact_hash=tool_artifact_hash,
-                    tool_name=tool_name,
-                    params=params,
-                    policy_action=fresh_policy_action,
-                    signals=fresh_decision.signals,
-                    risk_categories=fresh_decision.risk_categories,
-                    scanner_evidence=fresh_scanner_evidence,
-                )
-            if not is_execution_permitted(fresh_policy_action):
-                self._queue_observed_approval_requests(
-                    artifact=artifact,
-                    artifact_hash=tool_artifact_hash,
-                    tool_name=tool_name,
-                    params=params,
-                    policy_action=fresh_policy_action,
-                    risk_summary=fresh_decision.summary,
-                    risk_signals=list(fresh_decision.signals),
-                    extra_fields={"scanner_evidence": list(fresh_scanner_evidence)},
-                )
             observe_override = not is_execution_permitted(fresh_policy_action)
             executed_action: GuardAction = "allow" if observe_override else fresh_policy_action
             observe_evidence = fresh_scanner_evidence
@@ -1693,9 +1658,7 @@ class RuntimeMcpGuardProxy:
                 execution_context=package_context,
                 artifact_digest=artifact_digest,
                 policy_workspace=policy_workspace,
-                saved_policy_blocks=any(
-                    reason.get("code") == "saved_package_block" for reason in resolved_package_evaluation.reasons
-                ),
+                saved_policy_blocks=_has_saved_package_block(resolved_package_evaluation.reasons),
                 pending_approval_reuse_decision=stored_package_resolution.approval_reuse_decision,
                 approval_reuse_claim_disposition=stored_package_resolution.claim_disposition,
             )
@@ -2291,7 +2254,7 @@ class RuntimeMcpGuardProxy:
         reuse_evidence = tuple(
             {"source": "approval_reuse", **cast(dict[str, object], raw)}
             for reason in resolution.evaluation.reasons
-            if isinstance((raw := reason.get("approval_reuse")), dict)
+            if isinstance(reason, Mapping) and isinstance((raw := reason.get("approval_reuse")), dict)
         )
         return (*tool_evidence, *context_evidence, *reuse_evidence)
 
@@ -3892,9 +3855,15 @@ def _command_argument(arguments: object) -> str | None:
     return None
 
 
-def _package_reason_signals(reasons: tuple[dict[str, object], ...]) -> tuple[RiskSignalV2, ...]:
+def _has_saved_package_block(reasons: Sequence[object]) -> bool:
+    return any(isinstance(reason, Mapping) and reason.get("code") == "saved_package_block" for reason in reasons)
+
+
+def _package_reason_signals(reasons: Sequence[object]) -> tuple[RiskSignalV2, ...]:
     signals: list[RiskSignalV2] = []
     for reason in reasons:
+        if not isinstance(reason, Mapping):
+            continue
         code = _optional_text(reason.get("code")) or "package-risk"
         message = _optional_text(reason.get("message")) or code.replace("_", " ")
         severity = _package_signal_severity(_optional_text(reason.get("severity")))

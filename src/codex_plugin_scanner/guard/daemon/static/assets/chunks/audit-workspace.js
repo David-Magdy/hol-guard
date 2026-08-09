@@ -1,6 +1,7 @@
-import { j as jsxRuntimeExports, an as Tag, t as formatRelativeTime, r as reactExports, A as ActionButton, bT as HiMiniChevronLeft, c as HiMiniChevronRight, aX as IconActionButton, x as HiMiniXMark, b0 as GuardModalLayer, bU as HiMiniFunnel, ao as HiMiniMagnifyingGlass, bV as HiMiniArrowDown, bW as HiMiniArrowUp, S as SectionLabel, ar as HiMiniArrowPath, a$ as HiMiniBugAnt, k as EmptyState, $ as HiMiniAdjustmentsHorizontal, b1 as ConnectFlowCard, K as HiMiniExclamationTriangle, bX as runAuditRemediation, M as Badge, bQ as isBlockedGuardAction, aQ as isSupplyChainAuditEvidence, m as HiMiniCheckCircle, R as HiMiniXCircle, e as harnessDisplayName, bl as HiMiniDocumentText, bk as guardAwareHref, q as HiMiniShieldCheck } from "../guard-dashboard.js";
-import { p as packageWorkbenchEcosystems, f as filterPackageWorkbenchFindings, s as sortPackageWorkbenchFindings, u as useResolvedApprovalGate, i as isApprovalGateRequiredError, A as ApprovalProofModal } from "./supply-chain-hub-workspace.js";
-import { r as resolveManagerCoverageStatus } from "./supply-chain-protection-stats.js";
+import { j as jsxRuntimeExports, aj as Tag, s as formatRelativeTime, r as reactExports, A as ActionButton, bQ as HiMiniChevronLeft, c as HiMiniChevronRight, aR as IconActionButton, w as HiMiniXMark, aX as GuardModalLayer, bR as HiMiniFunnel, ak as HiMiniMagnifyingGlass, bS as HiMiniArrowDown, bT as HiMiniArrowUp, S as SectionLabel, ao as HiMiniArrowPath, aV as HiMiniBugAnt, i as EmptyState, $ as HiMiniAdjustmentsHorizontal, aY as ConnectFlowCard, J as HiMiniExclamationTriangle, bU as runAuditRemediation, L as Badge, bN as isBlockedGuardAction, aN as isSupplyChainAuditEvidence, l as HiMiniCheckCircle, T as HiMiniXCircle, e as harnessDisplayName, bj as HiMiniDocumentText, bi as guardAwareHref, o as HiMiniShieldCheck } from "../guard-dashboard.js";
+import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./use-resolved-approval-gate.js";
+import { p as packageWorkbenchEcosystems, f as filterPackageWorkbenchFindings, b as sortPackageWorkbenchFindings, i as isApprovalGateRequiredError } from "./supply-chain-hub-workspace.js";
+import { r as resolveManagerCoverageManagers, a as resolveManagerCoverageStatus } from "./supply-chain-protection-stats.js";
 const STEPS = [
   { id: "preparing", label: "Prepare workspace" },
   { id: "scanning", label: "Scan manifests and lockfiles" },
@@ -940,11 +941,11 @@ function buildPackageManagerAuditResult(manager, protection, generatedAt) {
       id: `unprotected-${manager}`,
       severity: "medium",
       title: `${manager} is waiting for restart`,
-      detail: `Guard already updated your shell profile for ${manager}. Open a new shell or restart AI apps so ${manager} resolves through Guard.`,
+      detail: `Guard added ${manager} to its managed shell profiles. Open a new terminal or source the matching profile to use it. The dashboard cannot observe a PATH change made in another terminal.`,
       harness: "global",
       workspace: null,
       timestamp: generatedAt,
-      remediation: "Open a new shell or restart AI apps to finish package-manager interception.",
+      remediation: "Open a new terminal or source the matching shell profile. Restart AI apps only when they run package managers.",
       remediationAction: null,
       resolved: false,
       evidenceHref: null
@@ -991,7 +992,7 @@ function deriveFrontendAuditResults(receipts, snapshot) {
   const results = [];
   const protection = snapshot.supply_chain?.package_manager_protection;
   if (protection) {
-    const managersNeedingAttention = protection.supported_managers.filter(
+    const managersNeedingAttention = resolveManagerCoverageManagers(protection).filter(
       (manager) => resolveManagerCoverageStatus(protection, manager) !== "protected"
     );
     for (const mgr of managersNeedingAttention) {

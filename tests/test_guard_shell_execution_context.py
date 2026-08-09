@@ -714,9 +714,10 @@ def test_destructive_shell_request_models_each_command_context_once(
         *,
         cwd: Path | None = None,
         workspace_root: Path | None = None,
+        home_dir: Path | None = None,
     ):
         calls.append(command_text)
-        return original_model(command_text, cwd=cwd, workspace_root=workspace_root)
+        return original_model(command_text, cwd=cwd, workspace_root=workspace_root, home_dir=home_dir)
 
     monkeypatch.setattr(secret_file_requests_module, "model_shell_execution_context", counting_model)
 

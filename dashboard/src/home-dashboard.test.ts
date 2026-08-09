@@ -141,6 +141,7 @@ const displayNames = [
   { harness: "openclaw", expected: "OpenClaw" },
   { harness: "kimi", expected: "Kimi" },
   { harness: "grok", expected: "Grok" },
+  { harness: "omp", expected: "Oh My Pi" },
 ];
 
 for (const { harness, expected } of displayNames) {
@@ -200,6 +201,9 @@ const managedDiscoveryInstalls: GuardManagedInstall[] = [
 const newAppDiscoveries = resolveNewAppDiscoveries(managedDiscoveryInstalls, [
   "cursor",
   "opencode",
+  "bunx",
+  "guard-cli",
+  "package-firewall",
   "Ce2b7ac2ccab4fab9902347b033bf25e",
   "d75ba142-bf53-4f27-aebc-4884278c421a",
 ]);

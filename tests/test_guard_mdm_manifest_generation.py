@@ -15,7 +15,7 @@ def _command(root: Path, runtime: Path, output: Path) -> list[str]:
         "--runtime-root",
         str(runtime),
         "--version",
-        "3.1.0a1",
+        "3.0.0a1",
         "--build-id",
         "build-1",
         "--platform",
@@ -60,6 +60,78 @@ def test_generator_rejects_runtime_symlink(tmp_path: Path) -> None:
     assert result.returncode == 2
     assert "runtime contains a symlink" in result.stderr
     assert not output.exists()
+
+
+def test_generator_materializes_internal_file_symlink_when_enabled(tmp_path: Path) -> None:
+    root = Path(__file__).parents[1]
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    target = runtime / "target"
+    target.write_bytes(b"protected")
+    link = runtime / "link"
+    link.symlink_to(target)
+    output = runtime / "release-manifest.json"
+
+    subprocess.run(
+        [*_command(root, runtime, output), "--materialize-internal-file-symlinks"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(output.read_text())
+
+    assert not link.is_symlink()
+    assert link.read_bytes() == target.read_bytes()
+    assert {entry["path"] for entry in payload["files"]} == {"link", "target"}
+
+
+def test_generator_rejects_external_symlink_before_materializing_any_link(tmp_path: Path) -> None:
+    root = Path(__file__).parents[1]
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    target = runtime / "target"
+    target.write_bytes(b"protected")
+    internal_link = runtime / "internal-link"
+    internal_link.symlink_to(target)
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"outside")
+    (runtime / "external-link").symlink_to(outside)
+    output = runtime / "release-manifest.json"
+
+    result = subprocess.run(
+        [*_command(root, runtime, output), "--materialize-internal-file-symlinks"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "runtime symlink escapes root" in result.stderr
+    assert internal_link.is_symlink()
+    assert not output.exists()
+
+
+def test_generator_materializes_internal_directory_symlink_when_enabled(tmp_path: Path) -> None:
+    root = Path(__file__).parents[1]
+    runtime = tmp_path / "runtime"
+    target = runtime / "target"
+    target.mkdir(parents=True)
+    (target / "file").write_bytes(b"protected")
+    link = runtime / "link"
+    link.symlink_to(target, target_is_directory=True)
+    output = runtime / "release-manifest.json"
+
+    subprocess.run(
+        [*_command(root, runtime, output), "--materialize-internal-file-symlinks"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert not link.is_symlink()
+    assert (link / "file").read_bytes() == b"protected"
+    payload = json.loads(output.read_text())
+    assert {entry["path"] for entry in payload["files"]} == {"link/file", "target/file"}
 
 
 def test_generator_rejects_empty_runtime(tmp_path: Path) -> None:

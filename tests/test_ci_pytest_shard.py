@@ -29,5 +29,4 @@ def test_ci_workflow_cancels_stale_runs_and_executes_each_shard() -> None:
     assert "timeout-minutes: 25" in tests_job
     assert "python scripts/ci/pytest_shard.py" in workflow
     assert "name: ci (3.12)" in workflow
-    assert "needs: [quality, tests, windows-updater]" in workflow
-    assert "WINDOWS_UPDATER_RESULT" in workflow
+    assert "needs: [quality, tests, compatibility]" in workflow

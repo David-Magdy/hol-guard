@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 
+from codex_plugin_scanner.guard.adapters import copilot as copilot_module
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.adapters.copilot import CopilotHarnessAdapter, _refresh_guard_proxy_entry
 
@@ -26,6 +28,27 @@ def _build_context(tmp_path: Path) -> HarnessContext:
         workspace_dir=workspace_dir,
         guard_home=guard_home,
     )
+
+
+def test_copilot_recognizes_bounded_hook_with_python_isolation_flag() -> None:
+    config = json.dumps(
+        {
+            "harness": "copilot",
+            "cli_args": ["guard", "hook", "--harness", "copilot"],
+        },
+        separators=(",", ":"),
+    )
+    command = shlex.join(
+        [
+            "python",
+            "-I",
+            "-c",
+            "from codex_plugin_scanner.guard.adapters.bounded_cli_hook_bridge import main_from_argv",
+            config,
+        ]
+    )
+
+    assert copilot_module._is_managed_hook_command(command) is True
 
 
 def test_copilot_detects_documented_local_surfaces_and_redacts_secrets(tmp_path):
@@ -224,13 +247,13 @@ def test_copilot_install_and_uninstall_manage_inline_config_hooks_idempotently(t
         assert managed_hooks["preToolUse"][0]["cwd"] == str(context.guard_home)
         assert managed_hooks["preToolUse"][0]["timeoutSec"] == 30
         assert managed_hooks["preToolUse"][0]["env"]["PYTHONPATH"] == original_pythonpath
-        assert "from codex_plugin_scanner.cli import main" in managed_hooks["preToolUse"][0]["bash"]
+        assert "bounded_cli_hook_bridge" in managed_hooks["preToolUse"][0]["bash"]
         assert "copilot" in managed_hooks["preToolUse"][0]["bash"]
         assert "--workspace" not in managed_hooks["preToolUse"][0]["bash"]
-        assert "from codex_plugin_scanner.cli import main" in managed_hooks["preToolUse"][0]["powershell"]
-        assert "from codex_plugin_scanner.cli import main" in managed_hooks["userPromptSubmitted"][0]["bash"]
+        assert "bounded_cli_hook_bridge" in managed_hooks["preToolUse"][0]["powershell"]
+        assert "bounded_cli_hook_bridge" in managed_hooks["userPromptSubmitted"][0]["bash"]
         assert managed_hooks["postToolUse"][0]["type"] == "command"
-        assert "from codex_plugin_scanner.cli import main" in managed_hooks["postToolUse"][0]["bash"]
+        assert "bounded_cli_hook_bridge" in managed_hooks["postToolUse"][0]["bash"]
         assert len(managed_workspace_hooks["userPromptSubmitted"]) == 1
         assert len(managed_workspace_hooks["preToolUse"]) == 1
         assert len(managed_workspace_hooks["postToolUse"]) == 1

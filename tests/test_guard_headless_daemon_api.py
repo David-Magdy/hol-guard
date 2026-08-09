@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from codex_plugin_scanner.guard import local_supply_chain as local_supply_chain_module
+from codex_plugin_scanner.guard import package_firewall_entitlement as package_firewall_entitlement_module
 from codex_plugin_scanner.guard import store as guard_store_module
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.approval_gate import update_settings as update_approval_gate_settings
@@ -259,6 +260,9 @@ def _signed_remote_approval_for_request(
     device_id: str | None = None,
     workspace_id: str | None = None,
     scope: str | None = None,
+    nonce: str | None = None,
+    reviewer_role: str = "owner",
+    reviewer_user_id: str = "user-1",
 ) -> dict[str, object]:
     request_row = store.get_approval_request(request_id)
     assert isinstance(request_row, dict)
@@ -285,12 +289,12 @@ def _signed_remote_approval_for_request(
         "localRequestId": claim["localRequestId"],
         "machineId": machine_id or claim["machineId"],
         "machineInstallationId": machine_installation_id or claim["machineInstallationId"],
-        "nonce": f"{claim['nonce']}:{receipt_id}",
+        "nonce": nonce or f"{claim['nonce']}:{receipt_id}",
         "policyVersion": claim["policyVersion"],
         "projectIdentity": claim["projectIdentity"],
         "receiptId": receipt_id,
-        "reviewerRole": "workspace-owner",
-        "reviewerUserId": "user-1",
+        "reviewerRole": reviewer_role,
+        "reviewerUserId": reviewer_user_id,
         "riskCategory": claim["riskCategory"],
         "runtimeGrantId": claim["runtimeGrantId"],
         "scope": scope or claim["recommendedScope"],
@@ -536,7 +540,7 @@ def test_supply_chain_package_firewall_connect_repairs_local_auth_and_unlocks_pa
             return None
 
     monkeypatch.setattr(daemon_server, "start_guard_browser_session", lambda **_kwargs: _FakeSession())
-    monkeypatch.setattr(daemon_server.webbrowser, "open", lambda _url: False)
+    monkeypatch.setattr(daemon_server, "open_browser_url", lambda _url: False)
     monkeypatch.setattr(
         daemon_server,
         "exchange_guard_authorization_code",
@@ -569,6 +573,11 @@ def test_supply_chain_package_firewall_connect_repairs_local_auth_and_unlocks_pa
         )
 
     monkeypatch.setattr(daemon_server, "sync_local_guard_cloud_proof", unavailable_first_sync)
+    monkeypatch.setattr(
+        daemon_server,
+        "resolve_package_firewall_entitlement_with_refresh",
+        package_firewall_entitlement_module.resolve_package_firewall_entitlement,
+    )
     connect_started = threading.Event()
     connect_finalized = threading.Event()
     connect_failure_details: list[str] = []
@@ -619,22 +628,37 @@ def test_supply_chain_package_firewall_connect_repairs_local_auth_and_unlocks_pa
         )
         assert status == 200
         connect_flow = running["connect_flow"]
-        assert connect_flow["state"] in {"idle", "running"}
-        if connect_flow["state"] == "running":
-            assert connect_flow["authorize_url"] == "https://hol.org/mock-authorize"
+        if connect_flow is not None:
+            assert isinstance(connect_flow, dict)
+            assert connect_flow["state"] in {"idle", "running"}
+            if connect_flow["state"] == "running":
+                assert connect_flow["authorize_url"] == "https://hol.org/mock-authorize"
         assert connect_finalized.wait(timeout=30), "Guard Cloud connect did not finalize repaired credentials"
-        status, refreshed = _read_json_response(
-            _request(
-                daemon.port,
-                "/v1/supply-chain/package-shims",
-                method="GET",
-                token=token,
-            ),
-        )
-        assert status == 200
+        assert not connect_failure_details, f"Guard Cloud connect failed: {connect_failure_details[0]}"
+        deadline = time.monotonic() + 30
+        refreshed = running
+        while (
+            not bool(refreshed["entitlement"]["allowed"]) or refreshed["connect_flow"] is not None
+        ) and time.monotonic() < deadline:
+            time.sleep(0.05)
+            status, refreshed = _read_json_response(
+                _request(
+                    daemon.port,
+                    "/v1/supply-chain/package-shims",
+                    method="GET",
+                    token=token,
+                ),
+            )
+            assert status == 200
+            connect_flow = refreshed["connect_flow"]
+            if isinstance(connect_flow, dict) and connect_flow.get("state") == "failed":
+                pytest.fail(f"Guard Cloud connect failed: {connect_flow.get('detail') or 'unknown error'}")
         assert refreshed["entitlement"]["allowed"] is True
         assert refreshed["entitlement"]["reason"] == "paid_oauth_entitlement_active"
         assert refreshed["connect_flow"] is None
+        latest_connect_state = store.get_effective_guard_connect_state(now=datetime.now(timezone.utc).isoformat())
+        assert isinstance(latest_connect_state, dict)
+        assert latest_connect_state["milestone"] == "first_sync_pending"
     finally:
         daemon.stop()
 
@@ -684,7 +708,7 @@ def test_guard_cloud_connect_starts_local_browser_flow_for_insights_share(
                 return None
 
         monkeypatch.setattr(daemon_server, "start_guard_browser_session", lambda **_kwargs: _FakeSession())
-        monkeypatch.setattr(daemon_server.webbrowser, "open", lambda _url: True)
+        monkeypatch.setattr(daemon_server, "open_browser_url", lambda _url: True)
         monkeypatch.setattr(
             daemon_server,
             "exchange_guard_authorization_code",
@@ -767,7 +791,7 @@ def test_package_firewall_connect_accepts_hosted_dashboard_origin(
                 return None
 
         monkeypatch.setattr(daemon_server, "start_guard_browser_session", lambda **_kwargs: _FakeSession())
-        monkeypatch.setattr(daemon_server.webbrowser, "open", lambda _url: True)
+        monkeypatch.setattr(daemon_server, "open_browser_url", lambda _url: True)
         monkeypatch.setattr(
             daemon_server,
             "exchange_guard_authorization_code",
@@ -848,7 +872,7 @@ def _assert_connect_endpoint_coalesces_concurrent_browser_starts(
         return _FakeSession()
 
     monkeypatch.setattr(daemon_server, "start_guard_browser_session", _start_session_once)
-    monkeypatch.setattr(daemon_server.webbrowser, "open", lambda url: opened_urls.append(url) or True)
+    monkeypatch.setattr(daemon_server, "open_browser_url", lambda url: opened_urls.append(url) or True)
 
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
     daemon.start()
@@ -1614,7 +1638,10 @@ def test_supply_chain_package_firewall_paid_install_and_test_roundtrip(
     ]
 
 
-def test_supply_chain_audit_scans_workspace_manifests(tmp_path: Path) -> None:
+def test_supply_chain_audit_scans_workspace_manifests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()
     audit_now = "2026-05-27T16:00:00.000Z"
@@ -1635,6 +1662,11 @@ def test_supply_chain_audit_scans_workspace_manifests(tmp_path: Path) -> None:
     )
     store = GuardStore(tmp_path / "guard-home")
     _seed_guard_cloud(store, workspace_id=WORKSPACE_ID)
+    monkeypatch.setattr(
+        local_supply_chain_module,
+        "_run_cloud_workspace_audit",
+        lambda **_kwargs: (None, {"code": "cloud_timeout", "message": "Cloud unavailable."}),
+    )
     bundle_response = _bundle_response(
         packages=[
             _package(
@@ -1932,6 +1964,23 @@ def test_supply_chain_dashboard_session_claims_scope_action_and_managers(tmp_pat
                 payload={"managers": ["pip"], "workspace_id": "workspace-1"},
             ),
         )
+        manager_repair_token = _dashboard_token_with_claims(
+            auth_token,
+            {
+                "action_path": "package_shims_repair",
+                "allowed_action_paths": ["package_shims_repair"],
+                "managers": ["npm"],
+                "workspace_id": "workspace-1",
+            },
+        )
+        repair_all_status, repair_all_payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/supply-chain/repair",
+                dashboard_session_token=manager_repair_token,
+                payload={"workspace_id": "workspace-1"},
+            ),
+        )
     finally:
         daemon.stop()
 
@@ -1939,6 +1988,8 @@ def test_supply_chain_dashboard_session_claims_scope_action_and_managers(tmp_pat
     assert allowed_payload["operation"] == "install"
     assert denied_status == 401
     assert denied_payload["error"] == "unauthorized"
+    assert repair_all_status == 401
+    assert repair_all_payload["error"] == "unauthorized"
 
 
 def test_action_scoped_dashboard_session_requires_exact_read_paths_and_matching_nonce(tmp_path: Path) -> None:
@@ -2717,159 +2768,6 @@ def test_headless_policy_sync_does_not_ack_failed_policy_replacement(
     assert store.get_sync_payload("policy_bundle_ack") is None
 
 
-@pytest.mark.parametrize("legacy_available", [True, False])
-def test_headless_policy_sync_enforces_canonical_v2_bundle(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    legacy_available: bool,
-) -> None:
-    store = GuardStore(tmp_path / "guard-home")
-    if legacy_available:
-        store.set_sync_payload(
-            "policy_bundle_legacy_last_good",
-            {
-                "contractVersion": "guard-policy-bundle.v1",
-                "bundleVersion": "policy-2026-07-16.7",
-                "bundleHash": "sha256:legacy",
-                "issuedAt": "2026-07-16T09:59:00Z",
-                "rules": [
-                    {
-                        "ruleId": "rule-1",
-                        "action": "block",
-                        "artifactId": "skill:hol/deploy",
-                        "scope": {},
-                    }
-                ],
-            },
-            "2026-07-16T09:59:00Z",
-        )
-    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
-    daemon.start()
-    bundle: dict[str, object] = {
-        "contractVersion": "guard-policy-bundle.v2",
-        "bundleVersion": 8,
-        "bundleHash": "sha256:canonical",
-        "issuedAt": "2026-07-16T10:00:00Z",
-        "workspaceId": "workspace-1",
-        "payload": {
-            "apiVersion": "guard.hashgraphonline.com/v1alpha1",
-            "kind": "GuardPolicy",
-            "metadata": {"id": "test-policy", "name": "Test policy", "revision": 1},
-            "spec": {
-                "defaults": {"mode": "prompt"},
-                "rules": [
-                    {
-                        "id": "rule-1",
-                        "enabled": True,
-                        "effect": "block",
-                        "match": {"artifacts": ["skill:hol/deploy"]},
-                        "lifetime": {"mode": "permanent", "expiresAt": None},
-                        "provenance": {
-                            "source": "import",
-                            "createdAt": "2026-07-16T10:00:00Z",
-                            "createdBy": "owner@example.com",
-                        },
-                    }
-                ],
-            },
-        },
-    }
-    monkeypatch.setenv("HOL_GUARD_POLICY_CANONICAL_ENFORCEMENT", "true")
-    monkeypatch.setattr(
-        daemon_server,
-        "validate_synced_policy_bundle",
-        lambda *_args, **_kwargs: (bundle, None, {}),
-    )
-    try:
-        token = _dashboard_token_for(store)
-        status, payload = _read_json_response(
-            _request(
-                daemon.port,
-                "/v1/policy/sync",
-                token=token,
-                payload={
-                    "harness": "codex",
-                    "operation": "policy_sync",
-                    "policy_bundle": json.dumps(bundle),
-                },
-            ),
-        )
-        repeat_status, repeat_payload = _read_json_response(
-            _request(
-                daemon.port,
-                "/v1/policy/sync",
-                token=token,
-                payload={
-                    "harness": "codex",
-                    "operation": "policy_sync",
-                    "policy_bundle": json.dumps(bundle),
-                },
-            ),
-        )
-        repeated_ack = store.get_sync_payload("policy_bundle_ack")
-        bundle["bundleVersion"] = 9
-        bundle["bundleHash"] = "sha256:higher"
-        higher_status, higher_payload = _read_json_response(
-            _request(
-                daemon.port,
-                "/v1/policy/sync",
-                token=token,
-                payload={
-                    "harness": "codex",
-                    "operation": "policy_sync",
-                    "policy_bundle": json.dumps(bundle),
-                },
-            ),
-        )
-        previous_good = store.get_sync_payload("policy_bundle_canonical_previous_good")
-        bundle["bundleVersion"] = 7
-        bundle["bundleHash"] = "sha256:lower"
-        downgrade_status, downgrade_payload = _read_json_response(
-            _request(
-                daemon.port,
-                "/v1/policy/sync",
-                token=token,
-                payload={
-                    "harness": "codex",
-                    "operation": "policy_sync",
-                    "policy_bundle": json.dumps(bundle),
-                },
-            ),
-        )
-        bundle["bundleVersion"] = 9
-        bundle["bundleHash"] = "sha256:substitution"
-        substitution_status, substitution_payload = _read_json_response(
-            _request(
-                daemon.port,
-                "/v1/policy/sync",
-                token=token,
-                payload={
-                    "harness": "codex",
-                    "operation": "policy_sync",
-                    "policy_bundle": json.dumps(bundle),
-                },
-            ),
-        )
-    finally:
-        daemon.stop()
-
-    assert status == 200, (payload, store.list_events())
-    assert payload["bundle_version"] == "8"
-    assert store.get_sync_payload("policy_bundle")["contractVersion"] == "guard-policy-bundle.v2"
-    decisions = store.list_policy_decisions()
-    assert [(decision["owner"], decision["source"]) for decision in decisions] == [
-        ("rule-1", "policy-bundle-canonical")
-    ]
-    assert repeat_status == 200, repeat_payload
-    assert repeated_ack["sequence"] == 2
-    assert higher_status == 200, higher_payload
-    assert previous_good["bundleVersion"] == 8
-    assert downgrade_status == 400
-    assert downgrade_payload["error"] == "bundle_version_downgrade"
-    assert substitution_status == 400
-    assert substitution_payload["error"] == "bundle_version_downgrade"
-
-
 def test_headless_policy_sync_rejects_unsupported_daemon_version(tmp_path: Path) -> None:
     store = GuardStore(tmp_path / "guard-home")
     _seed_guard_cloud(store, workspace_id="workspace-1")
@@ -3145,7 +3043,8 @@ def test_headless_api_rejects_missing_auth_and_bad_harness(tmp_path: Path) -> No
     assert bad_payload["error"]["retryable"] is False
 
 
-def test_headless_remote_once_applies_pending_request_and_records_receipt(tmp_path: Path) -> None:
+@pytest.mark.parametrize("reviewer_role", ["owner", "workspace-owner", "admin", "operator"])
+def test_headless_remote_once_applies_pending_request_and_records_receipt(tmp_path: Path, reviewer_role: str) -> None:
     store = GuardStore(tmp_path / "guard-home")
     _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
     request = _remote_once_request(
@@ -3162,6 +3061,8 @@ def test_headless_remote_once_applies_pending_request_and_records_receipt(tmp_pa
             store,
             "req-remote-once",
             receipt_id="cloud-receipt-1",
+            reviewer_role=reviewer_role,
+            reviewer_user_id=f"{reviewer_role}-user",
         )
         status, payload = _read_json_response(
             _request(
@@ -3680,6 +3581,191 @@ def test_headless_remote_once_rejects_wrong_target_and_does_not_apply(
 
     assert status == 409
     assert payload["error"] == "remote_once_wrong_target"
+
+
+def test_headless_remote_once_rejects_a_validly_signed_unauthorized_reviewer(
+    tmp_path: Path,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
+    request = _remote_once_request("req-remote-viewer")
+    store.add_approval_request(request, "2026-05-14T11:59:00+00:00")
+    remote_approval = _signed_remote_approval_for_request(
+        store,
+        "req-remote-viewer",
+        receipt_id="cloud-receipt-viewer",
+        reviewer_role="viewer",
+        reviewer_user_id="viewer-user",
+    )
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        status, payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 403
+    assert payload["error"] == "remote_once_reviewer_not_authorized"
+    assert store.has_remote_once_receipt("cloud-receipt-viewer") is False
+    request_row = store.get_approval_request("req-remote-viewer")
+    assert isinstance(request_row, dict)
+    assert request_row["status"] == "pending"
+
+
+def test_headless_remote_once_rejects_a_nonce_for_another_request(
+    tmp_path: Path,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
+    request = _remote_once_request("req-remote-nonce")
+    store.add_approval_request(request, "2026-05-14T11:59:00+00:00")
+    remote_approval = _signed_remote_approval_for_request(
+        store,
+        "req-remote-nonce",
+        receipt_id="cloud-receipt-nonce",
+        nonce="nonce-for-another-request:cloud-receipt-nonce",
+    )
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        status, payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 409
+    assert payload["error"] == "remote_once_request_stale"
+    assert store.has_remote_once_receipt("cloud-receipt-nonce") is False
+    request_row = store.get_approval_request("req-remote-nonce")
+    assert isinstance(request_row, dict)
+    assert request_row["status"] == "pending"
+
+
+def test_headless_remote_once_rejects_a_wrong_device_id(
+    tmp_path: Path,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
+    request = _remote_once_request("req-remote-device")
+    store.add_approval_request(request, "2026-05-14T11:59:00+00:00")
+    remote_approval = _signed_remote_approval_for_request(
+        store,
+        "req-remote-device",
+        receipt_id="cloud-receipt-device",
+        device_id="device-not-bound-to-this-request",
+    )
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        status, payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 409
+    assert payload["error"] == "remote_once_wrong_target"
+    assert store.has_remote_once_receipt("cloud-receipt-device") is False
+    request_row = store.get_approval_request("req-remote-device")
+    assert isinstance(request_row, dict)
+    assert request_row["status"] == "pending"
+
+
+def test_headless_remote_once_rejects_a_replayed_receipt_after_daemon_restart(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "guard-home"
+    store = GuardStore(home)
+    _seed_guard_cloud(store, workspace_id="workspace-1", now="2026-06-13T00:00:00+00:00")
+    request = _remote_once_request("req-remote-restart")
+    store.add_approval_request(request, "2026-05-14T11:59:00+00:00")
+    remote_approval = _signed_remote_approval_for_request(
+        store,
+        "req-remote-restart",
+        receipt_id="cloud-receipt-restart",
+    )
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        first_status, _first_payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        daemon.stop()
+
+    restarted_store = GuardStore(home)
+    restart_deadline = time.monotonic() + 30.0
+    while True:
+        try:
+            restarted_daemon = GuardDaemonServer(restarted_store, host="127.0.0.1", port=0)
+            break
+        except RuntimeError as error:
+            if (
+                str(error) != "A previous Guard daemon remains quarantined after unconfirmed containment."
+                or time.monotonic() >= restart_deadline
+            ):
+                raise
+            time.sleep(0.05)
+    restarted_daemon.start()
+    try:
+        replay_status, replay_payload = _read_json_response(
+            _request(
+                restarted_daemon.port,
+                "/v1/requests/remote-once",
+                token=_dashboard_token_for(restarted_store),
+                payload={
+                    "harness": "codex",
+                    "operation": "remote_once",
+                    "remoteApproval": json.dumps(remote_approval),
+                },
+            ),
+        )
+    finally:
+        restarted_daemon.stop()
+
+    assert first_status == 200
+    assert store.has_remote_once_receipt("cloud-receipt-restart") is True
+    assert replay_status == 409
+    assert replay_payload["error"] == "remote_once_replayed"
 
 
 def test_headless_remote_once_releases_claimed_receipts_after_apply_failure(

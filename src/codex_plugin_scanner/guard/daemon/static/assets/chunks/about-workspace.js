@@ -1,8 +1,8 @@
-import { j as jsxRuntimeExports, an as Tag, bM as Surface, M as Badge, r as reactExports, S as SectionLabel, b3 as HiMiniArrowTopRightOnSquare, bN as HiMiniCheckBadge } from "../guard-dashboard.js";
+import { j as jsxRuntimeExports, aj as Tag, bJ as Surface, L as Badge, r as reactExports, S as SectionLabel, a_ as HiMiniArrowTopRightOnSquare, bK as HiMiniCheckBadge } from "../guard-dashboard.js";
 const ABOUT_PARTNER_SECTION_TITLE = "Standards partner program";
 const ABOUT_PARTNER_SECTION_BODY = "Join teams building on HOL open standards. Partners get early access to protocol drafts, co-marketing, and direct engineering support.";
 const ABOUT_PARTNER_CTA = "Explore partner programs";
-const ABOUT_PARTNER_CTA_HREF = "https://hol.org/guard/partners";
+const ABOUT_PARTNER_CTA_HREF = "https://hol.org";
 const ABOUT_AFFILIATE_SECTION_TITLE = "Affiliate starter kit";
 const ABOUT_AFFILIATE_SECTION_BODY = "Approved affiliates can share Guard with their community and receive recurring commission on qualified paid referrals.";
 const ABOUT_AFFILIATE_CTA = "Learn about affiliates";
@@ -136,7 +136,7 @@ const ABOUT_PATH_CARDS = [
     title: "Standards partner program",
     description: "Contribute to open trust standards for agent identity, registries, and receipts.",
     ctaLabel: "Explore partners",
-    ctaHref: "https://hol.org/guard/partners",
+    ctaHref: "https://hol.org",
     ctaId: "path_standards_partner",
     priority: "tertiary",
     tone: "slate"
@@ -181,7 +181,7 @@ const ALLOWED_LINKS = {
   hol_guard_cloud: { host: "hol.org", pathPrefix: "/guard" },
   plugin_scanner_ci_docs: { host: "hol.org", pathPrefix: "/guard/docs/plugin-scanner" },
   standards_sdk_github: { host: "github.com", pathPrefix: "/hashgraph-online/standards-sdk" },
-  hol_partners: { host: "hol.org", pathPrefix: "/guard/partners" },
+  hol_partners: { host: "hol.org", pathPrefix: "/", exactPath: true },
   hol_affiliates: { host: "hol.org", pathPrefix: "/guard/affiliates" },
   hol_guard_source: { host: "github.com", pathPrefix: "/hashgraph-online/hol-guard" }
 };
@@ -308,9 +308,9 @@ function assertSafeAboutExternalUrl(linkId, raw) {
       `Host mismatch for ${linkId}: expected ${allowed.host}, got ${parsed.hostname}`
     );
   }
-  if (!parsed.pathname.startsWith(allowed.pathPrefix)) {
+  if (allowed.exactPath ? parsed.pathname !== allowed.pathPrefix : !parsed.pathname.startsWith(allowed.pathPrefix)) {
     throw new AboutExternalLinkError(
-      `Path prefix mismatch for ${linkId}: expected ${allowed.pathPrefix}, got ${parsed.pathname}`
+      `Path mismatch for ${linkId}: expected ${allowed.exactPath ? "exact" : "prefix"} ${allowed.pathPrefix}, got ${parsed.pathname}`
     );
   }
   const forbiddenParams = ["guard-token", "guardDaemon", "workspace", "device", "install", "user", "referral", "ref"];

@@ -42,7 +42,7 @@ def assertion(**updates: object) -> bytes:
         "detection": {
             "state": "present",
             "endpointOnline": True,
-            "version": "3.1.0a9",
+            "version": "3.0.0a9",
             "packageIdentity": "org.hiero.hol-guard",
             "reasonCodes": ["observer_current_present"],
         },
@@ -163,7 +163,7 @@ def test_enforces_clock_skew_expiry_and_partial_evidence() -> None:
         {
             "state": "present",
             "endpointOnline": "yes",
-            "version": "3.1.0a9",
+            "version": "3.0.0a9",
             "packageIdentity": "org.hiero.hol-guard",
             "reasonCodes": [],
         },
@@ -174,7 +174,7 @@ def test_enforces_clock_skew_expiry_and_partial_evidence() -> None:
             "packageIdentity": "org.hiero.hol-guard",
             "reasonCodes": [],
         },
-        {"state": "present", "endpointOnline": True, "version": "3.1.0a9", "packageIdentity": {}, "reasonCodes": []},
+        {"state": "present", "endpointOnline": True, "version": "3.0.0a9", "packageIdentity": {}, "reasonCodes": []},
     ],
 )
 def test_rejects_signed_schema_invalid_detection_fields(detection: dict[str, object]) -> None:

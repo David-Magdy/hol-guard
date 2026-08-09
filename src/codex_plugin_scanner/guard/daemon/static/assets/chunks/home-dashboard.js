@@ -1,5 +1,6 @@
-import { g as getHeatmapLevel, j as jsxRuntimeExports, S as SectionLabel, E as EvidenceInsightsShareButton, G as GuardStatMetric, H as HomeInsightsMetrics, a as EvidenceActivityHeatmapMini, r as reactExports, h as homeCommandActivityModel, b as HiMiniCommandLine, c as HiMiniChevronRight, d as createCommandActivityClient, f as fetchCommandActivityApi, u as useReceiptAnalytics, e as harnessDisplayName, i as isDisplayableHarness, p as protectionHealthFor, k as EmptyState, A as ActionButton, l as EvidenceInsightsShareModal, m as HiMiniCheckCircle, n as GuardHero, o as formatNumber, q as HiMiniShieldCheck, D as DeviceProofCard, s as guardActionDisposition, t as formatRelativeTime, v as guardActionActivityCopy, w as HiMiniSparkles, x as HiMiniXMark, y as HiMiniChevronUp, z as HiMiniChevronDown, B as resolveCloudIntelCopy, C as HiMiniCloud, F as HiMiniQuestionMarkCircle, I as useFocusTrap, J as approvalProofRequiresPassword, K as HiMiniExclamationTriangle, L as HiMiniBolt, M as Badge, N as HiMiniMinusCircle } from "../guard-dashboard.js";
+import { g as getHeatmapLevel, j as jsxRuntimeExports, S as SectionLabel, E as EvidenceInsightsShareButton, G as GuardStatMetric, H as HomeInsightsMetrics, a as EvidenceActivityHeatmapMini, r as reactExports, h as homeCommandActivityModel, b as HiMiniCommandLine, c as HiMiniChevronRight, d as createCommandActivityClient, f as fetchCommandActivityApi, u as useReceiptAnalytics, e as harnessDisplayName, p as protectionHealthFor, i as EmptyState, A as ActionButton, k as EvidenceInsightsShareModal, l as HiMiniCheckCircle, m as GuardHero, O as OperatorHealthCard, n as formatNumber, o as HiMiniShieldCheck, D as DeviceProofCard, q as guardActionDisposition, s as formatRelativeTime, t as guardActionActivityCopy, v as HiMiniSparkles, w as HiMiniXMark, x as HiMiniChevronUp, y as HiMiniChevronDown, z as resolveCloudIntelCopy, B as HiMiniCloud, C as HiMiniQuestionMarkCircle, F as useFocusTrap, I as approvalProofRequiresPassword, J as HiMiniExclamationTriangle, K as HiMiniBolt, L as Badge, M as HiMiniMinusCircle } from "../guard-dashboard.js";
 import { H as HomeProtectionModule } from "./home-protection-module.js";
+import { i as isConnectableAppHarness } from "./harness-setup-target.js";
 function HomeInsightsSkeleton() {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-px border-t border-slate-100 bg-slate-100 sm:grid-cols-4", children: Array.from({ length: 4 }, (_, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2 bg-white px-4 py-3.5 sm:py-4", children: [
@@ -229,14 +230,14 @@ function HomeWorkspace(props) {
   const snapshot = props.runtime.kind === "ready" ? props.runtime.snapshot : null;
   const queuedCount = props.requests.kind === "ready" ? props.requests.items.length : 0;
   const policyItems = props.policies.kind === "ready" ? props.policies.items : [];
-  const managedInstalls = (snapshot?.managed_installs ?? []).filter((item) => isDisplayableHarness(item.harness));
+  const managedInstalls = (snapshot?.managed_installs ?? []).filter((item) => isConnectableAppHarness(item.harness));
   const activeInstalls = managedInstalls.filter((item) => item.active);
   const observedHarnesses = snapshot ? Array.from(
     new Set([
       ...snapshot.items.map((item) => item.harness),
       ...snapshot.latest_receipts.map((receipt) => receipt.harness),
       ...policyItems.map((policy) => policy.harness)
-    ].filter(isDisplayableHarness))
+    ].filter(isConnectableAppHarness))
   ).sort() : [];
   const clearHarnesses = activeInstalls.length > 0 ? activeInstalls.map((i) => i.harness) : observedHarnesses;
   const watchedAppsCount = activeInstalls.length > 0 ? activeInstalls.length : observedHarnesses.length;
@@ -310,6 +311,7 @@ function HomeWorkspace(props) {
         cta: /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: ctaAction, "data-primary": "true", children: state.ctaLabel })
       }
     ),
+    snapshot.operator_health ? /* @__PURE__ */ jsxRuntimeExports.jsx(OperatorHealthCard, { health: snapshot.operator_health }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       EvidenceInsightsHomePreview,
       {
@@ -841,8 +843,8 @@ function NewAppDiscoveryBanner(props) {
   )) });
 }
 function resolveNewAppDiscoveries(managedInstalls, observedHarnesses) {
-  const activeHarnesses = new Set(managedInstalls.filter((i) => isDisplayableHarness(i.harness)).map((i) => i.harness));
-  return observedHarnesses.filter((h) => isDisplayableHarness(h) && !activeHarnesses.has(h));
+  const activeHarnesses = new Set(managedInstalls.filter((i) => isConnectableAppHarness(i.harness)).map((i) => i.harness));
+  return observedHarnesses.filter((h) => isConnectableAppHarness(h) && !activeHarnesses.has(h));
 }
 function NewAppBanner(props) {
   const storageKey = `guard-new-app-dismissed-${props.harness}`;

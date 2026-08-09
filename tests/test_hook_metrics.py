@@ -8,13 +8,12 @@ These tests exercise the public contract of ``HookMetricsRecorder``:
 * ``maybe_flush_to_store(force=True)`` writes one rollup ``guard_events``
   row containing no raw content and leaves the store usable.
 
-``reason_code`` is a short code (the production caller hardcodes
-``"unknown"``; every other codebase value is short snake_case such as
-``secret_match`` or ``scanner_budget_exhausted``). The recorder
-interpolates it verbatim into a composite counter key *by design*, so
-these tests probe the real boundary — no raw-output *field names* leak
-and every snapshot *value* is numeric — rather than asserting the
-caller-controlled reason string is absent from keys.
+``reason_code`` is a short code such as ``secret_match`` or
+``scanner_budget_exhausted``. The recorder interpolates it verbatim into
+a composite counter key *by design*, so these tests probe the real
+boundary — no raw-output *field names* leak and every snapshot *value*
+is numeric — rather than asserting the caller-controlled reason string
+is absent from keys.
 """
 
 from __future__ import annotations
@@ -53,10 +52,11 @@ def _record_one(
     latency_ms: float = 25.0,
     decision: str = "block",
     policy_action: str | None = "block",
+    harness: str = "cursor",
 ) -> None:
     """Record a single realistic hook decision metric."""
     recorder.record(
-        harness="cursor",
+        harness=harness,
         event_name="PostToolUse",
         route="source_read",
         payload_kind="file_output",
@@ -196,6 +196,31 @@ def test_snapshot_has_bucket_counters(recorder: HookMetricsRecorder) -> None:
     )
     assert has_size_buckets, "snapshot has no size bucket counters"
     assert snap["total_decisions"] == 3
+
+
+def test_failure_metrics_are_sanitized_and_bounded(recorder: HookMetricsRecorder) -> None:
+    recorder.record_failure(stage="engine", exception_type="RuntimeError")
+    recorder.record_failure(stage="unexpected/private/path", exception_type="not a class")
+
+    counters = recorder.snapshot()["counters"]
+
+    assert counters["failure:engine:RuntimeError"] == 1
+    assert counters["failure:unknown:UnknownError"] == 1
+
+
+def test_metric_dimensions_do_not_expose_or_multiply_session_values(recorder: HookMetricsRecorder) -> None:
+    for index in range(500):
+        _record_one(
+            recorder,
+            reason_code=f"/private/workspace/{index}",
+            harness=f"session-{index}",
+        )
+        recorder.record_failure(stage="engine", exception_type=f"SessionValue{index}")
+
+    counters = recorder.snapshot()["counters"]
+
+    assert len(counters) <= 256
+    assert all("/private/" not in key and "session-" not in key for key in counters)
 
 
 def test_flush_to_store_no_raw_content(

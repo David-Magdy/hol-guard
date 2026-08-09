@@ -1,19 +1,26 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { HiMiniArrowPath } from "react-icons/hi2";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { HiMiniAdjustmentsHorizontal, HiMiniArrowPath, HiMiniBeaker } from "react-icons/hi2";
 
 import {
   fetchGuardUpdateStatus,
   prepareGuardDaemonReconnect,
+  readRememberedGuardUpdateChannel,
   reconnectGuardDaemonAfterUpdate,
   readGuardToken,
   redirectToGuardDaemonOrigin,
   scheduleGuardUpdate,
+  setGuardUpdateChannel,
+  type GuardUpdateChannelProof,
 } from "./guard-api";
+import { AlphaChannelDialog } from "./alpha-update-channel-dialog";
+import { buildApprovalProofCredentials } from "./approval-proof-inline";
 import type {
+  GuardApprovalGatePublicConfig,
   GuardDaemonReconnectAuthorization,
   GuardUpdatePhase,
   GuardUpdateStatus,
 } from "./guard-types";
+import { GuardModalLayer } from "./guard-modal-layer";
 
 const UPDATE_STATUS_POLL_MS = 60_000;
 const RECONNECT_POLL_MS = 1_500;
@@ -25,6 +32,8 @@ export type GuardUpdatePanelProps = {
   updatePhase?: GuardUpdatePhase;
   onUpdateGuard?: () => void;
   onReinstallGuard?: () => void;
+  approvalGate?: GuardApprovalGatePublicConfig | null;
+  onSetUpdateChannel?: (channel: "stable" | "alpha", proof?: GuardUpdateChannelProof) => void | Promise<void>;
   compact?: boolean;
 };
 
@@ -103,6 +112,59 @@ export function GuardUpdatePanel(props: GuardUpdatePanelProps) {
     phase !== "reconnecting";
   const showReinstallButton = shouldPromptRecoveryReinstall(props.updateStatus) && phase !== "updating" && phase !== "reconnecting";
   const busy = phase === "updating" || phase === "reconnecting";
+  const useAlpha = props.updateStatus?.release_channel === "alpha" || (
+    props.updateStatus == null && readRememberedGuardUpdateChannel() === "alpha"
+  );
+  const [alphaModalOpen, setAlphaModalOpen] = useState(false);
+  const [alphaSavePending, setAlphaSavePending] = useState(false);
+  const [alphaSaveError, setAlphaSaveError] = useState<string | null>(null);
+  const [alphaApprovalPassword, setAlphaApprovalPassword] = useState("");
+  const [alphaApprovalTotpCode, setAlphaApprovalTotpCode] = useState("");
+  const targetChannel = useAlpha ? "stable" : "alpha";
+  const modalTitle = useAlpha ? "Return to stable updates" : "Try alpha updates";
+
+  const handleOpenAlphaModal = useCallback(() => {
+    setAlphaSaveError(null);
+    setAlphaApprovalPassword("");
+    setAlphaApprovalTotpCode("");
+    setAlphaModalOpen(true);
+  }, []);
+  const handleCloseAlphaModal = useCallback(() => {
+    if (alphaSavePending) {
+      return;
+    }
+    setAlphaModalOpen(false);
+    setAlphaSaveError(null);
+    setAlphaApprovalPassword("");
+    setAlphaApprovalTotpCode("");
+  }, [alphaSavePending]);
+  const handleConfirmAlphaChannel = useCallback(async () => {
+    if (!props.onSetUpdateChannel) {
+      return;
+    }
+    setAlphaSavePending(true);
+    setAlphaSaveError(null);
+    try {
+      const proof = props.approvalGate?.enabled
+        ? buildApprovalProofCredentials(props.approvalGate, {
+            approvalPassword: alphaApprovalPassword,
+            approvalTotpCode: alphaApprovalTotpCode,
+          })
+        : undefined;
+      await props.onSetUpdateChannel(targetChannel, proof);
+      setAlphaModalOpen(false);
+    } catch (error) {
+      setAlphaSaveError(error instanceof Error ? error.message : "Guard could not change the update channel. Try again.");
+    } finally {
+      setAlphaSavePending(false);
+    }
+  }, [alphaApprovalPassword, alphaApprovalTotpCode, props.approvalGate, props.onSetUpdateChannel, targetChannel]);
+  const handleApprovalPasswordChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setAlphaApprovalPassword(event.target.value);
+  }, []);
+  const handleApprovalTotpCodeChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    setAlphaApprovalTotpCode(event.target.value);
+  }, []);
 
   return (
     <div className={props.compact ? "space-y-1" : "space-y-2"}>
@@ -116,6 +178,37 @@ export function GuardUpdatePanel(props: GuardUpdatePanelProps) {
       ) : null}
       {helpCopy ? (
         <p className="text-[11px] leading-relaxed text-brand-dark/70">{helpCopy}</p>
+      ) : null}
+      {props.onSetUpdateChannel && useAlpha ? (
+        <div
+          className="flex items-center justify-between gap-2 rounded-md border border-brand-blue/20 bg-brand-blue/[0.06] px-2 py-1.5"
+          role="status"
+          aria-label="Alpha updates enabled"
+        >
+          <span className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-brand-blue">
+            <HiMiniBeaker className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Alpha updates
+          </span>
+          <button
+            type="button"
+            onClick={handleOpenAlphaModal}
+            disabled={busy}
+            aria-label="Manage alpha updates"
+            title="Manage alpha updates"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-brand-blue transition-colors hover:bg-brand-blue/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <HiMiniAdjustmentsHorizontal className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      ) : props.onSetUpdateChannel ? (
+        <button
+          type="button"
+          onClick={handleOpenAlphaModal}
+          disabled={busy}
+          className="inline-flex min-h-9 w-full items-center justify-center rounded-lg border border-brand-blue/25 bg-white px-3 py-2 text-xs font-semibold text-brand-blue transition-colors hover:bg-brand-blue/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Try alpha updates
+        </button>
       ) : null}
       {showUpdateButton && props.onUpdateGuard ? (
         <button
@@ -143,6 +236,22 @@ export function GuardUpdatePanel(props: GuardUpdatePanelProps) {
           {phase === "updating" ? "Updating Guard…" : "Reconnecting…"}
         </p>
       )}
+      {alphaModalOpen ? (
+        <GuardModalLayer ariaLabel={modalTitle} onClose={handleCloseAlphaModal} panelClassName="w-full max-w-md">
+          <AlphaChannelDialog
+            useAlpha={useAlpha}
+            pending={alphaSavePending}
+            error={alphaSaveError}
+            approvalGate={props.approvalGate ?? null}
+            approvalPassword={alphaApprovalPassword}
+            approvalTotpCode={alphaApprovalTotpCode}
+            onClose={handleCloseAlphaModal}
+            onConfirm={handleConfirmAlphaChannel}
+            onApprovalPasswordChange={handleApprovalPasswordChange}
+            onApprovalTotpCodeChange={handleApprovalTotpCodeChange}
+          />
+        </GuardModalLayer>
+      ) : null}
     </div>
   );
 }
@@ -153,23 +262,44 @@ export function useGuardUpdate(options?: { onReconnected?: () => void; enabled?:
   const [updatePhase, setUpdatePhase] = useState<GuardUpdatePhase>(enabled ? "checking" : "idle");
   const reconnectStartedAt = useRef<number | null>(null);
   const updatePhaseRef = useRef<GuardUpdatePhase>("checking");
+  const updateStatusEpoch = useRef(0);
+  const channelMutationId = useRef(0);
+  const channelMutationPending = useRef(false);
+  const isMounted = useRef(false);
 
   useEffect(() => {
     updatePhaseRef.current = updatePhase;
   }, [updatePhase]);
 
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
   const refreshUpdateStatus = useCallback(async () => {
-    if (!enabled) {
+    if (!enabled || !isMounted.current || channelMutationPending.current) {
       return;
     }
+    const epoch = updateStatusEpoch.current;
+    const mutationId = channelMutationId.current;
     try {
       const status = await fetchGuardUpdateStatus();
+      if (
+        !isMounted.current ||
+        epoch !== updateStatusEpoch.current ||
+        mutationId !== channelMutationId.current ||
+        channelMutationPending.current
+      ) {
+        return;
+      }
       setUpdateStatus(status);
       if (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle") {
         setUpdatePhase("idle");
       }
     } catch {
-      if (updatePhaseRef.current === "checking") {
+      if (isMounted.current && updatePhaseRef.current === "checking") {
         setUpdatePhase("idle");
       }
     }
@@ -181,10 +311,20 @@ export function useGuardUpdate(options?: { onReconnected?: () => void; enabled?:
       return;
     }
     let cancelled = false;
+    const epoch = updateStatusEpoch.current;
+    const mutationId = channelMutationId.current;
     void fetchGuardUpdateStatus()
       .then((status) => {
-        if (!cancelled && (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle")) {
-          setUpdateStatus(status);
+        if (
+          cancelled ||
+          epoch !== updateStatusEpoch.current ||
+          mutationId !== channelMutationId.current ||
+          channelMutationPending.current
+        ) {
+          return;
+        }
+        setUpdateStatus(status);
+        if (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle") {
           setUpdatePhase("idle");
         }
       })
@@ -233,6 +373,7 @@ export function useGuardUpdate(options?: { onReconnected?: () => void; enabled?:
             redirectToGuardDaemonOrigin(origin, readGuardToken());
             return true;
           }
+          updateStatusEpoch.current += 1;
           setUpdateStatus(reconnectResult.status);
           setUpdatePhase("idle");
           options?.onReconnected?.();
@@ -313,12 +454,33 @@ export function useGuardUpdate(options?: { onReconnected?: () => void; enabled?:
     });
   }, [scheduleAndWait, updateStatus]);
 
+  const onSetUpdateChannel = useCallback(async (channel: "stable" | "alpha", proof?: GuardUpdateChannelProof) => {
+    const mutationId = ++channelMutationId.current;
+    updateStatusEpoch.current += 1;
+    channelMutationPending.current = true;
+    try {
+      const status = await setGuardUpdateChannel(channel, proof);
+      if (mutationId === channelMutationId.current) {
+        updateStatusEpoch.current += 1;
+        setUpdateStatus(status);
+        if (updatePhaseRef.current === "checking" || updatePhaseRef.current === "idle") {
+          setUpdatePhase("idle");
+        }
+      }
+    } finally {
+      if (mutationId === channelMutationId.current) {
+        channelMutationPending.current = false;
+      }
+    }
+  }, []);
+
   return {
     guardVersion: updateStatus?.current_version ?? null,
     updateStatus,
     updatePhase,
     onUpdateGuard,
     onReinstallGuard,
+    onSetUpdateChannel,
     refreshUpdateStatus,
   };
 }

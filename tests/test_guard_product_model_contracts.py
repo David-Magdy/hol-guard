@@ -73,10 +73,12 @@ def test_canonical_harnesses_match_launch_harnesses_and_existing_contracts() -> 
         "opencode",
         "copilot",
         "cursor",
+        "cline",
         "gemini",
         "hermes",
         "openclaw",
         "pi",
+        "omp",
     )
     assert set(CANONICAL_HARNESS_VALUES).issubset(contract_harnesses)
 
@@ -191,6 +193,7 @@ def test_local_route_and_api_ownership_contracts_are_explicit() -> None:
     assert routes["/protect"].writes_state is True
     assert routes["/apps/{slug}"].writes_state is True
     assert routes["/evidence"].writes_state is True
+    assert routes["/extensions"].writes_state is True
     assert routes["/supply-chain"].writes_state is True
     assert routes["/audit"].writes_state is True
     assert routes["/policy"].writes_state is True
@@ -227,6 +230,7 @@ def test_local_route_and_api_ownership_contracts_are_explicit() -> None:
     assert apis_by_method[("GET", "/v1/command-activity/diagnostics")].writes_state is False
     assert apis_by_method[("DELETE", "/v1/command-activity")].category == "destructive"
     assert apis_by_method[("POST", "/v1/daemon/repair")].writes_state is True
+    assert apis_by_method[("POST", "/v1/protection/repair")].writes_state is True
     assert apis_by_method[("GET", "/v1/evidence/export")].auth_required is True
     assert apis_by_method[("GET", "/v1/settings")].writes_state is False
     assert apis_by_method[("POST", "/v1/settings")].category == "config"

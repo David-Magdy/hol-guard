@@ -37,9 +37,9 @@ from codex_plugin_scanner.guard.risk import (
     extract_network_hosts,
 )
 from codex_plugin_scanner.guard.runtime.actions import normalize_codex_hook_payload
+from codex_plugin_scanner.guard.runtime.git_execution_safety import git_binary_path_is_trusted
 from codex_plugin_scanner.guard.runtime.secret_file_requests import (
     _gh_pr_create_body_has_shell_command_substitution,
-    _git_binary_path_is_trusted,
     _path_text_is_within_root_text,
     _read_small_runtime_text_file,
     _resolved_runtime_path,
@@ -62,6 +62,169 @@ from codex_plugin_scanner.guard.runtime.secret_sensitivity import (
     classify_secret_path,
 )
 from codex_plugin_scanner.guard.store import GuardStore
+
+LOCAL_COMPOSE_SAFE_CASES = (
+    "docker compose up -d postgres",
+    "docker compose logs -f api",
+    "docker compose ps",
+    "docker compose down",
+    "docker compose build",
+    "docker compose build --platform linux/amd64 -t app:v1 .",
+    "docker compose -f docker-compose.yml up -d postgres",
+    "docker compose --file=docker-compose.yml up",
+    "docker compose -f docker-compose.yml ps",
+    "docker compose --profile dev up -d",
+    "docker compose --profile=dev logs -f api",
+    "docker --debug compose --profile dev logs -f api",
+    "docker compose --project-name=app ps",
+    "docker compose -p app ls",
+    "docker compose --project-directory . up -d",
+    "docker compose --project-directory=. up -d",
+    "docker compose --parallel 4 pull",
+    "docker compose --parallel=4 pull",
+    "docker compose --ansi never ps",
+    "docker compose --ansi=never ps",
+    "docker compose version",
+    "docker compose create web",
+    "docker compose stop redis",
+    "docker compose restart web",
+    "docker compose pull",
+    "docker compose images",
+    "docker compose top",
+    "docker compose events",
+    "docker compose port web 8080",
+    "docker compose rm -f web",
+    "docker compose pause web",
+    "docker compose unpause web",
+    "docker compose wait web",
+    "docker compose config",
+    "docker compose up --build",
+    "docker --context default compose up",
+    "docker --context=default compose ps",
+    "DOCKER_CONTEXT=default docker compose ps",
+    "env DOCKER_CONTEXT=default docker compose up -d",
+    "DOCKER_HOST=unix:///var/run/docker.sock docker compose ps",
+)
+
+SENSITIVE_DOCKER_DENY_CASES = (
+    "docker build --build-arg FOO .",
+    "docker build --build-arg FOO=$(cat ~/.npmrc) .",
+    "docker build --build-arg FOO=`cat ~/.aws/credentials` .",
+    "docker build --label leak=$(cat ~/.aws/credentials) .",
+    "docker build --annotation leak=$(cat ~/.aws/credentials) .",
+    "docker build --label $NPM_TOKEN=1 .",
+    "docker build --annotation $(cat ~/.aws/credentials)=x .",
+    "docker buildx --debug build --secret id=npm,src=.npmrc .",
+    "docker buildx --debug=false build --secret id=npm,src=.npmrc .",
+    "docker buildx build --allow security.insecure .",
+    "docker buildx b --secret id=npm,src=.npmrc .",
+    "docker buildx build --cache-to type=local,dest=/tmp/cache .",
+    "docker buildx build --load .",
+    "docker buildx build -otype=local,dest=/tmp/out .",
+    "docker buildx build --output type=local,dest=/tmp/out .",
+    "docker build --iidfile /tmp/image-id .",
+    "docker build --metadata-file=/tmp/metadata.json .",
+    "docker --debug login registry.example.com",
+    "docker --tlsverify run alpine",
+    "docker --debug=true login registry.example.com",
+    "docker --tlsverify=false run alpine",
+    "docker login registry.example.com",
+    "docker --context prod login registry.example.com",
+    "docker run -v ~/.ssh:/root/.ssh ubuntu:latest",
+    "docker compose run --rm app",
+    "docker compose exec web sh",
+    "docker compose cp file web:/tmp",
+    "docker compose push",
+    "docker compose publish",
+    "docker compose watch",
+    "docker compose frobnicate up",
+    "docker compose --env-file .env up",
+    "docker compose --env-file=.env up",
+    "docker compose up --env-file .env",
+    "docker compose up --env-file=.env",
+    "docker compose build --secret id=npm,src=.npmrc",
+    "docker compose build --ssh default",
+    "docker compose build --build-arg NPM_TOKEN=$NPM_TOKEN",
+    "docker compose build --build-arg FOO=sk-test",
+    "docker compose build --allow security.insecure",
+    "docker compose build --push",
+    "docker --context prod compose up",
+    "docker --context=prod compose ps",
+    "docker -H tcp://docker.example compose up",
+    "docker -Htcp://docker.example compose ps",
+    "docker --host=tcp://docker.example compose ps",
+    "docker --config /custom/docker compose up",
+    "docker --tlsverify compose up",
+    "docker --tls compose up",
+    "docker --tlsverify=false compose ps",
+    "docker --tlscacert /ca.pem compose up",
+    "docker --tlscert /cert.pem compose up",
+    "docker --tlskey /key.pem compose up",
+    "docker -c prod compose up",
+    "docker -cprod compose up",
+    "DOCKER_HOST=tcp://prod-docker.example docker compose up -d",
+    "env DOCKER_CONTEXT=prod docker compose ps",
+    "DOCKER_CONFIG=/custom/docker docker compose up",
+    "DOCKER_TLS_VERIFY=1 docker compose ps",
+    "DOCKER_CERT_PATH=/certs docker compose up",
+    "COMPOSE_ENV_FILES=.env docker compose up -d",
+    "env COMPOSE_ENV_FILES=.env docker compose ps",
+    "export DOCKER_CONTEXT=prod && docker compose ps",
+    "export DOCKER_HOST=tcp://prod-docker.example; docker compose up -d",
+    "env --split-string=DOCKER_CONTEXT=prod docker compose ps",
+    "env -S DOCKER_HOST=tcp://prod-docker.example docker compose up -d",
+    "docker build --secret id=npm,src=.npmrc -t registry.example.com/app:v1 .",
+    "docker --context prod build --secret id=npm,src=.npmrc -t registry.example.com/app:v1 .",
+    "docker -H tcp://docker.example build --secret id=npm,src=.npmrc -t registry.example.com/app:v1 .",
+    "docker buildx build --secret id=npm,src=.npmrc -t registry.example.com/app:v1 .",
+    "docker buildx --builder ci build --secret id=npm,src=.npmrc -t registry.example.com/app:v1 .",
+    "docker build --ssh default -t registry.example.com/app:v1 .",
+    "docker build --build-arg NPM_TOKEN=$NPM_TOKEN -t registry.example.com/app:v1 .",
+    "docker build --build-arg FOO=$NPM_TOKEN -t registry.example.com/app:v1 .",
+    "docker build --build-arg FOO=$SECRETTOKEN -t registry.example.com/app:v1 .",
+    "docker build --build-arg FOO=${NPM_TOKEN:-fallback} -t registry.example.com/app:v1 .",
+    "docker build --build-arg FOO=sk-test -t registry.example.com/app:v1 .",
+)
+
+MUTATING_PYTHON_MODULE_DENY_CASES = (
+    "python -m ruff check --add-noqa .",
+    "python -m ruff format .",
+    "python -m ruff --config ruff.toml format .",
+    "python -m ruff --color always format .",
+    "python -m mypy --install-types package",
+    "python -m pytest --basetemp=/tmp/guard-pytest",
+    "python -m pytest --junitxml=/tmp/guard-pytest.xml",
+    "python -m pytest --junit-xml=/tmp/guard-pytest.xml",
+    "python -m pytest --debug=/tmp/guard-pytest.log",
+    "python -m pytest --log-file=/tmp/guard-pytest.log",
+    "python -m pytest -c attacker.ini",
+    "PYTEST_ADDOPTS=--basetemp=/tmp/guard-pytest python -m pytest -q",
+    "python dangerous.py -m pytest",
+    "python -m unittest discover",
+)
+
+LOCAL_SHELL_RISK_CASES = (
+    ("shell-write-001", "sed -n '1,20p' src/file.ts | grep foo > out.txt", "destructive shell command"),
+    ("shell-write-002", "grep -h>~/.bashrc '^' src/payload.sh", "destructive shell command"),
+    ("shell-safe-001", 'ls missing 2>"/dev/null" | head -40', None),
+    ("shell-safe-002", 'ls missing 2>"/DEV/NULL" | head -40', None),
+    ("shell-safe-003", "ls missing 2>|/dev/null | head -40", None),
+)
+
+ENCODED_EXEC_PIPELINE_CASES = (
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -d | bash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -D | bash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -d | /bin/bash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -di | bash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -d | dash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -d | env bash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -d | env -i bash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -d | /usr/bin/env -i bash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -d | env -u FOO bash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -d | env --unset=FOO bash",
+    "echo cm0gLWYgZGFuZ2Vyb3VzLW1hcmtlci5qc29uCg== | base64 -i -d | bash",
+    "printf 726d202d662064616e6765726f75732d6d61726b65722e6a736f6e0a | xxd -rp | bash",
+)
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -1176,14 +1339,57 @@ def test_tool_action_request_classifier_skips_git_commit_with_coauthored_by_trai
     assert request is None
 
 
-def test_tool_action_request_classifier_reviews_gh_pr_create_body_file():
+def test_tool_action_request_classifier_allows_static_markdown_gh_pr_create_body_file(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    body_file = tmp_path / "points-portal-command-builder-a11y-pr-body.md"
+    body_file.write_text("## Summary\n- Wire the capability gate.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                "gh pr create --base main --head fix/guard-command-builder-a11y "
+                "--title 'fix(portal): wire command capability gate' "
+                f"--body-file {body_file}"
+            )
+        },
+        cwd=workspace,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is None
+
+
+def test_tool_action_request_classifier_allows_canonical_pr_body_file_with_standard_flags(tmp_path):
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text("## Summary\n- Render report dates reliably.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                'gh pr create --title "fix(guard): render report dates" '
+                "--body-file pr-body.md --base main --head fix/report-date 2>&1"
+            )
+        },
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is None
+
+
+@pytest.mark.parametrize(
+    "body_file",
+    ("-", "/tmp/guard-pr-body.txt", "'~/focused-pr-body.md'", "~otheruser/focused-pr-body.md"),
+)
+def test_tool_action_request_classifier_reviews_nonstatic_gh_pr_create_body_file(body_file):
     request = extract_sensitive_tool_action_request(
         "bash",
         {
             "command": (
                 "gh pr create --repo hashgraph-online/hol-guard "
                 "--title 'feat(guard): notify desktop for approvals' "
-                "--body-file /tmp/guard-pr-body.md"
+                f"--body-file {body_file}"
             )
         },
     )
@@ -1192,7 +1398,149 @@ def test_tool_action_request_classifier_reviews_gh_pr_create_body_file():
     assert request.action_class == "GitHub content mutation command"
 
 
-def test_tool_action_request_classifier_reviews_single_quoted_gh_pr_create_markdown_body():
+def test_tool_action_request_classifier_reviews_missing_gh_pr_create_body_file(tmp_path):
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file {tmp_path / 'missing.md'}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_secret_bearing_gh_pr_create_body_file(tmp_path):
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text(
+        "Authorization: Bearer ghp_" + "012345678901234567890123456789012345\n",
+        encoding="utf-8",
+    )
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file {body_file}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_symlinked_gh_pr_create_body_file(tmp_path):
+    source = tmp_path / "source-pr-body.md"
+    source.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    body_file = tmp_path / "pr-body.md"
+    body_file.symlink_to(source)
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file {body_file}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_dynamic_title_with_canonical_pr_body_file(tmp_path):
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": 'gh pr create --title "$GITHUB_TOKEN" --body-file pr-body.md'},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub PR dynamic content"
+
+
+def test_tool_action_request_classifier_reviews_background_command_after_canonical_pr_body_file(tmp_path):
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": "gh pr create --title 'Static title' --body-file pr-body.md & echo continued"},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_reviews_padded_gh_pr_create_body_file(tmp_path: Path) -> None:
+    safe_body = tmp_path / "pr-body.md"
+    safe_body.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    padded_body = tmp_path / " pr-body.md"
+    padded_body.write_text("Unreviewed content.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": "gh pr create --title 'Static title' --body-file ' pr-body.md'"},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+@pytest.mark.parametrize(
+    "substitution",
+    ("<(touch marker)", ">(cat)", "$(touch marker)", "`touch marker`"),
+)
+def test_tool_action_request_classifier_reviews_substitution_outside_gh_pr_create_body_file(
+    tmp_path: Path,
+    substitution: str,
+) -> None:
+    body_file = tmp_path / "pr-body.md"
+    body_file.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file pr-body.md {substitution}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+
+
+def test_tool_action_request_classifier_reviews_globbed_gh_pr_create_body_file(tmp_path):
+    literal_body = tmp_path / "[a]-pr-body.md"
+    literal_body.write_text("## Summary\n- Safe text.\n", encoding="utf-8")
+    expanded_body = tmp_path / "a-pr-body.md"
+    expanded_body.write_text(
+        "Authorization: Bearer ghp_" + "012345678901234567890123456789012345\n",
+        encoding="utf-8",
+    )
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": (f"gh pr create --title 'Static title' --body-file {literal_body}")},
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+@pytest.mark.parametrize(
+    "template_arg",
+    ("--template body.md", "--template=body.md", "-Tbody.md"),
+)
+def test_tool_action_request_classifier_reviews_gh_pr_create_template(template_arg):
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": f'gh pr create --title "focused fix" {template_arg}'},
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_allows_single_quoted_gh_pr_create_markdown_body():
     request = extract_sensitive_tool_action_request(
         "bash",
         {
@@ -1206,8 +1554,86 @@ def test_tool_action_request_classifier_reviews_single_quoted_gh_pr_create_markd
         },
     )
 
+    assert request is None
+
+
+def test_tool_action_request_classifier_allows_static_inline_gh_pr_create_compound(tmp_path):
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                f"cd {tmp_path} && "
+                'gh pr create --title "feat(guard): focused fix" '
+                '--body "Static summary. Tests pass." 2>&1 | tail -3'
+            )
+        },
+        cwd=tmp_path,
+    )
+
+    assert request is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        'gh pr create --title "$GITHUB_TOKEN" --body "Static summary"',
+        'gh pr create --title "Static title" --body "${GITHUB_TOKEN}"',
+        'gh pr create --title "$(printenv GITHUB_TOKEN)" --body "Static summary"',
+        'gh pr create --title "Static title" --body "Static summary" --label "$GITHUB_TOKEN"',
+        'gh pr create -t"$GITHUB_TOKEN" -b"Static summary"',
+        'sudo gh pr create --title "Static title" --body "$GITHUB_TOKEN"',
+        'command -- gh pr create --title "Static title" --body "$GITHUB_TOKEN"',
+        'env GH_HOST=github.com gh pr create --title "Static title" --body "$GITHUB_TOKEN"',
+    ),
+)
+def test_tool_action_request_classifier_reviews_dynamic_gh_pr_create_content(command):
+    request = extract_sensitive_tool_action_request("bash", {"command": command})
+
+    assert request is not None
+    assert request.action_class == "GitHub PR dynamic content"
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "gh pr create --fill",
+        "gh pr create -f",
+        'gh pr create --title "Static title"',
+        'gh pr create --title "Static title" --body "Static summary" -e',
+        'gh pr create --title "Static title" --body "Static summary" --recover input',
+        'gh pr create --title "Static title" --body "Static summary" --web',
+        'gh pr create --title "Static title" --body "Static summary" -w',
+    ),
+)
+def test_tool_action_request_classifier_reviews_content_derived_gh_pr_create(command):
+    request = extract_sensitive_tool_action_request("bash", {"command": command})
+
     assert request is not None
     assert request.action_class == "GitHub content mutation command"
+
+
+def test_tool_action_request_classifier_allows_single_quoted_pr_literals_with_shell_metacharacters():
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {
+            "command": (
+                "gh pr create --title 'Document $GITHUB_TOKEN handling' "
+                "--body 'Verification: `python -m pytest` and ${TOKEN} remain literal.'"
+            )
+        },
+    )
+
+    assert request is None
+
+
+def test_tool_action_request_classifier_preserves_dangerous_action_after_pr_create():
+    request = extract_sensitive_tool_action_request(
+        "bash",
+        {"command": ('gh pr create --title "focused fix" --body "Static summary" && gh pr merge 17 --admin')},
+    )
+
+    assert request is not None
+    assert request.action_class == "GitHub administrator pull-request merge command"
 
 
 def test_tool_action_request_classifier_explains_gh_pr_create_double_quoted_markdown_substitution():
@@ -1263,7 +1689,7 @@ def test_tool_action_request_classifier_explains_wrapped_gh_pr_create_body_subst
     assert request.action_class == "GitHub PR body shell substitution"
 
 
-def test_tool_action_request_classifier_reviews_pr_create_with_unrelated_substitution():
+def test_tool_action_request_classifier_allows_pr_create_with_unrelated_substitution():
     request = extract_sensitive_tool_action_request(
         "bash",
         {
@@ -1276,11 +1702,10 @@ def test_tool_action_request_classifier_reviews_pr_create_with_unrelated_substit
         },
     )
 
-    assert request is not None
-    assert request.action_class == "GitHub content mutation command"
+    assert request is None
 
 
-def test_tool_action_request_classifier_reviews_pr_create_with_attached_body_flag():
+def test_tool_action_request_classifier_allows_pr_create_with_attached_static_body_flag():
     request = extract_sensitive_tool_action_request(
         "bash",
         {
@@ -1293,8 +1718,7 @@ def test_tool_action_request_classifier_reviews_pr_create_with_attached_body_fla
         },
     )
 
-    assert request is not None
-    assert request.action_class == "GitHub content mutation command"
+    assert request is None
 
 
 def test_tool_action_request_classifier_ignores_single_quoted_env_split_string_body():
@@ -3218,7 +3642,7 @@ def test_git_binary_path_is_trusted_when_cwd_is_filesystem_root():
     if git_binary is None:
         pytest.skip("git is required for the verified-status classifier")
 
-    assert _git_binary_path_is_trusted(Path(git_binary).resolve(), cwd=Path("/"))
+    assert git_binary_path_is_trusted(Path(git_binary).resolve(), cwd=Path("/"))
 
 
 def test_explicitly_benign_git_status_rejects_repository_fsmonitor(tmp_path: Path):

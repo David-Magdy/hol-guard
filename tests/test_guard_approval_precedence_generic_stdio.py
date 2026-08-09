@@ -11,9 +11,11 @@ from pathlib import Path
 
 import pytest
 
+from codex_plugin_scanner.guard.cli import commands_hook_generic
 from codex_plugin_scanner.guard.cli import commands_support as guard_commands_module
 from codex_plugin_scanner.guard.cli.commands_hook_generic import (
     _generic_hook_approval_reuse,
+    _generic_hook_memory_command,
     _generic_hook_payload_digest,
 )
 from codex_plugin_scanner.guard.config import GuardConfig
@@ -94,6 +96,16 @@ def test_generic_hook_payload_digest_ignores_delivery_ids_but_keeps_nested_actio
     assert _generic_hook_payload_digest(retried) != _generic_hook_payload_digest(changed_argument)
 
 
+def test_generic_shell_memory_uses_exact_nested_command() -> None:
+    command = "ln -s /workspace-a/node_modules ./node_modules"
+    payload = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+    }
+
+    assert _generic_hook_memory_command(payload) == command
+
+
 def _run_generic_hook(
     *,
     capsys: pytest.CaptureFixture[str],
@@ -101,12 +113,13 @@ def _run_generic_hook(
     payload: dict[str, object],
     store: GuardStore,
     workspace: Path,
+    harness: str = _GENERIC_HARNESS,
     post_claim_revalidator: Callable[[str], int | None] | None = None,
 ) -> tuple[int, dict[str, object]]:
     args = argparse.Namespace(
         artifact_id=None,
         artifact_name=None,
-        harness=_GENERIC_HARNESS,
+        harness=harness,
         json=True,
         policy_action=None,
     )
@@ -388,6 +401,95 @@ def test_generic_hook_saved_allow_never_lowers_new_current_block(
         )
         is not None
     )
+
+
+@pytest.mark.parametrize("event_name", ["PreToolUse", "PostToolUse", "UserPromptSubmit"])
+def test_generic_hook_observe_mode_records_block_without_enforcing_it(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    event_name: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = GuardStore(tmp_path / "guard-home")
+    config = GuardConfig(
+        guard_home=tmp_path / "guard-home",
+        workspace=workspace,
+        default_action="block",
+        mode="observe",
+    )
+    payload = {**_generic_payload(), "event": event_name}
+    if event_name == "PreToolUse":
+        payload["tool_name"] = "Bash"
+        payload["tool_input"] = {"command": "git status --short"}
+    recorded_activity: dict[str, object] = {}
+    monkeypatch.setattr(
+        commands_hook_generic,
+        "record_pre_hook_command_activity_best_effort",
+        lambda **kwargs: recorded_activity.update(kwargs),
+    )
+
+    rc, output = _run_generic_hook(
+        capsys=capsys,
+        config=config,
+        payload=payload,
+        store=store,
+        workspace=workspace,
+    )
+
+    assert rc == 0
+    assert output["policy_action"] == "allow"
+    assert output["policy_composition"]["observed_policy_action"] == "block"
+    assert output["policy_composition"]["authoritative_action"] == "allow"
+    assert {
+        "source": "observe_mode",
+        "observed_policy_action": "block",
+        "authoritative_action": "allow",
+    } in output["scanner_evidence"]
+    assert store.list_receipts(limit=1)[0]["policy_decision"] == "allow"
+    if event_name == "PreToolUse":
+        assert recorded_activity["policy_action"] == "allow"
+        assert recorded_activity["prompted"] is False
+
+
+def test_codex_pretool_observe_mode_persists_observed_decision_evidence(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = GuardStore(tmp_path / "guard-home")
+    config = GuardConfig(
+        guard_home=tmp_path / "guard-home",
+        workspace=workspace,
+        default_action="block",
+        mode="observe",
+    )
+    payload = {
+        **_generic_payload(),
+        "event": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git status --short"},
+    }
+
+    rc, _output = _run_generic_hook(
+        capsys=capsys,
+        config=config,
+        payload=payload,
+        store=store,
+        workspace=workspace,
+        harness="codex",
+    )
+
+    assert rc == 0
+    receipt = store.list_receipts(limit=1)[0]
+    assert receipt["policy_decision"] == "allow"
+    assert {
+        "source": "observe_mode",
+        "observed_policy_action": "block",
+        "authoritative_action": "allow",
+    } in receipt["scanner_evidence"]
 
 
 @pytest.mark.parametrize(

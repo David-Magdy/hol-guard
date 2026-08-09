@@ -27,6 +27,7 @@ from .mdm.policy import apply_managed_policy, fail_closed_managed_policy, load_m
 from .models import GUARD_ACTION_VALUES, GuardAction, GuardMode
 
 DEFAULT_GUARD_DIRNAME = ".hol-guard"
+VALID_UPDATE_CHANNELS = frozenset({"stable", "alpha"})
 LEGACY_GUARD_DIRNAMES = (".config/.ai-plugin-scanner-guard", ".ai-plugin-scanner-guard", ".holguard")
 NON_MIGRATED_GUARD_RUNTIME_FILES = frozenset(
     {
@@ -34,11 +35,15 @@ NON_MIGRATED_GUARD_RUNTIME_FILES = frozenset(
         "guard.db-journal",
         "guard.db-shm",
         "guard.db-wal",
+        "schema-migration.lock",
+        "storage-access.lock",
     }
 )
 GUARD_HOME_METADATA_FILES = frozenset(
     {
         "oauth-keychain-access.json",
+        "schema-migration.lock",
+        "storage-access.lock",
         "system-keyring-availability.json",
     }
 )
@@ -47,7 +52,8 @@ GUARD_DB_BACKUP_SLEEP_SECONDS = 0.05
 WORKSPACE_CONFIG_FILENAMES = (".ai-plugin-scanner-guard.toml", ".hol-guard.toml")
 MAX_APPROVAL_WAIT_TIMEOUT_SECONDS = 600
 
-# Fast hook review rollout flags (environment-controlled for safe staged rollout).
+# Hook review controls. The resident worker is the safe production default;
+# operators can explicitly disable it for emergency rollback.
 # These are read from os.environ at call time so tests/daemon can toggle without restart.
 HOOK_FAST_PATH_ENV = "HOL_GUARD_HOOK_FAST_PATH"
 HOOK_SOURCE_REF_ENV = "HOL_GUARD_HOOK_SOURCE_REF"
@@ -58,7 +64,7 @@ def hook_fast_path_enabled() -> bool:
     """Whether the daemon should use the resident hook worker for fast-path review."""
     import os
 
-    return os.environ.get(HOOK_FAST_PATH_ENV, "0") == "1"
+    return os.environ.get(HOOK_FAST_PATH_ENV, "1") == "1"
 
 
 def hook_source_ref_enabled() -> bool:
@@ -209,6 +215,7 @@ EDITABLE_GUARD_SETTING_KEYS = frozenset(
         "approval_browser_delay_seconds",
         "approval_browser_immediate_severity",
         "desktop_notifications",
+        "update_channel",
         "telemetry",
         "sync",
         "billing",
@@ -309,6 +316,7 @@ class GuardConfig:
     approval_browser_delay_seconds: int = 20
     approval_browser_immediate_severity: str = "critical"
     desktop_notifications: bool = True
+    update_channel: str = "stable"
     telemetry: bool = False
     sync: bool = False
     receipt_redaction_level: str = "full"
@@ -324,6 +332,10 @@ class GuardConfig:
     publisher_actions: dict[str, GuardAction] | None = None
     artifact_actions: dict[str, GuardAction] | None = None
     evidence_retain_days: int = 90
+    # Opt-in caps on retained detailed rows. None keeps the store defaults
+    # (250k each); power users can lower these to bound database growth.
+    receipt_detail_limit: int | None = None
+    guard_event_limit: int | None = None
     managed_policy_status: str = "absent"
     managed_policy_hash: str | None = None
     managed_locked_settings: tuple[str, ...] = ()
@@ -363,8 +375,14 @@ def resolve_guard_home(override: str | None = None) -> Path:
 
     if override:
         return Path(override).expanduser().resolve()
-    canonical_home = Path.home() / DEFAULT_GUARD_DIRNAME
-    legacy_home = _existing_legacy_guard_home()
+    return resolve_guard_home_for_user_home(Path.home())
+
+
+def resolve_guard_home_for_user_home(user_home: Path) -> Path:
+    """Resolve Guard state beneath an already authenticated user home."""
+
+    canonical_home = user_home / DEFAULT_GUARD_DIRNAME
+    legacy_home = _existing_legacy_guard_home(user_home)
     if legacy_home is None:
         return canonical_home
     if _guard_home_has_sync_credentials(canonical_home):
@@ -448,6 +466,7 @@ def load_guard_config(
             merged.get("approval_browser_immediate_severity")
         ),
         desktop_notifications=_coerce_loaded_bool(merged.get("desktop_notifications", True)),
+        update_channel=_coerce_loaded_update_channel(merged.get("update_channel")),
         telemetry=bool(merged.get("telemetry", False)),
         sync=bool(merged.get("sync", False)),
         billing=bool(merged.get("billing", False)),
@@ -469,6 +488,14 @@ def load_guard_config(
             merged.get("evidence_retain_days"),
             default=90,
             maximum=3_650,
+        ),
+        receipt_detail_limit=_coerce_loaded_optional_bounded_positive_int(
+            merged.get("receipt_detail_limit"),
+            maximum=1_000_000,
+        ),
+        guard_event_limit=_coerce_loaded_optional_bounded_positive_int(
+            merged.get("guard_event_limit"),
+            maximum=1_000_000,
         ),
         managed_policy_status=managed_state.status,
         managed_policy_hash=effective_managed_policy.content_hash if effective_managed_policy is not None else None,
@@ -499,6 +526,7 @@ def editable_guard_settings(config: GuardConfig) -> dict[str, object]:
         "approval_browser_delay_seconds": config.approval_browser_delay_seconds,
         "approval_browser_immediate_severity": config.approval_browser_immediate_severity,
         "desktop_notifications": config.desktop_notifications,
+        "update_channel": config.update_channel,
         "telemetry": config.telemetry,
         "sync": config.sync,
         "receipt_redaction_level": config.receipt_redaction_level,
@@ -516,6 +544,7 @@ def update_guard_settings(
     payload: dict[str, object],
     *,
     approval_gate_grant: ApprovalGateGrant | None = None,
+    cloud_sync_entitled: bool = False,
 ) -> GuardConfig:
     """Persist safe local Guard settings to config.toml and return the updated config."""
 
@@ -545,9 +574,29 @@ def update_guard_settings(
         ]
         if weakened:
             raise ValueError(f"Managed policy locks prevent weakening: {', '.join(sorted(weakened))}")
-    if next_payload.get("sync") is True and next_payload.get("billing") is not True:
+    if next_payload.get("sync") is True and not cloud_sync_entitled:
         raise ValueError("Cloud sync requires a paid team plan.")
     _write_guard_config(guard_home / "config.toml", next_payload)
+    return load_guard_config(guard_home)
+
+
+def update_guard_update_channel(
+    guard_home: Path,
+    update_channel: object,
+    *,
+    approval_gate_grant: ApprovalGateGrant | None = None,
+) -> GuardConfig:
+    """Persist the local release channel selected from the update surface."""
+
+    require_settings_write(guard_home, approval_gate_grant=approval_gate_grant)
+    if not isinstance(update_channel, str) or update_channel not in VALID_UPDATE_CHANNELS:
+        raise ValueError("Update channel must be stable or alpha.")
+    current_config = load_guard_config(guard_home)
+    if "update_channel" in current_config.managed_locked_settings:
+        raise ValueError("Managed policy locks the update channel.")
+    current = _read_toml(guard_home / "config.toml")
+    current["update_channel"] = update_channel
+    _write_guard_config(guard_home / "config.toml", current)
     return load_guard_config(guard_home)
 
 
@@ -600,6 +649,10 @@ def _coerce_editable_setting(key: str, value: object) -> object:
         if isinstance(value, bool):
             return value
         raise ValueError(f"{key} must be true or false.")
+    if key == "update_channel":
+        if isinstance(value, str) and value in VALID_UPDATE_CHANNELS:
+            return value
+        raise ValueError("Update channel must be stable or alpha.")
     if key == "receipt_redaction_level":
         if isinstance(value, str) and value in VALID_RECEIPT_REDACTION_LEVELS:
             return value
@@ -617,6 +670,10 @@ def _coerce_loaded_security_level(value: object) -> str:
     if isinstance(value, str) and value in VALID_SECURITY_LEVELS:
         return value
     return DEFAULT_SECURITY_LEVEL
+
+
+def _coerce_loaded_update_channel(value: object) -> str:
+    return value if isinstance(value, str) and value in VALID_UPDATE_CHANNELS else "stable"
 
 
 def _coerce_loaded_guard_mode(value: object, fallback: GuardMode) -> GuardMode:
@@ -662,8 +719,16 @@ def _coerce_loaded_bounded_positive_int(value: object, *, default: int, maximum:
     return default
 
 
+def _coerce_loaded_optional_bounded_positive_int(value: object, *, maximum: int) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= maximum:
+        return value
+    return None
+
+
 def _coerce_loaded_approval_surface_policy(value: object) -> str:
-    if value == "auto-open-once":
+    if value in {"auto-open-once", "approval-center"}:
         return "attention-aware"
     if isinstance(value, str) and value in VALID_APPROVAL_SURFACE_POLICIES:
         return value
@@ -812,7 +877,7 @@ def overlay_synced_guard_policy(
         return config
     next_mode = config.mode
     raw_mode = payload.get("mode")
-    if isinstance(raw_mode, str) and raw_mode in VALID_GUARD_MODES:
+    if config.mode != "observe" and isinstance(raw_mode, str) and raw_mode in VALID_GUARD_MODES:
         next_mode = raw_mode
     default_action = _coerce_action_value(payload.get("defaultAction"), config.default_action)
     unknown_publisher_action = _coerce_action_value(
@@ -915,9 +980,9 @@ def _string_object_table(value: object) -> dict[str, object] | None:
     return {key: item for key, item in value.items() if isinstance(key, str)}
 
 
-def _existing_legacy_guard_home() -> Path | None:
+def _existing_legacy_guard_home(user_home: Path) -> Path | None:
     for relative_path in LEGACY_GUARD_DIRNAMES:
-        candidate = Path.home() / relative_path
+        candidate = user_home / relative_path
         if candidate.exists():
             return candidate
     return None
@@ -1045,7 +1110,13 @@ def _guard_home_has_state(path: Path) -> bool:
     entries = list(path.iterdir())
     if not entries:
         return False
-    if any(entry.name not in {"guard.db", *GUARD_HOME_METADATA_FILES} for entry in entries):
+    state_entries = [
+        entry for entry in entries if entry.name not in {"guard.db", "secrets", *GUARD_HOME_METADATA_FILES}
+    ]
+    if state_entries:
+        return True
+    secrets_dir = path / "secrets"
+    if secrets_dir.is_dir() and any(entry.name != "key.bin" for entry in secrets_dir.iterdir()):
         return True
     database_path = path / "guard.db"
     if not database_path.is_file():

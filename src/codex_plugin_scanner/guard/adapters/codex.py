@@ -216,6 +216,10 @@ _AUTHORITATIVE_ENFORCEMENT_BOUNDARY = "codex-native-hooks"
 _AUTHORITATIVE_HOOK_UNAVAILABLE_REASON = "codex_authoritative_hook_unavailable"
 
 
+def _hook_workspace_dir(context: HarnessContext) -> Path | None:
+    return context.workspace_dir if context.workspace_override_explicit else None
+
+
 def _json_object(path: Path) -> dict[str, object]:
     if not path.is_file():
         return {}
@@ -243,8 +247,9 @@ def _local_hook_command_parts_for_home_mode(
         guard_args.extend(["--home", str(context.home_dir)])
         if runtime_guard_home != context.home_dir.resolve():
             guard_args.extend(["--guard-home", str(runtime_guard_home)])
-    if context.workspace_dir is not None:
-        guard_args.extend(["--workspace", str(context.workspace_dir)])
+    hook_workspace = _hook_workspace_dir(context)
+    if hook_workspace is not None:
+        guard_args.extend(["--workspace", str(hook_workspace)])
     package_root = Path(__file__).resolve().parents[3]
     return isolated_guard_cli_command(python_executable, package_root, guard_args)
 
@@ -272,9 +277,19 @@ def _local_hook_command_parts(context: HarnessContext) -> tuple[str, ...]:
     )
 
 
-def _daemon_start_command(guard_home: Path, *, python_executable: str = sys.executable) -> tuple[str, ...]:
+def _daemon_start_command(
+    guard_home: Path,
+    home_dir: Path,
+    *,
+    python_executable: str = sys.executable,
+) -> tuple[str, ...]:
     package_root = Path(__file__).resolve().parents[3]
-    return isolated_daemon_start_command(python_executable, package_root, guard_home)
+    return isolated_daemon_start_command(
+        python_executable,
+        package_root,
+        guard_home.resolve(strict=False),
+        home_dir.resolve(strict=False),
+    )
 
 
 def _hook_command_parts_for_home_mode(
@@ -284,11 +299,13 @@ def _hook_command_parts_for_home_mode(
     python_executable: str,
 ) -> tuple[str, ...]:
     guard_home = (resolve_guard_home() if home_is_current else context.guard_home).resolve(strict=False)
-    query = {"guard-home": str(guard_home)}
-    if not home_is_current:
-        query["home"] = str(context.home_dir)
-    if context.workspace_dir is not None:
-        query["workspace"] = str(context.workspace_dir)
+    # Bind the daemon fast path to the install context explicitly. Omitting
+    # ``home`` for the common current-user install silently forced every
+    # PostToolUse event through the legacy CLI path.
+    query = {"guard-home": str(guard_home), "home": str(context.home_dir.resolve(strict=False))}
+    hook_workspace = _hook_workspace_dir(context)
+    if hook_workspace is not None:
+        query["workspace"] = str(hook_workspace)
     long_timeout = _post_tool_hook_timeout_seconds(context)
     config = {
         "state_path": str(guard_home / "daemon-state.json"),
@@ -305,7 +322,7 @@ def _hook_command_parts_for_home_mode(
                 python_executable=python_executable,
             )
         ),
-        "start_command": list(_daemon_start_command(guard_home, python_executable=python_executable)),
+        "start_command": list(_daemon_start_command(guard_home, context.home_dir, python_executable=python_executable)),
         "query": urlencode(query),
         "hook_timeouts": {
             "PreToolUse": long_timeout,
@@ -376,7 +393,7 @@ def _permission_request_hook_group(context: HarnessContext) -> dict[str, object]
 def _post_tool_hook_timeout_seconds(context: HarnessContext) -> int:
     configured_wait_timeout = load_guard_config(
         context.guard_home,
-        context.workspace_dir,
+        _hook_workspace_dir(context),
     ).approval_wait_timeout_seconds
     return (
         min(
@@ -451,7 +468,7 @@ def _hook_manifest_spec(context: HarnessContext) -> CodexHookManifestSpec:
         guard_home=context.guard_home,
         home_dir=context.home_dir,
         runtime_guard_home=_runtime_guard_home(context),
-        workspace_dir=context.workspace_dir,
+        workspace_dir=_hook_workspace_dir(context),
         config_path=CodexHarnessAdapter._hook_config_path(context),
         interpreter_path=Path(_guard_python_executable()),
         package_version=__version__,
@@ -459,9 +476,11 @@ def _hook_manifest_spec(context: HarnessContext) -> CodexHookManifestSpec:
         fallback_argv=_local_hook_command_parts(context),
         daemon_start_argv=_daemon_start_command(
             _runtime_guard_home(context),
+            context.home_dir,
             python_executable=_guard_python_executable(),
         ),
         event_bindings=tuple(_manifest_event_bindings(context)),
+        workspace_rebinding_allowed=not context.workspace_override_explicit,
     )
 
 
@@ -1048,7 +1067,10 @@ class CodexHarnessAdapter(HarnessAdapter):
                     if not isinstance(name, str) or not isinstance(server_config, dict):
                         continue
                     command = server_config.get("command")
-                    args = tuple(str(value) for value in server_config.get("args", []) if isinstance(value, str))
+                    raw_args = server_config.get("args")
+                    if raw_args is not None and not isinstance(raw_args, list):
+                        continue
+                    args = tuple(str(value) for value in (raw_args or []) if isinstance(value, str))
                     if is_guard_proxy_command(command if isinstance(command, str) else None, args):
                         proxy_artifact = _artifact_from_guard_proxy_args(
                             args=args,
@@ -1216,6 +1238,8 @@ class CodexHarnessAdapter(HarnessAdapter):
         mcp_servers = payload.get("mcp_servers")
         if not isinstance(mcp_servers, dict):
             mcp_servers = {}
+        migrated_proxy_servers = self._refresh_managed_proxy_interpreters(mcp_servers)
+        skipped_servers = tuple(name for name in skipped_servers if name not in migrated_proxy_servers)
         features = hook_payload.get("features")
         if not isinstance(features, dict):
             features = {}
@@ -1290,11 +1314,14 @@ class CodexHarnessAdapter(HarnessAdapter):
             "managed_hook_config_path": str(hook_config_path),
             "managed_hook_manifest_path": str(hook_state["manifest_path"]),
             "managed_hook_integrity": str(hook_state["integrity_status"]),
+            "hook_workspace_explicit": context.workspace_override_explicit,
             "managed_hooks_path": str(hooks_path),
             "enforcement_boundary": _AUTHORITATIVE_ENFORCEMENT_BOUNDARY,
             "legacy_shell_guard_cleanup": "complete",
             "backup_path": str(backup_path),
             "managed_servers": [server.name for server in managed_servers],
+            "migrated_proxy_servers": list(migrated_proxy_servers),
+            "runtime_restart_required": bool(migrated_proxy_servers),
             "skipped_servers": list(skipped_servers),
             "source_config_paths": list(detection.config_paths),
         }
@@ -1399,6 +1426,26 @@ class CodexHarnessAdapter(HarnessAdapter):
         if env:
             entry["env"] = env
         return entry
+
+    @staticmethod
+    def _refresh_managed_proxy_interpreters(mcp_servers: dict[str, object]) -> tuple[str, ...]:
+        current_interpreter = _guard_python_executable()
+        migrated: list[str] = []
+        for name, server_config in mcp_servers.items():
+            if not isinstance(server_config, dict):
+                continue
+            command = server_config.get("command")
+            raw_args = server_config.get("args")
+            if not isinstance(raw_args, list):
+                continue
+            args = tuple(str(value) for value in raw_args if isinstance(value, str))
+            if not is_guard_proxy_command(command if isinstance(command, str) else None, args):
+                continue
+            if command == current_interpreter:
+                continue
+            server_config["command"] = current_interpreter
+            migrated.append(name)
+        return tuple(sorted(migrated))
 
     @staticmethod
     def _should_skip_workspace_override(

@@ -3,24 +3,64 @@
 # pyright: reportImportCycles=false
 
 # fmt: off
-# ruff: noqa: F403, F405, I001
+# ruff: noqa: E402, F403, F405, I001
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+
+def _coalesce_string(*values: object | None) -> str:
+    """Return the first non-empty display value during circular CLI imports."""
+
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "unknown-artifact"
+
+
+def _canonical_harness_name(value: str) -> str:
+    """Resolve harness aliases lazily to avoid the CLI support import cycle."""
+
+    from .commands_support_runtime_resolution import _canonical_harness_name as resolve
+
+    return resolve(value)
+
+
+def _managed_install_for(store: GuardStore, harness: str) -> dict[str, object] | None:
+    """Resolve managed-install state lazily to avoid the CLI support import cycle."""
+
+    from .commands_support_runtime_resolution import _managed_install_for as resolve
+
+    return resolve(store, harness)
+
+
+def _hook_event_name(payload: dict[str, object]) -> str | None:
+    """Read hook event names lazily to avoid the CLI support import cycle."""
+
+    from .commands_support_runtime_artifacts import _hook_event_name as resolve
+
+    return resolve(payload)
+
+
+def _write_json_line(payload: dict[str, object], *, output_stream: TextIO | None = None) -> None:
+    """Resolve hook output lazily without reintroducing the prompt import cycle."""
+
+    from .commands_support_prompts import _write_json_line as resolve
+
+    resolve(payload, output_stream=output_stream)
+
 if TYPE_CHECKING:
+    from ..store import GuardStore
     from ._commands_shared import _GUARD_CLIENT_VERSION, _HOOK_DAEMON_UNREACHABLE_REASON_MARKER, _now
     from .commands_support_interaction import _attach_primary_approval_link, _preferred_approval_review_url
-    from .commands_support_prompts import _write_json_line
-    from .commands_support_runtime_artifacts import _hook_event_name
     from .commands_support_runtime_policy import _approval_delivery_payload, _localize_pending_approval_copy
-    from .commands_support_runtime_resolution import _canonical_harness_name, _managed_install_for
 
 
 from ._commands_shared import *
 from .commands_parser_helpers import *
 from ..adapters.kimi_hooks import normalize_kimi_prompt
+from ..browser_opener import open_browser_url
 from ..runtime.hook_payload_reference import hydrate_hook_payload_reference
 
 def _emit_native_hook_response(
@@ -174,10 +214,12 @@ def _headless_approval_resolver(
             return payload
         managed_install = _managed_install_for(store, args.harness)
         approval_flow = approval_prompt_flow(args.harness, managed_install=managed_install)
-        approval_center_url = ensure_guard_daemon(context.guard_home)
-        try:
-            daemon_client = load_guard_surface_daemon_client(context.guard_home)
-        except RuntimeError:
+        approval_center_url = schedule_guard_daemon_ensure(
+            context.guard_home,
+            home_dir=context.home_dir,
+        )
+
+        def resolve_from_local_queue():
             queued = queue_blocked_approvals(
                 redaction_level=config.receipt_redaction_level,
                 detection=detection,
@@ -228,30 +270,38 @@ def _headless_approval_resolver(
                     f"{', '.join(str(item) for item in pending_request_ids)}."
                 )
             return payload
-        session = daemon_client.start_session(
-            harness=args.harness,
-            surface="cli",
-            workspace=str(context.workspace_dir) if context.workspace_dir is not None else None,
-            client_name="hol-guard",
-            client_title="HOL Guard CLI",
-            client_version=_GUARD_CLIENT_VERSION,
-            capabilities=["approval-resolution", "receipt-view"],
-        )
-        blocked_operation = daemon_client.queue_blocked_operation(
-            session_id=str(session["session_id"]),
-            operation_type="run",
-            harness=args.harness,
-            metadata={"command": f"hol-guard run {args.harness}"},
-            detection=detection.to_dict(),
-            evaluation=payload,
-            approval_center_url=approval_center_url,
-            approval_surface_policy=_approval_surface_policy_for_flow(
-                config.approval_surface_policy,
-                approval_flow,
-            ),
-            open_key=None,
-            redaction_level=config.receipt_redaction_level,
-        )
+
+        try:
+            daemon_client = load_guard_surface_daemon_client(context.guard_home)
+        except RuntimeError:
+            return resolve_from_local_queue()
+        try:
+            session = daemon_client.start_session(
+                harness=args.harness,
+                surface="cli",
+                workspace=str(context.workspace_dir) if context.workspace_dir is not None else None,
+                client_name="hol-guard",
+                client_title="HOL Guard CLI",
+                client_version=_GUARD_CLIENT_VERSION,
+                capabilities=["approval-resolution", "receipt-view"],
+            )
+            blocked_operation = daemon_client.queue_blocked_operation(
+                session_id=str(session["session_id"]),
+                operation_type="run",
+                harness=args.harness,
+                metadata={"command": f"hol-guard run {args.harness}"},
+                detection=detection.to_dict(),
+                evaluation=payload,
+                approval_center_url=approval_center_url,
+                approval_surface_policy=_approval_surface_policy_for_flow(
+                    config.approval_surface_policy,
+                    approval_flow,
+                ),
+                open_key=None,
+                redaction_level=config.receipt_redaction_level,
+            )
+        except RuntimeError:
+            return resolve_from_local_queue()
         operation = blocked_operation["operation"] if isinstance(blocked_operation.get("operation"), dict) else {}
         queued = (
             blocked_operation["approval_requests"]
@@ -295,23 +345,26 @@ def _headless_approval_resolver(
             payload["blocked"] = any(str(item.get("resolution_action")) == "block" for item in resolved_items)
             if not payload["blocked"]:
                 payload["blocked"] = False
-                daemon_client.update_operation_status(
-                    operation_id=str(operation["operation_id"]),
-                    status="completed",
-                )
+                with suppress(RuntimeError):
+                    daemon_client.update_operation_status(
+                        operation_id=str(operation["operation_id"]),
+                        status="completed",
+                    )
                 payload["review_hint"] = "Approval received. Guard is resuming the harness launch."
             else:
-                daemon_client.update_operation_status(
-                    operation_id=str(operation["operation_id"]),
-                    status="blocked",
-                )
+                with suppress(RuntimeError):
+                    daemon_client.update_operation_status(
+                        operation_id=str(operation["operation_id"]),
+                        status="blocked",
+                    )
         else:
             pending_request_ids = _object_list(wait_result.get("pending_request_ids"))
-            daemon_client.update_operation_status(
-                operation_id=str(operation["operation_id"]),
-                status="waiting_on_approval",
-                approval_request_ids=[str(item["request_id"]) for item in queued if "request_id" in item],
-            )
+            with suppress(RuntimeError):
+                daemon_client.update_operation_status(
+                    operation_id=str(operation["operation_id"]),
+                    status="waiting_on_approval",
+                    approval_request_ids=[str(item["request_id"]) for item in queued if "request_id" in item],
+                )
             payload["review_hint"] = (
                 f"Approval is still pending in the Guard approval center at {approval_center_url}. Resolve request "
                 f"{', '.join(str(item) for item in pending_request_ids)}."
@@ -338,7 +391,7 @@ def _open_approval_center(
         approval_surface_policy=config.approval_surface_policy,
         open_key=open_key or approval_center_url,
         force_open=force_open,
-        opener=webbrowser.open,
+        opener=open_browser_url,
     )
     open_result["browser_url"] = _public_approval_center_url(browser_url) or approval_center_url
     return open_result
@@ -409,7 +462,22 @@ def _load_hook_payload(
     return _normalize_hook_payload(payload, harness=harness) if isinstance(payload, dict) else {}
 
 _ACTION_ENVELOPE_HARNESSES = frozenset(
-    {"codex", "claude-code", "opencode", "copilot", "gemini", "hermes", "openclaw", "cursor", "grok", "pi", "zcode"}
+    {
+        "codex",
+        "cline",
+        "claude-code",
+        "opencode",
+        "copilot",
+        "gemini",
+        "hermes",
+        "openclaw",
+        "cursor",
+        "grok",
+        "kimi",
+        "pi",
+        "omp",
+        "zcode",
+    }
 )
 
 def _hook_action_envelope(
@@ -524,12 +592,6 @@ def _first_hook_tool_call(
     if fallback_tool_call is not None:
         return fallback_tool_call
     return None, None
-
-def _coalesce_string(*values: object | None) -> str:
-    for value in values:
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return "unknown-artifact"
 
 __all__ = [
     "_ACTION_ENVELOPE_HARNESSES", "_action_envelope_json", "_approval_center_browser_url",

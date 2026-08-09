@@ -17,7 +17,6 @@ import type {
   SupplyChainAuditSnapshot,
 } from "./guard-types";
 import { fetchReceipts } from "./guard-api";
-import type { PackageFirewallPanelHandle } from "./supply-chain-firewall-panel";
 import { SupplyChainBundlePanel } from "./supply-chain-bundle-panel";
 import {
   deriveSupplyChainEvidenceRail,
@@ -26,11 +25,12 @@ import {
 import { SupplyChainEvidenceRail } from "./supply-chain-evidence-rail-panel";
 import { resolveSupplyChainCloudCapabilities } from "./supply-chain-cloud-capabilities";
 import { SupplyChainCloudCapabilitiesPanel } from "./supply-chain-cloud-capabilities-panel";
-import { resolveSupplyChainIssues, type SupplyChainIssueAction } from "./supply-chain-issues";
+import { resolveSupplyChainIssues } from "./supply-chain-issues";
 import { resolveSupplyChainWorkspaceHero } from "./supply-chain-workspace-hero-state";
-import { SupplyChainStatusHeader } from "./supply-chain-status-header";
+import { SupplyChainWorkspaceHero } from "./supply-chain-workspace-hero";
+import { SupplyChainRecovery } from "./supply-chain-recovery";
+import type { SupplyChainFixAllState } from "./supply-chain-fix-all";
 import { SUPPLY_CHAIN_WORKSPACE_SHELL_CLASS } from "./supply-chain-workspace-layout";
-import type { RefObject } from "react";
 
 export { buildSupplyChainStats } from "./supply-chain-protection-stats";
 
@@ -149,21 +149,21 @@ function SupplyChainAuditTeaser({ auditSnapshot, auditRunning, onOpenAudit }: Su
 type SupplyChainWorkspaceProps = {
   snapshot: GuardRuntimeSnapshot;
   onGoHome: () => void;
-  onRuntimeRefresh?: () => Promise<void> | void;
-  firewallPanelRef: RefObject<PackageFirewallPanelHandle | null>;
   onAuditNavigate: () => void;
   auditSnapshot: SupplyChainAuditSnapshot | null;
   auditRunning: boolean;
+  fixAllState: SupplyChainFixAllState;
+  onFixAll: () => void;
 };
 
 export function SupplyChainWorkspace({
   snapshot,
   onGoHome,
-  onRuntimeRefresh,
-  firewallPanelRef,
   onAuditNavigate,
   auditSnapshot,
   auditRunning,
+  fixAllState,
+  onFixAll,
 }: SupplyChainWorkspaceProps) {
   const protection = snapshot.supply_chain?.package_manager_protection;
   const managedInstalls = useMemo(
@@ -171,48 +171,6 @@ export function SupplyChainWorkspace({
     [snapshot.managed_installs],
   );
   const [evidenceRail, setEvidenceRail] = useState<SupplyChainEvidenceRailSnapshot | null>(null);
-  const [issueActionPending, setIssueActionPending] = useState(false);
-
-  const handleIssueAction = useCallback(
-    async (action: SupplyChainIssueAction) => {
-      const panel = firewallPanelRef.current;
-      if (panel === null) {
-        return;
-      }
-      if (action.kind === "firewall_unprotected") {
-        panel.focusUnprotected();
-        panel.scrollIntoView();
-        return;
-      }
-      if (action.kind === "firewall_repair") {
-        panel.focusActionable();
-        panel.scrollIntoView();
-        return;
-      }
-      if (action.kind === "firewall_audit") {
-        onAuditNavigate();
-        panel.runAudit();
-        return;
-      }
-
-      setIssueActionPending(true);
-      try {
-        if (action.kind === "connect") {
-          await panel.startConnect();
-          await onRuntimeRefresh?.();
-          return;
-        }
-        if (action.kind === "activate_runtime") {
-          await panel.activateRuntime();
-          await onRuntimeRefresh?.();
-        }
-      } finally {
-        setIssueActionPending(false);
-      }
-    },
-    [firewallPanelRef, onAuditNavigate, onRuntimeRefresh],
-  );
-
   const supplyChainIssues = useMemo(() => resolveSupplyChainIssues(snapshot), [snapshot]);
   const workspaceHero = useMemo(
     () => resolveSupplyChainWorkspaceHero(snapshot, { openIssueCount: supplyChainIssues.length }),
@@ -252,14 +210,16 @@ export function SupplyChainWorkspace({
         </ActionButton>
       </div>
 
-      <SupplyChainStatusHeader
-        hero={workspaceHero}
-        issues={supplyChainIssues}
-        onIssueAction={(action) => {
-          void handleIssueAction(action);
-        }}
-        actionPending={issueActionPending}
-      />
+      {supplyChainIssues.length > 0 ? (
+        <SupplyChainRecovery
+          issues={supplyChainIssues}
+          state={fixAllState}
+          onFixAll={onFixAll}
+          guidance={workspaceHero.stagedGuidance}
+        />
+      ) : (
+        <SupplyChainWorkspaceHero hero={workspaceHero} />
+      )}
 
       {supplyChainIssues.length === 0 ? (
         <SupplyChainCloudCapabilitiesPanel state={cloudCapabilities} />

@@ -9,6 +9,7 @@ import subprocess
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -19,6 +20,10 @@ from codex_plugin_scanner.guard.cli import update_commands
 from codex_plugin_scanner.guard.cli.approval_commands import run_approval_open_command
 from codex_plugin_scanner.guard.cli.install_commands import apply_managed_install
 from codex_plugin_scanner.guard.models import GuardApprovalRequest
+from codex_plugin_scanner.guard.runtime.extension_control_authority import (
+    AuthorityHealth,
+    ExtensionControlAuthorityView,
+)
 from codex_plugin_scanner.guard.shims import _trusted_import_root, _trusted_python_flags
 from codex_plugin_scanner.guard.store import GuardStore
 from tests.update_context_test_support import (
@@ -46,6 +51,82 @@ def _context(tmp_path: Path) -> HarnessContext:
     guard_home = tmp_path / "guard-home"
     workspace.mkdir(parents=True, exist_ok=True)
     return HarnessContext(home_dir=home, workspace_dir=workspace, guard_home=guard_home)
+
+
+@pytest.mark.parametrize(
+    ("health", "candidate_version", "expected"),
+    (
+        (AuthorityHealth.PROTECTED, "2.9.9", True),
+        (AuthorityHealth.TAMPERED, "2.9.9", True),
+        (AuthorityHealth.DEGRADED_ACKNOWLEDGED, "2.9.9", True),
+        (AuthorityHealth.UNENROLLED, "2.9.9", False),
+        (AuthorityHealth.PROTECTED, "3.0.0", False),
+        (AuthorityHealth.PROTECTED, "3.0.1", False),
+    ),
+)
+def test_extension_control_authority_blocks_only_downgrades_after_enrollment(
+    health: AuthorityHealth,
+    candidate_version: str,
+    expected: bool,
+    tmp_path: Path,
+) -> None:
+    class FakeStore:
+        def read_extension_control_authority(
+            self,
+            *,
+            catalog_digest: str,
+        ) -> ExtensionControlAuthorityView:
+            return ExtensionControlAuthorityView(health, 0, catalog_digest, ())
+
+    store = cast(GuardStore, FakeStore())
+
+    assert (
+        update_commands._authority_blocks_downgrade(
+            store,
+            guard_home=tmp_path,
+            current_version="3.0.0",
+            candidate_version=candidate_version,
+        )
+        is expected
+    )
+
+
+def test_update_blocks_protected_authority_downgrade_before_installer_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wheel = tmp_path / "hol_guard-2.9.9-py3-none-any.whl"
+    wheel.write_bytes(b"fake-wheel")
+    guard_home = tmp_path / "guard-home"
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "3.0.0")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "3.0.0")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("installer must not execute")),
+    )
+
+    class ProtectedAuthorityStore:
+        def read_extension_control_authority(
+            self,
+            *,
+            catalog_digest: str,
+        ) -> ExtensionControlAuthorityView:
+            return ExtensionControlAuthorityView(AuthorityHealth.PROTECTED, 1, catalog_digest, ())
+
+    payload, exit_code = update_commands.run_guard_update(
+        dry_run=False,
+        wheel=str(wheel),
+        guard_home=guard_home,
+        store=cast(GuardStore, ProtectedAuthorityStore()),
+    )
+
+    assert exit_code == 1
+    assert payload["status"] == "blocked"
+    assert payload["changed"] is False
+    assert payload["reason_code"] == "extension_control_authority_downgrade_blocked"
 
 
 def test_daemon_refresh_after_update_uses_fresh_interpreter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -193,6 +274,197 @@ def test_update_failure_redacts_output_and_returns_retry_command(monkeypatch: py
     assert payload["binary_diagnostics"]["path_status"] == "path_mismatch"
 
 
+def test_update_defers_when_latest_release_is_still_propagating(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.2.1")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda command, **_: subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            "ERROR: No matching distribution found for hol-guard==2.2.3",
+        ),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False)
+
+    assert exit_code == 0, json.dumps(payload, sort_keys=True)
+    assert payload["status"] == "deferred"
+    assert payload["reason_code"] == "update_release_propagating"
+    assert payload["changed"] is False
+    assert "current installation remains active" in str(payload["message"])
+    assert "retry_command" not in payload
+
+
+def test_update_recovers_from_broken_pipx_launcher_with_trusted_python(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    resulting_versions = iter(("2.2.1", "2.2.3"))
+    monkeypatch.setattr(
+        update_commands,
+        "_current_version_from_subprocess",
+        lambda *_args, **_kwargs: next(resulting_versions),
+    )
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(update_commands.sys, "executable", "/opt/guard/bin/python")
+    monkeypatch.setattr(update_commands, "_refresh_package_shims_after_update", lambda **_: (None, None))
+    monkeypatch.setattr(update_commands, "_repair_supported_harnesses", lambda **_: ([], []))
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[0] == "pipx":
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                "ModuleNotFoundError: No module named 'pipx'",
+            )
+        return subprocess.CompletedProcess(command, 0, "installed hol-guard 2.2.3", "")
+
+    monkeypatch.setattr(update_commands.subprocess, "run", fake_run)
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False)
+
+    assert exit_code == 0, payload
+    assert payload["status"] == "updated"
+    assert payload["installer_recovery"] == "trusted_python_pip"
+    assert commands == [
+        ["pipx", "install", "--force", "hol-guard==2.2.3"],
+        [
+            "/opt/guard/bin/python",
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "hol-guard==2.2.3",
+        ],
+    ]
+
+
+def test_update_preserves_requested_wheel_during_broken_pipx_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wheel = tmp_path / "hol_guard-2.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    resulting_versions = iter(("2.2.1", "2.2.3"))
+    monkeypatch.setattr(
+        update_commands,
+        "_current_version_from_subprocess",
+        lambda *_args, **_kwargs: next(resulting_versions),
+    )
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(update_commands.sys, "executable", "/opt/guard/bin/python")
+    monkeypatch.setattr(update_commands, "_refresh_package_shims_after_update", lambda **_: (None, None))
+    monkeypatch.setattr(update_commands, "_repair_supported_harnesses", lambda **_: ([], []))
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[0] == "pipx":
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                "ModuleNotFoundError: No module named 'pipx'",
+            )
+        return subprocess.CompletedProcess(command, 0, "installed local wheel", "")
+
+    monkeypatch.setattr(update_commands.subprocess, "run", fake_run)
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False, wheel=str(wheel))
+
+    assert exit_code == 0, json.dumps(payload, sort_keys=True)
+    assert payload["status"] == "updated"
+    assert payload["installer_recovery"] == "trusted_python_pip"
+    assert payload["command"] == [
+        "/opt/guard/bin/python",
+        "-m",
+        "pip",
+        "install",
+        "--force-reinstall",
+        str(wheel),
+    ]
+    assert commands == [
+        ["pipx", "install", "--force", str(wheel)],
+        [
+            "/opt/guard/bin/python",
+            "-m",
+            "pip",
+            "install",
+            "--force-reinstall",
+            str(wheel),
+        ],
+    ]
+
+
+def test_update_does_not_defer_local_wheel_failure_as_registry_propagation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wheel = tmp_path / "hol_guard-2.2.3-py3-none-any.whl"
+    wheel.write_bytes(b"wheel")
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.2.1")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda command, **_: subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            "ERROR: No matching distribution found for hol-guard==2.2.3",
+        ),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False, wheel=str(wheel))
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["reason_code"] == "update_installer_failed"
+
+
+def test_update_does_not_hide_registry_auth_failure_as_propagation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.2.1")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pip")
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda command, **_: subprocess.CompletedProcess(
+            command,
+            1,
+            "",
+            "ERROR: HTTP error 401 while fetching package index\n"
+            "ERROR: No matching distribution found for hol-guard==2.2.3",
+        ),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False)
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["reason_code"] == "update_installer_failed"
+
+
 def test_update_binary_diagnostics_accepts_same_environment_script(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update_commands, "_current_version", lambda: "2.0.0")
     monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
@@ -336,7 +608,7 @@ def test_build_guard_install_surface_payload_stays_local(monkeypatch: pytest.Mon
 def test_version_check_reports_python_incompatible_latest_release(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.0.807")
     monkeypatch.setattr(update_commands, "_latest_version_python_requirements", lambda latest: (">=3.10,<3.14",))
-    monkeypatch.setattr(update_commands, "_latest_compatible_release_version", lambda current, runtime: None)
+    monkeypatch.setattr(update_commands, "_latest_compatible_release_version", lambda current, runtime, **_kwargs: None)
     monkeypatch.setattr(update_commands, "_runtime_python_version", lambda: "3.14.0")
 
     payload = update_commands._version_check_payload("2.0.789")
@@ -403,7 +675,7 @@ def test_update_blocks_python_incompatible_latest_release(monkeypatch: pytest.Mo
     monkeypatch.setattr(update_commands, "_current_version", lambda: "2.0.789")
     monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.0.807")
     monkeypatch.setattr(update_commands, "_latest_version_python_requirements", lambda latest: (">=3.10,<3.14",))
-    monkeypatch.setattr(update_commands, "_latest_compatible_release_version", lambda current, runtime: None)
+    monkeypatch.setattr(update_commands, "_latest_compatible_release_version", lambda current, runtime, **_kwargs: None)
     monkeypatch.setattr(update_commands, "_runtime_python_version", lambda: "3.14.0")
     monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
     monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
@@ -434,7 +706,7 @@ def test_update_requested_local_wheel_bypasses_python_incompatible_latest_releas
     monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.0.790")
     monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.0.807")
     monkeypatch.setattr(update_commands, "_latest_version_python_requirements", lambda latest: (">=3.10,<3.14",))
-    monkeypatch.setattr(update_commands, "_latest_compatible_release_version", lambda current, runtime: None)
+    monkeypatch.setattr(update_commands, "_latest_compatible_release_version", lambda current, runtime, **_kwargs: None)
     monkeypatch.setattr(update_commands, "_runtime_python_version", lambda: "3.14.0")
     monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
     monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
@@ -541,9 +813,6 @@ def test_update_rejects_nonzero_pipx_result_even_when_version_changed(
         "which",
         lambda name: "/mock-home/.local/bin/hol-guard" if name == "hol-guard" else None,
     )
-    tray_restarts: list[GuardStore | None] = []
-    monkeypatch.setattr(update_commands, "_stop_tray_for_update", lambda _store: True)
-    monkeypatch.setattr(update_commands, "_restart_tray_after_update", tray_restarts.append)
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         assert command == ["pipx", "install", "--force", "hol-guard==2.0.628"]
@@ -564,7 +833,6 @@ def test_update_rejects_nonzero_pipx_result_even_when_version_changed(
     assert payload["resulting_version"] == "2.0.628"
     assert payload["reason_code"] == "update_installer_failed"
     assert "dashboard_sync" not in payload
-    assert tray_restarts == [None]
 
 
 def test_update_repairs_missing_pip_local_source_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1435,9 +1703,6 @@ def test_update_fails_closed_when_required_same_context_daemon_refresh_fails(
     monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
     monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
     monkeypatch.setattr(update_commands, "_refresh_package_shims_after_update", lambda **_: (None, None))
-    tray_restarts: list[GuardStore | None] = []
-    monkeypatch.setattr(update_commands, "_stop_tray_for_update", lambda _store: True)
-    monkeypatch.setattr(update_commands, "_restart_tray_after_update", tray_restarts.append)
     monkeypatch.setattr(
         update_commands,
         "refresh_guard_daemon_after_update",
@@ -1455,7 +1720,6 @@ def test_update_fails_closed_when_required_same_context_daemon_refresh_fails(
     assert payload["status"] == "failed"
     assert payload["reason_code"] == "update_daemon_refresh_failed"
     assert "trusted refresh failed" in payload["notes"]
-    assert tray_restarts == [None]
 
 
 def test_required_daemon_refresh_failure_never_deletes_unreceipted_local_wheel_staging(

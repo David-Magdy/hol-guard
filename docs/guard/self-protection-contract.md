@@ -1,6 +1,6 @@
 # HOL Guard self-protection contract
 
-Status: frozen for the `release/3.1` report-only alpha. Enforcement remains gated by certified endpoint and adapter evidence.
+Status: frozen for the `release/3.0` report-only alpha. Enforcement remains gated by certified endpoint and adapter evidence.
 
 ## Product guarantee
 

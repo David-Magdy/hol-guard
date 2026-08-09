@@ -29,7 +29,10 @@ import type {
 } from "./guard-types";
 import { isSupplyChainAuditEvidence } from "./guard-types";
 import { useResolvedApprovalGate } from "./use-resolved-approval-gate";
-import { resolveManagerCoverageStatus } from "./supply-chain-protection-stats";
+import {
+  resolveManagerCoverageManagers,
+  resolveManagerCoverageStatus,
+} from "./supply-chain-protection-stats";
 import { PackageWorkbenchPanel } from "./package-workbench-panel";
 import type { SupplyChainAuditSession } from "./use-supply-chain-audit-session";
 import { isBlockedGuardAction } from "./guard-action";
@@ -111,11 +114,11 @@ function buildPackageManagerAuditResult(
       id: `unprotected-${manager}`,
       severity: "medium",
       title: `${manager} is waiting for restart`,
-      detail: `Guard already updated your shell profile for ${manager}. Open a new shell or restart AI apps so ${manager} resolves through Guard.`,
+      detail: `Guard added ${manager} to its managed shell profiles. Open a new terminal or source the matching profile to use it. The dashboard cannot observe a PATH change made in another terminal.`,
       harness: "global",
       workspace: null,
       timestamp: generatedAt,
-      remediation: "Open a new shell or restart AI apps to finish package-manager interception.",
+      remediation: "Open a new terminal or source the matching shell profile. Restart AI apps only when they run package managers.",
       remediationAction: null,
       resolved: false,
       evidenceHref: null,
@@ -169,7 +172,7 @@ export function deriveFrontendAuditResults(
 
   const protection = snapshot.supply_chain?.package_manager_protection;
   if (protection) {
-    const managersNeedingAttention = protection.supported_managers.filter(
+    const managersNeedingAttention = resolveManagerCoverageManagers(protection).filter(
       (manager) => resolveManagerCoverageStatus(protection, manager) !== "protected",
     );
     for (const mgr of managersNeedingAttention) {

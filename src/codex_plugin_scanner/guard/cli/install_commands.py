@@ -8,9 +8,12 @@ from pathlib import Path
 
 from ..adapters import get_adapter, list_adapters
 from ..adapters.base import HarnessAdapter, HarnessContext
+from ..adapters.cline import ClineHarnessAdapter
 from ..adapters.contracts import contract_for
 from ..adapters.cursor import CursorHarnessAdapter
+from ..agent_safety_guidance import install_agent_safety_guidance, uninstall_agent_safety_guidance
 from ..consumer import detect_all
+from ..managed_install_proof import bind_managed_install_proof
 from ..runtime.mcp_skill_firewall import build_mcp_skill_firewall_fingerprints, portal_skill_identity
 from ..runtime.skill_protection import build_skill_identity, detect_skill_content_risk, skill_identity_metadata
 from ..store import GuardStore
@@ -26,6 +29,40 @@ _HARNESS_OBSERVED_COPY = {
     "found": "Observed locally, not protected by Guard yet.",
     "not_found": "Not installed on this machine.",
 }
+
+
+def _apply_adapter_management(
+    adapter: HarnessAdapter,
+    context: HarnessContext,
+    *,
+    active: bool,
+    surface: str | None,
+) -> dict[str, object]:
+    """Apply one adapter mutation while honoring declared surface capabilities."""
+
+    if surface is None:
+        if isinstance(adapter, CursorHarnessAdapter):
+            selected_surface = cursor_install_surface(None)
+            return (
+                adapter.install(context, surface=selected_surface)
+                if active
+                else adapter.uninstall(context, surface=selected_surface)
+            )
+        return adapter.install(context) if active else adapter.uninstall(context)
+
+    setup_contract = adapter.setup_contract()
+    if surface not in setup_contract.surface_capabilities:
+        raise ValueError(f"Unsupported {setup_contract.display_name} surface: {surface}")
+    if isinstance(adapter, CursorHarnessAdapter):
+        selected_surface = cursor_install_surface(surface)
+        return (
+            adapter.install(context, surface=selected_surface)
+            if active
+            else adapter.uninstall(context, surface=selected_surface)
+        )
+    if isinstance(adapter, ClineHarnessAdapter):
+        return adapter.install(context, surface=surface) if active else adapter.uninstall(context, surface=surface)
+    raise ValueError(f"Unsupported {setup_contract.display_name} surface: {surface}")
 
 
 def apply_managed_install(
@@ -45,15 +82,14 @@ def apply_managed_install(
     for harness in targets:
         adapter = get_adapter(harness)
         canonical_harness = adapter.harness
-        if isinstance(adapter, CursorHarnessAdapter):
-            selected_surface = cursor_install_surface(surface)
-            manifest = (
-                adapter.install(context, surface=selected_surface)
-                if active
-                else adapter.uninstall(context, surface=selected_surface)
-            )
-        else:
-            manifest = adapter.install(context) if active else adapter.uninstall(context)
+        manifest = _apply_adapter_management(
+            adapter,
+            context,
+            active=active,
+            surface=surface,
+        )
+        if active:
+            manifest = bind_managed_install_proof(manifest, context)
         store.set_managed_install(canonical_harness, active, workspace, manifest, now)
         managed_install = store.get_managed_install(canonical_harness)
         if managed_install is not None:
@@ -62,6 +98,10 @@ def apply_managed_install(
         "managed_installs": managed_installs,
         "auto_detected": requested_harness is None or install_all,
     }
+    if active and managed_installs:
+        payload["agent_safety_guidance"] = install_agent_safety_guidance(context.home_dir)
+    elif managed_installs and not any(bool(item.get("active")) for item in store.list_managed_installs()):
+        payload["agent_safety_guidance"] = uninstall_agent_safety_guidance(context.home_dir)
     if len(managed_installs) == 1:
         payload["managed_install"] = managed_installs[0]
     if active and context.workspace_dir is not None:
@@ -208,6 +248,21 @@ def build_harness_verification(
         verification.update(_opencode_protection_checks(context, store))
     if adapter.harness == "grok":
         verification.update(_grok_protection_checks(context))
+    if isinstance(adapter, ClineHarnessAdapter):
+        runtime_probe = adapter.runtime_probe(context)
+        verification["runtime"] = runtime_probe or {}
+        verification["warnings"] = adapter.diagnostic_warnings(adapter.detect(context), runtime_probe)
+        active_transport = runtime_probe.get("active_transport") if isinstance(runtime_probe, dict) else None
+        requested_transport = surface if surface in {"hooks", "plugin"} else active_transport
+        state_key = "plugin" if requested_transport == "plugin" else "native_hooks"
+        runtime_state = runtime_probe.get(state_key) if isinstance(runtime_probe, dict) else None
+        verification["active_transport"] = active_transport
+        verification["requested_transport"] = requested_transport
+        verification["ready"] = bool(
+            requested_transport == active_transport
+            and isinstance(runtime_state, dict)
+            and runtime_state.get("ready") is True
+        )
     payload: dict[str, object] = {
         "harness": adapter.harness,
         "safe": True,
@@ -477,9 +532,7 @@ def _resolve_targets(
     if targets:
         return targets
     action = "install" if command == "install" else "remove"
-    raise ValueError(
-        f"No supported harnesses were detected for Guard {action}. Pass a harness explicitly or configure one first."
-    )
+    raise ValueError(f"No supported Guard harnesses detected for {action}; pass one explicitly or configure one first.")
 
 
 __all__ = [

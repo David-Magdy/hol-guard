@@ -1240,6 +1240,7 @@ class _PackageProtectAuthority:
     launch_environment: Mapping[str, str]
     additional_current_action: object | None
     additional_policy_context: dict[str, object] | None
+    observe_mode: bool
 
 
 _PackageApprovalClaimDisposition = Literal["consumed", "retained"]
@@ -1456,6 +1457,7 @@ def _build_package_protect_authority(
             launch_environment=launch_environment,
             additional_current_action=additional_current_action,
             additional_policy_context=additional_policy_context,
+            observe_mode=config is not None and config.mode == "observe",
         )
     except BaseException:
         _cleanup_external_archive_downloads(evaluation)
@@ -1465,8 +1467,8 @@ def _build_package_protect_authority(
 def _final_package_protect_authority(
     *,
     initial: _PackageProtectAuthority,
-    saved_approval_claimed: bool,
-    saved_approval_claim_disposition: _PackageApprovalClaimDisposition | None,
+    initial_saved_evaluation: Any,
+    saved_approval_pending: bool,
     command: Sequence[str],
     store: Any,
     workspace_dir: Path,
@@ -1475,7 +1477,7 @@ def _final_package_protect_authority(
     current_config_provider: Callable[[], GuardConfig] | None,
     additional_authority_provider: Callable[[], tuple[object | None, dict[str, object] | None]] | None,
 ) -> tuple[_PackageProtectAuthority, Any]:
-    """Rebuild all current authority after a claim and immediately before spawn."""
+    """Refresh mode, claim required approval, then rebuild authority before spawn."""
 
     additional_action: object | None = initial.additional_current_action
     additional_context: dict[str, object] | None = initial.additional_policy_context
@@ -1488,6 +1490,31 @@ def _final_package_protect_authority(
                 raise TypeError("current config provider returned an invalid value")
         except Exception:
             config_refresh_failed = True
+    saved_approval_claimed = False
+    saved_approval_claim_disposition: _PackageApprovalClaimDisposition | None = None
+    saved_approval_claim_failure: Any | None = None
+    if (
+        saved_approval_pending
+        and not config_refresh_failed
+        and (current_config is None or current_config.mode != "observe")
+    ):
+        claimed_resolution = _resolve_stored_package_policy_override(
+            initial_saved_evaluation,
+            store=store,
+            artifact=initial.artifact,
+            artifact_hash=initial.artifact_hash,
+            workspace_dir=workspace_dir,
+            now=now,
+            execution_context=initial.execution_context,
+            current_action=initial.current_action,
+            claim_saved_approval=True,
+        )
+        claimed_action = _protect_action_for_policy_action(claimed_resolution.evaluation.policy_action)
+        if not is_execution_permitted(claimed_action):
+            saved_approval_claim_failure = claimed_resolution.evaluation
+        else:
+            saved_approval_claimed = True
+            saved_approval_claim_disposition = claimed_resolution.claim_disposition
     if additional_authority_provider is not None:
         try:
             additional_action, additional_context = additional_authority_provider()
@@ -1542,6 +1569,13 @@ def _final_package_protect_authority(
         current.evaluation,
         current_action=current.current_action,
     )
+    if saved_approval_claim_failure is not None:
+        return current, _package_evaluation_with_current_policy_action(
+            saved_approval_claim_failure,
+            current_action=current.current_action,
+        )
+    if current.observe_mode:
+        return current, current_evaluation
     if saved_approval_claimed:
         if validation_reason is not None:
             reuse = evaluate_approval_reuse(
@@ -1563,18 +1597,10 @@ def _final_package_protect_authority(
             claim_saved_approval=False,
         )
         if _evaluation_uses_saved_package_approval(refreshed_saved_policy):
-            # Persistent and explicitly reusable approvals must still exist
-            # and match at the final boundary. The fresh resolver has already
-            # composed any newly inserted block or integrity failure.
             return current, refreshed_saved_policy
         if _package_approval_reuse_evidence(refreshed_saved_policy):
-            # A fresh saved-policy result exists but is no longer an accepted
-            # exact allow (for example, a new block or tampered authority).
             return current, refreshed_saved_policy
         if saved_approval_claim_disposition != "consumed":
-            # Retained package local-once and persistent policy grants remain
-            # authoritative after a successful claim. Their disappearance is
-            # a post-claim revocation, never evidence of one-shot consumption.
             reuse = evaluate_approval_reuse(
                 current.current_action,
                 "allow",
@@ -1582,13 +1608,11 @@ def _final_package_protect_authority(
                 validation_reason=APPROVAL_REUSE_CONTEXT_CHANGED_AFTER_CLAIM,
             )
             return current, _package_evaluation_with_rejected_reuse(current_evaluation, reuse)
-        # Only a consuming one-shot is expected to disappear at claim time.
-        # Carry its atomic proof after the fresh lookup establishes that no
-        # newer saved authority applies and every current context still matches.
         reuse = evaluate_approval_reuse(
             current.current_action,
             "allow",
             saved_decision_present=True,
+            fresh_local_approval=True,
         )
         if reuse.accepted and reuse.saved_action == "allow":
             return current, _package_policy_override_evaluation(
@@ -1636,6 +1660,18 @@ def _final_package_protect_authority(
     return current, resolved
 
 
+def _package_execution_policy_action(
+    authority: _PackageProtectAuthority,
+    evaluation: Any,
+) -> GuardAction:
+    """Project package policy into execution without discarding watch-only evidence."""
+
+    observed_action = _protect_action_for_policy_action(evaluation.policy_action)
+    if not authority.observe_mode:
+        return observed_action
+    return "warn" if observed_action == "warn" else "allow"
+
+
 def _apply_package_protect_projection(
     *,
     payload: dict[str, object],
@@ -1644,6 +1680,7 @@ def _apply_package_protect_projection(
     command: Sequence[str],
     blocking: bool,
     executed: bool,
+    execution_policy_action: GuardAction | None = None,
 ) -> _PackageProtectProjection:
     """Project one authority/evaluation pair into every user and audit surface."""
 
@@ -1651,7 +1688,15 @@ def _apply_package_protect_projection(
     public_targets = [target.to_dict() for target in intent.targets]
     artifact = authority.artifact
     artifact_hash = authority.artifact_hash
-    verdict_action = _protect_action_for_policy_action(evaluation.policy_action)
+    observed_policy_action = _protect_action_for_policy_action(evaluation.policy_action)
+    verdict_action = execution_policy_action or observed_policy_action
+    observe_projected = authority.observe_mode and verdict_action != observed_policy_action
+    verdict_reason = evaluation.user_copy.summary
+    if observe_projected:
+        verdict_reason = (
+            f"Watch only observed a `{observed_policy_action}` package-policy decision. "
+            "HOL Guard allowed the install to continue."
+        )
     risk_signals = tuple(_evaluation_risk_signals(evaluation))
     approval_reuse_evidence = _package_approval_reuse_evidence(evaluation)
     receipt_policy_metadata: dict[str, object] = {
@@ -1663,6 +1708,9 @@ def _apply_package_protect_projection(
         "policy_version": evaluation.policy_version,
         "redacted_command": intent.redacted_command,
     }
+    if observe_projected:
+        receipt_policy_metadata["observe_mode"] = True
+        receipt_policy_metadata["observed_policy_action"] = observed_policy_action
     if evaluation.bundle_version is not None:
         receipt_policy_metadata["bundle_version"] = evaluation.bundle_version
     if authority.additional_policy_context is not None:
@@ -1674,7 +1722,7 @@ def _apply_package_protect_projection(
         artifact_id=artifact.artifact_id,
         artifact_hash=artifact_hash,
         policy_decision=verdict_action,
-        capabilities_summary=evaluation.user_copy.summary,
+        capabilities_summary=verdict_reason,
         changed_capabilities=[
             target.package_name or str(public_target.get("raw_spec") or "")
             for target, public_target in zip(intent.targets, public_targets, strict=True)
@@ -1700,11 +1748,14 @@ def _apply_package_protect_projection(
     payload["targets"] = [_protect_target_payload(target) for target in intent.targets]
     payload["verdict"] = {
         "action": verdict_action,
-        "reason": evaluation.user_copy.summary,
+        "reason": verdict_reason,
         "risk_signals": list(risk_signals),
         "matched_advisories": matched_advisories,
         "blocking": blocking,
     }
+    if observe_projected:
+        payload["verdict"]["observe_mode"] = True
+        payload["verdict"]["observed_policy_action"] = observed_policy_action
     payload["receipt"] = {
         **receipt.to_dict(),
         "action_envelope_json": receipt_policy_metadata,
@@ -1787,7 +1838,6 @@ def build_package_protect_payload(
     sanitized_intent = authority.intent
     artifact = authority.artifact
     evaluation = authority.evaluation
-    current_evaluation = evaluation
     current_action = authority.current_action
     package_execution_context = authority.execution_context
     artifact_hash = authority.artifact_hash
@@ -1806,7 +1856,8 @@ def build_package_protect_payload(
     effective_dry_run = dry_run and not (
         allow_saved_approval_execution and _evaluation_uses_saved_package_approval(evaluation)
     )
-    execution_permitted = is_execution_permitted(evaluation.policy_action)
+    execution_policy_action = _package_execution_policy_action(authority, evaluation)
+    execution_permitted = is_execution_permitted(execution_policy_action)
     payload: dict[str, object] = {
         "generated_at": now,
         "executed": False,
@@ -1819,6 +1870,7 @@ def build_package_protect_payload(
         command=command,
         blocking=not execution_permitted,
         executed=False,
+        execution_policy_action=execution_policy_action,
     )
     if config is not None:
         payload["supply_chain"] = build_local_supply_chain_posture(store, config, now=now)
@@ -1840,39 +1892,11 @@ def build_package_protect_payload(
             },
             now,
         )
-        return (payload, _package_execution_exit_code(evaluation.policy_action))
-    saved_approval_claimed = _evaluation_uses_saved_package_approval(evaluation)
-    saved_approval_claim_disposition: _PackageApprovalClaimDisposition | None = None
-    if saved_approval_claimed:
-        # Claim the one-shot first, then rebuild every current input. Mutations
-        # performed while the store claim is in flight cannot inherit the old
-        # authorization at the subsequent launch boundary.
-        claimed_resolution = _resolve_stored_package_policy_override(
-            current_evaluation,
-            store=store,
-            artifact=artifact,
-            artifact_hash=artifact_hash,
-            workspace_dir=workspace_dir,
-            now=now,
-            execution_context=package_execution_context,
-            current_action=current_action,
-            claim_saved_approval=True,
-        )
-        claimed_evaluation = claimed_resolution.evaluation
-        if not is_execution_permitted(claimed_evaluation.policy_action):
-            return _package_protect_denied_after_final_boundary(
-                payload=payload,
-                authority=authority,
-                evaluation=claimed_evaluation,
-                command=command,
-                store=store,
-                now=now,
-            )
-        saved_approval_claim_disposition = claimed_resolution.claim_disposition
+        return (payload, _package_execution_exit_code(execution_policy_action))
     final_authority, final_evaluation = _final_package_protect_authority(
         initial=authority,
-        saved_approval_claimed=saved_approval_claimed,
-        saved_approval_claim_disposition=saved_approval_claim_disposition,
+        initial_saved_evaluation=evaluation,
+        saved_approval_pending=_evaluation_uses_saved_package_approval(evaluation),
         command=command,
         store=store,
         workspace_dir=workspace_dir,
@@ -1881,7 +1905,8 @@ def build_package_protect_payload(
         current_config_provider=current_config_provider,
         additional_authority_provider=additional_authority_provider,
     )
-    if not is_execution_permitted(final_evaluation.policy_action):
+    final_execution_action = _package_execution_policy_action(final_authority, final_evaluation)
+    if not is_execution_permitted(final_execution_action):
         denied = _package_protect_denied_after_final_boundary(
             payload=payload,
             authority=final_authority,
@@ -1950,6 +1975,7 @@ def build_package_protect_payload(
         command=command,
         blocking=False,
         executed=True,
+        execution_policy_action=final_execution_action,
     )
     verdict_action = final_projection.verdict_action
     risk_signals = final_projection.risk_signals
@@ -2163,24 +2189,41 @@ def _resolve_stored_package_policy_override(
             else diagnosed_reason
         )
     )
+    legacy_local_approval = isinstance(decision, dict) and _is_legacy_package_local_approval(
+        decision,
+        store=store,
+    )
+    fresh_local_approval = isinstance(decision, dict) and (
+        _is_fresh_artifact_approval(decision, store=store) or legacy_local_approval
+    )
     reuse = evaluate_approval_reuse(
         effective_current_action,
         action,
         saved_decision_present=True,
         validation_reason=validation_reason,
+        fresh_local_approval=fresh_local_approval,
     )
     claim_disposition: _PackageApprovalClaimDisposition | None = None
     disposition_resolver = getattr(store, "approval_reuse_claim_disposition", None)
-    if isinstance(decision, dict) and callable(disposition_resolver):
+    if fresh_local_approval:
+        claim_disposition = "consumed"
+    elif isinstance(decision, dict) and callable(disposition_resolver):
         raw_disposition = disposition_resolver(decision)
         if raw_disposition in {"consumed", "retained"}:
             claim_disposition = cast(_PackageApprovalClaimDisposition, raw_disposition)
-    if (
-        claim_saved_approval
-        and reuse.should_claim
-        and isinstance(decision, dict)
-        and not store.claim_approval_reuse_decision(decision, now=now)
-    ):
+    claim_succeeded = True
+    if claim_saved_approval and reuse.should_claim and isinstance(decision, dict):
+        if legacy_local_approval:
+            approval_id = decision.get("approval_id")
+            assert isinstance(approval_id, str)
+            claim_succeeded = store.claim_local_once_approval(
+                approval_id,
+                claimed_at=now,
+                expected_decision=decision,
+            )
+        else:
+            claim_succeeded = store.claim_approval_reuse_decision(decision, now=now)
+    if claim_saved_approval and reuse.should_claim and not claim_succeeded:
         reuse = evaluate_approval_reuse(
             effective_current_action,
             action,
@@ -2216,6 +2259,7 @@ def _resolve_stored_package_policy_override(
                 reason_code="saved_package_approval",
                 reason_message="HOL Guard reused your saved approval for this package request.",
                 approval_reuse=reuse,
+                approval_claim_disposition=claim_disposition,
             ),
             approval_reuse_decision=decision,
             claim_disposition=claim_disposition,
@@ -2248,6 +2292,56 @@ def _resolve_stored_package_policy_override(
     return _StoredPackagePolicyResolution(_package_evaluation_with_rejected_reuse(current_evaluation, reuse))
 
 
+def _is_fresh_artifact_approval(decision: dict[str, object], *, store: Any) -> bool:
+    decision_id = decision.get("decision_id")
+    if not (
+        isinstance(decision_id, int)
+        and not isinstance(decision_id, bool)
+        and decision.get("source") == "approval-gate"
+        and decision.get("scope") == "artifact"
+        and isinstance(decision.get("expires_at"), str)
+    ):
+        return False
+    request_id = decision.get("request_id")
+    request_getter = getattr(store, "get_approval_request", None)
+    if not isinstance(request_id, str) or not request_id or not callable(request_getter):
+        return False
+    try:
+        request = request_getter(request_id)
+    except Exception:
+        return False
+    return isinstance(request, dict) and request.get("resolution_scope") == "artifact"
+
+
+def _is_legacy_package_local_approval(decision: dict[str, object], *, store: Any) -> bool:
+    approval_id = decision.get("approval_id")
+    request_id = decision.get("request_id")
+    if (
+        not isinstance(approval_id, str)
+        or not approval_id
+        or not isinstance(request_id, str)
+        or not request_id
+        or decision.get("workspace") is not None
+    ):
+        return False
+    request_getter = getattr(store, "get_approval_request", None)
+    if not callable(request_getter):
+        return False
+    try:
+        request = request_getter(request_id)
+    except Exception:
+        return False
+    return (
+        isinstance(request, dict)
+        and request.get("artifact_type") == "package_request"
+        and request.get("status") == "resolved"
+        and request.get("resolution_action") == "allow"
+        and request.get("resolution_scope") == "artifact"
+        and request.get("artifact_id") == decision.get("artifact_id")
+        and request.get("artifact_hash") == decision.get("artifact_hash")
+    )
+
+
 def package_saved_allow_validation_reason(
     decision: dict[str, object],
     *,
@@ -2263,8 +2357,6 @@ def package_saved_allow_validation_reason(
 
     if decision.get("action") != "allow":
         return None
-    # A matching legacy digest is still missing workspace, executable,
-    # capability, policy, and sandbox bindings. Require two valid v1 tokens.
     return approval_context_tokens_validation_reason(decision.get("artifact_hash"), artifact_hash)
 
 
@@ -2660,11 +2752,6 @@ def compose_current_package_policy_action(
         actions.append(additional_current_action)
     if config is not None:
         config_policy = _package_config_policy_context(artifact=artifact, config=config)
-        # Resolve specificity inside each configuration family first.  A
-        # harness risk action replaces its global risk action, and an exact
-        # artifact/publisher/harness action is one precedence chain.  The
-        # resulting configuration actions remain independent of the package
-        # feed/evaluator action and therefore cannot erase a feed block.
         for key in ("effective_package_script_action", "resolved_override"):
             action = config_policy.get(key)
             if action is not None:
@@ -2897,6 +2984,7 @@ def _package_policy_override_evaluation(
     reason_code: str,
     reason_message: str,
     approval_reuse: ApprovalReuseDecision | None = None,
+    approval_claim_disposition: _PackageApprovalClaimDisposition | None = None,
 ) -> Any:
     reason: dict[str, object] = {
         "code": reason_code,
@@ -2906,6 +2994,8 @@ def _package_policy_override_evaluation(
     }
     if approval_reuse is not None:
         reason["approval_reuse"] = approval_reuse.to_evidence()
+    if approval_claim_disposition is not None:
+        reason["approval_claim_disposition"] = approval_claim_disposition
     packages = tuple({**package, "decision": decision} for package in evaluation.packages)
     return replace(
         evaluation,
@@ -2976,21 +3066,28 @@ def _build_package_manager_protection(store: Any) -> dict[str, object]:
     active_managers = sorted(set(_string_items(status.get("active_managers"))))
     missing_shims = sorted(set(_string_items(status.get("missing_managers"))))
     supported_managers = list(package_shim_supported_managers())
+    detected_managers = sorted(set(_string_items(status.get("detected_managers"))))
     protected_managers = sorted(set(_string_items(status.get("protected_managers"))))
     protected_set = set(protected_managers)
     path_status = str(status.get("path_status") or "missing_from_path")
-    staged_managers = set(installed_managers) if path_status == "restart_required" else set()
+    coverage_managers = set(detected_managers)
+    staged_managers = (
+        set(installed_managers).intersection(coverage_managers) if path_status == "restart_required" else set()
+    )
     unprotected_managers = [
-        manager for manager in supported_managers if manager not in protected_set and manager not in staged_managers
+        manager for manager in detected_managers if manager not in protected_set and manager not in staged_managers
     ]
     return {
         "path_status": path_status,
         "path_contains_shim_dir": bool(status.get("path_contains_shim_dir")),
         "restart_shell_required": bool(status.get("restart_shell_required")),
+        "process_path_status": str(status.get("process_path_status") or "missing"),
+        "process_restart_required": bool(status.get("process_restart_required")),
         "shell_profile_configured": bool(status.get("shell_profile_configured")),
         "shell_profile_path": status.get("shell_profile_path"),
         "shim_dir": str(shim_dir),
         "supported_managers": supported_managers,
+        "detected_managers": detected_managers,
         "installed_managers": installed_managers,
         "active_managers": active_managers,
         "missing_shims": missing_shims,
@@ -4260,7 +4357,10 @@ def _posture_status(
 
 def _posture_detail(status: str) -> str:
     details = {
-        "not_connected": "Connect Guard Cloud to fetch signed supply-chain bundles.",
+        "not_connected": (
+            "Local package protection is active. Guard Cloud is optional and adds live package intelligence, "
+            "synced policy, and cross-device evidence."
+        ),
         "workspace_required": "Finish Guard Cloud pairing to fetch workspace-specific supply-chain bundles.",
         "sync_required": "Run `hol-guard supply-chain sync` to fetch the latest signed bundle.",
         "expired": "The cached signed bundle expired. Run `hol-guard supply-chain sync` before the next install.",
@@ -4278,7 +4378,9 @@ def _posture_health_status(
 ) -> str:
     if status == "expired":
         return "stale"
-    if status in {"not_connected", "workspace_required", "sync_required", "degraded"}:
+    if status == "not_connected":
+        return "local"
+    if status in {"workspace_required", "sync_required", "degraded"}:
         return "degraded"
     next_refresh_timestamp = _parse_timestamp(next_refresh_at)
     if (

@@ -182,7 +182,6 @@ args = ["workspace-skill.js", "--changed"]
 
         monkeypatch.setattr("codex_plugin_scanner.guard.cli.commands.sync_receipts", fail_cloud_call)
         monkeypatch.setattr("codex_plugin_scanner.guard.cli.commands.sync_runtime_session", fail_cloud_call)
-        monkeypatch.setattr("codex_plugin_scanner.guard.cli.commands.webbrowser.open", fail_cloud_call)
 
         rc = main(
             [
@@ -336,6 +335,7 @@ args = ["workspace-skill.js", "--changed"]
         assert rc == 0
         assert output["cloud_state"] == "local_only"
         assert output["sync_configured"] is False
+        assert "Guard Cloud is optional" in output["cloud_state_detail"]
         assert output["connect_url"] == "https://hol.org/guard/connect"
         assert output["dashboard_url"] == "https://hol.org/guard"
         assert output["inbox_url"] == "https://hol.org/guard/inbox"
@@ -457,7 +457,7 @@ args = ["workspace-skill.js", "--changed"]
         monkeypatch.setattr(sys, "argv", ["hol-guard"])
 
         with pytest.raises(SystemExit) as excinfo:
-            main(["guard", "--help"])
+            main(["--help"])
 
         output = capsys.readouterr().out
 

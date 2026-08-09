@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, final
 
 from ..cli.commands_support_command_activity import (
     hook_post_succeeded,
@@ -36,16 +36,37 @@ if TYPE_CHECKING:
     from ..store import GuardStore
 
 
+class CommandActivityWriter(Protocol):
+    def submit_command_activity(
+        self,
+        *,
+        harness: str,
+        event: str,
+        payload: Mapping[str, object],
+        succeeded: bool,
+    ) -> bool: ...
+
+
+def runtime_hook_event_name(payload: Mapping[str, object]) -> str:
+    for key in ("event", "eventName", "hook_event_name", "hookEventName", "hook_name", "hookName"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "PreToolUse"
+
+
 class HookWorkerUnsupported(RuntimeError):  # noqa: N818
     """Raised when the worker cannot handle a request (caller falls back to CLI)."""
 
 
+@final
 class HookWorker:
     """Resident hook review worker for the daemon."""
 
-    def __init__(self, *, store: GuardStore):
+    def __init__(self, *, store: GuardStore, activity_writer: CommandActivityWriter | None = None):
         self.store = store
         self.guard_home = store.guard_home
+        self.activity_writer = activity_writer
         self.scanner = ContentScanner()
         self.cache = HookDecisionCache(store)
         from .hook_metrics import HookMetricsRecorder
@@ -71,6 +92,7 @@ class HookWorker:
         home_dir: Path,
         guard_home: Path,
         workspace: Path | None,
+        deadline: float | None = None,
     ) -> dict[str, object]:
         """Review a hook HTTP payload and return harness JSON.
 
@@ -104,19 +126,30 @@ class HookWorker:
         request = self._request_from_payload(
             payload,
             harness=harness,
+            source_ref_external_allowed=default_harness.strip().lower().replace("_", "-") in {"pi", "omp"},
             home_dir=home_dir,
             guard_home=guard_home,
             workspace=workspace,
+            deadline=deadline,
         )
         response = self.engine.review(request)
-        record_post_hook_command_activity_best_effort(
-            store=self.store,
-            guard_home=self.guard_home,
-            harness=harness,
-            event=event_name,
-            payload=payload,
-            succeeded=hook_post_succeeded(event_name, payload),
-        )
+        succeeded = hook_post_succeeded(event_name, payload)
+        if self.activity_writer is not None:
+            _ = self.activity_writer.submit_command_activity(
+                harness=harness,
+                event=event_name,
+                payload=payload,
+                succeeded=succeeded,
+            )
+        else:
+            _ = record_post_hook_command_activity_best_effort(
+                store=self.store,
+                guard_home=self.guard_home,
+                harness=harness,
+                event=event_name,
+                payload=payload,
+                succeeded=succeeded,
+            )
         return _harness_json_from_review_response(harness, event_name, response)
 
     def _runtime_harness(self, params: Mapping[str, list[str]]) -> str | None:
@@ -130,9 +163,11 @@ class HookWorker:
         payload: dict[str, object],
         *,
         harness: str,
+        source_ref_external_allowed: bool,
         home_dir: Path,
         guard_home: Path,
         workspace: Path | None,
+        deadline: float | None = None,
     ) -> HookReviewRequest:
         """Build a typed review request from the HTTP payload."""
         event_name = self._hook_event_name(payload)
@@ -154,16 +189,14 @@ class HookWorker:
             home_dir=home_dir,
             guard_home=guard_home,
             source_scope=source_scope,
+            source_ref_external_allowed=source_ref_external_allowed,
             output_summary=output_summary,
             source_ref=source_ref,
+            deadline_monotonic=deadline,
         )
 
     def _hook_event_name(self, payload: Mapping[str, object]) -> str:
-        for key in ("event", "eventName", "hook_event_name", "hookEventName", "hook_name", "hookName"):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return "PreToolUse"
+        return runtime_hook_event_name(payload)
 
     def _payload_kind(self, payload: Mapping[str, object]) -> HookPayloadKind:
         if "guard_payload_ref" in payload:
@@ -277,7 +310,7 @@ def post_tool_fail_safe_response(
     reason: str = "HOL Guard could not complete local hook review safely.",
     reason_code: str = "daemon_worker_exception",
 ) -> dict[str, object]:
-    if _canonical_hook_harness(harness) == "pi":
+    if _canonical_hook_harness(harness) in {"pi", "omp"}:
         return {
             "decision": "deny",
             "reason": reason,
@@ -299,7 +332,7 @@ def _harness_json_from_review_response(
         payload = {}
     if event_name != "PostToolUse":
         return payload
-    if _canonical_hook_harness(harness) == "pi":
+    if _canonical_hook_harness(harness) in {"pi", "omp"}:
         return payload
     decision = str(payload.get("decision") or "")
     model_output_action = str(payload.get("model_output_action") or "")

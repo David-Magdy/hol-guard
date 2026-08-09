@@ -8,6 +8,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
@@ -30,6 +31,36 @@ from codex_plugin_scanner.guard.runtime.package_intent import (
 )
 from codex_plugin_scanner.guard.runtime.supply_chain_package_eval import evaluate_package_request_artifact
 from codex_plugin_scanner.guard.store import GuardStore
+
+
+def test_package_decision_v2_ignores_malformed_reason_items() -> None:
+    evaluation = SimpleNamespace(
+        reasons=("malformed", {"code": "cloud_timeout", "message": "Cloud timed out."}),
+        user_copy=SimpleNamespace(
+            title="Review package request",
+            summary="Current package safety data was unavailable.",
+            harness_message="Review the package request.",
+        ),
+    )
+
+    decision = RuntimeMcpGuardProxy._package_decision_v2(evaluation, "require-reapproval")
+
+    assert [signal["signal_id"] for signal in decision["signals"]] == ["supply-chain.cloud_timeout"]
+
+
+def test_package_resolution_helpers_ignore_malformed_reason_items() -> None:
+    reasons = ("malformed", {"code": "saved_package_block"})
+    resolution = SimpleNamespace(
+        execution_context=None,
+        evaluation=SimpleNamespace(
+            reasons=("malformed", {"approval_reuse": {"scope": "artifact"}}),
+        ),
+    )
+
+    assert runtime_mcp_module._has_saved_package_block(reasons) is True
+    assert RuntimeMcpGuardProxy._package_scanner_evidence(resolution=resolution, tool_evidence=()) == (
+        {"source": "approval_reuse", "scope": "artifact"},
+    )
 
 
 def _seed_guard_cloud(store, *, workspace_id=None, sync_url=None, token="demo-token", now="2026-05-19T00:00:00Z"):

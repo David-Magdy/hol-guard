@@ -9,6 +9,7 @@ from .store_base import (
     _runtime_scoped_exact_match_key,
     browser_mcp_exact_match_context,
     runtime_tool_action_exact_match_context,
+    runtime_tool_action_portable_match_context,
 )
 from .store_approval_facade import StoreApprovalsMixin
 from .store_cloud_events import StoreCloudEventsMixin
@@ -26,7 +27,11 @@ from .store_inventory import StoreInventoryMixin
 from .store_policy_document import StorePolicyDocumentMixin
 from .store_live_request_outbox import StoreLiveRequestOutboxMixin
 from .store_oauth import StoreOAuthConnectMixin
+from .store_portable_project_memory import StorePortableProjectMemoryMixin
 from .store_policy import StorePolicyMixin
+from .store_policy_integrity_backend import (
+    build_policy_integrity_secret_store as _build_policy_integrity_secret_store,
+)
 from .store_policy_integrity_runtime import StorePolicyIntegrityAdminMixin
 from .store_read_state import StoreReadStateMixin
 from .store_receipts import StoreReceiptsRuntimeMixin
@@ -35,6 +40,8 @@ from .store_secret_policy_integrity import (
     _POLICY_INTEGRITY_LOOKUP_UNSET,
 )
 from .store_sessions import StoreSessionsMixin
+from .store_storage_maintenance import StoreStorageMaintenanceMixin
+from .store_temporary_mcp import StoreTemporaryMcpMixin
 from .store_workflow_capabilities import StoreWorkflowCapabilitiesMixin
 from .store_workflow_capability_lookup import StoreWorkflowCapabilityLookupMixin
 from .store_workflow_capability_receipt_lookup import StoreWorkflowCapabilityReceiptLookupMixin
@@ -52,8 +59,10 @@ class GuardStore(
     StoreCommandActivityLifecycleMixin,
     StoreCommandActivityMaintenanceMixin,
     StoreCommandActivityPrivacyMixin,
+    StoreStorageMaintenanceMixin,
     StoreCommandShadowMixin,
     StoreInventoryMixin,
+    StorePortableProjectMemoryMixin,
     StorePolicyMixin,
     StorePolicyIntegrityAdminMixin,
     StoreCloudEventsMixin,
@@ -66,6 +75,7 @@ class GuardStore(
     StoreEvidenceMixin,
     StorePolicyDocumentMixin,
     StoreReadStateMixin,
+    StoreTemporaryMcpMixin,
     StoreWorkflowCapabilitiesMixin,
     StoreWorkflowCapabilityLookupMixin,
     StoreWorkflowCapabilityReceiptLookupMixin,

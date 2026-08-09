@@ -7,6 +7,8 @@ import {
   fetchAllPendingRequests,
   fetchApprovalPage,
   GuardHarnessActionError,
+  GuardProtectionRepairError,
+  GuardSessionUnavailableError,
   fetchQueueSummary,
 	  fetchResumeStatus,
 	  formatHarnessCommand,
@@ -40,6 +42,17 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 const snapshot = buildDemoRuntimeSnapshot();
+
+const localIntegrityRepairError = new GuardProtectionRepairError(409, {
+  error: "local_integrity_repair_incomplete",
+  repair_scope: "local_integrity",
+  message: "Guard could not establish a local integrity proof.",
+});
+assert(
+  localIntegrityRepairError.code === "local_integrity_repair_incomplete" &&
+    localIntegrityRepairError.repairScope === "local_integrity",
+  "protection repair preserves the structured local-integrity failure scope",
+);
 
 const missingRuntimeStateSnapshot = normalizeRuntimeSnapshot({
   ...snapshot,
@@ -162,6 +175,8 @@ const partialSupplyChainSnapshot = normalizeRuntimeSnapshot({
   supply_chain: {
     package_manager_protection: {
       path_status: "in_path",
+      supported_managers: ["npm", "pnpm", "cargo"],
+      detected_managers: ["npm", "pnpm"],
       protected_managers: ["npm"],
       restart_shell_required: false,
       shell_profile_configured: false,
@@ -171,6 +186,14 @@ const partialSupplyChainSnapshot = normalizeRuntimeSnapshot({
 assert(
   partialSupplyChainSnapshot.supply_chain?.package_manager_protection.protected_managers.length === 1,
   "T761: runtime normalizer preserves valid supply-chain manager arrays"
+);
+assert(
+  partialSupplyChainSnapshot.supply_chain?.package_manager_protection.detected_managers?.join(",") === "npm,pnpm",
+  "T761: runtime normalizer forwards detected package managers"
+);
+assert(
+  partialSupplyChainSnapshot.supply_chain?.package_manager_protection.supported_managers.join(",") === "npm,pnpm,cargo",
+  "T761: runtime normalizer keeps the support matrix separate from detection"
 );
 assert(
   partialSupplyChainSnapshot.supply_chain?.package_manager_protection.unprotected_managers.length === 0,

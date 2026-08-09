@@ -418,6 +418,84 @@ def load_policy_bundle_verification_keys_from_sync(
     return safe_load_policy_bundle_verification_keys(verification_keys)
 
 
+def migrate_legacy_policy_bundle_anchors(
+    *,
+    stored_keyring: object,
+    sync_keys: tuple[PolicyBundleVerificationKey, ...],
+    expected_workspace_id: str | None,
+) -> tuple[PolicyBundleVerificationKey, ...]:
+    """Scope an exact legacy anchor using authenticated sync metadata.
+
+    Legacy releases persisted the already-trusted key and workspace in a
+    snake-case wrapper, but omitted purpose and per-key workspace fields. The
+    migration never accepts a new fingerprint: it only enriches an existing
+    local anchor when Cloud advertises the same key for the same workspace.
+    """
+
+    if not isinstance(stored_keyring, dict) or set(stored_keyring) != {"keys", "workspace_id"}:
+        return ()
+    legacy_workspace_id = stored_keyring.get("workspace_id")
+    if (
+        not isinstance(expected_workspace_id, str)
+        or not expected_workspace_id
+        or legacy_workspace_id != expected_workspace_id
+    ):
+        return ()
+    raw_keys = stored_keyring.get("keys")
+    if not isinstance(raw_keys, list):
+        return ()
+    legacy_keys = safe_load_policy_bundle_verification_keys(stored_keyring)
+    if not legacy_keys or any(key.purpose != "unscoped" or key.workspace_id is not None for key in legacy_keys):
+        return ()
+    migrated: list[PolicyBundleVerificationKey] = []
+    for legacy_key in legacy_keys:
+        advertised_key = next(
+            (
+                key
+                for key in sync_keys
+                if key.key_id == legacy_key.key_id
+                and key.fingerprint_sha256 == legacy_key.fingerprint_sha256
+                and key.purpose == POLICY_BUNDLE_KEY_PURPOSE
+                and key.workspace_id == expected_workspace_id
+            ),
+            None,
+        )
+        if advertised_key is not None:
+            states = {legacy_key.state, advertised_key.state}
+            restrictive_state = "active"
+            if "revoked" in states:
+                restrictive_state = "revoked"
+            elif "grace" in states:
+                restrictive_state = "grace"
+            valid_from_candidates = [
+                value for value in (legacy_key.valid_from, advertised_key.valid_from) if value is not None
+            ]
+            valid_until_candidates = [
+                value for value in (legacy_key.valid_until, advertised_key.valid_until) if value is not None
+            ]
+            migrated.append(
+                PolicyBundleVerificationKey(
+                    key_id=legacy_key.key_id,
+                    public_key_pem=legacy_key.public_key_pem,
+                    fingerprint_sha256=legacy_key.fingerprint_sha256,
+                    state=restrictive_state,
+                    purpose=POLICY_BUNDLE_KEY_PURPOSE,
+                    workspace_id=expected_workspace_id,
+                    valid_from=max(
+                        valid_from_candidates,
+                        key=lambda value: _parse_iso_timestamp(value, field_name="validFrom"),
+                        default=None,
+                    ),
+                    valid_until=min(
+                        valid_until_candidates,
+                        key=lambda value: _parse_iso_timestamp(value, field_name="validUntil"),
+                        default=None,
+                    ),
+                )
+            )
+    return tuple(migrated)
+
+
 def policy_bundle_keyring_payload(
     keys: tuple[PolicyBundleVerificationKey, ...],
     *,
@@ -439,6 +517,7 @@ def _policy_bundle_verification_context_with_source(
     sync_payload: dict[str, object] | None = None,
     supply_chain_keyring: object = None,
     managed_keyring_provenance: object = None,
+    expected_workspace_id: str | None = None,
 ) -> tuple[
     tuple[PolicyBundleVerificationKey, ...],
     tuple[PolicyBundleVerificationKey, ...],
@@ -469,8 +548,13 @@ def _policy_bundle_verification_context_with_source(
         # migration signal; it never grants authority.
         trusted_keys = merge_policy_bundle_trusted_keys(builtin_keys, sync_keys)
         return trusted_keys, builtin_keys, False
-    trusted_keys = merge_policy_bundle_trusted_keys(builtin_keys, stored_keys, sync_keys)
-    anchored_keys = merge_policy_bundle_trusted_keys(builtin_keys, stored_keys)
+    migrated_legacy_keys = migrate_legacy_policy_bundle_anchors(
+        stored_keyring=stored_keyring,
+        sync_keys=sync_keys,
+        expected_workspace_id=expected_workspace_id,
+    )
+    trusted_keys = merge_policy_bundle_trusted_keys(builtin_keys, stored_keys, migrated_legacy_keys, sync_keys)
+    anchored_keys = merge_policy_bundle_trusted_keys(builtin_keys, stored_keys, migrated_legacy_keys)
     return trusted_keys, anchored_keys, False
 
 
@@ -505,6 +589,7 @@ def validate_synced_policy_bundle(
         sync_payload=sync_payload,
         supply_chain_keyring=supply_chain_keyring,
         managed_keyring_provenance=managed_keyring_provenance,
+        expected_workspace_id=expected_workspace_id,
     )
     if policy_bundle.get("contractVersion") == _POLICY_BUNDLE_V2_CONTRACT:
         validated_policy_bundle_v2_payload = _policy_bundle_v2_module().validated_policy_bundle_v2_payload

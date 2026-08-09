@@ -42,7 +42,34 @@ from tests.cloud_exception_bundle_fixtures import build_cloud_exception_policy_b
 from tests.policy_bundle_signing_helpers import policy_bundle_test_keyring, sign_policy_bundle
 from tests.shim_execution_helpers import write_fake_manager_script
 from tests.test_guard_protect import _seed_bundle_cache_only, _SyncAndEvaluateHandler
-from tests.test_guard_supply_chain_evaluator import _cloud_response, _EvaluateHandler
+from tests.test_guard_supply_chain_evaluator import _cloud_response, _EvaluateHandler, _force_unpaid_entitlement
+
+PACKAGE_SHIM_GUARD_CASES = (
+    ("bun", ("add", "minimist@1.2.9"), True),
+    ("bun", ("run", "build"), True),
+    ("bun", ("run", "build", "--watch"), True),
+    ("bun", ("run", "dev"), True),
+    ("bun", ("pm", "ls", "--all"), True),
+    ("bun", ("script.ts",), True),
+    ("bun", ("--version",), False),
+    ("brew", ("install", "jq"), True),
+    ("brew", ("install", "--cask", "firefox"), True),
+    ("brew", ("tap", "user/repository"), True),
+    ("brew", ("bundle", "install"), True),
+    ("brew", ("info", "jq"), False),
+    ("pip", ("install", "requests==2.32.3"), True),
+    ("pip", ("--isolated", "install", "requests==2.32.3"), True),
+    ("npm", ("install", "minimist@1.2.9"), True),
+    ("npm", ("--registry=https://registry.example.com", "install", "minimist@1.2.9"), True),
+    ("npm", ("run", "dev"), False),
+    ("pnpm", ("add", "minimist@1.2.9"), True),
+    ("pnpm", ("--dir", ".", "add", "minimist@1.2.9"), True),
+    ("pnpm", ("install",), True),
+    ("pnpm", ("--dir", ".", "run", "dev"), False),
+    ("pnpm", ("run", "dev"), False),
+    ("yarn", ("add", "minimist@1.2.9"), True),
+    ("yarn", ("--cwd", ".", "add", "minimist@1.2.9"), True),
+)
 
 
 def _seed_guard_cloud(store, *, workspace_id=None, sync_url=None, token="demo-token", now="2026-05-19T00:00:00Z"):
@@ -488,7 +515,7 @@ def test_enable_wal_mode_uses_bounded_busy_timeout(monkeypatch: pytest.MonkeyPat
     assert sleep_calls == [guard_store_module._SQLITE_LOCK_RETRY_DELAY_SECONDS]
 
 
-def test_guard_store_init_does_not_hold_sqlite_writer_during_missing_policy_integrity_retry(tmp_path: Path) -> None:
+def test_guard_protect_does_not_prime_policy_integrity_or_hold_sqlite_writer(tmp_path: Path) -> None:
     home_dir = tmp_path / "guard-home"
     workspace_dir = tmp_path / "workspace"
     home_dir.mkdir(parents=True, exist_ok=True)
@@ -505,7 +532,6 @@ def test_guard_store_init_does_not_hold_sqlite_writer_during_missing_policy_inte
         },
     )
     slow_process.start()
-    assert refresh_started_event.wait(timeout=5)
 
     with sqlite3.connect(home_dir / "guard.db", timeout=1.0) as writer_probe:
         writer_probe.execute("pragma busy_timeout=1000")
@@ -520,6 +546,7 @@ def test_guard_store_init_does_not_hold_sqlite_writer_during_missing_policy_inte
     assert slow_process.exitcode == 0
     slow_result = slow_results.get(timeout=1)
 
+    assert not refresh_started_event.is_set()
     assert fast_result["returncode"] == 2
     assert slow_result["returncode"] == 2
 
@@ -670,7 +697,7 @@ def test_package_manager_shim_runs_allowed_command_once_when_shim_dir_is_on_path
             manager="npm",
             capsys=capsys,
         )
-        env = dict(os.environ)
+        env = _with_subprocess_sync_auth(dict(os.environ), sync_url)
         env["PATH"] = f"{shim_path.parent}{os.pathsep}{fake_bin}{os.pathsep}{env.get('PATH', '')}"
 
         result = subprocess.run(
@@ -1443,7 +1470,7 @@ def test_package_shim_tries_owned_containment_before_guard_review(tmp_path: Path
     package_script_index = shim_source.index("try_execute_contained_package_script")
     typescript_index = shim_source.index("try_execute_contained_typescript")
     node_index = shim_source.index("try_execute_contained_node_command")
-    guard_index = shim_source.index("guard_process = subprocess.run")
+    guard_index = shim_source.index("guard_process = _run_guard_with_store_lock_retry")
     assert package_script_index < typescript_index < node_index < guard_index
     assert "if contained_result is None:" in shim_source
     assert "except Exception:\n        contained_result = None" in shim_source
@@ -1562,6 +1589,83 @@ def test_guard_protect_json_terminal_block_on_cloud_auth_error_does_not_queue_lo
     assert store.list_approval_requests(limit=None) == []
 
 
+def test_guard_protect_allows_codex_install_with_local_intelligence_when_cloud_auth_expired(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _force_unpaid_entitlement(monkeypatch)
+    home_dir = tmp_path / "guard-home"
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    server, thread, sync_url = _start_cloud_eval_server(
+        decision="allow",
+        package_name="@openai/codex",
+        evaluate_status=401,
+    )
+    try:
+        monkeypatch.setattr(
+            supply_chain_package_eval_module,
+            "_registry_resolved_target_version",
+            lambda **_kwargs: "1.2.3",
+        )
+        _seed_bundle_cache_only(
+            home_dir=home_dir,
+            ecosystem="npm",
+            package_name="minimist",
+            package_version="1.2.8",
+            action="allow",
+        )
+        _seed_workspace_sync_credentials(home_dir, sync_url)
+        store = GuardStore(home_dir)
+
+        payload, exit_code = build_protect_payload(
+            command=["bun", "install", "-g", "@openai/codex@latest"],
+            store=store,
+            workspace_dir=workspace_dir,
+            dry_run=True,
+            now="2026-05-19T00:00:00Z",
+        )
+    finally:
+        _stop_cloud_eval_server(server, thread)
+
+    assert exit_code == 0
+    assert payload["verdict"]["action"] == "allow"
+    assert payload["supply_chain_evaluation"]["policy_action"] == "allow"
+    assert any(reason["code"] == "cloud_auth_error" for reason in payload["supply_chain_evaluation"]["reasons"])
+    assert payload["supply_chain_evaluation"]["user_copy"]["next_step"] == "hol-guard connect"
+    assert "hol-guard connect" in payload["supply_chain_evaluation"]["user_copy"]["harness_message"]
+    assert store.list_approval_requests(limit=None) == []
+
+
+def test_cloud_reconnect_copy_preserves_existing_package_remediation() -> None:
+    evaluation = supply_chain_package_eval_module.PackageRequestEvaluation(
+        decision="ask",
+        policy_action="require-reapproval",
+        enforcement="premium_cloud",
+        entitlement_state="premium",
+        cache_status="cloud-error",
+        package_intent_hash="a" * 64,
+        policy_version="local:none",
+        bundle_version=None,
+        workspace_fingerprint=None,
+        reasons=(),
+        packages=(),
+        risk_summary="Guard paused the package request for review.",
+        user_copy=supply_chain_package_eval_module.SupplyChainUserCopy(
+            title="Review required",
+            summary="A safer package version is required.",
+            next_step="npm install example@2.0.0",
+            dashboard_url=None,
+            harness_message="Install the safer package version.",
+        ),
+    )
+
+    updated = supply_chain_package_eval_module._with_cloud_auth_reconnect_copy(evaluation)
+
+    assert updated.user_copy.next_step == "npm install example@2.0.0"
+    assert "hol-guard connect" in updated.user_copy.harness_message
+
+
 def test_guard_protect_probe_skips_local_approval_queue_on_block(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1673,9 +1777,10 @@ def test_guard_protect_pnpm_install_alias_renders_wrapped_review_link_for_cloud_
     output = capsys.readouterr().out
 
     assert rc == 2
-    assert "approve or keep this blocked" in output
-    assert "http://127.0.0.1:5474/requests/" in output
-    assert "review.. Open HOL Guard" not in output
+    normalized_output = " ".join(output.lower().split())
+    assert "blocked" in normalized_output
+    assert "approve or keep this blocked" not in normalized_output
+    assert "http://127.0.0.1:5474/requests/" not in output
 
 
 def test_guard_protect_ignores_stale_policy_bundle_package_family_block(
@@ -1683,6 +1788,7 @@ def test_guard_protect_ignores_stale_policy_bundle_package_family_block(
     monkeypatch: pytest.MonkeyPatch,
     capsys,
 ) -> None:
+    _force_unpaid_entitlement(monkeypatch)
     home_dir = tmp_path / "guard-home"
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -2176,14 +2282,9 @@ def test_guard_protect_cached_validation_error_still_requires_current_package_ga
         assert rc == 2
 
         store = GuardStore(home_dir)
-        apply_approval_resolution(
-            store=store,
-            request_id=str(payload["primary_approval_request_id"]),
-            action="allow",
-            scope="artifact",
-            workspace=None,
-            reason="reviewed",
-        )
+        assert payload["verdict"]["action"] == "block"
+        assert "primary_approval_request_id" not in payload
+        assert store.list_approval_requests(limit=None) == []
 
         _stop_cloud_eval_server(server, thread)
         server = None
@@ -2202,17 +2303,9 @@ def test_guard_protect_cached_validation_error_still_requires_current_package_ga
 
     assert retry_exit_code == 2
     assert retry_payload["executed"] is False
-    assert retry_payload["verdict"]["action"] in {"block", "review"}
-    assert any(
-        isinstance(reason, dict)
-        and reason.get("code")
-        in {
-            "approval_reuse_current_block",
-            "approval_reuse_policy_changed",
-            "approval_reuse_reapproval_required",
-        }
-        for reason in retry_payload["supply_chain_evaluation"]["reasons"]
-    )
+    assert retry_payload["verdict"]["action"] == "block"
+    assert "primary_approval_request_id" not in retry_payload
+    assert store.list_approval_requests(limit=None) == []
     assert marker_path.exists() is False
     assert store.list_approval_requests(status="pending", limit=None) == []
 
@@ -2510,16 +2603,18 @@ def test_guard_protect_saved_approval_does_not_bypass_new_bundle_block_for_unpin
         )
         _seed_workspace_sync_credentials(home_dir, sync_url)
 
-        first_payload, first_exit_code = build_protect_payload(
-            command=["npm", "install", package_name],
-            store=store,
-            workspace_dir=workspace_dir,
-            dry_run=True,
-            now="2026-05-19T00:00:00Z",
-        )
+        with monkeypatch.context() as unpaid_context:
+            _force_unpaid_entitlement(unpaid_context)
+            first_payload, first_exit_code = build_protect_payload(
+                command=["npm", "install", package_name],
+                store=store,
+                workspace_dir=workspace_dir,
+                dry_run=True,
+                now="2026-05-19T00:00:00Z",
+            )
 
-        assert first_exit_code == 2
-        assert first_payload["verdict"]["action"] in {"block", "require-reapproval"}
+        assert first_exit_code == 0
+        assert first_payload["verdict"]["action"] == "allow"
         receipt = first_payload["receipt"]
         assert isinstance(receipt, dict)
         store.upsert_policy(

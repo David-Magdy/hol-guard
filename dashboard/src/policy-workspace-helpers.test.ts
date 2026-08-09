@@ -83,6 +83,10 @@ assert(
   resolvePolicyRowSourceLabel(enrichedPackageRule) === "Local",
   "POL-H23: source column shows Local for local rules",
 );
+assert(
+  resolvePolicyRowSourceLabel(basePolicy({ source: "trusted-local-tool" })) === "Trusted local tool",
+  "POL-H23b: digest-bound local tool grants have a clear source label",
+);
 
 const scannerLabelRule = basePolicy({
   remembered_command: "Bash credential-looking output",

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from codex_plugin_scanner.guard import store_extension_control_authority_schema as authority_schema
 from codex_plugin_scanner.guard.approval_gate import ApprovalGateInput, update_settings
+from codex_plugin_scanner.guard.config import load_guard_config, update_guard_settings
 from codex_plugin_scanner.guard.extension_control_events import extension_control_change_payload
 from codex_plugin_scanner.guard.runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from codex_plugin_scanner.guard.runtime.extension_control_authority import (
@@ -35,7 +38,7 @@ from codex_plugin_scanner.guard.runtime.extension_control_proof import (
     issue_extension_control_proof,
 )
 from codex_plugin_scanner.guard.store import GuardStore
-from codex_plugin_scanner.guard.store_base import SystemKeyringSecretStore
+from codex_plugin_scanner.guard.store_base import EncryptedFileSecretStore, SystemKeyringSecretStore
 
 _PASSWORD = "correct horse battery staple"
 
@@ -95,6 +98,72 @@ def _store(
     if enroll:
         _enroll(store)
     return store
+
+
+def test_authenticated_recovery_rebuilds_unverifiable_authority(tmp_path: Path) -> None:
+    secrets = MemorySecretStore()
+    store = _store(tmp_path, secrets)
+    with store._connect() as connection:
+        connection.execute(
+            "update extension_control_authority_snapshot set snapshot_digest = ? where singleton = 1",
+            ("f" * 64,),
+        )
+
+    assert (
+        store.read_extension_control_authority(catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest).health
+        is AuthorityHealth.TAMPERED
+    )
+
+    repaired = store.recover_extension_control_authority(
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
+    )
+
+    assert repaired.health is AuthorityHealth.PROTECTED
+    assert repaired.revision == 0
+    assert repaired.layers == ()
+    assert (
+        store.read_extension_control_authority(catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest).health
+        is AuthorityHealth.PROTECTED
+    )
+
+
+def test_authenticated_recovery_rebuilds_snapshot_with_invalid_mac(tmp_path: Path) -> None:
+    secrets = MemorySecretStore()
+    store = _store(tmp_path, secrets)
+    with store._connect() as connection:
+        connection.execute(
+            "update extension_control_authority_snapshot set snapshot_mac = ? where singleton = 1",
+            ("invalid",),
+        )
+
+    repaired = store.recover_extension_control_authority(
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
+    )
+
+    assert repaired.health is AuthorityHealth.PROTECTED
+    assert repaired.revision == 0
+    assert repaired.layers == ()
+
+
+@pytest.mark.parametrize("missing_part", ("snapshot", "anchor", "key"))
+def test_authenticated_recovery_rebuilds_incomplete_authority(tmp_path: Path, missing_part: str) -> None:
+    secrets = MemorySecretStore()
+    store = _store(tmp_path, secrets)
+    if missing_part == "snapshot":
+        with store._connect() as connection:
+            connection.execute("delete from extension_control_authority_snapshot")
+    else:
+        suffix = ":anchor" if missing_part == "anchor" else ":authentication-key"
+        secret_id = next(secret_id for secret_id in secrets.values if secret_id.endswith(suffix))
+        secrets.delete_secret(secret_id)
+
+    repaired = store.recover_extension_control_authority(
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
+    )
+
+    assert repaired.health is AuthorityHealth.PROTECTED
+    assert repaired.revision == 0
+    assert repaired.layers == ()
 
 
 def _enrollment_proof(
@@ -330,6 +399,7 @@ def test_credential_store_failure_requires_explicit_degraded_acknowledgement(tmp
 
 
 def test_unavailable_system_keyring_never_silently_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(
         SystemKeyringSecretStore,
         "_is_available",
@@ -341,6 +411,108 @@ def test_unavailable_system_keyring_never_silently_falls_back(tmp_path: Path, mo
 
     assert view.health is AuthorityHealth.DEGRADED_UNACKNOWLEDGED
     assert view.layers_for(ControlSurface.COMMAND_EVALUATION)[0].global_lockdown is True
+
+
+def test_macos_extension_authority_default_never_probes_keychain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbid_keychain_probe(self: SystemKeyringSecretStore) -> bool:
+        raise AssertionError("keychain probe")
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(SystemKeyringSecretStore, "_is_available", forbid_keychain_probe)
+
+    store = GuardStore(tmp_path, prime_policy_integrity=False)
+
+    assert isinstance(store._secret_store(), EncryptedFileSecretStore)
+
+
+def test_explicit_macos_extension_authority_migration_enables_passive_vault_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    legacy_secrets = MemorySecretStore()
+    legacy_store = _store(tmp_path, legacy_secrets)
+    legacy_view = legacy_store.read_extension_control_authority(
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
+    )
+    assert legacy_view.health is AuthorityHealth.PROTECTED
+    monkeypatch.setattr(
+        SystemKeyringSecretStore,
+        "get_secret",
+        lambda _self, secret_id: legacy_secrets.get_secret(secret_id),
+    )
+    explicit_store = GuardStore(tmp_path, prime_policy_integrity=False, allow_system_keyring=True)
+
+    assert explicit_store.migrate_legacy_extension_control_authority_secrets() is True
+
+    monkeypatch.setattr(
+        SystemKeyringSecretStore,
+        "get_secret",
+        lambda _self, _secret_id: (_ for _ in ()).throw(AssertionError("passive read probed Keychain")),
+    )
+    passive_store = GuardStore(tmp_path, prime_policy_integrity=False)
+    passive_view = passive_store.read_extension_control_authority(
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
+    )
+
+    assert passive_view.health is AuthorityHealth.PROTECTED
+
+
+def test_explicit_macos_extension_authority_migration_rejects_partial_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    legacy_secrets = MemorySecretStore()
+    legacy_store = _store(tmp_path, legacy_secrets)
+    legacy_store.read_extension_control_authority(catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest)
+    anchor_ref = legacy_store._anchor_ref()
+    legacy_secrets.delete_secret(anchor_ref)
+    monkeypatch.setattr(
+        SystemKeyringSecretStore,
+        "get_secret",
+        lambda _self, secret_id: legacy_secrets.get_secret(secret_id),
+    )
+    explicit_store = GuardStore(tmp_path, prime_policy_integrity=False, allow_system_keyring=True)
+
+    assert explicit_store.migrate_legacy_extension_control_authority_secrets() is False
+
+
+def test_explicit_macos_extension_authority_spends_one_interactive_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    legacy_secrets = MemorySecretStore()
+    legacy_store = _store(tmp_path, legacy_secrets)
+    legacy_store.read_extension_control_authority(catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest)
+    interactive_reads: list[str] = []
+    bounded_reads: list[str] = []
+
+    def tracked_interactive_read(_self: SystemKeyringSecretStore, secret_id: str) -> str | None:
+        interactive_reads.append(secret_id)
+        return legacy_secrets.get_secret(secret_id)
+
+    def tracked_bounded_read(
+        _self: SystemKeyringSecretStore,
+        secret_id: str,
+        *,
+        timeout_seconds: float = 0.0,
+    ) -> str | None:
+        _ = timeout_seconds
+        bounded_reads.append(secret_id)
+        return legacy_secrets.get_secret(secret_id)
+
+    monkeypatch.setattr(SystemKeyringSecretStore, "get_secret", tracked_interactive_read)
+    monkeypatch.setattr(SystemKeyringSecretStore, "get_secret_with_timeout", tracked_bounded_read)
+    explicit_store = GuardStore(tmp_path, prime_policy_integrity=False, allow_system_keyring=True)
+
+    assert explicit_store.migrate_legacy_extension_control_authority_secrets() is True
+    assert interactive_reads == [legacy_store._key_ref()]
+    assert bounded_reads == [legacy_store._anchor_ref()]
 
 
 def test_failed_anchor_write_leaves_recoverable_prepared_transition(tmp_path: Path) -> None:
@@ -466,13 +638,65 @@ def test_transition_records_are_purpose_separated_and_replay_safe(tmp_path: Path
     assert tampered.health is AuthorityHealth.TAMPERED
 
 
+def test_v1_install_migrates_without_enrolling_or_changing_behavior(tmp_path: Path) -> None:
+    guard_home = tmp_path / "guard-home"
+    guard_home.mkdir()
+    checksum_v1 = cast(str, vars(authority_schema)["_SCHEMA_CHECKSUM_V1"])
+    with sqlite3.connect(guard_home / "guard.db") as connection:
+        connection.execute(
+            """
+            create table extension_control_schema_migration (
+                singleton integer primary key check (singleton = 1),
+                version integer not null,
+                checksum text not null
+            )
+            """
+        )
+        connection.execute(
+            "insert into extension_control_schema_migration (singleton, version, checksum) values (1, 1, ?)",
+            (checksum_v1,),
+        )
+    store = GuardStore(guard_home)
+
+    view = store.read_extension_control_authority(catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest)
+    with store._connect() as connection:
+        version = connection.execute(
+            "select version from extension_control_schema_migration where singleton = 1"
+        ).fetchone()[0]
+        snapshots = connection.execute("select count(*) from extension_control_authority_snapshot").fetchone()[0]
+
+    assert version == authority_schema.EXTENSION_CONTROL_SCHEMA_VERSION
+    assert snapshots == 0
+    assert view.health is AuthorityHealth.UNENROLLED
+
+
+def test_existing_settings_survive_authority_schema_migration_and_enrollment(tmp_path: Path) -> None:
+    update_guard_settings(tmp_path, {"mode": "enforce"})
+    before = load_guard_config(tmp_path)
+    assert not (tmp_path / "guard.db").exists()
+
+    store = _store(tmp_path, MemorySecretStore())
+    _commit(store)
+    after = load_guard_config(tmp_path)
+    authority = store.read_extension_control_authority(
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
+    )
+
+    assert after.mode == before.mode
+    assert authority.health is AuthorityHealth.PROTECTED
+    assert authority.revision == 1
+
+
 def test_extension_control_schema_rejects_future_or_gapped_versions(tmp_path: Path) -> None:
     secrets = MemorySecretStore()
     store = _store(tmp_path, secrets)
     with store._connect() as connection:
         connection.execute("update extension_control_schema_migration set version = 99 where singleton = 1")
-    with pytest.raises(ExtensionControlAuthorityError, match="schema"):
-        store.read_extension_control_authority(catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest)
+    view = store.read_extension_control_authority(catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest)
+
+    assert view.health is AuthorityHealth.TAMPERED
+    assert view.layers == ()
+    assert view.layers_for(ControlSurface.COMMAND_EVALUATION)[0].global_lockdown is True
 
 
 def test_non_protected_authority_requires_exact_trusted_surface_enum() -> None:

@@ -257,6 +257,14 @@ def _build_cloud_context(store: GuardStore) -> dict[str, object]:
     policy_defaults = policy_bundle.get("policyDefaults")
     remote_policy = _coerce_payload_dict(policy_defaults if isinstance(policy_defaults, dict) else None)
     policy_bundle_last_error = _coerce_payload_dict(store.get_sync_payload("policy_bundle_last_error"))
+    headless_sync_summary = _coerce_payload_dict(store.get_sync_payload("headless_app_sync_summary"))
+    live_request_sync_state = _coerce_payload_dict(store.get_sync_payload("guard_live_request_sync_state"))
+    cloud_auth_expired = (
+        policy_bundle_last_error.get("reason") == "auth_expired"
+        or headless_sync_summary.get("status") == "auth_expired"
+        or live_request_sync_state.get("state") == "auth_expired"
+    )
+    oauth_repair_required = oauth_repair_required or cloud_auth_expired
     sync_summary = _coerce_payload_dict(store.get_sync_payload("sync_summary"))
     last_sync_at = _optional_string(sync_summary.get("synced_at"))
     effective_connect_state = store.get_effective_guard_connect_state(now=_now())
@@ -537,8 +545,8 @@ def _cloud_state_detail(
             f"at {dashboard_url} for Home, Inbox, Fleet, Evidence, upgrades, and team workflows."
         )
     return (
-        "Receipts stay on this machine until you choose to pair Guard Cloud. "
-        f"Run `{GUARD_COMMAND} connect` when you want shared history, trust advisories, or team policy."
+        "Local Guard is active and keeps receipts on this machine. Guard Cloud is optional; "
+        f"run `{GUARD_COMMAND} connect` when you want shared history, live advisories, or team policy."
     )
 
 

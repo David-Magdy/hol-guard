@@ -12,7 +12,7 @@ $Runtime = Join-Path $Out 'runtime'
 Remove-Item -Recurse -Force $Out -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $Runtime | Out-Null
 $VersionFile = Join-Path $Out 'version-info.txt'
-python (Join-Path $PSScriptRoot 'write-version-info.py') --version $Version --output $VersionFile
+uv run --no-sync python (Join-Path $PSScriptRoot 'write-version-info.py') --version $Version --output $VersionFile
 
 uv run --no-sync pyinstaller --clean --noconfirm --onedir --name hol-guard `
     --collect-submodules codex_plugin_scanner --collect-data codex_plugin_scanner `
@@ -36,7 +36,7 @@ if (-not [string]::IsNullOrWhiteSpace($env:HOL_GUARD_SIGNTOOL_CERT_SHA1)) {
         & signtool sign /sha1 $env:HOL_GUARD_SIGNTOOL_CERT_SHA1 /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName
     }
 }
-python (Join-Path $Root 'scripts/mdm/generate-release-manifest.py') @ManifestArgs
+uv run --no-sync python (Join-Path $Root 'scripts/mdm/generate-release-manifest.py') @ManifestArgs
 
 $Msi = Join-Path $Out "hol-guard-$Version-x64.msi"
 & wix build (Join-Path $PSScriptRoot 'hol-guard.wxs') -arch x64 -d RuntimeRoot=$Runtime -o $Msi
@@ -45,7 +45,7 @@ $Msi = Join-Path $Out "hol-guard-$Version-x64.msi"
 if (-not [string]::IsNullOrWhiteSpace($env:HOL_GUARD_SIGNTOOL_CERT_SHA1)) {
     & signtool sign /sha1 $env:HOL_GUARD_SIGNTOOL_CERT_SHA1 /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $Msi
 }
-python (Join-Path $Root 'scripts/mdm/generate-sbom.py') --version $Version --output (Join-Path $Out 'sbom.cdx.json')
-python (Join-Path $Root 'scripts/mdm/write-release-evidence.py') --artifact $Msi `
+uv run --no-sync python (Join-Path $Root 'scripts/mdm/generate-sbom.py') --version $Version --output (Join-Path $Out 'sbom.cdx.json')
+uv run --no-sync python (Join-Path $Root 'scripts/mdm/write-release-evidence.py') --artifact $Msi `
     --manifest (Join-Path $Runtime 'release-manifest.json') --sbom (Join-Path $Out 'sbom.cdx.json') `
     --output (Join-Path $Out 'release-evidence.json')

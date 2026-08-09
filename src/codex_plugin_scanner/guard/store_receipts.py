@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -669,6 +670,35 @@ class StoreReceiptsRuntimeMixin:
             row = connection.execute(query, params).fetchone()
         return int(row["total"]) if row is not None else 0
 
+    def receipt_summary_between(self, *, start_at: str, before_at: str) -> dict[str, object]:
+        with self._connect() as connection:
+            if receipt_rollups_need_backfill(connection):
+                backfill_receipt_rollups(connection)
+            else:
+                reconcile_dirty_receipt_rollups(connection)
+            row = connection.execute(
+                """
+                select
+                  count(*) as total,
+                  coalesce(sum(case when s.policy_decision = 'block' then 1 else 0 end), 0) as blocked,
+                  coalesce(sum(case when s.policy_decision in ('allow', 'warn') then 1 else 0 end), 0) as approved,
+                  (select max(timestamp) from runtime_receipts) as latest_at
+                from runtime_receipts r
+                join receipt_rollup_actions s on s.receipt_id = r.receipt_id
+                where r.timestamp >= ? and r.timestamp < ?
+                """,
+                (start_at, before_at),
+            ).fetchone()
+        if row is None:
+            return {"total": 0, "blocked": 0, "approved": 0, "latest_at": None}
+        latest_at = row["latest_at"]
+        return {
+            "total": int(row["total"]),
+            "blocked": int(row["blocked"]),
+            "approved": int(row["approved"]),
+            "latest_at": str(latest_at) if isinstance(latest_at, str) and latest_at else None,
+        }
+
     def receipt_analytics(
         self,
         *,
@@ -771,6 +801,33 @@ class StoreReceiptsRuntimeMixin:
                 """,
                 (last_heartbeat_at, session_id),
             )
+
+    def try_touch_runtime_state(
+        self,
+        *,
+        session_id: str,
+        last_heartbeat_at: str,
+        timeout_seconds: float,
+    ) -> bool:
+        """Persist a heartbeat without inheriting the store's long busy timeout."""
+
+        bounded_timeout = min(max(timeout_seconds, 0.0), 1.0)
+        try:
+            with closing(sqlite3.connect(self.path, timeout=bounded_timeout)) as connection:
+                connection.execute(f"pragma busy_timeout={int(bounded_timeout * 1000)}")
+                connection.execute(
+                    """
+                    update guard_runtime_state
+                    set last_heartbeat_at = ?
+                    where state_key = 'runtime'
+                      and session_id = ?
+                    """,
+                    (last_heartbeat_at, session_id),
+                )
+                connection.commit()
+        except (OSError, sqlite3.Error):
+            return False
+        return True
 
     def get_runtime_state(self) -> dict[str, object] | None:
         with self._connect() as connection:

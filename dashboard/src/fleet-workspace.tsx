@@ -17,10 +17,25 @@ import {
   GuardHero,
   ProofStrip,
 } from "./approval-center-primitives";
-import { harnessDisplayName, isDisplayableHarness } from "./approval-center-utils";
-import { SUPPORTED_APPS_BRIEF, resolveAppInstallStatus, APP_STATUS_LABELS } from "./apps/app-catalog";
+import { harnessDisplayName } from "./approval-center-utils";
+import {
+  SUPPORTED_APPS_BRIEF,
+  resolveAppInstallStatus,
+  APP_STATUS_LABELS,
+} from "./apps/app-catalog";
+import { isConnectableAppHarness } from "./apps/harness-setup-target";
 import { protectionHealthFor } from "./protection-health";
-import type { GuardInventoryItem, GuardPolicyDecision, GuardProtectionState, GuardReceipt, GuardRuntimeSnapshot } from "./guard-types";
+import {
+  FleetProtectionRecovery,
+} from "./fleet-protection-recovery";
+import type {
+  GuardInventoryItem,
+  GuardPolicyDecision,
+  GuardProtectionAppHealth,
+  GuardProtectionState,
+  GuardReceipt,
+  GuardRuntimeSnapshot,
+} from "./guard-types";
 
 type FleetWorkspaceProps = {
   runtime: GuardRuntimeSnapshot;
@@ -33,6 +48,7 @@ type FleetWorkspaceProps = {
   onConnectHarness?: (harness: string) => void;
   onTestHarness?: (harness: string) => void;
   onRepairHarness?: (harness: string) => void;
+  onRepairProtection: (harnesses: string[]) => Promise<string>;
   onOpenAppDetail?: (harness: string) => void;
 };
 
@@ -67,10 +83,10 @@ export function resolveFleetHeroCopy(
       headline: protectionState === "partial" ? "Apps are partially protected" : "App protection is degraded",
       subheadline:
         protectionState === "partial"
-          ? "Core protection passes, but complete decision-stream evidence is not available."
-          : "One or more required protection checks failed or remain unproven.",
-      primaryCtaLabel: "Review app health",
-      primaryCtaHref: urls.dashboard_url,
+          ? "Core protection passes. Finish the remaining proofs below to reach full protection."
+          : "Some protection checks failed or remain unproven. Use the steps below to restore full protection.",
+      primaryCtaLabel: "Restore full protection",
+      primaryCtaHref: "#protection-recovery",
       secondaryCtaLabel: cloudState === "local_only" ? "Connect this machine" : "Open Cloud Devices",
       secondaryCtaHref: cloudState === "local_only" ? urls.connect_url : urls.fleet_url,
     };
@@ -117,10 +133,10 @@ export function resolveFleetHeroCopy(
 function collectHarnesses(snapshot: GuardRuntimeSnapshot): string[] {
   const harnesses = new Set<string>();
   for (const item of snapshot.items) {
-    if (isDisplayableHarness(item.harness)) harnesses.add(item.harness);
+    if (isConnectableAppHarness(item.harness)) harnesses.add(item.harness);
   }
   for (const receipt of snapshot.latest_receipts) {
-    if (isDisplayableHarness(receipt.harness)) harnesses.add(receipt.harness);
+    if (isConnectableAppHarness(receipt.harness)) harnesses.add(receipt.harness);
   }
   return Array.from(harnesses).sort((a, b) => a.localeCompare(b));
 }
@@ -129,17 +145,24 @@ function renderReceiptContext(receipt: GuardReceipt): string {
   return `${harnessDisplayName(receipt.harness)} · ${receipt.policy_decision.replace(/-/g, " ")}`;
 }
 
+function formatCount(value: number): string {
+  return value.toLocaleString();
+}
+
 type AppStatus = "protected" | "partial" | "found_unprotected" | "needs_repair" | "not_found";
 
 function resolveAppStatus(
   install: { active?: boolean } | undefined,
-  protectionState: GuardProtectionState,
+  protectionHealth: GuardProtectionAppHealth,
   hasInventory: boolean,
   hasReceipts: boolean
 ): AppStatus {
   if (install !== undefined) {
-    if (install.active && protectionState === "protected") return "protected";
-    if (install.active && protectionState === "partial") return "partial";
+    const hookCheck = protectionHealth.checks.find((check) => check.check_id === "harness_hooks");
+    if (!install.active || hookCheck?.status === "fail") return "needs_repair";
+    if (protectionHealth.state === "protected") return "protected";
+    if (protectionHealth.state === "partial") return "partial";
+    // Degraded with active hooks is not "partially protected" — treat as repair path.
     return "needs_repair";
   }
   if (!hasInventory && !hasReceipts) return "not_found";
@@ -164,7 +187,9 @@ function StatusIcon({ status }: { status: AppStatus }) {
 
 function StatusBadge({ status }: { status: AppStatus }) {
   if (status === "partial") return <span className="text-xs font-medium text-brand-blue">Partially protected</span>;
-  if (status === "needs_repair") return <span className="text-xs font-medium text-brand-attention">Degraded</span>;
+  if (status === "needs_repair") {
+    return <span className="text-xs font-medium text-brand-attention">Needs repair</span>;
+  }
   const installStatus = toInstallStatus(status);
   const label = APP_STATUS_LABELS[installStatus];
   if (installStatus === "active") return <span className="text-xs font-medium text-emerald-600">{label}</span>;
@@ -213,7 +238,7 @@ function AppRow({ harness, status, inventoryCount, policyCount, onOpenAppDetail 
         <div className="min-w-0">
           <p className="text-sm font-medium text-brand-dark">{harnessDisplayName(harness)}</p>
           <p className="text-xs text-slate-400">
-            {inventoryCount} actions · {policyCount} decisions
+            {formatCount(inventoryCount)} actions · {formatCount(policyCount)} decisions
           </p>
         </div>
       </div>
@@ -227,20 +252,25 @@ function AppRow({ harness, status, inventoryCount, policyCount, onOpenAppDetail 
 
 export function FleetWorkspace(props: FleetWorkspaceProps) {
   const harnesses = collectHarnesses(props.runtime);
-  const managedInstalls = (props.runtime.managed_installs ?? []).filter((i) => isDisplayableHarness(i.harness));
+  const managedInstalls = (props.runtime.managed_installs ?? []).filter((i) => isConnectableAppHarness(i.harness));
   const activeInstalls = managedInstalls.filter((i) => i.active);
-  const inventory = props.inventory.kind === "ready" ? props.inventory.items.filter((i) => isDisplayableHarness(i.harness)) : [];
+  const inventory = props.inventory.kind === "ready" ? props.inventory.items.filter((i) => isConnectableAppHarness(i.harness)) : [];
   const visibleHarnesses = Array.from(
     new Set([
       ...managedInstalls.map((i) => i.harness),
       ...harnesses,
       ...inventory.map((i) => i.harness),
       ...props.policies.map((p) => p.harness),
-    ].filter(isDisplayableHarness))
+    ].filter(isConnectableAppHarness))
   ).sort((a, b) => a.localeCompare(b));
   const runtimeState = props.runtime.runtime_state;
   const protectionHealth = protectionHealthFor(props.runtime);
-  const receiptHarnesses = new Set(props.runtime.latest_receipts.map((r) => r.harness).filter(isDisplayableHarness));
+  const receiptHarnesses = new Set(props.runtime.latest_receipts.map((r) => r.harness).filter(isConnectableAppHarness));
+  const repairHarness = managedInstalls.find((install) => !install.active)?.harness
+    ?? visibleHarnesses.find((harness) => protectionHealthFor(props.runtime, harness).checks.some(
+      (check) => check.check_id === "harness_hooks" && check.status === "fail"
+    ));
+  const repairHarnesses = Array.from(new Set(managedInstalls.map((install) => install.harness)));
 
   const heroCopy = resolveFleetHeroCopy(
     props.runtime.cloud_state,
@@ -259,22 +289,43 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
         status={heroCopy.status}
         headline={heroCopy.headline}
         subheadline={heroCopy.subheadline}
-        cta={<ActionButton href={heroCopy.primaryCtaHref}>{heroCopy.primaryCtaLabel}</ActionButton>}
+        cta={
+          protectionHealth.state !== "protected" ? null : (
+            <ActionButton href={heroCopy.primaryCtaHref}>{heroCopy.primaryCtaLabel}</ActionButton>
+          )
+        }
         secondaryCta={
-          <ActionButton href={heroCopy.secondaryCtaHref} variant="outline">
-            {heroCopy.secondaryCtaLabel}
-          </ActionButton>
+          protectionHealth.state !== "protected" ? null : (
+            <ActionButton href={heroCopy.secondaryCtaHref} variant="outline">
+              {heroCopy.secondaryCtaLabel}
+            </ActionButton>
+          )
         }
       />
 
       <ProofStrip
         items={[
-          { label: "Needs review", value: `${props.runtime.pending_count}`, tone: props.runtime.pending_count > 0 ? "blue" : "slate" },
-          { label: "History", value: `${props.runtime.receipt_count}`, tone: "purple" },
-          { label: "Watched apps", value: `${activeInstalls.length > 0 ? activeInstalls.length : visibleHarnesses.length}`, tone: protectionHealth.state === "protected" ? "green" : "slate" },
+          { label: "Needs review", value: formatCount(props.runtime.pending_count), tone: props.runtime.pending_count > 0 ? "blue" : "slate" },
+          { label: "History", value: formatCount(props.runtime.receipt_count), tone: "purple" },
+          { label: "Watched apps", value: formatCount(activeInstalls.length > 0 ? activeInstalls.length : visibleHarnesses.length), tone: protectionHealth.state === "protected" ? "green" : "slate" },
           { label: "Runtime", value: runtimeState ? "active" : "offline", tone: runtimeState ? "green" : "slate" },
         ]}
       />
+
+      {protectionHealth.state !== "protected" ? (
+        <FleetProtectionRecovery
+          cloudPolicy={{
+            cloudState: props.runtime.cloud_state,
+            cloudSyncState: props.runtime.cloud_sync_health.state,
+            cloudPolicySyncError: props.runtime.cloud_policy_sync_error,
+            connectUrl: props.runtime.connect_url,
+          }}
+          health={protectionHealth}
+          repairHarness={repairHarness}
+          repairHarnesses={repairHarnesses}
+          onRepairProtection={props.onRepairProtection}
+        />
+      ) : null}
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)]">
         <section>
@@ -291,7 +342,7 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
                 const harnessPolicies = props.policies.filter((p) => p.harness === harness);
                 const hasReceipts = receiptHarnesses.has(harness);
                 const appProtection = protectionHealthFor(props.runtime, harness);
-                const status = resolveAppStatus(install, appProtection.state, harnessInventory.length > 0, hasReceipts);
+                const status = resolveAppStatus(install, appProtection, harnessInventory.length > 0, hasReceipts);
                 return (
                   <AppRow
                     key={harness}

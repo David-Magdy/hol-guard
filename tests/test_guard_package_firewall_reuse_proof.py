@@ -103,7 +103,7 @@ def test_gpfr244_reuses_local_posture_builder(tmp_path: Path) -> None:
         now="2026-06-14T00:00:00+00:00",
     )
 
-    assert posture["health_status"] == "degraded"
+    assert posture["health_status"] == "local"
     assert "package_manager_protection" in posture
 
 

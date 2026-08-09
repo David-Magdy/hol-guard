@@ -35,6 +35,16 @@ from .store_command_activity_rollups import transition_command_activity_rollups
 
 _MAX_COUNTER: Final = 9_223_372_036_854_775_807
 _ERROR_CODE: Final = re.compile(r"[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*")
+COMMAND_PERSISTENCE_ERROR_DOMAIN: Final = "command"
+SHADOW_PERSISTENCE_ERROR_DOMAIN: Final = "shadow"
+MAINTENANCE_ERROR_DOMAIN: Final = "maintenance"
+_PERSISTENCE_ERROR_DOMAINS: Final = frozenset(
+    {
+        COMMAND_PERSISTENCE_ERROR_DOMAIN,
+        SHADOW_PERSISTENCE_ERROR_DOMAIN,
+        MAINTENANCE_ERROR_DOMAIN,
+    }
+)
 _EnumT = TypeVar("_EnumT", bound=Enum)
 
 
@@ -46,6 +56,7 @@ class _ConnectionOwner(Protocol):
 class CommandActivityPersistenceHealth:
     dropped_event_count: int
     persistence_error_count: int
+    active_error_count: int
     last_error_code: str | None
     last_error_at: datetime | None
     schema_version: str
@@ -157,6 +168,10 @@ class StoreCommandActivityLifecycleMixin:
             if result.rowcount != 1:
                 raise RuntimeError("command activity changed during lifecycle transition")
             transition_command_activity_rollups(connection, previous, current)
+            recover_command_activity_persistence(
+                connection,
+                error_domain=COMMAND_PERSISTENCE_ERROR_DOMAIN,
+            )
             return True
 
     def record_command_activity_persistence_failure(
@@ -181,6 +196,34 @@ class StoreCommandActivityLifecycleMixin:
                 """,
                 (_MAX_COUNTER, _MAX_COUNTER, error_code, occurred_at.isoformat()),
             )
+            error_domain = _persistence_error_domain(error_code)
+            connection.execute(
+                f"""
+                update command_activity_health_active
+                set {error_domain}_error_active = 1
+                where singleton = 1
+                """
+            )
+
+    def record_command_activity_observation_conflict(
+        self: _ConnectionOwner,
+        *,
+        occurred_at: datetime,
+    ) -> None:
+        """Retain one conflicting terminal observation without claiming a persistence outage."""
+
+        _require_utc_datetime(occurred_at)
+        with self._connect() as connection:
+            connection.execute("begin immediate")
+            connection.execute(
+                """
+                update command_activity_health
+                set dropped_event_count = min(dropped_event_count + 1, ?),
+                    last_error_code = 'post_result_conflict', last_error_at = ?
+                where singleton = 1
+                """,
+                (_MAX_COUNTER, occurred_at.isoformat()),
+            )
 
     def get_command_activity_persistence_health(
         self: _ConnectionOwner,
@@ -190,16 +233,54 @@ class StoreCommandActivityLifecycleMixin:
                 sqlite3.Row | None,
                 connection.execute("select * from command_activity_health where singleton = 1").fetchone(),
             )
-        if row is None:
+            active = cast(
+                sqlite3.Row | None,
+                connection.execute("select * from command_activity_health_active where singleton = 1").fetchone(),
+            )
+        if row is None or active is None:
             raise RuntimeError("command activity persistence health is unavailable")
         last_error_at = str(row["last_error_at"]) if row["last_error_at"] is not None else None
         return CommandActivityPersistenceHealth(
             dropped_event_count=int(row["dropped_event_count"]),
             persistence_error_count=int(row["persistence_error_count"]),
+            active_error_count=sum(
+                int(active[column])
+                for column in (
+                    "command_error_active",
+                    "shadow_error_active",
+                    "maintenance_error_active",
+                )
+            ),
             last_error_code=str(row["last_error_code"]) if row["last_error_code"] is not None else None,
             last_error_at=datetime.fromisoformat(last_error_at) if last_error_at is not None else None,
             schema_version=str(row["schema_version"]),
         )
+
+
+def recover_command_activity_persistence(
+    connection: sqlite3.Connection,
+    *,
+    error_domain: str,
+) -> None:
+    """Clear only the active error class recovered by this successful operation."""
+
+    if error_domain not in _PERSISTENCE_ERROR_DOMAINS:
+        raise ValueError("invalid persistence error domain")
+    connection.execute(
+        f"""
+        update command_activity_health_active
+        set {error_domain}_error_active = 0
+        where singleton = 1
+        """
+    )
+
+
+def _persistence_error_domain(error_code: str) -> str:
+    if error_code == "maintenance_failed":
+        return MAINTENANCE_ERROR_DOMAIN
+    if error_code == "shadow_evaluation_failed":
+        return SHADOW_PERSISTENCE_ERROR_DOMAIN
+    return COMMAND_PERSISTENCE_ERROR_DOMAIN
 
 
 def _select_by_request_correlation(

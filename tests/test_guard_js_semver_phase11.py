@@ -18,6 +18,74 @@ from codex_plugin_scanner.guard.runtime.supply_chain_package_eval import (
     _exact_version,  # pyright: ignore[reportPrivateUsage]
 )
 
+SEMVER_ORDINARY_RANGE_CASES = (
+    ("1.2.3-beta.1", "^1.2.0", False),
+    ("1.2.3-beta.1", "~1.2.0", False),
+    ("1.2.3-beta.1", ">=1.2.0 <2.0.0", False),
+    ("1.2.3-beta.1", "*", False),
+    ("1.3.0-beta.1", "^1.2.3", False),
+    ("1.2.3-beta.1", "", False),
+    ("1.2.3-beta.1", "latest", False),
+    ("1.2.3", "^1.2.0", True),
+    ("1.9.9", ">=1.2.0 <2.0.0", True),
+    ("2.0.0", "*", True),
+    ("2.0.0", "", True),
+    ("2.0.0+linux.x64", "latest", True),
+)
+
+SEMVER_PRERELEASE_BASE_CASES = (
+    ("1.2.3-beta.1", "1.2.3-beta.1", True),
+    ("1.2.3-beta.1+build.9", "=1.2.3-beta.1+build.2", True),
+    ("1.2.3-beta.2", ">=1.2.3-beta.1 <2.0.0", True),
+    ("1.2.3-rc.1", "^1.2.3-beta.1", True),
+    ("1.2.3-beta.2", "~1.2.3-beta.1", True),
+    ("0.0.0-beta.2", ">=0.0.0-alpha.1 >=0.0.0", True),
+    ("0.0.0-beta.2", "0 >=0.0.0-alpha.1", True),
+    ("1.2.3", ">=1.2.3-beta.1 <2.0.0", True),
+    ("1.2.4-beta.1", ">=1.2.3-beta.1 <2.0.0", False),
+    ("1.3.0-beta.1", "~1.2.3-beta.1", False),
+    ("2.0.0-beta.1", "^1.2.3-beta.1", False),
+)
+
+SEMVER_OR_CLAUSE_CASES = (
+    ("1.2.3-beta.2", ">=1.2.3-beta.1 <1.2.3 || >=2.0.0 <3.0.0", True),
+    ("2.1.0-alpha.2", ">=1.2.3-beta.1 <1.2.3 || >=2.0.0 <3.0.0", False),
+    ("2.1.0-alpha.2", ">=1.2.3-beta.1 <1.2.3 || >=2.1.0-alpha.1 <3.0.0", True),
+    ("3.1.0-alpha.1", ">=1.2.3-beta.1 <2.0.0 || >=3.0.0 <4.0.0", False),
+)
+
+SEMVER_ZERO_MAJOR_CASES = (
+    ("0.2.9", "^0.2.3", True),
+    ("0.3.0", "^0.2.3", False),
+    ("0.2.3-beta.2", "^0.2.3-beta.1", True),
+    ("0.2.4-beta.1", "^0.2.3-beta.1", False),
+    ("0.2.4", "^0.2.3-beta.1", True),
+    ("0.0.3", "^0.0.3", True),
+    ("0.0.4", "^0.0.3", False),
+    ("0.0.8", "^0.0", True),
+    ("0.1.0", "^0.0", False),
+)
+
+SEMVER_SUPPORTED_RANGE_CASES = (
+    ("1.2.9", "~1.2.3", True),
+    ("1.3.0", "~1.2.3", False),
+    ("1.8.0", "~1", True),
+    ("2.0.0", "~1", False),
+    ("1.2.9", "1.2.x", True),
+    ("1.2.9", "1.2", True),
+    ("1.9.0", "1.x", True),
+    ("2.0.0", "1.x", False),
+    ("1.2.9", ">1.2", False),
+    ("1.3.0", ">1.2", True),
+    ("1.2.9", "<=1.2", True),
+    ("1.3.0", "<=1.2", False),
+    ("1.2.3", "1.2.3 - 2.3.4", True),
+    ("2.3.4", "1.2.3 - 2.3.4", True),
+    ("2.3.5", "1.2.3 - 2.3.4", False),
+    ("2.3.9", "1.2 - 2.3", True),
+    ("2.4.0", "1.2 - 2.3", False),
+)
+
 
 @pytest.mark.parametrize(
     ("version", "selector", "expected"),

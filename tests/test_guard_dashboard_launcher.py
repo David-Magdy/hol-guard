@@ -436,7 +436,7 @@ class TestOpenDashboardSurfaceException:
     """If ``GuardSurfaceRuntime.ensure_surface()`` raises (e.g. due to an
     unexpected internal error), ``open_dashboard`` must normalize the failure
     into a clean redacted error payload instead of propagating the exception
-    to the caller (which would crash the tray's open callback)."""
+    to the caller (which would surface an unhandled local UI callback error)."""
 
     def test_surface_exception_returns_dashboard_open_failed(self, tmp_path: Path) -> None:
         mock_store = MagicMock()

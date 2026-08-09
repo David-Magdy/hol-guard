@@ -5,7 +5,7 @@ from __future__ import annotations
 # pyright: reportAttributeAccessIssue=false
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
@@ -338,7 +338,91 @@ def _normalized_delivery_binding(
     return values
 
 
+def _requeue_pending_live_requests(
+    connection: sqlite3.Connection,
+    *,
+    source: str,
+    changed_at: str,
+) -> int:
+    connection.execute("begin immediate")
+    binding = _live_request_oauth_binding(connection, source)
+    connection.execute(
+        """
+        delete from guard_live_request_outbox
+        where local_request_id in (
+          select request_id
+          from approval_requests
+          where status = 'pending' and oauth_source = ?
+        )
+        """,
+        (source,),
+    )
+    values = binding or {
+        "oauth_subject_hash": None,
+        "workspace_id": None,
+        "machine_id": None,
+        "machine_installation_id": None,
+    }
+    cursor = connection.execute(
+        """
+        insert into guard_live_request_outbox (
+          local_request_id,
+          changed_at,
+          oauth_source,
+          oauth_subject_hash,
+          workspace_id,
+          machine_id,
+          machine_installation_id
+        )
+        select request_id, ?, ?, ?, ?, ?, ?
+        from approval_requests
+        where status = 'pending' and oauth_source = ?
+        order by coalesce(last_seen_at, created_at), request_id
+        """,
+        (
+            changed_at,
+            source,
+            values["oauth_subject_hash"],
+            values["workspace_id"],
+            values["machine_id"],
+            values["machine_installation_id"],
+            source,
+        ),
+    )
+    return max(0, int(cursor.rowcount if cursor.rowcount is not None else 0))
+
+
 class StoreLiveRequestOutboxMixin:
+    def requeue_pending_live_requests(self, *, changed_at: str) -> int:
+        """Republish pending requests after a cloud-visible privacy change."""
+
+        with self._connect() as connection:
+            return _requeue_pending_live_requests(connection, source=self._guard_source, changed_at=changed_at)
+
+    def requeue_pending_live_requests_with_marker(
+        self,
+        *,
+        changed_at: str,
+        marker_key: str,
+        marker_payload: Mapping[str, object],
+    ) -> int:
+        """Atomically republish pending requests and advance their projection marker."""
+
+        with self._connect() as connection:
+            requeued = _requeue_pending_live_requests(connection, source=self._guard_source, changed_at=changed_at)
+            payload = {**marker_payload, "requeued": requeued}
+            connection.execute(
+                """
+                insert into sync_state (state_key, payload_json, updated_at)
+                values (?, ?, ?)
+                on conflict(state_key) do update set
+                  payload_json = excluded.payload_json,
+                  updated_at = excluded.updated_at
+                """,
+                (marker_key, json.dumps(payload), changed_at),
+            )
+            return requeued
+
     def get_live_request_oauth_binding(self) -> dict[str, str] | None:
         """Return the complete non-secret binding for this store source."""
         with self._connect() as connection:
@@ -396,7 +480,7 @@ class StoreLiveRequestOutboxMixin:
         approved_source: str,
         approved_workspace_id: str,
     ) -> int:
-        """Explicitly bind legacy ambiguous rows after operator confirmation."""
+        """Bind same-workspace quarantined rows after explicit confirmation."""
         if approved_source.strip() != self._guard_source:
             raise ValueError("approved source does not match the active Guard connection source")
         with self._connect() as connection:
@@ -417,16 +501,46 @@ class StoreLiveRequestOutboxMixin:
                 """
                 insert or ignore into guard_quarantined_live_request_ids (local_request_id)
                 select request_id
-                from approval_requests
-                where oauth_source is null
-                  and request_id not in (
-                    select local_request_id
-                    from guard_live_request_outbox
-                    where oauth_source is not null
+                from approval_requests as requests
+                where requests.oauth_source is null
+                  and requests.workspace = ?
+                  and not exists (
+                    select 1
+                    from guard_live_request_outbox as outbox
+                    where outbox.local_request_id = requests.request_id
                   )
                 union
-                select local_request_id from guard_live_request_outbox where oauth_source is null
-                """
+                select local_request_id
+                from guard_live_request_outbox as outbox
+                where outbox.oauth_source is null
+                  and (outbox.workspace_id is null or outbox.workspace_id = ?)
+                  and exists (
+                    select 1
+                    from approval_requests as requests
+                    where requests.request_id = outbox.local_request_id
+                      and requests.workspace = ?
+                  )
+                union
+                select local_request_id
+                from guard_live_request_outbox
+                where oauth_source = ?
+                  and workspace_id = ?
+                  and (
+                    oauth_subject_hash is not ?
+                    or machine_id is not ?
+                    or machine_installation_id is not ?
+                  )
+                """,
+                (
+                    binding["workspace_id"],
+                    binding["workspace_id"],
+                    binding["workspace_id"],
+                    self._guard_source,
+                    binding["workspace_id"],
+                    binding["oauth_subject_hash"],
+                    binding["machine_id"],
+                    binding["machine_installation_id"],
+                ),
             )
             row = connection.execute("select count(*) as total from guard_quarantined_live_request_ids").fetchone()
             reassigned = int(row["total"] if row is not None else 0)
@@ -436,7 +550,10 @@ class StoreLiveRequestOutboxMixin:
                 set oauth_source = ?, oauth_subject_hash = ?, workspace_id = ?,
                     machine_id = ?, machine_installation_id = ?
                 where local_request_id in (select local_request_id from guard_quarantined_live_request_ids)
-                  and oauth_source is null
+                  and (
+                    oauth_source is null
+                    or (oauth_source = ? and workspace_id = ?)
+                  )
                 """,
                 (
                     self._guard_source,
@@ -444,6 +561,8 @@ class StoreLiveRequestOutboxMixin:
                     binding["workspace_id"],
                     binding["machine_id"],
                     binding["machine_installation_id"],
+                    self._guard_source,
+                    binding["workspace_id"],
                 ),
             )
             connection.execute(
@@ -687,7 +806,13 @@ class StoreLiveRequestOutboxMixin:
                     then 1
                     else 0
                   end) as identity_mismatch_depth,
-                  sum(case when oauth_source is null then 1 else 0 end) as legacy_unbound_depth
+                  sum(case when oauth_source is null then 1 else 0 end) as legacy_unbound_depth,
+                  sum(case
+                    when oauth_source is null
+                      and (workspace_id is null or (? is not null and workspace_id = ?))
+                    then 1
+                    else 0
+                  end) as repairable_legacy_unbound_depth
                 from guard_live_request_outbox
                 """,
                 (
@@ -701,11 +826,16 @@ class StoreLiveRequestOutboxMixin:
                     complete_binding[0] if complete_binding is not None else None,
                     complete_binding[2] if complete_binding is not None else None,
                     complete_binding[3] if complete_binding is not None else None,
+                    workspace_id,
+                    workspace_id,
                 ),
             ).fetchone()
         unbound_depth = int(diagnostic_row["unbound_depth"] or 0) if diagnostic_row is not None else 0
         other_workspace_depth = int(diagnostic_row["other_workspace_depth"] or 0) if diagnostic_row is not None else 0
         legacy_unbound_depth = int(diagnostic_row["legacy_unbound_depth"] or 0) if diagnostic_row is not None else 0
+        repairable_legacy_unbound_depth = (
+            int(diagnostic_row["repairable_legacy_unbound_depth"] or 0) if diagnostic_row is not None else 0
+        )
         identity_mismatch_depth = (
             int(diagnostic_row["identity_mismatch_depth"] or 0) if diagnostic_row is not None else 0
         )
@@ -737,5 +867,6 @@ class StoreLiveRequestOutboxMixin:
             "other_workspace_depth": other_workspace_depth,
             "identity_mismatch_depth": identity_mismatch_depth,
             "legacy_unbound_depth": legacy_unbound_depth,
+            "repairable_legacy_unbound_depth": repairable_legacy_unbound_depth,
             "checked_at": now,
         }

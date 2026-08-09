@@ -26,7 +26,11 @@ from ..runtime.approval_context import (
 )
 from ..runtime.command_extensions import risk_classes_for_command_action
 from ..runtime.github_workflow_approval_record import GitHubWorkflowApprovalRecord
-from ..store import _runtime_scoped_exact_match_key, runtime_tool_action_exact_match_context
+from ..store import (
+    _runtime_scoped_exact_match_key,
+    runtime_tool_action_exact_match_context,
+    runtime_tool_action_portable_match_context,
+)
 from ..text import ensure_terminal_punctuation as _ensure_terminal_punctuation
 from ._commands_shared import *
 from .commands_parser_helpers import *
@@ -133,6 +137,7 @@ def _native_approval_center_context(response_payload: dict[str, object], *, harn
         "kimi": "Kimi",
         "grok": "Grok",
         "pi": "Pi",
+        "omp": "Oh My Pi",
     }.get(canonical_harness, "the harness")
     if canonical_harness in {
         "npm",
@@ -194,7 +199,12 @@ def _localize_decision_v2_review_copy(decision_v2: dict[str, object], review_con
         decision_v2["harness_message"] = _approval_center_routed_message(harness_message, review_context)
     action = _optional_string(decision_v2.get("action"))
     if action in {"ask", "block"}:
-        decision_v2["retry_instruction"] = review_context
+        retry_instruction = _optional_string(decision_v2.get("retry_instruction"))
+        decision_v2["retry_instruction"] = (
+            _approval_center_routed_message(retry_instruction, review_context)
+            if retry_instruction is not None and "hol-guard connect" in retry_instruction
+            else review_context
+        )
 
 def _approval_center_routed_message(message: str, review_context: str) -> str:
     normalized = _strip_cloud_inbox_urls(message)
@@ -367,6 +377,10 @@ def _runtime_stored_policy_decision(
                 for key in (
                     _runtime_scoped_exact_match_key(artifact_id),
                     _runtime_scoped_exact_match_key(artifact_id, runtime_exact_match_context),
+                    _runtime_scoped_exact_match_key(
+                        artifact_id,
+                        runtime_tool_action_portable_match_context(runtime_exact_match_context),
+                    ),
                 )
                 if key is not None
             }
@@ -758,6 +772,8 @@ def _runtime_artifact_exact_match_context(artifact: GuardArtifact) -> str | None
     if artifact.artifact_type != "tool_action_request":
         return None
     raw_command_text = artifact.metadata.get("raw_command_text")
+    if not isinstance(raw_command_text, str) or not raw_command_text:
+        raw_command_text = artifact.command
     wrapper_chain = artifact.metadata.get("wrapper_chain")
     normalized_wrapper_chain = (
         wrapper_chain if isinstance(wrapper_chain, Sequence) and not isinstance(wrapper_chain, str) else None
@@ -778,13 +794,23 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
         artifact.publisher,
     )
     command_action_floor = _runtime_artifact_command_action_floor(artifact)
+    pytest_restricted_sandbox = (
+        artifact.metadata.get("action_class") == "pytest repository-code execution"
+        and artifact.metadata.get("reason_code") == "pytest_restricted_profile_required"
+        and isinstance(artifact.metadata.get("restricted_profile_version"), str)
+    )
 
     def with_config_policy(action: GuardAction) -> GuardAction:
         # Artifact/publisher/harness settings are more-specific resolutions of
         # the global default, not additional inputs.  Scanner/risk results are
         # independent and therefore remain a floor even for an exact allow.
         current_config_action = configured_override if configured_override is not None else config.default_action
-        actions = (action, current_config_action, command_action_floor)
+        effective_command_floor = (
+            None
+            if action == "sandbox-required" and pytest_restricted_sandbox
+            else command_action_floor
+        )
+        actions = (action, current_config_action, effective_command_floor)
         return most_restrictive_guard_action(*(item for item in actions if item is not None))
 
     risk_classes = _runtime_artifact_risk_classes(artifact)
@@ -801,6 +827,10 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
         if resolved_actions:
             return with_config_policy(most_restrictive_guard_action(*resolved_actions))
     guard_default_action = _runtime_artifact_guard_default_action(artifact)
+    if (
+        guard_default_action == "sandbox-required" and pytest_restricted_sandbox
+    ):
+        return with_config_policy(guard_default_action)
     risk_actions = [resolve_risk_action(config, risk_class, harness=canonical_harness) for risk_class in risk_classes]
     resolved_actions = [action for action in risk_actions if coerce_guard_action(action) is not None]
     if resolved_actions:
@@ -814,7 +844,6 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
     if guard_default_action is not None:
         return with_config_policy(guard_default_action)
     return with_config_policy(SAFE_CHANGED_HASH_ACTION)
-
 def _resolve_configured_risk_action(config: GuardConfig, risk_class: str, *, harness: str) -> str | None:
     if config.harness_risk_actions is not None:
         harness_actions = config.harness_risk_actions.get(harness)
@@ -829,8 +858,6 @@ def _runtime_artifact_guard_default_action(artifact: GuardArtifact) -> GuardActi
     return normalize_guard_action(value, unknown_action="require-reapproval") if value is not None else None
 
 def _runtime_artifact_command_action_floor(artifact: GuardArtifact) -> GuardAction | None:
-    if artifact.artifact_type != "tool_action_request":
-        return None
     if "command_action_floor" not in artifact.metadata:
         return None
     return normalize_guard_action(artifact.metadata.get("command_action_floor"), unknown_action="block")

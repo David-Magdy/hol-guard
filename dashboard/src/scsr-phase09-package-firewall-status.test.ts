@@ -40,6 +40,14 @@ const phase11Payload = normalizePackageFirewallStatus({
 
 assert(phase11Payload.detected_managers.length === 2, "SCSR151: detected managers surface on status response");
 assert(
+  phase11Payload.protection?.detected_managers?.join(",") === "npm,pnpm",
+  "SCSR151: firewall protection forwards detected managers",
+);
+assert(
+  phase11Payload.protection?.unprotected_managers.join(",") === "pnpm",
+  "SCSR151: firewall protection excludes supported-but-undetected managers from remediation",
+);
+assert(
   phase11Payload.last_audit_proof_at === "2026-06-07T12:00:00Z",
   "SCSR151: last audit proof timestamp surfaces on status response",
 );
@@ -70,6 +78,8 @@ const nestedPayload = normalizePackageFirewallStatus({
     tested_managers: ["npm"],
     path_broken_managers: [],
     path_status: "restart_required",
+    process_path_status: "profile_staged",
+    process_restart_required: true,
     last_intercept_proof_at: {
       npm: "2026-06-07T10:00:00Z",
     },
@@ -96,6 +106,14 @@ assert(
 assert(
   nestedNpm?.last_intercept_proof_at === "2026-06-07T10:00:00Z",
   "SCSR151: snake_case intercept proof map is read",
+);
+assert(
+  nestedPayload.protection?.process_path_status === "profile_staged",
+  "SCSR151: staged profile status remains distinct from a missing activation",
+);
+assert(
+  nestedPayload.protection?.process_restart_required === true,
+  "SCSR151: dashboard retains the process restart signal",
 );
 
 const pathBrokenSummaryPayload = normalizePackageFirewallStatus({
@@ -141,6 +159,14 @@ assert(
 assert(
   hiddenManagerPayload.package_shims[0]?.manager === "npm",
   "SCSR151: only detected managers render in shim list",
+);
+assert(
+  hiddenManagerPayload.protection?.detected_managers?.join(",") === "npm",
+  "SCSR151: hidden support-matrix managers do not enter protection coverage",
+);
+assert(
+  hiddenManagerPayload.protection?.unprotected_managers.join(",") === "npm",
+  "SCSR151: only detected unprotected managers require remediation",
 );
 
 console.log("scsr-phase09-package-firewall-status.test.ts: all assertions passed");

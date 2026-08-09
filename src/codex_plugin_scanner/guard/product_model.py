@@ -44,10 +44,12 @@ CANONICAL_HARNESS_VALUES = (
     "opencode",
     "copilot",
     "cursor",
+    "cline",
     "gemini",
     "hermes",
     "openclaw",
     "pi",
+    "omp",
 )
 SUPPORTED_HARNESS_VALUES = tuple(contract.harness for contract in HARNESS_CONTRACTS)
 ACTION_CATEGORY_VALUES: tuple[ActionCategory, ...] = (
@@ -218,6 +220,7 @@ LOCAL_ROUTE_OWNERSHIP = (
         auth_required=True,
         writes_state=True,
     ),
+    RouteOwnership(route="/extensions", persona=("solo", "team_manager"), auth_required=True, writes_state=True),
     RouteOwnership(route="/supply-chain", persona=("solo", "security_lead"), auth_required=True, writes_state=True),
     RouteOwnership(route="/audit", persona=("solo", "security_lead"), auth_required=True, writes_state=True),
     RouteOwnership(route="/policy", persona=("solo", "team_manager"), auth_required=True, writes_state=True),
@@ -351,6 +354,7 @@ LOCAL_API_OWNERSHIP = (
         writes_state=True,
     ),
     ApiOwnership(path="/v1/daemon/repair", method="POST", category="config", auth_required=True, writes_state=True),
+    ApiOwnership(path="/v1/protection/repair", method="POST", category="config", auth_required=True, writes_state=True),
     ApiOwnership(path="/v1/settings", method="GET", category="config", auth_required=True, writes_state=False),
     ApiOwnership(path="/v1/settings", method="POST", category="config", auth_required=True, writes_state=True),
     ApiOwnership(path="/v1/settings/export", method="GET", category="config", auth_required=True, writes_state=False),

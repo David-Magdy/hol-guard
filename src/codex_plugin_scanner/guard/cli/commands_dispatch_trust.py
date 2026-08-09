@@ -103,14 +103,17 @@ def _now() -> str:
     return _shared_now()
 
 
-def _require_guard_store(store: GuardStore | None) -> GuardStore:
-    from ._commands_shared import _require_guard_store as _shared_require_guard_store
-
-    return _shared_require_guard_store(store)
-
-
-def _trust_status_payload(store: GuardStore, *, command: str, backend: str) -> dict[str, object]:
-    resolved = resolve_passive_trust_state(store, backend_requested=backend)
+def _trust_status_payload(
+    store: GuardStore | None,
+    *,
+    guard_home: Path | None = None,
+    command: str,
+    backend: str,
+) -> dict[str, object]:
+    resolved_guard_home = guard_home or (store.guard_home if store is not None else None)
+    if resolved_guard_home is None:
+        raise ValueError("guard_home is required")
+    resolved = resolve_passive_trust_state(store, guard_home=resolved_guard_home, backend_requested=backend)
     trust_status = resolved.trust_status.to_dict()
     degraded_reasons = trust_status.get("degraded_reasons")
     reasons = (
@@ -286,8 +289,21 @@ def _passive_read_guarantee() -> str:
 
 
 def build_trust_doctor_payload(store: GuardStore, *, backend: str = "auto") -> dict[str, object]:
-    payload = _trust_status_payload(store, command="doctor", backend=backend)
-    approval_center = _approval_center_status_payload(store.guard_home)
+    payload = _trust_status_payload(
+        store,
+        guard_home=store.guard_home,
+        command="doctor",
+        backend=backend,
+    )
+    return build_trust_doctor_payload_from_status(payload, guard_home=store.guard_home)
+
+
+def build_trust_doctor_payload_from_status(
+    payload: dict[str, object],
+    *,
+    guard_home: Path,
+) -> dict[str, object]:
+    approval_center = _approval_center_status_payload(guard_home)
     install_info = _installed_trust_cli_payload()
     remembered_rules = str(payload.get("remembered_rules") or "unknown")
     runtime_protection = str(payload.get("runtime_protection") or "unknown")
@@ -316,11 +332,11 @@ def build_trust_doctor_payload(store: GuardStore, *, backend: str = "auto") -> d
         [
             "Use one-time approvals for local-only work.",
             "Use Guard Cloud policies for durable team exceptions.",
-            "Run `hol-guard guard trust test --no-ui --json` to verify passive checks stay prompt-free.",
+            "Run `hol-guard trust test --no-ui --json` to verify passive checks stay prompt-free.",
         ]
         if remembered_rules != "enforced"
         else [
-            "Run `hol-guard guard trust test --no-ui --json` after Guard updates.",
+            "Run `hol-guard trust test --no-ui --json` after Guard updates.",
             "Use Guard Cloud policies for team-wide exceptions.",
         ]
     )
@@ -401,7 +417,12 @@ def build_trust_explain_payload(store: GuardStore, *, rule_id: int, backend: str
             "rule_id": rule_id,
             "error": f"Remembered rule {rule_id} was not found.",
         }
-    trust_payload = _trust_status_payload(store, command="explain", backend=backend)
+    trust_payload = _trust_status_payload(
+        store,
+        guard_home=store.guard_home,
+        command="explain",
+        backend=backend,
+    )
     rule_status, rule_status_label, rule_status_reason = _trust_rule_authority(
         decision,
         trust_status=trust_payload,
@@ -436,18 +457,30 @@ def _run_guard_trust_command(
     input_text: str | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
-    del guard_home, workspace, context, config, input_text, output_stream
-    store = _require_guard_store(store)
+    del workspace, context, config, input_text, output_stream
+    if guard_home is None and store is not None:
+        guard_home = store.guard_home
+    if guard_home is None:
+        raise ValueError("guard_home is required")
     trust_command = getattr(args, "trust_command", None) or "status"
     backend = str(getattr(args, "backend", None) or "auto")
-    payload = (
-        build_trust_doctor_payload(store, backend=backend)
-        if trust_command == "doctor"
-        else _trust_status_payload(store, command=trust_command, backend=backend)
-    )
     if trust_command in {"status", "doctor"}:
+        payload = _trust_status_payload(
+            None,
+            guard_home=guard_home,
+            command=trust_command,
+            backend=backend,
+        )
+        if trust_command == "doctor":
+            payload = build_trust_doctor_payload_from_status(payload, guard_home=guard_home)
         _emit_trust_payload(f"trust.{trust_command}", payload, getattr(args, "json", False))
         return 0
+    store = store or GuardStore(
+        guard_home,
+        prime_policy_integrity=False,
+        allow_system_keyring=trust_command in {"setup", "reset"} and backend == "macos-native",
+    )
+    payload = _trust_status_payload(store, guard_home=guard_home, command=trust_command, backend=backend)
     if trust_command == "test":
         if not bool(getattr(args, "no_ui", False)):
             payload["error"] = "Use --no-ui so Guard can prove this probe will not open an OS credential prompt."
@@ -466,7 +499,7 @@ def _run_guard_trust_command(
                 {
                     "generated_at": _now(),
                     "command": "explain",
-                    "error": "Use `hol-guard guard trust explain --rule <decision_id>`.",
+                    "error": "Use `hol-guard trust explain --rule <decision_id>`.",
                 },
                 getattr(args, "json", False),
             )
@@ -549,13 +582,13 @@ def _run_guard_trust_command(
                 "and broad remembered local rules are limited."
             )
             payload["next_action"] = (
-                "Run `hol-guard guard trust setup --backend macos-native --json` to protect local rules again."
+                "Run `hol-guard trust setup --backend macos-native --json` to protect local rules again."
             )
         _emit_trust_payload(f"trust.{trust_command}", payload, getattr(args, "json", False))
         return 0
     _emit_trust_payload(
         "trust",
-        {"error": "Use: hol-guard guard trust status|doctor|test|setup|reset"},
+        {"error": "Use: hol-guard trust status|doctor|test|setup|reset"},
         getattr(args, "json", False),
     )
     return 2

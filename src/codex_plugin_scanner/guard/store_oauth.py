@@ -11,6 +11,45 @@ from .store_base import *
 
 
 class StoreOAuthConnectMixin:
+    def legacy_macos_oauth_secret_migration_required(self) -> bool:
+        """Return whether authenticated OAuth metadata lacks its local vault copy."""
+
+        if sys.platform != "darwin":
+            return False
+        payload = self.get_sync_payload(self._oauth_local_credentials_state_key)
+        if not isinstance(payload, dict):
+            return False
+        secret_ref = _string_value(payload.get(_OAUTH_LOCAL_CREDENTIALS_REF_KEY))
+        secret_hash = _string_value(payload.get(_OAUTH_LOCAL_CREDENTIALS_HASH_KEY))
+        if secret_ref is None or secret_hash is None:
+            return False
+        fallback = self._resolve_oauth_fallback_store()
+        return fallback is not None and fallback.get_secret(secret_ref) is None
+
+    def migrate_legacy_macos_oauth_secret(self, *, allow_interactive: bool = True) -> bool:
+        """Mirror legacy Keychain OAuth state during an explicit action."""
+
+        if not self._allow_system_keyring or not self.legacy_macos_oauth_secret_migration_required():
+            return False
+        payload = self.get_sync_payload(self._oauth_local_credentials_state_key)
+        assert isinstance(payload, dict)
+        secret_ref = _string_value(payload.get(_OAUTH_LOCAL_CREDENTIALS_REF_KEY))
+        secret_hash = _string_value(payload.get(_OAUTH_LOCAL_CREDENTIALS_HASH_KEY))
+        assert secret_ref is not None and secret_hash is not None
+        secret_store = self._oauth_secret_store
+        if not allow_interactive and isinstance(secret_store, MigratingFallbackSecretStore):
+            secret_json = secret_store.get_secret_no_ui(secret_ref)
+        else:
+            secret_json = self._get_secret_from_store(secret_store, secret_ref)
+        if (
+            secret_json is None
+            or not _secret_matches_hash(secret_json, secret_hash)
+            or self._parse_oauth_secret_payload(secret_json) is None
+        ):
+            return False
+        self._remember_oauth_secret_payload(secret_ref, secret_hash, secret_json)
+        return True
+
     def get_cloud_sync_profile(self) -> dict[str, str] | None:
         oauth_payload = self.get_sync_payload(self._oauth_local_credentials_state_key)
         if not isinstance(oauth_payload, dict) and self.repair_oauth_local_credential_storage_from_primary():
@@ -234,21 +273,26 @@ class StoreOAuthConnectMixin:
         return self._build_oauth_local_credentials_result(metadata=metadata, secret_payload=secret_payload)
 
     def clear_oauth_local_credentials(self) -> None:
-        self._clear_oauth_secret_payload_cache()
-        payload = self.get_sync_payload(self._oauth_local_credentials_state_key)
-        if isinstance(payload, dict):
-            secret_ref = payload.get(_OAUTH_LOCAL_CREDENTIALS_REF_KEY)
-            if isinstance(secret_ref, str) and secret_ref:
-                self._oauth_secret_store.delete_secret(secret_ref)
-                if sys.platform == "darwin":
-                    legacy_fallback = EncryptedFileSecretStore(self.guard_home)
-                    legacy_path = legacy_fallback._path_for(secret_ref)
-                    with suppress(OSError):
-                        legacy_path.unlink()
-        self.delete_sync_payload(self._oauth_local_credentials_state_key)
-        # A capability is bound to one exact OAuth device/workspace grant. It
-        # must never survive disconnect and silently authorize a later grant.
-        self.delete_sync_payloads(list(_GUARD_CLOUD_COMMAND_STATE_KEYS))
+        with self.hold_oauth_refresh_lock():
+            self._clear_oauth_local_credentials_locked()
+
+    def _clear_oauth_local_credentials_locked(self) -> None:
+        with self.hold_oauth_credential_lock():
+            self._clear_oauth_secret_payload_cache()
+            payload = self.get_sync_payload(self._oauth_local_credentials_state_key)
+            if isinstance(payload, dict):
+                secret_ref = payload.get(_OAUTH_LOCAL_CREDENTIALS_REF_KEY)
+                if isinstance(secret_ref, str) and secret_ref:
+                    self._oauth_secret_store.delete_secret(secret_ref)
+                    if sys.platform == "darwin":
+                        legacy_fallback = EncryptedFileSecretStore(self.guard_home)
+                        legacy_path = legacy_fallback._path_for(secret_ref)
+                        with suppress(OSError):
+                            legacy_path.unlink()
+            self.delete_sync_payload(self._oauth_local_credentials_state_key)
+            # A capability is bound to one exact OAuth device/workspace grant. It
+            # must never survive disconnect and silently authorize a later grant.
+            self.delete_sync_payloads(list(_GUARD_CLOUD_COMMAND_STATE_KEYS))
 
     def get_oauth_local_credential_health(self) -> dict[str, object]:
         payload = self.get_sync_payload(self._oauth_local_credentials_state_key)
@@ -606,17 +650,11 @@ class StoreOAuthConnectMixin:
         if cached_secret_payload is not None:
             return cached_secret_payload
         fallback_secret_json = self._load_oauth_fallback_secret_json(secret_ref)
-        skip_fallback_first = (
-            sys.platform == "darwin"
-            and isinstance(self._oauth_secret_store, FallbackSecretStore)
-            and isinstance(self._oauth_secret_store.primary, SystemKeyringSecretStore)
-        )
         fallback_secret_payload = self._load_validated_oauth_fallback_secret_payload(
             fallback_secret_json,
             secret_hash,
         )
-        prefer_primary_over_fallback = skip_fallback_first and allow_primary
-        if fallback_secret_payload is not None and not prefer_primary_over_fallback:
+        if fallback_secret_payload is not None:
             self._remember_oauth_secret_payload(secret_ref, secret_hash, fallback_secret_json)
             return fallback_secret_payload
         if not allow_primary:
@@ -887,7 +925,6 @@ class StoreOAuthConnectMixin:
                     select request_id
                     from guard_connect_states
                     where status in ('connected', 'retry_required')
-                      and milestone != 'first_sync_succeeded'
                     order by updated_at desc
                     limit 1
                     """

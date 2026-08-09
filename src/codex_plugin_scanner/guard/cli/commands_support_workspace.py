@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 from ._commands_shared import *
 from .commands_parser_helpers import *
+from ..browser_opener import open_browser_url
 
 def _add_guard_common_args(
     parser: argparse.ArgumentParser,
@@ -142,16 +143,6 @@ def _build_init_plan(args: argparse.Namespace) -> list[dict[str, object]]:
             "command": "hol-guard doctor --notifications --force-notification-settings",
             "skip_flag": "skip_notifications",
         },
-        {
-            "id": "tray",
-            "title": "Install menu bar / tray icon",
-            "detail": (
-                "Adds a persistent HOL Guard icon to your menu bar (macOS) or system tray (Windows/Linux) "
-                "so you can open the dashboard without the terminal. Starts at login and can be toggled off later."
-            ),
-            "command": "hol-guard guard tray install && hol-guard guard tray start",
-            "skip_flag": "skip_tray",
-        },
     ]
 
 def _print_init_plan_preview(plan: list[dict[str, object]]) -> None:
@@ -235,7 +226,6 @@ def _run_init_command(
     apps_payload: dict[str, object] = {}
     cloud_payload: dict[str, object] = {}
     notification_payload: dict[str, object] = {}
-    tray_payload: dict[str, object] = {}
 
     for step in init_plan:
         step_id = str(step.get("id") or "")
@@ -288,7 +278,7 @@ def _run_init_command(
                         announce_copy=None
                         if getattr(args, "json", False)
                         else _announce_guard_device_connect_copy,
-                        open_browser=webbrowser.open,
+                        open_browser=open_browser_url,
                     )
                     step_payload = _finalize_guard_connect_payload(
                         store=store,
@@ -322,49 +312,6 @@ def _run_init_command(
                 except Exception as error:
                     init_failed = True
                     step_payload = {"skipped": False, "supported": True, "error": str(error)}
-            elif step_id == "tray":
-                # Install the persistent tray/menu-bar icon. Errors are
-                # non-fatal: Guard protection is already active; the tray is
-                # a convenience layer. The user can retry via
-                # `hol-guard guard tray install` if it fails here.
-                try:
-                    from ..tray.contracts import TrayState
-                    from ..tray.lifecycle import (
-                        get_status,
-                        install_registration,
-                        start_tray,
-                    )
-                    from ..tray.platforms import detect_platform_adapter
-
-                    adapter = detect_platform_adapter()
-                    if adapter is None:
-                        step_payload = {
-                            "skipped": False,
-                            "installed": False,
-                            "state": TrayState.UNSUPPORTED.value,
-                            "error": "unsupported_platform",
-                        }
-                    else:
-                        install_registration(
-                            context.guard_home,
-                            adapter=adapter,
-                            run_at_login=True,
-                        )
-                        start_tray(context.guard_home)
-                        state, _capability, _locator = get_status(context.guard_home)
-                        step_payload = {
-                            "installed": state in (TrayState.RUNNING, TrayState.INSTALLED),
-                            "running": state == TrayState.RUNNING,
-                            "state": state.value,
-                        }
-                    step_payload["skipped"] = False
-                except Exception as error:
-                    # Non-fatal: tray is a convenience, not protection.
-                    step_payload = {
-                        "skipped": False,
-                        "installed": False,
-                        "error": str(error),
-                    }
             else:
                 init_failed = True
                 step_payload = {"skipped": True, "reason": "unknown_step"}
@@ -377,8 +324,6 @@ def _run_init_command(
             cloud_payload = step_payload
         elif step_id == "notifications":
             notification_payload = step_payload
-        elif step_id == "tray":
-            tray_payload = step_payload
         if interactive:
             _print_init_step_complete(step, step_payload)
 
@@ -391,7 +336,6 @@ def _run_init_command(
         "apps": apps_payload,
         "cloud": cloud_payload,
         "desktop_notifications": notification_payload,
-        "tray": tray_payload,
         "next_command": "hol-guard init --yes" if not approved_any else "hol-guard status",
         "next_steps": [
             {
@@ -492,11 +436,14 @@ def _resolve_default_install_workspace(
 ) -> Path | None:
     """Pick a project workspace for install/uninstall when --workspace is omitted."""
 
-    cwd = Path.cwd().resolve()
     harness = _requested_install_harness(args)
     cursor_project_dir = _workspace_from_cursor_project_dir()
     if cursor_project_dir is not None and (harness is None or harness == "cursor"):
         return cursor_project_dir
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return None
 
     if _workspace_has_project_markers(cwd):
         return cwd

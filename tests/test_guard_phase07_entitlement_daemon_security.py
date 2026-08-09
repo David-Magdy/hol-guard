@@ -241,6 +241,14 @@ def test_phase07_install_and_sync_require_approval_gate(tmp_path: Path) -> None:
                 payload={"workspace_id": "workspace-1"},
             ),
         )
+        repair_all_status, repair_all_payload = _read_json_response(
+            _request(
+                daemon.port,
+                "/v1/supply-chain/repair",
+                token=token,
+                payload={"workspace_id": "workspace-1"},
+            ),
+        )
     finally:
         daemon.stop()
 
@@ -248,6 +256,8 @@ def test_phase07_install_and_sync_require_approval_gate(tmp_path: Path) -> None:
     assert install_payload["error"] == "approval_gate_required"
     assert sync_status == 403
     assert sync_payload["error"] == "approval_gate_required"
+    assert repair_all_status == 403
+    assert repair_all_payload["error"] == "approval_gate_required"
 
 
 def test_phase07_auth_audit_events_do_not_leak_dashboard_tokens(tmp_path: Path) -> None:

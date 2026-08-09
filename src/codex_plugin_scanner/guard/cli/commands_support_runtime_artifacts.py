@@ -4,49 +4,16 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .commands_support_codex_commands import (
-        _codex_command_parts_may_read_local_content,
-        _codex_command_reads_environment_pipeline,
-        _codex_local_secret_source_label,
-        _codex_pipeline_segment_may_read_local_content,
-        _codex_post_tool_command_is_read_only_source_inspection,
-        _codex_post_tool_command_texts,
-        _codex_shell_split,
-        _codex_source_inspection_can_skip_secret_output,
-    )
-    from .commands_support_codex_paths import (
-        _codex_prompt_credential_file_artifact,
-        _collect_codex_tool_response_text,
-        _with_codex_prompt_display_metadata,
-    )
-    from .commands_support_codex_reads import _split_codex_safe_read_only_pipeline
-    from .commands_support_codex_tool_output_messages import (
-        _codex_tool_output_request_summary,
-        _codex_tool_output_runtime_summary,
-    )
-    from .commands_support_hook_payload import _coalesce_string
-    from .commands_support_runtime_policy import _runtime_data_flow_summary
-
-    # These helpers are injected by commands_support's shared registry at
-    # runtime. Local signatures retain type safety without introducing a
-    # type-only import cycle with commands_support_runtime_resolution.
-    def _canonical_harness_name(value: str) -> str: ...
-
-    def _runtime_policy_path(
-        harness: str,
-        home_dir: Path,
-        workspace: Path | None,
-        *,
-        payload: dict[str, object] | None = None,
-    ) -> Path: ...
-
-
 from ..runtime.command_extensions import risk_classes_for_command_action
 from ..runtime.command_model import parse_shell_command
+from ..runtime.direct_vitest import (
+    direct_local_typescript_execution_context,
+    direct_local_vitest_execution_context,
+)
+from ..runtime.github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
+from ..runtime.jsonc import loads_jsonc
 from ..runtime.kubernetes_commands import kubernetes_secret_read_source
+from ..runtime.package_intent_common import PackageExecutionFileEvidence, PackageIntent
 from ..runtime.shell_command_wrappers import normalize_transparent_shell_command
 from ..runtime.shell_execution_context import (
     model_shell_execution_context,
@@ -66,6 +33,15 @@ from .commands_support_codex_commands import (
     _codex_source_inspection_can_skip_secret_output,
 )
 from .commands_support_codex_git import _codex_git_diff_selection_identity
+from .commands_support_codex_paths import (
+    _CODEX_PROMPT_FILE_FINGERPRINT_LENGTH,
+    _CODEX_TOOL_RESPONSE_MAX_DEPTH,
+    _CODEX_TOOL_RESPONSE_TEXT_LIMIT,
+    _codex_prompt_credential_file_artifact,
+    _collect_codex_tool_response_text,
+    _with_codex_prompt_display_metadata,
+)
+from .commands_support_codex_prompt_attachments import _codex_prompt_attachment_artifact
 from .commands_support_codex_reads import _split_codex_safe_read_only_pipeline
 from .commands_support_codex_tool_output import (
     _codex_command_captures_combined_shell_output,
@@ -86,6 +62,10 @@ from .commands_support_codex_tool_output_messages import (
     _codex_tool_output_runtime_reason,
     _codex_tool_output_runtime_summary,
 )
+from .commands_support_compound_decision import compound_command_decision_metadata
+from .commands_support_hook_payload import _coalesce_string
+from .commands_support_runtime_policy import _runtime_data_flow_summary
+from .commands_support_runtime_resolution import _canonical_harness_name, _runtime_policy_path
 
 
 def _optional_string(value: object | None) -> str | None:
@@ -226,6 +206,123 @@ def _runtime_artifact_declared_risk_classes(artifact: GuardArtifact) -> list[str
     return list(dict.fromkeys(risk_classes))
 
 
+def _routine_local_runner_has_complete_evidence(intent: PackageIntent) -> bool:
+    """Return whether a routine JS runner is already bound to local project state."""
+
+    if intent.package_manager not in {"bunx", "npx"} or len(intent.local_executions) != 1:
+        return False
+    execution = intent.local_executions[0]
+    if execution.package_name not in {"eslint", "jest", "tsc", "vitest"}:
+        return False
+    if len(intent.targets) != 1:
+        return False
+    target = intent.targets[0]
+    if target.raw_spec != execution.package_name or target.requested_specifier is not None:
+        return False
+    if target.source_kind is not None or target.source_url is not None:
+        return False
+    if "--package" in intent.command_tokens or any(token.startswith("--package=") for token in intent.command_tokens):
+        return False
+    if execution.package_name != execution.executable_name or execution.declared_version is None:
+        return False
+    if execution.declared_version.lower().startswith(("file:", "git+", "git://", "github:", "http:", "https:")):
+        return False
+    evidence_files = (execution.manager, execution.local_executable, *execution.manifests, *execution.lockfiles)
+    if not execution.manifests or not execution.lockfiles:
+        return False
+    if any(
+        evidence is None
+        or evidence.status != "available"
+        or evidence.resolved_path is None
+        or evidence.file_identity is None
+        or evidence.content_hash is None
+        for evidence in evidence_files
+    ):
+        return False
+    executable = execution.local_executable
+    if executable is None or executable.resolved_path is None:
+        return False
+    try:
+        workspace = Path(execution.effective_cwd).resolve(strict=True)
+        node_modules = (workspace / "node_modules").resolve(strict=True)
+        package_root = (node_modules / execution.package_name).resolve(strict=True)
+        package_root.relative_to(node_modules)
+        Path(executable.resolved_path).resolve(strict=True).relative_to(package_root)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return not intent.execution_context_reason_codes and _routine_local_runner_versions_match(
+        workspace,
+        execution.package_name,
+        execution.declared_version,
+        execution.lockfiles,
+    )
+
+
+def _routine_local_runner_versions_match(
+    workspace: Path,
+    package_name: str,
+    declared_version: str,
+    lockfiles: tuple[PackageExecutionFileEvidence, ...],
+) -> bool:
+    try:
+        manifest = json.loads((workspace / "package.json").read_text(encoding="utf-8"))
+        installed = json.loads((workspace / "node_modules" / package_name / "package.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(manifest, dict) or not isinstance(installed, dict):
+        return False
+    dependency_groups = (manifest.get("dependencies"), manifest.get("devDependencies"))
+    if not any(isinstance(group, dict) and group.get(package_name) == declared_version for group in dependency_groups):
+        return False
+    installed_version = installed.get("version")
+    if installed.get("name") != package_name or not isinstance(installed_version, str):
+        return False
+    locked_versions: set[str] = set()
+    for evidence in lockfiles:
+        if evidence.resolved_path is None:
+            continue
+        try:
+            lock_text = Path(evidence.resolved_path).read_text(encoding="utf-8")
+            lock = loads_jsonc(lock_text) if Path(evidence.resolved_path).name == "bun.lock" else json.loads(lock_text)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if not isinstance(lock, dict):
+            return False
+        packages = lock.get("packages")
+        if not isinstance(packages, dict):
+            return False
+        package_lock_entry = packages.get(f"node_modules/{package_name}")
+        if isinstance(package_lock_entry, dict) and isinstance(package_lock_entry.get("version"), str):
+            locked_versions.add(package_lock_entry["version"])
+        bun_entry = packages.get(package_name)
+        if isinstance(bun_entry, list) and bun_entry and isinstance(bun_entry[0], str):
+            prefix = f"{package_name}@"
+            if bun_entry[0].startswith(prefix):
+                locked_versions.add(bun_entry[0][len(prefix) :])
+    return locked_versions == {installed_version} and _routine_semver_spec_matches(declared_version, installed_version)
+
+
+def _routine_semver_spec_matches(specifier: str, version: str) -> bool:
+    match = re.fullmatch(r"([~^]?)(\d+)\.(\d+)\.(\d+)", specifier)
+    installed = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    if match is None or installed is None:
+        return False
+    operator, major, minor, patch = match.groups()
+    requested = (int(major), int(minor), int(patch))
+    actual = tuple(int(value) for value in installed.groups())
+    if actual < requested:
+        return False
+    if operator == "^":
+        if requested[0] > 0:
+            return actual[0] == requested[0]
+        if requested[1] > 0:
+            return actual[:2] == requested[:2]
+        return actual == requested
+    if operator == "~":
+        return actual[:2] == requested[:2]
+    return actual == requested
+
+
 def _unmodeled_shell_runtime_artifact(
     *,
     harness: str,
@@ -235,10 +332,45 @@ def _unmodeled_shell_runtime_artifact(
     workspace: Path | None,
     home_dir: Path,
 ) -> GuardArtifact | None:
+    if is_nonexecuting_github_actions_read_workflow(command_text):
+        return None
     canonical_command = parse_shell_command(command_text, cwd=workspace, home_dir=home_dir)
     execution_context = model_shell_execution_context(command_text, cwd=workspace, workspace_root=workspace)
     if canonical_command.confidence == "exact" and execution_context.complete:
         return None
+    if canonical_command.confidence == "exact" and not execution_context.complete:
+        home_execution_context = (
+            direct_local_vitest_execution_context(
+                command_text,
+                cwd=workspace,
+                home_dir=home_dir,
+            )
+            or direct_local_typescript_execution_context(
+                command_text,
+                cwd=workspace,
+                home_dir=home_dir,
+            )
+            or literal_cd_execution_context(
+                command_text,
+                home_dir=home_dir,
+            )
+            or low_risk_compound_developer_execution_context(
+                command_text,
+                home_dir=home_dir,
+            )
+        )
+        if home_execution_context is not None:
+            return None
+        home_execution_context = model_shell_execution_context(
+            command_text, cwd=home_dir, workspace_root=home_dir, home_dir=home_dir
+        )
+        github_assessment = classify_github_shell_capabilities(command_text, home_dir=home_dir)
+        if (
+            github_assessment is not None
+            and not github_capability_requires_confirmation(github_assessment)
+            and shell_execution_context_starts_with_literal_cd(home_execution_context)
+        ):
+            return None
     context_metadata = shell_execution_context_metadata(execution_context)
     reason_code = canonical_command.uncertainty_reason
     if reason_code is None:
@@ -381,8 +513,19 @@ def _compound_runtime_artifact(
             ),
         }
     )
+    if command_text is not None and canonical_command is not None:
+        metadata.update(
+            compound_command_decision_metadata(
+                command_text,
+                canonical_command=canonical_command,
+                workspace=workspace,
+                home_dir=home_dir,
+            )
+        )
     if command_text is not None:
         execution_context = model_shell_execution_context(command_text, cwd=workspace, workspace_root=workspace)
+        if not execution_context.complete:
+            execution_context = literal_cd_execution_context(command_text, home_dir=home_dir) or execution_context
         metadata.update(shell_execution_context_metadata(execution_context))
         metadata["compound_complete"] = metadata["compound_complete"] is True and execution_context.complete
     if metadata["compound_complete"] is not True or metadata.get("shell_execution_context_complete") is False:
@@ -417,7 +560,7 @@ def _hook_runtime_artifact(
 ) -> GuardArtifact | None:
     harness = _canonical_harness_name(harness)
     event_name = _hook_event_name(payload)
-    if harness in {"codex", "pi"} and event_name == "PostToolUse":
+    if harness in {"codex", "cline", "pi", "omp"} and event_name == "PostToolUse":
         output_artifact = _codex_post_tool_output_artifact(
             harness=harness,
             payload=payload,
@@ -467,6 +610,14 @@ def _hook_runtime_artifact(
             )
             if prompt_file_artifact is not None:
                 return prompt_file_artifact
+            if harness == "codex":
+                attachment_artifact = _codex_prompt_attachment_artifact(
+                    prompt_text=prompt_text,
+                    home_dir=home_dir,
+                    config_path=config_path,
+                )
+                if attachment_artifact is not None:
+                    return attachment_artifact
     tool_name = _runtime_hook_tool_name(payload)
     tool_arguments = _runtime_hook_tool_arguments(payload)
     raw_command_text = _runtime_hook_raw_command_text(payload, action_envelope)
@@ -516,9 +667,26 @@ def _hook_runtime_artifact(
             tool_arguments,
             action_envelope_command=action_envelope.command if action_envelope is not None else raw_command_text,
             workspace=workspace,
+            home_dir=home_dir,
         )
     runtime_artifacts: list[GuardArtifact] = []
-    if package_intent is not None:
+    verified_local_runner = isinstance(raw_command_text, str) and (
+        direct_local_vitest_execution_context(
+            raw_command_text,
+            cwd=workspace,
+            home_dir=home_dir,
+        )
+        or direct_local_typescript_execution_context(
+            raw_command_text,
+            cwd=workspace,
+            home_dir=home_dir,
+        )
+    )
+    if (
+        package_intent is not None
+        and not verified_local_runner
+        and not _routine_local_runner_has_complete_evidence(package_intent)
+    ):
         runtime_artifacts.append(
             build_package_request_artifact(
                 harness=harness,
@@ -542,7 +710,7 @@ def _hook_runtime_artifact(
                 source_scope=source_scope,
             )
         )
-    if raw_command_text is not None:
+    if raw_command_text is not None and (action_envelope is None or action_envelope.action_type == "shell_command"):
         unmodeled_artifact = _unmodeled_shell_runtime_artifact(
             harness=harness,
             command_text=raw_command_text,
@@ -631,12 +799,6 @@ def _runtime_data_flow_artifact(
 
 _CODEX_PROMPT_SECRET_KEY_MARKERS = ("TOKEN", "SECRET", "PASSWORD", "PASS", "API_KEY", "API-KEY", "AUTH", "CREDENTIAL")
 
-_CODEX_TOOL_RESPONSE_MAX_DEPTH = 5
-
-_CODEX_TOOL_RESPONSE_TEXT_LIMIT = 5 * 1024 * 1024
-
-_CODEX_PROMPT_FILE_FINGERPRINT_LENGTH = 24
-
 
 def _direct_codex_git_pathspec_identity(command_text: str, *, cwd: Path | None) -> str | None:
     pipeline = _split_codex_safe_read_only_pipeline(command_text)
@@ -688,7 +850,7 @@ def _codex_post_tool_output_artifact(
     home_dir: Path | None = None,
 ) -> GuardArtifact | None:
     canonical_harness = _canonical_harness_name(harness)
-    harness_label = "Pi" if canonical_harness == "pi" else "Codex"
+    harness_label = {"cline": "Cline", "pi": "Pi", "omp": "Oh My Pi"}.get(canonical_harness, "Codex")
     response_text = _collect_codex_tool_response_text(payload.get("tool_response"))
     stdout_text = _optional_string(payload.get("stdout"))
     if stdout_text:

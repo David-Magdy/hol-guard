@@ -154,3 +154,20 @@ def test_cached_pinned_signature_can_supply_runtime_config(tmp_path: Path) -> No
     assert effective_config.new_network_domain_action == "allow"
     assert effective_config.subprocess_action == "allow"
     assert effective_config.receipt_redaction_level == "none"
+
+
+def test_local_observe_mode_remains_an_execution_escape_hatch(tmp_path: Path) -> None:
+    local_config = GuardConfig(
+        guard_home=tmp_path / "guard-home",
+        workspace=tmp_path / "workspace",
+        mode="observe",
+        default_action="warn",
+    )
+
+    effective_config = overlay_synced_guard_policy(
+        local_config,
+        {"mode": "enforce", "defaultAction": "block"},
+    )
+
+    assert effective_config.mode == "observe"
+    assert effective_config.default_action == "block"

@@ -1,7 +1,7 @@
 """Guard CLI command dispatch helpers."""
 
 # fmt: off
-# ruff: noqa: F403, F405, I001
+# ruff: noqa: F403, F405
 
 from __future__ import annotations
 
@@ -17,8 +17,45 @@ if TYPE_CHECKING:
     from .protect_approvals import _queue_local_protect_approvals, _suppress_package_shim_allow_output
 
 
+from codex_plugin_scanner.guard.runtime.network_status import build_network_status
+
 from ._commands_shared import *
 from .commands_parser_helpers import *
+
+
+def _migrate_legacy_macos_secrets(store: GuardStore) -> None:
+    migration_pairs = (
+        (
+            "legacy_extension_control_authority_secret_migration_required",
+            "migrate_legacy_extension_control_authority_secrets",
+        ),
+        ("legacy_macos_oauth_secret_migration_required", "migrate_legacy_macos_oauth_secret"),
+    )
+    required_migrations: list[str] = []
+    for required_method_name, migration_method_name in migration_pairs:
+        method = getattr(store, required_method_name, None)
+        if callable(method):
+            with suppress(Exception):
+                if bool(method()):
+                    required_migrations.append(migration_method_name)
+    if not required_migrations:
+        return
+    try:
+        explicit_store = GuardStore(
+            store.guard_home,
+            prime_policy_integrity=False,
+            allow_system_keyring=True,
+        )
+    except Exception:
+        return
+    allow_interactive = True
+    for method_name in required_migrations:
+        method = getattr(explicit_store, method_name, None)
+        if callable(method):
+            with suppress(Exception):
+                method(allow_interactive=allow_interactive)
+            allow_interactive = False
+
 
 def _run_guard_pytest_contained_command(
     args: argparse.Namespace,
@@ -178,9 +215,17 @@ def _run_guard_update_command(
     else:
         try:
             store = GuardStore(guard_home)
+            _migrate_legacy_macos_secrets(store)
         except (OSError, RuntimeError, sqlite3.Error) as error:
             store = None
             update_store_error = error
+    try:
+        local_config = config or load_guard_config(guard_home, workspace=workspace)
+    except (OSError, ValueError):
+        local_config = None
+    include_alpha = bool(getattr(args, "alpha", False)) or (
+        local_config is not None and local_config.update_channel == "alpha"
+    )
     payload, exit_code = run_guard_update(
         dry_run=dry_run,
         context=context,
@@ -189,6 +234,7 @@ def _run_guard_update_command(
         now=_now(),
         wheel=getattr(args, "wheel", None),
         guard_home=guard_home,
+        include_alpha=include_alpha,
         force_pypi_reinstall=bool(getattr(args, "force_pypi_reinstall", False)),
     )
     if update_store_error is not None:
@@ -286,6 +332,27 @@ def _run_guard_status_command(
     config = _require_guard_config(config)
     payload = importlib.import_module(".product", __package__).build_guard_status_payload(context, store, config)
     _emit("status", payload, getattr(args, "json", False))
+    return 0
+
+
+def _run_guard_network_command(
+    args: argparse.Namespace,
+    *,
+    guard_home: Path | None = None,
+    workspace: Path | None = None,
+    context: HarnessContext | None = None,
+    store: GuardStore | None = None,
+    config: GuardConfig | None = None,
+    input_text: str | None = None,
+    output_stream: TextIO | None = None,
+) -> int:
+    command = getattr(args, "network_command", None) or "status"
+    if command != "status":
+        raise ValueError(f"unsupported network command: {command}")
+    payload = build_network_status(
+        legacy_domain_action=config.new_network_domain_action if config is not None else None
+    )
+    _emit("network", payload, getattr(args, "json", False))
     return 0
 
 def _run_guard_init_command(
@@ -420,6 +487,8 @@ def _run_guard_install_command(
 ) -> int:
     context = _require_guard_context(context)
     store = _require_guard_store(store)
+    if not bool(getattr(args, "dry_run", False)):
+        _migrate_legacy_macos_secrets(store)
     try:
         if bool(getattr(args, "dry_run", False)):
             payload = build_managed_install_plan(args.harness, bool(getattr(args, "all", False)), context, store)
@@ -466,218 +535,6 @@ def _run_guard_mcp_command(
     return server.run_stdio()
 
 
-def _run_guard_tray_command(
-    args: argparse.Namespace,
-    *,
-    guard_home: Path | None = None,
-    workspace: Path | None = None,
-    context: HarnessContext | None = None,
-    store: GuardStore | None = None,
-    config: GuardConfig | None = None,
-    input_text: str | None = None,
-    output_stream: TextIO | None = None,
-) -> int:
-    """Dispatch ``hol-guard tray`` subcommands."""
-    if guard_home is None:
-        raise RuntimeError("Guard home is required")
-    tray_command = str(getattr(args, "tray_command", ""))
-    use_json = bool(getattr(args, "json", False))
-    package_version = _guard_package_version()
-
-    if tray_command == "run":
-        # Internal: run the tray icon in-process.
-        # Platform adapters (LaunchAgent/Run-key/XDG autostart) invoke this
-        # path at login, so it MUST write the locator before entering the
-        # pystray main loop and remove it on exit. Without this, `tray status`
-        # would not see login-started trays.
-        from ..tray.runtime import TrayRuntime, detect_capability
-        from ..tray.state import (
-            build_locator_for_current_process,
-            remove_locator,
-            reset_crash_count,
-            write_locator,
-        )
-
-        run_guard_home_arg = getattr(args, "guard_home", None)
-        run_guard_home = Path(str(run_guard_home_arg)) if run_guard_home_arg is not None else guard_home
-        if run_guard_home is None:
-            print("guard_home is required for tray run", file=sys.stderr)
-            return 1
-
-        capability = detect_capability()
-        if not capability.supported:
-            print(f"Tray not supported: {capability.details}", file=sys.stderr)
-            return 1
-
-        # Write locator before starting so `tray status` sees this process.
-        locator = build_locator_for_current_process(
-            guard_home=run_guard_home,
-            package_version=package_version,
-            backend=capability.backend,
-        )
-        try:
-            write_locator(run_guard_home, locator)
-            reset_crash_count(run_guard_home)
-        except OSError as error:
-            print(f"Failed to write tray locator: {error}", file=sys.stderr)
-            return 1
-
-        runtime = TrayRuntime(
-            guard_home=run_guard_home,
-            store=store or _require_guard_store(store),
-            config=config or _require_guard_config(config),
-            capability=capability,
-        )
-        try:
-            return runtime.run()
-        finally:
-            with suppress(Exception):
-                remove_locator(run_guard_home)
-
-    from ..tray.lifecycle import (
-        get_status,
-        install_registration,
-        remove_registration,
-        repair_tray,
-        start_tray,
-        stop_tray,
-    )
-    from ..tray.platforms import detect_platform_adapter
-
-    if tray_command == "status":
-        state, capability, locator = get_status(guard_home, package_version=package_version)
-        payload: dict[str, object] = {
-            "generated_at": _now(),
-            "state": state.value,
-            "platform": capability.platform.value if capability.platform else None,
-            "backend": capability.backend.value,
-            "supported": capability.supported,
-            "reason": capability.reason.value,
-            "details": capability.details,
-            "locator": locator.to_payload() if locator else None,
-        }
-        _emit("tray-status", payload, use_json)
-        return 0
-
-    if tray_command == "start":
-        result = start_tray(guard_home, package_version=package_version, force=bool(getattr(args, "force", False)))
-        _emit(
-            "tray-start",
-            {
-                "generated_at": _now(),
-                "ok": result.ok,
-                "state": result.state.value,
-                "reason": result.reason.value,
-                "message": result.message,
-                **({"recovery_command": result.recovery_command} if result.recovery_command else {}),
-            },
-            use_json,
-        )
-        return 0 if result.ok else 1
-
-    if tray_command == "stop":
-        result = stop_tray(guard_home)
-        _emit(
-            "tray-stop",
-            {
-                "generated_at": _now(),
-                "ok": result.ok,
-                "state": result.state.value,
-                "reason": result.reason.value,
-                "message": result.message,
-                **({"recovery_command": result.recovery_command} if result.recovery_command else {}),
-            },
-            use_json,
-        )
-        return 0 if result.ok else 1
-
-    if tray_command == "restart":
-        stop_result = stop_tray(guard_home)
-        start_result = start_tray(guard_home, package_version=package_version, force=True)
-        _emit(
-            "tray-restart",
-            {
-                "generated_at": _now(),
-                "ok": start_result.ok,
-                "state": start_result.state.value,
-                "reason": start_result.reason.value,
-                "message": start_result.message,
-                "stop_reason": stop_result.reason.value,
-                **({"recovery_command": start_result.recovery_command} if start_result.recovery_command else {}),
-            },
-            use_json,
-        )
-        return 0 if start_result.ok else 1
-
-    if tray_command == "repair":
-        result = repair_tray(guard_home)
-        _emit(
-            "tray-repair",
-            {
-                "generated_at": _now(),
-                "ok": result.ok,
-                "state": result.state.value,
-                "reason": result.reason.value,
-                "message": result.message,
-            },
-            use_json,
-        )
-        return 0 if result.ok else 1
-
-    if tray_command == "install":
-        adapter = detect_platform_adapter()
-        if adapter is None:
-            _emit(
-                "tray-install",
-                {"generated_at": _now(), "ok": False, "reason": "unsupported_platform"},
-                use_json,
-            )
-            return 1
-        result = install_registration(
-            guard_home,
-            adapter=adapter,
-            run_at_login=not bool(getattr(args, "no_run_at_login", False)),
-        )
-        _emit(
-            "tray-install",
-            {
-                "generated_at": _now(),
-                "ok": result.ok,
-                "state": result.state.value,
-                "reason": result.reason.value,
-                "message": result.message,
-            },
-            use_json,
-        )
-        return 0 if result.ok else 1
-
-    if tray_command == "uninstall":
-        adapter = detect_platform_adapter()
-        if adapter is None:
-            _emit(
-                "tray-uninstall",
-                {"generated_at": _now(), "ok": False, "reason": "unsupported_platform"},
-                use_json,
-            )
-            return 1
-        result = remove_registration(guard_home, adapter=adapter)
-        _emit(
-            "tray-uninstall",
-            {
-                "generated_at": _now(),
-                "ok": result.ok,
-                "state": result.state.value,
-                "reason": result.reason.value,
-                "message": result.message,
-            },
-            use_json,
-        )
-        return 0 if result.ok else 1
-
-    print(f"Unknown tray command: {tray_command}", file=sys.stderr)
-    return 2
-
-
 def _guard_package_version() -> str:
     """Return the installed guard package version, or empty string."""
     try:
@@ -696,12 +553,12 @@ __all__ = [
     "_run_guard_init_command",
     "_run_guard_install_command",
     "_run_guard_mcp_command",
+    "_run_guard_network_command",
     "_run_guard_preflight_command",
     "_run_guard_protect_command",
     "_run_guard_pytest_contained_command",
     "_run_guard_scan_command",
     "_run_guard_start_command",
     "_run_guard_status_command",
-    "_run_guard_tray_command",
     "_run_guard_update_command",
 ]

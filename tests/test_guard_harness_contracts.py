@@ -95,11 +95,6 @@ class TestContractFor:
         assert c is not None
         assert c.harness == "claude-code"
 
-    def test_codex_cli_alias(self) -> None:
-        c = contract_for("codex")
-        assert c is not None
-        assert "codex" in c.install_aliases
-
     def test_claude_code_alias(self) -> None:
         c = contract_for("claude-code")
         assert c is not None
@@ -116,10 +111,10 @@ class TestContractFor:
     def test_unknown_returns_none(self) -> None:
         assert contract_for("unknown-harness-xyz") is None
 
-    def test_oh_my_pi_alias_is_resume_capable_pi_contract(self) -> None:
+    def test_oh_my_pi_alias_is_resume_capable_omp_contract(self) -> None:
         c = contract_for("oh-my-pi")
         assert c is not None
-        assert c.harness == "pi"
+        assert c.harness == "omp"
         assert c.resume_support is True
 
 

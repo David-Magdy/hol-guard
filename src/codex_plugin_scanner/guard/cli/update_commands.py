@@ -33,7 +33,11 @@ from ..adapters.opencode_pretool import (
     managed_plugin_path,
     pretool_plugin_source,
 )
-from ..config import resolve_guard_home
+from ..adapters.pi import OmpHarnessAdapter, PiHarnessAdapter, legacy_omp_managed_extension_is_verified
+from ..adapters.pi_extension_source import managed_extension_source
+from ..adapters.pi_support import json_payload
+from ..codex_hook_integrity import CodexHookIntegrityError, load_authenticated_hook_manifest
+from ..config import load_guard_config, resolve_guard_home
 from ..mdm.contracts import ManagedNetworkPolicy, ManagedPolicy
 from ..mdm.network import ManagedNetworkError, managed_urlopen
 from ..mdm.policy import load_managed_policy
@@ -57,6 +61,36 @@ from .update_subprocess import (
 _ALREADY_CURRENT_HINTS = (
     "already at latest version",
     "already up-to-date",
+    "nothing to upgrade",
+    "is pinned to",
+)
+_PIPX_LAUNCHER_FAILURE_HINTS = (
+    "ModuleNotFoundError: No module named 'pipx'",
+    'ModuleNotFoundError: No module named "pipx"',
+)
+_PYPI_PROPAGATION_FAILURE_HINTS = (
+    "No matching distribution found for hol-guard==",
+    "Could not find a version that satisfies the requirement hol-guard==",
+)
+_PYPI_PROPAGATION_EXCLUSION_HINTS = (
+    "401",
+    "403",
+    "authentication",
+    "certificate verify failed",
+    "connection error",
+    "connection refused",
+    "connection reset",
+    "could not fetch url",
+    "credential",
+    "forbidden",
+    "invalid index",
+    "name or service not known",
+    "ssl",
+    "temporary failure in name resolution",
+    "timed out",
+    "timeout",
+    "tls",
+    "unauthorized",
 )
 _PYPI_JSON_URL = "https://pypi.org/pypi/hol-guard/json"
 _PYPI_TIMEOUT_SECONDS = 3.0
@@ -251,6 +285,7 @@ def run_guard_update(
     force_pypi_reinstall: bool = False,
     wheel: str | None = None,
     guard_home: Path | None = None,
+    include_alpha: bool = False,
 ) -> tuple[dict[str, object], int]:
     installer = _installer_kind()
     payload: dict[str, object] = {
@@ -392,6 +427,7 @@ def run_guard_update(
         current_version,
         source_kind=update_context.source.public_name,
         network_policy=network_policy,
+        include_alpha=include_alpha,
     )
     if requested_wheel_path is None and _python_runtime_blocks_update(version_check):
         payload.update(
@@ -446,7 +482,7 @@ def run_guard_update(
     payload.update(
         {
             "command": command,
-            "retry_command": _safe_update_retry_command(requested_wheel_path),
+            "retry_command": _safe_update_retry_command(requested_wheel_path, include_alpha=include_alpha),
             "binary_diagnostics": _binary_diagnostics(command, installer),
             "version_check": version_check,
         }
@@ -458,7 +494,26 @@ def run_guard_update(
             payload["wheel_version"] = trusted_wheel.version
     else:
         payload["upgrade_source"] = update_context.source.public_name
+        if include_alpha:
+            payload["release_channel"] = "alpha"
+    already_current = (
+        requested_wheel_path is None
+        and not force_pypi_reinstall
+        and version_check.get("update_available") is False
+        and str(version_check.get("status") or "") == "current"
+        and local_source_install is None
+        and local_archive_install is None
+        and vcs_install is None
+    )
     if dry_run:
+        if already_current:
+            payload["status"] = "current"
+            payload["changed"] = False
+            payload["resulting_version"] = current_version
+            payload["message"] = "HOL Guard is already current."
+            if trusted_wheel is not None:
+                trusted_wheel.cleanup()
+            return payload, 0
         payload["status"] = "planned"
         payload["changed"] = False
         payload["message"] = _planned_update_message(
@@ -469,18 +524,39 @@ def run_guard_update(
         if trusted_wheel is not None:
             trusted_wheel.cleanup()
         return payload, 0
+    if already_current:
+        payload["status"] = "current"
+        payload["changed"] = False
+        payload["resulting_version"] = current_version
+        payload["message"] = "HOL Guard is already current."
+        # Skip force-reinstall/upgrade noise when PyPI already reports current.
+        package_shims, package_shim_note = _refresh_package_shims_after_update(
+            context=context,
+            dry_run=dry_run,
+            update_context=update_context,
+        )
+        if package_shims is not None:
+            payload["package_shims"] = package_shims
+        _append_payload_note(payload, package_shim_note)
+        repaired_installs, repair_notes = _repair_supported_harnesses(
+            context=context,
+            store=store,
+            workspace=workspace,
+            now=now,
+            dry_run=dry_run,
+            update_context=update_context,
+        )
+        if repair_notes:
+            payload["notes"] = [*_payload_notes(payload), *repair_notes]
+        if repaired_installs:
+            payload["managed_installs"] = repaired_installs
+            if len(repaired_installs) == 1:
+                payload["managed_install"] = repaired_installs[0]
+        return payload, 0
     active_command = execution_command
     active_display_command = command
     attempted_force_retry = False
-    # Stop the tray before updating so the old package's process doesn't
-    # hold files open on Windows or reference stale modules after cutover.
-    tray_was_running = _stop_tray_for_update(store)
-
-    def finish_update(result: tuple[dict[str, object], int]) -> tuple[dict[str, object], int]:
-        if tray_was_running:
-            _restart_tray_after_update(store)
-        return result
-
+    attempted_pipx_recovery = False
     installer_execution_started = False
     while True:
         try:
@@ -489,73 +565,81 @@ def run_guard_update(
             installer_execution_started = True
             result = update_context.run(active_command)
         except UpdateArtifactError as error:
-            return finish_update(
-                _trusted_update_failure(
-                    payload,
-                    UpdateSubprocessError(error.reason_code),
-                    trusted_wheel=trusted_wheel,
-                    retain_trusted_wheel=installer_execution_started,
-                )
+            return _trusted_update_failure(
+                payload,
+                UpdateSubprocessError(error.reason_code),
+                trusted_wheel=trusted_wheel,
+                retain_trusted_wheel=installer_execution_started,
             )
         except UpdateSubprocessError as error:
-            return finish_update(
-                _trusted_update_failure(
-                    payload,
-                    error,
-                    trusted_wheel=trusted_wheel,
-                    retain_trusted_wheel=installer_execution_started,
-                )
+            return _trusted_update_failure(
+                payload,
+                error,
+                trusted_wheel=trusted_wheel,
+                retain_trusted_wheel=installer_execution_started,
             )
         payload["command"] = active_display_command
         payload["stdout"] = _normalize_output_text(result.stdout)
         payload["stderr"] = _normalize_output_text(result.stderr)
         payload["return_code"] = result.returncode
         if result.output_limited:
-            return finish_update(
-                _trusted_update_failure(
-                    payload,
-                    UpdateSubprocessError("update_installer_output_limit"),
-                    trusted_wheel=trusted_wheel,
-                    retain_trusted_wheel=installer_execution_started,
-                )
+            return _trusted_update_failure(
+                payload,
+                UpdateSubprocessError("update_installer_output_limit"),
+                trusted_wheel=trusted_wheel,
+                retain_trusted_wheel=installer_execution_started,
             )
         importlib.invalidate_caches()
         try:
             payload["resulting_version"] = _current_version_from_subprocess(update_context)
         except UpdateSubprocessError as error:
-            return finish_update(
-                _trusted_update_failure(
-                    payload,
-                    error,
-                    trusted_wheel=trusted_wheel,
-                    retain_trusted_wheel=installer_execution_started,
-                )
+            return _trusted_update_failure(
+                payload,
+                error,
+                trusted_wheel=trusted_wheel,
+                retain_trusted_wheel=installer_execution_started,
             )
         initial_version_check = payload.get("version_check")
         resulting_version = str(payload.get("resulting_version") or current_version)
-        if trusted_wheel is not None:
-            try:
-                if Version(resulting_version) != Version(trusted_wheel.version):
-                    return finish_update(
-                        _trusted_update_failure(
-                            payload,
-                            UpdateSubprocessError("update_version_mismatch"),
-                            trusted_wheel=trusted_wheel,
-                            retain_trusted_wheel=installer_execution_started,
-                        )
-                    )
-            except InvalidVersion:
-                return finish_update(
-                    _trusted_update_failure(
-                        payload,
-                        UpdateSubprocessError("update_version_output_invalid"),
-                        trusted_wheel=trusted_wheel,
-                        retain_trusted_wheel=installer_execution_started,
-                    )
-                )
         if result.returncode != 0:
+            installer_output = _installer_output_text(payload.get("stdout"), payload.get("stderr"))
+            if (
+                installer == "pipx"
+                and not attempted_pipx_recovery
+                and _contains_any(installer_output, _PIPX_LAUNCHER_FAILURE_HINTS)
+            ):
+                pip_display_command = _update_command(
+                    "pip",
+                    use_pypi=trusted_wheel is None,
+                    target_version=target_version,
+                    wheel_path=requested_wheel_path if trusted_wheel is not None else None,
+                )
+                pip_execution_display_command = _update_command(
+                    "pip",
+                    use_pypi=trusted_wheel is None,
+                    target_version=target_version,
+                    wheel_path=trusted_wheel.staged_path if trusted_wheel is not None else None,
+                )
+                try:
+                    active_command = update_context.build_python_pip_command(pip_execution_display_command)
+                except UpdateSubprocessError as error:
+                    return _trusted_update_failure(payload, error, trusted_wheel=trusted_wheel)
+                attempted_pipx_recovery = True
+                active_display_command = pip_display_command
+                payload["installer_recovery"] = "trusted_python_pip"
+                continue
+            if requested_wheel_path is None and _is_pypi_propagation_failure(installer_output):
+                payload["status"] = "deferred"
+                payload["changed"] = False
+                payload["reason_code"] = "update_release_propagating"
+                payload["message"] = (
+                    "The newest HOL Guard release is still reaching PyPI. "
+                    "Your current installation remains active; try the update again shortly."
+                )
+                payload.pop("retry_command", None)
+                return payload, 0
             conflict_message = _dependency_conflict_message(
-                _installer_output_text(payload.get("stdout"), payload.get("stderr")),
+                installer_output,
             )
             if conflict_message:
                 payload["status"] = "blocked"
@@ -565,14 +649,30 @@ def run_guard_update(
                 payload.pop("retry_command", None)
                 if trusted_wheel is not None:
                     _retain_local_wheel_staging(payload)
-                return finish_update((payload, 1))
+                return payload, 1
             payload["status"] = "failed"
             payload["changed"] = False
             payload["reason_code"] = "update_installer_failed"
             payload["message"] = "HOL Guard update failed."
             if trusted_wheel is not None:
                 _retain_local_wheel_staging(payload)
-            return finish_update((payload, 1))
+            return payload, 1
+        if trusted_wheel is not None:
+            try:
+                if Version(resulting_version) != Version(trusted_wheel.version):
+                    return _trusted_update_failure(
+                        payload,
+                        UpdateSubprocessError("update_version_mismatch"),
+                        trusted_wheel=trusted_wheel,
+                        retain_trusted_wheel=installer_execution_started,
+                    )
+            except InvalidVersion:
+                return _trusted_update_failure(
+                    payload,
+                    UpdateSubprocessError("update_version_output_invalid"),
+                    trusted_wheel=trusted_wheel,
+                    retain_trusted_wheel=installer_execution_started,
+                )
         if trusted_wheel is not None:
             _record_verified_local_wheel_receipt(
                 payload,
@@ -585,6 +685,7 @@ def run_guard_update(
             resulting_version,
             source_kind=update_context.source.public_name,
             network_policy=network_policy,
+            include_alpha=include_alpha,
         )
         payload["post_version_check"] = post_version_check
         payload["version_check"] = _merge_version_checks(
@@ -613,7 +714,7 @@ def run_guard_update(
                 try:
                     active_command = update_context.build_installer_command(retry_command)
                 except UpdateSubprocessError as error:
-                    return finish_update(_trusted_update_failure(payload, error, trusted_wheel=trusted_wheel))
+                    return _trusted_update_failure(payload, error, trusted_wheel=trusted_wheel)
                 payload["upgrade_source"] = update_context.source.public_name
                 continue
         break
@@ -680,8 +781,8 @@ def run_guard_update(
                     "message": "HOL Guard was updated, but its daemon could not be restarted safely.",
                 }
             )
-            return finish_update((payload, 1))
-    return finish_update((payload, 0))
+            return payload, 1
+    return payload, 0
 
 
 def _record_verified_local_wheel_receipt(
@@ -873,44 +974,31 @@ def _output_lines(value: str) -> list[str]:
 
 
 def _success_status(payload: dict[str, object]) -> str:
-    if str(payload.get("upgrade_source") or "") == "local_wheel":
-        current_version = str(payload.get("current_version") or "").strip()
-        resulting_version = str(payload.get("resulting_version") or "").strip()
-        if (
-            current_version
-            and resulting_version
-            and current_version != "unknown"
-            and resulting_version != "unknown"
-            and current_version != resulting_version
-        ):
-            return "updated"
-        if (
-            current_version
-            and resulting_version
-            and current_version != "unknown"
-            and resulting_version != "unknown"
-            and current_version == resulting_version
-        ):
-            return "current"
-        output_text = str(payload.get("stdout") or "").lower()
-        if any(hint in output_text for hint in _ALREADY_CURRENT_HINTS):
-            return "current"
-        if "requirement already satisfied: hol-guard" in output_text or "hol-guard is already installed" in output_text:
-            return "current"
-        return "updated"
-    if _is_stale_install(payload):
-        return "stale"
     current_version = str(payload.get("current_version") or "").strip()
     resulting_version = str(payload.get("resulting_version") or "").strip()
-    if (
-        current_version
-        and resulting_version
-        and current_version != "unknown"
-        and resulting_version != "unknown"
-        and current_version != resulting_version
-    ):
-        return "updated"
-    output_text = str(payload.get("stdout") or "").lower()
+    versions_known = (
+        bool(current_version)
+        and bool(resulting_version)
+        and current_version not in {"", "unknown"}
+        and resulting_version not in {"", "unknown"}
+    )
+    is_local_wheel = str(payload.get("upgrade_source") or "") == "local_wheel"
+    versions_differ = versions_known and current_version != resulting_version
+    versions_equal = versions_known and current_version == resulting_version
+    still_behind_pypi = (not is_local_wheel) and _is_stale_install(payload)
+
+    if versions_differ:
+        # Partial upgrades that remain behind PyPI stay "stale".
+        return "stale" if still_behind_pypi else "updated"
+    if still_behind_pypi:
+        # Same resulting version while PyPI has a newer release (pin / no-op upgrade).
+        return "stale"
+    if versions_equal:
+        # Same version after install is "current" unless this was an explicit repair/reinstall.
+        if payload.get("recovery_reinstall") is True or payload.get("recovery_source_install") is True:
+            return "updated"
+        return "current"
+    output_text = str(payload.get("stdout") or "").lower() + "\n" + str(payload.get("stderr") or "").lower()
     if any(hint in output_text for hint in _ALREADY_CURRENT_HINTS):
         return "current"
     if "requirement already satisfied: hol-guard" in output_text or "hol-guard is already installed" in output_text:
@@ -968,7 +1056,10 @@ def _stale_retry_command(payload: dict[str, object]) -> str:
         return ""
     version_check = payload.get("version_check")
     if isinstance(version_check, dict) and version_check.get("update_available") is True:
-        return _shell_command(["hol-guard", "update"])
+        command = ["hol-guard", "update"]
+        if payload.get("release_channel") == "alpha":
+            command.append("--alpha")
+        return _shell_command(command)
     retry_command = payload.get("retry_command")
     if isinstance(retry_command, str) and retry_command.strip():
         return retry_command.strip()
@@ -978,8 +1069,10 @@ def _stale_retry_command(payload: dict[str, object]) -> str:
     return ""
 
 
-def _safe_update_retry_command(wheel_path: Path | None) -> str:
+def _safe_update_retry_command(wheel_path: Path | None, *, include_alpha: bool = False) -> str:
     command = ["hol-guard", "update"]
+    if include_alpha:
+        command.append("--alpha")
     if wheel_path is not None:
         command.extend(["--wheel", str(wheel_path)])
     return _shell_command(command)
@@ -1052,6 +1145,7 @@ def _version_check_payload(
     *,
     source_kind: str = "pypi",
     network_policy: ManagedNetworkPolicy | None = None,
+    include_alpha: bool = False,
 ) -> dict[str, object]:
     if source_kind != "pypi":
         return {
@@ -1063,7 +1157,9 @@ def _version_check_payload(
         }
     policy_token = _version_network_policy.set(network_policy)
     try:
-        latest_version = _latest_version_from_pypi()
+        latest_version = (
+            _latest_alpha_version_from_pypi(current_version) if include_alpha else _latest_version_from_pypi()
+        )
     finally:
         _version_network_policy.reset(policy_token)
     if latest_version is None:
@@ -1086,10 +1182,15 @@ def _version_check_payload(
     required_python_requirements = _latest_version_python_requirements(latest_version)
     runtime_python = _runtime_python_version()
     if update_available and not _python_requirements_satisfied(required_python_requirements, runtime_python):
-        compatible_version = _latest_compatible_release_version(current_version, runtime_python)
+        compatible_version = _latest_compatible_release_version(
+            current_version,
+            runtime_python,
+            alpha_only=include_alpha,
+        )
         if compatible_version is not None:
             return {
                 "source": "pypi",
+                **({"release_channel": "alpha"} if include_alpha else {}),
                 "status": "stale",
                 "current_version": current_version,
                 "latest_version": compatible_version,
@@ -1101,6 +1202,7 @@ def _version_check_payload(
             }
         return {
             "source": "pypi",
+            **({"release_channel": "alpha"} if include_alpha else {}),
             "status": "python_incompatible",
             "current_version": current_version,
             "latest_version": latest_version,
@@ -1110,6 +1212,7 @@ def _version_check_payload(
         }
     return {
         "source": "pypi",
+        **({"release_channel": "alpha"} if include_alpha else {}),
         "status": "stale" if update_available else "current",
         "current_version": current_version,
         "latest_version": latest_version,
@@ -1151,6 +1254,38 @@ def _latest_version_from_pypi() -> str | None:
     return version if isinstance(version, str) and version.strip() else None
 
 
+def _latest_alpha_version_from_pypi(current_version: str) -> str | None:
+    """Return the newest non-yanked alpha on PyPI, including newer majors.
+
+    ``current_version`` is retained for call-site compatibility. Alpha channel
+    intentionally tracks the global newest alpha so ``hol-guard update --alpha``
+    can move installs across major lines (for example 2.x stable -> 3.0.0aN).
+    """
+    _ = current_version
+    _ = _latest_version_from_pypi()
+    payload = _last_pypi_payload
+    if not isinstance(payload, dict):
+        return None
+    releases = payload.get("releases")
+    if not isinstance(releases, dict):
+        return None
+    candidates: list[tuple[Version, str]] = []
+    for version_text, files in releases.items():
+        if not isinstance(version_text, str) or not version_text.strip():
+            continue
+        try:
+            parsed_version = Version(version_text)
+        except InvalidVersion:
+            continue
+        if parsed_version.pre is None or parsed_version.pre[0] != "a":
+            continue
+        if _release_has_non_yanked_file(files):
+            candidates.append((parsed_version, version_text.strip()))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: candidate[0])[1]
+
+
 def _read_bounded_pypi_response(response: object, *, deadline: float) -> bytes:
     read = getattr(response, "read1", None)
     if not callable(read):
@@ -1182,7 +1317,12 @@ def _read_bounded_pypi_response(response: object, *, deadline: float) -> bytes:
             return bytes(payload)
 
 
-def _latest_compatible_release_version(current_version: str, runtime_python: str) -> str | None:
+def _latest_compatible_release_version(
+    current_version: str,
+    runtime_python: str,
+    *,
+    alpha_only: bool = False,
+) -> str | None:
     payload = _last_pypi_payload
     if not isinstance(payload, dict):
         return None
@@ -1197,6 +1337,8 @@ def _latest_compatible_release_version(current_version: str, runtime_python: str
             parsed_version = Version(version_text)
         except InvalidVersion:
             continue
+        if alpha_only and (parsed_version.pre is None or parsed_version.pre[0] != "a"):
+            continue
         if _is_newer_version(version_text, current_version) is not True:
             continue
         if not _release_has_non_yanked_file(files):
@@ -1206,6 +1348,8 @@ def _latest_compatible_release_version(current_version: str, runtime_python: str
             candidates.append((parsed_version, version_text.strip()))
     if not candidates:
         return None
+    if alpha_only:
+        return max(candidates, key=lambda candidate: candidate[0])[1]
     stable_candidates = [candidate for candidate in candidates if not candidate[0].is_prerelease]
     return max(stable_candidates or candidates, key=lambda candidate: candidate[0])[1]
 
@@ -1345,8 +1489,28 @@ def _hol_guard_package_spec(target_version: str | None = None) -> str:
     return "hol-guard"
 
 
+def _target_version_is_prerelease(target_version: str | None) -> bool:
+    if not isinstance(target_version, str) or not target_version.strip():
+        return False
+    try:
+        return Version(target_version.strip()).is_prerelease
+    except InvalidVersion:
+        return False
+
+
 def _installer_output_text(stdout: object, stderr: object) -> str:
     return "\n".join(part.strip() for part in (str(stdout or "").strip(), str(stderr or "").strip()) if part.strip())
+
+
+def _contains_any(value: str, candidates: tuple[str, ...]) -> bool:
+    return any(candidate in value for candidate in candidates)
+
+
+def _is_pypi_propagation_failure(installer_output: str) -> bool:
+    if not _contains_any(installer_output, _PYPI_PROPAGATION_FAILURE_HINTS):
+        return False
+    lowered = installer_output.lower()
+    return not _contains_any(lowered, _PYPI_PROPAGATION_EXCLUSION_HINTS)
 
 
 def _dependency_conflict_message(installer_output: str) -> str | None:
@@ -1380,12 +1544,24 @@ def _update_command(
             return ["pipx", "install", "--force", wheel]
         return [sys.executable, "-m", "pip", "install", "--force-reinstall", wheel]
     package = _hol_guard_package_spec(target_version)
+    allow_prerelease = _target_version_is_prerelease(target_version)
     if use_pypi:
         if installer == "uv":
-            return ["uv", "tool", "install", "--force", package]
+            command = ["uv", "tool", "install", "--force", "--refresh-package", "hol-guard"]
+            if allow_prerelease:
+                command.append("--prerelease=allow")
+            command.append(package)
+            return command
         if installer == "pipx":
-            return ["pipx", "install", "--force", package]
-        return [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", package]
+            command = ["pipx", "install", "--force", package]
+            if allow_prerelease:
+                command.append("--pip-args=--pre")
+            return command
+        command = [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall"]
+        if allow_prerelease:
+            command.append("--pre")
+        command.append(package)
+        return command
     if installer == "uv":
         return ["uv", "tool", "upgrade", "hol-guard"]
     if installer == "pipx":
@@ -2016,10 +2192,151 @@ def _repair_supported_harnesses_in_process(
         repaired_installs.append(repaired_cursor)
     if cursor_warning is not None:
         repair_notes.append(cursor_warning)
+    legacy_omp_migration, legacy_omp_warning = _migrate_legacy_omp_install(
+        context=context,
+        store=store,
+        workspace=workspace,
+        now=now,
+    )
+    if legacy_omp_migration is not None:
+        repaired_installs.append(legacy_omp_migration)
+    if legacy_omp_warning is not None:
+        repair_notes.append(legacy_omp_warning)
+    for harness, display_name in (("pi", "Pi"), ("omp", "Oh My Pi")):
+        if harness == "omp" and legacy_omp_migration is not None:
+            continue
+        repaired_pi_family, pi_family_warning = _repair_pi_family_install(
+            harness=harness,
+            display_name=display_name,
+            context=context,
+            store=store,
+            workspace=workspace,
+            now=now,
+        )
+        if repaired_pi_family is not None:
+            repaired_installs.append(repaired_pi_family)
+        if pi_family_warning is not None:
+            repair_notes.append(pi_family_warning)
     opencode_note = _refresh_opencode_pretool_plugin(context=context, store=store)
     if opencode_note is not None:
         repair_notes.append(opencode_note)
     return repaired_installs, repair_notes
+
+
+def _migrate_legacy_omp_install(
+    *,
+    context: HarnessContext,
+    store: GuardStore,
+    workspace: str | None,
+    now: str,
+) -> tuple[dict[str, object] | None, str | None]:
+    """Split only a verified extension from the former combined Pi installation."""
+
+    try:
+        pi_install = store.get_managed_install("pi")
+        omp_install = store.get_managed_install("omp")
+    except (json.JSONDecodeError, sqlite3.Error):
+        return None, None
+    if omp_install is not None or pi_install is None:
+        return None, None
+    if not legacy_omp_managed_extension_is_verified(context, pi_install):
+        return None, None
+    try:
+        repair_context, repair_workspace = _repair_context_from_managed_install(context, pi_install)
+        payload = apply_managed_install(
+            "install",
+            "omp",
+            False,
+            repair_context,
+            store,
+            repair_workspace or workspace,
+            now,
+        )
+    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+        return None, f"Could not migrate verified Oh My Pi protection during update: {error}"
+    migrated = payload.get("managed_install")
+    if not isinstance(migrated, dict):
+        return None, "Could not migrate verified Oh My Pi protection during update: managed install was not recorded"
+    return migrated, None
+
+
+def _repair_pi_family_install(
+    *,
+    harness: str,
+    display_name: str,
+    context: HarnessContext,
+    store: GuardStore,
+    workspace: str | None,
+    now: str,
+) -> tuple[dict[str, object] | None, str | None]:
+    """Rewrite one managed Pi-family extension after package updates.
+
+    The extension embeds timeout and daemon-compat constants. Refreshing it after
+    update keeps the fast daemon path available and avoids cold CLI timeouts.
+    When the on-disk extension and settings already match the current package,
+    skip the rewrite so already-current updates stay silent.
+    """
+
+    try:
+        managed_install = store.get_managed_install(harness)
+    except (json.JSONDecodeError, sqlite3.Error):
+        return None, None
+    if managed_install is None or not bool(managed_install.get("active")):
+        return None, None
+    try:
+        repair_context, repair_workspace = _repair_context_from_managed_install(context, managed_install)
+        if _pi_family_extension_is_current(harness=harness, context=repair_context):
+            return None, None
+        payload = apply_managed_install(
+            "install",
+            harness,
+            False,
+            repair_context,
+            store,
+            repair_workspace or workspace,
+            now,
+        )
+    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+        return None, f"Could not refresh {display_name} protection during update: {error}"
+    repaired = payload.get("managed_install")
+    if not isinstance(repaired, dict):
+        return None, f"Could not refresh {display_name} protection during update: managed install was not recorded"
+    return repaired, None
+
+
+def _pi_family_extension_is_current(*, harness: str, context: HarnessContext) -> bool:
+    """Return whether the managed Pi/OMP extension already matches this package."""
+
+    adapter: PiHarnessAdapter | OmpHarnessAdapter
+    if harness == "pi":
+        adapter = PiHarnessAdapter()
+    elif harness == "omp":
+        adapter = OmpHarnessAdapter()
+    else:
+        return False
+    extension_path = adapter._managed_extension_path(context)
+    settings_path = adapter._managed_settings_path(context)
+    if not extension_path.is_file():
+        return False
+    expected_source = managed_extension_source(
+        guard_home=context.guard_home,
+        home_dir=context.home_dir,
+        settings_path=settings_path,
+        harness=adapter.harness,
+        display_name=adapter.display_name,
+    )
+    try:
+        current_source = extension_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if current_source != expected_source:
+        return False
+    settings = json_payload(settings_path) if settings_path.is_file() else {}
+    raw_extensions = settings.get("extensions")
+    if not isinstance(raw_extensions, list):
+        return False
+    extension_value = str(extension_path)
+    return any(isinstance(item, str) and item == extension_value for item in raw_extensions)
 
 
 def _repair_cursor_install(
@@ -2107,12 +2424,20 @@ def _repair_context_from_managed_install(
     managed_workspace = managed_install.get("workspace")
     if isinstance(managed_workspace, str) and managed_workspace.strip():
         workspace_path = Path(managed_workspace).expanduser().resolve()
+        manifest = managed_install.get("manifest")
+        explicit_value = manifest.get("hook_workspace_explicit") if isinstance(manifest, dict) else None
+        workspace_override_explicit = (
+            explicit_value
+            if isinstance(explicit_value, bool)
+            else _legacy_codex_workspace_was_explicit(context, managed_install, workspace_path)
+        )
         return (
             HarnessContext(
                 home_dir=context.home_dir,
                 workspace_dir=workspace_path,
                 guard_home=context.guard_home,
                 home_override_explicit=context.home_override_explicit,
+                workspace_override_explicit=workspace_override_explicit,
             ),
             str(workspace_path),
         )
@@ -2125,6 +2450,25 @@ def _repair_context_from_managed_install(
         ),
         None,
     )
+
+
+def _legacy_codex_workspace_was_explicit(
+    context: HarnessContext,
+    managed_install: dict[str, object],
+    workspace_path: Path,
+) -> bool:
+    if managed_install.get("harness") != "codex":
+        return True
+    try:
+        authenticated = load_authenticated_hook_manifest(
+            context.guard_home,
+            CodexHarnessAdapter._hook_config_path(context),
+        )
+    except (CodexHookIntegrityError, OSError):
+        return False
+    manifest_context = authenticated.get("context")
+    bound_workspace = manifest_context.get("workspace_dir") if isinstance(manifest_context, dict) else None
+    return isinstance(bound_workspace, str) and Path(bound_workspace).resolve() == workspace_path
 
 
 def _repair_codex_install(
@@ -2194,7 +2538,10 @@ def _codex_backup_repair_contexts(context: HarnessContext) -> tuple[HarnessConte
     return (context,)
 
 
-def build_guard_update_status_payload() -> dict[str, object]:
+def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict[str, object]:
+    resolved_guard_home = guard_home or resolve_guard_home()
+    update_channel = load_guard_config(resolved_guard_home).update_channel
+    include_alpha = update_channel == "alpha"
     install_surface = build_guard_install_surface_payload()
     installer = str(install_surface.get("installer") or "")
     binary_diagnostics = install_surface.get("binary_diagnostics")
@@ -2229,6 +2576,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
             installed_distribution = _status_installed_distribution(
                 installer=installer,
                 managed_policy=managed_policy,
+                guard_home=resolved_guard_home,
             )
         except UpdateSubprocessError as error:
             auto_updatable = False
@@ -2241,7 +2589,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
     local_archive_install = _recover_local_archive_install(
         _local_archive_install_payload(direct_url),
         direct_url=direct_url,
-        guard_home=resolve_guard_home(),
+        guard_home=resolved_guard_home,
         installed_version=current_version,
     )
     version_check = (
@@ -2249,6 +2597,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
             current_version,
             source_kind=source_kind,
             network_policy=(managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()),
+            include_alpha=include_alpha,
         )
         if installed_distribution is not None
         else {
@@ -2309,6 +2658,7 @@ def build_guard_update_status_payload() -> dict[str, object]:
         "python_update_required": _python_runtime_blocks_update(version_check),
         "recovery_reinstall_available": recovery_reinstall_available,
         "recovery_reinstall_command": recovery_reinstall_command,
+        "release_channel": update_channel,
     }
     if trusted_failure_reason is not None:
         payload["reason_code"] = trusted_failure_reason
@@ -2319,11 +2669,12 @@ def _status_installed_distribution(
     *,
     installer: str,
     managed_policy: ManagedPolicy | None,
+    guard_home: Path,
 ) -> InstalledDistribution:
     network = managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()
     index_url = managed_policy.update.index_url if managed_policy is not None else None
     context = build_trusted_update_context(
-        guard_home=resolve_guard_home(),
+        guard_home=guard_home,
         workspace_dir=None,
         installer_kind=installer,
         source_url=index_url,
@@ -2333,50 +2684,6 @@ def _status_installed_distribution(
         ca_bundle_path=network.ca_bundle_path,
     )
     return context.query_distribution()
-
-
-def _stop_tray_for_update(store: GuardStore | None) -> bool:
-    """Stop the tray process before a package update.
-
-    Returns True if the tray was running and was stopped, False if it was
-    not running or could not be stopped. Errors are swallowed — the update
-    must proceed even if the tray can't be stopped (e.g. on a fresh install
-    where no tray exists yet).
-    """
-    if store is None:
-        return False
-    try:
-        from ..tray.lifecycle import get_status, stop_tray
-
-        guard_home = store.guard_home
-        state, _capability, locator = get_status(guard_home)
-        if state != "running" or locator is None:
-            return False
-        stop_tray(guard_home)
-        return True
-    except Exception:
-        # Never block the update if tray stop fails — the old process will
-        # be replaced on next start or cleaned up by the OS on reboot.
-        return False
-
-
-def _restart_tray_after_update(store: GuardStore | None) -> None:
-    """Restart a tray that was stopped for a package update attempt.
-
-    This restores the previous tray session after either a successful update
-    or a handled failure. Errors are swallowed so tray recovery cannot mask
-    the update result.
-    """
-    if store is None:
-        return
-    try:
-        from ..tray.lifecycle import start_tray
-
-        start_tray(store.guard_home)
-    except Exception:
-        # Update succeeded; tray restart failure is non-fatal. The user can
-        # manually start the tray via `hol-guard guard tray start`.
-        pass
 
 
 __all__ = ["build_guard_install_surface_payload", "build_guard_update_status_payload", "run_guard_update"]

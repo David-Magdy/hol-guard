@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..adapters import get_adapter
 from ..adapters.base import HarnessContext
+from ..agent_safety_guidance import install_agent_safety_guidance
 from ..config import GuardConfig
 from ..daemon import ensure_guard_daemon
 from ..store import GuardStore
@@ -96,9 +97,11 @@ def _build_bootstrap_install(
             "harness": requested_harness,
             "reason": "already_managed",
             "managed_install": managed_install,
+            "agent_safety_guidance": install_agent_safety_guidance(context.home_dir),
         }
     if requested_harness == "hermes":
         manifest = adapter.install(context)
+        agent_safety_guidance = install_agent_safety_guidance(context.home_dir)
         store.set_managed_install(
             requested_harness,
             True,
@@ -114,6 +117,7 @@ def _build_bootstrap_install(
                 "harness": requested_harness,
                 "reason": "already_managed",
                 "managed_install": managed_install,
+                "agent_safety_guidance": agent_safety_guidance,
             }
         if install_state == "repaired_managed_install":
             return {
@@ -121,11 +125,13 @@ def _build_bootstrap_install(
                 "harness": requested_harness,
                 "reason": "repaired_managed_install",
                 "managed_install": managed_install,
+                "agent_safety_guidance": agent_safety_guidance,
             }
         return {
             "installed": True,
             "harness": requested_harness,
             "managed_install": managed_install,
+            "agent_safety_guidance": agent_safety_guidance,
         }
     install_payload = apply_managed_install(
         "install",
@@ -141,6 +147,7 @@ def _build_bootstrap_install(
         "installed": True,
         "harness": requested_harness,
         "managed_install": managed_install,
+        "agent_safety_guidance": install_payload.get("agent_safety_guidance"),
     }
 
 

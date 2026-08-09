@@ -1,6 +1,6 @@
 # HOL Guard self-protection threat model
 
-Status: accepted for `release/3.1` report-only alpha. Re-run before enforcement GA and after changing identity, observer, or remediation authority.
+Status: accepted for `release/3.0` report-only alpha. Re-run before enforcement GA and after changing identity, observer, or remediation authority.
 
 ## Assets and boundaries
 

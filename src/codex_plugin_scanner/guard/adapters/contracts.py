@@ -133,6 +133,7 @@ _DISPLAY_NAMES = {
     "opencode": "OpenCode",
     "copilot": "Copilot",
     "cursor": "Cursor",
+    "cline": "Cline",
     "gemini": "Gemini",
     "hermes": "Hermes",
     "openclaw": "OpenClaw",
@@ -140,6 +141,7 @@ _DISPLAY_NAMES = {
     "kimi": "Kimi",
     "grok": "Grok",
     "pi": "Pi",
+    "omp": "Oh My Pi",
     "zcode": "ZCode",
 }
 
@@ -226,6 +228,53 @@ HARNESS_CONTRACTS: tuple[HarnessProtectionContract, ...] = (
         icon_label="Cursor",
     ),
     HarnessProtectionContract(
+        harness="cline",
+        install_aliases=("cline", "cline-cli", "cline-vscode"),
+        config_paths=(
+            "~/.cline/hooks/",
+            "~/.cline/plugins/",
+            "~/.cline/data/settings/cline_mcp_settings.json",
+            "~/.cline/settings/cline_mcp_settings.json",
+            "~/Documents/Cline/Hooks/",
+            "~/Documents/Cline/Plugins/",
+        ),
+        event_surfaces=("shell", "prompt", "mcp_tool", "file_read", "file_write", "tool_result", "network_request"),
+        native_approval=False,
+        browser_fallback=True,
+        resume_support=False,
+        known_blind_spots=(
+            "Native Cline PostToolUse hooks are observation-only and cannot replace a result already returned to "
+            "the model; full post-tool output mediation requires the Guard-managed Cline plugin transport. "
+            "JetBrains protection is reported as unverified until a live pre-tool deny proof is observed."
+        ),
+        smoke_command="hol-guard apps test cline --json",
+        surface_capabilities=("auto", "hooks", "plugin", "cli", "all"),
+        supported_actions=(
+            "connect:auto",
+            "connect:hooks",
+            "connect:plugin",
+            "connect:cli",
+            "connect:all",
+            "test:auto",
+            "test:hooks",
+            "test:plugin",
+            "test:cli",
+            "test:all",
+            "repair:auto",
+            "repair:hooks",
+            "repair:plugin",
+            "repair:cli",
+            "repair:all",
+            "disconnect:auto",
+            "disconnect:hooks",
+            "disconnect:plugin",
+            "disconnect:cli",
+            "disconnect:all",
+        ),
+        docs_path="docs/guard/cline-local-protection-contract.md",
+        icon_label="Cline",
+    ),
+    HarnessProtectionContract(
         harness="gemini",
         install_aliases=("gemini",),
         config_paths=("~/.gemini/settings.json",),
@@ -294,7 +343,7 @@ HARNESS_CONTRACTS: tuple[HarnessProtectionContract, ...] = (
         resume_support=False,
         known_blind_spots=(
             "Tool output post-processing and inline edits applied without a tool call are not visible to Guard. "
-            "Hooks run in parallel and fail open on crash or timeout."
+            "Hooks run in parallel, so separate requests may be reviewed concurrently."
         ),
         smoke_command="hol-guard install kimi --dry-run",
     ),
@@ -311,23 +360,19 @@ HARNESS_CONTRACTS: tuple[HarnessProtectionContract, ...] = (
         browser_fallback=True,
         resume_support=False,
         known_blind_spots=(
-            "Grok hooks fail open on crash or timeout. --always-approve and bypassPermissions weaken "
-            "prompt policy but PreToolUse hooks still run when installed."
+            "--always-approve and bypassPermissions weaken prompt policy, but the bounded Guard hook still "
+            "returns a native deny when its local review cannot finish."
         ),
         smoke_command="hol-guard install grok --dry-run",
     ),
     HarnessProtectionContract(
         harness="pi",
-        install_aliases=("pi", "pi-agent", "pi-coding-agent", "omp", "oh-my-pi"),
+        install_aliases=("pi", "pi-agent", "pi-coding-agent"),
         config_paths=(
             "~/.pi/agent/settings.json",
             ".pi/settings.json",
             "~/.pi/agent/extensions/*.ts",
             ".pi/extensions/*.ts",
-            "~/.omp/agent/settings.json",
-            ".omp/settings.json",
-            "~/.omp/agent/extensions/*.ts",
-            ".omp/extensions/*.ts",
         ),
         event_surfaces=("shell", "prompt", "mcp_tool", "file_read", "tool_result"),
         native_approval=True,
@@ -338,6 +383,26 @@ HARNESS_CONTRACTS: tuple[HarnessProtectionContract, ...] = (
             "configured package surfaces plus the prompt and tool events forwarded by the managed extension."
         ),
         smoke_command="hol-guard install pi --dry-run",
+    ),
+    HarnessProtectionContract(
+        harness="omp",
+        install_aliases=("omp", "oh-my-pi"),
+        config_paths=(
+            "~/.omp/agent/settings.json",
+            ".omp/settings.json",
+            "~/.omp/agent/extensions/*.ts",
+            ".omp/extensions/*.ts",
+        ),
+        event_surfaces=("shell", "prompt", "mcp_tool", "file_read", "tool_result"),
+        native_approval=True,
+        browser_fallback=True,
+        resume_support=True,
+        known_blind_spots=(
+            "Oh My Pi package install and update flows happen outside the runtime extension bridge, so Guard "
+            "observes the "
+            "configured package surfaces plus the prompt and tool events forwarded by the managed extension."
+        ),
+        smoke_command="hol-guard install omp --dry-run",
     ),
     HarnessProtectionContract(
         harness="zcode",

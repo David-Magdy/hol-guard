@@ -67,7 +67,7 @@ def _write_signed_runtime(runtime: Path, key: Ed25519PrivateKey) -> None:
     executable.write_bytes(b"runtime")
     payload: dict[str, object] = {
         "schemaVersion": "hol-guard-release-manifest.v1",
-        "version": "3.1.0a1",
+        "version": "3.0.0a1",
         "buildId": "build-1",
         "sourceCommit": "a" * 40,
         "platform": "macos",
