@@ -186,6 +186,7 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     }
     assert jobs["publish-alpha-pypi"]["needs"] == ["build", "reserve-alpha-tag"]
     assert "needs.publish-alpha-testpypi" not in jobs["publish-alpha-pypi"]["if"]
+    assert "vars.ALPHA_TESTPYPI_ENABLED" not in jobs["publish-alpha-pypi"]["if"]
     assert "vars.ALPHA_TESTPYPI_ENABLED == 'true'" in jobs["publish-alpha-testpypi"]["if"]
     for job_name in (
         "publish-alpha-testpypi",
