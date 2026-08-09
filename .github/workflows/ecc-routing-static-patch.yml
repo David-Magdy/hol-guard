@@ -1,0 +1,63 @@
+name: ECC routing static patch
+
+on:
+  push:
+    branches:
+      - feat/extension-control-center-01-details
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/extension-control-center-01-details
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - name: Patch direct SPA routing
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'anchor missing: {path}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace(
+              'dashboard/src/app.tsx',
+              '''  if (pathname === "/extensions") {\n    return "extensions";\n  }''',
+              '''  if (pathname === "/extensions" || pathname.startsWith("/extensions/")) {\n    return "extensions";\n  }''',
+          )
+          replace(
+              'dashboard/src/extensions-workspace.tsx',
+              '''const EXTENSION_ROUTE_STATE_KEY = "guardExtensionDetailPath";\n\nfunction historyDetailPath(): string | null {\n  const state: unknown = window.history.state;\n  if (typeof state !== "object" || state === null) return null;\n  const value = (state as Record<string, unknown>)[EXTENSION_ROUTE_STATE_KEY];\n  return typeof value === "string" && value.startsWith("/extensions/") ? value : null;\n}\n\nexport function currentExtensionRouteState(): RouteState {\n  const bridgedPath = window.location.pathname === "/extensions" ? historyDetailPath() : null;\n  return {\n    route: parseExtensionRoute(bridgedPath ?? window.location.pathname),\n    detail: readExtensionDetailUrlState(window.location.search),\n  };\n}\n''',
+              '''export function currentExtensionRouteState(): RouteState {\n  return {\n    route: parseExtensionRoute(window.location.pathname),\n    detail: readExtensionDetailUrlState(window.location.search),\n  };\n}\n''',
+          )
+          main = Path('dashboard/src/main.tsx')
+          main.write_text('''import { StrictMode } from "react";\nimport { createRoot } from "react-dom/client";\n\nimport { App } from "./app";\nimport "./styles.css";\n\nconst container = document.getElementById("guard-dashboard-root");\n\nif (container === null) {\n  throw new Error("Missing guard-dashboard-root");\n}\n\ncreateRoot(container).render(\n  <StrictMode>\n    <App />\n  </StrictMode>\n);\n''', encoding='utf-8')
+          replace(
+              'dashboard/src/app-routing.test.ts',
+              '''assert(resolveView("/about") === "about", "/about resolves to about view");''',
+              '''assert(resolveView("/about") === "about", "/about resolves to about view");\nassert(resolveView("/extensions/command.git") === "extensions", "canonical extension detail route resolves to extensions view");\nassert(resolveView("/extensions/%2Fetc%2Fpasswd") === "extensions", "invalid nested extension route stays inside extensions fail-closed view");''',
+          )
+          PY
+      - run: cd dashboard && bun install --frozen-lockfile
+      - run: cd dashboard && bun run test
+      - run: cd dashboard && bun run build
+      - name: Commit routing and exact production bundle
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard/src/app.tsx dashboard/src/extensions-workspace.tsx dashboard/src/main.tsx dashboard/src/app-routing.test.ts src/codex_plugin_scanner/guard/daemon/static
+          git commit -m "fix(guard): route canonical extension details directly"
+          git push origin HEAD:feat/extension-control-center-01-details
