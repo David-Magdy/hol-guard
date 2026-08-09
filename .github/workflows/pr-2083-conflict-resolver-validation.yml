@@ -1,4 +1,4 @@
-name: PR 2083 dashboard diagnosis
+name: PR 2083 final resolved-tree validation
 
 on:
   push:
@@ -6,16 +6,22 @@ on:
       - chore/pr-2083-conflict-resolver-executor
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose-dashboard:
+  integrate-and-validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       VALIDATED_BASE: 9b8a56644053dd9985ec0dc1c1f3b54e25564ad6
       RELEASE_HEAD: 7143b6f9de63f77d3f0a4adf943709a096f2637c
       MAIN_HEAD: a626ec004957ab3c827f18e98edcfff4ab6beed3
+      EXPECTED_UPDATER_BLOB: 78595a1f58198f655a682e54ac2b7f7b9b89f33f
+      EXPECTED_STORE_BLOB: 1d31847427e53f47db3d6b344bef07b756fc9e66
+      EXPECTED_FLEET_TEST_BLOB: 2374ecba70bbafbca6ac4600cd626a16f40fc0f2
+      EXPECTED_RATCHET_BASE_BLOB: df3885dcf8c5cf0a3bf564b5e7f18c2b0a95fd1c
+      EXPECTED_RELEASE_RATCHET_BLOB: bf41bf4eac57991bdafc82c865a1b2ffc55d8645
+      EXPECTED_MAIN_RATCHET_BLOB: ff7ac238fd1a6397c264acbfbe2049f875cffcda
       MERGED_CASES: "14037"
       MERGED_TEST_LINES: "310514"
     steps:
@@ -24,7 +30,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Recreate exact resolved tree
+      - name: Integrate exact current heads
         shell: bash
         run: |
           set -euo pipefail
@@ -32,54 +38,162 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --detach "$VALIDATED_BASE"
           git merge --no-ff --no-edit "$RELEASE_HEAD"
+
           set +e
           git merge --no-ff --no-edit "$MAIN_HEAD"
-          RC=$?
+          MERGE_RC=$?
           set -e
-          test "$RC" -ne 0
+          test "$MERGE_RC" -ne 0
           test "$(git diff --name-only --diff-filter=U)" = "ci/test-suite-ratchet-baseline.json"
+
+          BASE_BLOB=$(git ls-files -u ci/test-suite-ratchet-baseline.json | awk '$3 == 1 {print $2}')
+          OURS_BLOB=$(git ls-files -u ci/test-suite-ratchet-baseline.json | awk '$3 == 2 {print $2}')
+          THEIRS_BLOB=$(git ls-files -u ci/test-suite-ratchet-baseline.json | awk '$3 == 3 {print $2}')
+          test "$BASE_BLOB" = "$EXPECTED_RATCHET_BASE_BLOB"
+          test "$OURS_BLOB" = "$EXPECTED_RELEASE_RATCHET_BLOB"
+          test "$THEIRS_BLOB" = "$EXPECTED_MAIN_RATCHET_BLOB"
+
           git checkout --ours ci/test-suite-ratchet-baseline.json
           python - <<'PY'
           import json
           import os
           from pathlib import Path
-          p = Path("ci/test-suite-ratchet-baseline.json")
-          d = json.loads(p.read_text())
-          d["maximum_collected_cases"] = int(os.environ["MERGED_CASES"])
-          d["maximum_test_source_lines"] = int(os.environ["MERGED_TEST_LINES"])
-          p.write_text(json.dumps(d, indent=2) + "\n")
+
+          path = Path("ci/test-suite-ratchet-baseline.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          payload["maximum_collected_cases"] = int(os.environ["MERGED_CASES"])
+          payload["maximum_test_source_lines"] = int(os.environ["MERGED_TEST_LINES"])
+          path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
           PY
           git add ci/test-suite-ratchet-baseline.json
+
+          # Both branches adapted the same fleet-repair regression differently.
+          # The release version is the intentional 3.0 contract and avoids the
+          # duplicate declaration produced by Git's otherwise-clean auto-merge.
+          git checkout "$RELEASE_HEAD" -- dashboard/src/fleet-workspace.test.ts
+          test "$(git hash-object dashboard/src/fleet-workspace.test.ts)" = "$EXPECTED_FLEET_TEST_BLOB"
+          git add dashboard/src/fleet-workspace.test.ts
+
+          test -z "$(git diff --name-only --diff-filter=U)"
           git commit --no-edit
+
+          git merge-base --is-ancestor "$VALIDATED_BASE" HEAD
+          git merge-base --is-ancestor "$RELEASE_HEAD" HEAD
+          git merge-base --is-ancestor "$MAIN_HEAD" HEAD
+          test "$(git hash-object src/codex_plugin_scanner/guard/cli/update_commands.py)" = "$EXPECTED_UPDATER_BLOB"
+          test "$(git hash-object src/codex_plugin_scanner/guard/store.py)" = "$EXPECTED_STORE_BLOB"
+          test -z "$(git status --porcelain)"
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Install frozen Python dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Validate Python conflict surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -m py_compile \
+            src/codex_plugin_scanner/guard/cli/update_commands.py \
+            src/codex_plugin_scanner/guard/store.py \
+            src/codex_plugin_scanner/guard/runtime/direct_typescript_diagnostics.py
+          uv run --no-sync python -m ruff format --check \
+            src/codex_plugin_scanner/guard/cli/update_commands.py \
+            src/codex_plugin_scanner/guard/store.py \
+            src/codex_plugin_scanner/guard/runtime/direct_typescript_diagnostics.py \
+            tests/test_guard_direct_typescript_diagnostic_filter.py
+          uv run --no-sync python -m ruff check \
+            src/codex_plugin_scanner/guard/cli/update_commands.py \
+            src/codex_plugin_scanner/guard/store.py \
+            src/codex_plugin_scanner/guard/runtime/direct_typescript_diagnostics.py \
+            tests/test_guard_direct_typescript_diagnostic_filter.py
+          git diff --check
+
+      - name: Run focused Python regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync pytest -q \
+            tests/test_guard_phase03_local_install.py::test_update_blocks_protected_authority_downgrade_before_installer_execution \
+            tests/test_update_pi_family_repair.py \
+            tests/test_guard_cli.py::TestGuardCli::test_guard_update_runs_pip_upgrade_in_current_environment \
+            tests/test_guard_cli.py::TestGuardCli::test_guard_update_uses_pipx_when_running_from_pipx \
+            tests/test_guard_cli.py::TestGuardCli::test_guard_update_marks_already_current_pipx_runs_as_current \
+            tests/test_guard_project_identity.py \
+            tests/test_guard_project_identity_ipv6.py \
+            tests/test_guard_project_identity_precedence.py \
+            tests/test_guard_project_identity_symlink.py \
+            tests/test_guard_direct_typescript_diagnostic_filter.py \
+            --tb=short
+          uv run --no-sync pytest -q tests/test_guard_phase03_remainder.py -k success_status --tb=short
+          uv run --no-sync pytest -q tests/test_guard_update_pipx_recovery.py --tb=short
+
+      - name: Validate deterministic evidence and test ratchet
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src:. uv run --no-sync python -m tests.guard_command_decision_diff --check
+          uv run --no-sync python scripts/ci/test_inventory.py --output "$RUNNER_TEMP/test-inventory.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          inventory = json.loads(Path(os.environ["RUNNER_TEMP"] + "/test-inventory.json").read_text())
+          assert inventory["inventory"]["collected_cases"] == int(os.environ["MERGED_CASES"])
+          assert inventory["test_source_lines"] == int(os.environ["MERGED_TEST_LINES"])
+          PY
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory "$RUNNER_TEMP/test-inventory.json"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
         with:
           bun-version: 1.3.14
 
-      - name: Diagnose dashboard
+      - name: Validate dashboard tests and build
         working-directory: dashboard
         shell: bash
         run: |
-          set +e
-          bun install --frozen-lockfile >"$RUNNER_TEMP/bun-install.log" 2>&1
-          echo "install_rc=$?" > "$RUNNER_TEMP/dashboard-report.txt"
-          bun run test >"$RUNNER_TEMP/bun-test.log" 2>&1
-          echo "test_rc=$?" >> "$RUNNER_TEMP/dashboard-report.txt"
-          bun run build >"$RUNNER_TEMP/bun-build.log" 2>&1
-          echo "build_rc=$?" >> "$RUNNER_TEMP/dashboard-report.txt"
-          cat "$RUNNER_TEMP/dashboard-report.txt"
-          exit 0
+          set -euo pipefail
+          bun install --frozen-lockfile
+          bun run test
+          bun run build
 
-      - name: Upload dashboard logs
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: pr2083-dashboard-diagnosis
-          path: |
-            ${{ runner.temp }}/dashboard-report.txt
-            ${{ runner.temp }}/bun-install.log
-            ${{ runner.temp }}/bun-test.log
-            ${{ runner.temp }}/bun-build.log
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit only regenerated dashboard assets if needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          CHANGED=$(git diff --name-only)
+          if [ -n "$CHANGED" ]; then
+            while IFS= read -r path; do
+              case "$path" in
+                src/codex_plugin_scanner/guard/daemon/static/*) ;;
+                *) echo "Unexpected post-build change: $path" >&2; exit 1 ;;
+              esac
+            done <<< "$CHANGED"
+            git add src/codex_plugin_scanner/guard/daemon/static
+            git commit -m "build(dashboard): refresh assets after conflict resolution"
+          fi
+          test -z "$(git status --porcelain)"
+
+      - name: Push validated integration branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$RELEASE_HEAD" HEAD
+          git merge-base --is-ancestor "$MAIN_HEAD" HEAD
+          test "$(git hash-object src/codex_plugin_scanner/guard/cli/update_commands.py)" = "$EXPECTED_UPDATER_BLOB"
+          test "$(git hash-object src/codex_plugin_scanner/guard/store.py)" = "$EXPECTED_STORE_BLOB"
+          test "$(git hash-object dashboard/src/fleet-workspace.test.ts)" = "$EXPECTED_FLEET_TEST_BLOB"
+          git push --force origin HEAD:refs/heads/chore/pr-2083-current-final-validation
