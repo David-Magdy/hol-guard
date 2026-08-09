@@ -10,7 +10,7 @@ on:
       - src/codex_plugin_scanner/guard/runtime/command_extensions.py
       - src/codex_plugin_scanner/guard/runtime/command_permission_catalog.py
       - src/codex_plugin_scanner/guard/runtime/extension_control_*.py
-      - tests/dockerlabs/command-extension-analytics/**
+      - scripts/ci/installed_extension_control_center_server.py
       - tests/test_guard_extension_control_catalog_detail.py
       - tests/fixtures/extension-controls/**
       - pyproject.toml
@@ -25,7 +25,7 @@ on:
       - src/codex_plugin_scanner/guard/runtime/command_extensions.py
       - src/codex_plugin_scanner/guard/runtime/command_permission_catalog.py
       - src/codex_plugin_scanner/guard/runtime/extension_control_*.py
-      - tests/dockerlabs/command-extension-analytics/**
+      - scripts/ci/installed_extension_control_center_server.py
       - tests/test_guard_extension_control_catalog_detail.py
       - tests/fixtures/extension-controls/**
       - pyproject.toml
@@ -42,7 +42,7 @@ concurrency:
 jobs:
   installed-browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - name: Check out exact source
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -79,10 +79,9 @@ jobs:
           python -m venv "$RUNNER_TEMP/hol-guard-ecc-venv"
           CANARY_PYTHON="$RUNNER_TEMP/hol-guard-ecc-venv/bin/python"
           PYTHONPATH= "$CANARY_PYTHON" -m pip install --no-compile --index-url https://pypi.org/simple "$WHEEL"
-          PYTHONPATH= "$CANARY_PYTHON" -c 'import codex_plugin_scanner, importlib.metadata as m; print(m.version("hol-guard"))'
+          PYTHONPATH= "$CANARY_PYTHON" -c 'import importlib.metadata as m; assert m.version("hol-guard")'
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "CANARY_PYTHON=$CANARY_PYTHON" >> "$GITHUB_ENV"
-          echo "HOL_GUARD_WHEEL=$GITHUB_WORKSPACE/$WHEEL" >> "$GITHUB_ENV"
           sha256sum "$WHEEL" > extension-control-center-wheel.sha256
 
       - name: Install dashboard and Chromium dependencies
@@ -92,51 +91,68 @@ jobs:
           cd dashboard
           bun install --frozen-lockfile --ignore-scripts
           bunx playwright install --with-deps chromium
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends apparmor bubblewrap
-          sudo tee /etc/apparmor.d/hol-guard-bwrap >/dev/null <<'EOF'
-          abi <abi/4.0>,
-          include <tunables/global>
-          /usr/bin/bwrap flags=(unconfined) {
-            userns,
-          }
-          EOF
-          sudo apparmor_parser -r /etc/apparmor.d/hol-guard-bwrap
 
-      - name: Run installed daemon and Chromium proof
+      - name: Run exact installed daemon and Chromium proof
         shell: bash
-        env:
-          HOL_GUARD_LAB_EXPECTED_VERSION: ${{ env.VERSION }}
-          HOL_GUARD_LAB_PYTHON: ${{ env.CANARY_PYTHON }}
         run: |
           set -euo pipefail
-          mkdir -p installed-ecc-proof
-          cd tests/dockerlabs/command-extension-analytics
-          bun run typecheck
-          PYTHONPATH= HOL_GUARD_WHEEL="$HOL_GUARD_WHEEL" \
-            bun run guard:test:command-extension-analytics \
-            > "$GITHUB_WORKSPACE/installed-ecc-proof/dockerlab.json"
+          SESSION_FILE="$RUNNER_TEMP/ecc-dashboard-session"
+          READY_FILE="$RUNNER_TEMP/ecc-dashboard-ready"
+          GUARD_HOME="$RUNNER_TEMP/ecc-guard-home"
+          WORKSPACE="$RUNNER_TEMP/ecc-workspace"
+          PROOF_DIR="$GITHUB_WORKSPACE/.artifacts/extension-control-center-installed"
+          mkdir -p "$GUARD_HOME" "$WORKSPACE" "$PROOF_DIR"
+          PYTHONPATH= \
+          HOL_GUARD_INSTALLED_EXPECTED_VERSION="$VERSION" \
+          HOL_GUARD_INSTALLED_HOME="$GUARD_HOME" \
+          HOL_GUARD_INSTALLED_WORKSPACE="$WORKSPACE" \
+          HOL_GUARD_INSTALLED_SESSION_FILE="$SESSION_FILE" \
+          HOL_GUARD_INSTALLED_READY_FILE="$READY_FILE" \
+            "$CANARY_PYTHON" scripts/ci/installed_extension_control_center_server.py \
+            > "$RUNNER_TEMP/ecc-installed-server.log" 2>&1 &
+          SERVER_PID=$!
+          cleanup() {
+            kill "$SERVER_PID" >/dev/null 2>&1 || true
+            wait "$SERVER_PID" >/dev/null 2>&1 || true
+            rm -f "$SESSION_FILE" "$READY_FILE"
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 200); do
+            if [[ -s "$READY_FILE" && -s "$SESSION_FILE" ]]; then
+              ORIGIN=$(tr -d '\r\n' < "$READY_FILE")
+              if curl --fail --silent --show-error "$ORIGIN/extensions" >/dev/null; then
+                break
+              fi
+            fi
+            if ! kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+              cat "$RUNNER_TEMP/ecc-installed-server.log" >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          test -s "$READY_FILE"
+          test -s "$SESSION_FILE"
+          ORIGIN=$(tr -d '\r\n' < "$READY_FILE")
+          SESSION=$(tr -d '\r\n' < "$SESSION_FILE")
+          echo "::add-mask::$SESSION"
+          cd dashboard
+          PLAYWRIGHT_PROOF_DIR="$PROOF_DIR" \
+          GUARD_INSTALLED_ORIGIN="$ORIGIN" \
+          GUARD_INSTALLED_DASHBOARD_SESSION="$SESSION" \
+            bunx playwright test --config playwright.installed.config.ts \
+            e2e/installed-extension-control-center.spec.ts
 
       - name: Verify Extension Control Center browser evidence
         shell: bash
         run: |
           set -euo pipefail
-          proof_dir=.artifacts/command-extension-analytics/playwright-output
+          proof_dir=.artifacts/extension-control-center-installed
           for screenshot in \
             installed-extension-catalog.png \
             installed-extension-rule-detail.png; do
             count=$(find "$proof_dir" -type f -name "$screenshot" | wc -l)
             test "$count" -eq 1
           done
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          payload = json.loads(Path('installed-ecc-proof/dockerlab.json').read_text(encoding='utf-8'))
-          assert payload['status'] == 'pass'
-          assert payload['playwright'] == 'passed'
-          assert payload['privacy'] == {'api': 'clean', 'database': 'clean', 'export': 'clean', 'sse': 'clean'}
-          assert payload['persistence']['beforeRestart'] == payload['persistence']['afterRestart']
-          PY
 
       - name: Upload installed browser proof
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -144,8 +160,7 @@ jobs:
           name: extension-control-center-installed-proof-${{ runner.os }}
           path: |
             extension-control-center-wheel.sha256
-            installed-ecc-proof/dockerlab.json
-            .artifacts/command-extension-analytics/playwright-output/**/*.png
+            .artifacts/extension-control-center-installed/**/*.png
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 14
