@@ -29,6 +29,7 @@ import {
   type ExtensionRoute,
 } from "./extension-control-center-model";
 import {
+  acknowledgeDegradedExtensionControlAuthority,
   applyExtensionMutation,
   ExtensionControlApiError,
   fetchEffectiveExtensionControls,
@@ -72,7 +73,7 @@ type RouteState = {
   detail: ExtensionDetailUrlState;
 };
 
-export type ExtensionRecoveryAction = { copyLabel: string; command: string; description: string; title: string };
+export type ExtensionRecoveryAction = { actionLabel?: string; copyLabel: string; command: string; description: string; title: string };
 
 function historyDetailPath(): string | null {
   const state = window.history.state;
@@ -94,9 +95,27 @@ export function extensionRecoveryAction(health: EffectiveExtensionControls["heal
   if (health === "tampered" || health === "recovery-required") {
     return {
       title: "Repair extension controls",
+      actionLabel: "Repair now",
       copyLabel: "Copy repair command",
       description: "Guard locked these settings after detecting damaged authority data. Authenticate on this device to rebuild trusted authority.",
       command: "hol-guard command controls recover-authority",
+    };
+  }
+  if (health === "degraded-unacknowledged") {
+    return {
+      title: "Acknowledge degraded extension controls",
+      actionLabel: "Acknowledge degraded state",
+      copyLabel: "Copy status command",
+      description: "Guard is failing closed because extension-control authority is degraded. Authenticate to acknowledge the degraded state. Acknowledgement does not restore protected authority.",
+      command: "hol-guard status",
+    };
+  }
+  if (health === "degraded-acknowledged") {
+    return {
+      title: "Degraded extension controls acknowledged",
+      copyLabel: "Copy status command",
+      description: "Guard remains fail-closed while extension-control authority is degraded. Restore protected authority before changing extension policy.",
+      command: "hol-guard status",
     };
   }
   return {
@@ -178,8 +197,9 @@ export function ExtensionStatusBanner(props: {
   if (props.effective.health === "protected") {
     return <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900"><HiMiniShieldCheck className="size-5 shrink-0" aria-hidden="true" /><span><strong>Protected authority</strong> · revision {props.effective.revision}</span></div>;
   }
-  const repairable = props.effective.health === "tampered" || props.effective.health === "recovery-required";
-  return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><div className="flex items-start gap-3"><span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700"><HiMiniExclamationTriangle className="size-5" aria-hidden="true" /></span><div className="min-w-0 flex-1"><h2 className="font-semibold text-slate-950">{recovery?.title}</h2><p className="mt-1 text-sm leading-6 text-slate-700">{recovery?.description}</p><div className="mt-4 flex flex-wrap items-center gap-2">{repairable && props.onRecover ? <button type="button" aria-busy={props.busy} disabled={props.busy} onClick={props.onRecover} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-brand-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{props.busy ? <HiMiniArrowPath className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <HiMiniShieldCheck className="size-4" aria-hidden="true" />}{props.busy ? "Repairing…" : "Repair now"}</button> : null}<button type="button" onClick={props.onRetry} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><HiMiniArrowPath className="size-4" aria-hidden="true" />Check again</button></div><div className="mt-4 border-t border-amber-200 pt-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Command-line fallback</p><div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center"><code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800">{recovery?.command}</code><button type="button" onClick={handleCopy} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-brand-blue">{copyState === "copied" ? <HiMiniClipboardDocumentCheck className="size-4" aria-hidden="true" /> : <HiMiniClipboard className="size-4" aria-hidden="true" />}{copyState === "copied" ? "Copied" : recovery?.copyLabel}</button></div>{copyState === "failed" ? <span role="status" className="mt-2 block text-sm text-red-700">Copy failed. Select the command above.</span> : null}</div>{props.error ? <p role="alert" className="mt-3 text-sm font-medium text-red-700">{props.error}</p> : null}{props.status ? <p role="status" className="mt-3 text-sm font-medium text-slate-800">{props.status}</p> : null}</div></div></div>;
+  const repairable = props.effective.health === "tampered" || props.effective.health === "recovery-required" || props.effective.health === "degraded-unacknowledged";
+  const busyLabel = props.effective.health === "degraded-unacknowledged" ? "Acknowledging…" : "Repairing…";
+  return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><div className="flex items-start gap-3"><span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700"><HiMiniExclamationTriangle className="size-5" aria-hidden="true" /></span><div className="min-w-0 flex-1"><h2 className="font-semibold text-slate-950">{recovery?.title}</h2><p className="mt-1 text-sm leading-6 text-slate-700">{recovery?.description}</p><div className="mt-4 flex flex-wrap items-center gap-2">{repairable && props.onRecover ? <button type="button" aria-busy={props.busy} disabled={props.busy} onClick={props.onRecover} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-brand-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{props.busy ? <HiMiniArrowPath className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <HiMiniShieldCheck className="size-4" aria-hidden="true" />}{props.busy ? busyLabel : recovery?.actionLabel}</button> : null}<button type="button" onClick={props.onRetry} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><HiMiniArrowPath className="size-4" aria-hidden="true" />Check again</button></div><div className="mt-4 border-t border-amber-200 pt-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Command-line fallback</p><div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center"><code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800">{recovery?.command}</code><button type="button" onClick={handleCopy} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-brand-blue">{copyState === "copied" ? <HiMiniClipboardDocumentCheck className="size-4" aria-hidden="true" /> : <HiMiniClipboard className="size-4" aria-hidden="true" />}{copyState === "copied" ? "Copied" : recovery?.copyLabel}</button></div>{copyState === "failed" ? <span role="status" className="mt-2 block text-sm text-red-700">Copy failed. Select the command above.</span> : null}</div>{props.error ? <p role="alert" className="mt-3 text-sm font-medium text-red-700">{props.error}</p> : null}{props.status ? <p role="status" className="mt-3 text-sm font-medium text-slate-800">{props.status}</p> : null}</div></div></div>;
 }
 
 function ExtensionCard(props: {
@@ -324,21 +344,31 @@ export function ExtensionsWorkspace() {
   }, [load, pending, state]);
 
   const recover = useCallback(async (credentials?: { approval_password?: string; approval_totp_code?: string }) => {
+    const acknowledgingDegraded = state.kind === "ready" && state.effective.health === "degraded-unacknowledged";
     setRecoveryBusy(true);
     setRecoveryError(null);
-    setRecoveryStatus("Repairing extension controls…");
+    setRecoveryStatus(acknowledgingDegraded ? "Acknowledging degraded extension controls…" : "Repairing extension controls…");
     try {
-      const effective = await recoverExtensionControlAuthority(credentials);
-      if (effective.health !== "protected") throw new Error("Guard could not restore protected extension controls.");
-      if (state.kind === "ready") setState({ ...state, effective });
-      setRecoveryApprovalOpen(false);
-      setRecoveryStatus("Extension controls repaired.");
+      const effective = acknowledgingDegraded
+        ? await acknowledgeDegradedExtensionControlAuthority(credentials)
+        : await recoverExtensionControlAuthority(credentials);
+      if (acknowledgingDegraded) {
+        if (effective.health !== "degraded-acknowledged") throw new Error("Guard could not acknowledge the degraded authority state.");
+        if (state.kind === "ready") setState({ ...state, effective });
+        setRecoveryApprovalOpen(false);
+        setRecoveryStatus("Degraded state acknowledged. Guard remains fail-closed until protected authority is restored.");
+      } else {
+        if (effective.health !== "protected") throw new Error("Guard could not restore protected extension controls.");
+        if (state.kind === "ready") setState({ ...state, effective });
+        setRecoveryApprovalOpen(false);
+        setRecoveryStatus("Extension controls repaired.");
+      }
     } catch (error) {
       if (!credentials && requiresExtensionRecoveryApproval(error)) {
         await resolveApprovalGate();
         setRecoveryApprovalOpen(true);
       } else {
-        setRecoveryError(error instanceof Error ? error.message : "Guard could not repair extension controls.");
+        setRecoveryError(error instanceof Error ? error.message : acknowledgingDegraded ? "Guard could not acknowledge degraded extension controls." : "Guard could not repair extension controls.");
         setRecoveryStatus(null);
       }
     } finally {
@@ -349,8 +379,9 @@ export function ExtensionsWorkspace() {
   if (state.kind === "loading") return <main className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" /></main>;
   if (state.kind === "error") return <main className="mx-auto max-w-5xl p-6"><div className="rounded-3xl border border-red-200 bg-red-50 p-6"><h1 className="font-semibold text-red-950">Extensions unavailable</h1><p role="alert" className="mt-2 text-sm text-red-700">{state.message}</p><button type="button" onClick={load} className="mt-4 min-h-11 rounded-xl bg-red-700 px-4 text-sm font-semibold text-white">Try again</button></div></main>;
 
+  const acknowledgingDegraded = state.effective.health === "degraded-unacknowledged";
   const recoveryBanner = <ExtensionStatusBanner busy={recoveryBusy} effective={state.effective} error={recoveryError} status={recoveryStatus} onRecover={() => { void recover(); }} onRetry={load} />;
-  const recoveryModal = recoveryApprovalOpen ? <ApprovalProofModal title="Repair extension controls" detail="Authenticate this repair on your device. Guard uses the proof once and does not store it." confirmLabel="Repair controls" approvalGate={resolvedApprovalGate} busy={recoveryBusy} error={recoveryError} onCancel={() => { if (!recoveryBusy) setRecoveryApprovalOpen(false); }} onConfirm={(credentials) => { void recover(credentials); }} /> : null;
+  const recoveryModal = recoveryApprovalOpen ? <ApprovalProofModal title={acknowledgingDegraded ? "Acknowledge degraded extension controls" : "Repair extension controls"} detail={acknowledgingDegraded ? "Authenticate this acknowledgement on your device. Guard remains fail-closed until protected authority is restored." : "Authenticate this repair on your device. Guard uses the proof once and does not store it."} confirmLabel={acknowledgingDegraded ? "Acknowledge degraded state" : "Repair controls"} approvalGate={resolvedApprovalGate} busy={recoveryBusy} error={recoveryError} onCancel={() => { if (!recoveryBusy) setRecoveryApprovalOpen(false); }} onConfirm={(credentials) => { void recover(credentials); }} /> : null;
 
   if (routeState.route.kind === "detail" && selectedExtension) {
     return <><div className="mx-auto w-full max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">{recoveryBanner}</div><ExtensionControlCenterDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} urlState={routeState.detail} onUrlState={updateDetailState} onBack={closeExtension} onBroadControl={() => requestBroadControl(selectedExtension)} />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}{recoveryModal}</>;

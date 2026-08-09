@@ -285,7 +285,7 @@ export function normalizeEffectiveExtensionControls(value: unknown): EffectiveEx
   });
   return {
     schema_version: string(root.schema_version, "effective.schema_version"),
-    health: enumValue(root.health, "effective.health", ["unenrolled", "protected", "tampered", "degraded-unacknowledged", "recovery-required"] as const),
+    health: enumValue(root.health, "effective.health", ["unenrolled", "protected", "tampered", "degraded-unacknowledged", "degraded-acknowledged", "recovery-required"] as const),
     revision: integer(root.revision, "effective.revision"),
     catalog_digest: digest(root.catalog_digest, "effective.catalog_digest"),
     global_lockdown: bool(root.global_lockdown, "effective.global_lockdown"),

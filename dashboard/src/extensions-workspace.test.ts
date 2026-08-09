@@ -20,6 +20,11 @@ import { isExtensionEnabled } from "./extensions-filters";
 
 assert.equal(extensionRecoveryAction("protected"), null);
 assert.deepEqual(extensionRecoveryAction("recovery-required"), extensionRecoveryAction("tampered"));
+assert.equal(extensionRecoveryAction("degraded-unacknowledged")?.actionLabel, "Acknowledge degraded state");
+assert.equal(extensionRecoveryAction("degraded-unacknowledged")?.command, "hol-guard status");
+assert.match(extensionRecoveryAction("degraded-unacknowledged")?.description ?? "", /failing closed/);
+assert.equal(extensionRecoveryAction("degraded-acknowledged")?.actionLabel, undefined);
+assert.match(extensionRecoveryAction("degraded-acknowledged")?.description ?? "", /fail-closed/);
 assert.equal(requiresExtensionRecoveryApproval(new ExtensionControlApiError("approval_gate_required", 403, "approval_gate_required")), true);
 assert.equal(requiresExtensionRecoveryApproval(new ExtensionControlApiError("authority_not_recoverable", 409, "authority_not_recoverable")), false);
 
@@ -34,6 +39,18 @@ const recoveryMarkup = renderToStaticMarkup(createElement(ExtensionStatusBanner,
 assert.match(recoveryMarkup, /hol-guard command controls recover-authority/);
 assert.match(recoveryMarkup, /Repair now/);
 assert.match(recoveryMarkup, /Check again/);
+
+const degradedMarkup = renderToStaticMarkup(createElement(ExtensionStatusBanner, {
+  effective: {
+    schema_version: "1.0.0", health: "degraded-unacknowledged", revision: 5, catalog_digest: "a".repeat(64),
+    global_lockdown: true, controls: [], failures: [{ code: "cloud_layer_missing" }], layers: [],
+  },
+  onRecover: () => undefined,
+  onRetry: () => undefined,
+}));
+assert.match(degradedMarkup, /Acknowledge degraded state/);
+assert.match(degradedMarkup, /hol-guard status/);
+assert.doesNotMatch(degradedMarkup, /Finish local enrollment/);
 
 const totpRecoveryMarkup = renderToStaticMarkup(createElement(ApprovalProofModal, {
   title: "Repair extension controls",

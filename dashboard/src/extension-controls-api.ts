@@ -106,7 +106,7 @@ export type ExtensionCatalogResponse = {
 
 export type EffectiveExtensionControls = {
   schema_version: string;
-  health: "unenrolled" | "protected" | "tampered" | "degraded-unacknowledged" | "recovery-required";
+  health: "unenrolled" | "protected" | "tampered" | "degraded-unacknowledged" | "degraded-acknowledged" | "recovery-required";
   revision: number;
   catalog_digest: string;
   global_lockdown: boolean;
@@ -179,6 +179,20 @@ export async function recoverExtensionControlAuthority(credentials?: {
   approval_totp_code?: string;
 }): Promise<EffectiveExtensionControls> {
   return normalizeEffectiveExtensionControls(await request("/v1/extension-controls/recover-authority", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_nonce: crypto.randomUUID().replaceAll("-", ""),
+      ...credentials,
+    }),
+  }));
+}
+
+export async function acknowledgeDegradedExtensionControlAuthority(credentials?: {
+  approval_password?: string;
+  approval_totp_code?: string;
+}): Promise<EffectiveExtensionControls> {
+  return normalizeEffectiveExtensionControls(await request("/v1/extension-controls/acknowledge-degraded", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

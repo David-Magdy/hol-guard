@@ -115,6 +115,9 @@ assert.equal(normalizedCatalog.extensions[0]?.rules[0]?.rule_id, "command.git.re
 assert.equal(normalizedCatalog.extensions[0]?.permissions[0]?.safer_guidance[0], "Create a checkpoint first.");
 assert.deepEqual(normalizedCatalog.extensions[0]?.reference_urls, ["https://git-scm.com/docs"]);
 assert.equal(normalizeEffectiveExtensionControls(effective()).controls[0]?.state, "disabled");
+const acknowledged = effective();
+acknowledged.health = "degraded-acknowledged";
+assert.equal(normalizeEffectiveExtensionControls(acknowledged).health, "degraded-acknowledged");
 
 function rejects(mutator: (payload: ReturnType<typeof catalog>) => void, pattern: RegExp): void {
   const payload = catalog();

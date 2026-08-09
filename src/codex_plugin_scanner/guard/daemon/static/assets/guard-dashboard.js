@@ -30461,6 +30461,227 @@ function App() {
     helpOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Suspense, { fallback: null, children: /* @__PURE__ */ jsxRuntimeExports.jsx(HelpModal, { open: helpOpen, onClose: handleCloseHelp }) })
   ] });
 }
+const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+const DEFAULT_EXTENSION_DETAIL_URL_STATE = {
+  tab: "overview",
+  query: "",
+  risk: "all",
+  state: "all",
+  configurable: "all",
+  source: "all",
+  deprecated: "all",
+  type: "all",
+  sort: "name",
+  ruleId: null
+};
+function oneOf(value, allowed, fallback) {
+  return value !== null && allowed.includes(value) ? value : fallback;
+}
+function parseExtensionRoute(pathname) {
+  if (pathname === "/extensions" || pathname === "/extensions/") return { kind: "overview" };
+  if (!pathname.startsWith("/extensions/")) return { kind: "invalid" };
+  const encoded = pathname.slice("/extensions/".length);
+  if (!encoded || encoded.includes("/")) return { kind: "invalid" };
+  try {
+    const decoded = decodeURIComponent(encoded).trim().toLowerCase();
+    if (!EXTENSION_ID_PATTERN.test(decoded)) return { kind: "invalid" };
+    return { kind: "detail", extensionId: decoded };
+  } catch {
+    return { kind: "invalid" };
+  }
+}
+function readExtensionDetailUrlState(search) {
+  const params = new URLSearchParams(search);
+  const rawQuery = params.get("q") ?? "";
+  const query = rawQuery.slice(0, 160);
+  const rawRule = params.get("rule")?.trim().toLowerCase() ?? null;
+  const ruleId = rawRule && RULE_ID_PATTERN.test(rawRule) ? rawRule : null;
+  return {
+    tab: oneOf(params.get("tab"), ["overview", "commands", "policy", "test-lab", "activity"], "overview"),
+    query,
+    risk: oneOf(params.get("risk"), ["all", "low", "medium", "high", "critical"], "all"),
+    state: oneOf(params.get("state"), ["all", "allowed", "blocked"], "all"),
+    configurable: oneOf(params.get("configurable"), ["all", "yes", "no"], "all"),
+    source: oneOf(params.get("source"), ["all", "built-in", "local-admin", "signed-cloud"], "all"),
+    deprecated: oneOf(params.get("deprecated"), ["all", "yes", "no"], "all"),
+    type: oneOf(params.get("type"), ["all", "permission", "rule"], "all"),
+    sort: oneOf(params.get("sort"), ["name", "risk", "id"], "name"),
+    ruleId
+  };
+}
+function extensionDetailSearch(state) {
+  const params = new URLSearchParams();
+  if (state.tab !== "overview") params.set("tab", state.tab);
+  if (state.query.trim()) params.set("q", state.query.trim().slice(0, 160));
+  if (state.risk !== "all") params.set("risk", state.risk);
+  if (state.state !== "all") params.set("state", state.state);
+  if (state.configurable !== "all") params.set("configurable", state.configurable);
+  if (state.source !== "all") params.set("source", state.source);
+  if (state.deprecated !== "all") params.set("deprecated", state.deprecated);
+  if (state.type !== "all") params.set("type", state.type);
+  if (state.sort !== "name") params.set("sort", state.sort);
+  if (state.ruleId && RULE_ID_PATTERN.test(state.ruleId)) params.set("rule", state.ruleId);
+  const encoded = params.toString();
+  return encoded ? `?${encoded}` : "";
+}
+function extensionDetailHref(extensionId, state = DEFAULT_EXTENSION_DETAIL_URL_STATE) {
+  const canonical = extensionId.trim().toLowerCase();
+  if (!EXTENSION_ID_PATTERN.test(canonical)) return "/extensions";
+  return `/extensions/${encodeURIComponent(canonical)}${extensionDetailSearch(state)}`;
+}
+function canonicalExtensionId(catalog, candidate) {
+  if (!candidate) return null;
+  const normalized = candidate.trim().toLowerCase();
+  const direct = catalog.find((extension) => extension.extension_id === normalized);
+  if (direct) return direct.extension_id;
+  return catalog.find((extension) => extension.aliases.includes(normalized))?.extension_id ?? null;
+}
+function explicitControlState(effective, kind, targetId) {
+  return effective.controls.find(
+    (control) => control.target.kind === kind && control.target.target_id === targetId
+  )?.state ?? null;
+}
+function extensionEffectiveState(effective, extension) {
+  if (effective.health !== "protected") return "disabled";
+  if (effective.global_lockdown) return "disabled";
+  if (extension.required) return "enabled";
+  return explicitControlState(effective, "extension", extension.extension_id) ?? "enabled";
+}
+function permissionEffectiveState(effective, extension, permission) {
+  if (extensionEffectiveState(effective, extension) === "disabled") return "disabled";
+  if (!permission.configurable) return permission.default_enabled ? "enabled" : "disabled";
+  return explicitControlState(effective, "permission", permission.permission_id) ?? (permission.default_enabled ? "enabled" : "disabled");
+}
+function extensionStateLabel(effective, extension) {
+  if (effective.health !== "protected") return "Unavailable";
+  if (effective.global_lockdown) return "Lockdown";
+  const cloud = effective.layers.some((layer) => layer.kind === "signed-cloud" && layer.controls.some((control) => control.target_kind === "extension" && control.target_id === extension.extension_id));
+  if (cloud) return "Managed";
+  if (extension.required) return "Required";
+  return extensionEffectiveState(effective, extension) === "enabled" ? "Allowed" : "Blocked";
+}
+function permissionStateLabel(effective, extension, permission) {
+  if (effective.health !== "protected") return "Unavailable";
+  if (effective.global_lockdown) return "Lockdown";
+  const cloud = effective.layers.some((layer) => layer.kind === "signed-cloud" && layer.controls.some((control) => control.target_kind === "permission" && control.target_id === permission.permission_id));
+  if (cloud) return "Managed";
+  if (!permission.configurable) return "Required";
+  const explicit = explicitControlState(effective, "permission", permission.permission_id);
+  if (explicit === null) return "Inherited";
+  return explicit === "enabled" ? "Allowed" : "Blocked";
+}
+function controlProvenance(effective, kind, targetId) {
+  const sources = [];
+  if (effective.global_lockdown) sources.push("Global lockdown");
+  for (const layer of effective.layers) {
+    if (layer.controls.some((control) => control.target_kind === kind && control.target_id === targetId)) {
+      sources.push(layer.kind === "signed-cloud" ? "Signed cloud policy" : "Local administrator");
+    }
+  }
+  if (sources.length === 0) sources.push("Built-in default");
+  return sources;
+}
+function permissionForRule(extension, rule) {
+  return extension.permissions.find((permission) => permission.rule_ids.includes(rule.rule_id)) ?? null;
+}
+function permissionRelations(extension, permission) {
+  const byId = new Map(extension.permissions.map((item) => [item.permission_id, item]));
+  const resolve = (ids) => ids.map((id) => byId.get(id)).filter((item) => Boolean(item));
+  const referenced = [...permission.dependencies, ...permission.conflicts, ...permission.implied_permissions];
+  return {
+    dependencies: resolve(permission.dependencies),
+    conflicts: resolve(permission.conflicts),
+    implied: resolve(permission.implied_permissions),
+    missing: referenced.filter((id) => !byId.has(id))
+  };
+}
+const RISK_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+function queryMatch(values, query) {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  const haystack = values.join(" ").toLowerCase();
+  return tokens.every((token) => haystack.includes(token));
+}
+function filterDetailPermissions(extension, effective, state) {
+  if (state.type === "rule") return [];
+  const items = extension.permissions.filter((permission) => {
+    if (!queryMatch([permission.label, permission.permission_id, permission.description, ...permission.action_classes, ...permission.typed_capabilities, ...permission.rule_ids], state.query)) return false;
+    if (state.risk !== "all" && permission.risk_tier !== state.risk) return false;
+    const enabled = permissionEffectiveState(effective, extension, permission) === "enabled";
+    if (state.state === "allowed" && !enabled) return false;
+    if (state.state === "blocked" && enabled) return false;
+    if (state.configurable === "yes" && !permission.configurable) return false;
+    if (state.configurable === "no" && permission.configurable) return false;
+    if (state.source !== "all" && extension.source !== state.source) return false;
+    if (state.deprecated === "yes" && !permission.deprecated) return false;
+    if (state.deprecated === "no" && permission.deprecated) return false;
+    return true;
+  });
+  return items.sort((left, right) => {
+    if (state.sort === "id") return left.permission_id.localeCompare(right.permission_id);
+    if (state.sort === "risk") return RISK_RANK[right.risk_tier] - RISK_RANK[left.risk_tier] || left.label.localeCompare(right.label);
+    return left.label.localeCompare(right.label);
+  });
+}
+function filterDetailRules(extension, effective, state) {
+  if (state.type === "permission") return [];
+  const items = extension.rules.filter((rule) => {
+    const permission = permissionForRule(extension, rule);
+    if (!queryMatch([rule.title, rule.rule_id, rule.description, rule.matcher_kind, ...rule.action_classes, ...rule.risk_classes, ...permission ? [permission.label, permission.permission_id] : []], state.query)) return false;
+    if (state.risk !== "all" && rule.severity !== state.risk) return false;
+    const enabled = permission ? permissionEffectiveState(effective, extension, permission) === "enabled" : extensionEffectiveState(effective, extension) === "enabled";
+    if (state.state === "allowed" && !enabled) return false;
+    if (state.state === "blocked" && enabled) return false;
+    if (state.configurable !== "all" && permission) {
+      if (state.configurable === "yes" && !permission.configurable) return false;
+      if (state.configurable === "no" && permission.configurable) return false;
+    }
+    if (state.source !== "all" && extension.source !== state.source) return false;
+    const deprecated = permission?.deprecated ?? false;
+    if (state.deprecated === "yes" && !deprecated) return false;
+    if (state.deprecated === "no" && deprecated) return false;
+    return true;
+  });
+  return items.sort((left, right) => {
+    if (state.sort === "id") return left.rule_id.localeCompare(right.rule_id);
+    if (state.sort === "risk") return RISK_RANK[right.severity] - RISK_RANK[left.severity] || left.title.localeCompare(right.title);
+    return left.title.localeCompare(right.title);
+  });
+}
+function treatmentLabel(value) {
+  const labels = {
+    allow: "Allow",
+    warn: "Warn",
+    review: "Review",
+    "require-reapproval": "Require reapproval",
+    "sandbox-required": "Require sandbox",
+    block: "Block",
+    required: "Required",
+    enforce: "Enforce",
+    monitor: "Monitor",
+    disabled: "Disabled"
+  };
+  return labels[value] ?? value.replaceAll("-", " ");
+}
+const EXTENSION_ROUTE_STATE_KEY = "guardExtensionDetailPath";
+function sanitizeExtensionSearch(search) {
+  return extensionDetailSearch(readExtensionDetailUrlState(search));
+}
+function bridgeExtensionDetailRoute() {
+  if (!window.location.pathname.startsWith("/extensions/")) return;
+  const detailPath = window.location.pathname;
+  const safeSearch = sanitizeExtensionSearch(window.location.search);
+  const state = { ...window.history.state ?? {}, [EXTENSION_ROUTE_STATE_KEY]: detailPath };
+  window.history.replaceState(state, "", `/extensions${safeSearch}`);
+  window.requestAnimationFrame(() => {
+    const currentState = window.history.state ?? {};
+    if (currentState[EXTENSION_ROUTE_STATE_KEY] !== detailPath) return;
+    window.history.replaceState(currentState, "", `${detailPath}${safeSearch}`);
+  });
+}
+bridgeExtensionDetailRoute();
+window.addEventListener("popstate", bridgeExtensionDetailRoute);
 const container = document.getElementById("guard-dashboard-root");
 if (container === null) {
   throw new Error("Missing guard-dashboard-root");
@@ -30498,7 +30719,7 @@ export {
   HiMiniLockClosed as Z,
   HiMiniBellAlert as _,
   EvidenceActivityHeatmapMini as a,
-  HiMiniArrowTopRightOnSquare as a$,
+  clearLabelForScope as a$,
   HiMiniCircleStack as a0,
   TabBar as a1,
   resolveProtectionLevelCopy as a2,
@@ -30509,33 +30730,33 @@ export {
   clearReviewQueue as a7,
   revokeApprovalGateCooldown as a8,
   disableApprovalGateTotp as a9,
-  CommandActivityWorkspace as aA,
-  EvidenceFilterBar as aB,
-  EvidenceInsightStrip as aC,
-  EvidenceActionList as aD,
-  EvidenceActionDetail as aE,
-  policyIdentityKey as aF,
-  HiMiniChartBar as aG,
-  runHarnessAction as aH,
-  GuardHarnessActionError as aI,
-  HiMiniRocketLaunch as aJ,
-  HiMiniTrash as aK,
-  clearLabelForScope as aL,
-  formatHarnessCommand as aM,
-  isSupplyChainAuditIncomplete as aN,
-  isSupplyChainAuditEvidence as aO,
-  readString$1 as aP,
-  isRecord$2 as aQ,
-  HiMiniClock as aR,
-  IconActionButton as aS,
-  HiMiniBeaker as aT,
-  ActivationSummary as aU,
-  ActionResultPanel as aV,
-  HiMiniBugAnt as aW,
-  buildApprovalProofCredentials as aX,
-  GuardModalLayer as aY,
-  ConnectFlowCard as aZ,
-  ApprovalProofInline as a_,
+  fetchExtensionControlApi as aA,
+  HiMiniArrowPath as aB,
+  canonicalExtensionId as aC,
+  extensionDetailHref as aD,
+  DEFAULT_EXTENSION_DETAIL_URL_STATE as aE,
+  readExtensionDetailUrlState as aF,
+  parseExtensionRoute as aG,
+  HiMiniPuzzlePiece as aH,
+  fetchApprovalPage as aI,
+  fetchPolicy as aJ,
+  HiMiniHome as aK,
+  guardActionPresentation as aL,
+  DEFAULT_FILTER_STATE as aM,
+  filterEvidence as aN,
+  sortEvidence as aO,
+  computeMetrics as aP,
+  CommandActivityWorkspace as aQ,
+  EvidenceFilterBar as aR,
+  EvidenceInsightStrip as aS,
+  EvidenceActionList as aT,
+  EvidenceActionDetail as aU,
+  policyIdentityKey as aV,
+  HiMiniChartBar as aW,
+  runHarnessAction as aX,
+  GuardHarnessActionError as aY,
+  HiMiniRocketLaunch as aZ,
+  HiMiniTrash as a_,
   importSettings as aa,
   resetSettings as ab,
   enrollApprovalGateTotp as ac,
@@ -30549,79 +30770,94 @@ export {
   HiMiniMagnifyingGlass as ak,
   HiMiniCog6Tooth as al,
   approvalGateCooldownLabel as am,
-  HiMiniArrowLeft as an,
-  HiMiniInformationCircle as ao,
-  fetchExtensionControlApi as ap,
-  HiMiniArrowPath as aq,
-  HiMiniPuzzlePiece as ar,
-  fetchApprovalPage as as,
-  fetchPolicy as at,
-  HiMiniHome as au,
-  guardActionPresentation as av,
-  DEFAULT_FILTER_STATE as aw,
-  filterEvidence as ax,
-  sortEvidence as ay,
-  computeMetrics as az,
+  extensionEffectiveState as an,
+  extensionStateLabel as ao,
+  controlProvenance as ap,
+  filterDetailPermissions as aq,
+  filterDetailRules as ar,
+  HiMiniArrowLeft as as,
+  HiMiniArrowTopRightOnSquare as at,
+  permissionStateLabel as au,
+  treatmentLabel as av,
+  permissionForRule as aw,
+  permissionEffectiveState as ax,
+  HiMiniInformationCircle as ay,
+  permissionRelations as az,
   HiMiniCommandLine as b,
-  HiMiniCloudArrowDown as b0,
-  fetchPackageFirewallStatus as b1,
-  runPackageAudit as b2,
-  resolveSupplyChainAuditFailure as b3,
-  runPackageSync as b4,
-  startPackageFirewallConnect as b5,
-  openPackageFirewallAuthorizeFallback as b6,
-  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b7,
-  repairSupplyChainProtection as b8,
-  runPackageFirewallAction as b9,
-  PaginationControls as bA,
-  HiMiniNoSymbol as bB,
-  HiMiniCube as bC,
-  HiMiniArrowDownTray as bD,
-  HiMiniQueueList as bE,
-  fetchMcpPolicyRequest as bF,
-  resolveMcpPolicyRequest as bG,
-  HiMiniDocumentPlus as bH,
-  HiMiniDocumentMagnifyingGlass as bI,
-  Surface as bJ,
-  HiMiniCheckBadge as bK,
-  fetchSupplyChainBundle as bL,
-  isSupplyChainScannerEvidence as bM,
-  isBlockedGuardAction as bN,
-  HiMiniShieldExclamation as bO,
-  HiMiniComputerDesktop as bP,
-  HiMiniChevronLeft as bQ,
-  HiMiniFunnel as bR,
-  HiMiniArrowDown as bS,
-  HiMiniArrowUp as bT,
-  runAuditRemediation as bU,
-  HiMiniSignal as bV,
-  parseInterceptProofSnapshot as ba,
-  activatePackageFirewallRuntime as bb,
-  EntitlementNotice as bc,
-  fetchReceipts as bd,
-  WorkspacePageHeader as be,
-  __vitePreload as bf,
-  isApprovalProofSubmitDisabled as bg,
-  ApprovalProofFieldInputs as bh,
-  scopeLabel as bi,
-  guardAwareHref as bj,
-  HiMiniDocumentText as bk,
-  HiMiniCloudArrowUp as bl,
-  HiMiniCheck as bm,
-  HiMiniCodeBracket as bn,
-  HiMiniClipboardDocument as bo,
-  HiMiniUsers as bp,
-  HiMiniFolder as bq,
-  HiMiniIdentification as br,
-  policyActionLabel as bs,
-  createCloudExceptionRequest as bt,
-  HiMiniArrowRight as bu,
-  HiMiniGlobeAlt as bv,
-  fetchCloudExceptions as bw,
-  fetchCloudExceptionRequests as bx,
-  downloadBlob as by,
-  PolicyStatField as bz,
+  isSupplyChainScannerEvidence as b$,
+  formatHarnessCommand as b0,
+  isSupplyChainAuditIncomplete as b1,
+  isSupplyChainAuditEvidence as b2,
+  readString$1 as b3,
+  isRecord$2 as b4,
+  HiMiniClock as b5,
+  IconActionButton as b6,
+  HiMiniBeaker as b7,
+  ActivationSummary as b8,
+  ActionResultPanel as b9,
+  HiMiniCloudArrowUp as bA,
+  HiMiniCheck as bB,
+  HiMiniCodeBracket as bC,
+  HiMiniClipboardDocument as bD,
+  HiMiniUsers as bE,
+  HiMiniFolder as bF,
+  HiMiniIdentification as bG,
+  policyActionLabel as bH,
+  createCloudExceptionRequest as bI,
+  HiMiniArrowRight as bJ,
+  HiMiniGlobeAlt as bK,
+  fetchCloudExceptions as bL,
+  fetchCloudExceptionRequests as bM,
+  downloadBlob as bN,
+  PolicyStatField as bO,
+  PaginationControls as bP,
+  HiMiniNoSymbol as bQ,
+  HiMiniCube as bR,
+  HiMiniArrowDownTray as bS,
+  HiMiniQueueList as bT,
+  fetchMcpPolicyRequest as bU,
+  resolveMcpPolicyRequest as bV,
+  HiMiniDocumentPlus as bW,
+  HiMiniDocumentMagnifyingGlass as bX,
+  Surface as bY,
+  HiMiniCheckBadge as bZ,
+  fetchSupplyChainBundle as b_,
+  HiMiniBugAnt as ba,
+  buildApprovalProofCredentials as bb,
+  GuardModalLayer as bc,
+  ConnectFlowCard as bd,
+  ApprovalProofInline as be,
+  HiMiniCloudArrowDown as bf,
+  fetchPackageFirewallStatus as bg,
+  runPackageAudit as bh,
+  resolveSupplyChainAuditFailure as bi,
+  runPackageSync as bj,
+  startPackageFirewallConnect as bk,
+  openPackageFirewallAuthorizeFallback as bl,
+  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as bm,
+  repairSupplyChainProtection as bn,
+  runPackageFirewallAction as bo,
+  parseInterceptProofSnapshot as bp,
+  activatePackageFirewallRuntime as bq,
+  EntitlementNotice as br,
+  fetchReceipts as bs,
+  WorkspacePageHeader as bt,
+  __vitePreload as bu,
+  isApprovalProofSubmitDisabled as bv,
+  ApprovalProofFieldInputs as bw,
+  scopeLabel as bx,
+  guardAwareHref as by,
+  HiMiniDocumentText as bz,
   HiMiniChevronRight as c,
+  isBlockedGuardAction as c0,
+  HiMiniShieldExclamation as c1,
+  HiMiniComputerDesktop as c2,
+  HiMiniChevronLeft as c3,
+  HiMiniFunnel as c4,
+  HiMiniArrowDown as c5,
+  HiMiniArrowUp as c6,
+  runAuditRemediation as c7,
+  HiMiniSignal as c8,
   createCommandActivityClient as d,
   harnessDisplayName as e,
   fetchCommandActivityApi as f,
