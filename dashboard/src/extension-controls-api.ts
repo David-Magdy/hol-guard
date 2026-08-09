@@ -1,16 +1,79 @@
 import { fetchExtensionControlApi } from "./guard-api";
 
 export type ExtensionControlState = "enabled" | "disabled";
+export type GuardTreatment = "allow" | "warn" | "review" | "require-reapproval" | "sandbox-required" | "block";
+export type ExtensionRiskTier = "low" | "medium" | "high" | "critical";
+export type ExtensionRuleMode = "required" | "enforce" | "review" | "monitor" | "disabled";
+
+export type ExtensionRuleSafeVariant = {
+  variant_id: string;
+  title: string;
+  matcher_kind: string;
+};
+
+export type ExtensionRule = {
+  rule_id: string;
+  rule_version: number | string;
+  title: string;
+  description: string;
+  severity: ExtensionRiskTier;
+  risk_classes: string[];
+  action_classes: string[];
+  safer_alternatives: string[];
+  default_mode: ExtensionRuleMode;
+  matcher_kind: string;
+  safe_variants: ExtensionRuleSafeVariant[];
+  compatibility_fallback: boolean;
+};
+
+export type ExtensionPermission = {
+  permission_id: string;
+  schema_version: number;
+  extension_id: string;
+  implementation_version: string;
+  label: string;
+  description: string;
+  risk_tier: ExtensionRiskTier;
+  baseline_floor: GuardTreatment;
+  default_enabled: boolean;
+  configurable: boolean;
+  fixed_reason: string | null;
+  typed_capabilities: string[];
+  action_classes: string[];
+  rule_ids: string[];
+  dependencies: string[];
+  conflicts: string[];
+  implied_permissions: string[];
+  introduced_version: string;
+  deprecated: boolean;
+  replacement_permission_id: string | null;
+  safer_guidance: string[];
+};
 
 export type ExtensionCatalogItem = {
+  schema_version: number;
   extension_id: string;
   name: string;
   description: string;
+  enabled: boolean;
   required: boolean;
   source: string;
   version: string;
+  aliases: string[];
+  dependencies: string[];
+  conflicts: string[];
+  delegated_protection: string | null;
+  ecosystem_ids: string[];
+  executables: string[];
+  project_markers: string[];
+  reference_urls: string[];
   action_classes: string[];
   risk_classes: string[];
+  safer_alternatives: string[];
+  rule_count: number;
+  rules: ExtensionRule[];
+  permission_count: number;
+  permissions: ExtensionPermission[];
 };
 
 export type ExtensionControlLayer = {
@@ -27,13 +90,19 @@ export type ExtensionControlLayer = {
 
 export type ExtensionCatalogResponse = {
   schema_version: string;
+  control_schema_version?: string;
   catalog_digest: string;
   extensions: ExtensionCatalogItem[];
+  limits?: {
+    max_body_bytes?: number;
+    max_controls?: number;
+    max_observations?: number;
+  };
 };
 
 export type EffectiveExtensionControls = {
   schema_version: string;
-  health: "unenrolled" | "protected" | "tampered";
+  health: "unenrolled" | "protected" | "tampered" | "degraded-unacknowledged" | "recovery-required";
   revision: number;
   catalog_digest: string;
   global_lockdown: boolean;
@@ -42,7 +111,7 @@ export type EffectiveExtensionControls = {
     state: ExtensionControlState;
   }>;
   layers: ExtensionControlLayer[];
-  failures: Array<{ code: string; detail: string }>;
+  failures: Array<{ code: string; detail?: string; layer_kind?: string }>;
 };
 
 export type ExtensionMutationPayload = {
