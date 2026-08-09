@@ -55,6 +55,7 @@ _TSC_WRITE_FLAGS = frozenset(
 )
 _TSC_PATH_VALUE_FLAGS = frozenset({"--baseUrl", "--project", "-p", "--rootDir", "--typeRoots"})
 _TSC_PACKAGE_VALUE_FLAGS = frozenset({"--types"})
+_TSC_BOOLEAN_FLAGS = frozenset({"--noEmit", "--skipLibCheck"})
 _TSC_VALUE_FLAGS = frozenset(
     {
         "--jsx",
@@ -184,6 +185,8 @@ def _routine_typescript_diagnostic_context(
         for segment in stream_observers
     ):
         return None
+    if not any(segment.tokens[:1] in {("head",), ("tail",)} for segment in stream_observers):
+        return None
     return context
 
 
@@ -203,6 +206,21 @@ def _typescript_no_emit_args_are_safe(args: list[str], *, workspace: Path) -> bo
         arg = args[index]
         if arg.startswith("@"):
             return False
+        if "=" in arg:
+            flag, value = arg.split("=", 1)
+            if flag not in _TSC_VALUE_FLAGS or not value:
+                return False
+            if flag in _TSC_PACKAGE_VALUE_FLAGS and not _typescript_package_list_is_safe(value):
+                return False
+            if flag in _TSC_PATH_VALUE_FLAGS and not _typescript_path_is_contained(value, workspace=workspace):
+                return False
+            index += 1
+            continue
+        if arg in _TSC_BOOLEAN_FLAGS:
+            if index + 1 < len(args) and args[index + 1].casefold() in {"false", "true"}:
+                return False
+            index += 1
+            continue
         if arg in _TSC_VALUE_FLAGS:
             if index + 1 >= len(args):
                 return False
@@ -213,6 +231,8 @@ def _typescript_no_emit_args_are_safe(args: list[str], *, workspace: Path) -> bo
                 return False
             index += 2
             continue
+        if arg.startswith("-"):
+            return False
         if (
             not arg.startswith("-")
             and ("/" in arg or arg.endswith((".ts", ".tsx", ".mts", ".cts")))
