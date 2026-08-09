@@ -35,7 +35,13 @@ def publish_job() -> dict[str, object]:
 def test_feed_is_release_3_0_only_and_wakes_after_publisher() -> None:
     text = workflow_text()
     namespace = runpy.run_path(str(TOOL))
+    trusted_push = """push:
+    branches: [main]
+    paths:
+      - .github/workflows/desktop-core-alpha-feed.yml
+      - scripts/release/desktop_core_alpha_feed.py"""
     assert namespace["SUPPORTED_TRAINS"] == {"3.0"}
+    assert trusted_push in text
     assert "branches: [release/3.0]" in text
     assert 'workflows: ["Publish to PyPI"]' in text
     assert "workflow_run.conclusion == 'success'" in text
