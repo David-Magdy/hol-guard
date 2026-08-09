@@ -23,13 +23,6 @@ from pathlib import Path
 
 _FROZEN_BRIDGE_ARG = "--_hol-guard-codex-bridge"
 _FROZEN_DAEMON_RECOVER_ARG = "--_hol-guard-codex-daemon-recover"
-_ALLOWED_FAILURE_KINDS = frozenset(
-    {
-        "authenticated-control-plane-failure",
-        "overload",
-        "transport-failure",
-    }
-)
 
 
 def is_frozen_guard_runtime() -> bool:
@@ -135,7 +128,7 @@ def install_frozen_codex_runtime(*, force: bool = False) -> bool:
     codex._hook_command_parts_for_home_mode = frozen_hook_command
     codex._hook_packaged_file_paths = frozen_packaged_paths
     runtime_trust.validate_codex_hook_launch = _validate_frozen_codex_hook_launch
-    codex._HOL_GUARD_FROZEN_CODEX_RUNTIME = True
+    setattr(codex, "_HOL_GUARD_FROZEN_CODEX_RUNTIME", True)
     return True
 
 
@@ -179,8 +172,12 @@ def run_frozen_internal_command(argv: Sequence[str] | None = None) -> int | None
 
     from .daemon import recover_guard_daemon_after_hook_failure
 
-    failure_kind = os.environ.get("HOL_GUARD_HOOK_FAILURE_KIND", "transport-failure")
-    if failure_kind not in _ALLOWED_FAILURE_KINDS:
+    failure_kind_raw = os.environ.get("HOL_GUARD_HOOK_FAILURE_KIND", "transport-failure")
+    if failure_kind_raw == "authenticated-control-plane-failure":
+        failure_kind = "authenticated-control-plane-failure"
+    elif failure_kind_raw == "overload":
+        failure_kind = "overload"
+    else:
         failure_kind = "transport-failure"
     recover_guard_daemon_after_hook_failure(
         guard_home,
