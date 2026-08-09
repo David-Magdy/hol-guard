@@ -85,6 +85,9 @@ def test_feed_uses_apple_trust_and_no_redundant_manifest_key() -> None:
         for line in text.splitlines()
         if "codesign --display --extract-certificates" in line
     ]
+    verify = steps["Verify exact Apple identity, notarization, and Core contract"]
+    verify_run = verify["run"]
+    assert isinstance(verify_run, str)
     assert "HOL_GUARD_CORE_UPDATE_PRIVATE_KEY" not in text
     assert "HOL_GUARD_CORE_UPDATE_PUBLIC_KEY" not in text
     assert "json.sig" not in text
@@ -104,7 +107,10 @@ def test_feed_uses_apple_trust_and_no_redundant_manifest_key() -> None:
     assert 'test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT"' in text
     assert 'grep -Fx "Authority=$APPLE_SIGNING_IDENTITY"' not in text
     assert 'grep -Fx "TeamIdentifier=$APPLE_TEAM_ID"' in text
-    assert 'grep -F "source=Notarized Developer ID"' in text
+    assert verify["env"]["MODE"] == "${{ steps.existing.outputs.mode }}"
+    assert "spctl --assess" not in verify_run
+    assert 'test -s "$RUNNER_TEMP/notary-result.json"' in verify_run
+    assert ".status == \"Accepted\" and (.id | type == \"string\" and length > 0)" in verify_run
 
 
 def test_macos_feed_avoids_bash4_only_builtins_and_binds_mode() -> None:

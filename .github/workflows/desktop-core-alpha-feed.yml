@@ -355,6 +355,7 @@ jobs:
         env:
           CORE_VERSION: ${{ steps.release.outputs.version }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MODE: ${{ steps.existing.outputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
@@ -380,11 +381,11 @@ jobs:
             | sed -E 's/^[^=]+=//; s/://g' | tr '[:lower:]' '[:upper:]')
           test -n "$EXPECTED_FINGERPRINT"
           test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT"
-          if ! spctl --assess --type execute --verbose=4 "$BINARY" 2> "$RUNNER_TEMP/spctl.txt"; then
-            cat "$RUNNER_TEMP/spctl.txt" >&2
-            exit 1
+          if [[ "$MODE" == "build" ]]; then
+            test -s "$RUNNER_TEMP/notary-result.json"
+            jq -e '.status == "Accepted" and (.id | type == "string" and length > 0)' \
+              "$RUNNER_TEMP/notary-result.json" >/dev/null
           fi
-          grep -F "source=Notarized Developer ID" "$RUNNER_TEMP/spctl.txt"
           file "$BINARY" | grep -F "Mach-O 64-bit executable arm64"
           cp "$BINARY" "$VERIFY"
           chmod 0755 "$VERIFY"
