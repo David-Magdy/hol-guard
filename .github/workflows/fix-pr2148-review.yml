@@ -1,0 +1,87 @@
+name: Apply PR 2148 review fixes
+
+on:
+  push:
+    branches:
+      - fix/package-shim-store-lock-main
+    paths:
+      - .github/workflows/fix-pr2148-review.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Require exact repair branch and owner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "hashgraph-online/hol-guard"
+          test "$GITHUB_REF" = "refs/heads/fix/package-shim-store-lock-main"
+          test "$GITHUB_ACTOR" = "kantorcodes"
+
+      - name: Check out branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/package-shim-store-lock-main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Apply bounded deadline fix and 13-second regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --python 3.12
+          python3 - <<'PY'
+          from pathlib import Path
+
+          shims = Path('src/codex_plugin_scanner/guard/shims.py')
+          text = shims.read_text(encoding='utf-8')
+          old = '''            "        time.sleep(min(store_lock_retry_delay_seconds, remaining_seconds))",\n            "try:",'''
+          new = '''            "        time.sleep(min(store_lock_retry_delay_seconds, remaining_seconds))",\n            "        if time.monotonic() >= deadline:",\n            "            return result",\n            "try:",'''
+          if old not in text:
+              raise SystemExit('store-lock retry insertion point moved')
+          shims.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          tests = Path('tests/test_guard_package_shims.py')
+          text = tests.read_text(encoding='utf-8')
+          old = 'args=(str(home_dir / "guard.db"), 2, ready_event)'
+          new = 'args=(str(home_dir / "guard.db"), 13, ready_event)'
+          if old not in text:
+              raise SystemExit('transient writer-lock fixture insertion point moved')
+          tests.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+          uv run --no-sync python tests/guard_command_decision_diff.py --write
+          uv run --no-sync pytest \
+            tests/test_guard_package_shims.py::test_package_manager_shim_waits_out_transient_store_writer_lock \
+            tests/test_guard_package_shims.py::test_package_shim_tries_owned_containment_before_guard_review \
+            tests/test_guard_command_decision_diff.py::test_report_is_exactly_reproducible_and_source_bound \
+            --tb=short
+          git diff --check
+
+      - name: Commit fixes and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/fix-pr2148-review.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(guard): bound package-shim retry deadline"
+          git push origin HEAD:fix/package-shim-store-lock-main
