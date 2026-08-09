@@ -25,6 +25,7 @@ jobs:
       - name: Record exact merge conflicts
         shell: bash
         run: |
+          set +e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           REPORT="$RUNNER_TEMP/pr2083-current-conflicts.txt"
@@ -56,8 +57,8 @@ jobs:
             fi
           fi
 
-          git reset --hard "$VALIDATED_BASE"
-          git checkout --detach "$VALIDATED_BASE"
+          git reset --hard "$VALIDATED_BASE" >/dev/null 2>&1
+          git checkout --detach "$VALIDATED_BASE" >/dev/null 2>&1
           git merge --no-ff --no-edit "$MAIN_HEAD" >"$RUNNER_TEMP/main-merge.log" 2>&1
           MAIN_RC=$?
           echo "main_merge_rc=$MAIN_RC" >> "$REPORT"
@@ -78,7 +79,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr2083-current-conflicts
+          name: pr2083-current-conflicts-v2
           path: ${{ runner.temp }}/pr2083-current-conflicts.txt
           if-no-files-found: error
           retention-days: 1
