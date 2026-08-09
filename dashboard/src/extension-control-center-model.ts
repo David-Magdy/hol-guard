@@ -256,7 +256,9 @@ export function filterDetailRules(
   if (state.type === "permission") return [];
   const permissionByRule = new Map<string, ExtensionPermission>();
   for (const permission of extension.permissions) {
-    for (const ruleId of permission.rule_ids) permissionByRule.set(ruleId, permission);
+    for (const ruleId of permission.rule_ids) {
+      if (!permissionByRule.has(ruleId)) permissionByRule.set(ruleId, permission);
+    }
   }
   const items = extension.rules.filter((rule) => {
     const permission = permissionByRule.get(rule.rule_id) ?? null;
