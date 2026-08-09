@@ -165,6 +165,7 @@ export function permissionStateLabel(
 ): "Allowed" | "Blocked" | "Required" | "Managed" | "Inherited" | "Lockdown" | "Unavailable" {
   if (effective.health !== "protected") return "Unavailable";
   if (effective.global_lockdown) return "Lockdown";
+  if (extensionEffectiveState(effective, extension) === "disabled") return "Blocked";
   const cloud = effective.layers.some((layer) => layer.kind === "signed-cloud" && layer.controls.some((control) => control.target_kind === "permission" && control.target_id === permission.permission_id));
   if (cloud) return "Managed";
   if (!permission.configurable) return "Required";
