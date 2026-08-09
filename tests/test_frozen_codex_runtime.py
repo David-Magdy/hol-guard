@@ -76,7 +76,8 @@ def test_frozen_codex_contract_binds_commands_and_roles_to_one_executable(
     executable_target = Path(sys.executable).expanduser().resolve(strict=True)
 
     assert bridge_argv[:2] == (invocation, "--_hol-guard-codex-bridge")
-    assert fallback_argv[:5] == [invocation, "guard", "hook", "--harness", "codex"]
+    assert fallback_argv[:4] == [invocation, "hook", "--harness", "codex"]
+    assert "guard" not in fallback_argv[:2]
     assert daemon_argv[:2] == [invocation, "--_hol-guard-codex-daemon-recover"]
     assert {path for _role, path in package_paths} == {executable_target}
     assert {role for role, _path in package_paths} == {

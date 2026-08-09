@@ -77,9 +77,9 @@ def install_frozen_codex_runtime(*, force: bool = False) -> bool:
             home_is_current=home_is_current,
             python_executable=python_executable,
         )
-        if len(source_argv) < 5 or source_argv[1:3] != ("-I", "-c"):
+        if len(source_argv) < 6 or source_argv[1:3] != ("-I", "-c") or source_argv[4] != "guard":
             raise RuntimeError("Guard's source Codex fallback contract is not canonical")
-        return (python_executable, *source_argv[4:])
+        return (python_executable, *source_argv[5:])
 
     def frozen_daemon_start_command(
         guard_home: Path,
@@ -285,7 +285,7 @@ def _verify_frozen_launch_contracts(
         fallback_argv != tuple(fallback_command)
         or fallback.get("interpreter") != interpreter
         or fallback.get("package_roles") != ["fallback_entrypoint"]
-        or fallback_argv[:5] != (invocation_path, "guard", "hook", "--harness", "codex")
+        or fallback_argv[:4] != (invocation_path, "hook", "--harness", "codex")
     ):
         raise ValueError("managed frozen Codex hook fallback contract is invalid")
 
