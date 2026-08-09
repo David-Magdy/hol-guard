@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
+from typing import Mapping
 
 
 OWASP_AST10_VERSION = "1.0 (2026 Edition)"
@@ -29,30 +31,51 @@ class EvidenceState(str, Enum):
     NOT_TESTED = "not_tested"
 
 
-OWASP_AST10_RISKS: dict[str, AstRisk] = {
-    "AST01": AstRisk("AST01", "Malicious Skills"),
-    "AST02": AstRisk("AST02", "Supply Chain Compromise"),
-    "AST03": AstRisk("AST03", "Over-Privileged Skills"),
-    "AST04": AstRisk("AST04", "Insecure Metadata"),
-    "AST05": AstRisk("AST05", "Untrusted External Instructions"),
-    "AST06": AstRisk("AST06", "Weak Isolation"),
-    "AST07": AstRisk("AST07", "Update Drift"),
-    "AST08": AstRisk("AST08", "Poor Scanning"),
-    "AST09": AstRisk("AST09", "No Governance"),
-    "AST10": AstRisk("AST10", "Cross-Platform Reuse"),
-}
+OWASP_AST10_RISKS: Mapping[str, AstRisk] = MappingProxyType(
+    {
+        "AST01": AstRisk("AST01", "Malicious Skills"),
+        "AST02": AstRisk("AST02", "Supply Chain Compromise"),
+        "AST03": AstRisk("AST03", "Over-Privileged Skills"),
+        "AST04": AstRisk("AST04", "Insecure Metadata"),
+        "AST05": AstRisk("AST05", "Untrusted External Instructions"),
+        "AST06": AstRisk("AST06", "Weak Isolation"),
+        "AST07": AstRisk("AST07", "Update Drift"),
+        "AST08": AstRisk("AST08", "Poor Scanning"),
+        "AST09": AstRisk("AST09", "No Governance"),
+        "AST10": AstRisk("AST10", "Cross-Platform Reuse"),
+    }
+)
 
 # Only map rules when the association is narrow enough to be useful. Everything
 # else is deliberately UNMAPPED rather than inferred from a broad category name.
-_RULE_RISK_IDS: dict[str, tuple[str, ...]] = {
-    "SECURITY_MD_MISSING": ("AST09",),
-    "RISKY_APPROVAL_DEFAULT": ("AST03", "AST06"),
-}
+_RULE_RISK_IDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "SECURITY_MD_MISSING": ("AST09",),
+        "RISKY_APPROVAL_DEFAULT": ("AST03", "AST06"),
+    }
+)
 
 _UNMAPPED_REASON = (
     "No conservative OWASP Agentic Skills Top 10 association is encoded for this "
     "HOL Guard rule. This does not mean the finding is unimportant."
 )
+
+
+def _validate_mapping_catalog() -> None:
+    unknown_risk_ids = sorted(
+        {
+            risk_id
+            for risk_ids in _RULE_RISK_IDS.values()
+            for risk_id in risk_ids
+            if risk_id not in OWASP_AST10_RISKS
+        }
+    )
+    if unknown_risk_ids:
+        unknown = ", ".join(unknown_risk_ids)
+        raise RuntimeError(f"AST10 rule mappings reference unknown risk IDs: {unknown}")
+
+
+_validate_mapping_catalog()
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +88,9 @@ class AstMapping:
 
 def map_rule_id(rule_id: str) -> AstMapping:
     """Return a conservative AST10 association for a HOL Guard rule ID."""
+
+    if not isinstance(rule_id, str):
+        raise TypeError("rule_id must be a string")
 
     normalized = rule_id.strip().upper()
     risk_ids = _RULE_RISK_IDS.get(normalized, ())
@@ -88,6 +114,9 @@ def map_rule_id(rule_id: str) -> AstMapping:
 
 def evidence_record(rule_id: str, state: EvidenceState) -> dict[str, object]:
     """Build machine-readable evidence without conflating scan state and risk mapping."""
+
+    if not isinstance(state, EvidenceState):
+        raise TypeError("state must be an EvidenceState")
 
     mapping = map_rule_id(rule_id)
     return {
