@@ -77,7 +77,7 @@ def collect_lockfile_parse_results(
 
 def parse_lockfile_with_budget(
     path: str,
-    text: str,
+    source_text: str | bytes,
     *,
     budget_seconds: float,
     dependency_parser: DependencyMapParser,
@@ -86,7 +86,7 @@ def parse_lockfile_with_budget(
     budget_ms = budget_seconds * 1000
     return parse_lockfile_text(
         path,
-        text,
+        source_text,
         deadline=time.monotonic() + budget_seconds,
         budget_ms=budget_ms,
         dependency_parser=dependency_parser,
