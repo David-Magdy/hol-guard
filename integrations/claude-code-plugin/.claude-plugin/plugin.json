@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "hol-guard",
+  "displayName": "HOL Guard",
+  "description": "Install and manage local-first HOL Guard runtime protection for Claude Code, including native pre-tool security hooks for risky commands, secrets, packages, MCP, and agent supply-chain activity.",
+  "author": {
+    "name": "Hashgraph Online"
+  },
+  "homepage": "https://hol.org/guard",
+  "repository": "https://github.com/hashgraph-online/hol-guard",
+  "license": "Apache-2.0",
+  "keywords": [
+    "security",
+    "guardrails",
+    "prompt-injection",
+    "supply-chain",
+    "mcp",
+    "claude-code"
+  ]
+}
