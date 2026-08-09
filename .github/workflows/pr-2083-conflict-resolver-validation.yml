@@ -1,4 +1,4 @@
-name: PR 2083 conflict resolver validation
+name: PR 2083 current-head integration validation
 
 on:
   push:
@@ -9,29 +9,36 @@ permissions:
   contents: write
 
 jobs:
-  resolve-and-validate:
+  integrate-and-validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
+    env:
+      VALIDATED_BASE: 9b8a56644053dd9985ec0dc1c1f3b54e25564ad6
+      RELEASE_HEAD: 7143b6f9de63f77d3f0a4adf943709a096f2637c
+      MAIN_HEAD: a626ec004957ab3c827f18e98edcfff4ab6beed3
+      EXPECTED_UPDATER_BLOB: 78595a1f58198f655a682e54ac2b7f7b9b89f33f
+      EXPECTED_STORE_BLOB: 1d31847427e53f47db3d6b344bef07b756fc9e66
     steps:
       - name: Check out resolver branch
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
-      - name: Capture exact patch and switch to pinned integration
+      - name: Integrate exact current heads
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum .github/pr-2083-updater.patch
-          test "$(sha256sum .github/pr-2083-updater.patch | awk '{print $1}')" = "1a7684b409b08c528b4b0c24ca9bbc1e98e5b207b5240b137ae89aa1daae0d76"
-          cp .github/pr-2083-updater.patch /tmp/pr2083.patch
-          git checkout --detach caf3842feb562acfe420e5005f12d3d4f7b2ac13
-          test "$(git rev-parse HEAD)" = "caf3842feb562acfe420e5005f12d3d4f7b2ac13"
-          test "$(git hash-object src/codex_plugin_scanner/guard/cli/update_commands.py)" = "bea35e41c7b3109f12e2c88c86eaac5802a34b81"
-          test "$(git hash-object src/codex_plugin_scanner/guard/store.py)" = "1d31847427e53f47db3d6b344bef07b756fc9e66"
-          git apply --check /tmp/pr2083.patch
-          git apply /tmp/pr2083.patch
-          test "$(git diff --name-only)" = "src/codex_plugin_scanner/guard/cli/update_commands.py"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --detach "$VALIDATED_BASE"
+          git merge --no-ff --no-edit "$RELEASE_HEAD"
+          git merge --no-ff --no-edit "$MAIN_HEAD"
+          git merge-base --is-ancestor "$VALIDATED_BASE" HEAD
+          git merge-base --is-ancestor "$RELEASE_HEAD" HEAD
+          git merge-base --is-ancestor "$MAIN_HEAD" HEAD
+          test "$(git hash-object src/codex_plugin_scanner/guard/cli/update_commands.py)" = "$EXPECTED_UPDATER_BLOB"
+          test "$(git hash-object src/codex_plugin_scanner/guard/store.py)" = "$EXPECTED_STORE_BLOB"
+          test -z "$(git status --porcelain)"
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -44,25 +51,30 @@ jobs:
           version: "0.9.26"
           enable-cache: true
 
-      - name: Install frozen dependencies
+      - name: Install frozen Python dependencies
         run: uv sync --frozen --extra dev --python 3.12
 
-      - name: Validate resolved contracts
+      - name: Validate Python conflict surfaces
         shell: bash
         run: |
           set -euo pipefail
           uv run --no-sync python -m py_compile \
             src/codex_plugin_scanner/guard/cli/update_commands.py \
-            src/codex_plugin_scanner/guard/store.py
+            src/codex_plugin_scanner/guard/store.py \
+            src/codex_plugin_scanner/guard/runtime/direct_typescript_diagnostics.py
           uv run --no-sync python -m ruff format --check \
             src/codex_plugin_scanner/guard/cli/update_commands.py \
-            src/codex_plugin_scanner/guard/store.py
+            src/codex_plugin_scanner/guard/store.py \
+            src/codex_plugin_scanner/guard/runtime/direct_typescript_diagnostics.py \
+            tests/test_guard_direct_typescript_diagnostic_filter.py
           uv run --no-sync python -m ruff check \
             src/codex_plugin_scanner/guard/cli/update_commands.py \
-            src/codex_plugin_scanner/guard/store.py
+            src/codex_plugin_scanner/guard/store.py \
+            src/codex_plugin_scanner/guard/runtime/direct_typescript_diagnostics.py \
+            tests/test_guard_direct_typescript_diagnostic_filter.py
           git diff --check
 
-      - name: Run focused updater and store regressions
+      - name: Run focused Python regressions
         shell: bash
         run: |
           set -euo pipefail
@@ -76,17 +88,28 @@ jobs:
             tests/test_guard_project_identity_ipv6.py \
             tests/test_guard_project_identity_precedence.py \
             tests/test_guard_project_identity_symlink.py \
+            tests/test_guard_direct_typescript_diagnostic_filter.py \
             --tb=short
           uv run --no-sync pytest -q tests/test_guard_phase03_remainder.py -k success_status --tb=short
           uv run --no-sync pytest -q tests/test_guard_update_pipx_recovery.py --tb=short
 
-      - name: Create clean validation commit
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.3.14
+
+      - name: Validate dashboard
+        working-directory: dashboard
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git diff --name-only)" = "src/codex_plugin_scanner/guard/cli/update_commands.py"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/codex_plugin_scanner/guard/cli/update_commands.py
-          git commit -m "fix(release): preserve current updater contracts"
-          git push origin HEAD:refs/heads/chore/pr-2083-final-validation
+          bun install --frozen-lockfile
+          bun run test
+          bun run build
+
+      - name: Push validated integration branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          git push --force-with-lease origin HEAD:refs/heads/chore/pr-2083-current-final-validation
