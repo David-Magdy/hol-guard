@@ -200,6 +200,7 @@ def test_local_route_and_api_ownership_contracts_are_explicit() -> None:
     assert routes["/feed-health"].writes_state is True
     for route in routes:
         assert _GuardDaemonHandler._is_dashboard_route(route)
+    assert _GuardDaemonHandler._is_dashboard_route("/extensions/command.git")
     apis_by_method = {(api.method, api.path): api for api in LOCAL_API_OWNERSHIP}
     assert apis_by_method[("POST", "/v1/initialize")].auth_required is False
     assert apis_by_method[("GET", "/v1/connect/state")].writes_state is False
