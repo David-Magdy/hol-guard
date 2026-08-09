@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TextIO
@@ -44,16 +45,17 @@ def run_guard_risk_report_command(
     report = build_local_risk_report(status_payload, guard_version=_package_version())
     report_format = str(getattr(args, "format", "json"))
     body = render_local_risk_report_html(report) if report_format == "html" else local_risk_report_json(report)
+    stream = output_stream or sys.stdout
 
     output = getattr(args, "output", None)
     if isinstance(output, str) and output.strip():
         destination = Path(output).expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(body, encoding="utf-8")
-        print(f"Wrote sanitized local risk report: {destination}", file=output_stream)
+        print(f"Wrote sanitized local risk report: {destination}", file=stream)
         return 0
 
-    print(body, end="", file=output_stream)
+    print(body, end="", file=stream)
     return 0
 
 
