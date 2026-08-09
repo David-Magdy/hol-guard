@@ -47,17 +47,25 @@ def test_linux_policy_integrity_uses_local_vault_without_system_keyring(
 
     artifact_id = "codex:project:tampered-local-vault"
     store.upsert_policy(
-        PolicyDecision(harness="codex", scope="artifact", action="allow", artifact_id=artifact_id, artifact_hash="hash"),
+        PolicyDecision(
+            harness="codex", scope="artifact", action="allow", artifact_id=artifact_id, artifact_hash="hash"
+        ),
         "2026-08-07T20:01:00Z",
     )
     with sqlite3.connect(store.guard_home / "guard.db") as connection:
-        connection.execute("update policy_decisions set payload_mac = ? where artifact_id = ?", ("deadbeef", artifact_id))
-        before_row = connection.execute("select * from policy_decisions where artifact_id = ?", (artifact_id,)).fetchone()
+        connection.execute(
+            "update policy_decisions set payload_mac = ? where artifact_id = ?", ("deadbeef", artifact_id)
+        )
+        before_row = connection.execute(
+            "select * from policy_decisions where artifact_id = ?", (artifact_id,)
+        ).fetchone()
     assert store.verify_policy_integrity()["counts"]["tampered"] == 1
 
     rerun = store.setup_policy_integrity(now="2026-08-07T20:02:00Z", include_items=False)
     with sqlite3.connect(store.guard_home / "guard.db") as connection:
-        after_row = connection.execute("select * from policy_decisions where artifact_id = ?", (artifact_id,)).fetchone()
+        after_row = connection.execute(
+            "select * from policy_decisions where artifact_id = ?", (artifact_id,)
+        ).fetchone()
 
     assert rerun["mode"] == "protected"
     assert after_row == before_row
