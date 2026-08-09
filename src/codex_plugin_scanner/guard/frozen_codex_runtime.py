@@ -128,7 +128,7 @@ def install_frozen_codex_runtime(*, force: bool = False) -> bool:
     codex._hook_command_parts_for_home_mode = frozen_hook_command
     codex._hook_packaged_file_paths = frozen_packaged_paths
     runtime_trust.validate_codex_hook_launch = _validate_frozen_codex_hook_launch
-    setattr(codex, "_HOL_GUARD_FROZEN_CODEX_RUNTIME", True)
+    codex.__dict__["_HOL_GUARD_FROZEN_CODEX_RUNTIME"] = True
     return True
 
 
