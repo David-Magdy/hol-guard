@@ -48,6 +48,11 @@ jobs:
               '''function historyDetailPath(): string | null {\n  const state = window.history.state;\n  if (typeof state !== "object" || state === null) return null;\n  const value = (state as Record<string, unknown>)[EXTENSION_ROUTE_STATE_KEY];\n  return typeof value === "string" && value.startsWith("/extensions/") ? value : null;\n}\n\nexport function currentExtensionRouteState(): RouteState {\n  const bridgedPath = window.location.pathname === "/extensions" ? historyDetailPath() : null;\n  return {\n    route: parseExtensionRoute(bridgedPath ?? window.location.pathname),\n    detail: readExtensionDetailUrlState(window.location.search),\n  };\n}\n''',
               '''export function currentExtensionRouteState(): RouteState {\n  return {\n    route: parseExtensionRoute(window.location.pathname),\n    detail: readExtensionDetailUrlState(window.location.search),\n  };\n}\n''',
           )
+          replace(
+              'dashboard/src/extension-control-center-model.ts',
+              '''  const items = extension.rules.filter((rule) => {\n    const permission = permissionForRule(extension, rule);''',
+              '''  const permissionByRule = new Map<string, ExtensionPermission>();\n  for (const permission of extension.permissions) {\n    for (const ruleId of permission.rule_ids) permissionByRule.set(ruleId, permission);\n  }\n  const items = extension.rules.filter((rule) => {\n    const permission = permissionByRule.get(rule.rule_id) ?? null;''',
+          )
           main = Path('dashboard/src/main.tsx')
           main.write_text('''import { StrictMode } from "react";\nimport { createRoot } from "react-dom/client";\n\nimport { App } from "./app";\nimport "./styles.css";\n\nconst container = document.getElementById("guard-dashboard-root");\n\nif (container === null) {\n  throw new Error("Missing guard-dashboard-root");\n}\n\ncreateRoot(container).render(\n  <StrictMode>\n    <App />\n  </StrictMode>\n);\n''', encoding='utf-8')
           replace(
@@ -63,6 +68,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add dashboard/src/app.tsx dashboard/src/extensions-workspace.tsx dashboard/src/main.tsx dashboard/src/app-routing.test.ts src/codex_plugin_scanner/guard/daemon/static
+          git add dashboard/src/app.tsx dashboard/src/extensions-workspace.tsx dashboard/src/main.tsx dashboard/src/app-routing.test.ts dashboard/src/extension-control-center-model.ts src/codex_plugin_scanner/guard/daemon/static
           git commit -m "fix(guard): route canonical extension details directly"
           git push origin HEAD:feat/extension-control-center-01-details
