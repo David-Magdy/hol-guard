@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   HiMiniArrowPath,
   HiMiniCheckCircle,
@@ -28,6 +28,12 @@ import {
   type ExtensionMutationPayload,
 } from "./extension-controls-api";
 import { ApprovalProofModal } from "./approval-proof-modal";
+import {
+  ApprovalProofFieldInputs,
+  buildApprovalProofCredentials,
+  isApprovalProofSubmitDisabled,
+} from "./approval-proof-inline";
+import type { GuardApprovalGatePublicConfig } from "./guard-types";
 import { useResolvedApprovalGate } from "./use-resolved-approval-gate";
 import {
   classifyDomain,
@@ -246,18 +252,17 @@ function ExtensionCard(props: {
   );
 }
 
-function ReviewModal(props: {
+export function ReviewModal(props: {
   change: PendingChange;
   busy: boolean;
   error: string | null;
+  approvalGate: GuardApprovalGatePublicConfig | null;
   onCancel: () => void;
-  onConfirm: (password: string, totp: string) => void;
+  onConfirm: (credentials: { approval_password?: string; approval_totp_code?: string }) => void;
 }) {
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
-  const passwordInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    passwordInput.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !props.busy) {
         props.onCancel();
@@ -277,8 +282,16 @@ function ReviewModal(props: {
     : `${props.change.enabled ? "Enable" : "Disable"} ${props.change.extension.name}`;
   const handleSubmit = useCallback((event: React.FormEvent) => {
     event.preventDefault();
-    props.onConfirm(password, totp);
+    props.onConfirm(buildApprovalProofCredentials(props.approvalGate, {
+      approvalPassword: password,
+      approvalTotpCode: totp,
+    }));
   }, [password, props, totp]);
+  const submitDisabled = isApprovalProofSubmitDisabled(
+    props.approvalGate,
+    { approvalPassword: password, approvalTotpCode: totp },
+    props.busy,
+  );
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm" role="presentation">
       <form onSubmit={handleSubmit} role="dialog" aria-modal="true" aria-labelledby="extension-review-title" className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl">
@@ -290,10 +303,17 @@ function ReviewModal(props: {
           <span className="text-slate-500">Current</span><span aria-hidden="true">→</span><strong className="text-slate-950">Requested</strong>
           <span>{"globalLockdown" in props.change ? !props.change.globalLockdown ? "Open" : "Locked" : props.change.enabled ? "Disabled" : "Enabled"}</span><span /><span>{"globalLockdown" in props.change ? props.change.globalLockdown ? "Locked" : "Open" : props.change.enabled ? "Enabled" : "Disabled"}</span>
         </div>
-        <label className="mt-5 block text-sm font-medium text-slate-700">Approval password<input ref={passwordInput} type="password" autoComplete="current-password" value={password} onChange={handlePasswordChange} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" /></label>
-        <label className="mt-4 block text-sm font-medium text-slate-700">Authenticator code<input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={handleTotpChange} className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" /></label>
-        {props.error ? <p className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{props.error}</p> : null}
-        <div className="mt-6 flex justify-end gap-3"><button type="button" onClick={props.onCancel} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100">Cancel</button><button type="submit" disabled={props.busy} className="rounded-xl bg-brand-blue px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:opacity-60">{props.busy ? "Verifying…" : "Confirm change"}</button></div>
+        <div className="mt-5">
+          <ApprovalProofFieldInputs
+            approvalGate={props.approvalGate}
+            approvalPassword={password}
+            approvalTotpCode={totp}
+            onApprovalPasswordChange={handlePasswordChange}
+            onApprovalTotpCodeChange={handleTotpChange}
+          />
+        </div>
+        {props.error ? <p className="mt-4 rounded-xl border border-brand-attention/20 bg-brand-attention/[0.06] px-3 py-2 text-sm text-brand-attention">{props.error}</p> : null}
+        <div className="mt-6 flex justify-end gap-3"><button type="button" onClick={props.onCancel} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100">Cancel</button><button type="submit" disabled={submitDisabled} className="rounded-xl bg-brand-blue px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:opacity-60">{props.busy ? "Verifying…" : "Confirm change"}</button></div>
       </form>
     </div>
   );
@@ -336,15 +356,19 @@ export function ExtensionsWorkspace() {
     setFilters((prev) => ({ ...prev, ...patch }));
   }, []);
   const clearFilters = useCallback(() => setFilters(EMPTY_EXTENSION_FILTERS), []);
-  const handleChange = useCallback((change: PendingChange) => { setMutationError(null); setPending(change); }, []);
+  const handleChange = useCallback((change: PendingChange) => {
+    setMutationError(null);
+    void resolveApprovalGate({ failClosed: true })
+      .then(() => setPending(change))
+      .catch(() => setMutationError("Guard could not load approval settings. Check the local connection and try again."));
+  }, [resolveApprovalGate]);
   const handleCancel = useCallback(() => { if (!busy) setPending(null); }, [busy]);
-  const handleConfirm = useCallback(async (password: string, totp: string) => {
+  const handleConfirm = useCallback(async (credentials: { approval_password?: string; approval_totp_code?: string }) => {
     if (state.kind !== "ready" || pending === null) return;
     setBusy(true); setMutationError(null);
     try {
       const payload = buildExtensionMutation(state, pending);
-      payload.approval_password = password;
-      payload.approval_totp_code = totp;
+      Object.assign(payload, credentials);
       payload.session_nonce = randomToken();
       const preview = await previewExtensionMutation(payload);
       if (typeof preview.proof_id !== "string") throw new Error("Guard did not issue a mutation proof");
@@ -367,8 +391,13 @@ export function ExtensionsWorkspace() {
       setRecoveryStatus("Extension controls repaired.");
     } catch (error) {
       if (credentials === undefined && requiresExtensionRecoveryApproval(error)) {
-        await resolveApprovalGate();
-        setRecoveryApprovalOpen(true);
+        try {
+          await resolveApprovalGate({ failClosed: true });
+          setRecoveryApprovalOpen(true);
+        } catch {
+          setRecoveryError("Guard could not load approval settings. Check the local connection and try again.");
+          setRecoveryStatus(null);
+        }
       } else {
         setRecoveryError(error instanceof Error ? error.message : "Guard could not repair extension controls.");
         setRecoveryStatus(null);
@@ -393,6 +422,7 @@ export function ExtensionsWorkspace() {
         <button type="button" onClick={toggleLockdown} disabled={locked} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold ${state.effective.global_lockdown ? "bg-red-700 text-white" : "border border-slate-300 bg-white text-slate-700"} disabled:opacity-50`}><HiMiniLockClosed className="size-4" />{state.effective.global_lockdown ? "Disable lockdown" : "Enable lockdown"}</button>
       </header>
       <div className="mt-6"><ExtensionStatusBanner busy={recoveryBusy} effective={state.effective} error={recoveryError} status={recoveryStatus} onRecover={handleRecover} onRetry={load} /></div>
+      {mutationError && pending === null ? <p role="alert" className="mt-4 rounded-xl border border-brand-attention/20 bg-brand-attention/[0.06] px-4 py-3 text-sm font-medium text-brand-attention">{mutationError}</p> : null}
       {state.effective.global_lockdown ? <div className="mt-4 flex items-center gap-3 rounded-2xl bg-slate-950 px-4 py-3 text-sm text-white"><HiMiniLockClosed className="size-5" /><span><strong>Global lockdown active.</strong> Optional extensions remain disabled regardless of individual settings.</span></div> : null}
       <section aria-labelledby="installed-extensions" className="mt-8">
         <div className="flex flex-col gap-1">
@@ -421,7 +451,7 @@ export function ExtensionsWorkspace() {
         )}
       </section>
       <section className="mt-8 overflow-hidden rounded-3xl border border-slate-200 bg-white"><button type="button" onClick={toggleProvenance} aria-expanded={provenanceOpen} className="flex w-full items-center justify-between p-5 text-left"><span><span className="block font-semibold text-slate-950">Policy provenance</span><span className="mt-1 block text-sm text-slate-500">Catalog {state.catalog.catalog_digest.slice(0, 12)}… · {state.effective.layers.length} authority layer{state.effective.layers.length === 1 ? "" : "s"}</span></span>{provenanceOpen ? <HiMiniChevronUp className="size-5" /> : <HiMiniChevronDown className="size-5" />}</button>{provenanceOpen ? <div className="border-t border-slate-200 p-5"><div className="grid gap-3 sm:grid-cols-2">{state.effective.layers.map((layer: ExtensionControlLayer) => <div key={`${layer.kind}-${layer.catalog_digest}`} className="rounded-2xl bg-slate-50 p-4"><div className="flex items-center gap-2"><HiMiniCheckCircle className="size-5 text-emerald-600" /><strong className="text-sm text-slate-900">{layer.kind === "local-admin" ? "Local administrator" : "Signed cloud policy"}</strong></div><p className="mt-2 text-xs text-slate-500">{layer.controls.length} explicit controls · catalog {layer.catalog_digest.slice(0, 12)}…</p></div>)}</div></div> : null}</section>
-      {pending ? <ReviewModal change={pending} busy={busy} error={mutationError} onCancel={handleCancel} onConfirm={handleConfirm} /> : null}
+      {pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={handleCancel} onConfirm={handleConfirm} /> : null}
       {recoveryApprovalOpen ? <ApprovalProofModal title="Repair extension controls" detail="Authenticate this repair on your device. Guard uses the proof once and does not store it." confirmLabel="Repair controls" approvalGate={resolvedApprovalGate} busy={recoveryBusy} error={recoveryError} onCancel={handleRecoveryCancel} onConfirm={handleRecoveryConfirm} /> : null}
     </main>
   );
