@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import replace
 
 from codex_plugin_scanner.guard.local_risk_report import (
     build_local_risk_report,
@@ -84,12 +84,9 @@ def test_risk_band_marks_offline_runtime_high() -> None:
     assert any(check.id == "runtime" and check.status == "fail" for check in report.checks)
 
 
-def test_digest_changes_if_sanitized_summary_is_tampered() -> None:
+def test_digest_verifier_rejects_tampered_sanitized_summary() -> None:
     report = build_local_risk_report(_status_payload(), guard_version="3.0.0a1")
-    payload = asdict(report)
-    payload["managed_harness_count"] = 999
+    tampered = replace(report, managed_harness_count=999)
 
-    assert payload["integrity_sha256"] == report.integrity_sha256
-    # The verifier accepts only the typed report; reconstructing/tampering with
-    # serialized fields cannot preserve the original digest.
-    assert report.managed_harness_count != payload["managed_harness_count"]
+    assert verify_local_risk_report(report)
+    assert not verify_local_risk_report(tampered)
