@@ -1,5 +1,213 @@
-import { r as reactExports, an as extensionEffectiveState, ao as extensionStateLabel, ap as controlProvenance, aq as filterDetailPermissions, ar as filterDetailRules, j as jsxRuntimeExports, as as HiMiniArrowLeft, Z as HiMiniLockClosed, o as HiMiniShieldCheck, at as HiMiniArrowTopRightOnSquare, au as permissionStateLabel, av as treatmentLabel, aw as permissionForRule, ax as permissionEffectiveState, c as HiMiniChevronRight, ay as HiMiniInformationCircle, az as permissionRelations, w as HiMiniXMark, J as HiMiniExclamationTriangle, aA as fetchExtensionControlApi, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, aB as HiMiniArrowPath, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, aC as canonicalExtensionId, aD as extensionDetailHref, aE as DEFAULT_EXTENSION_DETAIL_URL_STATE, x as HiMiniChevronUp, y as HiMiniChevronDown, l as HiMiniCheckCircle, aF as readExtensionDetailUrlState, aG as parseExtensionRoute, aH as HiMiniPuzzlePiece } from "../guard-dashboard.js";
+import { r as reactExports, j as jsxRuntimeExports, an as HiMiniArrowLeft, Z as HiMiniLockClosed, o as HiMiniShieldCheck, ao as HiMiniArrowTopRightOnSquare, c as HiMiniChevronRight, ap as HiMiniInformationCircle, w as HiMiniXMark, J as HiMiniExclamationTriangle, aq as fetchExtensionControlApi, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, ar as HiMiniArrowPath, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp, y as HiMiniChevronDown, l as HiMiniCheckCircle, as as HiMiniPuzzlePiece } from "../guard-dashboard.js";
 import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./use-resolved-approval-gate.js";
+const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+const DEFAULT_EXTENSION_DETAIL_URL_STATE = {
+  tab: "overview",
+  query: "",
+  risk: "all",
+  state: "all",
+  configurable: "all",
+  source: "all",
+  deprecated: "all",
+  type: "all",
+  sort: "name",
+  ruleId: null
+};
+function oneOf(value, allowed, fallback) {
+  return value !== null && allowed.includes(value) ? value : fallback;
+}
+function parseExtensionRoute(pathname) {
+  if (pathname === "/extensions" || pathname === "/extensions/") return { kind: "overview" };
+  if (!pathname.startsWith("/extensions/")) return { kind: "invalid" };
+  const encoded = pathname.slice("/extensions/".length);
+  if (!encoded || encoded.includes("/")) return { kind: "invalid" };
+  try {
+    const decoded = decodeURIComponent(encoded).trim().toLowerCase();
+    if (!EXTENSION_ID_PATTERN.test(decoded)) return { kind: "invalid" };
+    return { kind: "detail", extensionId: decoded };
+  } catch {
+    return { kind: "invalid" };
+  }
+}
+function readExtensionDetailUrlState(search) {
+  const params = new URLSearchParams(search);
+  const rawQuery = params.get("q") ?? "";
+  const query = rawQuery.slice(0, 160);
+  const rawRule = params.get("rule")?.trim().toLowerCase() ?? null;
+  const ruleId = rawRule && RULE_ID_PATTERN.test(rawRule) ? rawRule : null;
+  return {
+    tab: oneOf(params.get("tab"), ["overview", "commands", "policy", "test-lab", "activity"], "overview"),
+    query,
+    risk: oneOf(params.get("risk"), ["all", "low", "medium", "high", "critical"], "all"),
+    state: oneOf(params.get("state"), ["all", "allowed", "blocked"], "all"),
+    configurable: oneOf(params.get("configurable"), ["all", "yes", "no"], "all"),
+    source: oneOf(params.get("source"), ["all", "built-in", "local-admin", "signed-cloud"], "all"),
+    deprecated: oneOf(params.get("deprecated"), ["all", "yes", "no"], "all"),
+    type: oneOf(params.get("type"), ["all", "permission", "rule"], "all"),
+    sort: oneOf(params.get("sort"), ["name", "risk", "id"], "name"),
+    ruleId
+  };
+}
+function extensionDetailSearch(state) {
+  const params = new URLSearchParams();
+  if (state.tab !== "overview") params.set("tab", state.tab);
+  if (state.query.trim()) params.set("q", state.query.trim().slice(0, 160));
+  if (state.risk !== "all") params.set("risk", state.risk);
+  if (state.state !== "all") params.set("state", state.state);
+  if (state.configurable !== "all") params.set("configurable", state.configurable);
+  if (state.source !== "all") params.set("source", state.source);
+  if (state.deprecated !== "all") params.set("deprecated", state.deprecated);
+  if (state.type !== "all") params.set("type", state.type);
+  if (state.sort !== "name") params.set("sort", state.sort);
+  if (state.ruleId && RULE_ID_PATTERN.test(state.ruleId)) params.set("rule", state.ruleId);
+  const encoded = params.toString();
+  return encoded ? `?${encoded}` : "";
+}
+function extensionDetailHref(extensionId, state = DEFAULT_EXTENSION_DETAIL_URL_STATE) {
+  const canonical = extensionId.trim().toLowerCase();
+  if (!EXTENSION_ID_PATTERN.test(canonical)) return "/extensions";
+  return `/extensions/${encodeURIComponent(canonical)}${extensionDetailSearch(state)}`;
+}
+function canonicalExtensionId(catalog, candidate) {
+  if (!candidate) return null;
+  const normalized = candidate.trim().toLowerCase();
+  const direct = catalog.find((extension2) => extension2.extension_id === normalized);
+  if (direct) return direct.extension_id;
+  return catalog.find((extension2) => extension2.aliases.includes(normalized))?.extension_id ?? null;
+}
+function explicitControlState(effective, kind, targetId) {
+  return effective.controls.find(
+    (control) => control.target.kind === kind && control.target.target_id === targetId
+  )?.state ?? null;
+}
+function extensionEffectiveState(effective, extension2) {
+  if (effective.health !== "protected") return "disabled";
+  if (effective.global_lockdown) return "disabled";
+  if (extension2.required) return "enabled";
+  return explicitControlState(effective, "extension", extension2.extension_id) ?? "enabled";
+}
+function permissionEffectiveState(effective, extension2, permission2) {
+  if (extensionEffectiveState(effective, extension2) === "disabled") return "disabled";
+  if (!permission2.configurable) return permission2.default_enabled ? "enabled" : "disabled";
+  return explicitControlState(effective, "permission", permission2.permission_id) ?? (permission2.default_enabled ? "enabled" : "disabled");
+}
+function extensionStateLabel(effective, extension2) {
+  if (effective.health !== "protected") return "Unavailable";
+  if (effective.global_lockdown) return "Lockdown";
+  const cloud = effective.layers.some((layer) => layer.kind === "signed-cloud" && layer.controls.some((control) => control.target_kind === "extension" && control.target_id === extension2.extension_id));
+  if (cloud) return "Managed";
+  if (extension2.required) return "Required";
+  return extensionEffectiveState(effective, extension2) === "enabled" ? "Allowed" : "Blocked";
+}
+function permissionStateLabel(effective, extension2, permission2) {
+  if (effective.health !== "protected") return "Unavailable";
+  if (effective.global_lockdown) return "Lockdown";
+  if (extensionEffectiveState(effective, extension2) === "disabled") return "Blocked";
+  const cloud = effective.layers.some((layer) => layer.kind === "signed-cloud" && layer.controls.some((control) => control.target_kind === "permission" && control.target_id === permission2.permission_id));
+  if (cloud) return "Managed";
+  if (!permission2.configurable) return "Required";
+  const explicit = explicitControlState(effective, "permission", permission2.permission_id);
+  if (explicit === null) return "Inherited";
+  return explicit === "enabled" ? "Allowed" : "Blocked";
+}
+function controlProvenance(effective, kind, targetId) {
+  const sources = [];
+  if (effective.global_lockdown) sources.push("Global lockdown");
+  for (const layer of effective.layers) {
+    if (layer.controls.some((control) => control.target_kind === kind && control.target_id === targetId)) {
+      sources.push(layer.kind === "signed-cloud" ? "Signed cloud policy" : "Local administrator");
+    }
+  }
+  if (sources.length === 0) sources.push("Built-in default");
+  return sources;
+}
+function permissionForRule(extension2, rule2) {
+  return extension2.permissions.find((permission2) => permission2.rule_ids.includes(rule2.rule_id)) ?? null;
+}
+function permissionRelations(extension2, permission2) {
+  const byId = new Map(extension2.permissions.map((item) => [item.permission_id, item]));
+  const resolve = (ids) => ids.map((id2) => byId.get(id2)).filter((item) => Boolean(item));
+  const referenced = [...permission2.dependencies, ...permission2.conflicts, ...permission2.implied_permissions];
+  return {
+    dependencies: resolve(permission2.dependencies),
+    conflicts: resolve(permission2.conflicts),
+    implied: resolve(permission2.implied_permissions),
+    missing: referenced.filter((id2) => !byId.has(id2))
+  };
+}
+const RISK_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+function queryMatch(values, query) {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  const haystack = values.join(" ").toLowerCase();
+  return tokens.every((token) => haystack.includes(token));
+}
+function filterDetailPermissions(extension2, effective, state) {
+  if (state.type === "rule") return [];
+  const items = extension2.permissions.filter((permission2) => {
+    if (!queryMatch([permission2.label, permission2.permission_id, permission2.description, ...permission2.action_classes, ...permission2.typed_capabilities, ...permission2.rule_ids], state.query)) return false;
+    if (state.risk !== "all" && permission2.risk_tier !== state.risk) return false;
+    const enabled = permissionEffectiveState(effective, extension2, permission2) === "enabled";
+    if (state.state === "allowed" && !enabled) return false;
+    if (state.state === "blocked" && enabled) return false;
+    if (state.configurable === "yes" && !permission2.configurable) return false;
+    if (state.configurable === "no" && permission2.configurable) return false;
+    if (state.source !== "all" && extension2.source !== state.source) return false;
+    if (state.deprecated === "yes" && !permission2.deprecated) return false;
+    if (state.deprecated === "no" && permission2.deprecated) return false;
+    return true;
+  });
+  return items.sort((left, right) => {
+    if (state.sort === "id") return left.permission_id.localeCompare(right.permission_id);
+    if (state.sort === "risk") return RISK_RANK[right.risk_tier] - RISK_RANK[left.risk_tier] || left.label.localeCompare(right.label);
+    return left.label.localeCompare(right.label);
+  });
+}
+function filterDetailRules(extension2, effective, state) {
+  if (state.type === "permission") return [];
+  const permissionByRule = /* @__PURE__ */ new Map();
+  for (const permission2 of extension2.permissions) {
+    for (const ruleId of permission2.rule_ids) permissionByRule.set(ruleId, permission2);
+  }
+  const items = extension2.rules.filter((rule2) => {
+    const permission2 = permissionByRule.get(rule2.rule_id) ?? null;
+    if (!queryMatch([rule2.title, rule2.rule_id, rule2.description, rule2.matcher_kind, ...rule2.action_classes, ...rule2.risk_classes, ...permission2 ? [permission2.label, permission2.permission_id] : []], state.query)) return false;
+    if (state.risk !== "all" && rule2.severity !== state.risk) return false;
+    const enabled = permission2 ? permissionEffectiveState(effective, extension2, permission2) === "enabled" : extensionEffectiveState(effective, extension2) === "enabled";
+    if (state.state === "allowed" && !enabled) return false;
+    if (state.state === "blocked" && enabled) return false;
+    if (state.configurable !== "all" && permission2) {
+      if (state.configurable === "yes" && !permission2.configurable) return false;
+      if (state.configurable === "no" && permission2.configurable) return false;
+    }
+    if (state.source !== "all" && extension2.source !== state.source) return false;
+    const deprecated = permission2?.deprecated ?? false;
+    if (state.deprecated === "yes" && !deprecated) return false;
+    if (state.deprecated === "no" && deprecated) return false;
+    return true;
+  });
+  return items.sort((left, right) => {
+    if (state.sort === "id") return left.rule_id.localeCompare(right.rule_id);
+    if (state.sort === "risk") return RISK_RANK[right.severity] - RISK_RANK[left.severity] || left.title.localeCompare(right.title);
+    return left.title.localeCompare(right.title);
+  });
+}
+function treatmentLabel(value) {
+  const labels = {
+    allow: "Allow",
+    warn: "Warn",
+    review: "Review",
+    "require-reapproval": "Require reapproval",
+    "sandbox-required": "Require sandbox",
+    block: "Block",
+    required: "Required",
+    enforce: "Enforce",
+    monitor: "Monitor",
+    disabled: "Disabled"
+  };
+  return labels[value] ?? value.replaceAll("-", " ");
+}
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
@@ -1257,17 +1465,9 @@ function useDebounce(value, delay) {
   }, [value, delay]);
   return debouncedValue;
 }
-const EXTENSION_ROUTE_STATE_KEY = "guardExtensionDetailPath";
-function historyDetailPath() {
-  const state = window.history.state;
-  if (typeof state !== "object" || state === null) return null;
-  const value = state[EXTENSION_ROUTE_STATE_KEY];
-  return typeof value === "string" && value.startsWith("/extensions/") ? value : null;
-}
 function currentExtensionRouteState() {
-  const bridgedPath = window.location.pathname === "/extensions" ? historyDetailPath() : null;
   return {
-    route: parseExtensionRoute(bridgedPath ?? window.location.pathname),
+    route: parseExtensionRoute(window.location.pathname),
     detail: readExtensionDetailUrlState(window.location.search)
   };
 }

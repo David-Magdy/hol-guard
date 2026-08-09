@@ -175,7 +175,7 @@ export function resolveView(pathname: string): AppView {
   if (pathname.startsWith("/apps/")) {
     return "fleet";
   }
-  if (pathname === "/extensions") {
+  if (pathname === "/extensions" || pathname.startsWith("/extensions/")) {
     return "extensions";
   }
   if (pathname === "/settings") {

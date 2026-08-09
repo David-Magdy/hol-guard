@@ -58,8 +58,6 @@ import { useDebounce } from "./use-debounce";
 import { useModalDialog } from "./use-modal-dialog";
 import { useResolvedApprovalGate } from "./use-resolved-approval-gate";
 
-const EXTENSION_ROUTE_STATE_KEY = "guardExtensionDetailPath";
-
 type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
@@ -75,17 +73,9 @@ type RouteState = {
 
 export type ExtensionRecoveryAction = { actionLabel?: string; copyLabel: string; command: string; description: string; title: string };
 
-function historyDetailPath(): string | null {
-  const state = window.history.state;
-  if (typeof state !== "object" || state === null) return null;
-  const value = (state as Record<string, unknown>)[EXTENSION_ROUTE_STATE_KEY];
-  return typeof value === "string" && value.startsWith("/extensions/") ? value : null;
-}
-
 export function currentExtensionRouteState(): RouteState {
-  const bridgedPath = window.location.pathname === "/extensions" ? historyDetailPath() : null;
   return {
-    route: parseExtensionRoute(bridgedPath ?? window.location.pathname),
+    route: parseExtensionRoute(window.location.pathname),
     detail: readExtensionDetailUrlState(window.location.search),
   };
 }

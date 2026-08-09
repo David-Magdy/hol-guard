@@ -254,8 +254,12 @@ export function filterDetailRules(
   state: ExtensionDetailUrlState,
 ): ExtensionRule[] {
   if (state.type === "permission") return [];
+  const permissionByRule = new Map<string, ExtensionPermission>();
+  for (const permission of extension.permissions) {
+    for (const ruleId of permission.rule_ids) permissionByRule.set(ruleId, permission);
+  }
   const items = extension.rules.filter((rule) => {
-    const permission = permissionForRule(extension, rule);
+    const permission = permissionByRule.get(rule.rule_id) ?? null;
     if (!queryMatch([rule.title, rule.rule_id, rule.description, rule.matcher_kind, ...rule.action_classes, ...rule.risk_classes, ...(permission ? [permission.label, permission.permission_id] : [])], state.query)) return false;
     if (state.risk !== "all" && rule.severity !== state.risk) return false;
     const enabled = permission ? permissionEffectiveState(effective, extension, permission) === "enabled" : extensionEffectiveState(effective, extension) === "enabled";
