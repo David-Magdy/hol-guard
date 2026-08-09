@@ -21,8 +21,13 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
+from packaging.version import InvalidVersion, Version
+
 SCHEMA_VERSION = "1"
 _SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+_HANDOFF_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_PROOF_KIND_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_VERSION_TEXT_RE = re.compile(r"^[0-9][0-9A-Za-z.!+_-]{0,63}$")
 
 Outcome = Literal["local_install_verified", "first_local_proof_generated"]
 Verification = Literal[
@@ -31,23 +36,109 @@ Verification = Literal[
     "privacy_safe_local_receipt",
 ]
 
-_FORBIDDEN_KEYS = frozenset(
+_ALLOWED_OUTCOMES = frozenset({"local_install_verified", "first_local_proof_generated"})
+_ALLOWED_VERIFICATIONS = frozenset(
+    {"binary_verified_handoff", "product_corroborated_handoff", "privacy_safe_local_receipt"}
+)
+_RECEIPT_FIELDS = frozenset(
     {
-        "prompt",
-        "raw_prompt",
-        "path",
-        "file",
-        "filename",
-        "command",
-        "secret",
-        "token",
-        "finding",
-        "source_code",
-        "hostname",
-        "username",
-        "report_body",
+        "schema_version",
+        "outcome",
+        "occurred_at",
+        "hol_guard_version",
+        "verification",
+        "evidence_digest",
+        "handoff_id",
+        "proof_kind",
+        "sensitive_content_included",
     }
 )
+_SENSITIVE_VALUE_MARKERS = frozenset(
+    {
+        "password",
+        "private",
+        "prompt",
+        "secret",
+        "sourcecode",
+        "token",
+        "username",
+        "hostname",
+    }
+)
+
+
+def _contains_sensitive_marker(value: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", value.lower())
+    return any(marker in normalized for marker in _SENSITIVE_VALUE_MARKERS)
+
+
+def _validate_utc_timestamp(value: object) -> None:
+    if not isinstance(value, str) or not value.endswith("Z") or len(value) > 40:
+        raise ValueError("occurred_at must be a bounded UTC ISO-8601 timestamp ending in Z")
+    try:
+        parsed = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+    except ValueError as exc:
+        raise ValueError("occurred_at must be a valid UTC ISO-8601 timestamp") from exc
+    if parsed.utcoffset() != UTC.utcoffset(parsed):
+        raise ValueError("occurred_at must be UTC")
+
+
+def _validate_guard_version(value: object) -> None:
+    if not isinstance(value, str) or not _VERSION_TEXT_RE.fullmatch(value):
+        raise ValueError("hol_guard_version must be a bounded PEP 440 version string")
+    try:
+        Version(value)
+    except InvalidVersion as exc:
+        raise ValueError("hol_guard_version must be a valid PEP 440 version") from exc
+
+
+def _validate_receipt_values(
+    *,
+    schema_version: object,
+    outcome: object,
+    occurred_at: object,
+    hol_guard_version: object,
+    verification: object,
+    evidence_digest: object,
+    handoff_id: object,
+    proof_kind: object,
+    sensitive_content_included: object,
+) -> None:
+    if schema_version != SCHEMA_VERSION:
+        raise ValueError(f"schema_version must be {SCHEMA_VERSION}")
+    if not isinstance(outcome, str) or outcome not in _ALLOWED_OUTCOMES:
+        raise ValueError("unsupported outcome")
+    if not isinstance(verification, str) or verification not in _ALLOWED_VERIFICATIONS:
+        raise ValueError("unsupported verification method")
+    _validate_utc_timestamp(occurred_at)
+    _validate_guard_version(hol_guard_version)
+    if not isinstance(evidence_digest, str) or not _SHA256_RE.fullmatch(evidence_digest):
+        raise ValueError("evidence_digest must be a lowercase SHA-256 digest")
+    if handoff_id is not None:
+        if not isinstance(handoff_id, str) or not _HANDOFF_ID_RE.fullmatch(handoff_id):
+            raise ValueError("handoff_id must use the bounded opaque identifier format")
+        if _contains_sensitive_marker(handoff_id):
+            raise ValueError("handoff_id must not contain sensitive-content markers")
+    if proof_kind is not None:
+        if not isinstance(proof_kind, str) or not _PROOF_KIND_RE.fullmatch(proof_kind):
+            raise ValueError("proof_kind must use the bounded lowercase identifier format")
+        if _contains_sensitive_marker(proof_kind):
+            raise ValueError("proof_kind must not contain sensitive-content markers")
+    if sensitive_content_included is not False:
+        raise ValueError("outcome receipts must not include sensitive content")
+
+    if outcome == "local_install_verified":
+        if verification not in {"binary_verified_handoff", "product_corroborated_handoff"}:
+            raise ValueError("local install requires verified handoff evidence")
+        if handoff_id is None:
+            raise ValueError("local install verification requires handoff_id")
+        if proof_kind is not None:
+            raise ValueError("local install receipt must not include proof_kind")
+    else:
+        if verification != "privacy_safe_local_receipt":
+            raise ValueError("first local proof requires privacy_safe_local_receipt verification")
+        if proof_kind is None:
+            raise ValueError("first local proof requires proof_kind")
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +152,19 @@ class GuardOutcomeReceipt:
     handoff_id: str | None
     proof_kind: str | None
     sensitive_content_included: Literal[False] = False
+
+    def __post_init__(self) -> None:
+        _validate_receipt_values(
+            schema_version=self.schema_version,
+            outcome=self.outcome,
+            occurred_at=self.occurred_at,
+            hol_guard_version=self.hol_guard_version,
+            verification=self.verification,
+            evidence_digest=self.evidence_digest,
+            handoff_id=self.handoff_id,
+            proof_kind=self.proof_kind,
+            sensitive_content_included=self.sensitive_content_included,
+        )
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -89,31 +193,7 @@ def build_outcome_receipt(
     occurred_at: datetime | None = None,
 ) -> GuardOutcomeReceipt:
     """Build a versioned receipt after an authoritative local outcome occurs."""
-    if not hol_guard_version or len(hol_guard_version) > 64:
-        raise ValueError("hol_guard_version must be 1..64 characters")
-    if not _SHA256_RE.fullmatch(evidence_digest):
-        raise ValueError("evidence_digest must be a lowercase SHA-256 digest")
-    if handoff_id is not None and not (1 <= len(handoff_id) <= 128):
-        raise ValueError("handoff_id must be 1..128 characters when present")
-    if proof_kind is not None and not (1 <= len(proof_kind) <= 64):
-        raise ValueError("proof_kind must be 1..64 characters when present")
-
-    if outcome == "local_install_verified":
-        if verification not in {"binary_verified_handoff", "product_corroborated_handoff"}:
-            raise ValueError("local install requires verified handoff evidence")
-        if not handoff_id:
-            raise ValueError("local install verification requires handoff_id")
-        if proof_kind is not None:
-            raise ValueError("local install receipt must not include proof_kind")
-    elif outcome == "first_local_proof_generated":
-        if verification != "privacy_safe_local_receipt":
-            raise ValueError("first local proof requires privacy_safe_local_receipt verification")
-        if not proof_kind:
-            raise ValueError("first local proof requires proof_kind")
-    else:  # pragma: no cover - protected by the type contract at static call sites
-        raise ValueError("unsupported outcome")
-
-    receipt = GuardOutcomeReceipt(
+    return GuardOutcomeReceipt(
         schema_version=SCHEMA_VERSION,
         outcome=outcome,
         occurred_at=_iso_utc(occurred_at),
@@ -123,32 +203,27 @@ def build_outcome_receipt(
         handoff_id=handoff_id,
         proof_kind=proof_kind,
     )
-    assert_privacy_safe_receipt(receipt.to_dict())
-    return receipt
 
 
 def assert_privacy_safe_receipt(payload: dict[str, object]) -> None:
-    """Reject receipt-shaped payloads that add sensitive-content fields."""
-    allowed = {
-        "schema_version",
-        "outcome",
-        "occurred_at",
-        "hol_guard_version",
-        "verification",
-        "evidence_digest",
-        "handoff_id",
-        "proof_kind",
-        "sensitive_content_included",
-    }
-    extras = set(payload) - allowed
+    """Validate the complete receipt schema and privacy/value invariants."""
+    extras = set(payload) - _RECEIPT_FIELDS
     if extras:
         raise ValueError(f"outcome receipt has unsupported fields: {sorted(extras)!r}")
-    for key in payload:
-        normalized = key.lower()
-        if normalized in _FORBIDDEN_KEYS:
-            raise ValueError(f"outcome receipt contains forbidden field: {key}")
-    if payload.get("sensitive_content_included") is not False:
-        raise ValueError("outcome receipts must not include sensitive content")
+    missing = _RECEIPT_FIELDS - set(payload)
+    if missing:
+        raise ValueError(f"outcome receipt is missing required fields: {sorted(missing)!r}")
+    _validate_receipt_values(
+        schema_version=payload["schema_version"],
+        outcome=payload["outcome"],
+        occurred_at=payload["occurred_at"],
+        hol_guard_version=payload["hol_guard_version"],
+        verification=payload["verification"],
+        evidence_digest=payload["evidence_digest"],
+        handoff_id=payload["handoff_id"],
+        proof_kind=payload["proof_kind"],
+        sensitive_content_included=payload["sensitive_content_included"],
+    )
 
 
 def canonical_receipt_bytes(receipt: GuardOutcomeReceipt) -> bytes:
