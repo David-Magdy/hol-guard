@@ -48,7 +48,7 @@ test("installed dashboard drills into canonical extensions using the real daemon
 
   await page.goto("/extensions/command.git?tab=commands&rule=command.git.hard-reset");
   await expectSecretSafeUrl(page);
-  const ruleDialog = page.getByRole("dialog", { name: "Hard reset" });
+  const ruleDialog = page.getByRole("dialog", { name: "Destructive Git reset" });
   await expect(ruleDialog).toBeVisible();
   await expect(ruleDialog.getByText("high detector severity")).toBeVisible();
   await expect(ruleDialog.getByText("Governing permission")).toBeVisible();
@@ -57,9 +57,9 @@ test("installed dashboard drills into canonical extensions using the real daemon
   await expect(page.getByRole("tab", { name: "Test Lab" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("Side-effect-free command simulation is delivered in Batch 3.")).toBeVisible();
   await page.goBack();
-  await expect(page.getByRole("dialog", { name: "Hard reset" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Destructive Git reset" })).toBeVisible();
   await page.getByRole("button", { name: "Close rule details" }).click();
-  await expect(page.getByRole("dialog", { name: "Hard reset" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Destructive Git reset" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Extensions" }).click();
   await expect(page.getByRole("heading", { name: "Extensions", exact: true })).toBeVisible();
