@@ -126,6 +126,27 @@ const managed: EffectiveExtensionControls = {
 };
 assert.equal(extensionStateLabel(managed, extension), "Managed");
 
+const sharedRuleExtension: ExtensionCatalogItem = {
+  ...extension,
+  rules: [rules[0]!],
+  rule_count: 1,
+  permissions: [
+    permissions[0]!,
+    { ...permissions[1]!, rule_ids: [rules[0]!.rule_id] },
+  ],
+  permission_count: 2,
+};
+assert.equal(filterDetailRules(sharedRuleExtension, effective, {
+  ...DEFAULT_EXTENSION_DETAIL_URL_STATE,
+  tab: "commands",
+  query: "Permission 0",
+}).length, 1);
+assert.equal(filterDetailRules(sharedRuleExtension, effective, {
+  ...DEFAULT_EXTENSION_DETAIL_URL_STATE,
+  tab: "commands",
+  query: "Permission 1",
+}).length, 0);
+
 const start = performance.now();
 const filteredRules = filterDetailRules(extension, effective, {
   ...DEFAULT_EXTENSION_DETAIL_URL_STATE,
