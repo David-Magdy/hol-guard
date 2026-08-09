@@ -147,18 +147,22 @@ assert.equal(filterDetailRules(sharedRuleExtension, effective, {
   query: "Permission 1",
 }).length, 0);
 
-const start = performance.now();
-const filteredRules = filterDetailRules(extension, effective, {
+const rulePerformanceState = {
   ...DEFAULT_EXTENSION_DETAIL_URL_STATE,
-  tab: "commands",
-  risk: "critical",
-  sort: "risk",
-});
-const filteredPermissions = filterDetailPermissions(extension, effective, {
+  tab: "commands" as const,
+  risk: "critical" as const,
+  sort: "risk" as const,
+};
+const permissionPerformanceState = {
   ...DEFAULT_EXTENSION_DETAIL_URL_STATE,
-  tab: "commands",
+  tab: "commands" as const,
   query: "Permission 49",
-});
+};
+filterDetailRules(extension, effective, rulePerformanceState);
+filterDetailPermissions(extension, effective, permissionPerformanceState);
+const start = performance.now();
+const filteredRules = filterDetailRules(extension, effective, rulePerformanceState);
+const filteredPermissions = filterDetailPermissions(extension, effective, permissionPerformanceState);
 const duration = performance.now() - start;
 assert.equal(filteredRules.length, 125);
 assert.ok(filteredPermissions.length > 0);
