@@ -184,6 +184,12 @@ def _protect_approval_item(
         if reason_code in reason_codes:
             decision_v2_payload["package_review_cloud_reason_code"] = reason_code
             break
+    action_envelope = receipt.get("action_envelope_json")
+    projected_action_envelope = dict(action_envelope) if isinstance(action_envelope, dict) else None
+    if projected_action_envelope is not None and projected_action_envelope.get("observe_mode") is True:
+        projected_action_envelope["policy_action"] = policy_action
+        projected_action_envelope.pop("observe_mode", None)
+        projected_action_envelope.pop("observed_policy_action", None)
     return {
         "artifact_id": artifact.artifact_id,
         "artifact_name": artifact.name,
@@ -195,9 +201,7 @@ def _protect_approval_item(
         "changed_fields": _protect_target_labels(response_payload),
         "risk_summary": risk_summary,
         "risk_signals": _string_list(verdict.get("risk_signals")),
-        "action_envelope_json": (
-            receipt.get("action_envelope_json") if isinstance(receipt.get("action_envelope_json"), dict) else None
-        ),
+        "action_envelope_json": projected_action_envelope,
         "decision_v2_json": decision_v2_payload,
         "scanner_evidence": scanner_evidence,
     }
