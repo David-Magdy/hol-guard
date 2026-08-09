@@ -1,0 +1,33 @@
+name: Request Desktop Core alpha feed
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch reviewed Desktop Core feed
+    if: >-
+      github.repository == 'hashgraph-online/hol-guard' &&
+      github.event.issue.title == '[desktop-core-feed] publish latest 3.x alpha' &&
+      (github.actor_id == 6068672 || github.actor_id == 301892678)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch existing reviewed feed on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "hashgraph-online/hol-guard"
+          test "$GITHUB_ACTOR_ID" = "6068672" -o "$GITHUB_ACTOR_ID" = "301892678"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/desktop-core-alpha-feed.yml/dispatches" \
+            -f ref=main
