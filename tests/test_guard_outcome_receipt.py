@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -21,7 +21,7 @@ def test_verified_install_receipt_requires_verified_handoff() -> None:
         verification="binary_verified_handoff",
         evidence_digest=evidence,
         handoff_id="handoff-safe-id",
-        occurred_at=datetime(2026, 8, 9, 16, 0, tzinfo=UTC),
+        occurred_at=datetime(2026, 8, 9, 16, 0, tzinfo=timezone.utc),
     )
     assert receipt.sensitive_content_included is False
     assert receipt.handoff_id == "handoff-safe-id"
@@ -37,7 +37,7 @@ def test_first_local_proof_receipt_contains_digest_not_evidence() -> None:
         verification="privacy_safe_local_receipt",
         evidence_digest=digest,
         proof_kind="runtime_decision_receipt",
-        occurred_at=datetime(2026, 8, 9, 16, 1, tzinfo=UTC),
+        occurred_at=datetime(2026, 8, 9, 16, 1, tzinfo=timezone.utc),
     )
     serialized = str(receipt.to_dict())
     assert "/private/path" not in serialized
@@ -87,7 +87,7 @@ def test_allowed_identifier_fields_reject_sensitive_markers() -> None:
             verification="binary_verified_handoff",
             evidence_digest="d" * 64,
             handoff_id="secret-token",
-            occurred_at=datetime(2026, 8, 9, 16, 2, tzinfo=UTC),
+            occurred_at=datetime(2026, 8, 9, 16, 2, tzinfo=timezone.utc),
         )
 
 
