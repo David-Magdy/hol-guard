@@ -1,4 +1,4 @@
-name: PR 2083 current-head conflict report
+name: PR 2083 current-head conflict artifact
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
       - chore/pr-2083-conflict-resolver-executor
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   report:
@@ -16,7 +16,6 @@ jobs:
       VALIDATED_BASE: 9b8a56644053dd9985ec0dc1c1f3b54e25564ad6
       RELEASE_HEAD: 7143b6f9de63f77d3f0a4adf943709a096f2637c
       MAIN_HEAD: a626ec004957ab3c827f18e98edcfff4ab6beed3
-      EXECUTOR_HEAD: c1008c63a2fe8ddebe37bfb9bfaf2c53b3ab3f21
     steps:
       - name: Check out full history
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -26,60 +25,60 @@ jobs:
       - name: Record exact merge conflicts
         shell: bash
         run: |
-          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          REPORT=/tmp/pr2083-current-conflicts.txt
+          REPORT="$RUNNER_TEMP/pr2083-current-conflicts.txt"
           : > "$REPORT"
 
           git checkout --detach "$VALIDATED_BASE"
-          set +e
-          git merge --no-ff --no-edit "$RELEASE_HEAD" >/tmp/release-merge.log 2>&1
+          git merge --no-ff --no-edit "$RELEASE_HEAD" >"$RUNNER_TEMP/release-merge.log" 2>&1
           RELEASE_RC=$?
-          set -e
           echo "release_merge_rc=$RELEASE_RC" >> "$REPORT"
           if [ "$RELEASE_RC" -ne 0 ]; then
             echo "[release_conflicts]" >> "$REPORT"
             git diff --name-only --diff-filter=U >> "$REPORT"
             echo "[release_index_stages]" >> "$REPORT"
             git ls-files -u >> "$REPORT"
-            git merge --abort
+            git merge --abort || git reset --hard "$VALIDATED_BASE"
           else
             echo "release_merge_head=$(git rev-parse HEAD)" >> "$REPORT"
-            set +e
-            git merge --no-ff --no-edit "$MAIN_HEAD" >/tmp/main-after-release.log 2>&1
+            git merge --no-ff --no-edit "$MAIN_HEAD" >"$RUNNER_TEMP/main-after-release.log" 2>&1
             MAIN_AFTER_RELEASE_RC=$?
-            set -e
             echo "main_after_release_rc=$MAIN_AFTER_RELEASE_RC" >> "$REPORT"
             if [ "$MAIN_AFTER_RELEASE_RC" -ne 0 ]; then
               echo "[main_after_release_conflicts]" >> "$REPORT"
               git diff --name-only --diff-filter=U >> "$REPORT"
               echo "[main_after_release_index_stages]" >> "$REPORT"
               git ls-files -u >> "$REPORT"
-              git merge --abort
+              git merge --abort || true
             else
               echo "main_after_release_head=$(git rev-parse HEAD)" >> "$REPORT"
             fi
           fi
 
+          git reset --hard "$VALIDATED_BASE"
           git checkout --detach "$VALIDATED_BASE"
-          set +e
-          git merge --no-ff --no-edit "$MAIN_HEAD" >/tmp/main-merge.log 2>&1
+          git merge --no-ff --no-edit "$MAIN_HEAD" >"$RUNNER_TEMP/main-merge.log" 2>&1
           MAIN_RC=$?
-          set -e
           echo "main_merge_rc=$MAIN_RC" >> "$REPORT"
           if [ "$MAIN_RC" -ne 0 ]; then
             echo "[main_conflicts]" >> "$REPORT"
             git diff --name-only --diff-filter=U >> "$REPORT"
             echo "[main_index_stages]" >> "$REPORT"
             git ls-files -u >> "$REPORT"
-            git merge --abort
+            git merge --abort || true
           else
             echo "main_merge_head=$(git rev-parse HEAD)" >> "$REPORT"
           fi
 
-          git checkout -B chore/pr-2083-current-conflict-report "$EXECUTOR_HEAD"
-          cp "$REPORT" .github/pr-2083-current-conflict-report.txt
-          git add .github/pr-2083-current-conflict-report.txt
-          git commit -m "chore: record PR 2083 current conflict stages"
-          git push --force origin HEAD:refs/heads/chore/pr-2083-current-conflict-report
+          cat "$REPORT"
+          exit 0
+
+      - name: Upload conflict report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr2083-current-conflicts
+          path: ${{ runner.temp }}/pr2083-current-conflicts.txt
+          if-no-files-found: error
+          retention-days: 1
