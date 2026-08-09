@@ -7859,6 +7859,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             return True
         if path.startswith("/apps/"):
             return True
+        if path.startswith("/extensions/"):
+            return True
         return path.startswith("/approvals/") and not path.endswith("/decision")
 
 
