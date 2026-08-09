@@ -16,6 +16,7 @@ from codex_plugin_scanner.standards.owasp_agentic_skills import (
 def test_risk_catalog_is_exactly_ast01_through_ast10() -> None:
     assert tuple(OWASP_AST10_RISKS) == tuple(f"AST{index:02d}" for index in range(1, 11))
     assert len({risk.name for risk in OWASP_AST10_RISKS.values()}) == 10
+    assert OWASP_AST10_RISKS["AST05"].name == "Untrusted External Instructions"
 
 
 @pytest.mark.parametrize(
