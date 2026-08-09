@@ -28,9 +28,9 @@ inputs:
     required: false
     default: "private"
   register_verification:
-    description: "Register the signed scan evidence with the HOL Guard verifier"
+    description: "Register the signed scan evidence with the HOL Guard verifier. Use the trusted reusable workflow for this mode."
     required: false
-    default: "true"
+    default: "false"
   verification_endpoint:
     description: "HTTPS Guarded Repository verification registration endpoint"
     required: false
@@ -185,7 +185,6 @@ runs:
       uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
       with:
         subject-path: ${{ steps.evidence.outputs.evidence_path }}
-        create-storage-record: false
         show-summary: true
 
     - name: Register verification
