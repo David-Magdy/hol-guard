@@ -73,6 +73,12 @@ def test_feed_uses_apple_trust_and_no_redundant_manifest_key() -> None:
     helper = TOOL.read_text(encoding="utf-8")
     job = publish_job()
     steps = {step.get("name"): step for step in job["steps"]}
+    extraction_line = 'codesign --display --extract-certificates "$BINARY" >/dev/null 2> "$RUNNER_TEMP/codesign-certificates.txt"'
+    extraction_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if "codesign --display --extract-certificates" in line
+    ]
     assert "HOL_GUARD_CORE_UPDATE_PRIVATE_KEY" not in text
     assert "HOL_GUARD_CORE_UPDATE_PUBLIC_KEY" not in text
     assert "json.sig" not in text
@@ -82,7 +88,8 @@ def test_feed_uses_apple_trust_and_no_redundant_manifest_key() -> None:
     assert "security find-identity -v -p codesigning" in text
     assert "apple-signing-fingerprint.txt" in text
     assert 'CERT_DIR="$RUNNER_TEMP/codesign-certs"' in text
-    assert 'codesign --display --extract-certificates "$BINARY"' in text
+    assert 'cd "$CERT_DIR"' in text
+    assert extraction_lines == [extraction_line]
     assert '--extract-certificates "$CERT_DIR"' not in text
     assert '--extract-certificates "$CERT_PREFIX"' not in text
     assert 'test -s "$CERT_DIR/codesign0"' in text
