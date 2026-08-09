@@ -27,10 +27,12 @@ def test_reusable_workflow_is_least_privilege_and_trusted() -> None:
     assert "contents: read" in text
     assert "id-token: write" in text
     assert "attestations: write" in text
+    assert "artifact-metadata: write" in text
     assert "security-events: write" in text
     assert "contents: write" not in text
     assert "pull-requests: write" not in text
     assert "issues: write" not in text
+    assert "packages: write" not in text
     assert "register_verification: true" in text
     assert "verification_endpoint: https://hol.org/api/guard/repository-attestations" in text
     match = re.search(r"uses: hashgraph-online/hol-guard/guarded-repository@([a-f0-9]{40})", text)
