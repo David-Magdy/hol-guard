@@ -40,7 +40,12 @@ jobs:
           )
           replace(
               'dashboard/src/extensions-workspace.tsx',
-              '''const EXTENSION_ROUTE_STATE_KEY = "guardExtensionDetailPath";\n\nfunction historyDetailPath(): string | null {\n  const state: unknown = window.history.state;\n  if (typeof state !== "object" || state === null) return null;\n  const value = (state as Record<string, unknown>)[EXTENSION_ROUTE_STATE_KEY];\n  return typeof value === "string" && value.startsWith("/extensions/") ? value : null;\n}\n\nexport function currentExtensionRouteState(): RouteState {\n  const bridgedPath = window.location.pathname === "/extensions" ? historyDetailPath() : null;\n  return {\n    route: parseExtensionRoute(bridgedPath ?? window.location.pathname),\n    detail: readExtensionDetailUrlState(window.location.search),\n  };\n}\n''',
+              '''const EXTENSION_ROUTE_STATE_KEY = "guardExtensionDetailPath";\n\ntype LoadState =''',
+              '''type LoadState =''',
+          )
+          replace(
+              'dashboard/src/extensions-workspace.tsx',
+              '''function historyDetailPath(): string | null {\n  const state = window.history.state;\n  if (typeof state !== "object" || state === null) return null;\n  const value = (state as Record<string, unknown>)[EXTENSION_ROUTE_STATE_KEY];\n  return typeof value === "string" && value.startsWith("/extensions/") ? value : null;\n}\n\nexport function currentExtensionRouteState(): RouteState {\n  const bridgedPath = window.location.pathname === "/extensions" ? historyDetailPath() : null;\n  return {\n    route: parseExtensionRoute(bridgedPath ?? window.location.pathname),\n    detail: readExtensionDetailUrlState(window.location.search),\n  };\n}\n''',
               '''export function currentExtensionRouteState(): RouteState {\n  return {\n    route: parseExtensionRoute(window.location.pathname),\n    detail: readExtensionDetailUrlState(window.location.search),\n  };\n}\n''',
           )
           main = Path('dashboard/src/main.tsx')
