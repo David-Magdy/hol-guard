@@ -22,13 +22,24 @@ _PROBE_TIMEOUT_SECONDS = 1.0
 
 
 def is_safe_git_worktree_add(command_text: str, *, cwd: Path | None, home_dir: Path) -> bool:
-    """Accept one new branch worktree under a bounded developer root."""
+    """Accept one new branch or detached worktree under a bounded developer root."""
 
     tokens = _literal_tokens(command_text)
-    if tokens is None or len(tokens) != 7 or tokens[:4] != ["git", "worktree", "add", "-b"] or cwd is None:
+    if tokens is None or cwd is None:
         return False
-    branch, destination_text, ref = tokens[4:]
-    if not _safe_git_name(branch, _BRANCH) or not _safe_git_name(ref, _REF):
+    branch: str | None
+    if len(tokens) == 7 and tokens[:4] == ["git", "worktree", "add", "-b"]:
+        branch, destination_text, ref = tokens[4:]
+        if not _safe_git_name(branch, _BRANCH):
+            return False
+    elif len(tokens) == 6 and tokens[:4] == ["git", "worktree", "add", "--detach"]:
+        branch = None
+        destination_text, ref = tokens[4:]
+        if re.fullmatch(r"[0-9a-f]{40}", ref) is None:
+            return False
+    else:
+        return False
+    if destination_text.startswith("-") or not _safe_git_name(ref, _REF):
         return False
     try:
         execution_cwd = cwd.resolve(strict=True)
@@ -46,11 +57,9 @@ def is_safe_git_worktree_add(command_text: str, *, cwd: Path | None, home_dir: P
         ref=ref,
     ):
         return False
-    return _git_ref_exists(git_binary, execution_cwd, ref) and not _git_branch_exists(
-        git_binary,
-        execution_cwd,
-        branch,
-    )
+    if not _git_ref_exists(git_binary, execution_cwd, ref):
+        return False
+    return branch is None or not _git_branch_exists(git_binary, execution_cwd, branch)
 
 
 def is_safe_codex_memory_registry_search(command_text: str, *, cwd: Path | None, home_dir: Path) -> bool:
