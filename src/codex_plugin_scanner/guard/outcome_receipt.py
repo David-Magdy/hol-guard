@@ -18,7 +18,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from packaging.version import InvalidVersion, Version
@@ -79,7 +79,7 @@ def _validate_utc_timestamp(value: object) -> None:
         parsed = datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
     except ValueError as exc:
         raise ValueError("occurred_at must be a valid UTC ISO-8601 timestamp") from exc
-    if parsed.utcoffset() != UTC.utcoffset(parsed):
+    if parsed.utcoffset() != timezone.utc.utcoffset(parsed):
         raise ValueError("occurred_at must be UTC")
 
 
@@ -176,10 +176,10 @@ def sha256_digest(data: bytes) -> str:
 
 
 def _iso_utc(value: datetime | None) -> str:
-    current = value or datetime.now(UTC)
+    current = value or datetime.now(timezone.utc)
     if current.tzinfo is None:
         raise ValueError("occurred_at must be timezone-aware")
-    return current.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return current.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def build_outcome_receipt(
