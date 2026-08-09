@@ -1,4 +1,8 @@
 import { fetchExtensionControlApi } from "./guard-api";
+import {
+  normalizeEffectiveExtensionControls,
+  normalizeExtensionCatalog,
+} from "./extension-controls-normalize";
 
 export type ExtensionControlState = "enabled" | "disabled";
 export type GuardTreatment = "allow" | "warn" | "review" | "require-reapproval" | "sandbox-required" | "block";
@@ -57,7 +61,7 @@ export type ExtensionCatalogItem = {
   description: string;
   enabled: boolean;
   required: boolean;
-  source: string;
+  source: "built-in" | "local-admin" | "signed-cloud";
   version: string;
   aliases: string[];
   dependencies: string[];
@@ -138,9 +142,14 @@ export class ExtensionControlApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request(path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetchExtensionControlApi(path, init);
-  const payload: unknown = await response.json();
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ExtensionControlApiError(`Guard returned invalid JSON (${response.status})`, response.status);
+  }
   if (!response.ok) {
     const error = typeof payload === "object" && payload !== null ? payload as Record<string, unknown> : {};
     throw new ExtensionControlApiError(
@@ -154,43 +163,51 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         : undefined,
     );
   }
-  return payload as T;
+  return payload;
 }
 
-export function fetchExtensionCatalog(): Promise<ExtensionCatalogResponse> {
-  return request("/v1/extension-controls/catalog");
+export async function fetchExtensionCatalog(): Promise<ExtensionCatalogResponse> {
+  return normalizeExtensionCatalog(await request("/v1/extension-controls/catalog"));
 }
 
-export function fetchEffectiveExtensionControls(): Promise<EffectiveExtensionControls> {
-  return request("/v1/extension-controls/effective");
+export async function fetchEffectiveExtensionControls(): Promise<EffectiveExtensionControls> {
+  return normalizeEffectiveExtensionControls(await request("/v1/extension-controls/effective"));
 }
 
-export function recoverExtensionControlAuthority(credentials?: {
+export async function recoverExtensionControlAuthority(credentials?: {
   approval_password?: string;
   approval_totp_code?: string;
 }): Promise<EffectiveExtensionControls> {
-  return request("/v1/extension-controls/recover-authority", {
+  return normalizeEffectiveExtensionControls(await request("/v1/extension-controls/recover-authority", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       session_nonce: crypto.randomUUID().replaceAll("-", ""),
       ...credentials,
     }),
-  });
+  }));
 }
 
-export function previewExtensionMutation(payload: ExtensionMutationPayload): Promise<Record<string, unknown>> {
-  return request("/v1/extension-controls/preview", {
+export async function previewExtensionMutation(payload: ExtensionMutationPayload): Promise<Record<string, unknown>> {
+  const result = await request("/v1/extension-controls/preview", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    throw new ExtensionControlApiError("Guard returned an invalid preview response", 502);
+  }
+  return result as Record<string, unknown>;
 }
 
-export function applyExtensionMutation(payload: ExtensionMutationPayload): Promise<Record<string, unknown>> {
-  return request("/v1/extension-controls/apply", {
+export async function applyExtensionMutation(payload: ExtensionMutationPayload): Promise<Record<string, unknown>> {
+  const result = await request("/v1/extension-controls/apply", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    throw new ExtensionControlApiError("Guard returned an invalid apply response", 502);
+  }
+  return result as Record<string, unknown>;
 }

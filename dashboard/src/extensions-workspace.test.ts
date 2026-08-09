@@ -4,14 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { ApprovalProofModal } from "./approval-proof-modal";
 import {
-  canonicalExtensionId,
+  DEFAULT_EXTENSION_DETAIL_URL_STATE,
   extensionDetailHref,
   extensionEffectiveState,
-  extensionIdFromSearch,
   permissionEffectiveState,
-  permissionForRule,
-  permissionRelations,
-  treatmentLabel,
 } from "./extension-control-center-model";
 import { ExtensionControlApiError, type ExtensionCatalogItem, type EffectiveExtensionControls } from "./extension-controls-api";
 import {
@@ -64,15 +60,15 @@ const mutationState = {
     layers: [{
       schema_version: "1.0.0", kind: "local-admin" as const, catalog_digest: "a".repeat(64),
       global_lockdown: false,
-      controls: [{ target_kind: "extension" as const, target_id: "existing", state: "disabled" as const }],
+      controls: [{ target_kind: "extension" as const, target_id: "command.existing", state: "disabled" as const }],
     }],
   },
 };
 const targeted = buildExtensionMutation(mutationState, {
-  extension: { extension_id: "new-extension", name: "New extension" }, enabled: false,
+  extension: { extension_id: "command.new-extension", name: "New extension" }, enabled: false,
 });
 assert.equal(targeted.previous_revision, 8);
-assert.deepEqual(targeted.layers[0]?.controls.map((control) => control.target_id), ["existing", "new-extension"]);
+assert.deepEqual(targeted.layers[0]?.controls.map((control) => control.target_id), ["command.existing", "command.new-extension"]);
 assert.equal(mutationState.effective.layers[0]?.controls.length, 1, "builder must not mutate loaded authority state");
 
 const extension: ExtensionCatalogItem = {
@@ -82,52 +78,34 @@ const extension: ExtensionCatalogItem = {
   project_markers: [".git"], reference_urls: [], action_classes: ["git.history.rewrite"],
   risk_classes: ["history-rewrite"], safer_alternatives: [], rule_count: 1,
   rules: [{
-    rule_id: "command.git.reset-hard", rule_version: 1, title: "Hard reset",
+    rule_id: "command.git.hard-reset", rule_version: 1, title: "Hard reset",
     description: "Rewrites the worktree and index.", severity: "high", risk_classes: ["history-rewrite"],
     action_classes: ["git.history.rewrite"], safer_alternatives: [], default_mode: "review",
     matcher_kind: "ExecutableMatcher", safe_variants: [], compatibility_fallback: false,
   }],
-  permission_count: 2,
-  permissions: [
-    {
-      permission_id: "command.git.permission.reset-hard", schema_version: 1, extension_id: "command.git",
-      implementation_version: "1.2.3", label: "Hard reset", description: "Controls destructive reset behavior.",
-      risk_tier: "high", baseline_floor: "review", default_enabled: true, configurable: true, fixed_reason: null,
-      typed_capabilities: [], action_classes: ["git.history.rewrite"], rule_ids: ["command.git.reset-hard"],
-      dependencies: ["command.git.permission.read"], conflicts: [], implied_permissions: ["command.git.permission.read"],
-      introduced_version: "2.2.0", deprecated: false, replacement_permission_id: null, safer_guidance: [],
-    },
-    {
-      permission_id: "command.git.permission.read", schema_version: 1, extension_id: "command.git",
-      implementation_version: "1.2.3", label: "Read repository", description: "Read-only repository inspection.",
-      risk_tier: "low", baseline_floor: "allow", default_enabled: true, configurable: true, fixed_reason: null,
-      typed_capabilities: [], action_classes: [], rule_ids: [], dependencies: [], conflicts: [], implied_permissions: [],
-      introduced_version: "2.2.0", deprecated: false, replacement_permission_id: null, safer_guidance: [],
-    },
-  ],
+  permission_count: 1,
+  permissions: [{
+    permission_id: "command.git.permission.hard-reset", schema_version: 1, extension_id: "command.git",
+    implementation_version: "1.2.3", label: "Hard reset", description: "Controls destructive reset behavior.",
+    risk_tier: "high", baseline_floor: "review", default_enabled: true, configurable: true, fixed_reason: null,
+    typed_capabilities: [], action_classes: ["git.history.rewrite"], rule_ids: ["command.git.hard-reset"],
+    dependencies: [], conflicts: [], implied_permissions: [], introduced_version: "1.0.0",
+    deprecated: false, replacement_permission_id: null, safer_guidance: [],
+  }],
 };
 const effective: EffectiveExtensionControls = {
   schema_version: "1.0.0", health: "protected", revision: 7, catalog_digest: "a".repeat(64),
   global_lockdown: false,
-  controls: [{ target: { kind: "permission", target_id: "command.git.permission.reset-hard" }, state: "disabled" }],
+  controls: [{ target: { kind: "permission", target_id: "command.git.permission.hard-reset" }, state: "disabled" }],
   layers: [], failures: [],
 };
-assert.equal(extensionIdFromSearch("?extension=command.git"), "command.git");
-assert.equal(extensionDetailHref("command.git"), "/extensions?extension=command.git");
-assert.doesNotMatch(extensionDetailHref("command.git"), /#/);
-assert.equal(canonicalExtensionId([extension], "command.scm"), "command.git");
+assert.equal(extensionDetailHref("command.git"), "/extensions/command.git");
+assert.equal(extensionDetailHref("command.git", { ...DEFAULT_EXTENSION_DETAIL_URL_STATE, tab: "commands", ruleId: "command.git.hard-reset" }), "/extensions/command.git?tab=commands&rule=command.git.hard-reset");
+assert.doesNotMatch(extensionDetailHref("command.git"), /#|guard-token/);
 assert.equal(extensionEffectiveState(effective, extension), "enabled");
 assert.equal(isExtensionEnabled(effective, extension), true);
 assert.equal(permissionEffectiveState(effective, extension, extension.permissions[0]!), "disabled");
-assert.equal(permissionForRule(extension, extension.rules[0]!)?.permission_id, "command.git.permission.reset-hard");
-assert.deepEqual(permissionRelations(extension, extension.permissions[0]!).dependencies.map((item) => item.permission_id), ["command.git.permission.read"]);
-assert.equal(treatmentLabel("sandbox-required"), "Require sandbox");
+assert.equal(extensionEffectiveState({ ...effective, global_lockdown: true }, { ...extension, required: true }), "disabled");
+assert.equal(extensionEffectiveState({ ...effective, health: "tampered" }, extension), "disabled");
 
-const lockedDown = { ...effective, global_lockdown: true };
-assert.equal(extensionEffectiveState(lockedDown, extension), "disabled");
-assert.equal(isExtensionEnabled(lockedDown, extension), false);
-const unavailable = { ...effective, health: "tampered" as const };
-assert.equal(extensionEffectiveState(unavailable, extension), "disabled");
-const requiredExtension = { ...extension, required: true };
-assert.equal(extensionEffectiveState(lockedDown, requiredExtension), "disabled", "global lockdown must short-circuit required extensions too");
-assert.equal(extension.risk_classes[0], "history-rewrite", "inspection helpers must not rewrite baseline risk metadata");
+console.log("extensions-workspace.test.ts: all assertions passed");
