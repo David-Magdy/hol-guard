@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from codex_plugin_scanner.guard.outcome_receipt import (
+    GuardOutcomeReceipt,
     assert_privacy_safe_receipt,
     build_outcome_receipt,
     receipt_digest,
@@ -64,6 +65,51 @@ def test_first_proof_requires_proof_kind() -> None:
         )
 
 
+def test_direct_dataclass_construction_enforces_privacy_boundary() -> None:
+    with pytest.raises(ValueError, match="opaque identifier format"):
+        GuardOutcomeReceipt(
+            schema_version="1",
+            outcome="local_install_verified",
+            occurred_at="2026-08-09T16:00:00Z",
+            hol_guard_version="3.0.0a1",
+            verification="binary_verified_handoff",
+            evidence_digest="c" * 64,
+            handoff_id="/private/path secret",
+            proof_kind=None,
+        )
+
+
+def test_allowed_identifier_fields_reject_sensitive_markers() -> None:
+    with pytest.raises(ValueError, match="sensitive-content markers"):
+        build_outcome_receipt(
+            outcome="local_install_verified",
+            hol_guard_version="3.0.0a1",
+            verification="binary_verified_handoff",
+            evidence_digest="d" * 64,
+            handoff_id="secret-token",
+            occurred_at=datetime(2026, 8, 9, 16, 2, tzinfo=UTC),
+        )
+
+
+def test_receipt_rejects_unbounded_or_unstructured_metadata() -> None:
+    with pytest.raises(ValueError, match="PEP 440"):
+        build_outcome_receipt(
+            outcome="first_local_proof_generated",
+            hol_guard_version="not-a-version",
+            verification="privacy_safe_local_receipt",
+            evidence_digest="e" * 64,
+            proof_kind="runtime_decision_receipt",
+        )
+    with pytest.raises(ValueError, match="lowercase identifier format"):
+        build_outcome_receipt(
+            outcome="first_local_proof_generated",
+            hol_guard_version="3.0.0a1",
+            verification="privacy_safe_local_receipt",
+            evidence_digest="f" * 64,
+            proof_kind="../../private/path",
+        )
+
+
 def test_privacy_guard_rejects_extra_sensitive_fields() -> None:
     with pytest.raises(ValueError, match="unsupported fields"):
         assert_privacy_safe_receipt(
@@ -73,10 +119,30 @@ def test_privacy_guard_rejects_extra_sensitive_fields() -> None:
                 "occurred_at": "2026-08-09T16:00:00Z",
                 "hol_guard_version": "3.0.0a1",
                 "verification": "privacy_safe_local_receipt",
-                "evidence_digest": "c" * 64,
+                "evidence_digest": "a" * 64,
                 "handoff_id": None,
                 "proof_kind": "runtime_decision_receipt",
                 "sensitive_content_included": False,
                 "raw_prompt": "do not serialize me",
+            }
+        )
+
+
+def test_privacy_guard_validates_required_fields_and_values() -> None:
+    with pytest.raises(ValueError, match="missing required fields"):
+        assert_privacy_safe_receipt({"schema_version": "1"})
+
+    with pytest.raises(ValueError, match="sensitive-content markers"):
+        assert_privacy_safe_receipt(
+            {
+                "schema_version": "1",
+                "outcome": "local_install_verified",
+                "occurred_at": "2026-08-09T16:00:00Z",
+                "hol_guard_version": "3.0.0a1",
+                "verification": "binary_verified_handoff",
+                "evidence_digest": "b" * 64,
+                "handoff_id": "private-token",
+                "proof_kind": None,
+                "sensitive_content_included": False,
             }
         )
