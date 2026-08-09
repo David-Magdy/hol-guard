@@ -62,10 +62,19 @@ def test_evidence_keeps_scanner_state_separate_from_mapping(state: EvidenceState
     assert payload["mapping"]["status"] == "mapped"
     assert payload["mapping"]["risks"] == [{"id": "AST09", "name": "No Governance"}]
     assert payload["source"]["revision"] == OWASP_AST10_SOURCE_REVISION
-
-    json.dumps(payload)
+    assert json.loads(json.dumps(payload)) == payload
 
 
 def test_rule_ids_are_normalized_without_guessing() -> None:
     assert map_rule_id(" security_md_missing ").rule_id == "SECURITY_MD_MISSING"
     assert map_rule_id(" never-seen-before ").mapped is False
+
+
+def test_non_string_rule_id_fails_with_explicit_type_error() -> None:
+    with pytest.raises(TypeError, match="rule_id must be a string"):
+        map_rule_id(None)  # type: ignore[arg-type]
+
+
+def test_invalid_evidence_state_fails_with_explicit_type_error() -> None:
+    with pytest.raises(TypeError, match="state must be an EvidenceState"):
+        evidence_record("SECURITY_MD_MISSING", "detected")  # type: ignore[arg-type]
