@@ -3419,7 +3419,7 @@ class TestGuardApprovals:
             assert timeout == 30
             return SimpleNamespace(status_code=200, json=lambda: {"resolved": True})
 
-        monkeypatch.setattr(guard_bridge_module.requests, "post", fake_post)
+        monkeypatch.setattr(guard_bridge_module._DAEMON_SESSION, "post", fake_post)
 
         resolved = bridge._execute_resolution("approve", "req-bridge")
 
