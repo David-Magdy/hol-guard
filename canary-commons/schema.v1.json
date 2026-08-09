@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hol.org/schemas/canary-commons/v1",
+  "title": "Canary Commons safe case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version","id","category","split","title","artifact_excerpt","expected_outcome","reason_code","benchmark_family","limitations","safety"],
+  "properties": {
+    "schema_version": {"const": "canary-commons/v1"},
+    "id": {"type": "string", "pattern": "^CC-(DOC|PRI|MCP|SKL|PKG|MEM)-[0-9]{3}$"},
+    "category": {"enum": ["documentation","pr_issue","mcp","skill","package_install","memory_workspace"]},
+    "split": {"enum": ["train","held_out"]},
+    "title": {"type": "string", "minLength": 3, "maxLength": 160},
+    "artifact_excerpt": {"type": "string", "minLength": 10, "maxLength": 1000},
+    "expected_outcome": {"enum": ["allow","review","block"]},
+    "reason_code": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+    "benchmark_family": {"enum": ["instruction-content","collaboration-content","mcp-surface","skill-surface","package-install","memory-workspace"]},
+    "limitations": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string", "minLength": 10, "maxLength": 300}},
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["synthetic_only","defanged","contains_live_secret","executable"],
+      "properties": {
+        "synthetic_only": {"const": true},
+        "defanged": {"const": true},
+        "contains_live_secret": {"const": false},
+        "executable": {"const": false}
+      }
+    }
+  }
+}
