@@ -34,7 +34,7 @@ OWASP_AST10_RISKS: dict[str, AstRisk] = {
     "AST02": AstRisk("AST02", "Supply Chain Compromise"),
     "AST03": AstRisk("AST03", "Over-Privileged Skills"),
     "AST04": AstRisk("AST04", "Insecure Metadata"),
-    "AST05": AstRisk("AST05", "Unsafe Deserialization"),
+    "AST05": AstRisk("AST05", "Untrusted External Instructions"),
     "AST06": AstRisk("AST06", "Weak Isolation"),
     "AST07": AstRisk("AST07", "Update Drift"),
     "AST08": AstRisk("AST08", "Poor Scanning"),
