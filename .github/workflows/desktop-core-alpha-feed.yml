@@ -143,11 +143,17 @@ jobs:
             --pattern "hol_guard-${CORE_VERSION}-*.whl" --dir "$TRUST_ASSETS"
           gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "hol-guard-v${CORE_VERSION}.intoto.jsonl" --dir "$TRUST_ASSETS"
-          mapfile -t WHEELS < <(find "$TRUST_ASSETS" -maxdepth 1 -type f -name "hol_guard-${CORE_VERSION}-*.whl" -print)
-          test "${#WHEELS[@]}" -eq 1
+          WHEEL=""
+          WHEEL_COUNT=0
+          while IFS= read -r candidate; do
+            WHEEL="$candidate"
+            WHEEL_COUNT=$((WHEEL_COUNT + 1))
+          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f -name "hol_guard-${CORE_VERSION}-*.whl" -print)
+          test "$WHEEL_COUNT" -eq 1
+          test -f "$WHEEL"
           BUNDLE="$TRUST_ASSETS/hol-guard-v${CORE_VERSION}.intoto.jsonl"
           test -s "$BUNDLE"
-          gh attestation verify "${WHEELS[0]}" \
+          gh attestation verify "$WHEEL" \
             --repo "$GITHUB_REPOSITORY" \
             --bundle "$BUNDLE" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish.yml" \
@@ -229,9 +235,14 @@ jobs:
           set -euo pipefail
           BASE="$RUNNER_TEMP/dist/hol-guard-core-${CORE_VERSION}-${RELEASE_TARGET}"
           for asset in "$BASE" "$BASE.json" "$BASE.attested.json"; do
-            gh attestation verify "$asset" --repo "$GITHUB_REPOSITORY"               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/desktop-core-alpha-feed.yml"               --source-ref refs/heads/main --deny-self-hosted-runners >/dev/null
+            gh attestation verify "$asset" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/desktop-core-alpha-feed.yml" \
+              --source-ref refs/heads/main --deny-self-hosted-runners >/dev/null
           done
-          python3 -I scripts/release/desktop_core_alpha_feed.py validate-marker             --base "$BASE" --marker "$BASE.attested.json" --version "$CORE_VERSION" --source-commit "$SOURCE_SHA"             --source-tag "$CORE_TAG" --target "$RELEASE_TARGET" --apple-signing-identity "$APPLE_SIGNING_IDENTITY"             --apple-team-id "$APPLE_TEAM_ID"
+          python3 -I scripts/release/desktop_core_alpha_feed.py validate-marker \
+            --base "$BASE" --marker "$BASE.attested.json" --version "$CORE_VERSION" --source-commit "$SOURCE_SHA" \
+            --source-tag "$CORE_TAG" --target "$RELEASE_TARGET" --apple-signing-identity "$APPLE_SIGNING_IDENTITY" \
+            --apple-team-id "$APPLE_TEAM_ID"
       - name: Build standalone Core executable
         if: steps.release.outputs.available == 'true' && steps.existing.outputs.mode == 'build'
         env:
@@ -358,6 +369,7 @@ jobs:
           CORE_VERSION: ${{ steps.release.outputs.version }}
           CORE_TAG: ${{ steps.release.outputs.tag }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          MODE: ${{ steps.existing.outputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
@@ -383,7 +395,9 @@ jobs:
           set -euo pipefail
           BASE="$RUNNER_TEMP/dist/hol-guard-core-${CORE_VERSION}-${RELEASE_TARGET}"
           MARKER="$BASE.attested.json"
-          COMMON=(--base "$BASE" --marker "$MARKER" --version "$CORE_VERSION" --source-commit "$SOURCE_SHA"             --source-tag "$CORE_TAG" --target "$RELEASE_TARGET" --apple-signing-identity "$APPLE_SIGNING_IDENTITY"             --apple-team-id "$APPLE_TEAM_ID")
+          COMMON=(--base "$BASE" --marker "$MARKER" --version "$CORE_VERSION" --source-commit "$SOURCE_SHA" \
+            --source-tag "$CORE_TAG" --target "$RELEASE_TARGET" --apple-signing-identity "$APPLE_SIGNING_IDENTITY" \
+            --apple-team-id "$APPLE_TEAM_ID")
           if [[ "$MODE" == "build" ]]; then
             python3 -I scripts/release/desktop_core_alpha_feed.py create-marker "${COMMON[@]}" --workflow-run "$GITHUB_RUN_ID"
           else
