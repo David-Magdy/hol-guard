@@ -1243,6 +1243,8 @@ def _build_package_manager_python_shim(context: HarnessContext, command: str) ->
             "        if remaining_seconds <= 0:",
             "            return result",
             "        time.sleep(min(store_lock_retry_delay_seconds, remaining_seconds))",
+            "        if time.monotonic() >= deadline:",
+            "            return result",
             "try:",
             "    guard_process = _run_guard_with_store_lock_retry(",
             "        [*guard_command, *guard_args], guard_kwargs",

@@ -3197,3 +3197,4 @@ def test_build_request_payload_includes_manifest_hash_when_package_json_present(
     assert "manifestHash" in payload["lockfileContext"]
     assert isinstance(payload["lockfileContext"]["manifestHash"], str)
     assert payload["lockfileContext"]["manifestHash"]
+
