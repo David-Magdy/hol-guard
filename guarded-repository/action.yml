@@ -150,18 +150,14 @@ runs:
         set -euo pipefail
         python3 -P - <<'PY'
         import os
-        from importlib.metadata import PackageNotFoundError, version
         from pathlib import Path
+        from codex_plugin_scanner import __version__ as scanner_version
         from codex_plugin_scanner.guarded_repository_evidence import (
             build_guarded_repository_evidence,
             file_sha256,
             guarded_repository_evidence_json,
             guarded_repository_evidence_sha256,
         )
-        try:
-            scanner_version = version("plugin-scanner")
-        except PackageNotFoundError:
-            scanner_version = "unknown"
         evidence = build_guarded_repository_evidence(
             repository=os.environ["REPOSITORY"],
             commit_sha=os.environ["COMMIT_SHA"],
@@ -201,8 +197,6 @@ runs:
         EVIDENCE_PATH: ${{ steps.evidence.outputs.evidence_path }}
         ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
         ATTESTATION_ID: ${{ steps.attest.outputs.attestation-id }}
-        ACTIONS_ID_TOKEN_REQUEST_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-        ACTIONS_ID_TOKEN_REQUEST_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
       run: |
         set -euo pipefail
         if [ "$REGISTER_VERIFICATION" != "true" ]; then
@@ -210,6 +204,7 @@ runs:
           exit 0
         fi
         python3 -P - <<'PY'
+        import datetime
         import json
         import os
         from pathlib import Path
@@ -222,7 +217,7 @@ runs:
             scanner_version=raw["scanner_version"], scanner_profile=raw["scanner_profile"], score=raw["score"],
             grade=raw["grade"], max_severity=raw["max_severity"], findings_total=raw["findings_total"],
             sarif_sha256=raw["sarif_sha256"], visibility=raw["visibility"],
-            generated_at=__import__("datetime").datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00")),
+            generated_at=datetime.datetime.fromisoformat(raw["generated_at"].replace("Z", "+00:00")),
         )
         try:
             result = register_guarded_repository_evidence(
