@@ -1,5 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import {
+  defaultSettingsPayload,
+  emptyInventoryPayload,
+  emptyPoliciesPayload,
+  emptyReceiptsPayload,
+  freeStateSnapshot,
+} from "./fixture-states";
+
 const DAEMON_ORIGIN = "http://127.0.0.1:4175";
 const DIGEST = "a".repeat(64);
 
@@ -96,25 +104,23 @@ function effective(overrides: Record<string, unknown> = {}) {
 async function mount(page: Page, options: { malformedCatalog?: boolean; effective?: Record<string, unknown> } = {}) {
   await page.route("**/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path.endsWith("/initialize")) {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ auth_token: "fixture-session-token" }) });
-      return;
-    }
-    if (path.endsWith("/extension-controls/catalog")) {
-      const body = options.malformedCatalog ? { ...catalog(), extensions: [{ extension_id: "../../bad" }] } : catalog();
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
-      return;
-    }
-    if (path.endsWith("/extension-controls/effective")) {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(options.effective ?? effective()) });
-      return;
-    }
-    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    let body: unknown = {};
+    if (path.endsWith("/initialize")) body = { auth_token: "fixture-session-token" };
+    else if (path.endsWith("/runtime")) body = freeStateSnapshot;
+    else if (path.endsWith("/requests")) body = { items: [], next_cursor: null, total_pending_count: 0, total_count: 0, status: "pending" };
+    else if (path.endsWith("/receipts")) body = emptyReceiptsPayload;
+    else if (path.endsWith("/policy")) body = emptyPoliciesPayload;
+    else if (path.endsWith("/settings")) body = defaultSettingsPayload;
+    else if (path.endsWith("/inventory")) body = emptyInventoryPayload;
+    else if (path.endsWith("/extension-controls/catalog")) {
+      body = options.malformedCatalog ? { ...catalog(), extensions: [{ extension_id: "../../bad" }] } : catalog();
+    } else if (path.endsWith("/extension-controls/effective")) body = options.effective ?? effective();
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
 }
 
 async function initialize(page: Page) {
-  await page.goto(`/extensions?guardDaemon=${encodeURIComponent(DAEMON_ORIGIN)}`);
+  await page.goto(`/extensions?guardDaemon=${DAEMON_ORIGIN}`);
   await expect(page.getByRole("heading", { name: "Extensions", exact: true })).toBeVisible();
 }
 
@@ -176,7 +182,7 @@ test("global lockdown and narrow viewport remain explicit and usable", async ({ 
 
 test("malformed catalog response is rejected at the client boundary", async ({ page }) => {
   await mount(page, { malformedCatalog: true });
-  await page.goto(`/extensions?guardDaemon=${encodeURIComponent(DAEMON_ORIGIN)}`);
+  await page.goto(`/extensions?guardDaemon=${DAEMON_ORIGIN}`);
   await expect(page.getByRole("heading", { name: "Extensions unavailable" })).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("Invalid extension-control response");
 });
