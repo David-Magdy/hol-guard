@@ -112,6 +112,13 @@ assert.equal(extensionStateLabel({ ...effective, global_lockdown: true }, extens
 assert.equal(extensionStateLabel({ ...effective, health: "tampered" }, extension), "Unavailable");
 const required = { ...extension, required: true };
 assert.equal(extensionStateLabel(effective, required), "Required");
+const blockedParent: EffectiveExtensionControls = {
+  ...effective,
+  controls: [{ target: { kind: "extension", target_id: "command.git" }, state: "disabled" }],
+  layers: [{ schema_version: "1.0.0", kind: "local-admin", catalog_digest: digest, global_lockdown: false, controls: [{ target_kind: "extension", target_id: "command.git", state: "disabled" }] }],
+};
+assert.equal(extensionStateLabel(blockedParent, extension), "Blocked");
+assert.equal(permissionStateLabel(blockedParent, extension, permissions[1]!), "Blocked");
 const managed: EffectiveExtensionControls = {
   ...effective,
   layers: [{ schema_version: "1.0.0", kind: "signed-cloud", catalog_digest: digest, global_lockdown: false, controls: [{ target_kind: "extension", target_id: "command.git", state: "disabled" }] }],
