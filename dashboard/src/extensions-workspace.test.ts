@@ -14,9 +14,11 @@ import {
   buildExtensionMutation,
   ExtensionStatusBanner,
   extensionRecoveryAction,
+  ReviewModal,
   requiresExtensionRecoveryApproval,
 } from "./extensions-workspace";
 import { isExtensionEnabled } from "./extensions-filters";
+import { fetchResolvedApprovalGate } from "./use-resolved-approval-gate";
 
 assert.equal(extensionRecoveryAction("protected"), null);
 assert.deepEqual(extensionRecoveryAction("recovery-required"), extensionRecoveryAction("tampered"));
@@ -67,6 +69,18 @@ const totpRecoveryMarkup = renderToStaticMarkup(createElement(ApprovalProofModal
 }));
 assert.match(totpRecoveryMarkup, /Authenticator code/);
 assert.doesNotMatch(totpRecoveryMarkup, /Approval password/);
+assert.match(totpRecoveryMarkup, /That authenticator code was not accepted/);
+assert.match(totpRecoveryMarkup, /role="alert"/);
+
+const resolvedTotpGate = await fetchResolvedApprovalGate(async () => ({
+  settings: { approval_gate: {
+    enabled: true, configured: true, cooldown_seconds: 0, cooldown_active: false,
+    cooldown_expires_at: null, locked_until: null, fail_closed: true,
+    strict_all_decisions: false, totp_enabled: true,
+  } },
+}));
+assert.equal(resolvedTotpGate?.totp_enabled, true);
+await assert.rejects(fetchResolvedApprovalGate(async () => { throw new Error("settings unavailable"); }, { failClosed: true }), /settings unavailable/);
 
 const mutationState = {
   kind: "ready" as const,
@@ -116,6 +130,21 @@ const effective: EffectiveExtensionControls = {
   controls: [{ target: { kind: "permission", target_id: "command.git.permission.hard-reset" }, state: "disabled" }],
   layers: [], failures: [],
 };
+const totpChangeMarkup = renderToStaticMarkup(createElement(ReviewModal, {
+  change: { extension, enabled: true }, busy: false, error: null,
+  approvalGate: { enabled: true, configured: true, cooldown_seconds: 0, cooldown_active: false, cooldown_expires_at: null, locked_until: null, fail_closed: true, strict_all_decisions: false, totp_enabled: true },
+  onCancel: () => undefined, onConfirm: () => undefined,
+}));
+assert.match(totpChangeMarkup, /Authenticator code/);
+assert.doesNotMatch(totpChangeMarkup, /Approval password/);
+const passwordChangeMarkup = renderToStaticMarkup(createElement(ReviewModal, {
+  change: { extension, enabled: true }, busy: false, error: null,
+  approvalGate: { enabled: true, configured: true, cooldown_seconds: 0, cooldown_active: false, cooldown_expires_at: null, locked_until: null, fail_closed: true, strict_all_decisions: false, totp_enabled: false },
+  onCancel: () => undefined, onConfirm: () => undefined,
+}));
+assert.match(passwordChangeMarkup, /Approval password/);
+assert.doesNotMatch(passwordChangeMarkup, /Authenticator code/);
+
 assert.equal(extensionDetailHref("command.git"), "/extensions/command.git");
 assert.equal(extensionDetailHref("command.git", { ...DEFAULT_EXTENSION_DETAIL_URL_STATE, tab: "commands", ruleId: "command.git.hard-reset" }), "/extensions/command.git?tab=commands&rule=command.git.hard-reset");
 assert.doesNotMatch(extensionDetailHref("command.git"), /#|guard-token/);

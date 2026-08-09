@@ -16,7 +16,13 @@ import {
 } from "react-icons/hi2";
 
 import { ApprovalProofModal } from "./approval-proof-modal";
+import {
+  ApprovalProofFieldInputs,
+  buildApprovalProofCredentials,
+  isApprovalProofSubmitDisabled,
+} from "./approval-proof-inline";
 import { ExtensionControlCenterDetail } from "./extension-control-center-detail";
+import type { GuardApprovalGatePublicConfig } from "./guard-types";
 import {
   canonicalExtensionId,
   DEFAULT_EXTENSION_DETAIL_URL_STATE,
@@ -214,10 +220,23 @@ function ExtensionCard(props: {
   </article>;
 }
 
-function ReviewModal(props: { change: PendingChange; busy: boolean; error: string | null; onCancel: () => void; onConfirm: (password: string, totp: string) => void }) {
+export function ReviewModal(props: {
+  change: PendingChange;
+  busy: boolean;
+  error: string | null;
+  approvalGate: GuardApprovalGatePublicConfig | null;
+  onCancel: () => void;
+  onConfirm: (credentials: { approval_password?: string; approval_totp_code?: string }) => void;
+}) {
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
   const dialogRef = useModalDialog<HTMLFormElement>(props.onCancel, !props.busy);
+  const handlePasswordChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(event.target.value);
+  }, []);
+  const handleTotpChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setTotp(event.target.value);
+  }, []);
   const title = "globalLockdown" in props.change
     ? `${props.change.globalLockdown ? "Enable" : "Disable"} global lockdown`
     : `${props.change.enabled ? "Allow" : "Block"} ${props.change.extension.name} capability`;
@@ -227,7 +246,19 @@ function ReviewModal(props: { change: PendingChange; busy: boolean; error: strin
   const requested = "globalLockdown" in props.change
     ? props.change.globalLockdown ? "Lockdown" : "Open"
     : props.change.enabled ? "Allowed" : "Blocked";
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm"><form ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="extension-review-title" onSubmit={(event) => { event.preventDefault(); props.onConfirm(password, totp); }} className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-blue">Review capability control</p><h2 id="extension-review-title" className="mt-2 text-xl font-semibold text-slate-950">{title}</h2></div><button type="button" disabled={props.busy} onClick={props.onCancel} aria-label="Close review" className="grid size-11 place-items-center rounded-full text-slate-500 hover:bg-slate-100 disabled:opacity-50"><HiMiniXMark className="size-5" /></button></div><div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-2xl bg-slate-50 p-4 text-sm"><span className="text-slate-500">Current</span><span aria-hidden="true">→</span><strong className="text-slate-950">Requested</strong><span>{current}</span><span /><span>{requested}</span></div><p className="mt-4 text-sm text-slate-600">Blocking a capability makes Guard block matching actions. It does not turn detector coverage off.</p><label className="mt-5 block text-sm font-medium text-slate-700">Approval password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-slate-300 px-3 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" /></label><label className="mt-4 block text-sm font-medium text-slate-700">Authenticator code<input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={(event) => setTotp(event.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-slate-300 px-3 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" /></label>{props.error ? <p role="alert" className="mt-4 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{props.error}</p> : null}<div className="mt-6 flex justify-end gap-3"><button type="button" disabled={props.busy} onClick={props.onCancel} className="min-h-11 rounded-xl px-4 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">Cancel</button><button type="submit" disabled={props.busy} className="min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60">{props.busy ? "Verifying…" : `Confirm ${requested.toLowerCase()}`}</button></div></form></div>;
+  const handleSubmit = useCallback((event: React.FormEvent) => {
+    event.preventDefault();
+    props.onConfirm(buildApprovalProofCredentials(props.approvalGate, {
+      approvalPassword: password,
+      approvalTotpCode: totp,
+    }));
+  }, [password, props, totp]);
+  const submitDisabled = isApprovalProofSubmitDisabled(
+    props.approvalGate,
+    { approvalPassword: password, approvalTotpCode: totp },
+    props.busy,
+  );
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm"><form ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="extension-review-title" onSubmit={handleSubmit} className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-blue">Review capability control</p><h2 id="extension-review-title" className="mt-2 text-xl font-semibold text-slate-950">{title}</h2></div><button type="button" disabled={props.busy} onClick={props.onCancel} aria-label="Close review" className="grid size-11 place-items-center rounded-full text-slate-500 hover:bg-slate-100 disabled:opacity-50"><HiMiniXMark className="size-5" /></button></div><div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-2xl bg-slate-50 p-4 text-sm"><span className="text-slate-500">Current</span><span aria-hidden="true">→</span><strong className="text-slate-950">Requested</strong><span>{current}</span><span /><span>{requested}</span></div><p className="mt-4 text-sm text-slate-600">Blocking a capability makes Guard block matching actions. It does not turn detector coverage off.</p><div className="mt-5"><ApprovalProofFieldInputs approvalGate={props.approvalGate} approvalPassword={password} approvalTotpCode={totp} onApprovalPasswordChange={handlePasswordChange} onApprovalTotpCodeChange={handleTotpChange} /></div>{props.error ? <p role="alert" className="mt-4 rounded-xl border border-brand-attention/20 bg-brand-attention/[0.06] px-3 py-2 text-sm text-brand-attention">{props.error}</p> : null}<div className="mt-6 flex justify-end gap-3"><button type="button" disabled={props.busy} onClick={props.onCancel} className="min-h-11 rounded-xl px-4 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">Cancel</button><button type="submit" disabled={submitDisabled} className="min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60">{props.busy ? "Verifying…" : `Confirm ${requested.toLowerCase()}`}</button></div></form></div>;
 }
 
 export function ExtensionsWorkspace() {
@@ -304,34 +335,39 @@ export function ExtensionsWorkspace() {
     setRouteState({ route: { kind: "detail", extensionId: canonicalSelected }, detail: next });
   }, [canonicalSelected, routeState.detail]);
 
-  const requestBroadControl = useCallback((extension: ExtensionCatalogItem) => {
-    if (state.kind !== "ready") return;
-    setMutationError(null);
-    setPending({ extension, enabled: !isExtensionEnabled(state.effective, extension) });
-  }, [state]);
+  const requestChange = useCallback((change: PendingChange) => {
+  setMutationError(null);
+  void resolveApprovalGate({ failClosed: true })
+    .then(() => setPending(change))
+    .catch(() => setMutationError("Guard could not load approval settings. Check the local connection and try again."));
+}, [resolveApprovalGate]);
 
-  const confirm = useCallback(async (password: string, totp: string) => {
-    if (state.kind !== "ready" || !pending) return;
-    setBusy(true);
-    setMutationError(null);
-    try {
-      const payload = buildExtensionMutation(state, pending);
-      payload.approval_password = password;
-      payload.approval_totp_code = totp;
-      payload.session_nonce = randomToken();
-      const preview = await previewExtensionMutation(payload);
-      if (typeof preview.proof_id !== "string") throw new Error("Guard did not issue a mutation proof");
-      payload.proof_id = preview.proof_id;
-      await applyExtensionMutation(payload);
-      setPending(null);
-      await load();
-    } catch (error) {
-      const recovery = error instanceof ExtensionControlApiError ? error.recoveryAction : undefined;
-      setMutationError(`${error instanceof Error ? error.message : "Change failed"}${recovery ? ` · ${recovery}` : ""}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [load, pending, state]);
+const requestBroadControl = useCallback((extension: ExtensionCatalogItem) => {
+  if (state.kind !== "ready") return;
+  requestChange({ extension, enabled: !isExtensionEnabled(state.effective, extension) });
+}, [requestChange, state]);
+
+  const confirm = useCallback(async (credentials: { approval_password?: string; approval_totp_code?: string }) => {
+  if (state.kind !== "ready" || !pending) return;
+  setBusy(true);
+  setMutationError(null);
+  try {
+    const payload = buildExtensionMutation(state, pending);
+    Object.assign(payload, credentials);
+    payload.session_nonce = randomToken();
+    const preview = await previewExtensionMutation(payload);
+    if (typeof preview.proof_id !== "string") throw new Error("Guard did not issue a mutation proof");
+    payload.proof_id = preview.proof_id;
+    await applyExtensionMutation(payload);
+    setPending(null);
+    await load();
+  } catch (error) {
+    const recovery = error instanceof ExtensionControlApiError ? error.recoveryAction : undefined;
+    setMutationError(`${error instanceof Error ? error.message : "Change failed"}${recovery ? ` · ${recovery}` : ""}`);
+  } finally {
+    setBusy(false);
+  }
+}, [load, pending, state]);
 
   const recover = useCallback(async (credentials?: { approval_password?: string; approval_totp_code?: string }) => {
     const acknowledgingDegraded = state.kind === "ready" && state.effective.health === "degraded-unacknowledged";
@@ -355,8 +391,13 @@ export function ExtensionsWorkspace() {
       }
     } catch (error) {
       if (!credentials && requiresExtensionRecoveryApproval(error)) {
-        await resolveApprovalGate();
-        setRecoveryApprovalOpen(true);
+        try {
+          await resolveApprovalGate({ failClosed: true });
+          setRecoveryApprovalOpen(true);
+        } catch {
+          setRecoveryError("Guard could not load approval settings. Check the local connection and try again.");
+          setRecoveryStatus(null);
+        }
       } else {
         setRecoveryError(error instanceof Error ? error.message : acknowledgingDegraded ? "Guard could not acknowledge degraded extension controls." : "Guard could not repair extension controls.");
         setRecoveryStatus(null);
@@ -369,12 +410,13 @@ export function ExtensionsWorkspace() {
   if (state.kind === "loading") return <main className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" /></main>;
   if (state.kind === "error") return <main className="mx-auto max-w-5xl p-6"><div className="rounded-3xl border border-red-200 bg-red-50 p-6"><h1 className="font-semibold text-red-950">Extensions unavailable</h1><p role="alert" className="mt-2 text-sm text-red-700">{state.message}</p><button type="button" onClick={load} className="mt-4 min-h-11 rounded-xl bg-red-700 px-4 text-sm font-semibold text-white">Try again</button></div></main>;
 
+  const mutationAlert = mutationError && pending === null ? <p role="alert" className="mt-4 rounded-xl border border-brand-attention/20 bg-brand-attention/[0.06] px-4 py-3 text-sm font-medium text-brand-attention">{mutationError}</p> : null;
   const acknowledgingDegraded = state.effective.health === "degraded-unacknowledged";
   const recoveryBanner = <ExtensionStatusBanner busy={recoveryBusy} effective={state.effective} error={recoveryError} status={recoveryStatus} onRecover={() => { void recover(); }} onRetry={load} />;
   const recoveryModal = recoveryApprovalOpen ? <ApprovalProofModal title={acknowledgingDegraded ? "Acknowledge degraded extension controls" : "Repair extension controls"} detail={acknowledgingDegraded ? "Authenticate this acknowledgement on your device. Guard remains fail-closed until protected authority is restored." : "Authenticate this repair on your device. Guard uses the proof once and does not store it."} confirmLabel={acknowledgingDegraded ? "Acknowledge degraded state" : "Repair controls"} approvalGate={resolvedApprovalGate} busy={recoveryBusy} error={recoveryError} onCancel={() => { if (!recoveryBusy) setRecoveryApprovalOpen(false); }} onConfirm={(credentials) => { void recover(credentials); }} /> : null;
 
   if (routeState.route.kind === "detail" && selectedExtension) {
-    return <><div className="mx-auto w-full max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">{recoveryBanner}</div><ExtensionControlCenterDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} urlState={routeState.detail} onUrlState={updateDetailState} onBack={closeExtension} onBroadControl={() => requestBroadControl(selectedExtension)} />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}{recoveryModal}</>;
+    return <><div className="mx-auto w-full max-w-7xl px-4 pt-6 sm:px-6 lg:px-8">{recoveryBanner}{mutationAlert}</div><ExtensionControlCenterDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} urlState={routeState.detail} onUrlState={updateDetailState} onBack={closeExtension} onBroadControl={() => requestBroadControl(selectedExtension)} />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}{recoveryModal}</>;
   }
 
   if (routeState.route.kind === "detail" || routeState.route.kind === "invalid") {
@@ -383,12 +425,13 @@ export function ExtensionsWorkspace() {
 
   const locked = state.effective.health !== "protected";
   return <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-    <header className="flex flex-col gap-5 border-b border-slate-200 pb-7 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.22em] text-brand-blue">Command safety</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Extensions</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Inspect canonical command protections and review broad capability policy without changing detector truth.</p></div><button type="button" disabled={locked} onClick={() => setPending({ globalLockdown: !state.effective.global_lockdown })} className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold ${state.effective.global_lockdown ? "bg-red-700 text-white" : "border border-slate-300 bg-white text-slate-700"} disabled:opacity-50`}><HiMiniLockClosed className="size-4" />{state.effective.global_lockdown ? "Review ending lockdown" : "Review global lockdown"}</button></header>
+    <header className="flex flex-col gap-5 border-b border-slate-200 pb-7 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[0.22em] text-brand-blue">Command safety</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Extensions</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Inspect canonical command protections and review broad capability policy without changing detector truth.</p></div><button type="button" disabled={locked} onClick={() => requestChange({ globalLockdown: !state.effective.global_lockdown })} className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold ${state.effective.global_lockdown ? "bg-red-700 text-white" : "border border-slate-300 bg-white text-slate-700"} disabled:opacity-50`}><HiMiniLockClosed className="size-4" />{state.effective.global_lockdown ? "Review ending lockdown" : "Review global lockdown"}</button></header>
     <div className="mt-6">{recoveryBanner}</div>
+    {mutationAlert}
     {state.effective.global_lockdown ? <div role="status" className="mt-4 flex items-center gap-3 rounded-2xl bg-slate-950 px-4 py-3 text-sm text-white"><HiMiniLockClosed className="size-5" /><span><strong>Global lockdown active.</strong> Matching capabilities are blocked regardless of optional local controls.</span></div> : null}
-    <section aria-labelledby="installed-extensions" className="mt-8"><div className="flex flex-col gap-1"><div className="flex items-center justify-between gap-4"><h2 id="installed-extensions" className="text-lg font-semibold text-slate-950">Installed extensions</h2><span className="text-sm text-slate-500">{catalogExtensions.length} available</span></div><p className="text-sm text-slate-500">Search by name or command, or filter by risk, domain, and effective state.</p></div><div className="mt-4"><ExtensionsFilterBar filters={filters} onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))} onClear={() => setFilters(EMPTY_EXTENSION_FILTERS)} extensions={catalogExtensions} effective={state.effective} /></div>{filtered.length ? <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{filtered.map((extension) => <ExtensionCard key={extension.extension_id} extension={extension} effective={state.effective} locked={locked || state.effective.global_lockdown} onChange={(change) => { setMutationError(null); setPending(change); }} onOpen={openExtension} />)}</div> : hasActiveFilters(effectiveFilters) ? <div className="mt-5 flex flex-col items-center gap-3 rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><HiMiniMagnifyingGlass className="size-7 text-slate-300" aria-hidden="true" /><h3 className="text-sm font-semibold text-slate-900">No extensions match these filters</h3><p className="max-w-sm text-sm text-slate-500">Try a different search term or clear the filters.</p><button type="button" onClick={() => setFilters(EMPTY_EXTENSION_FILTERS)} className="min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Clear filters</button></div> : <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center text-sm text-slate-500">No extensions are registered.</div>}</section>
+    <section aria-labelledby="installed-extensions" className="mt-8"><div className="flex flex-col gap-1"><div className="flex items-center justify-between gap-4"><h2 id="installed-extensions" className="text-lg font-semibold text-slate-950">Installed extensions</h2><span className="text-sm text-slate-500">{catalogExtensions.length} available</span></div><p className="text-sm text-slate-500">Search by name or command, or filter by risk, domain, and effective state.</p></div><div className="mt-4"><ExtensionsFilterBar filters={filters} onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))} onClear={() => setFilters(EMPTY_EXTENSION_FILTERS)} extensions={catalogExtensions} effective={state.effective} /></div>{filtered.length ? <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{filtered.map((extension) => <ExtensionCard key={extension.extension_id} extension={extension} effective={state.effective} locked={locked || state.effective.global_lockdown} onChange={requestChange} onOpen={openExtension} />)}</div> : hasActiveFilters(effectiveFilters) ? <div className="mt-5 flex flex-col items-center gap-3 rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center"><HiMiniMagnifyingGlass className="size-7 text-slate-300" aria-hidden="true" /><h3 className="text-sm font-semibold text-slate-900">No extensions match these filters</h3><p className="max-w-sm text-sm text-slate-500">Try a different search term or clear the filters.</p><button type="button" onClick={() => setFilters(EMPTY_EXTENSION_FILTERS)} className="min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Clear filters</button></div> : <div className="mt-5 rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center text-sm text-slate-500">No extensions are registered.</div>}</section>
     <section className="mt-8 overflow-hidden rounded-3xl border border-slate-200 bg-white"><button type="button" onClick={() => setProvenanceOpen((value) => !value)} aria-expanded={provenanceOpen} className="flex min-h-11 w-full items-center justify-between p-5 text-left"><span><span className="block font-semibold text-slate-950">Policy provenance</span><span className="mt-1 block text-sm text-slate-500">Catalog {state.catalog.catalog_digest.slice(0, 12)}… · {state.effective.layers.length} authority layer{state.effective.layers.length === 1 ? "" : "s"}</span></span>{provenanceOpen ? <HiMiniChevronUp className="size-5" /> : <HiMiniChevronDown className="size-5" />}</button>{provenanceOpen ? <div className="border-t border-slate-200 p-5"><div className="grid gap-3 sm:grid-cols-2">{state.effective.layers.map((layer) => <div key={`${layer.kind}-${layer.catalog_digest}`} className="rounded-2xl bg-slate-50 p-4"><div className="flex items-center gap-2"><HiMiniCheckCircle className="size-5 text-emerald-600" /><strong className="text-sm text-slate-900">{layer.kind === "local-admin" ? "Local administrator" : "Signed cloud policy"}</strong></div><p className="mt-2 text-xs text-slate-500">{layer.controls.length} explicit controls · catalog {layer.catalog_digest.slice(0, 12)}…</p></div>)}</div></div> : null}</section>
-    {pending ? <ReviewModal change={pending} busy={busy} error={mutationError} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}
+    {pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}
     {recoveryModal}
   </main>;
 }

@@ -1,4 +1,4 @@
-import { r as reactExports, j as jsxRuntimeExports, an as HiMiniArrowLeft, Z as HiMiniLockClosed, o as HiMiniShieldCheck, ao as HiMiniArrowTopRightOnSquare, c as HiMiniChevronRight, ap as HiMiniInformationCircle, w as HiMiniXMark, J as HiMiniExclamationTriangle, aq as fetchExtensionControlApi, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, ar as HiMiniArrowPath, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp, y as HiMiniChevronDown, l as HiMiniCheckCircle, as as HiMiniPuzzlePiece } from "../guard-dashboard.js";
+import { r as reactExports, j as jsxRuntimeExports, an as HiMiniArrowLeft, Z as HiMiniLockClosed, o as HiMiniShieldCheck, ao as HiMiniArrowTopRightOnSquare, c as HiMiniChevronRight, ap as HiMiniInformationCircle, w as HiMiniXMark, J as HiMiniExclamationTriangle, aq as fetchExtensionControlApi, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, ar as HiMiniArrowPath, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp, y as HiMiniChevronDown, l as HiMiniCheckCircle, as as buildApprovalProofCredentials, at as isApprovalProofSubmitDisabled, au as ApprovalProofFieldInputs, av as HiMiniPuzzlePiece } from "../guard-dashboard.js";
 import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./use-resolved-approval-gate.js";
 const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -1654,13 +1654,28 @@ function ReviewModal(props) {
   const [password, setPassword] = reactExports.useState("");
   const [totp, setTotp] = reactExports.useState("");
   const dialogRef = useModalDialog(props.onCancel, !props.busy);
+  const handlePasswordChange = reactExports.useCallback((event) => {
+    setPassword(event.target.value);
+  }, []);
+  const handleTotpChange = reactExports.useCallback((event) => {
+    setTotp(event.target.value);
+  }, []);
   const title = "globalLockdown" in props.change ? `${props.change.globalLockdown ? "Enable" : "Disable"} global lockdown` : `${props.change.enabled ? "Allow" : "Block"} ${props.change.extension.name} capability`;
   const current = "globalLockdown" in props.change ? props.change.globalLockdown ? "Open" : "Lockdown" : props.change.enabled ? "Blocked" : "Allowed";
   const requested = "globalLockdown" in props.change ? props.change.globalLockdown ? "Lockdown" : "Open" : props.change.enabled ? "Allowed" : "Blocked";
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { ref: dialogRef, tabIndex: -1, role: "dialog", "aria-modal": "true", "aria-labelledby": "extension-review-title", onSubmit: (event) => {
+  const handleSubmit = reactExports.useCallback((event) => {
     event.preventDefault();
-    props.onConfirm(password, totp);
-  }, className: "w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none", children: [
+    props.onConfirm(buildApprovalProofCredentials(props.approvalGate, {
+      approvalPassword: password,
+      approvalTotpCode: totp
+    }));
+  }, [password, props, totp]);
+  const submitDisabled = isApprovalProofSubmitDisabled(
+    props.approvalGate,
+    { approvalPassword: password, approvalTotpCode: totp },
+    props.busy
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { ref: dialogRef, tabIndex: -1, role: "dialog", "aria-modal": "true", "aria-labelledby": "extension-review-title", onSubmit: handleSubmit, className: "w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start justify-between gap-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-bold uppercase tracking-[0.18em] text-brand-blue", children: "Review capability control" }),
@@ -1677,18 +1692,11 @@ function ReviewModal(props) {
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: requested })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 text-sm text-slate-600", children: "Blocking a capability makes Guard block matching actions. It does not turn detector coverage off." }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "mt-5 block text-sm font-medium text-slate-700", children: [
-      "Approval password",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "password", autoComplete: "current-password", value: password, onChange: (event) => setPassword(event.target.value), className: "mt-2 min-h-11 w-full rounded-xl border border-slate-300 px-3 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "mt-4 block text-sm font-medium text-slate-700", children: [
-      "Authenticator code",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("input", { inputMode: "numeric", autoComplete: "one-time-code", value: totp, onChange: (event) => setTotp(event.target.value), className: "mt-2 min-h-11 w-full rounded-xl border border-slate-300 px-3 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" })
-    ] }),
-    props.error ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-4 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700", children: props.error }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ApprovalProofFieldInputs, { approvalGate: props.approvalGate, approvalPassword: password, approvalTotpCode: totp, onApprovalPasswordChange: handlePasswordChange, onApprovalTotpCodeChange: handleTotpChange }) }),
+    props.error ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-4 rounded-xl border border-brand-attention/20 bg-brand-attention/[0.06] px-3 py-2 text-sm text-brand-attention", children: props.error }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 flex justify-end gap-3", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: props.busy, onClick: props.onCancel, className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50", children: "Cancel" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "submit", disabled: props.busy, className: "min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60", children: props.busy ? "Verifying…" : `Confirm ${requested.toLowerCase()}` })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "submit", disabled: submitDisabled, className: "min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60", children: props.busy ? "Verifying…" : `Confirm ${requested.toLowerCase()}` })
     ] })
   ] }) });
 }
@@ -1760,19 +1768,21 @@ function ExtensionsWorkspace() {
     else window.history.replaceState({}, "", href);
     setRouteState({ route: { kind: "detail", extensionId: canonicalSelected }, detail: next });
   }, [canonicalSelected, routeState.detail]);
+  const requestChange = reactExports.useCallback((change) => {
+    setMutationError(null);
+    void resolveApprovalGate({ failClosed: true }).then(() => setPending(change)).catch(() => setMutationError("Guard could not load approval settings. Check the local connection and try again."));
+  }, [resolveApprovalGate]);
   const requestBroadControl = reactExports.useCallback((extension2) => {
     if (state.kind !== "ready") return;
-    setMutationError(null);
-    setPending({ extension: extension2, enabled: !isExtensionEnabled(state.effective, extension2) });
-  }, [state]);
-  const confirm = reactExports.useCallback(async (password, totp) => {
+    requestChange({ extension: extension2, enabled: !isExtensionEnabled(state.effective, extension2) });
+  }, [requestChange, state]);
+  const confirm = reactExports.useCallback(async (credentials) => {
     if (state.kind !== "ready" || !pending) return;
     setBusy(true);
     setMutationError(null);
     try {
       const payload = buildExtensionMutation(state, pending);
-      payload.approval_password = password;
-      payload.approval_totp_code = totp;
+      Object.assign(payload, credentials);
       payload.session_nonce = randomToken();
       const preview = await previewExtensionMutation(payload);
       if (typeof preview.proof_id !== "string") throw new Error("Guard did not issue a mutation proof");
@@ -1807,8 +1817,13 @@ function ExtensionsWorkspace() {
       }
     } catch (error) {
       if (!credentials && requiresExtensionRecoveryApproval(error)) {
-        await resolveApprovalGate();
-        setRecoveryApprovalOpen(true);
+        try {
+          await resolveApprovalGate({ failClosed: true });
+          setRecoveryApprovalOpen(true);
+        } catch {
+          setRecoveryError("Guard could not load approval settings. Check the local connection and try again.");
+          setRecoveryStatus(null);
+        }
       } else {
         setRecoveryError(error instanceof Error ? error.message : acknowledgingDegraded2 ? "Guard could not acknowledge degraded extension controls." : "Guard could not repair extension controls.");
         setRecoveryStatus(null);
@@ -1823,6 +1838,7 @@ function ExtensionsWorkspace() {
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-2 text-sm text-red-700", children: state.message }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: load, className: "mt-4 min-h-11 rounded-xl bg-red-700 px-4 text-sm font-semibold text-white", children: "Try again" })
   ] }) });
+  const mutationAlert = mutationError && pending === null ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-4 rounded-xl border border-brand-attention/20 bg-brand-attention/[0.06] px-4 py-3 text-sm font-medium text-brand-attention", children: mutationError }) : null;
   const acknowledgingDegraded = state.effective.health === "degraded-unacknowledged";
   const recoveryBanner = /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionStatusBanner, { busy: recoveryBusy, effective: state.effective, error: recoveryError, status: recoveryStatus, onRecover: () => {
     void recover();
@@ -1834,9 +1850,12 @@ function ExtensionsWorkspace() {
   } }) : null;
   if (routeState.route.kind === "detail" && selectedExtension) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mx-auto w-full max-w-7xl px-4 pt-6 sm:px-6 lg:px-8", children: recoveryBanner }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mx-auto w-full max-w-7xl px-4 pt-6 sm:px-6 lg:px-8", children: [
+        recoveryBanner,
+        mutationAlert
+      ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionControlCenterDetail, { extension: selectedExtension, effective: state.effective, catalogDigest: state.catalog.catalog_digest, urlState: routeState.detail, onUrlState: updateDetailState, onBack: closeExtension, onBroadControl: () => requestBroadControl(selectedExtension) }),
-      pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewModal, { change: pending, busy, error: mutationError, onCancel: () => {
+      pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewModal, { change: pending, busy, error: mutationError, approvalGate: resolvedApprovalGate, onCancel: () => {
         if (!busy) setPending(null);
       }, onConfirm: confirm }) : null,
       recoveryModal
@@ -1863,12 +1882,13 @@ function ExtensionsWorkspace() {
         /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "mt-2 text-3xl font-semibold tracking-tight text-slate-950", children: "Extensions" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-2xl text-sm leading-6 text-slate-600", children: "Inspect canonical command protections and review broad capability policy without changing detector truth." })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", disabled: locked, onClick: () => setPending({ globalLockdown: !state.effective.global_lockdown }), className: `inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold ${state.effective.global_lockdown ? "bg-red-700 text-white" : "border border-slate-300 bg-white text-slate-700"} disabled:opacity-50`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", disabled: locked, onClick: () => requestChange({ globalLockdown: !state.effective.global_lockdown }), className: `inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold ${state.effective.global_lockdown ? "bg-red-700 text-white" : "border border-slate-300 bg-white text-slate-700"} disabled:opacity-50`, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniLockClosed, { className: "size-4" }),
         state.effective.global_lockdown ? "Review ending lockdown" : "Review global lockdown"
       ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: recoveryBanner }),
+    mutationAlert,
     state.effective.global_lockdown ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { role: "status", className: "mt-4 flex items-center gap-3 rounded-2xl bg-slate-950 px-4 py-3 text-sm text-white", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniLockClosed, { className: "size-5" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
@@ -1888,10 +1908,7 @@ function ExtensionsWorkspace() {
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-500", children: "Search by name or command, or filter by risk, domain, and effective state." })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionsFilterBar, { filters, onChange: (patch) => setFilters((previous) => ({ ...previous, ...patch })), onClear: () => setFilters(EMPTY_EXTENSION_FILTERS), extensions: catalogExtensions, effective: state.effective }) }),
-      filtered.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3", children: filtered.map((extension2) => /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionCard, { extension: extension2, effective: state.effective, locked: locked || state.effective.global_lockdown, onChange: (change) => {
-        setMutationError(null);
-        setPending(change);
-      }, onOpen: openExtension }, extension2.extension_id)) }) : hasActiveFilters(effectiveFilters) ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 flex flex-col items-center gap-3 rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center", children: [
+      filtered.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3", children: filtered.map((extension2) => /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionCard, { extension: extension2, effective: state.effective, locked: locked || state.effective.global_lockdown, onChange: requestChange, onOpen: openExtension }, extension2.extension_id)) }) : hasActiveFilters(effectiveFilters) ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 flex flex-col items-center gap-3 rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniMagnifyingGlass, { className: "size-7 text-slate-300", "aria-hidden": "true" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "text-sm font-semibold text-slate-900", children: "No extensions match these filters" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "max-w-sm text-sm text-slate-500", children: "Try a different search term or clear the filters." }),
@@ -1926,7 +1943,7 @@ function ExtensionsWorkspace() {
         ] })
       ] }, `${layer.kind}-${layer.catalog_digest}`)) }) }) : null
     ] }),
-    pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewModal, { change: pending, busy, error: mutationError, onCancel: () => {
+    pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewModal, { change: pending, busy, error: mutationError, approvalGate: resolvedApprovalGate, onCancel: () => {
       if (!busy) setPending(null);
     }, onConfirm: confirm }) : null,
     recoveryModal
@@ -1935,6 +1952,7 @@ function ExtensionsWorkspace() {
 export {
   ExtensionStatusBanner,
   ExtensionsWorkspace,
+  ReviewModal,
   buildExtensionMutation,
   currentExtensionRouteState,
   extensionRecoveryAction,
