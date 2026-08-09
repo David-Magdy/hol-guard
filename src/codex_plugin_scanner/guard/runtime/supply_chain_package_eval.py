@@ -125,8 +125,8 @@ _NAMED_SOURCE_SEPARATOR_RE = re.compile(
     r"@(?=(?:https?|git\+|github|gitlab|bitbucket|file):)",
     re.IGNORECASE,
 )
-_LOCKFILE_PARSE_BUDGET_SECONDS = 0.2
-_LOCKFILE_PARSE_BUDGET_PER_MIB_SECONDS = 0.35
+_LOCKFILE_PARSE_BUDGET_SECONDS = 0.5
+_LOCKFILE_PARSE_BUDGET_PER_MIB_SECONDS = 0.75
 _LOCKFILE_PARSE_MAX_BUDGET_SECONDS = 1.5
 _LOCKFILE_PARSE_CACHE: ContextVar[dict[tuple[str, bytes], LockfileParseResult] | None] = ContextVar(
     "lockfile_parse_cache",

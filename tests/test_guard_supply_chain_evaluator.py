@@ -2308,9 +2308,9 @@ def test_transitive_lockfile_resolution_uses_bounded_deadline(tmp_path: Path, mo
 @pytest.mark.parametrize(
     ("byte_count", "expected_budget"),
     (
-        (0, 0.2),
-        (667_000, 0.2 + (0.35 * 667_000 / (1024 * 1024))),
-        (1024 * 1024, 0.55),
+        (0, 0.5),
+        (667_000, 0.5 + (0.75 * 667_000 / (1024 * 1024))),
+        (1024 * 1024, 1.25),
         (8 * 1024 * 1024, 1.5),
     ),
 )
