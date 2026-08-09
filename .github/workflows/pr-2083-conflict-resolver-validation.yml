@@ -1,4 +1,4 @@
-name: PR 2083 final current-head validation
+name: PR 2083 evidence and ratchet diagnosis
 
 on:
   push:
@@ -6,28 +6,23 @@ on:
       - chore/pr-2083-conflict-resolver-executor
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  integrate-and-validate:
+  diagnose:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 20
     env:
       VALIDATED_BASE: 9b8a56644053dd9985ec0dc1c1f3b54e25564ad6
       RELEASE_HEAD: 7143b6f9de63f77d3f0a4adf943709a096f2637c
       MAIN_HEAD: a626ec004957ab3c827f18e98edcfff4ab6beed3
-      EXPECTED_UPDATER_BLOB: 78595a1f58198f655a682e54ac2b7f7b9b89f33f
-      EXPECTED_STORE_BLOB: 1d31847427e53f47db3d6b344bef07b756fc9e66
-      EXPECTED_RELEASE_RATCHET_BLOB: bf41bf4eac57991bdafc82c865a1b2ffc55d8645
-      EXPECTED_RATCHET_BASE_BLOB: df3885dcf8c5cf0a3bf564b5e7f18c2b0a95fd1c
-      EXPECTED_MAIN_RATCHET_BLOB: ff7ac238fd1a6397c264acbfbe2049f875cffcda
     steps:
       - name: Check out full history
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
-      - name: Integrate exact current heads and resolve ratchet
+      - name: Recreate exact resolved tree
         shell: bash
         run: |
           set -euo pipefail
@@ -35,33 +30,15 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --detach "$VALIDATED_BASE"
           git merge --no-ff --no-edit "$RELEASE_HEAD"
-
           set +e
           git merge --no-ff --no-edit "$MAIN_HEAD"
-          MERGE_RC=$?
+          RC=$?
           set -e
-          test "$MERGE_RC" -ne 0
+          test "$RC" -ne 0
           test "$(git diff --name-only --diff-filter=U)" = "ci/test-suite-ratchet-baseline.json"
-
-          BASE_BLOB=$(git ls-files -u ci/test-suite-ratchet-baseline.json | awk '$3 == 1 {print $2}')
-          OURS_BLOB=$(git ls-files -u ci/test-suite-ratchet-baseline.json | awk '$3 == 2 {print $2}')
-          THEIRS_BLOB=$(git ls-files -u ci/test-suite-ratchet-baseline.json | awk '$3 == 3 {print $2}')
-          test "$BASE_BLOB" = "$EXPECTED_RATCHET_BASE_BLOB"
-          test "$OURS_BLOB" = "$EXPECTED_RELEASE_RATCHET_BLOB"
-          test "$THEIRS_BLOB" = "$EXPECTED_MAIN_RATCHET_BLOB"
-
           git checkout --ours ci/test-suite-ratchet-baseline.json
           git add ci/test-suite-ratchet-baseline.json
-          test -z "$(git diff --name-only --diff-filter=U)"
           git commit --no-edit
-
-          git merge-base --is-ancestor "$VALIDATED_BASE" HEAD
-          git merge-base --is-ancestor "$RELEASE_HEAD" HEAD
-          git merge-base --is-ancestor "$MAIN_HEAD" HEAD
-          test "$(git hash-object src/codex_plugin_scanner/guard/cli/update_commands.py)" = "$EXPECTED_UPDATER_BLOB"
-          test "$(git hash-object src/codex_plugin_scanner/guard/store.py)" = "$EXPECTED_STORE_BLOB"
-          test "$(git hash-object ci/test-suite-ratchet-baseline.json)" = "$EXPECTED_RELEASE_RATCHET_BLOB"
-          test -z "$(git status --porcelain)"
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -74,75 +51,38 @@ jobs:
           version: "0.9.26"
           enable-cache: true
 
-      - name: Install frozen Python dependencies
+      - name: Install frozen dependencies
         run: uv sync --frozen --extra dev --python 3.12
 
-      - name: Validate Python conflict surfaces
+      - name: Diagnose evidence and ratchet
         shell: bash
         run: |
-          set -euo pipefail
-          uv run --no-sync python -m py_compile \
-            src/codex_plugin_scanner/guard/cli/update_commands.py \
-            src/codex_plugin_scanner/guard/store.py \
-            src/codex_plugin_scanner/guard/runtime/direct_typescript_diagnostics.py
-          uv run --no-sync python -m ruff format --check \
-            src/codex_plugin_scanner/guard/cli/update_commands.py \
-            src/codex_plugin_scanner/guard/store.py \
-            src/codex_plugin_scanner/guard/runtime/direct_typescript_diagnostics.py \
-            tests/test_guard_direct_typescript_diagnostic_filter.py
-          uv run --no-sync python -m ruff check \
-            src/codex_plugin_scanner/guard/cli/update_commands.py \
-            src/codex_plugin_scanner/guard/store.py \
-            src/codex_plugin_scanner/guard/runtime/direct_typescript_diagnostics.py \
-            tests/test_guard_direct_typescript_diagnostic_filter.py
-          git diff --check
-
-      - name: Run focused Python regressions
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv run --no-sync pytest -q \
-            tests/test_guard_phase03_local_install.py::test_update_blocks_protected_authority_downgrade_before_installer_execution \
-            tests/test_update_pi_family_repair.py \
-            tests/test_guard_cli.py::TestGuardCli::test_guard_update_runs_pip_upgrade_in_current_environment \
-            tests/test_guard_cli.py::TestGuardCli::test_guard_update_uses_pipx_when_running_from_pipx \
-            tests/test_guard_cli.py::TestGuardCli::test_guard_update_marks_already_current_pipx_runs_as_current \
-            tests/test_guard_project_identity.py \
-            tests/test_guard_project_identity_ipv6.py \
-            tests/test_guard_project_identity_precedence.py \
-            tests/test_guard_project_identity_symlink.py \
-            tests/test_guard_direct_typescript_diagnostic_filter.py \
-            --tb=short
-          uv run --no-sync pytest -q tests/test_guard_phase03_remainder.py -k success_status --tb=short
-          uv run --no-sync pytest -q tests/test_guard_update_pipx_recovery.py --tb=short
-
-      - name: Validate deterministic evidence and test ratchet
-        shell: bash
-        run: |
-          set -euo pipefail
-          PYTHONPATH=src:. uv run --no-sync python -m tests.guard_command_decision_diff --check
-          uv run --no-sync python scripts/ci/test_inventory.py --output "$RUNNER_TEMP/test-inventory.json"
+          set +e
+          REPORT="$RUNNER_TEMP/pr2083-gate-report.txt"
+          : > "$REPORT"
+          PYTHONPATH=src:. uv run --no-sync python -m tests.guard_command_decision_diff --check >"$RUNNER_TEMP/decision-diff.log" 2>&1
+          echo "decision_diff_rc=$?" >> "$REPORT"
+          uv run --no-sync python scripts/ci/test_inventory.py --output "$RUNNER_TEMP/test-inventory.json" >"$RUNNER_TEMP/inventory.log" 2>&1
+          echo "inventory_rc=$?" >> "$REPORT"
           uv run --no-sync python scripts/ci/test_suite_ratchet.py \
             --baseline ci/test-suite-ratchet-baseline.json \
-            --inventory "$RUNNER_TEMP/test-inventory.json"
+            --inventory "$RUNNER_TEMP/test-inventory.json" >"$RUNNER_TEMP/ratchet.log" 2>&1
+          echo "ratchet_rc=$?" >> "$REPORT"
+          cp ci/test-suite-ratchet-baseline.json "$RUNNER_TEMP/current-baseline.json"
+          cat "$REPORT"
+          exit 0
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+      - name: Upload diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          bun-version: 1.3.14
-
-      - name: Validate dashboard
-        working-directory: dashboard
-        shell: bash
-        run: |
-          set -euo pipefail
-          bun install --frozen-lockfile
-          bun run test
-          bun run build
-
-      - name: Push validated integration branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -z "$(git status --porcelain)"
-          git push origin HEAD:refs/heads/chore/pr-2083-current-final-validation
+          name: pr2083-gate-diagnosis
+          path: |
+            ${{ runner.temp }}/pr2083-gate-report.txt
+            ${{ runner.temp }}/test-inventory.json
+            ${{ runner.temp }}/current-baseline.json
+            ${{ runner.temp }}/decision-diff.log
+            ${{ runner.temp }}/inventory.log
+            ${{ runner.temp }}/ratchet.log
+          if-no-files-found: error
+          retention-days: 1
