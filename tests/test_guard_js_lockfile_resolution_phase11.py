@@ -10,6 +10,7 @@ import pytest
 import codex_plugin_scanner.guard.runtime.lockfile_parse_result as lockfile_parse_module
 import codex_plugin_scanner.guard.runtime.supply_chain_package_eval as evaluator_module
 from codex_plugin_scanner.guard.runtime.lockfile_evaluation_support import (
+    collect_lockfile_parse_results,
     incomplete_lockfile_fallback_target,
 )
 from codex_plugin_scanner.guard.runtime.lockfile_parse_result import LOCKFILE_MAX_BYTES, parse_lockfile_text
@@ -53,6 +54,21 @@ def test_lockfile_parser_rejects_oversized_bytes_before_decoding() -> None:
 
     assert result.complete is False
     assert result.error_reason == "byte_limit_exceeded"
+
+
+def test_lockfile_collection_rejects_oversized_bytes_before_decoding(tmp_path: Path) -> None:
+    (tmp_path / "bun.lock").write_bytes(b"\xff" * (LOCKFILE_MAX_BYTES + 1))
+
+    results = collect_lockfile_parse_results(
+        tmp_path,
+        ["bun.lock"],
+        budget_ms=200,
+        parse_text_result=evaluator_module._parse_lockfile_text_result,
+    )
+
+    assert len(results) == 1
+    assert results[0].complete is False
+    assert results[0].error_reason == "byte_limit_exceeded"
 
 
 @pytest.mark.parametrize(
@@ -423,17 +439,17 @@ def test_late_incomplete_lockfile_result_is_not_deduplicated_against_direct_pack
     real_parser = evaluator_module._parse_lockfile_text_result
     parse_calls = 0
 
-    def changing_parser(path: str, text: str):
+    def changing_parser(path: str, source: str | bytes):
         nonlocal parse_calls
         parse_calls += 1
         if parse_calls == 3:
             return lockfile_parse_module.incomplete_lockfile_result(
                 path,
-                text.encode("utf-8"),
+                source if isinstance(source, bytes) else source.encode("utf-8"),
                 error_reason="parse_error",
                 budget_ms=200,
             )
-        return real_parser(path, text)
+        return real_parser(path, source)
 
     monkeypatch.setattr(evaluator_module, "_parse_lockfile_text_result", changing_parser)
 

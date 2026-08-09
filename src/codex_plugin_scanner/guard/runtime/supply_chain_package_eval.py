@@ -128,7 +128,7 @@ _NAMED_SOURCE_SEPARATOR_RE = re.compile(
 _LOCKFILE_PARSE_BUDGET_SECONDS = 0.2
 _LOCKFILE_PARSE_BUDGET_PER_MIB_SECONDS = 0.35
 _LOCKFILE_PARSE_MAX_BUDGET_SECONDS = 1.5
-_LOCKFILE_PARSE_CACHE: ContextVar[dict[tuple[str, str], LockfileParseResult] | None] = ContextVar(
+_LOCKFILE_PARSE_CACHE: ContextVar[dict[tuple[str, bytes], LockfileParseResult] | None] = ContextVar(
     "lockfile_parse_cache",
     default=None,
 )
@@ -2294,13 +2294,10 @@ def _lockfile_parse_results(
     )
 
 
-def _parse_lockfile_text_result(path: str, text: str) -> LockfileParseResult:
+def _parse_lockfile_text_result(path: str, source: str | bytes) -> LockfileParseResult:
     cache = _LOCKFILE_PARSE_CACHE.get()
-    cache_key = (path.casefold(), text)
-    if cache is not None and (cached := cache.get(cache_key)) is not None:
-        return cached
     try:
-        source_bytes = text.encode("utf-8")
+        source_bytes = source if isinstance(source, bytes) else source.encode("utf-8")
     except MemoryError:
         return incomplete_lockfile_result(
             path,
@@ -2308,6 +2305,9 @@ def _parse_lockfile_text_result(path: str, text: str) -> LockfileParseResult:
             error_reason="resource_limit_exceeded",
             budget_ms=_LOCKFILE_PARSE_BUDGET_SECONDS * 1000,
         )
+    cache_key = (path.casefold(), source_bytes)
+    if cache is not None and (cached := cache.get(cache_key)) is not None:
+        return cached
     result = parse_lockfile_with_budget(
         path,
         source_bytes,
