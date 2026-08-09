@@ -243,7 +243,6 @@ jobs:
             --base "$BASE" --marker "$BASE.attested.json" --version "$CORE_VERSION" --source-commit "$SOURCE_SHA" \
             --source-tag "$CORE_TAG" --target "$RELEASE_TARGET" --apple-signing-identity "$APPLE_SIGNING_IDENTITY" \
             --apple-team-id "$APPLE_TEAM_ID"
-          echo "PRIOR_FEED_PROVENANCE_VERIFIED=true" >> "$GITHUB_ENV"
       - name: Build standalone Core executable
         if: steps.release.outputs.available == 'true' && steps.existing.outputs.mode == 'build'
         env:
@@ -287,7 +286,7 @@ jobs:
             --payload "$RUNNER_TEMP/bootstrap.json" --version "$CORE_VERSION" --subject "Standalone Core"
           mv "$BUILT" "$ASSET"
       - name: Import Apple signing identity
-        if: steps.release.outputs.available == 'true' && steps.existing.outputs.mode == 'build'
+        if: steps.release.outputs.available == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -308,14 +307,22 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security import "$RUNNER_TEMP/certificate.p12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          openssl pkcs12 -in "$RUNNER_TEMP/certificate.p12" -clcerts -nokeys \
-            -passin env:APPLE_CERTIFICATE_PASSWORD -out "$RUNNER_TEMP/signing-certificate.pem"
-          IMPORTED_CERTIFICATE_SHA1=$(openssl x509 -in "$RUNNER_TEMP/signing-certificate.pem" \
-            -noout -fingerprint -sha1 | sed -E 's/^[^=]+=//; s/://g' | tr '[:lower:]' '[:upper:]')
-          printf 'IMPORTED_CERTIFICATE_SHA1=%s\n' "$IMPORTED_CERTIFICATE_SHA1" >> "$GITHUB_ENV"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           security list-keychains -d user -s "$KEYCHAIN"
+          security find-identity -v -p codesigning "$KEYCHAIN" > "$RUNNER_TEMP/codesign-identities.txt"
+          python3 -I - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"])
+          identity_text = (root / "codesign-identities.txt").read_text(encoding="utf-8")
+          matches = re.findall(r'^\s*\d+\)\s+([0-9A-Fa-f]{40})\s+"[^"]+"\s*$', identity_text, flags=re.MULTILINE)
+          if len(matches) != 1:
+              raise SystemExit(f"Expected exactly one imported code-signing identity, found {len(matches)}")
+          (root / "apple-signing-fingerprint.txt").write_text(matches[0].upper() + "\n", encoding="ascii")
+          PY
       - name: Sign and notarize new Core sidecar
         if: steps.release.outputs.available == 'true' && steps.existing.outputs.mode == 'build'
         env:
@@ -342,37 +349,30 @@ jobs:
         if: steps.release.outputs.available == 'true'
         env:
           CORE_VERSION: ${{ steps.release.outputs.version }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         shell: bash
         run: |
           set -euo pipefail
           BINARY="$RUNNER_TEMP/dist/hol-guard-core-${CORE_VERSION}-${RELEASE_TARGET}"
           VERIFY="$RUNNER_TEMP/dist/hol-guard"
+          CERT_PREFIX="$RUNNER_TEMP/codesign-cert"
           chmod 0755 "$BINARY"
           codesign --verify --deep --strict --verbose=2 "$BINARY"
           codesign --display --verbose=4 "$BINARY" 2> "$RUNNER_TEMP/codesign.txt"
-          if [ -n "${IMPORTED_CERTIFICATE_SHA1:-}" ]; then
-            codesign --display --extract-certificates="$RUNNER_TEMP/codesign-cert-" "$BINARY"
-            CERTIFICATE_SHA1=$(openssl x509 -inform DER \
-              -in "$RUNNER_TEMP/codesign-cert-0" -noout -fingerprint -sha1 \
-              | sed -E 's/^[^=]+=//; s/://g' | tr '[:lower:]' '[:upper:]')
-            test "$CERTIFICATE_SHA1" = "$IMPORTED_CERTIFICATE_SHA1"
-          elif ! grep -Fx "Authority=$APPLE_SIGNING_IDENTITY" "$RUNNER_TEMP/codesign.txt"; then
-            codesign --display --extract-certificates="$RUNNER_TEMP/codesign-cert-" "$BINARY"
-            CERTIFICATE_SHA1=$(openssl x509 -inform DER \
-              -in "$RUNNER_TEMP/codesign-cert-0" -noout -fingerprint -sha1 \
-              | sed -E 's/^[^=]+=//; s/://g' | tr '[:lower:]' '[:upper:]')
-            SELECTOR_SHA1=$(printf '%s' "$APPLE_SIGNING_IDENTITY" \
-              | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')
-            test "$CERTIFICATE_SHA1" = "$SELECTOR_SHA1"
-          fi
           grep -Fx "TeamIdentifier=$APPLE_TEAM_ID" "$RUNNER_TEMP/codesign.txt"
-          if [ -f "$RUNNER_TEMP/notary-result.json" ]; then
-            jq -e '.status == "Accepted"' "$RUNNER_TEMP/notary-result.json" >/dev/null
-          else
-            test "${PRIOR_FEED_PROVENANCE_VERIFIED:-}" = "true"
+          rm -f "${CERT_PREFIX}"*
+          codesign --display --extract-certificates "$CERT_PREFIX" "$BINARY" >/dev/null 2>&1
+          test -s "${CERT_PREFIX}0"
+          EXPECTED_FINGERPRINT=$(tr -d '\r\n' < "$RUNNER_TEMP/apple-signing-fingerprint.txt" | tr '[:lower:]' '[:upper:]')
+          ACTUAL_FINGERPRINT=$(openssl x509 -inform DER -in "${CERT_PREFIX}0" -noout -fingerprint -sha1 \
+            | sed -E 's/^[^=]+=//; s/://g' | tr '[:lower:]' '[:upper:]')
+          test -n "$EXPECTED_FINGERPRINT"
+          test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT"
+          if ! spctl --assess --type execute --verbose=4 "$BINARY" 2> "$RUNNER_TEMP/spctl.txt"; then
+            cat "$RUNNER_TEMP/spctl.txt" >&2
+            exit 1
           fi
+          grep -F "source=Notarized Developer ID" "$RUNNER_TEMP/spctl.txt"
           file "$BINARY" | grep -F "Mach-O 64-bit executable arm64"
           cp "$BINARY" "$VERIFY"
           chmod 0755 "$VERIFY"

@@ -71,23 +71,22 @@ def test_privileged_feed_is_main_bound_and_pins_candidate_provenance() -> None:
 def test_feed_uses_apple_trust_and_no_redundant_manifest_key() -> None:
     text = workflow_text()
     helper = TOOL.read_text(encoding="utf-8")
+    job = publish_job()
+    steps = {step.get("name"): step for step in job["steps"]}
     assert "HOL_GUARD_CORE_UPDATE_PRIVATE_KEY" not in text
     assert "HOL_GUARD_CORE_UPDATE_PUBLIC_KEY" not in text
     assert "json.sig" not in text
     assert "minisign" not in helper.lower()
     assert "bunx @tauri-apps/cli" not in text
-    assert "IMPORTED_CERTIFICATE_SHA1=$(openssl x509" in text
-    assert "-passin env:APPLE_CERTIFICATE_PASSWORD" in text
-    assert 'codesign --display --extract-certificates="$RUNNER_TEMP/codesign-cert-"' in text
-    assert 'test "$CERTIFICATE_SHA1" = "$IMPORTED_CERTIFICATE_SHA1"' in text
-    assert 'grep -Fx "Authority=$APPLE_SIGNING_IDENTITY"' in text
-    assert 'test "$CERTIFICATE_SHA1" = "$SELECTOR_SHA1"' in text
+    assert steps["Import Apple signing identity"]["if"] == "steps.release.outputs.available == 'true'"
+    assert "security find-identity -v -p codesigning" in text
+    assert "apple-signing-fingerprint.txt" in text
+    assert "codesign --display --extract-certificates" in text
+    assert "openssl x509 -inform DER" in text
+    assert 'test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT"' in text
+    assert 'grep -Fx "Authority=$APPLE_SIGNING_IDENTITY"' not in text
     assert 'grep -Fx "TeamIdentifier=$APPLE_TEAM_ID"' in text
-    assert "spctl --assess" not in text
-    assert 'echo "PRIOR_FEED_PROVENANCE_VERIFIED=true" >> "$GITHUB_ENV"' in text
-    assert 'if [ -f "$RUNNER_TEMP/notary-result.json" ]' in text
-    assert "jq -e '.status == \"Accepted\"'" in text
-    assert 'test "${PRIOR_FEED_PROVENANCE_VERIFIED:-}" = "true"' in text
+    assert 'grep -F "source=Notarized Developer ID"' in text
 
 
 def test_macos_feed_avoids_bash4_only_builtins_and_binds_mode() -> None:
