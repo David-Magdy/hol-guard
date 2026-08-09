@@ -81,7 +81,12 @@ def test_feed_uses_apple_trust_and_no_redundant_manifest_key() -> None:
     assert steps["Import Apple signing identity"]["if"] == "steps.release.outputs.available == 'true'"
     assert "security find-identity -v -p codesigning" in text
     assert "apple-signing-fingerprint.txt" in text
-    assert "codesign --display --extract-certificates" in text
+    assert 'CERT_DIR="$RUNNER_TEMP/codesign-certs"' in text
+    assert 'codesign --display --extract-certificates "$BINARY"' in text
+    assert '--extract-certificates "$CERT_DIR"' not in text
+    assert '--extract-certificates "$CERT_PREFIX"' not in text
+    assert 'test -s "$CERT_DIR/codesign0"' in text
+    assert 'cat "$RUNNER_TEMP/codesign-certificates.txt" >&2' in text
     assert "openssl x509 -inform DER" in text
     assert 'test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT"' in text
     assert 'grep -Fx "Authority=$APPLE_SIGNING_IDENTITY"' not in text
