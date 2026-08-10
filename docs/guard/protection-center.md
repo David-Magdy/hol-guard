@@ -15,6 +15,8 @@ Protection Center is a local security surface. Local evaluation, blocking, setti
 
 Guard Cloud is optional continuity and coordination. The UI may explain Cloud history, cross-device continuity, or organization coordination, but Cloud state must never disable or hide local protection controls. Plan limits must come from authoritative entitlement state when present. The client must not invent device, retention, or storage quotas.
 
+Local dashboard sessions are accepted only for the daemon's explicit Protection Center route allowlist and remain subject to same-origin and session-expiry checks. Forged, expired, or foreign-origin dashboard requests must fail closed.
+
 ## Protection settings
 
 User-facing choices are:
