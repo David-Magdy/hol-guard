@@ -123,8 +123,8 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await expect(page.getByRole("heading", { name: "What HOL Guard protects" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent decisions" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Protection health check" })).toBeVisible();
-  await expect(page.getByLabel("Cloud continuity")).toBeVisible();
-  await expect(page.getByLabel("Cloud continuity")).toContainText("Local protection is active");
+  await expect(page.getByRole("complementary", { name: "Cloud continuity" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Cloud continuity" })).toContainText("Local protection is active");
   await expect(page.getByRole("heading", { name: /^(Protected|Finish setup|Needs repair|Protection limited|Emergency Lockdown active)$/ })).toBeVisible();
 
   const healthCheck = page.getByRole("button", { name: "Run health check" });
