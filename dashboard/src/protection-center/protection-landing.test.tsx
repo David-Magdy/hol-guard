@@ -121,6 +121,6 @@ assert.match(decisionMarkup, /Recent decisions/);
 assert.match(decisionMarkup, /Blocked/);
 assert.match(decisionMarkup, /Allowed/);
 assert.match(decisionMarkup, /Why\?/);
-assert.doesNotMatch(decisionMarkup, /Users\/private|raw command/i);
+assert.doesNotMatch(decisionMarkup, /Users\/private|workspace\/secret|\.env\/private/i);
 
 console.log("protection-landing.test.tsx: all assertions passed");
