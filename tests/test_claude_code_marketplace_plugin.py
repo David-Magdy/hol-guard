@@ -45,4 +45,4 @@ def test_status_skill_is_read_only_by_default() -> None:
     assert "read-only checks first" in status
     assert "hol-guard --version" in status
     assert "hol-guard status" in status
-    assert "/hol-guard:setup" in status
+    assert "/hol-guard:setup" in status and "pipx install hol-guard" not in status and "hol-guard init" not in status
