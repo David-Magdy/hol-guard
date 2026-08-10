@@ -36,13 +36,18 @@ jobs:
           set -e
           if [ "$rc" -ne 0 ]; then
             conflicts="$(git diff --name-only --diff-filter=U | sort)"
-            allowed="$(printf '%s\n' ci/test-suite-ratchet-baseline.json src/codex_plugin_scanner/guard/daemon/static/assets/guard-dashboard.js | sort)"
-            if [ "$conflicts" != "$allowed" ]; then
-              echo "Unexpected merge conflicts:"; printf '%s\n' "$conflicts"; exit 1
+            unexpected="$(printf '%s\n' "$conflicts" | grep -Ev '^(ci/test-suite-ratchet-baseline\.json|src/codex_plugin_scanner/guard/daemon/static/assets/guard-dashboard\.js)$' || true)"
+            if [ -n "$unexpected" ]; then
+              echo "Unexpected merge conflicts:"; printf '%s\n' "$unexpected"; exit 1
             fi
-            git checkout --ours ci/test-suite-ratchet-baseline.json
-            git checkout --ours src/codex_plugin_scanner/guard/daemon/static/assets/guard-dashboard.js
-            git add ci/test-suite-ratchet-baseline.json src/codex_plugin_scanner/guard/daemon/static/assets/guard-dashboard.js
+            if git diff --name-only --diff-filter=U | grep -qx 'ci/test-suite-ratchet-baseline.json'; then
+              git checkout --ours ci/test-suite-ratchet-baseline.json
+              git add ci/test-suite-ratchet-baseline.json
+            fi
+            if git diff --name-only --diff-filter=U | grep -qx 'src/codex_plugin_scanner/guard/daemon/static/assets/guard-dashboard.js'; then
+              git checkout --ours src/codex_plugin_scanner/guard/daemon/static/assets/guard-dashboard.js
+              git add src/codex_plugin_scanner/guard/daemon/static/assets/guard-dashboard.js
+            fi
           fi
       - name: Recompute ratchet and verify Python
         shell: bash
@@ -53,10 +58,11 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          inventory = json.loads(Path('test-inventory.json').read_text())['inventory']
+          payload = json.loads(Path('test-inventory.json').read_text())
+          inventory = payload['inventory']
           baseline = {
               'maximum_collected_cases': inventory['collected_cases'],
-              'maximum_test_source_lines': json.loads(Path('test-inventory.json').read_text())['test_source_lines'],
+              'maximum_test_source_lines': payload['test_source_lines'],
               'schema_version': 1,
           }
           Path('ci/test-suite-ratchet-baseline.json').write_text(json.dumps(baseline, indent=2) + '\n')
