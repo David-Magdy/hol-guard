@@ -9,6 +9,7 @@ import json
 import os
 import secrets
 import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -1241,10 +1242,8 @@ def _current_totp_session_binding() -> str | None:
     signals: list[str] = []
     getsid = getattr(os, "getsid", None)
     if callable(getsid):
-        try:
+        with suppress(OSError):
             signals.append(f"sid={getsid(0)}")
-        except OSError:
-            pass
     for key in _TOTP_SESSION_ENV_KEYS:
         value = os.environ.get(key)
         if value:
