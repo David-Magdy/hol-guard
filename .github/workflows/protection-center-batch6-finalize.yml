@@ -43,7 +43,49 @@ jobs:
           set -euo pipefail
           cd dashboard
           bun install --frozen-lockfile --ignore-scripts
-      - name: Verify dashboard contracts
+      - name: Verify Cloud value contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
+          bunx tsx src/protection-center/protection-cloud-value.test.tsx
+      - name: Verify telemetry privacy contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
+          bunx tsx src/protection-center/protection-telemetry.test.ts
+      - name: Verify terminology contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
+          bunx tsx src/protection-center/protection-terminology.test.tsx
+      - name: Verify accessibility contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
+          bunx tsx src/protection-center/protection-final-a11y.test.tsx
+      - name: Verify author metadata contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
+          bunx tsx src/protection-center/model/protection-author-metadata.test.ts
+      - name: Verify performance budget contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
+          bunx tsx src/protection-center/model/protection-performance-budgets.test.ts
+      - name: Verify final architecture contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
+          bunx tsx src/protection-center/protection-final-contract.test.ts
+      - name: Verify complete dashboard contracts
         shell: bash
         run: |
           set -euo pipefail
