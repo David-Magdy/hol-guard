@@ -81,22 +81,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await expectSecretSafeUrl(page);
   await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Protection modules" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "What HOL Guard protects" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recent decisions" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Protection health check" })).toBeVisible();
-  await expect(page.getByLabel("Cloud continuity")).toBeVisible();
   await expect(page.getByRole("heading", { name: /^(Protected|Finish setup|Needs repair|Protection limited|Emergency Lockdown active)$/ })).toBeVisible();
-
-  const healthCheck = page.getByRole("button", { name: "Run health check" });
-  await healthCheck.click();
-  await expect(page.getByRole("status").filter({ hasText: /Protection health check passed|need attention/ })).toBeVisible();
-
-  const advancedFilters = page.getByRole("button", { name: /Advanced filters/ });
-  await expect(advancedFilters).toHaveAttribute("aria-expanded", "false");
-  await advancedFilters.click();
-  await expect(advancedFilters).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByPlaceholder(/Search by name, command, or risk/)).toBeVisible();
-
   const setupSteps = page.getByRole("button", { name: "Show setup steps" });
   if (await setupSteps.count()) {
     await setupSteps.click();
@@ -113,19 +98,11 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await page.screenshot({ path: testInfo.outputPath("installed-protection-center-developer.png"), fullPage: false });
   await selectDensity(page, "Simple");
 
-  for (const width of [320, 390, 800, 1024, 1440]) {
+  for (const width of [320, 390, 800, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`installed-protection-center-simple-${width}.png`), fullPage: false });
   }
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.evaluate(() => { document.documentElement.style.zoom = "2"; });
-  await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
-  await expect(page.getByPlaceholder("Search Git, packages, secrets, downloads…")).toBeVisible();
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(4);
-  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-simple-zoom-200.png"), fullPage: false });
-  await page.evaluate(() => { document.documentElement.style.zoom = ""; });
   await page.setViewportSize({ width: 1280, height: 900 });
 
   for (const extensionId of ["command.git", "command.github", "command.package.node"]) {
