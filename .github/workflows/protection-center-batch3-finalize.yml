@@ -26,16 +26,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin feat/protection-center-03-module-detail
-          for path in \
-            dashboard/src/protection-center/protection-module-detail.tsx \
-            dashboard/src/protection-center/protection-module-detail.test.tsx \
-            dashboard/src/protection-center/use-protection-module-activity.ts; do
+          for path in dashboard/src/protection-center/protection-module-detail.tsx dashboard/src/protection-center/protection-module-detail.test.tsx dashboard/src/protection-center/use-protection-module-activity.ts; do
             git show "origin/feat/protection-center-03-module-detail:${path}" > "${path}"
           done
           python <<'PY'
           from pathlib import Path
           import json
-
           p = Path("dashboard/src/protection-center/protection-center-workspace.tsx")
           text = p.read_text(encoding="utf-8")
           text = text.replace('import { ExtensionControlCenterDetail } from "../extension-control-center-detail";\n', '')
@@ -51,18 +47,9 @@ jobs:
           j = text.find(end, i)
           if i < 0 or j < 0:
               raise SystemExit("detail route block changed")
-          block = '''  if (routeState.route.kind === "detail" && selectedExtension) {
-    return <><ProtectionModuleDetail
-      extension={selectedExtension}
-      effective={state.effective}
-      catalogDigest={state.catalog.catalog_digest}
-      onBack={closeExtension}
-      onChange={() => requestChange({ extension: selectedExtension, enabled: !isExtensionEnabled(state.effective, selectedExtension) })}
-    />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}{recoveryModal}</>;
-  }'''
+          block = '  if (routeState.route.kind === "detail" && selectedExtension) {\n    return <><ProtectionModuleDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} onBack={closeExtension} onChange={() => requestChange({ extension: selectedExtension, enabled: !isExtensionEnabled(state.effective, selectedExtension) })} />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}{recoveryModal}</>;\n  }'
           text = text[:i] + block + text[j:]
           p.write_text("\n".join(line.rstrip() for line in text.splitlines()) + "\n", encoding="utf-8")
-
           q = Path("dashboard/package.json")
           data = json.loads(q.read_text(encoding="utf-8"))
           cmd = "tsx src/protection-center/protection-module-detail.test.tsx"
