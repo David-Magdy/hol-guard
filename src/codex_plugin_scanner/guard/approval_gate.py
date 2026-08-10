@@ -90,6 +90,7 @@ ApprovalGatePurpose = Literal[
 
 _ACTIVE_GRANTS: dict[str, dict[str, object]] = {}
 _APPROVAL_GATE_LOCK = threading.RLock()
+_APPROVAL_REQUEST_PROCESS_SESSION_NONCE = secrets.token_urlsafe(32)
 _INVALIDATED_AUTH_STATE_KEYS = (
     "approval_sessions",
     "recovery_code_hashes",
@@ -924,14 +925,18 @@ def _verify_or_raise_locked(
         )
     accepted_counter: int | None = None
     factor_set = ("password",)
+    resolved_session_nonce = _recent_auth_session_nonce(
+        purpose=purpose,
+        subject=subject,
+        session_nonce=session_nonce,
+    )
     if _totp_enabled(state):
-        if session_nonce and _recent_totp_auth_valid(
+        if resolved_session_nonce and _recent_totp_auth_valid(
             guard_home,
             state,
-            session_nonce=session_nonce,
+            session_nonce=resolved_session_nonce,
             now_epoch=now_epoch,
         ):
-            _reset_failed_attempts(state)
             return _register_grant(
                 guard_home,
                 state=state,
@@ -939,7 +944,7 @@ def _verify_or_raise_locked(
                 action=action,
                 scope=scope,
                 subject=subject,
-                session_nonce=session_nonce,
+                session_nonce=resolved_session_nonce,
                 factor_set=("totp",),
                 strict=strict,
                 used_cooldown=False,
@@ -959,11 +964,11 @@ def _verify_or_raise_locked(
         factor_set = ("totp",)
         state["totp_last_counter"] = accepted_counter
         state.pop("cooldown_expires_at", None)
-        if session_nonce:
+        if resolved_session_nonce:
             _remember_recent_totp_auth(
                 guard_home,
                 state,
-                session_nonce=session_nonce,
+                session_nonce=resolved_session_nonce,
                 accepted_counter=accepted_counter,
                 now_epoch=now_epoch,
             )
@@ -989,7 +994,7 @@ def _verify_or_raise_locked(
         action=action,
         scope=scope,
         subject=subject,
-        session_nonce=session_nonce,
+        session_nonce=resolved_session_nonce,
         factor_set=factor_set,
         strict=strict,
         used_cooldown=False,
@@ -998,6 +1003,21 @@ def _verify_or_raise_locked(
         totp_verified=accepted_counter is not None,
         now=now,
     )
+
+
+def _recent_auth_session_nonce(
+    *,
+    purpose: ApprovalGatePurpose,
+    subject: str | None,
+    session_nonce: str | None,
+) -> str | None:
+    """Resolve the bounded local session identity eligible for recent-MFA reuse."""
+
+    if session_nonce:
+        return session_nonce
+    if purpose == "approval_decision" and subject and subject.startswith("approval-request:"):
+        return _APPROVAL_REQUEST_PROCESS_SESSION_NONCE
+    return None
 
 
 def _register_grant(
