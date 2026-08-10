@@ -46,9 +46,9 @@ jobs:
               git add ci/test-suite-ratchet-baseline.json
             fi
           fi
-          # The branch briefly received a partial connector replacement of this
-          # large test file. release/3.0 owns the intact source and has the same
-          # pre-edit blob, so restore it before applying the surgical readiness fix.
+          # Restore the intact release-owned latency suite before applying the
+          # narrow readiness assertion. This prevents an overloaded worker pool
+          # from making the deadline assertion measure startup pressure instead.
           git checkout origin/release/3.0 -- tests/test_pi_hook_latency.py
           python - <<'PY'
           from pathlib import Path
@@ -86,6 +86,13 @@ jobs:
         run: |
           set -euo pipefail
           uv sync --frozen --extra dev --python 3.12
+      - name: Format surgical Pi latency change
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -m ruff format tests/test_pi_hook_latency.py
+          git add tests/test_pi_hook_latency.py
+          git diff --check
       - name: Recalculate composed test ratchet
         shell: bash
         run: |
