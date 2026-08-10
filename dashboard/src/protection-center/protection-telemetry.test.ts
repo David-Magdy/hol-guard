@@ -32,6 +32,6 @@ assert.equal(envelope.schema_version, "guard.protection-center.telemetry.v1");
 assert.deepEqual(envelope.fields, { result: "ask-first", plan_id: "enterprise" });
 assert.doesNotMatch(JSON.stringify(envelope), /never include me|raw_command|proof|token|path/);
 
-assert.deepEqual(sanitizeProtectionTelemetry({ plan_id: "future-plan", density: "dense", cloud_state: "online" }), {});
+assert.deepEqual(sanitizeProtectionTelemetry({ plan_id: "future-plan", density: "dense", cloud_state: "online", category: "customer-acme" }), {});
 
 console.log("protection-telemetry.test.ts: all assertions passed");
