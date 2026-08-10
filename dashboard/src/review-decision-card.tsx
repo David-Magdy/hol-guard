@@ -69,6 +69,7 @@ export function ReviewDecisionCard(props: {
   const [useCooldown, setUseCooldown] = useState(false);
   const [pendingAction, setPendingAction] = useState<"allow" | "block" | null>(null);
   const [pendingContractKey, setPendingContractKey] = useState<string | null>(null);
+  const [rememberExactAction, setRememberExactAction] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const allowButtonRef = useRef<HTMLButtonElement>(null);
   const availableScopeChoices = useMemo(
@@ -110,6 +111,7 @@ export function ReviewDecisionCard(props: {
       setUseCooldown(false);
       setPendingAction(null);
       setPendingContractKey(null);
+      setRememberExactAction(false);
     }
   }, [item?.request_id, item?.scope_contract_version, item?.scope_contract_digest]);
 
@@ -141,6 +143,7 @@ export function ReviewDecisionCard(props: {
             action,
             scope: requestedScope,
             reason: action === "allow" ? "approved in review" : "blocked in review",
+            persistExactAction: action === "allow" ? rememberExactAction : false,
           }),
           ...(includeGateFields && needsPassword ? { approval_password: approvalPassword } : {}),
           ...(includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {}),
@@ -167,6 +170,7 @@ export function ReviewDecisionCard(props: {
       item,
       allowScope,
       blockScope,
+      rememberExactAction,
       props.onResolve,
       props.approvalGate,
       approvalPassword,
@@ -306,6 +310,10 @@ export function ReviewDecisionCard(props: {
   const topAlertItems = buildTopAlertItems(item);
   const evidenceItems = buildEvidenceItems(item);
   const actionPresentation = guardActionPresentation(item.policy_action);
+  const resolvedAllowButtonLabel =
+    rememberExactAction && allowScope === "artifact"
+      ? "Approve and remember"
+      : allowButtonLabel(allowScope);
   return (
     <div className="space-y-5">
       {resolved && (
@@ -397,10 +405,13 @@ export function ReviewDecisionCard(props: {
             blockScopeOptions={blockScopeOptions}
             hasAllowScope={hasAllowScope}
             taskCapabilityCopy={taskCapabilityCopy}
+            exactActionPersistenceEligible={item.exact_action_persistence_eligible === true}
+            rememberExactAction={rememberExactAction}
             allowScope={allowScope}
             blockScope={blockScope}
             onAllowScopeChange={setAllowScope}
             onBlockScopeChange={setBlockScope}
+            onRememberExactActionChange={setRememberExactAction}
           />
         )}
         {errorMessage && (
@@ -436,7 +447,7 @@ export function ReviewDecisionCard(props: {
             ) : (
               <span className="flex items-center gap-2">
                 <HiMiniCheckCircle className="h-4 w-4" aria-hidden="true" />
-                {allowButtonLabel(allowScope)}
+                {resolvedAllowButtonLabel}
               </span>
             )}
           </ActionButton>
@@ -518,7 +529,7 @@ export function ReviewDecisionCard(props: {
           onUseCooldownChange={handleUseCooldownChange}
           onSubmit={handleModalSubmit}
           onCancel={handleModalCancel}
-          submitLabel={pendingAction === "allow" ? allowButtonLabel(allowScope) : blockButtonLabel(blockScope)}
+          submitLabel={pendingAction === "allow" ? resolvedAllowButtonLabel : blockButtonLabel(blockScope)}
         />
       )}
     </div>

@@ -196,6 +196,7 @@ def _bounded_non_consuming_policy_rows(
     artifact_id: str | None,
     artifact_hash: str | None,
     runtime_exact_match_key: str | None,
+    global_runtime_exact_match_key: str | None,
     workspace_key: str | None,
     workspace: str | None,
     publisher: str | None,
@@ -291,7 +292,7 @@ def _bounded_non_consuming_policy_rows(
                 _hash_partition_probes(
                     base_predicate="scope = 'global' and harness = ? and artifact_id = ?",
                     base_parameters=(harness_selector, artifact_selector),
-                    exact_hashes=(artifact_hash, runtime_exact_match_key),
+                    exact_hashes=(artifact_hash, global_runtime_exact_match_key),
                     exact_index="idx_policy_decisions_lookup_global",
                     legacy_index="idx_policy_decisions_lookup_global_legacy",
                     exact_first=True,
@@ -301,7 +302,7 @@ def _bounded_non_consuming_policy_rows(
             _hash_partition_probes(
                 base_predicate="scope = 'global' and harness = ? and artifact_id is null",
                 base_parameters=(harness_selector,),
-                exact_hashes=(artifact_hash, runtime_exact_match_key),
+                exact_hashes=(artifact_hash, global_runtime_exact_match_key),
                 exact_index="idx_policy_decisions_lookup_global",
                 legacy_index="idx_policy_decisions_lookup_global_legacy",
                 exact_first=True,
@@ -1153,6 +1154,14 @@ class StorePolicyMixin:
             if artifact_hash is not None and runtime_exact_match_context is not None
             else None
         )
+        global_runtime_exact_match_key = (
+            _global_runtime_scoped_exact_match_key(
+                artifact_id,
+                runtime_tool_action_portable_match_context(runtime_exact_match_context),
+            )
+            if artifact_hash is not None and runtime_exact_match_context is not None
+            else None
+        )
         events: list[tuple[str, dict[str, object]]] = []
         selected_payload: dict[str, object] | None = None
         ignored_local_integrity: dict[str, object] | None = None
@@ -1283,6 +1292,7 @@ class StorePolicyMixin:
                     artifact_id=artifact_id,
                     artifact_hash=artifact_hash,
                     runtime_exact_match_key=runtime_exact_match_key,
+                    global_runtime_exact_match_key=global_runtime_exact_match_key,
                     workspace_key=workspace_key,
                     workspace=workspace,
                     publisher=publisher,
@@ -1372,8 +1382,8 @@ class StorePolicyMixin:
                         artifact_id,
                         action_family_key,
                         artifact_hash,
-                        runtime_exact_match_key,
-                        runtime_exact_match_key,
+                        global_runtime_exact_match_key,
+                        global_runtime_exact_match_key,
                         current_time,
                         _NON_CONSUMING_POLICY_MATCH_LIMIT + 1 if not consume_one_shot else -1,
                     ),
@@ -1456,6 +1466,7 @@ class StorePolicyMixin:
                         requested_artifact_hash=artifact_hash,
                         requested_runtime_exact_match_key=runtime_exact_match_key,
                         requested_portable_exact_match_key=portable_runtime_exact_match_key,
+                        requested_global_exact_match_key=global_runtime_exact_match_key,
                     ):
                         continue
                     integrity_result = self._policy_integrity_result_for_row(
@@ -1552,6 +1563,7 @@ class StorePolicyMixin:
                     requested_artifact_hash=artifact_hash,
                     requested_runtime_exact_match_key=runtime_exact_match_key,
                     requested_portable_exact_match_key=portable_runtime_exact_match_key,
+                    requested_global_exact_match_key=global_runtime_exact_match_key,
                 ):
                     continue
                 integrity_result = self._policy_integrity_result_for_row(
