@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
 use guard_contracts::{
-    NativeHookRequestV1, RuntimeCapabilitiesV1, MAX_NATIVE_REQUEST_BYTES, MAX_NATIVE_RESPONSE_BYTES,
-    NATIVE_PROTOCOL_VERSION,
+    NativeHookRequestV1, RuntimeCapabilitiesV1, MAX_NATIVE_REQUEST_BYTES,
+    MAX_NATIVE_RESPONSE_BYTES, NATIVE_PROTOCOL_VERSION,
 };
 use guard_hook_core::review_post_tool;
 use std::env;
@@ -22,7 +22,7 @@ fn capabilities() -> RuntimeCapabilitiesV1 {
     RuntimeCapabilitiesV1 {
         protocol_version: NATIVE_PROTOCOL_VERSION,
         runtime_version: PACKAGE_VERSION.to_owned(),
-        rule_digest: guard_rules::rule_digest(),
+        rule_digest: guard_rule_contract::rule_digest(),
         build_sha: BUILD_SHA.to_owned(),
         target: format!("{}-{}", env::consts::ARCH, env::consts::OS),
         features: vec![
@@ -31,6 +31,7 @@ fn capabilities() -> RuntimeCapabilitiesV1 {
             "oneshot-v1".into(),
             "framed-serve-v1".into(),
             "bounded-concurrency-v1".into(),
+            "rule-contract-v2".into(),
         ],
     }
 }
@@ -51,7 +52,8 @@ fn evaluate_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let request: NativeHookRequestV1 =
         serde_json::from_slice(bytes).map_err(|_| "native_request_invalid_json".to_owned())?;
     let response = review_post_tool(&request);
-    let encoded = serde_json::to_vec(&response).map_err(|_| "native_response_encode_failed".to_owned())?;
+    let encoded =
+        serde_json::to_vec(&response).map_err(|_| "native_response_encode_failed".to_owned())?;
     if encoded.len() > MAX_NATIVE_RESPONSE_BYTES {
         return Err("native_response_too_large".into());
     }
@@ -99,7 +101,8 @@ fn serve(socket_path: &str) -> Result<(), String> {
 
     let path = Path::new(socket_path);
     if path.exists() {
-        let metadata = fs::symlink_metadata(path).map_err(|_| "native_socket_stat_failed".to_owned())?;
+        let metadata =
+            fs::symlink_metadata(path).map_err(|_| "native_socket_stat_failed".to_owned())?;
         if metadata.file_type().is_symlink() {
             return Err("native_socket_symlink_rejected".into());
         }
@@ -146,7 +149,13 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.as_slice() {
         [command] if command == "capabilities" => write_json(&capabilities()),
-        [command, flag] if command == "capabilities" && flag == "--json" => write_json(&capabilities()),
+        [command, flag] if command == "capabilities" && flag == "--json" => {
+            write_json(&capabilities())
+        }
+        [command] if command == "rule-contract" => write_json(&guard_rule_contract::rule_contract()),
+        [command, flag] if command == "rule-contract" && flag == "--json" => {
+            write_json(&guard_rule_contract::rule_contract())
+        }
         [command] if command == "self-test" => {
             write_json(&serde_json::json!({"ok": true, "capabilities": capabilities()}))
         }
@@ -166,7 +175,7 @@ fn run() -> Result<(), String> {
         }
         [command, flag, path] if command == "serve" && flag == "--socket" => serve(path),
         _ => Err(
-            "usage: hol-guard-runtime capabilities --json | self-test --json | hook --stdin | serve --socket PATH"
+            "usage: hol-guard-runtime capabilities --json | rule-contract --json | self-test --json | hook --stdin | serve --socket PATH"
                 .into(),
         ),
     }

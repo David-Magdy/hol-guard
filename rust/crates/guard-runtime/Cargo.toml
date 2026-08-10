@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 guard-contracts = { path = "../guard-contracts" }
 guard-hook-core = { path = "../guard-hook-core" }
-guard-rules = { path = "../guard-rules" }
+guard-rule-contract = { path = "../guard-rule-contract" }
 serde.workspace = true
 serde_json.workspace = true
 
