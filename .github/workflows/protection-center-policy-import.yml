@@ -50,24 +50,40 @@ jobs:
           git add . dashboard/e2e/installed-extension-policy-editor.spec.ts
           test -z "$(git diff --name-only --diff-filter=U)"
           git commit -m "feat(protection-center): import reviewed extension policy engine"
-      - name: Adapt imported test harness to current resident authority
+      - name: Adapt imported tests to current release contracts
         shell: bash
         run: |
           set -euo pipefail
           python <<'PY'
           from pathlib import Path
-          path = Path('tests/test_guard_extension_control_projection.py')
-          text = path.read_text()
-          if 'class NullStore' in text and 'def load_extension_control_authority' not in text:
-              if 'from codex_plugin_scanner.guard.runtime.extension_control_authority import' not in text:
-                  text = text.replace('from __future__ import annotations\n', 'from __future__ import annotations\n\nfrom codex_plugin_scanner.guard.runtime.extension_control_authority import AuthorityHealth, ExtensionControlAuthorityView\n', 1)
-              marker = 'class NullStore:'
-              replacement = '''class NullStore:\n    def load_extension_control_authority(self, *, catalog_digest: str):\n        return ExtensionControlAuthorityView(AuthorityHealth.PROTECTED, 0, catalog_digest, ())\n'''
-              text = text.replace(marker, replacement, 1)
-              path.write_text(text)
+
+          projection_path = Path('tests/test_guard_extension_control_projection.py')
+          projection_text = projection_path.read_text()
+          if 'class NullStore' in projection_text and 'def load_extension_control_authority' not in projection_text:
+              if 'from codex_plugin_scanner.guard.runtime.extension_control_authority import' not in projection_text:
+                  projection_text = projection_text.replace(
+                      'from __future__ import annotations\n',
+                      'from __future__ import annotations\n\nfrom codex_plugin_scanner.guard.runtime.extension_control_authority import AuthorityHealth, ExtensionControlAuthorityView\n',
+                      1,
+                  )
+              projection_text = projection_text.replace(
+                  'class NullStore:',
+                  'class NullStore:\n    def load_extension_control_authority(self, *, catalog_digest: str):\n        return ExtensionControlAuthorityView(AuthorityHealth.PROTECTED, 0, catalog_digest, ())\n',
+                  1,
+              )
+              projection_path.write_text(projection_text)
+
+          api_path = Path('tests/test_guard_extension_control_api.py')
+          api_text = api_path.read_text()
+          if 'effective.pop("projection")' not in api_text:
+              marker = '''    assert catalog["limits"] == {\n        "max_body_bytes": 1_000_000,\n        "max_controls": 4096,\n        "max_observations": 2048,\n    }\n    assert effective == {'''
+              replacement = '''    assert catalog["limits"] == {\n        "max_body_bytes": 1_000_000,\n        "max_controls": 4096,\n        "max_observations": 2048,\n    }\n    projection = cast(dict[str, object], effective.pop("projection"))\n    assert projection["schema_version"] == "guard.daemon.extension-control-projection.v1"\n    assert projection["revision"] == effective["revision"]\n    assert projection["catalog_digest"] == effective["catalog_digest"]\n    assert projection["health"] == effective["health"]\n    assert isinstance(projection["extensions"], list)\n    assert isinstance(projection["permissions"], list)\n    assert effective == {'''
+              if api_text.count(marker) != 1:
+                  raise SystemExit('extension-control API bounded DTO assertion changed unexpectedly')
+              api_path.write_text(api_text.replace(marker, replacement, 1))
           PY
-          git add tests/test_guard_extension_control_projection.py
-          git commit -m "test(protection-center): honor resident extension authority" || true
+          git add tests/test_guard_extension_control_projection.py tests/test_guard_extension_control_api.py
+          git commit -m "test(protection-center): align imported engine with current contracts" || true
       - name: Add dashboard test contracts
         shell: bash
         run: |
