@@ -18,7 +18,6 @@ import {
   buildApprovalProofCredentials,
   isApprovalProofSubmitDisabled,
 } from "../approval-proof-inline";
-import { ExtensionControlCenterDetail } from "../extension-control-center-detail";
 import {
   canonicalExtensionId,
   DEFAULT_EXTENSION_DETAIL_URL_STATE,
@@ -26,7 +25,6 @@ import {
   extensionStateLabel,
   parseExtensionRoute,
   readExtensionDetailUrlState,
-  type ExtensionDetailUrlState,
   type ExtensionRoute,
 } from "../extension-control-center-model";
 import {
@@ -56,6 +54,7 @@ import { useModalDialog } from "../use-modal-dialog";
 import { useResolvedApprovalGate } from "../use-resolved-approval-gate";
 import { PROTECTION_TERMS } from "./copy/protection-copy";
 import { ProtectionLandingExperience } from "./protection-landing-experience";
+import { ProtectionModuleDetail } from "./protection-module-detail";
 import {
   InlineError,
   ProtectionDensityControl,
@@ -305,13 +304,6 @@ export function ProtectionCenterWorkspace() {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
 
-  const updateDetailState = useCallback((next: ExtensionDetailUrlState) => {
-    if (!canonicalSelected) return;
-    const href = extensionDetailHref(canonicalSelected, next);
-    window.history.pushState({}, "", href);
-    setRouteState({ route: { kind: "detail", extensionId: canonicalSelected }, detail: next });
-  }, [canonicalSelected]);
-
   const requestChange = useCallback((change: ProtectionPendingChange) => {
     setMutationError(null);
     void resolveApprovalGate({ failClosed: true })
@@ -393,14 +385,12 @@ export function ProtectionCenterWorkspace() {
   /> : null;
 
   if (routeState.route.kind === "detail" && selectedExtension) {
-    return <><ExtensionControlCenterDetail
+    return <><ProtectionModuleDetail
       extension={selectedExtension}
       effective={state.effective}
       catalogDigest={state.catalog.catalog_digest}
-      urlState={routeState.detail}
-      onUrlState={updateDetailState}
       onBack={closeExtension}
-      onBroadControl={() => requestChange({ extension: selectedExtension, enabled: !isExtensionEnabled(state.effective, selectedExtension) })}
+      onChange={() => requestChange({ extension: selectedExtension, enabled: !isExtensionEnabled(state.effective, selectedExtension) })}
     />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}{recoveryModal}</>;
   }
 
