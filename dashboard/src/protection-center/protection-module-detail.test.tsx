@@ -36,14 +36,25 @@ assert.match(simple, /Recent decisions/);
 assert.match(simple, /Change protection/);
 assert.doesNotMatch(simple, /Catalog digest|Extension ID|Matcher|permission_id|rule_id/);
 
+const requiredExtension = { ...FIXED_PROTECTION_MODULE, required: true };
 const required = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
+  extension: requiredExtension,
+  effective: PROTECTION_AUTHORITY_FIXTURES.protected,
+  catalogDigest: "a".repeat(64),
+  onBack: () => undefined,
+  onChange: () => undefined,
+}));
+assert.match(required, /Required protection|cannot be turned off/);
+assert.doesNotMatch(required, />Change protection</);
+
+const fixedSettingSimple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   extension: FIXED_PROTECTION_MODULE,
   effective: PROTECTION_AUTHORITY_FIXTURES.protected,
   catalogDigest: "a".repeat(64),
   onBack: () => undefined,
   onChange: () => undefined,
 }));
-assert.match(required, /Required by Guard|cannot be turned off|Fixed/);
+assert.match(fixedSettingSimple, /0 changeable settings/);
 
 const managed = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   extension: git,
