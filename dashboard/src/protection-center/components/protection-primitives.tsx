@@ -118,3 +118,16 @@ export function WhyThisHappened(props: { summary: string; children?: React.React
 export function TechnicalDetails(props: { title?: string; children: React.ReactNode }) {
   return <details className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><summary className="cursor-pointer list-none text-sm font-semibold text-slate-700"><span className="inline-flex items-center gap-2">{props.title ?? "Technical details"}<HiMiniChevronDown className="size-4" aria-hidden="true" /></span></summary><div className="mt-4 text-sm text-slate-700">{props.children}</div></details>;
 }
+
+export function RecoveryProgress(props: { currentStep: number; steps: readonly string[] }) {
+  return <ol aria-label="Repair progress" className="space-y-2">{props.steps.map((step, index) => <li key={step} className={`flex items-center gap-2 text-sm ${index < props.currentStep ? "text-emerald-700" : index === props.currentStep ? "font-semibold text-slate-950" : "text-slate-400"}`}><span className="grid size-6 shrink-0 place-items-center rounded-full border border-current/30 text-xs">{index < props.currentStep ? "✓" : index + 1}</span>{step}</li>)}</ol>;
+}
+
+export function InlineError({ message }: { message: string }) {
+  return <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{message}</p>;
+}
+
+export function AsyncActionButton(props: React.ButtonHTMLAttributes<HTMLButtonElement> & { busy?: boolean; busyLabel?: string }) {
+  const { busy, busyLabel, children, className = "", disabled, ...buttonProps } = props;
+  return <button {...buttonProps} type={buttonProps.type ?? "button"} aria-busy={busy} disabled={disabled || busy} className={`min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white disabled:opacity-60 ${className}`}>{busy ? busyLabel ?? "Working…" : children}</button>;
+}
