@@ -17801,7 +17801,7 @@ def test_guard_runtime_tool_action_policy_uses_network_egress_when_stricter(tmp_
         "global",
     ],
 )
-def test_guard_runtime_narrows_legacy_broad_allow_for_same_risky_tool_action(
+def test_guard_runtime_requires_exact_context_for_saved_broad_risky_tool_action(
     tmp_path: Path,
     scope: str,
 ) -> None:
@@ -17858,8 +17858,8 @@ def test_guard_runtime_narrows_legacy_broad_allow_for_same_risky_tool_action(
     )
 
     assert resolution["requested_scope"] == scope
-    assert resolution["applied_scope"] == "artifact"
-    assert "scope_warning" in resolution
+    assert resolution["applied_scope"] == scope
+    assert "scope_warning" not in resolution
 
     runtime_artifact = GuardArtifact(
         artifact_id=request.artifact_id,
@@ -17949,8 +17949,8 @@ def test_guard_runtime_rejects_saved_allows_for_different_risky_tool_action(
     )
 
     assert resolution["requested_scope"] == scope
-    assert resolution["applied_scope"] == "artifact"
-    assert "scope_warning" in resolution
+    assert resolution["applied_scope"] == scope
+    assert "scope_warning" not in resolution
 
     later_artifact = GuardArtifact(
         artifact_id="opencode:project:tool-action:credential-upload",
