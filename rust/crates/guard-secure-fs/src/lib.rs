@@ -161,12 +161,27 @@ pub fn resolve_candidate(
 pub fn contains_symlink_component(path: &Path) -> bool {
     let mut current = PathBuf::new();
     for component in path.components() {
-        match component {
-            Component::Prefix(prefix) => current.push(prefix.as_os_str()),
-            Component::RootDir => current.push(Path::new(std::path::MAIN_SEPARATOR_STR)),
+        let should_stat = match component {
+            Component::Prefix(prefix) => {
+                current.push(prefix.as_os_str());
+                false
+            }
+            Component::RootDir => {
+                current.push(Path::new(std::path::MAIN_SEPARATOR_STR));
+                false
+            }
             Component::CurDir => continue,
-            Component::ParentDir => current.push(".."),
-            Component::Normal(part) => current.push(part),
+            Component::ParentDir => {
+                current.push("..");
+                false
+            }
+            Component::Normal(part) => {
+                current.push(part);
+                true
+            }
+        };
+        if !should_stat {
+            continue;
         }
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => return true,
