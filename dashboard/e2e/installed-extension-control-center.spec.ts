@@ -37,7 +37,17 @@ async function expectNoHorizontalOverflow(page: import("@playwright/test").Page)
       .filter((item) => item.display !== "none" && (item.right > root.clientWidth + 4 || item.left < -4))
       .sort((a, b) => Math.max(b.right - root.clientWidth, -b.left) - Math.max(a.right - root.clientWidth, -a.left))
       .slice(0, 12);
-    return { overflow, clientWidth: root.clientWidth, scrollWidth: root.scrollWidth, offenders };
+    return {
+      overflow,
+      clientWidth: root.clientWidth,
+      scrollWidth: root.scrollWidth,
+      innerWidth: window.innerWidth,
+      outerWidth: window.outerWidth,
+      screenWidth: window.screen.width,
+      rootFontSize: getComputedStyle(root).fontSize,
+      lgMatches: window.matchMedia("(min-width: 64rem)").matches,
+      offenders,
+    };
   });
   expect(report, JSON.stringify(report, null, 2)).toMatchObject({ overflow: expect.any(Number) });
   expect(report.overflow, JSON.stringify(report, null, 2)).toBeLessThanOrEqual(4);
