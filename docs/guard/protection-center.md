@@ -80,3 +80,5 @@ Protection Center is a presentation layer over the same extension-control catalo
 Any CLI or API caller using those contracts should observe the same effective settings and Test Lab decision semantics as the dashboard.
 
 The installed-wheel release gate verifies Protection Center against the packaged dashboard and real local daemon, including signed-session Test Lab evaluation, proof-bound settings apply, daemon restart persistence, settings restore, Cloud-independent local behavior, and browser artifact capture.
+
+Before merge, the release branch is composed into the feature branch and the exact composed head is re-run through the protected PR checks so Protection Center is validated against the current `release/3.0` tree rather than a stale base.
