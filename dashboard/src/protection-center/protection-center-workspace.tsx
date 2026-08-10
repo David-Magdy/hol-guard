@@ -55,6 +55,7 @@ import { useDebounce } from "../use-debounce";
 import { useModalDialog } from "../use-modal-dialog";
 import { useResolvedApprovalGate } from "../use-resolved-approval-gate";
 import { PROTECTION_TERMS } from "./copy/protection-copy";
+import { ProtectionLandingExperience } from "./protection-landing-experience";
 import {
   InlineError,
   ProtectionDensityControl,
@@ -437,12 +438,22 @@ export function ProtectionCenterWorkspace() {
     {recoveryError ? <div className="mt-4"><InlineError message={recoveryError} /></div> : null}
     {recoveryStatus ? <p role="status" className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">{recoveryStatus}</p> : null}
 
+    {density === "simple" ? <ProtectionLandingExperience
+      catalog={catalogExtensions}
+      catalogDigest={state.catalog.catalog_digest}
+      effective={state.effective}
+      filters={filters}
+      onFilters={(patch) => setFilters((previous) => ({ ...previous, ...patch }))}
+      onClearFilters={() => setFilters(EMPTY_EXTENSION_FILTERS)}
+      onOpen={openExtension}
+    /> : null}
+
     {density !== "simple" ? <section id="advanced-protection-controls" className="mt-6 space-y-3" aria-label="Advanced protection controls">
       <ExtensionStatusBanner busy={recoveryBusy} effective={state.effective} error={recoveryError} status={recoveryStatus} onRecover={() => { void recover(); }} onRetry={load} />
       <button type="button" disabled={locked} onClick={() => requestChange({ globalLockdown: !state.effective.global_lockdown })} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 disabled:opacity-50"><HiMiniLockClosed className="size-4" />{state.effective.global_lockdown ? "Review ending Emergency Lockdown" : "Review Emergency Lockdown"}</button>
     </section> : null}
 
-    <section aria-labelledby="protection-modules-heading" className="mt-8">
+    {density !== "simple" ? <section aria-labelledby="protection-modules-heading" className="mt-8">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><h2 id="protection-modules-heading" className="text-xl font-semibold text-slate-950">{PROTECTION_TERMS.modules}</h2><p className="mt-1 text-sm text-slate-500">Open a protection to understand its current behavior and available controls.</p></div><span className="text-sm text-slate-500">{catalogExtensions.length} available</span></div>
       {density !== "simple" ? <div className="mt-4"><ExtensionsFilterBar filters={filters} onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))} onClear={() => setFilters(EMPTY_EXTENSION_FILTERS)} extensions={catalogExtensions} effective={state.effective} /></div> : null}
       {visible.length ? <div className="mt-4 space-y-2">{visible.map((extension) => <ProtectionModuleRow
@@ -454,7 +465,7 @@ export function ProtectionCenterWorkspace() {
         managed={sourceIsManaged(state.effective, extension.extension_id)}
         onOpen={() => openExtension(extension)}
       />)}</div> : hasActiveFilters(effectiveFilters) ? <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center"><p className="text-sm font-semibold text-slate-900">No protections match these filters.</p><button type="button" onClick={() => setFilters(EMPTY_EXTENSION_FILTERS)} className="mt-3 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Clear filters</button></div> : <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">No protection modules are registered.</div>}
-    </section>
+    </section> : null}
 
     {density === "developer" ? <div className="mt-8"><TechnicalDetails title="Developer policy details"><button type="button" onClick={() => setProvenanceOpen((value) => !value)} aria-expanded={provenanceOpen} className="flex min-h-11 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 text-left text-sm font-semibold text-slate-800"><span>Policy provenance and catalog identity</span>{provenanceOpen ? <HiMiniChevronUp className="size-4" /> : <HiMiniChevronDown className="size-4" />}</button>{provenanceOpen ? <div className="mt-3 grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-white p-3"><div className="text-xs font-semibold uppercase text-slate-500">Catalog digest</div><code className="mt-1 block break-all text-xs text-slate-700">{state.catalog.catalog_digest}</code></div><div className="rounded-xl bg-white p-3"><div className="text-xs font-semibold uppercase text-slate-500">Authority layers</div><div className="mt-1 text-sm text-slate-700">{state.effective.layers.length} active layer{state.effective.layers.length === 1 ? "" : "s"}</div></div>{state.effective.layers.map((layer) => <div key={`${layer.kind}:${layer.catalog_digest}`} className="rounded-xl bg-white p-3"><div className="flex items-center gap-2"><HiMiniCheckCircle className="size-4 text-emerald-600" /><strong className="text-sm">{layer.kind}</strong></div><p className="mt-1 text-xs text-slate-500">{layer.controls.length} explicit controls</p></div>)}</div> : null}</TechnicalDetails></div> : null}
 
