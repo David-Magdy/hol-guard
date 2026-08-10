@@ -66,16 +66,38 @@ def test_dashboard_session_authorizes_new_extension_control_routes(tmp_path: Pat
             timeout=5,
         ) as response:
             test_payload = json.loads(response.read().decode("utf-8"))
-        with urllib.request.urlopen(
-            _request(
-                daemon,
-                "/v1/extension-controls/history",
-                session_token=session_token,
-                origin=local_origin,
-            ),
-            timeout=5,
-        ) as response:
-            history_payload = json.loads(response.read().decode("utf-8"))
+
+        # A brand-new authority store has no validated history anchor yet, so this
+        # route may legitimately return 409. The important auth regression is that
+        # a valid signed dashboard session reaches the API instead of being rejected
+        # with 401 by the daemon's dashboard-session path allowlist.
+        with pytest.raises(urllib.error.HTTPError) as history_error:
+            urllib.request.urlopen(
+                _request(
+                    daemon,
+                    "/v1/extension-controls/history",
+                    session_token=session_token,
+                    origin=local_origin,
+                ),
+                timeout=5,
+            )
+        assert history_error.value.code == 409
+
+        # A healthy fresh authority is not in degraded mode. Reaching this 409 also
+        # proves the signed session was accepted for the new acknowledge route.
+        with pytest.raises(urllib.error.HTTPError) as acknowledge_error:
+            urllib.request.urlopen(
+                _request(
+                    daemon,
+                    "/v1/extension-controls/acknowledge-degraded",
+                    session_token=session_token,
+                    origin=local_origin,
+                    payload={},
+                ),
+                timeout=5,
+            )
+        assert acknowledge_error.value.code == 409
+
         with urllib.request.urlopen(
             _request(
                 daemon,
@@ -92,8 +114,6 @@ def test_dashboard_session_authorizes_new_extension_control_routes(tmp_path: Pat
     assert test_payload["schema_version"] == "guard.daemon.extension-control-test.v1"
     assert "command" not in test_payload
     assert command not in json.dumps(test_payload, sort_keys=True)
-    assert history_payload["schema_version"] == "guard.daemon.extension-control-history.v1"
-    assert isinstance(history_payload["items"], list)
     assert root_payload["schema_version"] == "guard.daemon.extension-control-test.v1"
 
     for path in (
