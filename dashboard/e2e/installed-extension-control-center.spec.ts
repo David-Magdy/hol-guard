@@ -15,6 +15,11 @@ async function expectSecretSafeUrl(page: import("@playwright/test").Page) {
   expect(page.url()).not.toContain("#");
 }
 
+async function selectDensity(page: import("@playwright/test").Page, density: "Simple" | "Advanced" | "Developer") {
+  await page.getByRole("radio", { name: density }).click();
+  await expect(page.getByRole("radio", { name: density })).toHaveAttribute("aria-checked", "true");
+}
+
 test("installed Protection Center keeps canonical routes and real-daemon inspection", async ({ page }, testInfo) => {
   const extensionResponses: { path: string; status: number }[] = [];
   const runtimeErrors: string[] = [];
@@ -39,7 +44,23 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
     await setupSteps.click();
     await expect(page.getByText("Finish local enrollment", { exact: true })).toBeVisible();
   }
+
+  await selectDensity(page, "Simple");
   await page.screenshot({ path: testInfo.outputPath("installed-extension-catalog.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-simple.png"), fullPage: false });
+  await selectDensity(page, "Advanced");
+  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-advanced.png"), fullPage: false });
+  await selectDensity(page, "Developer");
+  await expect(page.getByText("Developer policy details")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-developer.png"), fullPage: false });
+  await selectDensity(page, "Simple");
+
+  for (const width of [320, 390, 800, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`installed-protection-center-simple-${width}.png`), fullPage: false });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
 
   for (const extensionId of ["command.git", "command.github", "command.package.node"]) {
     await page.goto(`/extensions/${extensionId}`);
