@@ -2,13 +2,15 @@
 
 This worker avoids Python startup/import cost and avoids calling the
 CLI path for normal daemon hooks. It builds a ``HookReviewRequest``
-from the HTTP payload and calls ``HookReviewEngine.review()``.
+from the HTTP payload and calls the configured local decision backend.
 
 Security:
 - Never lets unreviewed tool output reach the model.
 - Never falls back to legacy CLI after a worker exception for a
   request that supplied only ``guard_source_ref`` without full output.
 - Never calls ``run_guard_command()``.
+- Native authority is limited to PostToolUse and falls back to Python on
+  any unavailable, incompatible, timeout, transport, or invalid-response case.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from ..cli.commands_support_command_activity import (
     record_post_hook_command_activity_best_effort,
 )
 from ..config import load_guard_config
-from ..native_runtime import choose_post_tool_response
+from ..native_runtime import native_mode, review_post_tool_native
 from ..runtime.hook_content_scanner import ContentScanner
 from ..runtime.hook_decision_cache import HookDecisionCache
 from ..runtime.hook_review_engine import HookReviewEngine
@@ -97,9 +99,10 @@ class HookWorker:
     ) -> dict[str, object]:
         """Review a hook HTTP payload and return harness JSON.
 
-        PostToolUse remains the only fast-path event. Python is always evaluated
-        while the native backend is off or shadowed; explicit auto/force modes
-        may select the version-matched native result after compatibility checks.
+        ``off`` keeps the Python engine authoritative. ``shadow`` evaluates
+        Python first and exercises native only as non-authoritative evidence.
+        ``auto`` and ``force`` try the native runtime first and invoke Python
+        only when native cannot produce a valid local result.
         """
         harness = self._runtime_harness(params) or default_harness
         event_name = self._hook_event_name(payload)
@@ -115,13 +118,23 @@ class HookWorker:
             workspace=workspace,
             deadline=deadline,
         )
-        python_response = self.engine.review(request)
-        config = self._load_config(guard_home, workspace)
-        response = choose_post_tool_response(
-            request,
-            python_response=python_response,
-            observe_mode=config.mode == "observe",
-        )
+        mode = native_mode()
+        if mode in {"auto", "force"}:
+            config = self._load_config(guard_home, workspace)
+            response = review_post_tool_native(
+                request,
+                observe_mode=config.mode == "observe",
+            )
+            if response is None:
+                response = self.engine.review(request)
+        else:
+            response = self.engine.review(request)
+            if mode == "shadow":
+                _ = review_post_tool_native(
+                    request,
+                    observe_mode=response.observe_mode,
+                )
+
         succeeded = hook_post_succeeded(event_name, payload)
         if self.activity_writer is not None:
             _ = self.activity_writer.submit_command_activity(
