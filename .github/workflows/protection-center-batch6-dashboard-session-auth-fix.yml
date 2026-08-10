@@ -73,14 +73,21 @@ jobs:
         run: |
           set -euo pipefail
           uv run --no-sync basedpyright --level error
-      - name: Verify signed dashboard-session behavior
+      - name: Verify dashboard-session auth regressions
         shell: bash
         run: |
           set -euo pipefail
-          uv run --no-sync pytest -q \
-            tests/test_guard_extension_control_dashboard_session_auth.py \
-            tests/test_guard_extension_control_test_lab.py \
-            tests/test_guard_extension_control_api.py
+          uv run --no-sync pytest -q tests/test_guard_extension_control_dashboard_session_auth.py
+      - name: Verify Test Lab regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync pytest -q tests/test_guard_extension_control_test_lab.py
+      - name: Verify extension-control API regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync pytest -q tests/test_guard_extension_control_api.py
           git diff --check
       - name: Commit verified auth fix
         shell: bash
