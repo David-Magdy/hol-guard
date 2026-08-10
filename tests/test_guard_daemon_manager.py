@@ -136,6 +136,55 @@ def test_malformed_process_command_only_blocks_proven_daemon_launchers() -> None
     assert daemon_manager_module._malformed_command_may_launch_guard(daemon_command)
 
 
+def test_frozen_daemon_launch_uses_signed_guard_executable(tmp_path, monkeypatch) -> None:
+    executable = tmp_path / "hol-guard"
+    executable.write_bytes(b"guard")
+    executable.chmod(0o755)
+    guard_home = tmp_path / ".hol-guard"
+    guard_home.mkdir()
+
+    monkeypatch.setattr(daemon_manager_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(daemon_manager_module.sys, "executable", str(executable))
+
+    command = daemon_manager_module._guard_daemon_launch_command(
+        guard_home,
+        4781,
+        home_dir=tmp_path,
+    )
+
+    assert command == [
+        str(executable.resolve()),
+        "daemon",
+        "--serve",
+        "--guard-home",
+        str(guard_home),
+        "--home",
+        str(tmp_path.resolve()),
+        "--port",
+        "4781",
+    ]
+    assert "-c" not in command
+    assert "-I" not in command
+
+
+def test_frozen_daemon_launch_rejects_unreleased_windows_gate(tmp_path, monkeypatch) -> None:
+    executable = tmp_path / "hol-guard"
+    executable.write_bytes(b"guard")
+    executable.chmod(0o755)
+    guard_home = tmp_path / ".hol-guard"
+    guard_home.mkdir()
+
+    monkeypatch.setattr(daemon_manager_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(daemon_manager_module.sys, "executable", str(executable))
+
+    with pytest.raises(RuntimeError, match="gated launch is unavailable"):
+        daemon_manager_module._guard_daemon_launch_command(
+            guard_home,
+            4781,
+            home_dir=tmp_path,
+            gate_on_stdin=True,
+        )
+
 def test_schedule_guard_daemon_ensure_is_reserved_and_nonblocking(
     tmp_path,
     monkeypatch,
