@@ -42,7 +42,7 @@ assert.match(simple, /Common examples/);
 assert.match(simple, /Protection settings/);
 assert.match(simple, /Why this setting\?/);
 assert.match(simple, /Safer alternatives/);
-assert.match(simple, /Recent decisions/);
+assert.match(simple, /Activity/);
 assert.match(simple, /Change settings/);
 assert.doesNotMatch(simple, /Catalog digest|Extension ID|Matcher|permission_id|rule_id/);
 
