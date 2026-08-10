@@ -1,0 +1,102 @@
+name: Protection Center Batch 3 installed proof fix
+on:
+  push:
+    branches: [feat/protection-center-03-module-detail-final]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - name: Preserve installed policy proof on the new detail surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin feat/protection-center-04-policy-editor
+          for path in dashboard/src/protection-center/protection-module-detail.tsx dashboard/src/protection-center/protection-module-detail.test.tsx; do
+            git show "origin/feat/protection-center-04-policy-editor:${path}" > "$path"
+          done
+          python <<'PY'
+          from pathlib import Path
+
+          workspace = Path("dashboard/src/protection-center/protection-center-workspace.tsx")
+          text = workspace.read_text(encoding="utf-8")
+          old = '<ProtectionModuleDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} onBack={closeExtension} onChange={() => requestChange({ extension: selectedExtension, enabled: !isExtensionEnabled(state.effective, selectedExtension) })} />'
+          new = '<ProtectionModuleDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} onBack={closeExtension} onRefresh={load} />'
+          if old not in text:
+              raise SystemExit("module detail workspace marker changed")
+          workspace.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          e2e = Path("dashboard/e2e/installed-extension-control-center.spec.ts")
+          text = e2e.read_text(encoding="utf-8")
+          text = text.replace('await expect(page.getByTestId("extension-control-center-detail")).toBeVisible();\n  await expect(page.getByRole("heading", { name: "Permission controls" })).toBeVisible();', 'await expect(page.getByTestId("protection-module-detail")).toBeVisible();\n  await page.getByRole("button", { name: "Change settings" }).click();\n  await expect(page.getByRole("heading", { name: "Permission controls" })).toBeVisible();', 1)
+          old_loop = '''  for (const extensionId of ["command.git", "command.github", "command.package.node"]) {
+    await page.goto(`/extensions/${extensionId}`);
+    await expectSecretSafeUrl(page);
+    await expect(page.getByTestId("extension-control-center-detail")).toBeVisible();
+    await expect(page.locator("code", { hasText: extensionId }).first()).toBeVisible();
+    await page.getByRole("tab", { name: "Commands & rules" }).click();
+    await expect(page.getByRole("heading", { name: "Permissions" })).toBeVisible();
+    await expect(page.getByText(/Showing \\d+ permissions and \\d+ rules/)).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Test Lab" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Activity" })).toHaveCount(0);
+  }
+
+  await page.goto("/extensions/command.git?tab=commands&rule=command.git.hard-reset");
+  await expectSecretSafeUrl(page);
+  const ruleDialog = page.getByRole("dialog", { name: "Destructive Git reset" });
+  await expect(ruleDialog).toBeVisible();
+  await expect(ruleDialog.getByText("high detector severity")).toBeVisible();
+  await expect(ruleDialog.getByText("Governing permission")).toBeVisible();
+  await expect(ruleDialog.getByRole("button", { name: "Test this rule" })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("installed-extension-rule-detail.png"), fullPage: true });
+  await page.getByRole("button", { name: "Close rule details" }).click();
+  await expect(page.getByRole("dialog", { name: "Destructive Git reset" })).toHaveCount(0);
+'''
+          new_loop = '''  for (const moduleId of ["command.git", "command.github", "command.package.node"]) {
+    await page.goto(`/extensions/${moduleId}`);
+    await expectSecretSafeUrl(page);
+    await expect(page.getByTestId("protection-module-detail")).toBeVisible();
+    await selectDensity(page, "Developer");
+    await page.getByText("Developer details", { exact: true }).click();
+    await expect(page.locator("code", { hasText: moduleId }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Detections" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Protection setting identifiers" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Test Lab" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Activity" })).toHaveCount(0);
+  }
+
+  await page.goto("/extensions/command.git");
+  await expectSecretSafeUrl(page);
+  await selectDensity(page, "Developer");
+  await page.getByText("Developer details", { exact: true }).click();
+  await expect(page.getByText("Destructive Git reset", { exact: true })).toBeVisible();
+  await expect(page.getByText("command.git.hard-reset", { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("installed-extension-rule-detail.png"), fullPage: true });
+'''
+          if old_loop not in text:
+              raise SystemExit("legacy detail inspection block changed")
+          text = text.replace(old_loop, new_loop, 1)
+          text = text.replace('await expect(page.getByTestId("extension-control-center-detail")).toBeVisible();\n\n  await expect.poll', 'await expect(page.getByTestId("protection-module-detail")).toBeVisible();\n\n  await expect.poll', 1)
+          e2e.write_text(text, encoding="utf-8")
+          PY
+          cd dashboard
+          bun install --frozen-lockfile --ignore-scripts
+          bun run test
+          bun run build
+          cd ..
+          rm .github/workflows/protection-center-batch3-installed-fix.yml
+          git add dashboard src/codex_plugin_scanner/guard/daemon/static .github/workflows/protection-center-batch3-installed-fix.yml
+          git diff --cached --check
+          git commit -m "test(protection-center): preserve installed policy proof on module detail"
+          git push origin HEAD:feat/protection-center-03-module-detail-final
