@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 _MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
@@ -18,7 +19,7 @@ _GENERIC_NEEDLES = (
 )
 
 
-def _iter_files(path: Path):
+def _iter_files(path: Path) -> Iterator[Path]:
     if path.is_file():
         yield path
         return
@@ -34,7 +35,9 @@ def _iter_files(path: Path):
 def _scan_file(path: Path, secret: bytes | None) -> None:
     size = path.stat().st_size
     if size > _MAX_ARTIFACT_BYTES:
-        raise SystemExit(f"Protection Center proof artifact is unexpectedly large: {path} ({size} bytes)")
+        raise SystemExit(
+            f"Protection Center proof artifact is unexpectedly large: {path} ({size} bytes)"
+        )
     payload = path.read_bytes()
     needles = list(_GENERIC_NEEDLES)
     if secret:
