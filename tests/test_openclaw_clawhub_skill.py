@@ -8,17 +8,17 @@ SKILL = ROOT / "integrations" / "openclaw-clawhub" / "hol-guard" / "SKILL.md"
 
 
 def test_clawhub_skill_is_manual_install_companion() -> None:
-    text = SKILL.read_text(encoding="utf-8")
+    frontmatter, body = SKILL.read_text(encoding="utf-8").split("\n---\n", 1)
 
-    assert "name: hol-guard" in text
-    assert "user-invocable: true" in text
-    assert "disable-model-invocation: true" in text
-    assert "pipx install hol-guard" in text
-    assert "hol-guard init" in text
-    assert "hol-guard status" in text
-    assert "explicit approval" in text
-    assert "Installing this skill alone does not mean runtime protection is active" in text
-    assert "Guard Cloud is optional" in text
+    assert frontmatter.startswith("---\nname: hol-guard")
+    assert "user-invocable: true" in frontmatter
+    assert "disable-model-invocation: true" in frontmatter
+    assert body.index("Start with read-only checks") < body.index("## Install or initialize")
+    assert "stop after `hol-guard status`" in body
+    assert body.index("explicit approval") < body.index("pipx install hol-guard")
+    assert body.index("pipx install hol-guard") < body.index("hol-guard init")
+    assert "Installing this skill alone does not mean runtime protection is active" in body
+    assert "Guard Cloud is optional" in body
 
 
 def test_clawhub_skill_does_not_duplicate_runtime_hook_logic() -> None:
