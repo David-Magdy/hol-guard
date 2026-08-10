@@ -1800,9 +1800,12 @@ function emitProtectionTelemetry(event, fields = {}, target2 = typeof window ===
   }
 }
 const PLAN_IDS = /* @__PURE__ */ new Set(["free", "solo", "pro", "team", "enterprise"]);
+function isProtectionCloudPlan(value) {
+  return PLAN_IDS.has(value);
+}
 function protectionCloudPlan(runtime) {
   const raw = runtime?.cloud_pairing_state?.plan_id?.trim().toLowerCase();
-  return raw && PLAN_IDS.has(raw) ? raw : null;
+  return raw && isProtectionCloudPlan(raw) ? raw : null;
 }
 function connectedPlanDetail(plan) {
   switch (plan) {
@@ -1901,7 +1904,7 @@ function CloudValueGate(props) {
       plan_id: value.plan ?? "unknown",
       cloud_state: telemetryCloudState(value)
     });
-  }, [dismissed, props.loading, value.plan, value.state]);
+  }, [props.loading, value.plan, value.state]);
   if (dismissed) return null;
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
     "aside",
