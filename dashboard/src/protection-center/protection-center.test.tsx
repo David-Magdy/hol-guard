@@ -4,7 +4,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { assertSimpleCopySafe, localSettingChoiceLabel, PROTECTION_TERMS, simpleCopyViolations } from "./copy/protection-copy";
 import { ProtectionDensityControl, ProtectionModuleRow, ProtectionStatusHero, TechnicalDetails } from "./components/protection-primitives";
-import { PROTECTION_AUTHORITY_FIXTURES, protectionModuleFixture } from "./fixtures/protection-fixtures";
+import {
+  CLOUD_CONNECTED_FIXTURE,
+  CLOUD_OFFLINE_FIXTURE,
+  FIXED_PROTECTION_MODULE,
+  MALFORMED_PROTECTION_STATE_FIXTURE,
+  NO_PROTECTION_DECISIONS,
+  PROTECTION_AUTHORITY_FIXTURES,
+  STALE_POLICY_DRAFT_FIXTURE,
+  SYNTHETIC_PROTECTION_DECISIONS,
+  largeDeveloperModuleFixture,
+  protectionModuleFixture,
+} from "./fixtures/protection-fixtures";
 import { groupProtectionModules, protectionCategoryIdForExtension } from "./model/protection-categories";
 import { deriveProtectionStatus, parseProtectionDensity, readProtectionDensity, writeProtectionDensity } from "./model/protection-presentation";
 
@@ -23,11 +34,25 @@ assert.deepEqual(deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.protected)
   primaryActionLabel: null,
 });
 assert.equal(deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.unenrolled).primaryAction, "finish-setup");
+assert.equal(deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.unenrolled).primaryActionLabel, "Show setup steps");
 assert.equal(deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.tampered).primaryAction, "repair");
 assert.equal(deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.recoveryRequired).primaryAction, "repair");
 assert.equal(deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.degradedUnacknowledged).status, "limited");
 assert.equal(deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.degradedAcknowledged).primaryAction, "retry-repair");
 assert.equal(deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.lockdown).status, "lockdown");
+assert.equal(PROTECTION_AUTHORITY_FIXTURES.managedBlock.layers[0]?.kind, "signed-cloud");
+assert.equal(PROTECTION_AUTHORITY_FIXTURES.localStricterBlock.layers[0]?.kind, "local-admin");
+assert.equal(FIXED_PROTECTION_MODULE.permissions[0]?.configurable, false);
+assert.equal(STALE_POLICY_DRAFT_FIXTURE.currentRevision > STALE_POLICY_DRAFT_FIXTURE.baseRevision, true);
+assert.equal(CLOUD_OFFLINE_FIXTURE.syncConfigured, false);
+assert.equal(CLOUD_CONNECTED_FIXTURE.syncConfigured, true);
+assert.equal(NO_PROTECTION_DECISIONS.length, 0);
+assert.equal(SYNTHETIC_PROTECTION_DECISIONS.length, 3);
+assert.equal(typeof MALFORMED_PROTECTION_STATE_FIXTURE, "object");
+const largeFixture = largeDeveloperModuleFixture();
+assert.equal(largeFixture.rules.length, 500);
+assert.equal(largeFixture.rule_count, 500);
+assert.throws(() => largeDeveloperModuleFixture(501), /Invalid fixture rule count/);
 
 assert.equal(parseProtectionDensity("developer"), "developer");
 assert.equal(parseProtectionDensity("unexpected"), "simple");
