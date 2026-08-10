@@ -13,7 +13,8 @@ The Test Lab contract requires that:
 - the command is not uploaded to Guard Cloud;
 - the daemon response does not echo the raw command;
 - request and response sizes are bounded;
-- the request uses the authenticated local daemon transport.
+- the request uses the authenticated local daemon transport;
+- command inputs and example selectors are locked while evaluation is in flight so the displayed result cannot drift from the command that was evaluated.
 
 Test Lab returns the local decision, controlling protection metadata, bounded safe matches, and safer alternatives. It does not create a second enforcement path.
 
