@@ -22,7 +22,8 @@ def test_frozen_runtime_proves_same_executable_bootloader_parent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    executable = tmp_path / "hol-guard"
+    executable = tmp_path / "Application Support" / "hol-guard"
+    executable.parent.mkdir()
     executable.write_bytes(b"guard")
     home = tmp_path / "home"
     guard_home = home / ".hol-guard"

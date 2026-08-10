@@ -57,6 +57,22 @@ def _same_guard_home(left: Path, right: Path) -> bool:
         return left == right
 
 
+def _split_frozen_parent_command(command: str, executable: Path) -> list[str] | None:
+    """Preserve a trusted frozen executable path when POSIX ps drops argv quoting."""
+
+    executable_text = str(executable)
+    if os.name != "nt" and command.startswith(executable_text):
+        suffix = command[len(executable_text) :]
+        if not suffix:
+            return [executable_text]
+        if suffix[0].isspace():
+            tail = manager._split_process_command(suffix.lstrip())
+            if tail is None:
+                return None
+            return [executable_text, *tail]
+    return manager._split_process_command(command)
+
+
 def _trusted_frozen_bootloader_parent_pid(guard_home: Path) -> int | None:
     """Return the proven PyInstaller one-file parent PID for this daemon child."""
 
@@ -70,7 +86,11 @@ def _trusted_frozen_bootloader_parent_pid(guard_home: Path) -> int | None:
     command = manager._guard_daemon_command_for_pid(parent_pid)
     if command is None:
         return None
-    parts = manager._split_process_command(command)
+    try:
+        current_executable = _trusted_frozen_executable()
+    except RuntimeError:
+        return None
+    parts = _split_frozen_parent_command(command, current_executable)
     if not parts or not manager._guard_daemon_command_parts_match(parts):
         return None
     command_guard_home = manager._guard_home_from_command_parts(parts)
@@ -78,7 +98,6 @@ def _trusted_frozen_bootloader_parent_pid(guard_home: Path) -> int | None:
         return None
 
     try:
-        current_executable = _trusted_frozen_executable()
         parent_executable = Path(parts[0]).expanduser().resolve(strict=True)
     except (OSError, RuntimeError):
         return None

@@ -252,11 +252,7 @@ class _ExtensionControlAuthorityTransitionMixin(_ExtensionControlAuthoritySuppor
             key = self._authority_key(required=True)
             assert key is not None
             anchor = self._read_anchor(key=key)
-            if (
-                anchor is None
-                or anchor.phase is not AuthorityPhase.COMMITTED
-                or anchor.revision != current.revision
-            ):
+            if anchor is None or anchor.phase is not AuthorityPhase.COMMITTED or anchor.revision != current.revision:
                 raise ExtensionControlAuthorityError("extension control history anchor mismatch")
             self._validate_transition_chain(
                 current.revision,
