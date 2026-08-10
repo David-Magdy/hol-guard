@@ -98,6 +98,7 @@ export function ReviewDecisionCard(props: {
   const [mcpGrantDuration, setMcpGrantDuration] = useState<GuardTemporaryMcpGrantDuration>("once");
   const [localToolGrantTarget, setLocalToolGrantTarget] = useState<GuardLocalToolGrantTarget>("capability");
   const [localToolGrantDuration, setLocalToolGrantDuration] = useState<GuardLocalToolGrantDuration>("once");
+  const [rememberExactAction, setRememberExactAction] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const allowButtonRef = useRef<HTMLButtonElement>(null);
   const availableScopeChoices = useMemo(
@@ -148,6 +149,7 @@ export function ReviewDecisionCard(props: {
       setUseCooldown(false);
       setPendingAction(null);
       setPendingContractKey(null);
+      setRememberExactAction(false);
       const nextTemporaryOptions = temporaryMcpApprovalOptions(item);
       if (nextTemporaryOptions !== null) {
         setMcpGrantTarget(defaultTemporaryMcpTarget(nextTemporaryOptions));
@@ -204,6 +206,7 @@ export function ReviewDecisionCard(props: {
             action,
             scope: requestedScope,
             reason: action === "allow" ? "approved in review" : "blocked in review",
+            persistExactAction: action === "allow" ? rememberExactAction : false,
           }),
           ...(includeGateFields && needsPassword ? { approval_password: approvalPassword } : {}),
           ...(includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {}),
@@ -232,6 +235,7 @@ export function ReviewDecisionCard(props: {
       item,
       allowScope,
       blockScope,
+      rememberExactAction,
       props.onResolve,
       props.approvalGate,
       approvalPassword,
@@ -378,6 +382,9 @@ export function ReviewDecisionCard(props: {
   const evidenceItems = buildEvidenceItems(item);
   const actionPresentation = guardActionPresentation(item.policy_action);
   let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
+  if (rememberExactAction && allowScope === "artifact") {
+    resolvedAllowButtonLabel = "Approve and remember";
+  }
   if (temporaryMcpOptions !== null) {
     resolvedAllowButtonLabel = temporaryMcpAllowButtonLabel(mcpGrantDuration);
   } else if (localToolOptions !== null) {
@@ -498,11 +505,14 @@ export function ReviewDecisionCard(props: {
               blockScopeOptions={blockScopeOptions}
               hasAllowScope={hasAllowScope}
               taskCapabilityCopy={taskCapabilityCopy}
+              exactActionPersistenceEligible={item.exact_action_persistence_eligible === true}
+              rememberExactAction={rememberExactAction}
               allowScope={allowScope}
               blockScope={blockScope}
               showAllowScopes={temporaryMcpOptions === null && localToolOptions === null}
               onAllowScopeChange={setAllowScope}
               onBlockScopeChange={setBlockScope}
+              onRememberExactActionChange={setRememberExactAction}
             />
           </>
         )}

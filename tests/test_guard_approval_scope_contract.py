@@ -356,22 +356,85 @@ def test_v2_ineligible_scope_returns_422_without_policy_or_resolution(tmp_path: 
     assert store.list_policy_decisions() == []
 
 
-def test_v2_saved_artifact_allow_is_rejected_as_ineligible(tmp_path: Path) -> None:
+def test_v2_saved_artifact_allow_persists_only_the_exact_action(tmp_path: Path) -> None:
     store = GuardStore(tmp_path / "guard-home")
     row = _store_request(store, _request("saved-allow"))
     payload = {**_v2_selection(row, "artifact"), "persist_policy": True}
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
     daemon.start()
     try:
-        status, response = _post(daemon, "/v1/requests/saved-allow/approve", payload)
+        status, _response = _post(daemon, "/v1/requests/saved-allow/approve", payload)
+    finally:
+        daemon.stop()
+
+    assert status == 200
+    stored = store.get_approval_request("saved-allow")
+    assert stored is not None
+    assert stored["status"] == "resolved"
+    decisions = store.list_policy_decisions()
+    assert len(decisions) == 1
+    assert decisions[0]["scope"] == "artifact"
+    assert decisions[0]["expires_at"] is None
+    same_action_context = runtime_tool_action_exact_match_context(
+        config_path="/workspace/repo/.guard/config.toml",
+        source_scope="project",
+        raw_command_text="echo test",
+    )
+    changed_action_context = runtime_tool_action_exact_match_context(
+        config_path="/workspace/repo/.guard/config.toml",
+        source_scope="project",
+        raw_command_text="echo changed",
+    )
+    assert (
+        store.resolve_policy_decision(
+            "codex",
+            "codex:project:tool-action:saved-allow",
+            "hash-retry",
+            runtime_exact_match_context=same_action_context,
+            consume_one_shot=False,
+        )
+        is not None
+    )
+    assert (
+        store.resolve_policy_decision(
+            "codex",
+            "codex:project:tool-action:saved-allow",
+            "hash-retry",
+            runtime_exact_match_context=changed_action_context,
+            consume_one_shot=False,
+        )
+        is None
+    )
+
+
+def test_v2_saved_artifact_allow_requires_exact_action_proof(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    request = replace(
+        _request("unproven-saved-allow"),
+        action_envelope_json={"action_type": "shell_command"},
+    )
+    row = _store_request(store, request)
+    payload = {**_v2_selection(row, "artifact"), "persist_policy": True}
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        status, response = _post(daemon, "/v1/requests/unproven-saved-allow/approve", payload)
     finally:
         daemon.stop()
 
     assert status == 422
     assert response["error"] == "saved_allow_scope_ineligible"
-    stored = store.get_approval_request("saved-allow")
-    assert stored is not None
-    assert stored["status"] == "pending"
+
+
+def test_exact_action_persistence_accepts_envelope_raw_command_text(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    request = replace(
+        _request("envelope-raw-command"),
+        action_envelope_json={"action_type": "shell_command", "raw_command_text": "echo test"},
+    )
+    row = _store_request(store, request)
+
+    assert request_scope_contract(row).exact_action_persistence_eligible is True
 
 
 def test_legacy_unknown_broad_deny_is_not_silently_narrowed(tmp_path: Path) -> None:

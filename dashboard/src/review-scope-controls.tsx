@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, type ChangeEvent } from "react";
 import { HiMiniKey } from "react-icons/hi2";
 import { SectionLabel } from "./approval-center-primitives";
 import type { ApprovalScopeChoice } from "./approval-scopes";
@@ -11,11 +11,14 @@ type ReviewScopeControlsProps = {
   blockScopeOptions: ApprovalScopeChoice[];
   hasAllowScope: boolean;
   taskCapabilityCopy: string | null;
+  exactActionPersistenceEligible: boolean;
+  rememberExactAction: boolean;
   allowScope: DecisionScope;
   blockScope: DecisionScope;
   showAllowScopes?: boolean;
   onAllowScopeChange: (scope: DecisionScope) => void;
   onBlockScopeChange: (scope: DecisionScope) => void;
+  onRememberExactActionChange: (checked: boolean) => void;
 };
 
 export function ReviewScopeControls(props: ReviewScopeControlsProps) {
@@ -38,6 +41,12 @@ export function ReviewScopeControls(props: ReviewScopeControlsProps) {
           />
         ))}
       </div>}
+      {showAllowScopes && props.exactActionPersistenceEligible && props.allowScope === "artifact" && (
+        <ExactActionPersistenceChoice
+          checked={props.rememberExactAction}
+          onChange={props.onRememberExactActionChange}
+        />
+      )}
       {showAllowScopes && props.broaderScopeOptions.length > 0 && (
         <details className="rounded-xl border border-brand-blue/15 bg-brand-blue/[0.03] p-3">
           <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue">
@@ -105,6 +114,32 @@ export function ReviewScopeControls(props: ReviewScopeControlsProps) {
         </details>
       )}
     </div>
+  );
+}
+
+function ExactActionPersistenceChoice(props: { checked: boolean; onChange: (checked: boolean) => void }) {
+  const handleChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      props.onChange(event.target.checked);
+    },
+    [props.onChange],
+  );
+
+  return (
+    <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-brand-blue/20 bg-brand-blue/[0.03] px-4 py-3">
+      <input
+        type="checkbox"
+        checked={props.checked}
+        onChange={handleChange}
+        className="mt-0.5 h-4 w-4 accent-brand-blue"
+      />
+      <span>
+        <span className="block text-sm font-medium text-brand-dark">Always allow this exact action</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          Save only this exact command for this AI app. Changed commands still need review.
+        </span>
+      </span>
+    </label>
   );
 }
 

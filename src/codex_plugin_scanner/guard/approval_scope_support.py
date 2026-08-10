@@ -33,7 +33,7 @@ _SCOPED_APPROVAL_FAMILIES = frozenset(
 )
 
 APPROVAL_SCOPE_CONTRACT_VERSION_PREFIX: Final = "guard.approval-scopes.v"
-APPROVAL_SCOPE_CONTRACT_VERSION: Final = f"{APPROVAL_SCOPE_CONTRACT_VERSION_PREFIX}4"
+APPROVAL_SCOPE_CONTRACT_VERSION: Final = f"{APPROVAL_SCOPE_CONTRACT_VERSION_PREFIX}5"
 ResolutionAction = Literal["allow", "block"]
 
 
@@ -85,6 +85,7 @@ class ApprovalScopeContract:
     digest: str
     task_capability_eligible: bool = False
     task_capability_reason_codes: tuple[str, ...] = ("task_capability_not_enabled",)
+    exact_action_persistence_eligible: bool = False
     version: str = APPROVAL_SCOPE_CONTRACT_VERSION
 
     def to_dict(self) -> dict[str, object]:
@@ -104,6 +105,7 @@ class ApprovalScopeContract:
                 "eligible": self.task_capability_eligible,
                 "reason_codes": list(self.task_capability_reason_codes),
             },
+            "exact_action_persistence_eligible": self.exact_action_persistence_eligible,
         }
 
 
@@ -121,6 +123,7 @@ def request_scope_contract(request: Mapping[str, object]) -> ApprovalScopeContra
     block_scopes: list[DecisionScope] = list(artifact_scopes)
     trusted_family = _request_scoped_family_key(request)
     task_capability_eligible = _github_workflow_task_capability_eligible(request)
+    exact_action_persistence_eligible = exact_action_allow_persistence_eligible(request)
     task_capability_reason_codes = (
         ("exact_github_workflow_record",) if task_capability_eligible else ("task_capability_not_enabled",)
     )
@@ -151,6 +154,7 @@ def request_scope_contract(request: Mapping[str, object]) -> ApprovalScopeContra
         restrictions=restrictions_tuple,
         task_capability_eligible=task_capability_eligible,
         task_capability_reason_codes=task_capability_reason_codes,
+        exact_action_persistence_eligible=exact_action_persistence_eligible,
     )
     return ApprovalScopeContract(
         allow_scopes=allow_scopes,
@@ -161,6 +165,7 @@ def request_scope_contract(request: Mapping[str, object]) -> ApprovalScopeContra
         digest=digest,
         task_capability_eligible=task_capability_eligible,
         task_capability_reason_codes=task_capability_reason_codes,
+        exact_action_persistence_eligible=exact_action_persistence_eligible,
     )
 
 
@@ -211,6 +216,28 @@ def request_scope_contract_payload(request: Mapping[str, object]) -> dict[str, o
     if local_tool_approval is not None:
         payload["local_tool_approval"] = local_tool_approval
     return payload
+
+
+def exact_action_allow_persistence_eligible(request: Mapping[str, object]) -> bool:
+    """Return whether an artifact allow can be saved as one exact action."""
+
+    if _allow_is_non_overridable(request) or _string_or_none(request.get("artifact_type")) != "tool_action_request":
+        return False
+    if _request_scoped_family_key(request) != "family:tool-action":
+        return False
+    artifact_id = _string_or_none(request.get("artifact_id"))
+    artifact_hash = _string_or_none(request.get("artifact_hash"))
+    action_identity = _string_or_none(request.get("action_identity"))
+    raw_command_text = _string_or_none(request.get("raw_command_text"))
+    envelope = request.get("action_envelope_json")
+    if isinstance(envelope, Mapping):
+        typed_envelope = cast(Mapping[str, object], envelope)
+        raw_command_text = (
+            raw_command_text
+            or _string_or_none(typed_envelope.get("raw_command_text"))
+            or _string_or_none(typed_envelope.get("command"))
+        )
+    return bool(artifact_id and artifact_hash and artifact_hash != "unknown" and action_identity and raw_command_text)
 
 
 def resolve_request_scope_selection(
@@ -394,6 +421,7 @@ def _scope_contract_digest(
     restrictions: tuple[str, ...],
     task_capability_eligible: bool = False,
     task_capability_reason_codes: tuple[str, ...] = ("task_capability_not_enabled",),
+    exact_action_persistence_eligible: bool = False,
 ) -> str:
     material = {
         "version": APPROVAL_SCOPE_CONTRACT_VERSION,
@@ -402,6 +430,7 @@ def _scope_contract_digest(
         "restrictions": restrictions,
         "task_capability_eligible": task_capability_eligible,
         "task_capability_reason_codes": task_capability_reason_codes,
+        "exact_action_persistence_eligible": exact_action_persistence_eligible,
         "request": {
             key: _json_boundary_value(request.get(key))
             for key in (
