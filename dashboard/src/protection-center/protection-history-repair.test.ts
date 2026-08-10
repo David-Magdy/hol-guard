@@ -1,0 +1,14 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+const history = fs.readFileSync(path.join(process.cwd(), "src/protection-center/protection-settings-history.tsx"), "utf8");
+const policy = fs.readFileSync(path.join(process.cwd(), "src/extension-policy-panel.tsx"), "utf8");
+const repair = fs.readFileSync(path.join(process.cwd(), "src/protection-center/protection-repair-card.tsx"), "utf8");
+assert.match(history, /Use this version as draft/);
+assert.doesNotMatch(history, /applyExtensionMutation/);
+assert.match(policy, /historicalLocal/);
+assert.match(policy, /layer.kind === "local-admin"/);
+assert.match(policy, /Review \{changeCount\} change/);
+assert.match(repair, /recoverExtensionControlAuthority/);
+assert.match(repair, /resolveApprovalGate\(\{ failClosed: true \}\)/);
+console.log("protection-history-repair.test.ts: all assertions passed");

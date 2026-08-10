@@ -1606,6 +1606,10 @@
     resize: both;
   }
 
+  .resize-y {
+    resize: vertical;
+  }
+
   .\[scrollbar-gutter\:stable\] {
     scrollbar-gutter: stable;
   }
@@ -2743,6 +2747,10 @@
 
   .bg-amber-500 {
     background-color: var(--color-amber-500);
+  }
+
+  .bg-amber-900 {
+    background-color: var(--color-amber-900);
   }
 
   .bg-black\/30 {

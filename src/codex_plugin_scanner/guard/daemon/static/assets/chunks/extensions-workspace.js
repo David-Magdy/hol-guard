@@ -1,4 +1,4 @@
-import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, w as HiMiniXMark, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as HiMiniInformationCircle, ap as HiMiniArrowPath, B as HiMiniCloud, aq as commandReasonLabel, ar as DEFAULT_COMMAND_ACTIVITY_FILTERS, a4 as fetchRuntimeSnapshot, d as createCommandActivityClient, f as fetchCommandActivityApi, Z as HiMiniLockClosed, as as HiMiniArrowLeft, at as HiMiniArrowTopRightOnSquare, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp, au as buildApprovalProofCredentials, av as isApprovalProofSubmitDisabled, aw as ApprovalProofFieldInputs } from "../guard-dashboard.js";
+import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, w as HiMiniXMark, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as HiMiniInformationCircle, ap as HiMiniArrowPath, B as HiMiniCloud, aq as commandReasonLabel, ar as DEFAULT_COMMAND_ACTIVITY_FILTERS, a4 as fetchRuntimeSnapshot, d as createCommandActivityClient, f as fetchCommandActivityApi, Z as HiMiniLockClosed, N as HiMiniWrenchScrewdriver, as as HiMiniBeaker, at as HiMiniArrowLeft, au as HiMiniArrowTopRightOnSquare, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp, av as buildApprovalProofCredentials, aw as isApprovalProofSubmitDisabled, ax as ApprovalProofFieldInputs } from "../guard-dashboard.js";
 import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./use-resolved-approval-gate.js";
 const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -168,7 +168,7 @@ const PERMISSION_ID$1 = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*\.permission\.[a-z
 const MAX_EXTENSIONS = 512;
 const MAX_PERMISSIONS = 4096;
 const MAX_REASONS = 64;
-function record$2(value, label) {
+function record$3(value, label) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`Invalid ${label}`);
   return value;
 }
@@ -199,7 +199,7 @@ function reasons(value, label) {
   return value.map((item, index) => text(item, `${label}[${index}]`, 128));
 }
 function extensionItem(value, label) {
-  const item = record$2(value, label);
+  const item = record$3(value, label);
   return {
     extension_id: id$1(item.extension_id, `${label}.extension_id`, EXTENSION_ID$1),
     effective_state: enumValue$1(item.effective_state, `${label}.effective_state`, ["allowed", "blocked"]),
@@ -210,7 +210,7 @@ function extensionItem(value, label) {
   };
 }
 function permissionItem(value, label) {
-  const item = record$2(value, label);
+  const item = record$3(value, label);
   return {
     permission_id: id$1(item.permission_id, `${label}.permission_id`, PERMISSION_ID$1),
     extension_id: id$1(item.extension_id, `${label}.extension_id`, EXTENSION_ID$1),
@@ -223,7 +223,7 @@ function permissionItem(value, label) {
   };
 }
 function normalizeEffectiveExtensionControlProjection(value) {
-  const root = record$2(value, "extension projection");
+  const root = record$3(value, "extension projection");
   const schemaVersion = text(root.schema_version, "projection.schema_version", 128);
   if (schemaVersion !== "guard.daemon.extension-control-projection.v1") throw new Error("Invalid extension projection schema");
   const digest2 = text(root.catalog_digest, "projection.catalog_digest", 64);
@@ -263,7 +263,7 @@ class ExtensionControlProtocolError extends Error {
     super(`Invalid extension-control response: ${message}`);
   }
 }
-function record$1(value, label) {
+function record$2(value, label) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ExtensionControlProtocolError(`${label} must be an object`);
   }
@@ -314,7 +314,7 @@ function version(value, label) {
   if (!VERSION.test(candidate)) throw new ExtensionControlProtocolError(`${label} is not a semantic implementation version`);
   return candidate;
 }
-function stringList(value, label, max = EXTENSION_CLIENT_LIMITS.relationshipIds) {
+function stringList$1(value, label, max = EXTENSION_CLIENT_LIMITS.relationshipIds) {
   return array(value, label, max).map((item, index) => string$1(item, `${label}[${index}]`));
 }
 function idList$1(value, label, pattern, max = EXTENSION_CLIENT_LIMITS.relationshipIds) {
@@ -323,7 +323,7 @@ function idList$1(value, label, pattern, max = EXTENSION_CLIENT_LIMITS.relations
   return items;
 }
 function safeVariant(value, label) {
-  const item = record$1(value, label);
+  const item = record$2(value, label);
   return {
     variant_id: string$1(item.variant_id, `${label}.variant_id`),
     title: string$1(item.title, `${label}.title`),
@@ -331,7 +331,7 @@ function safeVariant(value, label) {
   };
 }
 function rule(value, extensionId, label) {
-  const item = record$1(value, label);
+  const item = record$2(value, label);
   const ruleId = id(item.rule_id, `${label}.rule_id`, RULE_ID);
   if (!ruleId.startsWith(`${extensionId}.`)) throw new ExtensionControlProtocolError(`${label}.rule_id belongs to another extension`);
   const rawVersion = item.rule_version;
@@ -344,9 +344,9 @@ function rule(value, extensionId, label) {
     title: string$1(item.title, `${label}.title`),
     description: string$1(item.description, `${label}.description`),
     severity: enumValue(item.severity, `${label}.severity`, ["low", "medium", "high", "critical"]),
-    risk_classes: stringList(item.risk_classes, `${label}.risk_classes`),
-    action_classes: stringList(item.action_classes, `${label}.action_classes`),
-    safer_alternatives: stringList(item.safer_alternatives, `${label}.safer_alternatives`),
+    risk_classes: stringList$1(item.risk_classes, `${label}.risk_classes`),
+    action_classes: stringList$1(item.action_classes, `${label}.action_classes`),
+    safer_alternatives: stringList$1(item.safer_alternatives, `${label}.safer_alternatives`),
     default_mode: enumValue(item.default_mode, `${label}.default_mode`, ["required", "enforce", "review", "monitor", "disabled"]),
     matcher_kind: string$1(item.matcher_kind, `${label}.matcher_kind`),
     safe_variants: array(item.safe_variants, `${label}.safe_variants`, EXTENSION_CLIENT_LIMITS.relationshipIds).map((entry, index) => safeVariant(entry, `${label}.safe_variants[${index}]`)),
@@ -354,7 +354,7 @@ function rule(value, extensionId, label) {
   };
 }
 function permission(value, extensionId, label) {
-  const item = record$1(value, label);
+  const item = record$2(value, label);
   const permissionId = id(item.permission_id, `${label}.permission_id`, PERMISSION_ID);
   const owner = id(item.extension_id, `${label}.extension_id`, EXTENSION_ID);
   if (owner !== extensionId || !permissionId.startsWith(`${extensionId}.permission.`)) {
@@ -373,8 +373,8 @@ function permission(value, extensionId, label) {
     default_enabled: bool$1(item.default_enabled, `${label}.default_enabled`),
     configurable: bool$1(item.configurable, `${label}.configurable`),
     fixed_reason: optionalString(item.fixed_reason, `${label}.fixed_reason`),
-    typed_capabilities: stringList(item.typed_capabilities, `${label}.typed_capabilities`),
-    action_classes: stringList(item.action_classes, `${label}.action_classes`),
+    typed_capabilities: stringList$1(item.typed_capabilities, `${label}.typed_capabilities`),
+    action_classes: stringList$1(item.action_classes, `${label}.action_classes`),
     rule_ids: idList$1(item.rule_ids, `${label}.rule_ids`, RULE_ID),
     dependencies: idList$1(item.dependencies, `${label}.dependencies`, PERMISSION_ID),
     conflicts: idList$1(item.conflicts, `${label}.conflicts`, PERMISSION_ID),
@@ -382,11 +382,11 @@ function permission(value, extensionId, label) {
     introduced_version: version(item.introduced_version, `${label}.introduced_version`),
     deprecated: bool$1(item.deprecated, `${label}.deprecated`),
     replacement_permission_id: replacement,
-    safer_guidance: stringList(item.safer_guidance, `${label}.safer_guidance`)
+    safer_guidance: stringList$1(item.safer_guidance, `${label}.safer_guidance`)
   };
 }
 function extension(value, label) {
-  const item = record$1(value, label);
+  const item = record$2(value, label);
   const extensionId = id(item.extension_id, `${label}.extension_id`, EXTENSION_ID);
   const rules = array(item.rules, `${label}.rules`, EXTENSION_CLIENT_LIMITS.rulesPerExtension).map((entry, index) => rule(entry, extensionId, `${label}.rules[${index}]`));
   const permissions = array(item.permissions, `${label}.permissions`, EXTENSION_CLIENT_LIMITS.permissionsPerExtension).map((entry, index) => permission(entry, extensionId, `${label}.permissions[${index}]`));
@@ -418,23 +418,23 @@ function extension(value, label) {
     dependencies: idList$1(item.dependencies, `${label}.dependencies`, EXTENSION_ID),
     conflicts: idList$1(item.conflicts, `${label}.conflicts`, EXTENSION_ID),
     delegated_protection: optionalString(item.delegated_protection, `${label}.delegated_protection`),
-    ecosystem_ids: stringList(item.ecosystem_ids, `${label}.ecosystem_ids`),
-    executables: stringList(item.executables, `${label}.executables`),
-    project_markers: stringList(item.project_markers, `${label}.project_markers`),
-    reference_urls: stringList(item.reference_urls, `${label}.reference_urls`),
-    action_classes: stringList(item.action_classes, `${label}.action_classes`),
-    risk_classes: stringList(item.risk_classes, `${label}.risk_classes`),
-    safer_alternatives: stringList(item.safer_alternatives, `${label}.safer_alternatives`),
+    ecosystem_ids: stringList$1(item.ecosystem_ids, `${label}.ecosystem_ids`),
+    executables: stringList$1(item.executables, `${label}.executables`),
+    project_markers: stringList$1(item.project_markers, `${label}.project_markers`),
+    reference_urls: stringList$1(item.reference_urls, `${label}.reference_urls`),
+    action_classes: stringList$1(item.action_classes, `${label}.action_classes`),
+    risk_classes: stringList$1(item.risk_classes, `${label}.risk_classes`),
+    safer_alternatives: stringList$1(item.safer_alternatives, `${label}.safer_alternatives`),
     rule_count: ruleCount,
     rules,
     permission_count: permissionCount,
     permissions
   };
 }
-function controlLayer(value, label) {
-  const item = record$1(value, label);
+function normalizeExtensionControlLayer(value, label = "layer") {
+  const item = record$2(value, label);
   const controls = array(item.controls, `${label}.controls`, EXTENSION_CLIENT_LIMITS.controls).map((entry, index) => {
-    const raw = record$1(entry, `${label}.controls[${index}]`);
+    const raw = record$2(entry, `${label}.controls[${index}]`);
     const kind = enumValue(raw.target_kind, `${label}.controls[${index}].target_kind`, ["extension", "permission"]);
     return {
       target_kind: kind,
@@ -453,11 +453,11 @@ function controlLayer(value, label) {
   };
 }
 function normalizeExtensionCatalog(value) {
-  const root = record$1(value, "catalog");
+  const root = record$2(value, "catalog");
   const extensions = array(root.extensions, "catalog.extensions", EXTENSION_CLIENT_LIMITS.extensions).map((entry, index) => extension(entry, `catalog.extensions[${index}]`));
   const ids = extensions.map((entry) => entry.extension_id);
   if (new Set(ids).size !== ids.length) throw new ExtensionControlProtocolError("catalog.extensions contains duplicate extension IDs");
-  const limits = root.limits === void 0 ? void 0 : record$1(root.limits, "catalog.limits");
+  const limits = root.limits === void 0 ? void 0 : record$2(root.limits, "catalog.limits");
   return {
     schema_version: string$1(root.schema_version, "catalog.schema_version"),
     control_schema_version: root.control_schema_version === void 0 ? void 0 : string$1(root.control_schema_version, "catalog.control_schema_version"),
@@ -471,10 +471,10 @@ function normalizeExtensionCatalog(value) {
   };
 }
 function normalizeEffectiveExtensionControls(value) {
-  const root = record$1(value, "effective");
+  const root = record$2(value, "effective");
   const controls = array(root.controls, "effective.controls", EXTENSION_CLIENT_LIMITS.controls).map((entry, index) => {
-    const raw = record$1(entry, `effective.controls[${index}]`);
-    const target2 = record$1(raw.target, `effective.controls[${index}].target`);
+    const raw = record$2(entry, `effective.controls[${index}]`);
+    const target2 = record$2(raw.target, `effective.controls[${index}].target`);
     const kind = enumValue(target2.kind, `effective.controls[${index}].target.kind`, ["extension", "permission"]);
     return {
       target: {
@@ -486,9 +486,9 @@ function normalizeEffectiveExtensionControls(value) {
   });
   const keys = controls.map((control) => `${control.target.kind}:${control.target.target_id}`);
   if (new Set(keys).size !== keys.length) throw new ExtensionControlProtocolError("effective.controls contains duplicate targets");
-  const layers = array(root.layers, "effective.layers", EXTENSION_CLIENT_LIMITS.layers).map((entry, index) => controlLayer(entry, `effective.layers[${index}]`));
+  const layers = array(root.layers, "effective.layers", EXTENSION_CLIENT_LIMITS.layers).map((entry, index) => normalizeExtensionControlLayer(entry, `effective.layers[${index}]`));
   const failures = array(root.failures, "effective.failures", EXTENSION_CLIENT_LIMITS.failures).map((entry, index) => {
-    const raw = record$1(entry, `effective.failures[${index}]`);
+    const raw = record$2(entry, `effective.failures[${index}]`);
     return {
       code: string$1(raw.code, `effective.failures[${index}].code`),
       detail: raw.detail === void 0 ? void 0 : string$1(raw.detail, `effective.failures[${index}].detail`, true),
@@ -513,7 +513,7 @@ const MAX_CHANGED_TARGETS = 4096;
 const MAX_AFFECTED_IDS = 4096;
 const MAX_WARNINGS = 64;
 const MAX_TEXT = 8192;
-function record(value, label) {
+function record$1(value, label) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`Invalid extension-control ${label}: expected object`);
   return value;
 }
@@ -558,7 +558,7 @@ function optionalStringList(value, label) {
   return items;
 }
 function warning(value, label) {
-  const item = record(value, label);
+  const item = record$1(value, label);
   return {
     code: string(item.code, `${label}.code`, 128),
     message: string(item.message, `${label}.message`, 1024),
@@ -567,8 +567,8 @@ function warning(value, label) {
   };
 }
 function target(value, label) {
-  const item = record(value, label);
-  const rawTarget = record(item.target, `${label}.target`);
+  const item = record$1(value, label);
+  const rawTarget = record$1(item.target, `${label}.target`);
   const kind = string(rawTarget.kind, `${label}.target.kind`, 32);
   if (kind !== "extension" && kind !== "permission") throw new Error(`Invalid extension-control ${label}.target.kind`);
   const beforeExplicit = string(item.before_explicit, `${label}.before_explicit`, 32);
@@ -604,10 +604,10 @@ function target(value, label) {
   };
 }
 function normalizeExtensionSemanticPreview(value) {
-  const root = record(value, "semantic preview");
+  const root = record$1(value, "semantic preview");
   if (string(root.schema_version, "semantic_preview.schema_version", 128) !== "guard.daemon.extension-control-semantic-preview.v1") throw new Error("Invalid extension-control semantic preview schema");
-  const lockdown = record(root.global_lockdown, "semantic_preview.global_lockdown");
-  const summary = record(root.summary, "semantic_preview.summary");
+  const lockdown = record$1(root.global_lockdown, "semantic_preview.global_lockdown");
+  const summary = record$1(root.summary, "semantic_preview.summary");
   const changedTargets = boundedArray(root.changed_targets, "semantic_preview.changed_targets", MAX_CHANGED_TARGETS).map((entry, index) => target(entry, `semantic_preview.changed_targets[${index}]`));
   const changedTargetCount = integer(root.changed_target_count, "semantic_preview.changed_target_count");
   if (changedTargetCount !== changedTargets.length) throw new Error("Invalid extension-control semantic preview target count");
@@ -631,7 +631,7 @@ function normalizeExtensionSemanticPreview(value) {
   };
 }
 function normalizeExtensionMutationPreview(value) {
-  const root = record(value, "mutation preview");
+  const root = record$1(value, "mutation preview");
   return {
     schema_version: string(root.schema_version, "preview.schema_version", 128),
     previous_revision: integer(root.previous_revision, "preview.previous_revision"),
@@ -645,7 +645,7 @@ function normalizeExtensionMutationPreview(value) {
   };
 }
 function normalizeExtensionMutationApply(value) {
-  const root = record(value, "mutation apply");
+  const root = record$1(value, "mutation apply");
   if (string(root.status, "apply.status", 32) !== "applied") throw new Error("Invalid extension-control apply status");
   return {
     schema_version: string(root.schema_version, "apply.schema_version", 128),
@@ -698,6 +698,33 @@ async function fetchEffectiveExtensionControls() {
     throw new ExtensionControlApiError("Guard returned an inconsistent extension-control projection", 502);
   }
   return { ...normalized, projection };
+}
+async function fetchExtensionControlHistory() {
+  const raw = await request("/v1/extension-controls/history");
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new ExtensionControlApiError("Guard returned invalid settings history", 502);
+  const root = raw;
+  if (root.schema_version !== "guard.daemon.extension-control-history.v1") throw new ExtensionControlApiError("Guard returned unsupported settings history", 502);
+  if (!Number.isSafeInteger(root.revision) || root.revision < 0 || typeof root.catalog_digest !== "string") throw new ExtensionControlApiError("Guard returned invalid settings history metadata", 502);
+  if (!Array.isArray(root.items) || root.items.length > 50) throw new ExtensionControlApiError("Guard returned too much settings history", 502);
+  const items = root.items.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ExtensionControlApiError("Guard returned invalid settings history item", 502);
+    const item = value;
+    if (!Number.isSafeInteger(item.revision) || !Number.isSafeInteger(item.previous_revision) || typeof item.occurred_at !== "string" || typeof item.catalog_digest !== "string" || !Array.isArray(item.layers)) throw new ExtensionControlApiError("Guard returned invalid settings history item", 502);
+    const layers = item.layers.map((layer, layerIndex) => normalizeExtensionControlLayer(layer, `history.items[${index}].layers[${layerIndex}]`));
+    return {
+      revision: item.revision,
+      previous_revision: item.previous_revision,
+      occurred_at: item.occurred_at,
+      catalog_digest: item.catalog_digest,
+      layers
+    };
+  });
+  return {
+    schema_version: "guard.daemon.extension-control-history.v1",
+    revision: root.revision,
+    catalog_digest: root.catalog_digest,
+    items
+  };
 }
 async function recoverExtensionControlAuthority(credentials) {
   const raw = await request("/v1/extension-controls/recover-authority", {
@@ -1974,6 +2001,41 @@ function keepExtensionPolicyRebaseConflicts(result, latestEffective) {
   }
   return layers;
 }
+function ProtectionSettingsHistory(props) {
+  const [items, setItems] = reactExports.useState([]);
+  const [loading, setLoading] = reactExports.useState(true);
+  const [error, setError] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    let active = true;
+    setLoading(true);
+    fetchExtensionControlHistory().then((history) => {
+      if (!active) return;
+      setItems(history.items.filter((item) => item.catalog_digest === props.catalogDigest));
+      setError(null);
+    }).catch(() => {
+      if (active) setError("Local settings history is unavailable until Guard verifies settings integrity.");
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [props.catalogDigest]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-sm font-semibold text-slate-800", children: "Settings history" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs leading-5 text-slate-600", children: "Guard verifies the authenticated local history before showing it. Restoring a version only prepares the device layer as a draft. Current organization policy stays in force, and nothing changes until you review and approve it." }),
+    loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-slate-500", children: "Loading verified history…" }) : error ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-amber-800", children: error }) : items.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 space-y-2", children: items.slice(0, 10).map((item) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-2 rounded-xl bg-white p-3 sm:flex-row sm:items-center sm:justify-between", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-sm font-medium text-slate-800", children: [
+          "Device settings revision ",
+          item.revision
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("time", { className: "text-xs text-slate-500", dateTime: item.occurred_at, children: new Date(item.occurred_at).toLocaleString() })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: props.disabled, onClick: () => props.onUse(item.layers, item.revision), className: "min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-brand-blue disabled:opacity-40", children: "Use this version as draft" })
+    ] }, item.revision)) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-slate-500", children: "No earlier authenticated device settings are available yet." })
+  ] });
+}
 const RISK_TONE = {
   critical: "border-red-200 bg-red-50 text-red-800",
   high: "border-orange-200 bg-orange-50 text-orange-800",
@@ -2403,6 +2465,19 @@ function ExtensionPolicyPanel(props) {
     setStale(false);
     setPendingRebase(null);
   }, [baseEffective, policyExtension]);
+  const useHistoricalDraft = reactExports.useCallback((historicalLayers, _revision) => {
+    draftGeneration.current += 1;
+    const historicalLocal = historicalLayers.find((layer) => layer.kind === "local-admin");
+    const next = baseEffective.layers.flatMap((layer) => layer.kind === "local-admin" ? historicalLocal ? [historicalLocal] : [] : [layer]);
+    if (historicalLocal && !baseEffective.layers.some((layer) => layer.kind === "local-admin")) next.push(historicalLocal);
+    setDraftLayers(next);
+    setIdentity(newExtensionPolicyDraftIdentity());
+    setPreview(null);
+    setReviewOpen(false);
+    setError(null);
+    setStale(false);
+    setPendingRebase(null);
+  }, [baseEffective.layers]);
   const configurableCount = policyExtension.permissions.filter((permission2) => permission2.configurable).length;
   const managedCount = policyExtension.permissions.filter((permission2) => managedPermissionState(baseEffective, permission2.permission_id) !== null).length;
   const confirmationCount = preview?.semantic_preview.changed_target_count ?? changeCount;
@@ -2438,6 +2513,7 @@ function ExtensionPolicyPanel(props) {
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs leading-5 text-slate-500", children: "Profiles only prepare a local draft. Custom appears automatically when you adjust individual settings. You still review the exact outcome and authenticate before anything is applied." })
       ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionSettingsHistory, { catalogDigest: baseEffective.catalog_digest, disabled: baseEffective.health !== "protected" || refreshRequired, onUse: useHistoricalDraft }),
       baseEffective.global_lockdown ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { role: "status", className: "mt-4 flex gap-2 rounded-xl bg-slate-950 p-3 text-sm text-white", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniLockClosed, { className: "mt-0.5 size-4 shrink-0" }),
         "Emergency Lockdown remains dominant. You can prepare a local draft, but matching commands stay blocked while lockdown is active."
@@ -2500,6 +2576,231 @@ function ExtensionPolicyPanel(props) {
     }, onConfirm: (credentials) => {
       void apply(credentials);
     } }) : null
+  ] });
+}
+function ProtectionRepairCard(props) {
+  const repairable = props.effective.health === "tampered" || props.effective.health === "recovery-required";
+  const [open, setOpen] = reactExports.useState(false);
+  const [busy, setBusy] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
+  if (!repairable) return null;
+  const begin = async () => {
+    try {
+      await resolveApprovalGate({ failClosed: true });
+      setError(null);
+      setOpen(true);
+    } catch {
+      setError("Guard could not load the local approval gate. Repair was not started.");
+    }
+  };
+  const repair = async (credentials) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await recoverExtensionControlAuthority(credentials);
+      setOpen(false);
+      await props.onRefresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Guard could not repair settings integrity.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-repair-heading", className: "mt-5 rounded-3xl border border-amber-200 bg-amber-50 p-5 sm:p-6", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniWrenchScrewdriver, { className: "mt-0.5 size-5 shrink-0 text-amber-800", "aria-hidden": "true" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-repair-heading", className: "font-semibold text-amber-950", children: "Repair protection settings integrity" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-6 text-amber-900", children: "Guard is staying fail-safe because the authenticated local settings state cannot be trusted. Repair rebuilds a protected local authority after explicit approval. Organization policy is not weakened." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => {
+          void begin();
+        }, className: "mt-4 min-h-11 rounded-xl bg-amber-900 px-4 text-sm font-semibold text-white", children: "Repair safely" }),
+        error && !open ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-3 text-sm text-red-800", children: error }) : null
+      ] })
+    ] }),
+    open ? /* @__PURE__ */ jsxRuntimeExports.jsx(ApprovalProofModal, { title: "Repair protection settings", detail: "Authenticate this local recovery. Guard will rebuild settings integrity fail-safe and then reload the current protected state.", confirmLabel: "Repair settings", approvalGate: resolvedApprovalGate, busy, error, onCancel: () => {
+      if (!busy) setOpen(false);
+    }, onConfirm: (credentials) => {
+      void repair(credentials);
+    } }) : null
+  ] });
+}
+const DECISIONS = /* @__PURE__ */ new Set(["allowed", "ask-first", "blocked"]);
+const MINIMUM_ACTIONS = /* @__PURE__ */ new Set(["allow", "monitor", "review", "block"]);
+const SEVERITIES = /* @__PURE__ */ new Set(["low", "medium", "high", "critical"]);
+function record(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Guard returned an invalid Test Lab response");
+  return value;
+}
+function boundedString(value, field, limit = 512) {
+  if (typeof value !== "string" || !value.trim() || value.length > limit) throw new Error(`Guard returned an invalid ${field}`);
+  return value;
+}
+function stringList(value, field, limit) {
+  if (!Array.isArray(value) || value.length > limit || !value.every((item) => typeof item === "string" && item.length <= 320)) {
+    throw new Error(`Guard returned an invalid ${field}`);
+  }
+  return [...value];
+}
+function normalizeProtectionTestResult(value) {
+  const raw = record(value);
+  if (raw.schema_version !== "guard.daemon.extension-control-test.v1") throw new Error("Guard returned an unsupported Test Lab response");
+  if (typeof raw.decision !== "string" || !DECISIONS.has(raw.decision)) throw new Error("Guard returned an invalid Test Lab decision");
+  if (typeof raw.minimum_action !== "string" || !MINIMUM_ACTIONS.has(raw.minimum_action)) throw new Error("Guard returned an invalid Test Lab action");
+  if (typeof raw.matched !== "boolean" || typeof raw.module_matched !== "boolean" || typeof raw.other_protection_matched !== "boolean") {
+    throw new Error("Guard returned invalid Test Lab match state");
+  }
+  if (!Array.isArray(raw.matches) || raw.matches.length > 32) throw new Error("Guard returned too many Test Lab matches");
+  const matches = raw.matches.map((item) => {
+    const match = record(item);
+    if (typeof match.severity !== "string" || !SEVERITIES.has(match.severity)) throw new Error("Guard returned an invalid Test Lab severity");
+    return {
+      extension_id: boundedString(match.extension_id, "extension ID", 256),
+      extension_name: boundedString(match.extension_name, "extension name", 120),
+      rule_id: boundedString(match.rule_id, "rule ID", 256),
+      rule_title: boundedString(match.rule_title, "rule title", 160),
+      description: boundedString(match.description, "rule description", 320),
+      severity: match.severity,
+      risk_classes: stringList(match.risk_classes, "risk classes", 16)
+    };
+  });
+  if (typeof raw.revision !== "number" || !Number.isSafeInteger(raw.revision) || raw.revision < 0) throw new Error("Guard returned an invalid Test Lab revision");
+  return {
+    schema_version: "guard.daemon.extension-control-test.v1",
+    decision: raw.decision,
+    minimum_action: raw.minimum_action,
+    matched: raw.matched,
+    module_matched: raw.module_matched,
+    other_protection_matched: raw.other_protection_matched,
+    explanation: boundedString(raw.explanation, "Test Lab explanation", 320),
+    matches,
+    safer_alternatives: stringList(raw.safer_alternatives, "safer alternatives", 8),
+    authority_health: boundedString(raw.authority_health, "authority health", 64),
+    revision: raw.revision,
+    catalog_digest: boundedString(raw.catalog_digest, "catalog digest", 128)
+  };
+}
+async function testProtectionCommand(extensionId, command) {
+  const response = await fetchExtensionControlApi("/v1/extension-controls/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ extension_id: extensionId, command })
+  });
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`Guard returned invalid JSON (${response.status})`);
+  }
+  if (!response.ok) {
+    const raw = typeof payload === "object" && payload !== null && !Array.isArray(payload) ? payload : {};
+    throw new Error(typeof raw.error === "string" ? raw.error.replaceAll("_", " ") : `Test Lab request failed (${response.status})`);
+  }
+  return normalizeProtectionTestResult(payload);
+}
+function safeExamples(extension2) {
+  const executable = extension2.executables[0];
+  const examples = extension2.extension_id === "command.git" ? ["git status", "git reset --hard HEAD~1", "git push --force-with-lease"] : executable ? [`${executable} --help`] : [];
+  return examples.slice(0, 3);
+}
+function resultTitle(result) {
+  if (result.decision === "blocked") return "Guard would block this";
+  if (result.decision === "ask-first") return "Guard would ask first";
+  return "Guard would allow this";
+}
+function ProtectionTestLab({ extension: extension2 }) {
+  const [command, setCommand] = reactExports.useState("");
+  const [result, setResult] = reactExports.useState(null);
+  const [busy, setBusy] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  const examples = reactExports.useMemo(() => safeExamples(extension2), [extension2]);
+  const run = async () => {
+    const candidate = command.trim();
+    if (!candidate || busy) return;
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      setResult(await testProtectionCommand(extension2.extension_id, candidate));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Test Lab could not evaluate this command.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-test-lab-heading", className: "rounded-3xl border border-slate-200 bg-white p-5 sm:p-6", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grid size-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-700", "aria-hidden": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniBeaker, { className: "size-5" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-test-lab-heading", className: "text-lg font-semibold text-slate-950", children: "Test Lab" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-6 text-slate-600", children: "See how Guard would handle a command without running it." })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "mt-0.5 size-5 shrink-0", "aria-hidden": "true" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Nothing is executed." }),
+        " The command is evaluated locally in memory and is not saved to Activity or sent to Guard Cloud."
+      ] })
+    ] }) }),
+    examples.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-semibold uppercase tracking-wide text-slate-500", children: "Try an example" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 flex flex-wrap gap-2", children: examples.map((example) => /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: busy, onClick: () => {
+        setCommand(example);
+        setResult(null);
+        setError(null);
+      }, className: "min-h-10 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50", children: example }, example)) })
+    ] }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "mt-5 block", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-slate-800", children: "Command to check" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("textarea", { value: command, disabled: busy, onChange: (event) => {
+        setCommand(event.target.value.slice(0, 4096));
+        setResult(null);
+        setError(null);
+      }, maxLength: 4096, rows: 3, spellCheck: false, autoComplete: "off", placeholder: "Paste a command here. Guard will not run it.", className: "mt-2 w-full resize-y rounded-2xl border border-slate-300 bg-white px-4 py-3 font-mono text-sm text-slate-900 outline-none focus:border-brand-blue focus:ring-2 focus:ring-blue-100" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => {
+        void run();
+      }, disabled: busy || !command.trim(), className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50", children: busy ? "Checking…" : "Check safely" }),
+      command ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: busy, onClick: () => {
+        setCommand("");
+        setResult(null);
+        setError(null);
+      }, className: "min-h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50", children: "Clear" }) : null,
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs text-slate-500", children: [
+        command.length,
+        "/4096"
+      ] })
+    ] }),
+    error ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800", children: error }) : null,
+    result ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { role: "status", className: "mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-3", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionDecisionBadge, { result: result.decision }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-slate-950", children: resultTitle(result) }),
+        result.decision === "allowed" ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "size-5 text-emerald-700", "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "size-5 text-amber-700", "aria-hidden": "true" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-sm leading-6 text-slate-700", children: result.explanation }),
+      result.matches.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-semibold uppercase tracking-wide text-slate-500", children: "Protection rules involved" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 space-y-2", children: result.matches.slice(0, 6).map((match) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl bg-white p-3", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-slate-900", children: match.rule_title }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs font-semibold capitalize text-slate-500", children: [
+              match.severity,
+              " risk"
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs leading-5 text-slate-600", children: match.description })
+        ] }, `${match.extension_id}:${match.rule_id}`)) })
+      ] }) : null,
+      result.safer_alternatives.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-semibold uppercase tracking-wide text-slate-500", children: "Safer alternatives" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700", children: result.safer_alternatives.map((alternative) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: alternative }, alternative)) })
+      ] }) : null,
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 text-xs text-slate-500", children: "This result uses the current local protection state. It is a read-only evaluation and does not create an approval or receipt." })
+    ] }) : null
   ] });
 }
 const client = createCommandActivityClient(fetchCommandActivityApi);
@@ -2625,8 +2926,9 @@ function ModuleRecentDecisions(props) {
   const activity = useProtectionModuleActivity(props.extension.extension_id);
   const decisions = reactExports.useMemo(() => recentProtectionDecisions(activity.items, [props.extension], 5), [activity.items, props.extension]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "module-recent-heading", className: "rounded-3xl border border-slate-200 bg-white p-5 sm:p-6", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "module-recent-heading", className: "text-lg font-semibold text-slate-950", children: "Recent decisions" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-600", children: "Privacy-safe local activity for this protection. Raw commands and paths are not shown." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "module-recent-heading", className: "text-lg font-semibold text-slate-950", children: "Activity" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-600", children: "Recent privacy-safe decisions on this device. Raw commands and paths are not shown." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs leading-5 text-slate-500", children: "Local activity works without Cloud. Guard Cloud adds longer retention, synchronization, advanced search, evidence exports, and team history according to your plan." }),
     activity.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-skeleton mt-4 h-20 w-full", "aria-label": "Loading recent decisions" }) : activity.unavailable ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-600", children: "Recent local activity is unavailable right now. This does not change the protection status above." }) : decisions.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 divide-y divide-slate-100", children: decisions.map((decision) => /* @__PURE__ */ jsxRuntimeExports.jsxs("article", { className: "py-3 first:pt-0 last:pb-0", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-2", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionDecisionBadge, { result: decision.result }),
@@ -2787,6 +3089,7 @@ function ProtectionModuleDetail(props) {
         "Emergency Lockdown currently controls this module. Matching optional actions remain blocked."
       ] }) : null
     ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionRepairCard, { effective: props.effective, onRefresh: props.onRefresh }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 grid gap-5 lg:grid-cols-2", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(WhatThisProtects, { extension: props.extension }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(SimpleSettingsSummary, { extension: props.extension, effective: props.effective, onChange: () => setEditing(true) })
@@ -2810,6 +3113,7 @@ function ProtectionModuleDetail(props) {
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(ModuleRecentDecisions, { extension: props.extension })
     ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionTestLab, { extension: props.extension }) }),
     density !== "simple" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(AdvancedModuleDetails, { extension: props.extension, effective: props.effective }) }) : null,
     density === "developer" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(DeveloperModuleDetails, { extension: props.extension, effective: props.effective, catalogDigest: props.catalogDigest }) }) : null
   ] });
