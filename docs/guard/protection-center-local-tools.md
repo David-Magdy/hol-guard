@@ -16,7 +16,7 @@ The Test Lab contract requires that:
 - the request uses the authenticated local daemon transport;
 - command inputs and example selectors are locked while evaluation is in flight so the displayed result cannot drift from the command that was evaluated.
 
-Test Lab returns the local decision, controlling protection metadata, bounded safe matches, and safer alternatives. It does not create a second enforcement path.
+Test Lab returns the local decision, controlling protection metadata, bounded safe matches, and safer alternatives. It does not create a second enforcement path. Dashboard regression coverage enforces the in-flight input lock so a completed result remains bound to the command the user actually checked.
 
 ## Settings history
 
