@@ -1,4 +1,4 @@
-"""Regression coverage for session-bound TOTP reauthentication grace."""
+"""Regression coverage for bounded TOTP reauthentication grace."""
 
 from __future__ import annotations
 
@@ -179,27 +179,29 @@ def test_totp_recent_auth_expires_without_sliding_extension(tmp_path: Path) -> N
     assert expired.value.code == "approval_gate_totp_required"
 
 
-def test_totp_code_replay_without_session_nonce_remains_rejected(tmp_path: Path) -> None:
+def test_totp_approval_request_reuses_daemon_process_session(tmp_path: Path) -> None:
     guard_home = tmp_path / "guard-home"
     secret = _enable_totp(guard_home)
     code = totp_code_at_counter(secret=secret, counter=_counter(FIRST_APPROVAL_NOW))
-    _approve(
+
+    first = _approve(
         guard_home,
         session_nonce=None,
         subject="approval-request:first",
         now=FIRST_APPROVAL_NOW,
         code=code,
     )
+    second = _approve(
+        guard_home,
+        session_nonce=None,
+        subject="approval-request:second",
+        now="2026-04-11T00:00:45+00:00",
+        code=None,
+    )
 
-    with pytest.raises(ApprovalGateError) as replayed_code:
-        _approve(
-            guard_home,
-            session_nonce=None,
-            subject="approval-request:second",
-            now="2026-04-11T00:00:45+00:00",
-            code=code,
-        )
-    assert replayed_code.value.code == "approval_gate_totp_invalid"
+    assert first is not None and first.totp_verified is True
+    assert second is not None and second.totp_verified is True
+    assert first.session_nonce == second.session_nonce
 
 
 def test_totp_recent_auth_tampering_fails_closed(tmp_path: Path) -> None:
