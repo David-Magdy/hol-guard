@@ -151,6 +151,7 @@
     --color-indigo-50: oklch(96.2% .018 272.314);
     --color-indigo-200: oklch(87% .065 274.039);
     --color-indigo-700: oklch(45.7% .24 277.023);
+    --color-indigo-800: oklch(39.8% .195 277.366);
     --color-indigo-900: oklch(35.9% .144 278.697);
     --color-violet-50: oklch(96.9% .016 293.756);
     --color-violet-100: oklch(94.3% .029 294.588);
@@ -760,6 +761,10 @@
 
   .-mt-1 {
     margin-top: calc(var(--spacing) * -1);
+  }
+
+  .-mt-8 {
+    margin-top: calc(var(--spacing) * -8);
   }
 
   .mt-0\.5 {
@@ -3574,6 +3579,16 @@
     background-color: var(--color-slate-950);
   }
 
+  .bg-slate-950\/40 {
+    background-color: #02061866;
+  }
+
+  @supports (color: color-mix(in lab, red, red)) {
+    .bg-slate-950\/40 {
+      background-color: color-mix(in oklab, var(--color-slate-950) 40%, transparent);
+    }
+  }
+
   .bg-slate-950\/45 {
     background-color: #02061873;
   }
@@ -4664,6 +4679,10 @@
 
   .text-indigo-700 {
     color: var(--color-indigo-700);
+  }
+
+  .text-indigo-800 {
+    color: var(--color-indigo-800);
   }
 
   .text-indigo-900 {
@@ -6053,6 +6072,10 @@
     opacity: .4;
   }
 
+  .disabled\:opacity-45:disabled {
+    opacity: .45;
+  }
+
   .disabled\:opacity-50:disabled {
     opacity: .5;
   }
@@ -6068,6 +6091,18 @@
   @media (hover: hover) {
     .disabled\:hover\:bg-transparent:disabled:hover {
       background-color: #0000;
+    }
+  }
+
+  @supports ((-webkit-backdrop-filter: var(--tw)) or (backdrop-filter: var(--tw))) {
+    .supports-\[backdrop-filter\]\:bg-white\/85 {
+      background-color: #ffffffd9;
+    }
+
+    @supports (color: color-mix(in lab, red, red)) {
+      .supports-\[backdrop-filter\]\:bg-white\/85 {
+        background-color: color-mix(in oklab, var(--color-white) 85%, transparent);
+      }
     }
   }
 
@@ -6785,6 +6820,10 @@
         background-color: var(--color-slate-800);
       }
     }
+  }
+
+  .\[\&_\#extension-panel-policy\]\:hidden #extension-panel-policy {
+    display: none;
   }
 
   .\[\&_button\]\:h-11 button {
