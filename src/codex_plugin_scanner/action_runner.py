@@ -21,7 +21,7 @@ from .github_reporting import (
     should_manage_pr_comment,
     upsert_pr_comment,
 )
-from .models import Finding, GRADE_LABELS, SEVERITY_ORDER, max_severity
+from .models import GRADE_LABELS, SEVERITY_ORDER, Finding, max_severity
 from .quality_artifact import build_quality_artifact, write_quality_artifact
 from .reporting import build_json_payload, format_markdown, format_sarif, should_fail_for_severity
 from .submission import (
