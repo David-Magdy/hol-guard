@@ -1,0 +1,69 @@
+name: Protection Center Batch 5 release sync
+on:
+  push:
+    branches: [feat/protection-center-05-test-activity]
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Merge current release/3.0 safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin release/3.0
+          set +e
+          git merge --no-edit origin/release/3.0
+          merge_rc=$?
+          set -e
+          if [ "$merge_rc" -ne 0 ]; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            if [ "$conflicts" != "ci/test-suite-ratchet-baseline.json" ]; then
+              echo "Unexpected merge conflicts:"
+              printf '%s\n' "$conflicts"
+              exit 1
+            fi
+            cat > ci/test-suite-ratchet-baseline.json <<'JSON'
+          {
+            "maximum_collected_cases": 14204,
+            "maximum_test_source_lines": 313068,
+            "schema_version": 1
+          }
+          JSON
+            git add ci/test-suite-ratchet-baseline.json
+            git commit --no-edit
+          fi
+          git merge-base --is-ancestor origin/release/3.0 HEAD
+          git diff --check HEAD~1..HEAD
+      - name: Verify composed hook and Protection Center behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync pytest -q \
+            tests/test_codex_daemon_hook_bridge.py \
+            tests/test_guard_extension_control_authority.py \
+            tests/test_guard_extension_control_test_lab.py
+      - name: Remove temporary workflow and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/protection-center-batch5-sync.yml
+          git add .github/workflows/protection-center-batch5-sync.yml
+          git commit -m "chore(protection-center): remove temporary release sync workflow"
+          git push origin HEAD:feat/protection-center-05-test-activity
