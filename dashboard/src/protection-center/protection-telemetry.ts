@@ -1,3 +1,5 @@
+import { PROTECTION_CATEGORIES } from "./model/protection-categories";
+
 export const PROTECTION_TELEMETRY_EVENTS = [
   "protection_center_viewed",
   "protection_density_changed",
@@ -19,6 +21,7 @@ const ALLOWED_PLAN_IDS = new Set(["free", "solo", "pro", "team", "enterprise", "
 const ALLOWED_DENSITIES = new Set(["simple", "advanced", "developer"]);
 const ALLOWED_CLOUD_STATES = new Set(["local_only", "paired_waiting", "paired_active", "unavailable"]);
 const ALLOWED_RESULTS = new Set(["allowed", "ask-first", "blocked", "unavailable"]);
+const ALLOWED_CATEGORIES = new Set<string>(PROTECTION_CATEGORIES.map((category) => category.id));
 
 function boundedToken(value: unknown, max = 48): string | null {
   if (typeof value !== "string") return null;
@@ -37,6 +40,7 @@ export function sanitizeProtectionTelemetry(fields: Record<string, unknown>): Re
     if (key === "density" && !ALLOWED_DENSITIES.has(value)) continue;
     if (key === "cloud_state" && !ALLOWED_CLOUD_STATES.has(value)) continue;
     if (key === "result" && !ALLOWED_RESULTS.has(value)) continue;
+    if (key === "category" && !ALLOWED_CATEGORIES.has(value)) continue;
     result[key] = value;
   }
   return result;
