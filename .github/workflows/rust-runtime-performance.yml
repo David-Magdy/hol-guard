@@ -5,6 +5,7 @@ on:
     branches: [release/3.0]
     paths:
       - "rust/**"
+      - "scripts/bench_guard_native_full_path.py"
       - "scripts/bench_guard_native_release_gate.py"
       - "src/codex_plugin_scanner/guard/native_runtime.py"
       - "src/codex_plugin_scanner/guard/native_runtime_resident.py"
@@ -14,6 +15,7 @@ on:
     branches: [release/3.0]
     paths:
       - "rust/**"
+      - "scripts/bench_guard_native_full_path.py"
       - "scripts/bench_guard_native_release_gate.py"
       - "src/codex_plugin_scanner/guard/native_runtime.py"
       - "src/codex_plugin_scanner/guard/native_runtime_resident.py"
