@@ -20,7 +20,9 @@ Protection Center uses three presentation densities over the same canonical data
 - **Advanced** — troubleshooting, explicit protection controls, rule/capability explanations, and local policy configuration.
 - **Developer** — canonical IDs, rule metadata, provenance layers, digests, and other implementation details needed for debugging or integration work.
 
-Changing presentation density never changes policy or daemon requests. The installed-browser contract also verifies the settled layout at 320, 390, 720, 800, 1024, and 1440 CSS pixels, including the 720-pixel equivalent of a 1440-pixel display at 200% browser zoom, with no horizontal page overflow.
+A protection-module detail page starts with plain-language scope, behavior, examples, and recent privacy-safe decisions. `Change settings` opens the existing proof-bound local settings editor, while canonical identifiers and detector metadata stay behind Developer disclosure.
+
+Changing presentation density never changes policy or daemon requests. The installed-browser contract also verifies the settled layout at 320, 390, 720, 800, 1024, and 1440 CSS pixels, including the 720-pixel equivalent of a 1440-pixel display at 200% browser zoom, with no horizontal page overflow. Installed policy verification reopens the settings editor after an apply or restore so the UI proof confirms the daemon's refreshed effective state rather than relying on stale DOM state.
 
 ## Local and Cloud boundary
 

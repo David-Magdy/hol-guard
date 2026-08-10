@@ -70,7 +70,8 @@ async function openPolicy(page: import("@playwright/test").Page) {
   await installSession(page);
   await page.goto(`/extensions/${extensionId}?tab=policy`);
   await expectSecretSafeUrl(page);
-  await expect(page.getByTestId("extension-control-center-detail")).toBeVisible();
+  await expect(page.getByTestId("protection-module-detail")).toBeVisible();
+  await page.getByRole("button", { name: "Change settings" }).click();
   await expect(page.getByRole("heading", { name: "Permission controls" })).toBeVisible();
   return page.locator(`[data-permission-id="${permissionId}"]`);
 }
@@ -166,33 +167,31 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForTimeout(250);
 
-  for (const extensionId of ["command.git", "command.github", "command.package.node"]) {
-    await page.goto(`/extensions/${extensionId}`);
+  for (const moduleId of ["command.git", "command.github", "command.package.node"]) {
+    await page.goto(`/extensions/${moduleId}`);
     await expectSecretSafeUrl(page);
-    await expect(page.getByTestId("extension-control-center-detail")).toBeVisible();
-    await expect(page.locator("code", { hasText: extensionId }).first()).toBeVisible();
-    await page.getByRole("tab", { name: "Commands & rules" }).click();
-    await expect(page.getByRole("heading", { name: "Permissions" })).toBeVisible();
-    await expect(page.getByText(/Showing \d+ permissions and \d+ rules/)).toBeVisible();
+    await expect(page.getByTestId("protection-module-detail")).toBeVisible();
+    await selectDensity(page, "Developer");
+    await page.getByText("Developer details", { exact: true }).click();
+    await expect(page.locator("code", { hasText: moduleId }).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Detections" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Protection setting identifiers" })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Test Lab" })).toHaveCount(0);
     await expect(page.getByRole("tab", { name: "Activity" })).toHaveCount(0);
   }
 
-  await page.goto("/extensions/command.git?tab=commands&rule=command.git.hard-reset");
+  await page.goto("/extensions/command.git");
   await expectSecretSafeUrl(page);
-  const ruleDialog = page.getByRole("dialog", { name: "Destructive Git reset" });
-  await expect(ruleDialog).toBeVisible();
-  await expect(ruleDialog.getByText("high detector severity")).toBeVisible();
-  await expect(ruleDialog.getByText("Governing permission")).toBeVisible();
-  await expect(ruleDialog.getByRole("button", { name: "Test this rule" })).toHaveCount(0);
+  await selectDensity(page, "Developer");
+  await page.getByText("Developer details", { exact: true }).click();
+  await expect(page.getByRole("table").getByText("Destructive Git reset", { exact: true })).toBeVisible();
+  await expect(page.getByText("command.git.hard-reset", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("installed-extension-rule-detail.png"), fullPage: true });
-  await page.getByRole("button", { name: "Close rule details" }).click();
-  await expect(page.getByRole("dialog", { name: "Destructive Git reset" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Protections" }).click();
   await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
   await page.goBack();
-  await expect(page.getByTestId("extension-control-center-detail")).toBeVisible();
+  await expect(page.getByTestId("protection-module-detail")).toBeVisible();
 
   await expect.poll(() => extensionResponses.length).toBeGreaterThan(1);
   expect(extensionResponses.some((response) => response.path === "/v1/extension-controls/catalog" && response.status === 200)).toBe(true);
@@ -222,7 +221,7 @@ test("installed dashboard previews and proof-applies a permission block", async 
   expect(effective.controls).toContainEqual({ target: { kind: "permission", target_id: permissionId }, state: "disabled" });
   expect(effective.projection?.permissions.find((permission) => permission.permission_id === permissionId)?.effective_state).toBe("blocked");
   await expectSecretSafeUrl(page);
-  const appliedRow = page.locator(`[data-permission-id="${permissionId}"]`);
+  const appliedRow = await openPolicy(page);
   await expect(appliedRow.getByText("Blocked", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("installed-extension-policy-applied.png"), fullPage: true });
   expect(runtimeErrors).toEqual([]);
@@ -242,7 +241,7 @@ test("permission authority persists across daemon restart and can be proof-resto
   await expect(page.getByRole("dialog", { name: "Review 1 permission change" })).toBeVisible();
   const effective = await authenticateAndApply(page);
   expect(effective.controls.some((control) => control.target.kind === "permission" && control.target.target_id === permissionId)).toBe(false);
-  const restoredRow = page.locator(`[data-permission-id="${permissionId}"]`);
+  const restoredRow = await openPolicy(page);
   await expect(restoredRow.getByText("Inherited", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("installed-extension-policy-restored.png"), fullPage: true });
   await expectSecretSafeUrl(page);
