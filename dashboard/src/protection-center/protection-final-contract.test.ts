@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 const cloud = readFileSync(new URL("./protection-cloud-value.tsx", import.meta.url), "utf8");
 const telemetry = readFileSync(new URL("./protection-telemetry.ts", import.meta.url), "utf8");
 const lab = readFileSync(new URL("./protection-test-lab.tsx", import.meta.url), "utf8");
+const guardApi = readFileSync(new URL("../guard-api.ts", import.meta.url), "utf8");
 const docs = readFileSync(new URL("../../../docs/guard/protection-center.md", import.meta.url), "utf8");
 
 assert.match(cloud, /data-local-protection-independent/);
@@ -16,6 +17,7 @@ for (const forbidden of ["command", "path", "proof_id", "rule_id", "extension_id
 }
 assert.match(lab, /Nothing is executed/);
 assert.match(lab, /not saved to Activity or sent to Guard Cloud/);
+assert.match(guardApi, /catalog\|effective\|history\|preview\|test\|apply\|refresh\|recover-authority\|acknowledge-degraded/);
 assert.match(docs, /must never disable or hide local protection controls/);
 assert.match(docs, /client must not invent device, retention, or storage quotas/);
 
