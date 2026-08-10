@@ -29,14 +29,14 @@ export function ProtectionDensityControl(props: {
     { value: "advanced", label: "Advanced" },
     { value: "developer", label: "Developer" },
   ];
-  return <div role="radiogroup" aria-label="Information detail" className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1">
+  return <div role="radiogroup" aria-label="Information detail" className="flex w-full max-w-full flex-wrap rounded-xl border border-slate-200 bg-slate-50 p-1 sm:inline-flex sm:w-auto sm:flex-nowrap">
     {choices.map((choice) => <button
       key={choice.value}
       type="button"
       role="radio"
       aria-checked={props.value === choice.value}
       onClick={() => props.onChange(choice.value)}
-      className={`min-h-10 rounded-lg px-3 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue ${props.value === choice.value ? "bg-white text-brand-blue shadow-sm" : "text-slate-600 hover:bg-white"}`}
+      className={`min-h-10 min-w-0 flex-1 rounded-lg px-2.5 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue sm:flex-none sm:px-3 ${props.value === choice.value ? "bg-white text-brand-blue shadow-sm" : "text-slate-600 hover:bg-white"}`}
     >{choice.label}</button>)}
   </div>;
 }

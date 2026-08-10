@@ -15,6 +15,44 @@ async function expectSecretSafeUrl(page: import("@playwright/test").Page) {
   expect(page.url()).not.toContain("#");
 }
 
+async function expectNoHorizontalOverflow(page: import("@playwright/test").Page) {
+  const report = await page.evaluate(() => {
+    const root = document.documentElement;
+    const overflow = root.scrollWidth - root.clientWidth;
+    const offenders = [...document.querySelectorAll<HTMLElement>("body *")]
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          tag: element.tagName.toLowerCase(),
+          className: typeof element.className === "string" ? element.className.slice(0, 180) : "",
+          text: (element.innerText || "").replace(/\s+/g, " ").trim().slice(0, 100),
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          width: Math.round(rect.width),
+          display: style.display,
+          position: style.position,
+        };
+      })
+      .filter((item) => item.display !== "none" && (item.right > root.clientWidth + 4 || item.left < -4))
+      .sort((a, b) => Math.max(b.right - root.clientWidth, -b.left) - Math.max(a.right - root.clientWidth, -a.left))
+      .slice(0, 12);
+    return {
+      overflow,
+      clientWidth: root.clientWidth,
+      scrollWidth: root.scrollWidth,
+      innerWidth: window.innerWidth,
+      outerWidth: window.outerWidth,
+      screenWidth: window.screen.width,
+      rootFontSize: getComputedStyle(root).fontSize,
+      lgMatches: window.matchMedia("(min-width: 64rem)").matches,
+      offenders,
+    };
+  });
+  expect(report, JSON.stringify(report, null, 2)).toMatchObject({ overflow: expect.any(Number) });
+  expect(report.overflow, JSON.stringify(report, null, 2)).toBeLessThanOrEqual(4);
+}
+
 async function selectDensity(page: import("@playwright/test").Page, density: "Simple" | "Advanced" | "Developer") {
   await page.getByRole("radio", { name: density }).click();
   await expect(page.getByRole("radio", { name: density })).toHaveAttribute("aria-checked", "true");
@@ -38,7 +76,22 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await expectSecretSafeUrl(page);
   await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Protection modules" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What HOL Guard protects" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent decisions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Protection health check" })).toBeVisible();
+  await expect(page.getByLabel("Cloud continuity")).toBeVisible();
   await expect(page.getByRole("heading", { name: /^(Protected|Finish setup|Needs repair|Protection limited|Emergency Lockdown active)$/ })).toBeVisible();
+
+  const healthCheck = page.getByRole("button", { name: "Run health check" });
+  await healthCheck.click();
+  await expect(page.getByRole("status").filter({ hasText: /Protection health check passed|need attention/ })).toBeVisible();
+
+  const advancedFilters = page.getByRole("button", { name: /Advanced filters/ });
+  await expect(advancedFilters).toHaveAttribute("aria-expanded", "false");
+  await advancedFilters.click();
+  await expect(advancedFilters).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByPlaceholder(/Search by name, command, or risk/)).toBeVisible();
+
   const setupSteps = page.getByRole("button", { name: "Show setup steps" });
   if (await setupSteps.count()) {
     await setupSteps.click();
@@ -55,12 +108,20 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await page.screenshot({ path: testInfo.outputPath("installed-protection-center-developer.png"), fullPage: false });
   await selectDensity(page, "Simple");
 
-  for (const width of [320, 390, 800, 1440]) {
+  for (const width of [320, 390, 720, 800, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
+    // The shell deliberately animates desktop sidebar padding. Validate the
+    // settled responsive layout rather than sampling that 200 ms transition.
+    await page.waitForTimeout(250);
     await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath(`installed-protection-center-simple-${width}.png`), fullPage: false });
+    await expectNoHorizontalOverflow(page);
+    const screenshotName = width === 720
+      ? "installed-protection-center-simple-zoom-200.png"
+      : `installed-protection-center-simple-${width}.png`;
+    await page.screenshot({ path: testInfo.outputPath(screenshotName), fullPage: false });
   }
   await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(250);
 
   for (const extensionId of ["command.git", "command.github", "command.package.node"]) {
     await page.goto(`/extensions/${extensionId}`);

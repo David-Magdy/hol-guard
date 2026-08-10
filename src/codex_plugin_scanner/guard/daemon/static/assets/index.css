@@ -4109,6 +4109,10 @@
     padding-top: calc(var(--spacing) * 8);
   }
 
+  .pr-3 {
+    padding-right: calc(var(--spacing) * 3);
+  }
+
   .pr-4 {
     padding-right: calc(var(--spacing) * 4);
   }

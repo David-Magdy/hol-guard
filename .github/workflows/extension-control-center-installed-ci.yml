@@ -164,7 +164,9 @@ jobs:
             installed-protection-center-simple-320.png \
             installed-protection-center-simple-390.png \
             installed-protection-center-simple-800.png \
-            installed-protection-center-simple-1440.png; do
+            installed-protection-center-simple-1024.png \
+            installed-protection-center-simple-1440.png \
+            installed-protection-center-simple-zoom-200.png; do
             count=$(find "$proof_dir" -type f -name "$screenshot" | wc -l)
             test "$count" -eq 1
           done
