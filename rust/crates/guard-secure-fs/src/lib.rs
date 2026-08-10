@@ -26,8 +26,8 @@ const SOURCE_INSPECTION_PARTS: &[&str] = &[
     "workers",
 ];
 const SOURCE_EXTENSIONS: &[&str] = &[
-    "c", "cc", "cpp", "css", "go", "h", "hpp", "html", "java", "js", "jsx", "json", "md", "mjs", "py", "rs",
-    "sh", "toml", "ts", "tsx", "yaml", "yml",
+    "c", "cc", "cpp", "css", "go", "h", "hpp", "html", "java", "js", "jsx", "json", "md", "mjs",
+    "py", "rs", "sh", "toml", "ts", "tsx", "yaml", "yml",
 ];
 const BENIGN_SOURCE_DOTFILES: &[&str] = &[".nvmrc", ".worktrees"];
 const SENSITIVE_SEARCH_BASENAMES: &[&str] = &[
@@ -101,11 +101,19 @@ pub struct SourcePathDecision {
 
 impl SourcePathDecision {
     fn allow(reason_code: &'static str, path: PathBuf) -> Self {
-        Self { allowed: true, reason_code, resolved_path: Some(path) }
+        Self {
+            allowed: true,
+            reason_code,
+            resolved_path: Some(path),
+        }
     }
 
     fn deny(reason_code: &'static str) -> Self {
-        Self { allowed: false, reason_code, resolved_path: None }
+        Self {
+            allowed: false,
+            reason_code,
+            resolved_path: None,
+        }
     }
 }
 
@@ -125,7 +133,11 @@ pub enum SecureReadError {
     Changed,
 }
 
-pub fn resolve_candidate(target: &str, cwd: Option<&Path>, home: &Path) -> Result<PathBuf, SecureReadError> {
+pub fn resolve_candidate(
+    target: &str,
+    cwd: Option<&Path>,
+    home: &Path,
+) -> Result<PathBuf, SecureReadError> {
     let stripped = target.trim().trim_matches(['\'', '"']);
     if stripped.is_empty() {
         return Err(SecureReadError::UnresolvedPath);
@@ -176,7 +188,12 @@ fn identity(metadata: &Metadata) -> FileIdentity {
     let (dev, ino) = (Some(metadata.dev()), Some(metadata.ino()));
     #[cfg(not(unix))]
     let (dev, ino) = (None, None);
-    FileIdentity { dev, ino, size: metadata.len(), mtime_ns }
+    FileIdentity {
+        dev,
+        ino,
+        size: metadata.len(),
+        mtime_ns,
+    }
 }
 
 fn secure_open(path: &Path) -> io::Result<File> {
@@ -215,7 +232,11 @@ pub fn read_bounded(path: &Path, max_bytes: usize) -> Result<SecureRead, SecureR
     }
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    Ok(SecureRead { bytes, identity: after, sha256: hex::encode(hasher.finalize()) })
+    Ok(SecureRead {
+        bytes,
+        identity: after,
+        sha256: hex::encode(hasher.finalize()),
+    })
 }
 
 fn lowered_parts(path: &Path) -> Vec<String> {
@@ -228,18 +249,38 @@ fn lowered_parts(path: &Path) -> Vec<String> {
 }
 
 fn hidden_parts_allowed(parts: &[String]) -> bool {
-    let hidden: Vec<&str> = parts.iter().map(String::as_str).filter(|part| part.starts_with('.')).collect();
-    if hidden.is_empty() || hidden.iter().all(|part| BENIGN_SOURCE_DOTFILES.contains(part)) {
+    let hidden: Vec<&str> = parts
+        .iter()
+        .map(String::as_str)
+        .filter(|part| part.starts_with('.'))
+        .collect();
+    if hidden.is_empty()
+        || hidden
+            .iter()
+            .all(|part| BENIGN_SOURCE_DOTFILES.contains(part))
+    {
         return true;
     }
-    let workflow_prefix = parts.windows(2).any(|window| window[0] == ".github" && window[1] == "workflows");
+    let workflow_prefix = parts
+        .windows(2)
+        .any(|window| window[0] == ".github" && window[1] == "workflows");
     workflow_prefix && hidden == [".github"]
 }
 
 fn sensitive_external_filename(path: &Path) -> bool {
-    let filename = path.file_name().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
-    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase();
-    if EXTERNAL_SENSITIVE_PARTS.contains(&filename.as_str()) || EXTERNAL_SENSITIVE_PARTS.contains(&stem.as_str()) {
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if EXTERNAL_SENSITIVE_PARTS.contains(&filename.as_str())
+        || EXTERNAL_SENSITIVE_PARTS.contains(&stem.as_str())
+    {
         return true;
     }
     stem.replace(['-', '.'], "_")
@@ -248,13 +289,20 @@ fn sensitive_external_filename(path: &Path) -> bool {
 }
 
 fn source_shape_allowed(path: &Path, parts: &[String]) -> bool {
-    if parts.iter().any(|part| SOURCE_INSPECTION_PARTS.contains(&part.as_str())) {
+    if parts
+        .iter()
+        .any(|part| SOURCE_INSPECTION_PARTS.contains(&part.as_str()))
+    {
         return true;
     }
-    if path.file_name().and_then(|value| value.to_str()).is_some_and(|name| {
-        let lowered = name.to_ascii_lowercase();
-        BENIGN_SOURCE_DOTFILES.contains(&lowered.as_str())
-    }) {
+    if path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| {
+            let lowered = name.to_ascii_lowercase();
+            BENIGN_SOURCE_DOTFILES.contains(&lowered.as_str())
+        })
+    {
         return true;
     }
     path.extension()
@@ -289,13 +337,18 @@ fn immediate_sibling_git_checkout(path: &Path, workspace: &Path) -> bool {
     }
     let marker = checkout.join(".git");
     match fs::symlink_metadata(&marker) {
-        Ok(metadata) => !metadata.file_type().is_symlink() && (metadata.is_file() || metadata.is_dir()),
+        Ok(metadata) => {
+            !metadata.file_type().is_symlink() && (metadata.is_file() || metadata.is_dir())
+        }
         Err(_) => false,
     }
 }
 
 fn known_skill_doc_path(target: &str, home: &Path) -> Option<PathBuf> {
-    if target.chars().any(|character| matches!(character, '$' | '`' | '<' | '>' | '|' | ';' | '&')) {
+    if target
+        .chars()
+        .any(|character| matches!(character, '$' | '`' | '<' | '>' | '|' | ';' | '&'))
+    {
         return None;
     }
     if let Some(skill_name) = target.strip_prefix("skill://") {
@@ -303,15 +356,21 @@ fn known_skill_doc_path(target: &str, home: &Path) -> Option<PathBuf> {
         let candidate = Path::new(skill_name);
         if skill_name.is_empty()
             || candidate.is_absolute()
-            || candidate.components().any(|component| matches!(component, Component::ParentDir))
+            || candidate
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
         {
             return None;
         }
         for root in KNOWN_SKILL_DOC_ROOTS {
             let skill_dir = home.join(root).join(candidate);
             let skill_file = skill_dir.join("SKILL.md");
-            let Ok(real_dir) = fs::canonicalize(&skill_dir) else { continue };
-            let Ok(real_file) = fs::canonicalize(&skill_file) else { continue };
+            let Ok(real_dir) = fs::canonicalize(&skill_dir) else {
+                continue;
+            };
+            let Ok(real_file) = fs::canonicalize(&skill_file) else {
+                continue;
+            };
             if real_file.is_file() && real_file.starts_with(&real_dir) {
                 return Some(real_file);
             }
@@ -332,7 +391,12 @@ fn known_skill_doc_path(target: &str, home: &Path) -> Option<PathBuf> {
     None
 }
 
-pub fn classify_source_path(target: &str, cwd: &Path, home: Option<&Path>, allow_external: bool) -> SourcePathDecision {
+pub fn classify_source_path(
+    target: &str,
+    cwd: &Path,
+    home: Option<&Path>,
+    allow_external: bool,
+) -> SourcePathDecision {
     let stripped = target.trim().trim_matches(['\'', '"']);
     if stripped.is_empty() {
         return SourcePathDecision::deny("empty_path");
@@ -351,7 +415,10 @@ pub fn classify_source_path(target: &str, cwd: &Path, home: Option<&Path>, allow
             }
         }
     }
-    if stripped.chars().any(|character| matches!(character, '*' | '?' | '{' | '}')) {
+    if stripped
+        .chars()
+        .any(|character| matches!(character, '*' | '?' | '{' | '}'))
+    {
         return SourcePathDecision::deny("glob_pattern");
     }
 
@@ -386,7 +453,11 @@ pub fn classify_source_path(target: &str, cwd: &Path, home: Option<&Path>, allow
             return SourcePathDecision::deny("external_target_not_sibling_git_checkout");
         }
         let parts = lowered_parts(&candidate);
-        if parts.iter().any(|part| EXTERNAL_SENSITIVE_PARTS.contains(&part.as_str())) || sensitive_external_filename(&candidate) {
+        if parts
+            .iter()
+            .any(|part| EXTERNAL_SENSITIVE_PARTS.contains(&part.as_str()))
+            || sensitive_external_filename(&candidate)
+        {
             return SourcePathDecision::deny("sensitive_basename");
         }
         if !hidden_parts_allowed(&parts) {
@@ -406,7 +477,10 @@ pub fn classify_source_path(target: &str, cwd: &Path, home: Option<&Path>, allow
     if parts.is_empty() {
         return SourcePathDecision::deny("empty_resolved_path");
     }
-    if parts.iter().any(|part| SENSITIVE_SEARCH_BASENAMES.contains(&part.as_str())) {
+    if parts
+        .iter()
+        .any(|part| SENSITIVE_SEARCH_BASENAMES.contains(&part.as_str()))
+    {
         return SourcePathDecision::deny("sensitive_basename");
     }
     if !hidden_parts_allowed(&parts) {
@@ -415,14 +489,24 @@ pub fn classify_source_path(target: &str, cwd: &Path, home: Option<&Path>, allow
     if !source_shape_allowed(relative, &parts) {
         return SourcePathDecision::deny("not_source_like");
     }
-    let reason = if parts.first().is_some_and(|part| SOURCE_INSPECTION_PARTS.contains(&part.as_str())) {
+    let reason = if parts
+        .first()
+        .is_some_and(|part| SOURCE_INSPECTION_PARTS.contains(&part.as_str()))
+    {
         "source_prefix"
-    } else if parts.iter().any(|part| SOURCE_INSPECTION_PARTS.contains(&part.as_str())) {
+    } else if parts
+        .iter()
+        .any(|part| SOURCE_INSPECTION_PARTS.contains(&part.as_str()))
+    {
         "source_inspection_part"
-    } else if relative.file_name().and_then(|value| value.to_str()).is_some_and(|name| {
-        let lowered = name.to_ascii_lowercase();
-        BENIGN_SOURCE_DOTFILES.contains(&lowered.as_str())
-    }) {
+    } else if relative
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| {
+            let lowered = name.to_ascii_lowercase();
+            BENIGN_SOURCE_DOTFILES.contains(&lowered.as_str())
+        })
+    {
         "benign_source_dotfile"
     } else {
         "source_extension"
@@ -431,8 +515,14 @@ pub fn classify_source_path(target: &str, cwd: &Path, home: Option<&Path>, allow
 }
 
 pub fn sensitive_path_family(path: &Path) -> Option<(&'static str, &'static str)> {
-    let normalized = path.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
-    let parts: Vec<&str> = normalized.split('/').filter(|part| !part.is_empty()).collect();
+    let normalized = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    let parts: Vec<&str> = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
     let basename = parts.last().copied().unwrap_or_default();
     if basename == ".env" || basename.starts_with(".env.") {
         return Some(("local .env file", "critical"));
@@ -450,16 +540,26 @@ pub fn sensitive_path_family(path: &Path) -> Option<(&'static str, &'static str)
     if let Some((_, family, sensitivity)) = direct.iter().find(|(name, _, _)| *name == basename) {
         return Some((*family, *sensitivity));
     }
-    if basename.contains("private-key") || basename.contains("private_key") || basename.contains("wallet-key") || basename.contains("wallet_key") {
+    if basename.contains("private-key")
+        || basename.contains("private_key")
+        || basename.contains("wallet-key")
+        || basename.contains("wallet_key")
+    {
         return Some(("wallet/private-key file", "critical"));
     }
-    if parts.windows(2).any(|window| window == [".aws", "credentials"]) {
+    if parts
+        .windows(2)
+        .any(|window| window == [".aws", "credentials"])
+    {
         return Some(("AWS shared credentials file", "high"));
     }
     if parts.windows(2).any(|window| window == [".aws", "config"]) {
         return Some(("AWS shared config file", "high"));
     }
-    if parts.windows(2).any(|window| window == [".docker", "config.json"]) {
+    if parts
+        .windows(2)
+        .any(|window| window == [".docker", "config.json"])
+    {
         return Some(("Docker client config", "high"));
     }
     if parts.windows(2).any(|window| window == [".kube", "config"]) {
@@ -469,7 +569,10 @@ pub fn sensitive_path_family(path: &Path) -> Option<(&'static str, &'static str)
         return Some(("GnuPG key material", "high"));
     }
     if let Some(index) = parts.iter().position(|part| *part == ".ssh") {
-        if parts.get(index + 1).is_some_and(|name| matches!(*name, "id_rsa" | "id_ed25519" | "id_ecdsa")) {
+        if parts
+            .get(index + 1)
+            .is_some_and(|name| matches!(*name, "id_rsa" | "id_ed25519" | "id_ecdsa"))
+        {
             return Some(("SSH private key", "critical"));
         }
         if parts.get(index + 1).is_some_and(|name| *name == "config") {
@@ -481,7 +584,11 @@ pub fn sensitive_path_family(path: &Path) -> Option<(&'static str, &'static str)
 
 pub fn source_like(path: &Path) -> bool {
     let parts = lowered_parts(path);
-    if parts.iter().any(|part| SENSITIVE_SEARCH_BASENAMES.contains(&part.as_str())) || !hidden_parts_allowed(&parts) {
+    if parts
+        .iter()
+        .any(|part| SENSITIVE_SEARCH_BASENAMES.contains(&part.as_str()))
+        || !hidden_parts_allowed(&parts)
+    {
         return false;
     }
     source_shape_allowed(path, &parts)
@@ -512,8 +619,16 @@ mod tests {
 
     #[test]
     fn sensitive_paths_are_classified() {
-        assert_eq!(sensitive_path_family(Path::new("/home/u/.aws/credentials")).unwrap().0, "AWS shared credentials file");
-        assert_eq!(sensitive_path_family(Path::new(".env.local")).unwrap().1, "critical");
+        assert_eq!(
+            sensitive_path_family(Path::new("/home/u/.aws/credentials"))
+                .unwrap()
+                .0,
+            "AWS shared credentials file"
+        );
+        assert_eq!(
+            sensitive_path_family(Path::new(".env.local")).unwrap().1,
+            "critical"
+        );
     }
 
     #[test]
@@ -532,7 +647,10 @@ mod tests {
             classify_source_path(".secret/config.ts", &workspace, Some(&home), false).reason_code,
             "unsafe_hidden_dir"
         );
-        assert_eq!(classify_source_path(".env", &workspace, Some(&home), false).reason_code, "sensitive_basename");
+        assert_eq!(
+            classify_source_path(".env", &workspace, Some(&home), false).reason_code,
+            "sensitive_basename"
+        );
         assert_eq!(
             classify_source_path("../../outside.rs", &workspace, Some(&home), true).reason_code,
             "external_target_not_readable"
@@ -554,8 +672,21 @@ mod tests {
         fs::create_dir_all(sibling.join(".git")).unwrap();
         fs::write(&sibling_file, "value = 1\n").unwrap();
 
-        assert!(classify_source_path(".github/workflows/publish.yml", &workspace, Some(&home), false).allowed);
-        let external = classify_source_path(sibling_file.to_str().unwrap(), &workspace, Some(&home), true);
+        assert!(
+            classify_source_path(
+                ".github/workflows/publish.yml",
+                &workspace,
+                Some(&home),
+                false
+            )
+            .allowed
+        );
+        let external = classify_source_path(
+            sibling_file.to_str().unwrap(),
+            &workspace,
+            Some(&home),
+            true,
+        );
         assert!(external.allowed);
         assert_eq!(external.reason_code, "external_source_path");
         let _ = fs::remove_dir_all(root);
@@ -575,10 +706,13 @@ mod tests {
         fs::write(&benign, "value = 1\n").unwrap();
 
         assert_eq!(
-            classify_source_path(sensitive.to_str().unwrap(), &workspace, Some(&home), true).reason_code,
+            classify_source_path(sensitive.to_str().unwrap(), &workspace, Some(&home), true)
+                .reason_code,
             "sensitive_basename"
         );
-        assert!(classify_source_path(benign.to_str().unwrap(), &workspace, Some(&home), true).allowed);
+        assert!(
+            classify_source_path(benign.to_str().unwrap(), &workspace, Some(&home), true).allowed
+        );
         let _ = fs::remove_dir_all(root);
     }
 }
