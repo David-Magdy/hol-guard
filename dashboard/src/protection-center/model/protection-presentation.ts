@@ -73,7 +73,7 @@ export function deriveProtectionStatus(effective: EffectiveExtensionControls): P
         summary: "Complete local setup so Guard can protect and verify settings on this device.",
         tone: "attention",
         primaryAction: "finish-setup",
-        primaryActionLabel: "Finish setup",
+        primaryActionLabel: "Show setup steps",
       };
     case "tampered":
     case "recovery-required":
