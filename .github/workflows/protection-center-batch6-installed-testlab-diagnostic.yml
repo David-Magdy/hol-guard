@@ -1,0 +1,101 @@
+name: Protection Center Batch 6 installed Test Lab diagnostic
+on:
+  push:
+    branches: [feat/protection-center-06-cloud-boundary-hardening]
+permissions:
+  contents: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Probe installed Test Lab endpoint
+        id: probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --python 3.12
+          VERSION=$(uv run --no-sync python scripts/sync_repo_version.py --check)
+          uv build --wheel --out-dir dist
+          WHEEL=$(find dist -maxdepth 1 -type f -name 'hol_guard-*.whl' -print)
+          python -m venv "$RUNNER_TEMP/pc6-probe-venv"
+          CANARY_PYTHON="$RUNNER_TEMP/pc6-probe-venv/bin/python"
+          PYTHONPATH= "$CANARY_PYTHON" -m pip install --no-compile --index-url https://pypi.org/simple "$WHEEL" >/dev/null
+
+          GUARD_HOME="$RUNNER_TEMP/pc6-guard-home"
+          WORKSPACE="$RUNNER_TEMP/pc6-workspace"
+          SESSION_FILE="$RUNNER_TEMP/pc6-session"
+          APPROVAL_FILE="$RUNNER_TEMP/pc6-approval"
+          READY_FILE="$RUNNER_TEMP/pc6-ready"
+          SERVER_LOG="$RUNNER_TEMP/pc6-server.log"
+          mkdir -p "$GUARD_HOME" "$WORKSPACE"
+          PYTHONPATH= \
+          HOL_GUARD_INSTALLED_EXPECTED_VERSION="$VERSION" \
+          HOL_GUARD_INSTALLED_HOME="$GUARD_HOME" \
+          HOL_GUARD_INSTALLED_WORKSPACE="$WORKSPACE" \
+          HOL_GUARD_INSTALLED_SESSION_FILE="$SESSION_FILE" \
+          HOL_GUARD_INSTALLED_APPROVAL_FILE="$APPROVAL_FILE" \
+          HOL_GUARD_INSTALLED_READY_FILE="$READY_FILE" \
+            "$CANARY_PYTHON" scripts/ci/installed_extension_control_center_server.py >"$SERVER_LOG" 2>&1 &
+          SERVER_PID=$!
+          cleanup() { kill "$SERVER_PID" >/dev/null 2>&1 || true; wait "$SERVER_PID" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          for _ in $(seq 1 250); do
+            [[ -s "$READY_FILE" && -s "$SESSION_FILE" ]] && break
+            if ! kill -0 "$SERVER_PID" >/dev/null 2>&1; then cat "$SERVER_LOG" >&2; exit 1; fi
+            sleep 0.1
+          done
+          ORIGIN=$(tr -d '\r\n' < "$READY_FILE")
+          SESSION=$(tr -d '\r\n' < "$SESSION_FILE")
+          echo "::add-mask::$SESSION"
+          RESPONSE_FILE="$RUNNER_TEMP/pc6-response.json"
+          STATUS=$(curl --silent --show-error --output "$RESPONSE_FILE" --write-out '%{http_code}' \
+            -H "X-Guard-Dashboard-Session: $SESSION" \
+            -H "Origin: $ORIGIN" \
+            -H 'Content-Type: application/json' \
+            --data '{"extension_id":"command.git","command":"git reset --hard HEAD~1"}' \
+            "$ORIGIN/v1/extension-controls/test")
+          STATUS="$STATUS" RESPONSE_FILE="$RESPONSE_FILE" "$CANARY_PYTHON" - <<'PY'
+          import json, os
+          from pathlib import Path
+          status = int(os.environ['STATUS'])
+          payload = json.loads(Path(os.environ['RESPONSE_FILE']).read_text(encoding='utf-8'))
+          safe = {
+              'status': status,
+              'error': payload.get('error') if isinstance(payload, dict) else None,
+              'schema_version': payload.get('schema_version') if isinstance(payload, dict) else None,
+              'decision': payload.get('decision') if isinstance(payload, dict) else None,
+              'authority_health': payload.get('authority_health') if isinstance(payload, dict) else None,
+              'matches_count': len(payload.get('matches', [])) if isinstance(payload, dict) and isinstance(payload.get('matches'), list) else None,
+              'contains_command_field': isinstance(payload, dict) and 'command' in payload,
+          }
+          print(json.dumps(safe, sort_keys=True))
+          if status != 200:
+              raise SystemExit(f'installed Test Lab returned HTTP {status} ({safe["error"]})')
+          if safe['contains_command_field']:
+              raise SystemExit('installed Test Lab response unexpectedly contains command field')
+          if safe['schema_version'] != 'guard.daemon.extension-control-test.v1':
+              raise SystemExit('installed Test Lab response schema mismatch')
+          PY
+      - name: Remove diagnostic workflow
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/protection-center-batch6-installed-testlab-diagnostic.yml
+          git add .github/workflows/protection-center-batch6-installed-testlab-diagnostic.yml
+          git commit -m "chore(protection-center): remove installed Test Lab diagnostic"
+          git push origin HEAD:feat/protection-center-06-cloud-boundary-hardening
