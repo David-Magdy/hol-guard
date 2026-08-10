@@ -1741,6 +1741,64 @@ function ProtectionHealthCheckPanel(props) {
     ] }) : null
   ] });
 }
+const PROTECTION_TELEMETRY_EVENTS = [
+  "protection_center_viewed",
+  "protection_density_changed",
+  "protection_cloud_value_viewed",
+  "protection_test_lab_checked"
+];
+const PROTECTION_TELEMETRY_EVENT_NAME = "guard:protection-telemetry";
+const ALLOWED_FIELDS = /* @__PURE__ */ new Set([
+  "density",
+  "plan_id",
+  "cloud_state",
+  "result",
+  "category"
+]);
+const ALLOWED_PLAN_IDS = /* @__PURE__ */ new Set(["free", "solo", "pro", "team", "enterprise", "unknown"]);
+const ALLOWED_DENSITIES = /* @__PURE__ */ new Set(["simple", "advanced", "developer"]);
+const ALLOWED_CLOUD_STATES = /* @__PURE__ */ new Set(["local_only", "paired_waiting", "paired_active", "unavailable"]);
+const ALLOWED_RESULTS = /* @__PURE__ */ new Set(["allowed", "ask-first", "blocked", "unavailable"]);
+const ALLOWED_CATEGORIES = new Set(PROTECTION_CATEGORIES.map((category) => category.id));
+function boundedToken(value, max = 48) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized.length > max || !/^[a-z0-9_.-]+$/.test(normalized)) return null;
+  return normalized;
+}
+function sanitizeProtectionTelemetry(fields) {
+  const result = {};
+  for (const [key, raw] of Object.entries(fields)) {
+    if (!ALLOWED_FIELDS.has(key)) continue;
+    const value = boundedToken(raw);
+    if (value === null) continue;
+    if (key === "plan_id" && !ALLOWED_PLAN_IDS.has(value)) continue;
+    if (key === "density" && !ALLOWED_DENSITIES.has(value)) continue;
+    if (key === "cloud_state" && !ALLOWED_CLOUD_STATES.has(value)) continue;
+    if (key === "result" && !ALLOWED_RESULTS.has(value)) continue;
+    if (key === "category" && !ALLOWED_CATEGORIES.has(value)) continue;
+    result[key] = value;
+  }
+  return result;
+}
+function protectionTelemetryEnvelope(event, fields = {}) {
+  if (!PROTECTION_TELEMETRY_EVENTS.includes(event)) throw new Error("unsupported Protection Center telemetry event");
+  return {
+    schema_version: "guard.protection-center.telemetry.v1",
+    event,
+    fields: sanitizeProtectionTelemetry(fields)
+  };
+}
+function emitProtectionTelemetry(event, fields = {}, target2 = typeof window === "undefined" ? null : window) {
+  if (!target2) return false;
+  try {
+    return target2.dispatchEvent(new CustomEvent(PROTECTION_TELEMETRY_EVENT_NAME, {
+      detail: protectionTelemetryEnvelope(event, fields)
+    }));
+  } catch {
+    return false;
+  }
+}
 const PLAN_IDS = /* @__PURE__ */ new Set(["free", "solo", "pro", "team", "enterprise"]);
 function protectionCloudPlan(runtime) {
   const raw = runtime?.cloud_pairing_state?.plan_id?.trim().toLowerCase();
@@ -1795,21 +1853,76 @@ function protectionCloudValue(runtime, loadFailed = false) {
     detail: connectedPlanDetail(plan)
   };
 }
+function safeHttpsDestination(candidate) {
+  if (!candidate) return null;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === "https:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+function protectionCloudDestination(runtime) {
+  const candidate = runtime?.sync_configured ? runtime.cloud_pairing_state?.dashboard_url || runtime.dashboard_url : runtime?.cloud_pairing_state?.connect_url || runtime?.connect_url;
+  return safeHttpsDestination(candidate);
+}
+function benefitForPlan(plan) {
+  switch (plan) {
+    case "solo":
+      return "Keep personal protection history available across your connected devices.";
+    case "pro":
+      return "Keep longer Cloud history and richer evidence workflows available when you need them.";
+    case "team":
+      return "Coordinate organization policy and audit context without moving local enforcement into the Cloud.";
+    case "enterprise":
+      return "Centralize oversight and delegated workflows while every device continues enforcing locally.";
+    default:
+      return "Add continuity and history without changing how this device protects you locally.";
+  }
+}
+function eligiblePlanCopy(plan, eligiblePlan) {
+  if (eligiblePlan) return `Available on ${eligiblePlan[0].toUpperCase()}${eligiblePlan.slice(1)} Cloud.`;
+  if (plan) return `Current Cloud plan: ${plan[0].toUpperCase()}${plan.slice(1)}.`;
+  return "Availability is determined by your connected Guard Cloud plan.";
+}
+function telemetryCloudState(value) {
+  if (value.state === "connected") return "paired_active";
+  if (value.state === "connecting") return "paired_waiting";
+  if (value.state === "offline") return "unavailable";
+  return "local_only";
+}
 function CloudValueGate(props) {
+  const [dismissed, setDismissed] = reactExports.useState(false);
   const value = protectionCloudValue(props.runtime, props.loadFailed);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+  const destination = props.destination === void 0 ? protectionCloudDestination(props.runtime) : safeHttpsDestination(props.destination);
+  reactExports.useEffect(() => {
+    if (props.loading || dismissed) return;
+    emitProtectionTelemetry("protection_cloud_value_viewed", {
+      plan_id: value.plan ?? "unknown",
+      cloud_state: telemetryCloudState(value)
+    });
+  }, [dismissed, props.loading, value.plan, value.state]);
+  if (dismissed) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
     "aside",
     {
       "aria-label": "Cloud continuity",
       "data-local-protection-independent": "true",
+      "data-cloud-value-state": props.loading ? "loading" : value.state,
       className: "rounded-2xl border border-slate-200 bg-white px-4 py-3",
-      children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-slate-900", children: props.loading ? "Checking Cloud continuity…" : value.label }),
-          value.plan ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-600", children: value.plan }) : null
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-start justify-between gap-3", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-slate-900", children: props.loading ? "Checking Cloud continuity…" : value.label }),
+            value.plan ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-600", children: value.plan }) : null
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs leading-5 text-slate-600", children: props.loading ? "Local protection continues while Cloud status is checked." : value.detail }),
+          !props.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs font-medium leading-5 text-slate-700", children: props.benefit ?? benefitForPlan(value.plan) }) : null,
+          !props.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-[11px] leading-5 text-slate-500", children: eligiblePlanCopy(value.plan, props.eligiblePlan) }) : null,
+          destination && !props.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href: destination, target: "_blank", rel: "noreferrer", className: "mt-2 inline-flex min-h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100", children: value.state === "connected" ? "Open Guard Cloud" : "Connect Guard Cloud" }) : null
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs leading-5 text-slate-600", children: props.loading ? "Local protection continues while Cloud status is checked." : value.detail })
-      ]
+        props.dismissible !== false ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => setDismissed(true), "aria-label": "Hide Cloud continuity", className: "min-h-9 rounded-lg px-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-700", children: "Hide" }) : null
+      ] })
     }
   );
 }
