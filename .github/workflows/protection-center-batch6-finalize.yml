@@ -37,13 +37,23 @@ jobs:
           uv run --no-sync pytest -q \
             tests/test_guard_cloud_entitlements.py \
             tests/test_guard_extension_control_test_lab.py
-      - name: Verify dashboard and build packaged assets
+      - name: Install dashboard dependencies
         shell: bash
         run: |
           set -euo pipefail
           cd dashboard
           bun install --frozen-lockfile --ignore-scripts
+      - name: Verify dashboard contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
           bun run test
+      - name: Build packaged dashboard assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
           bun run build
       - name: Commit verified final hardening
         shell: bash
