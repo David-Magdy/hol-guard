@@ -2,14 +2,14 @@ name: Temporary Rust source path Windows root patch
 
 on:
   push:
-    branches: [tmp/rust-source-path-windows-root]
+    branches:
+      - "tmp/rust-source-path-windows-root"
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: ${{ !contains(github.event.head_commit.message, 'fix(guard): handle Windows source path roots') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -75,9 +75,10 @@ jobs:
               false
           }
           '''
-          if old not in text:
+          if old in text:
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          elif 'let should_stat = match component' not in text:
               raise SystemExit('expected contains_symlink_component body not found')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
       - name: Format and verify
         run: |
@@ -85,8 +86,11 @@ jobs:
           rustup default 1.88.0
           rustfmt --edition 2021 rust/crates/guard-secure-fs/src/lib.rs
           git diff --check
-      - name: Commit patch
+      - name: Commit patch when changed
         run: |
+          if git diff --quiet -- rust/crates/guard-secure-fs/src/lib.rs; then
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add rust/crates/guard-secure-fs/src/lib.rs
