@@ -1,0 +1,51 @@
+name: Protection Center Batch 3 proof fix
+on:
+  push:
+    branches:
+      - feat/protection-center-03-module-detail-final
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+      - name: Correct installed proof selectors
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python <<'PY'
+          from pathlib import Path
+          p = Path("dashboard/e2e/installed-extension-control-center.spec.ts")
+          text = p.read_text(encoding="utf-8")
+          old = 'await expect(page.getByText("Destructive Git reset", { exact: true })).toBeVisible();'
+          new = 'await expect(page.getByRole("table").getByText("Destructive Git reset", { exact: true })).toBeVisible();'
+          if text.count(old) != 1:
+              raise SystemExit(f"rule selector marker count={text.count(old)}")
+          text = text.replace(old, new, 1)
+          old = '''  const appliedRow = page.locator(`[data-permission-id="${permissionId}"]`);
+  await expect(appliedRow.getByText("Blocked", { exact: true })).toBeVisible();'''
+          new = '''  const appliedRow = await openPolicy(page);
+  await expect(appliedRow.getByText("Blocked", { exact: true })).toBeVisible();'''
+          if text.count(old) != 1:
+              raise SystemExit("applied-row marker changed")
+          text = text.replace(old, new, 1)
+          old = '''  const restoredRow = page.locator(`[data-permission-id="${permissionId}"]`);
+  await expect(restoredRow.getByText("Inherited", { exact: true })).toBeVisible();'''
+          new = '''  const restoredRow = await openPolicy(page);
+  await expect(restoredRow.getByText("Inherited", { exact: true })).toBeVisible();'''
+          if text.count(old) != 1:
+              raise SystemExit("restored-row marker changed")
+          text = text.replace(old, new, 1)
+          p.write_text(text, encoding="utf-8")
+          PY
+          rm .github/workflows/protection-center-batch3-proof-fix.yml
+          git add dashboard/e2e/installed-extension-control-center.spec.ts .github/workflows/protection-center-batch3-proof-fix.yml
+          git diff --cached --check
+          git commit -m "test(protection-center): verify applied policy after editor refresh"
+          git push origin HEAD:feat/protection-center-03-module-detail-final
