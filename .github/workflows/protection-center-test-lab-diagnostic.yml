@@ -1,0 +1,141 @@
+name: Protection Center Test Lab diagnostic
+
+on:
+  push:
+    branches:
+      - feat/protection-center-06-cloud-boundary-hardening
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+
+      - name: Build exact wheel and isolated interpreter
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --python 3.12
+          VERSION=$(uv run --no-sync python scripts/sync_repo_version.py --check)
+          uv build --wheel --out-dir dist
+          WHEEL=$(find dist -maxdepth 1 -type f -name 'hol_guard-*.whl' -print)
+          test -n "$WHEEL"
+          test "$(printf '%s\n' "$WHEEL" | wc -l)" -eq 1
+          python -m venv "$RUNNER_TEMP/hol-guard-test-lab-venv"
+          CANARY_PYTHON="$RUNNER_TEMP/hol-guard-test-lab-venv/bin/python"
+          PYTHONPATH= "$CANARY_PYTHON" -m pip install --no-compile --index-url https://pypi.org/simple "$WHEEL"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "CANARY_PYTHON=$CANARY_PYTHON" >> "$GITHUB_ENV"
+
+      - name: Install browser dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
+          bun install --frozen-lockfile --ignore-scripts
+          bunx playwright install --with-deps chromium
+
+      - name: Instrument runner-only Test Lab diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("dashboard/e2e/installed-extension-control-center.spec.ts")
+          text = path.read_text(encoding="utf-8")
+          old = '''  await expect(
+            page.getByRole("status").filter({ hasText: /Guard would (allow|ask first|block) this/ }),
+          ).toContainText(expectedLabTitle);
+          await expect(page.getByRole("alert")).toHaveCount(0);
+          '''
+          new = '''  await page.waitForTimeout(250);
+          const diagnosticAlerts = (await page.getByRole("alert").allTextContents())
+            .map((value) => value.replaceAll(labCommand, "[redacted]"));
+          const diagnosticStatuses = (await page.getByRole("status").allTextContents())
+            .map((value) => value.replaceAll(labCommand, "[redacted]"));
+          throw new Error(`TEST_LAB_DIAGNOSTIC decision=${String(labDecision)} expected=${expectedLabTitle} alerts=${JSON.stringify(diagnosticAlerts)} statuses=${JSON.stringify(diagnosticStatuses)}`);
+          '''
+          if text.count(old) != 1:
+              raise SystemExit("expected one Test Lab assertion block")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
+      - name: Run exact installed daemon Test Lab diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          SESSION_FILE="$RUNNER_TEMP/test-lab-dashboard-session"
+          APPROVAL_FILE="$RUNNER_TEMP/test-lab-approval-password"
+          READY_FILE="$RUNNER_TEMP/test-lab-dashboard-ready"
+          GUARD_HOME="$RUNNER_TEMP/test-lab-guard-home"
+          WORKSPACE="$RUNNER_TEMP/test-lab-workspace"
+          SERVER_LOG="$RUNNER_TEMP/test-lab-installed-server.log"
+          mkdir -p "$GUARD_HOME" "$WORKSPACE"
+          SERVER_PID=""
+          cleanup() {
+            if [[ -n "$SERVER_PID" ]]; then
+              kill "$SERVER_PID" >/dev/null 2>&1 || true
+              wait "$SERVER_PID" >/dev/null 2>&1 || true
+            fi
+            rm -f "$SESSION_FILE" "$READY_FILE" "$APPROVAL_FILE"
+          }
+          trap cleanup EXIT
+          PYTHONPATH= \
+          HOL_GUARD_INSTALLED_EXPECTED_VERSION="$VERSION" \
+          HOL_GUARD_INSTALLED_HOME="$GUARD_HOME" \
+          HOL_GUARD_INSTALLED_WORKSPACE="$WORKSPACE" \
+          HOL_GUARD_INSTALLED_SESSION_FILE="$SESSION_FILE" \
+          HOL_GUARD_INSTALLED_APPROVAL_FILE="$APPROVAL_FILE" \
+          HOL_GUARD_INSTALLED_READY_FILE="$READY_FILE" \
+            "$CANARY_PYTHON" scripts/ci/installed_extension_control_center_server.py \
+            >> "$SERVER_LOG" 2>&1 &
+          SERVER_PID=$!
+          for _ in $(seq 1 250); do
+            if [[ -s "$READY_FILE" && -s "$SESSION_FILE" && -s "$APPROVAL_FILE" ]]; then
+              ORIGIN=$(tr -d '\r\n' < "$READY_FILE")
+              if curl --fail --silent --show-error "$ORIGIN/extensions" >/dev/null; then break; fi
+            fi
+            if ! kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+              cat "$SERVER_LOG" >&2
+              exit 1
+            fi
+            sleep 0.1
+          done
+          test -s "$READY_FILE"
+          ORIGIN=$(tr -d '\r\n' < "$READY_FILE")
+          SESSION=$(tr -d '\r\n' < "$SESSION_FILE")
+          APPROVAL_PASSWORD=$(tr -d '\r\n' < "$APPROVAL_FILE")
+          echo "::add-mask::$SESSION"
+          echo "::add-mask::$APPROVAL_PASSWORD"
+          cd dashboard
+          GUARD_INSTALLED_ORIGIN="$ORIGIN" \
+          GUARD_INSTALLED_DASHBOARD_SESSION="$SESSION" \
+          GUARD_INSTALLED_APPROVAL_PASSWORD="$APPROVAL_PASSWORD" \
+          GUARD_INSTALLED_POLICY_PHASE="apply" \
+            bunx playwright test --config playwright.installed.config.ts \
+            e2e/installed-extension-control-center.spec.ts \
+            --grep "installed Protection Center keeps canonical routes and real-daemon inspection"
