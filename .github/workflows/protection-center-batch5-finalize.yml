@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          SOURCE=688a00c9029eeadae6d0b3684e4bb795cb6a093e
+          SOURCE=d22e109703f3e5143e4db390635bd9e6ba96a91e
           for path in \
             src/codex_plugin_scanner/guard/daemon/extension_control_test_api.py \
             tests/test_guard_extension_control_test_lab.py \
