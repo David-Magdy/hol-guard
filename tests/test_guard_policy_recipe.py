@@ -26,7 +26,12 @@ def _recipe() -> dict[str, object]:
         "limitations": ["Path matching is surface-specific and does not replace operating-system access controls."],
         "tests": [
             {"label": "matching synthetic case", "matcherKind": "path", "value": ".env", "expected": "review"},
-            {"label": "different benign synthetic case", "matcherKind": "path", "value": "benign-.env", "expected": "unmatched"},
+            {
+                "label": "different benign synthetic case",
+                "matcherKind": "path",
+                "value": "benign-.env",
+                "expected": "unmatched",
+            },
         ],
         "emergencyEligible": True,
         "reviewedAt": "2026-08-09",
@@ -48,9 +53,10 @@ def test_policy_recipe_rejects_unknown_fields() -> None:
         parse_policy_recipe(raw)
 
 
-def test_policy_recipe_rejects_wildcard_matchers() -> None:
+@pytest.mark.parametrize("matcher_value", ["*", "secret?", "[abc]", "{foo,bar}"])
+def test_policy_recipe_rejects_wildcard_matchers(matcher_value: str) -> None:
     raw = _recipe()
-    raw["matcher"] = {"kind": "path", "value": "*"}
+    raw["matcher"] = {"kind": "path", "value": matcher_value}
     with pytest.raises(ValueError, match="wildcard"):
         parse_policy_recipe(raw)
 

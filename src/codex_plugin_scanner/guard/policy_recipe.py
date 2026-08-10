@@ -9,8 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Mapping, Sequence, cast
+from typing import Literal, cast
 
 SCHEMA_VERSION = "guard-policy-recipe/v1"
 _RECIPE_ID_RE = re.compile(r"^GPR-[0-9]{3}$")
@@ -19,6 +20,7 @@ _ALLOWED_ACTIONS = frozenset({"allow", "block", "review"})
 _ALLOWED_MATCHER_KINDS = frozenset({"path", "package", "command", "mcp", "tool", "domain"})
 _ALLOWED_RISKS = frozenset({"low", "medium", "high", "critical"})
 _ALLOWED_EXPECTED = frozenset({"allow", "block", "review", "unmatched"})
+_GLOB_META_RE = re.compile(r"[*?\[\]{}]")
 
 RecipeAction = Literal["allow", "block", "review"]
 RecipeMatcherKind = Literal["path", "package", "command", "mcp", "tool", "domain"]
@@ -84,9 +86,20 @@ def parse_policy_recipe(value: object) -> PolicyRecipe:
     _strict_keys(
         record,
         {
-            "schemaVersion", "id", "slug", "title", "summary", "action", "matcher",
-            "templateId", "risk", "threatSlugs", "limitations", "tests",
-            "emergencyEligible", "reviewedAt",
+            "schemaVersion",
+            "id",
+            "slug",
+            "title",
+            "summary",
+            "action",
+            "matcher",
+            "templateId",
+            "risk",
+            "threatSlugs",
+            "limitations",
+            "tests",
+            "emergencyEligible",
+            "reviewedAt",
         },
         "recipe",
     )
@@ -111,7 +124,7 @@ def parse_policy_recipe(value: object) -> PolicyRecipe:
         raise ValueError("invalid matcher kind")
     kind = cast(RecipeMatcherKind, kind_value)
     matcher_value = _required_string(matcher_record, "value", maximum=160)
-    if "*" in matcher_value:
+    if _GLOB_META_RE.search(matcher_value):
         raise ValueError("wildcard matchers are not allowed in public policy recipes")
 
     risk_value = record.get("risk")
