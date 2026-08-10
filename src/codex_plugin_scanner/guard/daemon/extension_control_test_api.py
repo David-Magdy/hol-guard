@@ -7,7 +7,7 @@ from typing import cast
 from ..runtime.command_evaluation import evaluate_command
 from ..runtime.command_extensions import CommandSafetyExtensionRegistry
 from ..runtime.extension_control_runtime import ExtensionControlRuntime
-from .extension_control_api import ExtensionControlApiError
+from .extension_control_errors import ExtensionControlApiError
 
 _TEST_SCHEMA = "guard.daemon.extension-control-test.v1"
 _MAX_TEST_COMMAND_CHARS = 4096
