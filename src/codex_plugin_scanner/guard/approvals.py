@@ -717,7 +717,11 @@ def apply_approval_resolution(
         if scope in {"artifact", "workspace", "harness", "global"}:
             scoped_artifact_id = request_artifact_id
     else:
-        artifact_runtime_exact_match_key = _artifact_scope_runtime_exact_match_key(request, scope)
+        artifact_runtime_exact_match_key = _artifact_scope_runtime_exact_match_key(
+            request,
+            scope,
+            include_envelope_command=persist_policy is True,
+        )
         if artifact_runtime_exact_match_key is not None:
             scoped_artifact_hash = artifact_runtime_exact_match_key
         broad_runtime_exact_match_key = _broad_runtime_exact_match_key(request, scope)
@@ -981,7 +985,12 @@ def _workspace_policy_artifact_keys(request: Mapping[str, object], scope: str) -
     return artifact_id, artifact_hash
 
 
-def _artifact_scope_runtime_exact_match_key(request: Mapping[str, object], scope: str) -> str | None:
+def _artifact_scope_runtime_exact_match_key(
+    request: Mapping[str, object],
+    scope: str,
+    *,
+    include_envelope_command: bool = False,
+) -> str | None:
     if scope != "artifact" or request.get("artifact_type") != "tool_action_request":
         return None
     artifact_id = request.get("artifact_id")
@@ -992,7 +1001,7 @@ def _artifact_scope_runtime_exact_match_key(request: Mapping[str, object], scope
         raw_command_text = (
             raw_command_text
             or _string_or_none(envelope.get("raw_command_text"))
-            or _string_or_none(envelope.get("command"))
+            or (_string_or_none(envelope.get("command")) if include_envelope_command else None)
         )
         if not isinstance(wrapper_chain, Sequence) or isinstance(wrapper_chain, str):
             wrapper_chain = envelope.get("wrapper_chain")
