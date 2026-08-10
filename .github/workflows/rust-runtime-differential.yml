@@ -2,7 +2,6 @@ name: Rust runtime differential
 
 on:
   pull_request:
-    branches: [release/3.0]
     paths:
       - "rust/**"
       - "src/codex_plugin_scanner/guard/native_runtime.py"
