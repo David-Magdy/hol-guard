@@ -28,6 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/ci/protection_center_batch6_transform.py
+          python scripts/ci/protection_center_batch6_normalize.py
           git diff --check
       - name: Verify local and Cloud boundaries
         shell: bash
@@ -105,7 +106,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm .github/workflows/protection-center-batch6-finalize.yml
           rm scripts/ci/protection_center_batch6_transform.py
-          git add dashboard docs/guard/protection-center.md src/codex_plugin_scanner/guard/daemon/static .github/workflows/protection-center-batch6-finalize.yml scripts/ci/protection_center_batch6_transform.py
+          rm scripts/ci/protection_center_batch6_normalize.py
+          git add dashboard docs/guard/protection-center.md src/codex_plugin_scanner/guard/daemon/static .github/workflows/protection-center-batch6-finalize.yml scripts/ci/protection_center_batch6_transform.py scripts/ci/protection_center_batch6_normalize.py
           git diff --cached --check
           git commit -m "feat(protection-center): harden Cloud boundary and final UX contracts"
           git push origin HEAD:feat/protection-center-06-cloud-boundary-hardening
