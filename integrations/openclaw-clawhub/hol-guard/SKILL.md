@@ -30,7 +30,11 @@ hol-guard status
 
 Report only what the CLI proves. Installing this skill alone does not mean runtime protection is active.
 
+If the user asked only to check Guard, stop after `hol-guard status`. Do not install or initialize Guard.
+
 ## Install or initialize
+
+Continue with setup only when the user explicitly asked to install, enable, initialize, or repair Guard.
 
 If `hol-guard` is missing, explain that the next command changes the user's Python/pipx environment and obtain explicit approval before running it:
 
