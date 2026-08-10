@@ -16,8 +16,31 @@ async function expectSecretSafeUrl(page: import("@playwright/test").Page) {
 }
 
 async function expectNoHorizontalOverflow(page: import("@playwright/test").Page) {
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(4);
+  const report = await page.evaluate(() => {
+    const root = document.documentElement;
+    const overflow = root.scrollWidth - root.clientWidth;
+    const offenders = [...document.querySelectorAll<HTMLElement>("body *")]
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          tag: element.tagName.toLowerCase(),
+          className: typeof element.className === "string" ? element.className.slice(0, 180) : "",
+          text: (element.innerText || "").replace(/\s+/g, " ").trim().slice(0, 100),
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          width: Math.round(rect.width),
+          display: style.display,
+          position: style.position,
+        };
+      })
+      .filter((item) => item.display !== "none" && (item.right > root.clientWidth + 4 || item.left < -4))
+      .sort((a, b) => Math.max(b.right - root.clientWidth, -b.left) - Math.max(a.right - root.clientWidth, -a.left))
+      .slice(0, 12);
+    return { overflow, clientWidth: root.clientWidth, scrollWidth: root.scrollWidth, offenders };
+  });
+  expect(report, JSON.stringify(report, null, 2)).toMatchObject({ overflow: expect.any(Number) });
+  expect(report.overflow, JSON.stringify(report, null, 2)).toBeLessThanOrEqual(4);
 }
 
 async function selectDensity(page: import("@playwright/test").Page, density: "Simple" | "Advanced" | "Developer") {
