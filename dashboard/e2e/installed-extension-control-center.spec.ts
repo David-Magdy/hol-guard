@@ -34,6 +34,11 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Protection modules" })).toBeVisible();
   await expect(page.getByRole("heading", { name: /^(Protected|Finish setup|Needs repair|Protection limited|Emergency Lockdown active)$/ })).toBeVisible();
+  const setupSteps = page.getByRole("button", { name: "Show setup steps" });
+  if (await setupSteps.count()) {
+    await setupSteps.click();
+    await expect(page.getByText("Finish local enrollment", { exact: true })).toBeVisible();
+  }
   await page.screenshot({ path: testInfo.outputPath("installed-extension-catalog.png"), fullPage: true });
 
   for (const extensionId of ["command.git", "command.github", "command.package.node"]) {
