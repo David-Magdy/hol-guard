@@ -8,7 +8,7 @@ use guard_rules::{
     OUTPUT_TEXT_KEYS, PAYLOAD_OUTPUT_KEYS, REVIEWED_EXCERPT_CHARS,
 };
 use guard_scanner::scan_text;
-use guard_secure_fs::{classify_source_path, read_bounded, sensitive_path_family, SecureReadError};
+use guard_secure_fs::{classify_source_path, read_bounded, sensitive_path_family};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -237,21 +237,27 @@ fn sensitive_reason(family: &str) -> &'static str {
     }
 }
 
+fn inconclusive_source() -> HookReviewResponseV1 {
+    // Python's source fast path retains detailed internal reason codes, but
+    // every non-risky proof failure falls back to the standard PostToolUse
+    // path. With a source-ref-only payload that public contract is a safe
+    // deny/block with `no_output_to_review`. Keep the Rust classifier details
+    // internal so native mode does not change observable reason semantics.
+    HookReviewResponseV1::deny(
+        "no_output_to_review",
+        "HOL Guard could not complete local hook review safely.",
+    )
+}
+
 fn review_source(
     request: &NativeHookRequestV1,
     source: &HookSourceFileRefV1,
 ) -> HookReviewResponseV1 {
     if source.version != 1 {
-        return HookReviewResponseV1::deny(
-            "invalid_source_ref_version",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     }
     if source.output_chars < 0 || source.output_chars > MAX_SCAN_BYTES as i64 {
-        return HookReviewResponseV1::deny(
-            "output_too_large",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     }
     if source.output_sha256.len() != 64
         || !source
@@ -259,16 +265,10 @@ fn review_source(
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit())
     {
-        return HookReviewResponseV1::deny(
-            "invalid_output_hash",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     }
     let Some(target) = envelope_target(&request.payload) else {
-        return HookReviewResponseV1::deny(
-            "unresolved_envelope_target",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     };
     let candidate = source.tool_input_path.as_deref().unwrap_or(&source.path);
     let cwd = request
@@ -284,80 +284,33 @@ fn review_source(
         matches!(request.harness.as_str(), "pi" | "omp") && request.source_ref_external_allowed;
     let candidate_decision = classify_source_path(candidate, cwd, Some(home), allow_external);
     if !candidate_decision.allowed {
-        return HookReviewResponseV1::deny(
-            candidate_decision.reason_code,
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     }
     let target_decision = classify_source_path(&target, cwd, Some(home), allow_external);
     if !target_decision.allowed {
-        return HookReviewResponseV1::deny(
-            "unresolved_envelope_target",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     }
     let Some(path) = candidate_decision.resolved_path else {
-        return HookReviewResponseV1::deny(
-            "unresolved_path",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     };
     let Some(target_path) = target_decision.resolved_path else {
-        return HookReviewResponseV1::deny(
-            "unresolved_envelope_target",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     };
     if path != target_path {
-        return HookReviewResponseV1::deny(
-            "source_ref_target_mismatch",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     }
     let read = match read_bounded(&path, MAX_SCAN_BYTES) {
         Ok(read) => read,
-        Err(SecureReadError::TooLarge) => {
-            return HookReviewResponseV1::deny(
-                "source_file_too_large",
-                "HOL Guard could not complete local hook review safely.",
-            )
-        }
-        Err(SecureReadError::Changed) => {
-            return HookReviewResponseV1::deny(
-                "source_stat_changed",
-                "HOL Guard could not complete local hook review safely.",
-            )
-        }
-        Err(SecureReadError::SymlinkInPath) => {
-            return HookReviewResponseV1::deny(
-                "symlink_in_path",
-                "HOL Guard could not complete local hook review safely.",
-            )
-        }
-        Err(_) => {
-            return HookReviewResponseV1::deny(
-                "read_failed",
-                "HOL Guard could not complete local hook review safely.",
-            )
-        }
+        Err(_) => return inconclusive_source(),
     };
     if read.bytes.contains(&0) {
-        return HookReviewResponseV1::deny(
-            "binary_file",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     }
     let Ok(text) = std::str::from_utf8(&read.bytes) else {
-        return HookReviewResponseV1::deny(
-            "invalid_utf8",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     };
     if !output_equivalent(text, &source.output_sha256, source.output_chars) {
-        return HookReviewResponseV1::deny(
-            "output_mismatch",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     }
     let scan = scan_text(
         text,
@@ -367,10 +320,7 @@ fn review_source(
         deadline(request),
     );
     if scan.budget_exhausted {
-        return HookReviewResponseV1::deny(
-            "scanner_budget_exhausted",
-            "HOL Guard could not complete local hook review safely.",
-        );
+        return inconclusive_source();
     }
     if !scan.matches.is_empty() {
         return HookReviewResponseV1::deny(
