@@ -203,7 +203,9 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
     "ask-first": "Guard would ask first",
     blocked: "Guard would block this",
   }[labDecision as "allowed" | "ask-first" | "blocked"];
-  await expect(page.getByRole("status")).toContainText(expectedLabTitle);
+  await expect(
+    page.getByRole("status").filter({ hasText: /Guard would (allow|ask first|block) this/ }),
+  ).toContainText(expectedLabTitle);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("installed-protection-test-lab.png"), fullPage: true });
   await selectDensity(page, "Developer");
