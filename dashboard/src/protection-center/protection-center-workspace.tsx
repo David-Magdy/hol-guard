@@ -393,7 +393,7 @@ export function ProtectionCenterWorkspace() {
   /> : null;
 
   if (routeState.route.kind === "detail" && selectedExtension) {
-    return <><ProtectionModuleDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} onBack={closeExtension} onChange={() => requestChange({ extension: selectedExtension, enabled: !isExtensionEnabled(state.effective, selectedExtension) })} />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}{recoveryModal}</>;
+    return <><ProtectionModuleDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} onBack={closeExtension} onRefresh={load} />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}{recoveryModal}</>;
   }
 
   if (routeState.route.kind === "detail" || routeState.route.kind === "invalid") {
