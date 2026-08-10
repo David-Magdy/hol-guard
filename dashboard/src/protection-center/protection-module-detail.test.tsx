@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ProtectionModuleDetail } from "./protection-module-detail";
 import {
   FIXED_PROTECTION_MODULE,
+  FIXED_PROTECTION_PERMISSION,
   PROTECTION_AUTHORITY_FIXTURES,
   largeDeveloperModuleFixture,
   protectionModuleFixture,
@@ -17,6 +18,15 @@ const git = protectionModuleFixture({
   ecosystem_ids: ["git"],
   executables: ["git"],
   safer_alternatives: ["Create a checkpoint before rewriting history."],
+  permission_count: 1,
+  permissions: [{
+    ...FIXED_PROTECTION_PERMISSION,
+    permission_id: "command.git.permission.history-rewrite",
+    label: "Repository history changes",
+    description: "Controls destructive repository history changes.",
+    configurable: true,
+    fixed_reason: null,
+  }],
 });
 
 const simple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
