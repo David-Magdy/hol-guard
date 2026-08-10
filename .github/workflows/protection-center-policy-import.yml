@@ -28,13 +28,19 @@ jobs:
         with:
           version: "0.9.26"
           enable-cache: true
-      - name: Import PR 2193 reviewed engine
+      - name: Synchronize current release and import PR 2193 reviewed engine
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin feat/extension-control-center-02-permissions
+
+          # Forward-port the current release first. This preserves post-2193 authority,
+          # daemon, migration, and regression contracts instead of validating the
+          # imported engine against a stale stacked release baseline.
+          git fetch origin release/3.0 feat/extension-control-center-02-permissions
+          git merge --no-edit origin/release/3.0
+
           git show origin/feat/extension-control-center-02-permissions:dashboard/e2e/installed-extension-control-center.spec.ts \
             > dashboard/e2e/installed-extension-policy-editor.spec.ts
 
