@@ -177,3 +177,23 @@ def test_verifier_rejects_missing_cookie_declared_runtime(
 
     with pytest.raises(ValueError, match="Cookie-declared Python runtime target 'Python'.*found 0"):
         module.verify(archive, "TEAM123")
+
+
+def test_verifier_rejects_parent_traversal_cookie_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_verifier()
+    archive = tmp_path / "hol-guard"
+    _fake_archive(
+        archive,
+        declared_runtime="../Python",
+        entries=[
+            ("../Python", b"runtime\0", "n"),
+            ("../runtime", b"\xcf\xfa\xed\xfe-runtime", "b"),
+        ],
+    )
+    monkeypatch.setattr(module, "_team_id", lambda _path: "TEAM123")
+
+    with pytest.raises(ValueError, match="archive-relative"):
+        module.verify(archive, "TEAM123")
