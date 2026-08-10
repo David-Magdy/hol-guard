@@ -184,7 +184,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await expectSecretSafeUrl(page);
   await selectDensity(page, "Developer");
   await page.getByText("Developer details", { exact: true }).click();
-  await expect(page.getByText("Destructive Git reset", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table").getByText("Destructive Git reset", { exact: true })).toBeVisible();
   await expect(page.getByText("command.git.hard-reset", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("installed-extension-rule-detail.png"), fullPage: true });
 
@@ -221,7 +221,7 @@ test("installed dashboard previews and proof-applies a permission block", async 
   expect(effective.controls).toContainEqual({ target: { kind: "permission", target_id: permissionId }, state: "disabled" });
   expect(effective.projection?.permissions.find((permission) => permission.permission_id === permissionId)?.effective_state).toBe("blocked");
   await expectSecretSafeUrl(page);
-  const appliedRow = page.locator(`[data-permission-id="${permissionId}"]`);
+  const appliedRow = await openPolicy(page);
   await expect(appliedRow.getByText("Blocked", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("installed-extension-policy-applied.png"), fullPage: true });
   expect(runtimeErrors).toEqual([]);
@@ -241,7 +241,7 @@ test("permission authority persists across daemon restart and can be proof-resto
   await expect(page.getByRole("dialog", { name: "Review 1 permission change" })).toBeVisible();
   const effective = await authenticateAndApply(page);
   expect(effective.controls.some((control) => control.target.kind === "permission" && control.target.target_id === permissionId)).toBe(false);
-  const restoredRow = page.locator(`[data-permission-id="${permissionId}"]`);
+  const restoredRow = await openPolicy(page);
   await expect(restoredRow.getByText("Inherited", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("installed-extension-policy-restored.png"), fullPage: true });
   await expectSecretSafeUrl(page);
