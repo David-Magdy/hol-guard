@@ -217,6 +217,7 @@ export function buildDecisionPayload(input: {
   action: "allow" | "block";
   scope: DecisionScope;
   reason: string;
+  persistExactAction?: boolean;
 }): {
   requestId: string;
   action: "allow" | "block";
@@ -225,6 +226,7 @@ export function buildDecisionPayload(input: {
   reason: string;
   scope_contract_version?: string;
   scope_contract_digest?: string;
+  persist_policy?: boolean;
 } {
   const contractVersion = input.item.scope_contract_version;
   const contractDigest = input.item.scope_contract_digest;
@@ -250,6 +252,12 @@ export function buildDecisionPayload(input: {
     scope: normalizedScope,
     workspace,
     reason: input.reason,
+    ...(input.action === "allow" &&
+    normalizedScope === "artifact" &&
+    input.persistExactAction === true &&
+    input.item.exact_action_persistence_eligible === true
+      ? { persist_policy: true }
+      : {}),
     ...(hasCompleteBinding
       ? {
           scope_contract_version: contractVersion,

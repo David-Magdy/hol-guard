@@ -182,6 +182,7 @@ export type GuardApprovalRequest = {
   recommended_scope_by_action?: GuardRecommendedScopesByAction;
   scope_restrictions?: string[];
   task_capability_eligibility?: GuardTaskCapabilityEligibility;
+  exact_action_persistence_eligible?: boolean;
   risk_headline?: string;
   risk_summary?: string;
   risk_signals?: string[];
@@ -260,6 +261,7 @@ export type GuardApprovalResolutionInput = {
   approval_gate_use_cooldown?: boolean;
   scope_contract_version?: string;
   scope_contract_digest?: string;
+  persist_policy?: boolean;
   mcp_grant_target?: GuardTemporaryMcpGrantTarget;
   mcp_grant_duration?: GuardTemporaryMcpGrantDuration;
   local_tool_grant_target?: GuardLocalToolGrantTarget;
