@@ -15,7 +15,12 @@ async function expectSecretSafeUrl(page: import("@playwright/test").Page) {
   expect(page.url()).not.toContain("#");
 }
 
-test("installed dashboard drills into canonical extensions using the real daemon", async ({ page }, testInfo) => {
+async function selectDensity(page: import("@playwright/test").Page, density: "Simple" | "Advanced" | "Developer") {
+  await page.getByRole("radio", { name: density }).click();
+  await expect(page.getByRole("radio", { name: density })).toHaveAttribute("aria-checked", "true");
+}
+
+test("installed Protection Center keeps canonical routes and real-daemon inspection", async ({ page }, testInfo) => {
   const extensionResponses: { path: string; status: number }[] = [];
   const runtimeErrors: string[] = [];
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
@@ -31,19 +36,42 @@ test("installed dashboard drills into canonical extensions using the real daemon
 
   await page.goto("/extensions");
   await expectSecretSafeUrl(page);
-  await expect(page.getByRole("heading", { name: "Extensions", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^View .* details$/ }).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Protection modules" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^(Protected|Finish setup|Needs repair|Protection limited|Emergency Lockdown active)$/ })).toBeVisible();
+  const setupSteps = page.getByRole("button", { name: "Show setup steps" });
+  if (await setupSteps.count()) {
+    await setupSteps.click();
+    await expect(page.getByText("Finish local enrollment", { exact: true })).toBeVisible();
+  }
+
+  await selectDensity(page, "Simple");
   await page.screenshot({ path: testInfo.outputPath("installed-extension-catalog.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-simple.png"), fullPage: false });
+  await selectDensity(page, "Advanced");
+  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-advanced.png"), fullPage: false });
+  await selectDensity(page, "Developer");
+  await expect(page.getByText("Developer policy details")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-developer.png"), fullPage: false });
+  await selectDensity(page, "Simple");
+
+  for (const width of [320, 390, 800, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`installed-protection-center-simple-${width}.png`), fullPage: false });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
 
   for (const extensionId of ["command.git", "command.github", "command.package.node"]) {
     await page.goto(`/extensions/${extensionId}`);
     await expectSecretSafeUrl(page);
     await expect(page.getByTestId("extension-control-center-detail")).toBeVisible();
     await expect(page.locator("code", { hasText: extensionId }).first()).toBeVisible();
-    await expect(page.getByText("Catalog digest")).toBeVisible();
     await page.getByRole("tab", { name: "Commands & rules" }).click();
     await expect(page.getByRole("heading", { name: "Permissions" })).toBeVisible();
     await expect(page.getByText(/Showing \d+ permissions and \d+ rules/)).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Test Lab" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Activity" })).toHaveCount(0);
   }
 
   await page.goto("/extensions/command.git?tab=commands&rule=command.git.hard-reset");
@@ -52,17 +80,13 @@ test("installed dashboard drills into canonical extensions using the real daemon
   await expect(ruleDialog).toBeVisible();
   await expect(ruleDialog.getByText("high detector severity")).toBeVisible();
   await expect(ruleDialog.getByText("Governing permission")).toBeVisible();
+  await expect(ruleDialog.getByRole("button", { name: "Test this rule" })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("installed-extension-rule-detail.png"), fullPage: true });
-  await page.getByRole("button", { name: "Test this rule" }).click();
-  await expect(page.getByRole("tab", { name: "Test Lab" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("Side-effect-free command simulation is delivered in Batch 3.")).toBeVisible();
-  await page.goBack();
-  await expect(page.getByRole("dialog", { name: "Destructive Git reset" })).toBeVisible();
   await page.getByRole("button", { name: "Close rule details" }).click();
   await expect(page.getByRole("dialog", { name: "Destructive Git reset" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Extensions" }).click();
-  await expect(page.getByRole("heading", { name: "Extensions", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Protections" }).click();
+  await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
   await page.goBack();
   await expect(page.getByTestId("extension-control-center-detail")).toBeVisible();
 
