@@ -20,7 +20,7 @@ Protection Center uses three presentation densities over the same canonical data
 - **Advanced** — troubleshooting, explicit protection controls, rule/capability explanations, and local policy configuration.
 - **Developer** — canonical IDs, rule metadata, provenance layers, digests, and other implementation details needed for debugging or integration work.
 
-Changing presentation density never changes policy or daemon requests.
+Changing presentation density never changes policy or daemon requests. The installed-browser contract also verifies the settled layout at 320, 390, 720, 800, 1024, and 1440 CSS pixels, including the 720-pixel equivalent of a 1440-pixel display at 200% browser zoom, with no horizontal page overflow.
 
 ## Local and Cloud boundary
 
