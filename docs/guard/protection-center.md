@@ -78,3 +78,5 @@ Missing presentation metadata must not cause local enforcement to fail. The UI f
 Protection Center is a presentation layer over the same extension-control catalog, effective state, preview, proof, apply, and runtime evaluation contracts used elsewhere in Guard. It must not create separate enforcement semantics.
 
 Any CLI or API caller using those contracts should observe the same effective settings and Test Lab decision semantics as the dashboard.
+
+The installed-wheel release gate verifies Protection Center against the packaged dashboard and real local daemon, including signed-session Test Lab evaluation, proof-bound settings apply, daemon restart persistence, settings restore, Cloud-independent local behavior, and browser artifact capture.
