@@ -77,6 +77,7 @@ jobs:
               raise SystemExit("extension-control-center-detail.tsx: overview panel marker changed unexpectedly")
           notice = '      {activeTab !== props.urlState.tab ? <p role="status" className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">This older link points to a section that is not available in this build. Showing Overview instead.</p> : null}\n\n'
           detail = detail.replace(overview_marker, notice + overview_marker, 1)
+          detail = "\n".join(line.rstrip() for line in detail.splitlines()) + "\n"
           detail_path.write_text(detail, encoding="utf-8")
 
           routing_path = Path("dashboard/src/app-routing.test.ts")
