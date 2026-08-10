@@ -8,6 +8,9 @@ export const PROTECTION_TELEMETRY_EVENTS = [
 ] as const;
 
 export type ProtectionTelemetryEvent = (typeof PROTECTION_TELEMETRY_EVENTS)[number];
+export type ProtectionTelemetryTarget = { dispatchEvent(event: Event): boolean };
+
+export const PROTECTION_TELEMETRY_EVENT_NAME = "guard:protection-telemetry";
 
 const ALLOWED_FIELDS = new Set([
   "density",
@@ -61,4 +64,24 @@ export function protectionTelemetryEnvelope(
     event,
     fields: sanitizeProtectionTelemetry(fields),
   };
+}
+
+/**
+ * Emits only the sanitized envelope as an in-app DOM event. There is no
+ * network transport here, and observer failure is ignored so local protection
+ * can never depend on analytics availability.
+ */
+export function emitProtectionTelemetry(
+  event: ProtectionTelemetryEvent,
+  fields: Record<string, unknown> = {},
+  target: ProtectionTelemetryTarget | null = typeof window === "undefined" ? null : window,
+): boolean {
+  if (!target) return false;
+  try {
+    return target.dispatchEvent(new CustomEvent(PROTECTION_TELEMETRY_EVENT_NAME, {
+      detail: protectionTelemetryEnvelope(event, fields),
+    }));
+  } catch {
+    return false;
+  }
 }
