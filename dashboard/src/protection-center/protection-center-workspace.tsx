@@ -415,6 +415,9 @@ export function ProtectionCenterWorkspace() {
       void recover();
     } else if (status.primaryAction === "review-lockdown") {
       requestChange({ globalLockdown: false });
+    } else if (status.primaryAction === "finish-setup") {
+      setDensity("advanced");
+      requestAnimationFrame(() => document.getElementById("advanced-protection-controls")?.scrollIntoView({ block: "nearest" }));
     } else {
       void load();
     }
@@ -434,7 +437,7 @@ export function ProtectionCenterWorkspace() {
     {recoveryError ? <div className="mt-4"><InlineError message={recoveryError} /></div> : null}
     {recoveryStatus ? <p role="status" className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">{recoveryStatus}</p> : null}
 
-    {density !== "simple" ? <section className="mt-6 space-y-3" aria-label="Advanced protection controls">
+    {density !== "simple" ? <section id="advanced-protection-controls" className="mt-6 space-y-3" aria-label="Advanced protection controls">
       <ExtensionStatusBanner busy={recoveryBusy} effective={state.effective} error={recoveryError} status={recoveryStatus} onRecover={() => { void recover(); }} onRetry={load} />
       <button type="button" disabled={locked} onClick={() => requestChange({ globalLockdown: !state.effective.global_lockdown })} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 disabled:opacity-50"><HiMiniLockClosed className="size-4" />{state.effective.global_lockdown ? "Review ending Emergency Lockdown" : "Review Emergency Lockdown"}</button>
     </section> : null}

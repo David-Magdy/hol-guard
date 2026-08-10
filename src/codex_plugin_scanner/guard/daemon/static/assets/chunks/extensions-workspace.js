@@ -1514,7 +1514,7 @@ function deriveProtectionStatus(effective) {
         summary: "Complete local setup so Guard can protect and verify settings on this device.",
         tone: "attention",
         primaryAction: "finish-setup",
-        primaryActionLabel: "Finish setup"
+        primaryActionLabel: "Show setup steps"
       };
     case "tampered":
     case "recovery-required":
@@ -2013,6 +2013,9 @@ function ProtectionCenterWorkspace() {
       void recover();
     } else if (status.primaryAction === "review-lockdown") {
       requestChange({ globalLockdown: false });
+    } else if (status.primaryAction === "finish-setup") {
+      setDensity("advanced");
+      requestAnimationFrame(() => document.getElementById("advanced-protection-controls")?.scrollIntoView({ block: "nearest" }));
     } else {
       void load();
     }
@@ -2030,7 +2033,7 @@ function ProtectionCenterWorkspace() {
     mutationError && !pending ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: mutationError }) }) : null,
     recoveryError ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: recoveryError }) }) : null,
     recoveryStatus ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "status", className: "mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700", children: recoveryStatus }) : null,
-    density !== "simple" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-6 space-y-3", "aria-label": "Advanced protection controls", children: [
+    density !== "simple" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { id: "advanced-protection-controls", className: "mt-6 space-y-3", "aria-label": "Advanced protection controls", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionStatusBanner, { busy: recoveryBusy, effective: state.effective, error: recoveryError, status: recoveryStatus, onRecover: () => {
         void recover();
       }, onRetry: load }),
