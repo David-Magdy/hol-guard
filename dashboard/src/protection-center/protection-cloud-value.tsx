@@ -69,10 +69,7 @@ export function protectionCloudValue(runtime: GuardRuntimeSnapshot | null, loadF
   };
 }
 
-export function protectionCloudDestination(runtime: GuardRuntimeSnapshot | null): string | null {
-  const candidate = runtime?.sync_configured
-    ? runtime.cloud_pairing_state?.dashboard_url || runtime.dashboard_url
-    : runtime?.cloud_pairing_state?.connect_url || runtime?.connect_url;
+function safeHttpsDestination(candidate: string | null | undefined): string | null {
   if (!candidate) return null;
   try {
     const parsed = new URL(candidate);
@@ -80,6 +77,13 @@ export function protectionCloudDestination(runtime: GuardRuntimeSnapshot | null)
   } catch {
     return null;
   }
+}
+
+export function protectionCloudDestination(runtime: GuardRuntimeSnapshot | null): string | null {
+  const candidate = runtime?.sync_configured
+    ? runtime.cloud_pairing_state?.dashboard_url || runtime.dashboard_url
+    : runtime?.cloud_pairing_state?.connect_url || runtime?.connect_url;
+  return safeHttpsDestination(candidate);
 }
 
 function benefitForPlan(plan: ProtectionCloudPlan | null): string {
@@ -120,18 +124,9 @@ export function CloudValueGate(props: {
   if (dismissed) return null;
 
   const value = protectionCloudValue(props.runtime, props.loadFailed);
-  const destination = props.destination === undefined ? protectionCloudDestination(props.runtime) : props.destination;
-  const safeDestination = destination && protectionCloudDestination({
-    ...props.runtime,
-    sync_configured: props.runtime?.sync_configured ?? false,
-    cloud_pairing_state: {
-      ...(props.runtime?.cloud_pairing_state ?? { state: "local_only", label: "", detail: "", sync_configured: false, plan_id: null, dashboard_url: "", inbox_url: "", fleet_url: "", connect_url: "" }),
-      dashboard_url: destination,
-      connect_url: destination,
-    },
-    dashboard_url: destination,
-    connect_url: destination,
-  } as GuardRuntimeSnapshot) ? destination : null;
+  const destination = props.destination === undefined
+    ? protectionCloudDestination(props.runtime)
+    : safeHttpsDestination(props.destination);
 
   return <aside
     aria-label="Cloud continuity"
@@ -148,7 +143,7 @@ export function CloudValueGate(props: {
         <p className="mt-1 text-xs leading-5 text-slate-600">{props.loading ? "Local protection continues while Cloud status is checked." : value.detail}</p>
         {!props.loading ? <p className="mt-2 text-xs font-medium leading-5 text-slate-700">{props.benefit ?? benefitForPlan(value.plan)}</p> : null}
         {!props.loading ? <p className="mt-1 text-[11px] leading-5 text-slate-500">{eligiblePlanCopy(value.plan, props.eligiblePlan)}</p> : null}
-        {safeDestination && !props.loading ? <a href={safeDestination} target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100">{value.state === "connected" ? "Open Guard Cloud" : "Connect Guard Cloud"}</a> : null}
+        {destination && !props.loading ? <a href={destination} target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100">{value.state === "connected" ? "Open Guard Cloud" : "Connect Guard Cloud"}</a> : null}
       </div>
       {props.dismissible !== false ? <button type="button" onClick={() => setDismissed(true)} aria-label="Hide Cloud continuity" className="min-h-9 rounded-lg px-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-700">Hide</button> : null}
     </div>
