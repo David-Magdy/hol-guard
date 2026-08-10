@@ -67,6 +67,9 @@ APPROVAL_GATE_GRANT_TTL_SECONDS = 30
 APPROVAL_GATE_HASH_ITERATIONS = 310_000
 APPROVAL_GATE_TOTP_SKEW_STEPS = 1
 APPROVAL_GATE_TOTP_PENDING_TTL_SECONDS = 600
+APPROVAL_GATE_TOTP_REUSE_TTL_SECONDS = 60
+_APPROVAL_GATE_TOTP_REUSE_SCHEMA = "guard.approval-gate-totp-reuse.v1"
+_APPROVAL_GATE_TOTP_REUSE_DOMAIN = b"hol-guard:approval-gate:totp-reuse:v1"
 
 ApprovalGatePurpose = Literal[
     "approval_decision",
@@ -92,6 +95,7 @@ _INVALIDATED_AUTH_STATE_KEYS = (
     "recovery_code_hashes",
     "recovery_codes",
     "session_nonces",
+    "totp_recent_auth",
     "trusted_device_state",
     "trusted_devices",
 )
@@ -921,6 +925,29 @@ def _verify_or_raise_locked(
     accepted_counter: int | None = None
     factor_set = ("password",)
     if _totp_enabled(state):
+        if session_nonce and _recent_totp_auth_valid(
+            guard_home,
+            state,
+            session_nonce=session_nonce,
+            now_epoch=now_epoch,
+        ):
+            _reset_failed_attempts(state)
+            return _register_grant(
+                guard_home,
+                state=state,
+                purpose=purpose,
+                action=action,
+                scope=scope,
+                subject=subject,
+                session_nonce=session_nonce,
+                factor_set=("totp",),
+                strict=strict,
+                used_cooldown=False,
+                cooldown_expires_at=None,
+                password_verified=False,
+                totp_verified=True,
+                now=now,
+            )
         if gate_input.totp_code is None:
             raise ApprovalGateError("approval_gate_totp_required", "TOTP code is required.")
         accepted_counter = _verify_totp_or_raise(
@@ -932,6 +959,16 @@ def _verify_or_raise_locked(
         factor_set = ("totp",)
         state["totp_last_counter"] = accepted_counter
         state.pop("cooldown_expires_at", None)
+        if session_nonce:
+            _remember_recent_totp_auth(
+                guard_home,
+                state,
+                session_nonce=session_nonce,
+                accepted_counter=accepted_counter,
+                now_epoch=now_epoch,
+            )
+        else:
+            state.pop("totp_recent_auth", None)
     else:
         _verify_password_stage(guard_home, state, password=gate_input.password, now=now)
     _reset_failed_attempts(state)
@@ -1053,6 +1090,98 @@ def _has_pending_totp(state: dict[str, object], now_epoch: float) -> bool:
     pending_secret_id = _optional_string(state.get("totp_pending_secret_id"))
     pending_expires_at = _optional_string(state.get("totp_pending_expires_at"))
     return pending_secret_id is not None and _is_future(pending_expires_at, now_epoch)
+
+
+def _remember_recent_totp_auth(
+    guard_home: Path,
+    state: dict[str, object],
+    *,
+    session_nonce: str,
+    accepted_counter: int,
+    now_epoch: float,
+) -> None:
+    """Persist a signed, non-renewing proof that this local session just satisfied TOTP."""
+
+    secret = _validate_totp_state_or_raise(guard_home, state)
+    payload: dict[str, object] = {
+        "schema": _APPROVAL_GATE_TOTP_REUSE_SCHEMA,
+        "session_digest": hashlib.sha256(session_nonce.encode("utf-8")).hexdigest(),
+        "accepted_counter": accepted_counter,
+        "factor_generation": _factor_generation(state),
+        "issued_at": _iso_from_epoch(now_epoch),
+        "expires_at": _iso_from_epoch(now_epoch + APPROVAL_GATE_TOTP_REUSE_TTL_SECONDS),
+    }
+    state["totp_recent_auth"] = {
+        **payload,
+        "signature": _totp_recent_auth_signature(secret, payload),
+    }
+
+
+def _recent_totp_auth_valid(
+    guard_home: Path,
+    state: dict[str, object],
+    *,
+    session_nonce: str,
+    now_epoch: float,
+) -> bool:
+    """Validate recent TOTP satisfaction without re-accepting the one-time code itself."""
+
+    record = state.get("totp_recent_auth")
+    if not isinstance(record, dict):
+        return False
+    signature = _optional_string(record.get("signature"))
+    schema = _optional_string(record.get("schema"))
+    session_digest = _optional_string(record.get("session_digest"))
+    issued_at = _optional_string(record.get("issued_at"))
+    expires_at = _optional_string(record.get("expires_at"))
+    accepted_counter = _optional_int(record.get("accepted_counter"))
+    factor_generation = _optional_int(record.get("factor_generation"))
+    if (
+        signature is None
+        or schema != _APPROVAL_GATE_TOTP_REUSE_SCHEMA
+        or session_digest is None
+        or issued_at is None
+        or expires_at is None
+        or accepted_counter is None
+        or factor_generation is None
+    ):
+        return False
+    issued_epoch = _epoch(issued_at)
+    expires_epoch = _epoch(expires_at)
+    if issued_epoch <= 0 or issued_epoch > now_epoch + 1:
+        return False
+    if expires_epoch <= now_epoch or expires_epoch - issued_epoch > APPROVAL_GATE_TOTP_REUSE_TTL_SECONDS + 0.001:
+        return False
+    if factor_generation != _factor_generation(state):
+        return False
+    if accepted_counter != _optional_int(state.get("totp_last_counter")):
+        return False
+    expected_session_digest = hashlib.sha256(session_nonce.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(session_digest, expected_session_digest):
+        return False
+    secret = _validate_totp_state_or_raise(guard_home, state)
+    payload: dict[str, object] = {
+        "schema": schema,
+        "session_digest": session_digest,
+        "accepted_counter": accepted_counter,
+        "factor_generation": factor_generation,
+        "issued_at": issued_at,
+        "expires_at": expires_at,
+    }
+    expected_signature = _totp_recent_auth_signature(secret, payload)
+    return hmac.compare_digest(signature, expected_signature)
+
+
+def _totp_recent_auth_signature(secret: str, payload: dict[str, object]) -> str:
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    signing_key = hmac.new(secret.encode("utf-8"), _APPROVAL_GATE_TOTP_REUSE_DOMAIN, hashlib.sha256).digest()
+    return hmac.new(signing_key, canonical, hashlib.sha256).hexdigest()
 
 
 def _verify_password_stage(
