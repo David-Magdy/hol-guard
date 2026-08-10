@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { GuardRuntimeSnapshot } from "../guard-types";
-import { CloudValueGate, protectionCloudPlan, protectionCloudValue } from "./protection-cloud-value";
+import { CloudValueGate, protectionCloudDestination, protectionCloudPlan, protectionCloudValue } from "./protection-cloud-value";
 
 function runtime(overrides: Partial<GuardRuntimeSnapshot> = {}): GuardRuntimeSnapshot {
   return {
@@ -34,10 +34,11 @@ function runtime(overrides: Partial<GuardRuntimeSnapshot> = {}): GuardRuntimeSna
   };
 }
 
-const localOnly = runtime();
+const localOnly = runtime({ connect_url: "https://hol.org/guard/connect" });
 assert.equal(protectionCloudPlan(localOnly), null);
 assert.equal(protectionCloudValue(localOnly).state, "optional");
 assert.match(protectionCloudValue(localOnly).detail, /Local protection is active/);
+assert.equal(protectionCloudDestination(localOnly), "https://hol.org/guard/connect");
 
 const offline = protectionCloudValue(null, true);
 assert.equal(offline.state, "offline");
@@ -46,11 +47,13 @@ assert.match(offline.detail, /Local protection is active independently/);
 const solo = runtime({
   sync_configured: true,
   cloud_state: "paired_active",
-  cloud_pairing_state: { state: "paired_active", label: "Connected", detail: "", sync_configured: true, plan_id: "solo", dashboard_url: "", inbox_url: "", fleet_url: "", connect_url: "" },
+  dashboard_url: "https://hol.org/guard/dashboard",
+  cloud_pairing_state: { state: "paired_active", label: "Connected", detail: "", sync_configured: true, plan_id: "solo", dashboard_url: "https://hol.org/guard/dashboard", inbox_url: "", fleet_url: "", connect_url: "" },
 });
 assert.equal(protectionCloudPlan(solo), "solo");
 assert.match(protectionCloudValue(solo).detail, /cross-device continuity/);
 assert.match(protectionCloudValue(solo).detail, /run locally/);
+assert.equal(protectionCloudDestination(solo), "https://hol.org/guard/dashboard");
 
 const enterprise = runtime({
   sync_configured: true,
@@ -68,9 +71,19 @@ const unknown = runtime({
 assert.equal(protectionCloudPlan(unknown), null);
 assert.doesNotMatch(protectionCloudValue(unknown).detail, /device limit|retention|storage/);
 
-const html = renderToStaticMarkup(createElement(CloudValueGate, { runtime: localOnly }));
+const unsafe = runtime({ connect_url: "javascript:alert(1)" });
+assert.equal(protectionCloudDestination(unsafe), null);
+
+const html = renderToStaticMarkup(createElement(CloudValueGate, { runtime: localOnly, eligiblePlan: "solo" }));
 assert.match(html, /data-local-protection-independent="true"/);
+assert.match(html, /data-cloud-value-state="optional"/);
 assert.match(html, /Cloud continuity is optional/);
+assert.match(html, /Available on Solo Cloud/);
+assert.match(html, /Connect Guard Cloud/);
+assert.match(html, /Hide Cloud continuity/);
 assert.doesNotMatch(html, /upgrade required|local protection disabled/i);
+
+const unsafeHtml = renderToStaticMarkup(createElement(CloudValueGate, { runtime: unsafe, destination: "javascript:alert(1)" }));
+assert.doesNotMatch(unsafeHtml, /javascript:|Connect Guard Cloud/);
 
 console.log("protection-cloud-value.test.tsx: all assertions passed");
