@@ -68,6 +68,10 @@ The overhaul moves these details behind Advanced or Developer disclosure while p
 
 The backend registry, resolver, authority store, managed policy, semantic preview, and proof system remain authoritative. Presentation code may translate facts into user-safe language but must not independently calculate a weaker effective policy.
 
+## Batch 1 review note
+
+Source review caught one pre-merge interaction defect: an unenrolled device initially rendered a `Finish setup` action that only refreshed status. The final Batch 1 behavior labels that action `Show setup steps`, switches to the existing trusted enrollment instructions, and proves the transition in the installed-wheel browser test. Browser enrollment itself remains intentionally terminal-bound because first authority enrollment requires the trusted foreground terminal flow.
+
 ## Batch sequence
 
 1. Foundation and information architecture
