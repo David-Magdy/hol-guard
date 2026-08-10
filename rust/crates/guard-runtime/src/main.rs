@@ -16,6 +16,7 @@ const PACKAGE_VERSION: &str = match option_env!("HOL_GUARD_PACKAGE_VERSION") {
     Some(value) => value,
     None => env!("CARGO_PKG_VERSION"),
 };
+const MAX_RESIDENT_CONCURRENCY: usize = 16;
 
 fn capabilities() -> RuntimeCapabilitiesV1 {
     RuntimeCapabilitiesV1 {
@@ -29,6 +30,7 @@ fn capabilities() -> RuntimeCapabilitiesV1 {
             "post-tool-source-read-v1".into(),
             "oneshot-v1".into(),
             "framed-serve-v1".into(),
+            "bounded-concurrency-v1".into(),
         ],
     }
 }
@@ -69,6 +71,8 @@ fn serve(socket_path: &str) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::thread;
 
     fn handle(mut stream: UnixStream) -> Result<(), String> {
         let mut header = [0u8; 4];
@@ -104,13 +108,31 @@ fn serve(socket_path: &str) -> Result<(), String> {
     let listener = UnixListener::bind(path).map_err(|_| "native_socket_bind_failed".to_owned())?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
         .map_err(|_| "native_socket_permissions_failed".to_owned())?;
+
+    let permits = Arc::new((Mutex::new(MAX_RESIDENT_CONCURRENCY), Condvar::new()));
     for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let _ = handle(stream);
+        let stream = stream.map_err(|_| "native_socket_accept_failed".to_owned())?;
+        let thread_permits = Arc::clone(&permits);
+        {
+            let (lock, available) = &*thread_permits;
+            let mut remaining = lock
+                .lock()
+                .map_err(|_| "native_runtime_concurrency_poisoned".to_owned())?;
+            while *remaining == 0 {
+                remaining = available
+                    .wait(remaining)
+                    .map_err(|_| "native_runtime_concurrency_poisoned".to_owned())?;
             }
-            Err(_) => return Err("native_socket_accept_failed".into()),
+            *remaining -= 1;
         }
+        thread::spawn(move || {
+            let _ = handle(stream);
+            let (lock, available) = &*thread_permits;
+            if let Ok(mut remaining) = lock.lock() {
+                *remaining = (*remaining + 1).min(MAX_RESIDENT_CONCURRENCY);
+                available.notify_one();
+            }
+        });
     }
     Ok(())
 }
