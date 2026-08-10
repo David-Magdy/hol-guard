@@ -52,11 +52,19 @@ const categoryFixtures = [
   ["command.unknown-shell", "system-shell"],
 ] as const;
 for (const [id, category] of categoryFixtures) {
-  assert.equal(protectionCategoryIdForExtension(protectionModuleFixture({ extension_id: id, name: id })), category);
+  assert.equal(protectionCategoryIdForExtension(protectionModuleFixture({
+    extension_id: id,
+    name: id,
+    description: id,
+    ecosystem_ids: [],
+    executables: [],
+    action_classes: [],
+    risk_classes: [],
+  })), category);
 }
 const grouped = groupProtectionModules([
   protectionModuleFixture({ extension_id: "command.git", name: "Git" }),
-  protectionModuleFixture({ extension_id: "command.npm", name: "npm" }),
+  protectionModuleFixture({ extension_id: "command.npm", name: "npm", description: "Package manager", ecosystem_ids: ["npm"], executables: ["npm"], action_classes: ["package.install"], risk_classes: ["supply-chain"] }),
 ]);
 assert.equal(grouped.get("source-control")?.length, 1);
 assert.equal(grouped.get("packages")?.length, 1);
