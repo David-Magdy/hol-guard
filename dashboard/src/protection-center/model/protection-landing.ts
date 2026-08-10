@@ -88,7 +88,7 @@ export function rankProtectionModules(
   return catalog.map((extension) => {
     const used = involvement.get(extension.extension_id);
     const section: ProtectionModuleSection = used ? "in-use" : extension.required || extension.enabled ? "recommended" : "all";
-    const recencyScore = used ? Math.max(0, 10_000_000_000_000 - Math.max(0, Date.now() - Date.parse(used.lastAt))) : 0;
+    const recencyScore = used ? Math.max(0, Date.parse(used.lastAt)) : 0;
     const score = (used ? 1_000_000_000_000_000 : 0)
       + (used?.count ?? 0) * 1_000_000_000
       + (extension.required ? 100_000_000 : 0)

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   HiMiniArrowPath,
   HiMiniCheckCircle,
@@ -68,8 +68,12 @@ export function ProtectionModuleExplorer(props: {
 }) {
   const hasInUse = props.modules.some((module) => module.section === "in-use");
   const [section, setSection] = useState<ProtectionModuleSection>(hasInUse ? "in-use" : "recommended");
+  const sectionTouched = useRef(false);
   const [query, setQuery] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  useEffect(() => {
+    if (hasInUse && !sectionTouched.current && section !== "in-use") setSection("in-use");
+  }, [hasInUse, section]);
   const queried = useMemo(() => filterProtectionModulesByHumanQuery(props.modules, query), [props.modules, query]);
   const visible = queried.filter((module) => section === "all" || module.section === section);
 
@@ -77,7 +81,7 @@ export function ProtectionModuleExplorer(props: {
     <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><h2 id="protection-modules-heading" className="text-xl font-semibold text-slate-950">Protection modules</h2><p className="mt-1 text-sm text-slate-600">Find protections by the thing you use, like Git, packages, secrets, or downloads.</p></div><span className="text-sm text-slate-500">{props.modules.length} available</span></div>
     <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center">
       <label className="relative min-w-0 flex-1"><span className="sr-only">Search protection modules</span><HiMiniMagnifyingGlass className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" aria-hidden="true" /><input type="search" value={query} onChange={(event) => setQuery(event.target.value.slice(0, 160))} placeholder="Search Git, packages, secrets, downloads…" className="min-h-11 w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" /></label>
-      <div role="tablist" aria-label="Protection module groups" className="flex shrink-0 rounded-xl border border-slate-200 bg-white p-1">{(["in-use", "recommended", "all"] as const).map((id) => <button key={id} type="button" role="tab" aria-selected={section === id} disabled={id === "in-use" && !hasInUse} onClick={() => setSection(id)} className={`min-h-9 rounded-lg px-3 text-xs font-semibold disabled:opacity-40 ${section === id ? "bg-blue-50 text-brand-blue" : "text-slate-600 hover:bg-slate-50"}`}>{SECTION_LABELS[id]}</button>)}</div>
+      <div role="tablist" aria-label="Protection module groups" className="flex shrink-0 rounded-xl border border-slate-200 bg-white p-1">{(["in-use", "recommended", "all"] as const).map((id) => <button key={id} type="button" role="tab" aria-selected={section === id} disabled={id === "in-use" && !hasInUse} onClick={() => { sectionTouched.current = true; setSection(id); }} className={`min-h-9 rounded-lg px-3 text-xs font-semibold disabled:opacity-40 ${section === id ? "bg-blue-50 text-brand-blue" : "text-slate-600 hover:bg-slate-50"}`}>{SECTION_LABELS[id]}</button>)}</div>
     </div>
     {props.advancedFilters ? <div className="mt-3"><button type="button" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((value) => !value)} className="inline-flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100">Advanced filters <HiMiniChevronDown className={`size-4 transition motion-reduce:transition-none ${advancedOpen ? "rotate-180" : ""}`} aria-hidden="true" /></button>{advancedOpen ? <div className="mt-2">{props.advancedFilters}</div> : null}</div> : null}
     {visible.length ? <div className="mt-4 space-y-2">{visible.map((module) => <ProtectionModuleRow key={module.extension.extension_id} name={module.extension.name} description={module.extension.description} behavior={isExtensionEnabled(props.effective, module.extension) ? "Guard defaults active" : "Blocked on this device"} required={module.extension.required} managed={managedByOrganization(props.effective, module.extension.extension_id)} onOpen={() => props.onOpen(module.extension)} />)}</div> : <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center"><p className="text-sm font-semibold text-slate-900">No protection modules match this view.</p><p className="mt-1 text-sm text-slate-500">Try All modules or a simpler search.</p></div>}

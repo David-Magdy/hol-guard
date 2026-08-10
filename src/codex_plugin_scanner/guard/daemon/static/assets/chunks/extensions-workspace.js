@@ -1729,7 +1729,7 @@ function rankProtectionModules(catalog, activity) {
   return catalog.map((extension2) => {
     const used = involvement.get(extension2.extension_id);
     const section = used ? "in-use" : extension2.required || extension2.enabled ? "recommended" : "all";
-    const recencyScore = used ? Math.max(0, 1e13 - Math.max(0, Date.now() - Date.parse(used.lastAt))) : 0;
+    const recencyScore = used ? Math.max(0, Date.parse(used.lastAt)) : 0;
     const score = (used ? 1e15 : 0) + (used?.count ?? 0) * 1e9 + (extension2.required ? 1e8 : 0) + (extension2.enabled ? 1e7 : 0) + recencyScore;
     return {
       extension: extension2,
@@ -1869,8 +1869,12 @@ const SECTION_LABELS = {
 function ProtectionModuleExplorer(props) {
   const hasInUse = props.modules.some((module) => module.section === "in-use");
   const [section, setSection] = reactExports.useState(hasInUse ? "in-use" : "recommended");
+  const sectionTouched = reactExports.useRef(false);
   const [query, setQuery] = reactExports.useState("");
   const [advancedOpen, setAdvancedOpen] = reactExports.useState(false);
+  reactExports.useEffect(() => {
+    if (hasInUse && !sectionTouched.current && section !== "in-use") setSection("in-use");
+  }, [hasInUse, section]);
   const queried = reactExports.useMemo(() => filterProtectionModulesByHumanQuery(props.modules, query), [props.modules, query]);
   const visible = queried.filter((module) => section === "all" || module.section === section);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-modules-heading", className: "mt-8", children: [
@@ -1890,7 +1894,10 @@ function ProtectionModuleExplorer(props) {
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniMagnifyingGlass, { className: "pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400", "aria-hidden": "true" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("input", { type: "search", value: query, onChange: (event) => setQuery(event.target.value.slice(0, 160)), placeholder: "Search Git, packages, secrets, downloads…", className: "min-h-11 w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { role: "tablist", "aria-label": "Protection module groups", className: "flex shrink-0 rounded-xl border border-slate-200 bg-white p-1", children: ["in-use", "recommended", "all"].map((id2) => /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", role: "tab", "aria-selected": section === id2, disabled: id2 === "in-use" && !hasInUse, onClick: () => setSection(id2), className: `min-h-9 rounded-lg px-3 text-xs font-semibold disabled:opacity-40 ${section === id2 ? "bg-blue-50 text-brand-blue" : "text-slate-600 hover:bg-slate-50"}`, children: SECTION_LABELS[id2] }, id2)) })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { role: "tablist", "aria-label": "Protection module groups", className: "flex shrink-0 rounded-xl border border-slate-200 bg-white p-1", children: ["in-use", "recommended", "all"].map((id2) => /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", role: "tab", "aria-selected": section === id2, disabled: id2 === "in-use" && !hasInUse, onClick: () => {
+        sectionTouched.current = true;
+        setSection(id2);
+      }, className: `min-h-9 rounded-lg px-3 text-xs font-semibold disabled:opacity-40 ${section === id2 ? "bg-blue-50 text-brand-blue" : "text-slate-600 hover:bg-slate-50"}`, children: SECTION_LABELS[id2] }, id2)) })
     ] }),
     props.advancedFilters ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", "aria-expanded": advancedOpen, onClick: () => setAdvancedOpen((value) => !value), className: "inline-flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100", children: [
@@ -2019,7 +2026,13 @@ function ProtectionLandingExperience(props) {
         fetchEffectiveExtensionControls(),
         fetchRuntimeSnapshot({ includeItems: false, includeReceipts: false })
       ]);
-      setHealthResult(evaluateProtectionHealth(catalog.catalog_digest, effective, runtime));
+      const result = evaluateProtectionHealth(catalog.catalog_digest, effective, runtime);
+      if (catalog.catalog_digest !== props.catalogDigest) {
+        result.status = "needs-attention";
+        result.summary = "Protection data changed since this page loaded. Refresh Protection Center before making changes.";
+        result.checks.push({ id: "view-freshness", label: "This page matches the latest protection catalog", passed: false });
+      }
+      setHealthResult(result);
     } catch (error) {
       setHealthResult(null);
       setHealthError(error instanceof Error ? error.message : "Guard could not complete the local protection health check.");
@@ -2237,6 +2250,7 @@ function ProtectionCenterWorkspace() {
   const [filters, setFilters] = reactExports.useState(EMPTY_EXTENSION_FILTERS);
   const [density, setDensity] = useProtectionDensity();
   const [provenanceOpen, setProvenanceOpen] = reactExports.useState(false);
+  const [troubleshootingOpen, setTroubleshootingOpen] = reactExports.useState(false);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = reactExports.useRef(null);
   const load = reactExports.useCallback(async () => {
@@ -2413,6 +2427,7 @@ function ProtectionCenterWorkspace() {
       requestChange({ globalLockdown: false });
     } else if (status.primaryAction === "finish-setup") {
       setDensity("advanced");
+      setTroubleshootingOpen(true);
       requestAnimationFrame(() => document.getElementById("advanced-protection-controls")?.scrollIntoView({ block: "nearest" }));
     } else {
       void load();
@@ -2444,9 +2459,12 @@ function ProtectionCenterWorkspace() {
       }
     ) : null,
     density !== "simple" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { id: "advanced-protection-controls", className: "mt-6 space-y-3", "aria-label": "Advanced protection controls", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionStatusBanner, { busy: recoveryBusy, effective: state.effective, error: recoveryError, status: recoveryStatus, onRecover: () => {
-        void recover();
-      }, onRetry: load }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { open: troubleshootingOpen, onToggle: (event) => setTroubleshootingOpen(event.currentTarget.open), className: "rounded-2xl border border-slate-200 bg-white p-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-sm font-semibold text-slate-800", children: "Troubleshooting" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionStatusBanner, { busy: recoveryBusy, effective: state.effective, error: recoveryError, status: recoveryStatus, onRecover: () => {
+          void recover();
+        }, onRetry: load }) })
+      ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", disabled: locked, onClick: () => requestChange({ globalLockdown: !state.effective.global_lockdown }), className: "inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 disabled:opacity-50", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniLockClosed, { className: "size-4" }),
         state.effective.global_lockdown ? "Review ending Emergency Lockdown" : "Review Emergency Lockdown"

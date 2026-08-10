@@ -251,6 +251,7 @@ export function ProtectionCenterWorkspace() {
   const [filters, setFilters] = useState<ExtensionFilterState>(EMPTY_EXTENSION_FILTERS);
   const [density, setDensity] = useProtectionDensity();
   const [provenanceOpen, setProvenanceOpen] = useState(false);
+  const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = useRef<string | null>(null);
 
@@ -418,6 +419,7 @@ export function ProtectionCenterWorkspace() {
       requestChange({ globalLockdown: false });
     } else if (status.primaryAction === "finish-setup") {
       setDensity("advanced");
+      setTroubleshootingOpen(true);
       requestAnimationFrame(() => document.getElementById("advanced-protection-controls")?.scrollIntoView({ block: "nearest" }));
     } else {
       void load();
@@ -449,7 +451,10 @@ export function ProtectionCenterWorkspace() {
     /> : null}
 
     {density !== "simple" ? <section id="advanced-protection-controls" className="mt-6 space-y-3" aria-label="Advanced protection controls">
-      <ExtensionStatusBanner busy={recoveryBusy} effective={state.effective} error={recoveryError} status={recoveryStatus} onRecover={() => { void recover(); }} onRetry={load} />
+      <details open={troubleshootingOpen} onToggle={(event) => setTroubleshootingOpen(event.currentTarget.open)} className="rounded-2xl border border-slate-200 bg-white p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-800">Troubleshooting</summary>
+        <div className="mt-3"><ExtensionStatusBanner busy={recoveryBusy} effective={state.effective} error={recoveryError} status={recoveryStatus} onRecover={() => { void recover(); }} onRetry={load} /></div>
+      </details>
       <button type="button" disabled={locked} onClick={() => requestChange({ globalLockdown: !state.effective.global_lockdown })} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 disabled:opacity-50"><HiMiniLockClosed className="size-4" />{state.effective.global_lockdown ? "Review ending Emergency Lockdown" : "Review Emergency Lockdown"}</button>
     </section> : null}
 

@@ -54,7 +54,13 @@ export function ProtectionLandingExperience(props: {
         fetchEffectiveExtensionControls(),
         fetchRuntimeSnapshot({ includeItems: false, includeReceipts: false }),
       ]);
-      setHealthResult(evaluateProtectionHealth(catalog.catalog_digest, effective, runtime));
+      const result = evaluateProtectionHealth(catalog.catalog_digest, effective, runtime);
+      if (catalog.catalog_digest !== props.catalogDigest) {
+        result.status = "needs-attention";
+        result.summary = "Protection data changed since this page loaded. Refresh Protection Center before making changes.";
+        result.checks.push({ id: "view-freshness", label: "This page matches the latest protection catalog", passed: false });
+      }
+      setHealthResult(result);
     } catch (error) {
       setHealthResult(null);
       setHealthError(error instanceof Error ? error.message : "Guard could not complete the local protection health check.");
