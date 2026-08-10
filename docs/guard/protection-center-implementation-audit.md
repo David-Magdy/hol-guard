@@ -8,7 +8,8 @@ This document records the implementation baseline for the Protection Center UX o
 
 - Repository: `hashgraph-online/hol-guard`
 - Target branch: `release/3.0`
-- Batch 1 base: `4cc09ee78a8b1cc9c0d604854aca2b737af93b3a`
+- Batch 1 original base: `4cc09ee78a8b1cc9c0d604854aca2b737af93b3a`
+- Batch 1 synchronized release base before merge validation: `cbd62f1a4d2863c169cf11fead1d66e30dc49220`
 - Existing Extension Control Center detail implementation: PR #2172, merged into `release/3.0`
 - Existing granular policy implementation: PR #2193
 - PR #2193 audited head: `d1435839a6490d0b3a2af56baeb9f233387198bf`
@@ -71,6 +72,8 @@ The backend registry, resolver, authority store, managed policy, semantic previe
 ## Batch 1 review note
 
 Source review caught one pre-merge interaction defect: an unenrolled device initially rendered a `Finish setup` action that only refreshed status. The final Batch 1 behavior labels that action `Show setup steps`, switches to the existing trusted enrollment instructions, and proves the transition in the installed-wheel browser test. Browser enrollment itself remains intentionally terminal-bound because first authority enrollment requires the trusted foreground terminal flow.
+
+Before merge, `release/3.0` advanced through PR #2198 with the frozen-daemon launch repair. Batch 1 was merged with that release head on its feature branch and reran the dashboard contracts before the final repository gates. This avoids merging UX work on stale release evidence.
 
 ## Batch sequence
 
