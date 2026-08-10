@@ -25,6 +25,8 @@ _RECOVERY_ACTIONS = {
 
 @dataclass(frozen=True, slots=True)
 class ExtensionControlApiError(Exception):
+    """Stable error envelope shared by inspection, Test Lab, and mutation APIs."""
+
     status: int
     code: str
 
