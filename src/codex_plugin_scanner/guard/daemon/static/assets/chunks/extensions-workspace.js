@@ -1,4 +1,4 @@
-import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, w as HiMiniXMark, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as HiMiniInformationCircle, ap as HiMiniArrowPath, B as HiMiniCloud, aq as commandReasonLabel, ar as DEFAULT_COMMAND_ACTIVITY_FILTERS, a4 as fetchRuntimeSnapshot, d as createCommandActivityClient, f as fetchCommandActivityApi, Z as HiMiniLockClosed, N as HiMiniWrenchScrewdriver, as as HiMiniBeaker, at as HiMiniArrowLeft, au as HiMiniArrowTopRightOnSquare, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp, av as buildApprovalProofCredentials, aw as isApprovalProofSubmitDisabled, ax as ApprovalProofFieldInputs } from "../guard-dashboard.js";
+import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, w as HiMiniXMark, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as HiMiniInformationCircle, ap as commandReasonLabel, aq as HiMiniArrowPath, ar as DEFAULT_COMMAND_ACTIVITY_FILTERS, a4 as fetchRuntimeSnapshot, d as createCommandActivityClient, f as fetchCommandActivityApi, Z as HiMiniLockClosed, N as HiMiniWrenchScrewdriver, as as HiMiniBeaker, at as HiMiniArrowLeft, au as HiMiniArrowTopRightOnSquare, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp, av as buildApprovalProofCredentials, aw as isApprovalProofSubmitDisabled, ax as ApprovalProofFieldInputs } from "../guard-dashboard.js";
 import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./use-resolved-approval-gate.js";
 const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -1498,6 +1498,13 @@ function protectionCategoryForExtension(extension2) {
   const id2 = protectionCategoryIdForExtension(extension2);
   return CATEGORY_BY_ID.get(id2) ?? PROTECTION_CATEGORIES[8];
 }
+const PROTECTION_CENTER_PERFORMANCE_BUDGETS = Object.freeze({
+  simpleRuleRenderCap: 500,
+  recentDecisionCap: 20,
+  humanSearchCharacterCap: 160,
+  humanSearchTermCap: 8,
+  developerRelationshipCap: 1024
+});
 function protectionDecisionForAction(action) {
   if (action === "block") return "blocked";
   if (action === "allow") return "allowed";
@@ -1505,7 +1512,7 @@ function protectionDecisionForAction(action) {
 }
 function recentProtectionDecisions(activity, catalog, limit = 5) {
   const names = new Map(catalog.map((extension2) => [extension2.extension_id, extension2.name]));
-  return [...activity].filter((item) => item.policy_action !== null).sort((left, right) => Date.parse(right.occurred_at) - Date.parse(left.occurred_at)).slice(0, Math.max(0, Math.min(limit, 20))).map((item) => {
+  return [...activity].filter((item) => item.policy_action !== null).sort((left, right) => Date.parse(right.occurred_at) - Date.parse(left.occurred_at)).slice(0, Math.max(0, Math.min(limit, PROTECTION_CENTER_PERFORMANCE_BUDGETS.recentDecisionCap))).map((item) => {
     const extensionIds = [...new Set(item.matches.map((match) => match.extension_id))].slice(0, 8);
     return {
       activityId: item.activity_id,
@@ -1559,41 +1566,13 @@ function safeSearchText(extension2) {
   ].join(" ").toLowerCase();
 }
 function filterProtectionModulesByHumanQuery(modules, query) {
-  const normalized = query.trim().toLowerCase().slice(0, 160);
+  const normalized = query.trim().toLowerCase().slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchCharacterCap);
   if (!normalized) return [...modules];
-  const terms = normalized.split(/\s+/).filter(Boolean).slice(0, 8);
+  const terms = normalized.split(/\s+/).filter(Boolean).slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchTermCap);
   return modules.filter(({ extension: extension2 }) => {
     const text2 = safeSearchText(extension2);
     return terms.every((term) => text2.includes(term));
   });
-}
-function protectionCloudContinuity(runtime, loadFailed = false) {
-  if (loadFailed) {
-    return {
-      state: "unavailable",
-      label: "Cloud continuity unavailable",
-      detail: "Local protection continues on this device. Cloud status could not be refreshed."
-    };
-  }
-  if (!runtime || !runtime.sync_configured || runtime.cloud_state === "local_only") {
-    return {
-      state: "not-connected",
-      label: "Cloud continuity not connected",
-      detail: "Local protection continues. Connect Cloud only if you want cross-device continuity and Cloud history."
-    };
-  }
-  if (runtime.cloud_state === "paired_waiting") {
-    return {
-      state: "waiting",
-      label: "Cloud continuity connecting",
-      detail: "Local protection continues while Cloud finishes pairing or synchronization."
-    };
-  }
-  return {
-    state: "connected",
-    label: "Cloud continuity connected",
-    detail: runtime.cloud_state_detail || "Cloud continuity is connected for this device."
-  };
 }
 function protectionCategorySummary(catalog, effective) {
   const groups = /* @__PURE__ */ new Map();
@@ -1631,15 +1610,6 @@ function managedByOrganization(effective, extensionId) {
   return effective.layers.some(
     (layer) => layer.kind === "signed-cloud" && layer.controls.some((control) => control.target_kind === "extension" && control.target_id === extensionId)
   );
-}
-function CloudContinuityIndicator(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { "aria-label": "Cloud continuity", className: "flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grid size-9 shrink-0 place-items-center rounded-xl bg-slate-50 text-slate-600", "aria-hidden": "true", children: props.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "size-5 animate-spin motion-reduce:animate-none" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { className: "size-5" }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-sm font-semibold text-slate-900", children: props.loading ? "Checking Cloud continuity…" : props.continuity.label }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs leading-5 text-slate-600", children: props.continuity.detail })
-    ] })
-  ] });
 }
 function ProtectionCategoryGrid(props) {
   const categories = reactExports.useMemo(() => protectionCategorySummary(props.catalog, props.effective), [props.catalog, props.effective]);
@@ -1771,6 +1741,78 @@ function ProtectionHealthCheckPanel(props) {
     ] }) : null
   ] });
 }
+const PLAN_IDS = /* @__PURE__ */ new Set(["free", "solo", "pro", "team", "enterprise"]);
+function protectionCloudPlan(runtime) {
+  const raw = runtime?.cloud_pairing_state?.plan_id?.trim().toLowerCase();
+  return raw && PLAN_IDS.has(raw) ? raw : null;
+}
+function connectedPlanDetail(plan) {
+  switch (plan) {
+    case "solo":
+      return "Solo adds personal cross-device continuity and Cloud history. Protection and blocking still run locally on this device.";
+    case "pro":
+      return "Pro adds extended Cloud history plus richer evidence and export workflows. Protection and blocking still run locally on this device.";
+    case "team":
+      return "Team adds organization coordination, policy continuity, and centralized audit. This device keeps enforcing locally if Cloud is unavailable.";
+    case "enterprise":
+      return "Enterprise adds organization policy, centralized oversight, and delegated workflows. This device keeps enforcing locally if Cloud is unavailable.";
+    case "free":
+      return "Cloud is connected for account continuity. Plan choices affect Cloud features only; protection and blocking still run locally on this device.";
+    default:
+      return "Cloud continuity is connected. Protection and blocking still run locally on this device.";
+  }
+}
+function protectionCloudValue(runtime, loadFailed = false) {
+  if (loadFailed) {
+    return {
+      state: "offline",
+      plan: null,
+      label: "Cloud status unavailable",
+      detail: "Local protection is active independently. Cloud status could not be refreshed."
+    };
+  }
+  if (!runtime || !runtime.sync_configured || runtime.cloud_state === "local_only") {
+    return {
+      state: "optional",
+      plan: protectionCloudPlan(runtime),
+      label: "Cloud continuity is optional",
+      detail: "Local protection is active on this device. Connect Guard Cloud only if you want continuity, history, or organization coordination."
+    };
+  }
+  if (runtime.cloud_state === "paired_waiting") {
+    return {
+      state: "connecting",
+      plan: protectionCloudPlan(runtime),
+      label: "Cloud continuity is connecting",
+      detail: "Local protection remains active while Cloud pairing or synchronization finishes."
+    };
+  }
+  const plan = protectionCloudPlan(runtime);
+  return {
+    state: "connected",
+    plan,
+    label: plan ? `${plan[0].toUpperCase()}${plan.slice(1)} Cloud continuity` : "Cloud continuity connected",
+    detail: connectedPlanDetail(plan)
+  };
+}
+function CloudValueGate(props) {
+  const value = protectionCloudValue(props.runtime, props.loadFailed);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "aside",
+    {
+      "aria-label": "Cloud continuity",
+      "data-local-protection-independent": "true",
+      className: "rounded-2xl border border-slate-200 bg-white px-4 py-3",
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-slate-900", children: props.loading ? "Checking Cloud continuity…" : value.label }),
+          value.plan ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-600", children: value.plan }) : null
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs leading-5 text-slate-600", children: props.loading ? "Local protection continues while Cloud status is checked." : value.detail })
+      ]
+    }
+  );
+}
 const client$1 = createCommandActivityClient(fetchCommandActivityApi);
 const INITIAL_STATE = {
   activity: [],
@@ -1818,10 +1860,6 @@ function ProtectionLandingExperience(props) {
   const [healthError, setHealthError] = reactExports.useState(null);
   const modules = reactExports.useMemo(() => rankProtectionModules(props.catalog, landing.activity), [landing.activity, props.catalog]);
   const decisions = reactExports.useMemo(() => recentProtectionDecisions(landing.activity, props.catalog, 5), [landing.activity, props.catalog]);
-  const continuity = reactExports.useMemo(
-    () => protectionCloudContinuity(landing.runtime, landing.runtimeError),
-    [landing.runtime, landing.runtimeError]
-  );
   async function runHealthCheck() {
     setHealthBusy(true);
     setHealthError(null);
@@ -1846,7 +1884,7 @@ function ProtectionLandingExperience(props) {
     }
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloudContinuityIndicator, { continuity, loading: landing.runtimeLoading }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloudValueGate, { runtime: landing.runtime, loading: landing.runtimeLoading, loadFailed: landing.runtimeError }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionCategoryGrid, { catalog: props.catalog, effective: props.effective }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       ProtectionModuleExplorer,

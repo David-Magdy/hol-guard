@@ -124,6 +124,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await expect(page.getByRole("heading", { name: "Recent decisions" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Protection health check" })).toBeVisible();
   await expect(page.getByLabel("Cloud continuity")).toBeVisible();
+  await expect(page.getByLabel("Cloud continuity")).toContainText("Local protection is active");
   await expect(page.getByRole("heading", { name: /^(Protected|Finish setup|Needs repair|Protection limited|Emergency Lockdown active)$/ })).toBeVisible();
 
   const healthCheck = page.getByRole("button", { name: "Run health check" });
@@ -182,6 +183,19 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
 
   await page.goto("/extensions/command.git");
   await expectSecretSafeUrl(page);
+  await expect(page.getByRole("heading", { name: "Test Lab", exact: true })).toBeVisible();
+  const labCommand = "git reset --hard HEAD~1";
+  await page.getByLabel("Command to check").fill(labCommand);
+  const labResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/v1/extension-controls/test" && response.status() === 200;
+  });
+  await page.getByRole("button", { name: "Check safely" }).click();
+  const labResponse = await labResponsePromise;
+  const labPayload = await labResponse.json();
+  expect(JSON.stringify(labPayload)).not.toContain(labCommand);
+  await expect(page.getByRole("status").filter({ hasText: /Guard would (allow|ask first|block) this/ })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("installed-protection-test-lab.png"), fullPage: true });
   await selectDensity(page, "Developer");
   await page.getByText("Developer details", { exact: true }).click();
   await expect(page.getByRole("table").getByText("Destructive Git reset", { exact: true })).toBeVisible();

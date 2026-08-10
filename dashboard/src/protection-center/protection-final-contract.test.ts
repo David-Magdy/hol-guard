@@ -1,0 +1,22 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const cloud = readFileSync(new URL("./protection-cloud-value.tsx", import.meta.url), "utf8");
+const telemetry = readFileSync(new URL("./protection-telemetry.ts", import.meta.url), "utf8");
+const lab = readFileSync(new URL("./protection-test-lab.tsx", import.meta.url), "utf8");
+const docs = readFileSync(new URL("../../../docs/guard/protection-center.md", import.meta.url), "utf8");
+
+assert.match(cloud, /data-local-protection-independent/);
+assert.match(cloud, /cloud_pairing_state.*plan_id/s);
+assert.doesNotMatch(cloud, /4\.99|15\.00|1073741824|30-day|deviceLimit/);
+assert.match(telemetry, /ALLOWED_FIELDS/);
+const allowedFields = telemetry.match(/const ALLOWED_FIELDS = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? "";
+for (const forbidden of ["command", "path", "proof_id", "rule_id", "extension_id", "token"]) {
+  assert.equal(allowedFields.includes(`"${forbidden}"`), false);
+}
+assert.match(lab, /Nothing is executed/);
+assert.match(lab, /not saved to Activity or sent to Guard Cloud/);
+assert.match(docs, /must never disable or hide local protection controls/);
+assert.match(docs, /client must not invent device, retention, or storage quotas/);
+
+console.log("protection-final-contract.test.ts: all assertions passed");

@@ -3,6 +3,7 @@ import type { EffectiveExtensionControls, ExtensionCatalogItem } from "../../ext
 import type { GuardRuntimeSnapshot } from "../../guard-types";
 import { isExtensionEnabled } from "../../extensions-filters";
 import { protectionCategoryForExtension } from "./protection-categories";
+import { PROTECTION_CENTER_PERFORMANCE_BUDGETS } from "./protection-performance-budgets";
 
 export type ProtectionDecision = "allowed" | "ask-first" | "blocked";
 export type ProtectionModuleSection = "in-use" | "recommended" | "all";
@@ -53,7 +54,7 @@ export function recentProtectionDecisions(
   return [...activity]
     .filter((item) => item.policy_action !== null)
     .sort((left, right) => Date.parse(right.occurred_at) - Date.parse(left.occurred_at))
-    .slice(0, Math.max(0, Math.min(limit, 20)))
+    .slice(0, Math.max(0, Math.min(limit, PROTECTION_CENTER_PERFORMANCE_BUDGETS.recentDecisionCap)))
     .map((item) => {
       const extensionIds = [...new Set(item.matches.map((match) => match.extension_id))].slice(0, 8);
       return {
@@ -122,9 +123,9 @@ export function filterProtectionModulesByHumanQuery(
   modules: readonly ProtectionModuleRank[],
   query: string,
 ): ProtectionModuleRank[] {
-  const normalized = query.trim().toLowerCase().slice(0, 160);
+  const normalized = query.trim().toLowerCase().slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchCharacterCap);
   if (!normalized) return [...modules];
-  const terms = normalized.split(/\s+/).filter(Boolean).slice(0, 8);
+  const terms = normalized.split(/\s+/).filter(Boolean).slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchTermCap);
   return modules.filter(({ extension }) => {
     const text = safeSearchText(extension);
     return terms.every((term) => text.includes(term));
