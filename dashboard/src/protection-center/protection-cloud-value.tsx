@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { GuardRuntimeSnapshot } from "../guard-types";
+import { emitProtectionTelemetry } from "./protection-telemetry";
 
 export type ProtectionCloudPlan = "free" | "solo" | "pro" | "team" | "enterprise";
 
@@ -107,6 +108,13 @@ function eligiblePlanCopy(plan: ProtectionCloudPlan | null, eligiblePlan?: Prote
   return "Availability is determined by your connected Guard Cloud plan.";
 }
 
+function telemetryCloudState(value: ProtectionCloudValue): "local_only" | "paired_waiting" | "paired_active" | "unavailable" {
+  if (value.state === "connected") return "paired_active";
+  if (value.state === "connecting") return "paired_waiting";
+  if (value.state === "offline") return "unavailable";
+  return "local_only";
+}
+
 /**
  * Gates Cloud value copy only. Local Protection Center controls must never be
  * passed through this component or conditioned on its state.
@@ -121,12 +129,20 @@ export function CloudValueGate(props: {
   dismissible?: boolean;
 }) {
   const [dismissed, setDismissed] = useState(false);
-  if (dismissed) return null;
-
   const value = protectionCloudValue(props.runtime, props.loadFailed);
   const destination = props.destination === undefined
     ? protectionCloudDestination(props.runtime)
     : safeHttpsDestination(props.destination);
+
+  useEffect(() => {
+    if (props.loading || dismissed) return;
+    emitProtectionTelemetry("protection_cloud_value_viewed", {
+      plan_id: value.plan ?? "unknown",
+      cloud_state: telemetryCloudState(value),
+    });
+  }, [dismissed, props.loading, value.plan, value.state]);
+
+  if (dismissed) return null;
 
   return <aside
     aria-label="Cloud continuity"
