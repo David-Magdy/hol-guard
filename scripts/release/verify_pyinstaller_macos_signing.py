@@ -140,7 +140,18 @@ def _unique_entry(
     return matches[0]
 
 
+def _archive_relative_name(name: str, *, role: str) -> str:
+    path = PurePosixPath(name)
+    if not name or path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"{role} {name!r} must be archive-relative")
+    normalized = path.as_posix()
+    if normalized in {"", ".", ".."}:
+        raise ValueError(f"{role} {name!r} must be archive-relative")
+    return normalized
+
+
 def _normalized_symlink_target(source_name: str, target: str) -> str:
+    source_name = _archive_relative_name(source_name, role="PyInstaller archive symlink source")
     target_path = PurePosixPath(target)
     if target_path.is_absolute():
         raise ValueError(f"PyInstaller archive symlink {source_name!r} has an absolute target")
@@ -157,7 +168,8 @@ def _normalized_symlink_target(source_name: str, target: str) -> str:
         parts.append(part)
     if not parts:
         raise ValueError(f"PyInstaller archive symlink {source_name!r} has an empty target")
-    return PurePosixPath(*parts).as_posix()
+    normalized = PurePosixPath(*parts).as_posix()
+    return _archive_relative_name(normalized, role="PyInstaller archive symlink target")
 
 
 def _resolve_declared_runtime(
@@ -168,7 +180,10 @@ def _resolve_declared_runtime(
 ) -> tuple[str, int, int, bool, str]:
     """Resolve PyInstaller's cookie runtime through archive-local symlinks to a binary entry."""
 
-    current_name = declared_runtime
+    current_name = _archive_relative_name(
+        declared_runtime,
+        role="Cookie-declared Python runtime",
+    )
     seen: set[str] = set()
     for _ in range(8):
         if current_name in seen:
