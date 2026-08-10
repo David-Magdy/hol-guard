@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -15,6 +16,7 @@ assert.match(markup, /evaluated locally in memory/);
 assert.match(markup, /not saved to Activity or sent to Guard Cloud/);
 assert.match(markup, /Check safely/);
 assert.match(markup, /4096/);
+assert.ok((readFileSync(new URL("./protection-test-lab.tsx", import.meta.url), "utf8").match(/disabled=\{busy\}/g) ?? []).length >= 3);
 assert.doesNotMatch(markup, /Run command|Execute command|Upload command/);
 
 const normalized = normalizeProtectionTestResult({

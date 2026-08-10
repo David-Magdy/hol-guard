@@ -2746,15 +2746,15 @@ function ProtectionTestLab({ extension: extension2 }) {
     ] }) }),
     examples.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-semibold uppercase tracking-wide text-slate-500", children: "Try an example" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 flex flex-wrap gap-2", children: examples.map((example) => /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => {
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 flex flex-wrap gap-2", children: examples.map((example) => /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: busy, onClick: () => {
         setCommand(example);
         setResult(null);
         setError(null);
-      }, className: "min-h-10 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100", children: example }, example)) })
+      }, className: "min-h-10 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50", children: example }, example)) })
     ] }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "mt-5 block", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-slate-800", children: "Command to check" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("textarea", { value: command, onChange: (event) => {
+      /* @__PURE__ */ jsxRuntimeExports.jsx("textarea", { value: command, disabled: busy, onChange: (event) => {
         setCommand(event.target.value.slice(0, 4096));
         setResult(null);
         setError(null);
@@ -2764,11 +2764,11 @@ function ProtectionTestLab({ extension: extension2 }) {
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => {
         void run();
       }, disabled: busy || !command.trim(), className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50", children: busy ? "Checking…" : "Check safely" }),
-      command ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => {
+      command ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: busy, onClick: () => {
         setCommand("");
         setResult(null);
         setError(null);
-      }, className: "min-h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700", children: "Clear" }) : null,
+      }, className: "min-h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50", children: "Clear" }) : null,
       /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs text-slate-500", children: [
         command.length,
         "/4096"
