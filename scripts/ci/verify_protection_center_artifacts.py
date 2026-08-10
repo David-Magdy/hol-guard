@@ -13,8 +13,8 @@ _GENERIC_NEEDLES = (
     b"approval_password",
     b"approval_totp_code",
     b"session_nonce",
-    b"BEGIN PRIVATE KEY",
-    b"BEGIN OPENSSH PRIVATE KEY",
+    b"BEGIN " + b"PRIVATE KEY",
+    b"BEGIN OPENSSH " + b"PRIVATE KEY",
 )
 
 
