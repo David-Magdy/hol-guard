@@ -29,16 +29,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          SOURCE=1bab07c3b06265b1496c8bd4d36b8cf558341b5c
-          for path in \
-            src/codex_plugin_scanner/guard/daemon/extension_control_test_api.py \
-            tests/test_guard_extension_control_test_lab.py \
-            dashboard/src/protection-center/protection-test-api.ts \
-            dashboard/src/protection-center/protection-test-lab.tsx \
-            dashboard/src/protection-center/protection-test-lab.test.tsx; do
-            mkdir -p "$(dirname "$path")"
-            git show "$SOURCE:$path" > "$path"
-          done
           python scripts/ci/protection_center_batch5_transform.py
           uv sync --frozen --extra dev --python 3.12
           uv run --no-sync pytest -q \
