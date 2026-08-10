@@ -26,18 +26,27 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          import re
 
-          errors = Path('src/codex_plugin_scanner/guard/daemon/extension_control_errors.py')
-          errors.write_text('''"""Shared extension-control daemon API errors.\n\nKept separate from the API service so helper evaluators can raise the same\npublic error type without creating an import cycle.\n"""\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass\n\n_RECOVERY_ACTIONS = {\n    "approval_required": "provide_local_approval",\n    "authority_conflict": "refresh_effective_controls",\n    "authority_unavailable": "enroll_or_repair_authority",\n    "catalog_conflict": "refresh_catalog",\n    "immutable_extension": "remove_local_override",\n    "immutable_permission": "remove_local_override",\n    "managed_layer_mutation": "managed_policy_read_only",\n    "proof_invalid": "request_new_proof",\n    "proof_mismatch": "request_new_proof",\n    "proof_not_found": "request_new_proof",\n    "revision_conflict": "refresh_effective_controls",\n}\n\n\n@dataclass(frozen=True, slots=True)\nclass ExtensionControlApiError(Exception):\n    status: int\n    code: str\n\n    def to_payload(self) -> dict[str, object]:\n        payload: dict[str, object] = {"error": self.code}\n        action = _RECOVERY_ACTIONS.get(self.code)\n        if action is not None:\n            payload["recovery"] = {"action": action}\n        return payload\n''')
+          errors_path = Path('src/codex_plugin_scanner/guard/daemon/extension_control_errors.py')
+          errors_path.write_text('''"""Shared extension-control daemon API errors.\n\nKept separate from the API service so helper evaluators can raise the same\npublic error type without creating an import cycle.\n"""\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass\n\n_RECOVERY_ACTIONS = {\n    "approval_required": "provide_local_approval",\n    "authority_conflict": "refresh_effective_controls",\n    "authority_unavailable": "enroll_or_repair_authority",\n    "catalog_conflict": "refresh_catalog",\n    "immutable_extension": "remove_local_override",\n    "immutable_permission": "remove_local_override",\n    "managed_layer_mutation": "managed_policy_read_only",\n    "proof_invalid": "request_new_proof",\n    "proof_mismatch": "request_new_proof",\n    "proof_not_found": "request_new_proof",\n    "revision_conflict": "refresh_effective_controls",\n}\n\n\n@dataclass(frozen=True, slots=True)\nclass ExtensionControlApiError(Exception):\n    status: int\n    code: str\n\n    def to_payload(self) -> dict[str, object]:\n        payload: dict[str, object] = {"error": self.code}\n        action = _RECOVERY_ACTIONS.get(self.code)\n        if action is not None:\n            payload["recovery"] = {"action": action}\n        return payload\n''')
 
           api_path = Path('src/codex_plugin_scanner/guard/daemon/extension_control_api.py')
           api = api_path.read_text()
-          api = api.replace('from .extension_control_projection import build_effective_extension_control_projection\n', 'from .extension_control_errors import ExtensionControlApiError\nfrom .extension_control_projection import build_effective_extension_control_projection\n')
-          pattern = re.compile(r'_RECOVERY_ACTIONS = \{.*?\n\}\n\n\n@dataclass\(frozen=True, slots=True\)\nclass ExtensionControlApiError\(Exception\):.*?\n\n\n(?=@dataclass\(frozen=True, slots=True\)\nclass _PendingMutation)', re.S)
-          api, count = pattern.subn('', api)
-          if count != 1:
-              raise SystemExit(f'expected one API error block, replaced {count}')
+          import_anchor = 'from .extension_control_projection import build_effective_extension_control_projection\n'
+          if api.count(import_anchor) != 1:
+              raise SystemExit('unexpected extension-control projection import anchor')
+          api = api.replace(
+              import_anchor,
+              'from .extension_control_errors import ExtensionControlApiError\n' + import_anchor,
+              1,
+          )
+          start_marker = '_RECOVERY_ACTIONS = {\n'
+          end_marker = '@dataclass(frozen=True, slots=True)\nclass _PendingMutation:'
+          start = api.find(start_marker)
+          end = api.find(end_marker)
+          if start < 0 or end < 0 or end <= start:
+              raise SystemExit('could not locate exact API error contract boundaries')
+          api = api[:start] + api[end:]
           api_path.write_text(api)
 
           helper_path = Path('src/codex_plugin_scanner/guard/daemon/extension_control_test_api.py')
@@ -46,7 +55,7 @@ jobs:
           new = 'from .extension_control_errors import ExtensionControlApiError\n'
           if helper.count(old) != 1:
               raise SystemExit('unexpected Test Lab error import')
-          helper_path.write_text(helper.replace(old, new))
+          helper_path.write_text(helper.replace(old, new, 1))
           PY
           git diff --check
       - name: Verify lint typing and focused behavior
@@ -54,6 +63,10 @@ jobs:
         run: |
           set -euo pipefail
           uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync python -m ruff format \
+            src/codex_plugin_scanner/guard/daemon/extension_control_api.py \
+            src/codex_plugin_scanner/guard/daemon/extension_control_errors.py \
+            src/codex_plugin_scanner/guard/daemon/extension_control_test_api.py
           uv run --no-sync python -m ruff check src/
           uv run --no-sync python -m ruff format --check src/
           uv run --no-sync basedpyright --level error
@@ -61,6 +74,7 @@ jobs:
             tests/test_guard_extension_control_api.py \
             tests/test_guard_extension_control_authority.py \
             tests/test_guard_extension_control_test_lab.py
+          git diff --check
       - name: Commit verified import fix
         shell: bash
         run: |
