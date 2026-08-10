@@ -160,6 +160,31 @@ class ExtensionControlApiService:
         _ = self._runtime.refresh(view)
         return self.effective()
 
+    def test_command(self, payload: dict[str, object]) -> dict[str, object]:
+        from .extension_control_test_api import evaluate_extension_control_test
+
+        return evaluate_extension_control_test(
+            registry=self._registry,
+            runtime=self._runtime,
+            payload=payload,
+        )
+
+    def history(self) -> dict[str, object]:
+        current = self._runtime.current()
+        try:
+            items = self._store.list_extension_control_authority_history(
+                catalog_digest=self._registry.catalog_digest,
+                limit=20,
+            )
+        except ExtensionControlAuthorityError as exc:
+            raise ExtensionControlApiError(409, "authority_history_unavailable") from exc
+        return {
+            "schema_version": "guard.daemon.extension-control-history.v1",
+            "revision": current.revision,
+            "catalog_digest": current.catalog_digest,
+            "items": items,
+        }
+
     def recover_authority(self, payload: dict[str, object]) -> dict[str, object]:
         current = self._store.read_extension_control_authority(catalog_digest=self._registry.catalog_digest)
         if current.health not in {AuthorityHealth.TAMPERED, AuthorityHealth.RECOVERY_REQUIRED}:

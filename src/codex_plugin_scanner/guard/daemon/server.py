@@ -2058,6 +2058,14 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 extra_headers={"Cache-Control": "no-store"},
             )
             return
+        if parsed.path == "/v1/extension-controls/history":
+            try:
+                history = self._daemon_server().extension_control_api.history()
+            except ExtensionControlApiError as error:
+                self._write_json(error.to_payload(), status=error.status)
+                return
+            self._write_json(history, extra_headers={"Cache-Control": "no-store"})
+            return
         if parsed.path == "/v1/capabilities":
             self._handle_capabilities()
             return
@@ -2459,6 +2467,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             return
         extension_control_paths = {
             "/v1/extension-controls/preview",
+            "/v1/extension-controls/test",
             "/v1/extension-controls/apply",
             "/v1/extension-controls/refresh",
             "/v1/extension-controls/recover-authority",
@@ -2544,7 +2553,9 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             return
         if parsed.path in extension_control_paths:
             try:
-                if parsed.path.endswith("/preview"):
+                if parsed.path.endswith("/test"):
+                    response = self._daemon_server().extension_control_api.test_command(payload)
+                elif parsed.path.endswith("/preview"):
                     response = self._daemon_server().extension_control_api.preview(payload)
                 elif parsed.path.endswith("/apply"):
                     response = self._daemon_server().extension_control_api.apply(payload)

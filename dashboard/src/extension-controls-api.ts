@@ -2,6 +2,7 @@ import { fetchExtensionControlApi } from "./guard-api";
 import {
   normalizeEffectiveExtensionControls,
   normalizeExtensionCatalog,
+  normalizeExtensionControlLayer,
 } from "./extension-controls-normalize";
 import {
   normalizeExtensionMutationApply,
@@ -155,6 +156,21 @@ export type EffectiveExtensionControls = {
   projection?: EffectiveExtensionControlProjection;
 };
 
+export type ExtensionControlHistoryItem = {
+  revision: number;
+  previous_revision: number;
+  occurred_at: string;
+  catalog_digest: string;
+  layers: ExtensionControlLayer[];
+};
+
+export type ExtensionControlHistoryResponse = {
+  schema_version: "guard.daemon.extension-control-history.v1";
+  revision: number;
+  catalog_digest: string;
+  items: ExtensionControlHistoryItem[];
+};
+
 export type ExtensionMutationPayload = {
   previous_revision: number;
   catalog_digest: string;
@@ -284,6 +300,34 @@ export async function fetchEffectiveExtensionControls(): Promise<EffectiveExtens
     throw new ExtensionControlApiError("Guard returned an inconsistent extension-control projection", 502);
   }
   return { ...normalized, projection };
+}
+
+export async function fetchExtensionControlHistory(): Promise<ExtensionControlHistoryResponse> {
+  const raw = await request("/v1/extension-controls/history");
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new ExtensionControlApiError("Guard returned invalid settings history", 502);
+  const root = raw as Record<string, unknown>;
+  if (root.schema_version !== "guard.daemon.extension-control-history.v1") throw new ExtensionControlApiError("Guard returned unsupported settings history", 502);
+  if (!Number.isSafeInteger(root.revision) || (root.revision as number) < 0 || typeof root.catalog_digest !== "string") throw new ExtensionControlApiError("Guard returned invalid settings history metadata", 502);
+  if (!Array.isArray(root.items) || root.items.length > 50) throw new ExtensionControlApiError("Guard returned too much settings history", 502);
+  const items = root.items.map((value, index) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ExtensionControlApiError("Guard returned invalid settings history item", 502);
+    const item = value as Record<string, unknown>;
+    if (!Number.isSafeInteger(item.revision) || !Number.isSafeInteger(item.previous_revision) || typeof item.occurred_at !== "string" || typeof item.catalog_digest !== "string" || !Array.isArray(item.layers)) throw new ExtensionControlApiError("Guard returned invalid settings history item", 502);
+    const layers = item.layers.map((layer, layerIndex) => normalizeExtensionControlLayer(layer, `history.items[${index}].layers[${layerIndex}]`));
+    return {
+      revision: item.revision as number,
+      previous_revision: item.previous_revision as number,
+      occurred_at: item.occurred_at,
+      catalog_digest: item.catalog_digest,
+      layers,
+    };
+  });
+  return {
+    schema_version: "guard.daemon.extension-control-history.v1",
+    revision: root.revision as number,
+    catalog_digest: root.catalog_digest,
+    items,
+  };
 }
 
 export async function recoverExtensionControlAuthority(credentials?: {
