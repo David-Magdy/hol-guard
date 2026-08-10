@@ -11,6 +11,7 @@ import {
   taskCapabilityExplanation,
 } from "./approval-scopes";
 import type { GuardApprovalRequest } from "./guard-types";
+import { ReviewScopeControls } from "./review-scope-controls";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -39,7 +40,7 @@ const BASE_REQUEST: GuardApprovalRequest = {
   policy_action: "require-reapproval",
   recommended_scope: "artifact",
   allowed_scopes: ["artifact", "workspace", "harness", "global"],
-  scope_contract_version: "guard.approval-scopes.v4",
+  scope_contract_version: "guard.approval-scopes.v5",
   scope_contract_digest: "scope-digest",
   allowed_scopes_by_action: {
     allow: ["artifact", "workspace", "harness", "global"],
@@ -51,6 +52,7 @@ const BASE_REQUEST: GuardApprovalRequest = {
     eligible: false,
     reason_codes: ["task_capability_not_enabled"],
   },
+  exact_action_persistence_eligible: true,
   changed_fields: ["first_seen"],
   source_scope: "project",
   config_path: "./config.toml",
@@ -79,9 +81,57 @@ const allowPayload = buildDecisionPayload({
 assert(allowPayload.scope === "global", "T-AS-01: eligible Everywhere selection is preserved");
 assert(allowPayload.workspace === undefined, "T-AS-02: artifact allow does not send a workspace");
 assert(
-  allowPayload.scope_contract_version === "guard.approval-scopes.v4" &&
+  allowPayload.scope_contract_version === "guard.approval-scopes.v5" &&
     allowPayload.scope_contract_digest === "scope-digest",
   "T-AS-03: resolution payload binds the displayed scope contract",
+);
+
+const rememberedExactPayload = buildDecisionPayload({
+  item: BASE_REQUEST,
+  action: "allow",
+  scope: "artifact",
+  reason: "approved in review",
+  persistExactAction: true,
+});
+assert(rememberedExactPayload.persist_policy === true, "T-AS-03a: exact-action persistence is explicit");
+const unprovenRememberedPayload = buildDecisionPayload({
+  item: { ...BASE_REQUEST, exact_action_persistence_eligible: false },
+  action: "allow",
+  scope: "artifact",
+  reason: "approved in review",
+  persistExactAction: true,
+});
+assert(unprovenRememberedPayload.persist_policy === undefined, "T-AS-03b: unproven actions cannot be remembered");
+
+function ignoreScopeChange(): void {}
+
+function renderExactActionControl(eligible: boolean): string {
+  return renderToStaticMarkup(
+    createElement(ReviewScopeControls, {
+      commonScopeOptions: standardScopeChoicesForRequest(BASE_REQUEST, "allow"),
+      broaderScopeOptions: [],
+      advancedScopeOptions: [],
+      blockScopeOptions: [],
+      hasAllowScope: true,
+      taskCapabilityCopy: null,
+      exactActionPersistenceEligible: eligible,
+      rememberExactAction: false,
+      allowScope: "artifact",
+      blockScope: "artifact",
+      onAllowScopeChange: ignoreScopeChange,
+      onBlockScopeChange: ignoreScopeChange,
+      onRememberExactActionChange: ignoreScopeChange,
+    }),
+  );
+}
+
+assert(
+  renderExactActionControl(true).includes("Always allow this exact action"),
+  "T-AS-03c: eligible requests render the exact-action permission",
+);
+assert(
+  !renderExactActionControl(false).includes("Always allow this exact action"),
+  "T-AS-03d: unproven requests do not render a durable permission",
 );
 
 const blockPayload = buildDecisionPayload({
@@ -199,3 +249,5 @@ assert(
     "artifact,workspace,harness",
   "T-AS-21: standard allow scopes expose project and app when eligible",
 );
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";

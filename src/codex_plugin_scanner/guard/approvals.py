@@ -23,6 +23,7 @@ from .approval_gate import ApprovalGateGrant, ApprovalGateInput, require_approva
 from .approval_resolution import require_resolvable_approval_request
 from .approval_scope_support import (
     IneligibleApprovalScopeError,
+    exact_action_allow_persistence_eligible,
     package_request_portable_workspace_scope,
     request_scope_contract,
     request_scope_contract_payload,
@@ -680,13 +681,15 @@ def apply_approval_resolution(
         persist_policy = None
     elif action == "allow" and scope == "artifact" and persist_policy is True:
         if scope_contract_version is not None:
-            raise IneligibleApprovalScopeError(
-                "saved_allow_scope_ineligible",
-                request_scope_contract(request),
-                action=action,
-                requested_scope=scope,
-            )
-        persist_policy = None
+            if not exact_action_allow_persistence_eligible(request):
+                raise IneligibleApprovalScopeError(
+                    "saved_allow_scope_ineligible",
+                    request_scope_contract(request),
+                    action=action,
+                    requested_scope=scope,
+                )
+        else:
+            persist_policy = None
     workspace_artifact_id, workspace_artifact_hash = _workspace_policy_artifact_keys(request, scope)
     request_artifact_id = _string_or_none(request.get("artifact_id"))
     request_artifact_hash = _string_or_none(request.get("artifact_hash"))
@@ -714,7 +717,11 @@ def apply_approval_resolution(
         if scope in {"artifact", "workspace", "harness", "global"}:
             scoped_artifact_id = request_artifact_id
     else:
-        artifact_runtime_exact_match_key = _artifact_scope_runtime_exact_match_key(request, scope)
+        artifact_runtime_exact_match_key = _artifact_scope_runtime_exact_match_key(
+            request,
+            scope,
+            include_envelope_command=persist_policy is True,
+        )
         if artifact_runtime_exact_match_key is not None:
             scoped_artifact_hash = artifact_runtime_exact_match_key
         broad_runtime_exact_match_key = _broad_runtime_exact_match_key(request, scope)
@@ -978,7 +985,12 @@ def _workspace_policy_artifact_keys(request: Mapping[str, object], scope: str) -
     return artifact_id, artifact_hash
 
 
-def _artifact_scope_runtime_exact_match_key(request: Mapping[str, object], scope: str) -> str | None:
+def _artifact_scope_runtime_exact_match_key(
+    request: Mapping[str, object],
+    scope: str,
+    *,
+    include_envelope_command: bool = False,
+) -> str | None:
     if scope != "artifact" or request.get("artifact_type") != "tool_action_request":
         return None
     artifact_id = request.get("artifact_id")
@@ -986,7 +998,11 @@ def _artifact_scope_runtime_exact_match_key(request: Mapping[str, object], scope
     wrapper_chain = request.get("wrapper_chain")
     envelope = request.get("action_envelope_json")
     if isinstance(envelope, Mapping):
-        raw_command_text = raw_command_text or _string_or_none(envelope.get("raw_command_text"))
+        raw_command_text = (
+            raw_command_text
+            or _string_or_none(envelope.get("raw_command_text"))
+            or (_string_or_none(envelope.get("command")) if include_envelope_command else None)
+        )
         if not isinstance(wrapper_chain, Sequence) or isinstance(wrapper_chain, str):
             wrapper_chain = envelope.get("wrapper_chain")
     normalized_wrapper_chain = (
