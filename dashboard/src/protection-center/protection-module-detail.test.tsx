@@ -34,7 +34,7 @@ const simple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   effective: PROTECTION_AUTHORITY_FIXTURES.protected,
   catalogDigest: "a".repeat(64),
   onBack: () => undefined,
-  onChange: () => undefined,
+  onRefresh: () => undefined,
 }));
 assert.match(simple, /Protection module/);
 assert.match(simple, /What this protects/);
@@ -43,7 +43,7 @@ assert.match(simple, /Protection settings/);
 assert.match(simple, /Why this setting\?/);
 assert.match(simple, /Safer alternatives/);
 assert.match(simple, /Recent decisions/);
-assert.match(simple, /Change protection/);
+assert.match(simple, /Change settings/);
 assert.doesNotMatch(simple, /Catalog digest|Extension ID|Matcher|permission_id|rule_id/);
 
 const requiredExtension = { ...FIXED_PROTECTION_MODULE, required: true };
@@ -52,17 +52,17 @@ const required = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   effective: PROTECTION_AUTHORITY_FIXTURES.protected,
   catalogDigest: "a".repeat(64),
   onBack: () => undefined,
-  onChange: () => undefined,
+  onRefresh: () => undefined,
 }));
 assert.match(required, /Required protection|cannot be turned off/);
-assert.doesNotMatch(required, />Change protection</);
+assert.doesNotMatch(required, />Change settings</);
 
 const fixedSettingSimple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   extension: FIXED_PROTECTION_MODULE,
   effective: PROTECTION_AUTHORITY_FIXTURES.protected,
   catalogDigest: "a".repeat(64),
   onBack: () => undefined,
-  onChange: () => undefined,
+  onRefresh: () => undefined,
 }));
 assert.match(fixedSettingSimple, /0 changeable settings/);
 
@@ -71,16 +71,17 @@ const managed = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   effective: PROTECTION_AUTHORITY_FIXTURES.managedBlock,
   catalogDigest: "a".repeat(64),
   onBack: () => undefined,
-  onChange: () => undefined,
+  onRefresh: () => undefined,
 }));
 assert.match(managed, /Managed by your organization/);
-assert.doesNotMatch(managed, />Change protection</);
+assert.match(managed, /Change settings/);
 
 const lockdown = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   extension: git,
   effective: PROTECTION_AUTHORITY_FIXTURES.lockdown,
   catalogDigest: "a".repeat(64),
   onBack: () => undefined,
+  onRefresh: () => undefined,
 }));
 assert.match(lockdown, /Emergency Lockdown currently controls this module/);
 
@@ -92,6 +93,7 @@ renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   effective: PROTECTION_AUTHORITY_FIXTURES.protected,
   catalogDigest: "a".repeat(64),
   onBack: () => undefined,
+  onRefresh: () => undefined,
 }));
 assert.ok(performance.now() - started < 500, "Simple module detail should not expand 500 Developer detections by default");
 

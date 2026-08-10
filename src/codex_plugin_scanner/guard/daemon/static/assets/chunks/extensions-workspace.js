@@ -1,4 +1,4 @@
-import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, w as HiMiniXMark, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as HiMiniInformationCircle, ap as HiMiniArrowPath, B as HiMiniCloud, aq as commandReasonLabel, ar as DEFAULT_COMMAND_ACTIVITY_FILTERS, a4 as fetchRuntimeSnapshot, d as createCommandActivityClient, f as fetchCommandActivityApi, as as HiMiniArrowLeft, Z as HiMiniLockClosed, at as HiMiniArrowTopRightOnSquare, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp, au as buildApprovalProofCredentials, av as isApprovalProofSubmitDisabled, aw as ApprovalProofFieldInputs } from "../guard-dashboard.js";
+import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, w as HiMiniXMark, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as HiMiniInformationCircle, ap as HiMiniArrowPath, B as HiMiniCloud, aq as commandReasonLabel, ar as DEFAULT_COMMAND_ACTIVITY_FILTERS, a4 as fetchRuntimeSnapshot, d as createCommandActivityClient, f as fetchCommandActivityApi, Z as HiMiniLockClosed, as as HiMiniArrowLeft, at as HiMiniArrowTopRightOnSquare, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp, au as buildApprovalProofCredentials, av as isApprovalProofSubmitDisabled, aw as ApprovalProofFieldInputs } from "../guard-dashboard.js";
 import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./use-resolved-approval-gate.js";
 const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -128,7 +128,7 @@ function permissionStateLabel(effective, extension2, permission2) {
   return effectiveState === "enabled" ? "Allowed" : "Blocked";
 }
 function controlProvenance(effective, kind, targetId2) {
-  const projected = effective.projection?.extensions.find((item) => item.extension_id === targetId2);
+  const projected = kind === "extension" ? effective.projection?.extensions.find((item) => item.extension_id === targetId2) : effective.projection?.permissions.find((item) => item.permission_id === targetId2);
   if (projected) {
     const sources2 = [];
     if (effective.global_lockdown) sources2.push("Global lockdown");
@@ -1836,6 +1836,618 @@ function ProtectionLandingExperience(props) {
     } })
   ] });
 }
+function cloneLayers$1(layers) {
+  return layers.map((layer) => ({
+    ...layer,
+    controls: layer.controls.map((control) => ({ ...control }))
+  }));
+}
+function sortedControls(layer) {
+  return {
+    ...layer,
+    controls: [...layer.controls].sort(
+      (left, right) => `${left.target_kind}:${left.target_id}`.localeCompare(`${right.target_kind}:${right.target_id}`)
+    )
+  };
+}
+function localPermissionDraftState(layers, permissionId) {
+  const local = layers.find((layer) => layer.kind === "local-admin");
+  const control = local?.controls.find(
+    (item) => item.target_kind === "permission" && item.target_id === permissionId
+  );
+  if (!control) return "inherit";
+  return control.state === "enabled" ? "allow" : "block";
+}
+function setLocalPermissionDraftState(layers, catalogDigest, permissionId, state) {
+  const next = cloneLayers$1(layers);
+  let local = next.find((layer) => layer.kind === "local-admin");
+  if (!local) {
+    local = {
+      schema_version: "1.0.0",
+      kind: "local-admin",
+      catalog_digest: catalogDigest,
+      global_lockdown: false,
+      controls: []
+    };
+    next.push(local);
+  }
+  local.controls = local.controls.filter(
+    (control) => control.target_kind !== "permission" || control.target_id !== permissionId
+  );
+  if (state !== "inherit") {
+    local.controls.push({
+      target_kind: "permission",
+      target_id: permissionId,
+      state: state === "allow" ? "enabled" : "disabled"
+    });
+  }
+  const normalized = next.map((layer) => sortedControls(layer));
+  normalized.sort((left, right) => left.kind.localeCompare(right.kind));
+  return normalized;
+}
+function canonicalLayerValue(layers) {
+  return JSON.stringify(
+    [...layers].map((layer) => sortedControls(layer)).sort((left, right) => left.kind.localeCompare(right.kind))
+  );
+}
+function extensionPolicyDraftIsDirty(effective, draftLayers) {
+  return canonicalLayerValue(effective.layers) !== canonicalLayerValue(draftLayers);
+}
+function buildExtensionPolicyDraftMutation(effective, catalogDigest, draftLayers, identity) {
+  return {
+    previous_revision: effective.revision,
+    catalog_digest: catalogDigest,
+    layers: cloneLayers$1(draftLayers),
+    actor_id: "dashboard-admin",
+    idempotency_key: identity.idempotencyKey,
+    nonce: identity.nonce
+  };
+}
+function newExtensionPolicyDraftIdentity() {
+  return {
+    idempotencyKey: crypto.randomUUID().replaceAll("-", ""),
+    nonce: crypto.randomUUID().replaceAll("-", "")
+  };
+}
+function permissionSuffix(permissionId) {
+  const marker = ".permission.";
+  const index = permissionId.indexOf(marker);
+  return index < 0 ? null : permissionId.slice(index + marker.length);
+}
+function latestPermissionId(original, oldExtension, latestExtension) {
+  if (latestExtension.permissions.some((permission2) => permission2.permission_id === original)) return original;
+  if (latestExtension.extension_id !== oldExtension.extension_id && latestExtension.aliases.includes(oldExtension.extension_id)) {
+    const suffix = permissionSuffix(original);
+    if (!suffix) return null;
+    const candidate = `${latestExtension.extension_id}.permission.${suffix}`;
+    if (latestExtension.permissions.some((permission2) => permission2.permission_id === candidate)) return candidate;
+  }
+  return null;
+}
+function rebaseExtensionPolicyDraft(oldEffective, latestEffective, oldExtension, latestExtension, draftLayers) {
+  let rebased = latestEffective.layers.map((layer) => ({ ...layer, controls: layer.controls.map((control) => ({ ...control })) }));
+  const conflicts = [];
+  const remapped = {};
+  for (const permission2 of oldExtension.permissions) {
+    const baseState = localPermissionDraftState(oldEffective.layers, permission2.permission_id);
+    const requestedState = localPermissionDraftState(draftLayers, permission2.permission_id);
+    if (baseState === requestedState) continue;
+    const mapped = latestPermissionId(permission2.permission_id, oldExtension, latestExtension);
+    if (!mapped) {
+      conflicts.push({
+        original_permission_id: permission2.permission_id,
+        latest_permission_id: null,
+        kind: "removed",
+        base_state: baseState,
+        latest_state: "inherit",
+        requested_state: requestedState
+      });
+      continue;
+    }
+    remapped[permission2.permission_id] = mapped;
+    const latestState = localPermissionDraftState(latestEffective.layers, mapped);
+    if (latestState !== baseState && latestState !== requestedState) {
+      conflicts.push({
+        original_permission_id: permission2.permission_id,
+        latest_permission_id: mapped,
+        kind: "overlap",
+        base_state: baseState,
+        latest_state: latestState,
+        requested_state: requestedState
+      });
+      continue;
+    }
+    rebased = setLocalPermissionDraftState(rebased, latestEffective.catalog_digest, mapped, requestedState);
+  }
+  return { draft_layers: rebased, conflicts, remapped_permission_ids: remapped };
+}
+function keepExtensionPolicyRebaseConflicts(result, latestEffective) {
+  let layers = result.draft_layers;
+  for (const conflict of result.conflicts) {
+    if (conflict.kind !== "overlap" || !conflict.latest_permission_id) continue;
+    layers = setLocalPermissionDraftState(
+      layers,
+      latestEffective.catalog_digest,
+      conflict.latest_permission_id,
+      conflict.requested_state
+    );
+  }
+  return layers;
+}
+const RISK_TONE = {
+  critical: "border-red-200 bg-red-50 text-red-800",
+  high: "border-orange-200 bg-orange-50 text-orange-800",
+  medium: "border-amber-200 bg-amber-50 text-amber-800",
+  low: "border-slate-200 bg-slate-50 text-slate-700"
+};
+function Pill(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${props.tone ?? "border-slate-200 bg-slate-50 text-slate-700"}`, children: props.children });
+}
+function cloneLayers(effective) {
+  return effective.layers.map((layer) => ({ ...layer, controls: layer.controls.map((control) => ({ ...control })) }));
+}
+function managedPermissionState(effective, permissionId) {
+  const projected = effective.projection?.permissions.find((item) => item.permission_id === permissionId)?.managed_state;
+  if (projected && projected !== "inherited") return projected;
+  for (const layer of effective.layers) {
+    if (layer.kind !== "signed-cloud") continue;
+    const control = layer.controls.find((item) => item.target_kind === "permission" && item.target_id === permissionId);
+    if (control) return control.state;
+  }
+  return null;
+}
+function draftChangeCount(effective, extension2, draftLayers) {
+  return extension2.permissions.filter(
+    (permission2) => localPermissionDraftState(effective.layers, permission2.permission_id) !== localPermissionDraftState(draftLayers, permission2.permission_id)
+  ).length;
+}
+function DraftControl(props) {
+  const managed = managedPermissionState(props.effective, props.permission.permission_id);
+  const choices = [
+    { value: "inherit", label: "Use recommended" },
+    { value: "block", label: "Block matching actions" },
+    { value: "allow", label: "Allow when Guard would otherwise permit", disabled: managed === "disabled" }
+  ];
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { role: "radiogroup", "aria-label": `${props.permission.label} protection setting`, className: "flex flex-wrap gap-1 rounded-xl bg-slate-100 p-1", children: choices.map((choice) => /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", role: "radio", "aria-checked": props.state === choice.value, disabled: props.disabled || choice.disabled, title: choice.disabled ? "Managed policy already blocks this permission; local policy cannot weaken it." : void 0, onClick: () => props.onChange(choice.value), className: `min-h-10 rounded-lg px-3 text-xs font-semibold transition motion-reduce:transition-none ${props.state === choice.value ? "bg-white text-brand-blue shadow-sm" : "text-slate-600 hover:bg-white/70"} disabled:cursor-not-allowed disabled:opacity-45`, children: choice.label }, choice.value)) });
+}
+function PermissionPolicyRow(props) {
+  const managed = managedPermissionState(props.effective, props.permission.permission_id);
+  const provenance = controlProvenance(props.effective, "permission", props.permission.permission_id);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("article", { className: "rounded-2xl border border-slate-200 bg-white p-4", "data-permission-id": props.permission.permission_id, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "font-semibold text-slate-950", children: props.permission.label }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { tone: RISK_TONE[props.permission.risk_tier], children: [
+          props.permission.risk_tier,
+          " risk"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { children: permissionStateLabel(props.effective, props.extension, props.permission) }),
+        !props.permission.configurable ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { children: "Required safety" }) : null,
+        managed ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: "border-indigo-200 bg-indigo-50 text-indigo-800", children: "Organization managed" }) : null
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-slate-600", children: props.permission.description }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer font-semibold text-slate-700", children: "Technical setting details" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex flex-wrap gap-x-4 gap-y-1", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+            "Minimum protection: ",
+            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-slate-700", children: treatmentLabel(props.permission.baseline_floor) })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+            props.permission.rule_ids.length,
+            " governed rule",
+            props.permission.rule_ids.length === 1 ? "" : "s"
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+            "Managed by: ",
+            provenance.join(" · ")
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "mt-2 block break-all text-[11px] text-slate-500", children: props.permission.permission_id })
+      ] }),
+      !props.permission.configurable ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-3 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: "Why this cannot be changed:" }),
+        " ",
+        props.permission.fixed_reason ?? "Guard marks this safety permission as immutable."
+      ] }) : null,
+      managed === "disabled" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-3 flex items-start gap-2 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs leading-5 text-indigo-900", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniLockClosed, { className: "mt-0.5 size-4 shrink-0" }),
+        "Your organization blocks this capability. You can keep the organization setting or add a local block, but this device cannot weaken it."
+      ] }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(DraftControl, { permission: props.permission, effective: props.effective, state: props.draftState, disabled: !props.permission.configurable || props.effective.health !== "protected", onChange: props.onChange })
+  ] }) });
+}
+function PreviewPanel(props) {
+  const semantic = props.preview.semantic_preview;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-bold uppercase tracking-[0.18em] text-brand-blue", children: "Protection review" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "mt-1 text-lg font-semibold text-slate-950", children: "What will change" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { children: [
+          semantic.changed_target_count,
+          " target",
+          semantic.changed_target_count === 1 ? "" : "s"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { children: [
+          semantic.affected_permission_count,
+          " permissions"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { children: [
+          semantic.affected_rule_count,
+          " rules"
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 grid gap-3 sm:grid-cols-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-2xl bg-slate-50 p-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-2xl font-semibold text-slate-950", children: semantic.summary.newly_blocked_permissions }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs text-slate-500", children: "Newly blocked settings" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-2xl bg-slate-50 p-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-2xl font-semibold text-slate-950", children: semantic.summary.newly_allowed_permissions }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs text-slate-500", children: "Newly allowed settings" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-2xl bg-slate-50 p-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-2xl font-semibold text-slate-950", children: semantic.summary.effective_change_count }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs text-slate-500", children: "Settings changing" })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 space-y-3", children: semantic.changed_targets.map((target2) => /* @__PURE__ */ jsxRuntimeExports.jsxs("article", { className: "rounded-2xl border border-slate-200 p-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-slate-950", children: target2.label }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { children: [
+          target2.before_explicit,
+          " → ",
+          target2.after_explicit
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { children: [
+          target2.before_effective,
+          " → ",
+          target2.after_effective
+        ] }),
+        target2.baseline_risk ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { tone: RISK_TONE[target2.baseline_risk], children: [
+          target2.baseline_risk,
+          " baseline"
+        ] }) : null
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 text-xs text-slate-500", children: [
+        "Affects ",
+        target2.affected_permission_ids.length,
+        " permission",
+        target2.affected_permission_ids.length === 1 ? "" : "s",
+        " and ",
+        target2.affected_rule_ids.length,
+        " rule",
+        target2.affected_rule_ids.length === 1 ? "" : "s",
+        "."
+      ] }),
+      target2.affected_rule_ids.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "mt-3", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-xs font-semibold text-brand-blue", children: "Developer details" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 max-h-40 overflow-auto rounded-xl bg-slate-50 p-3", children: target2.affected_rule_ids.map((id2) => /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "block break-all text-[11px] text-slate-600", children: id2 }, id2)) })
+      ] }) : null,
+      target2.warnings.map((warning2, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "mt-0.5 size-4 shrink-0" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("strong", { children: [
+            warning2.code,
+            ":"
+          ] }),
+          " ",
+          warning2.message
+        ] })
+      ] }, `${warning2.code}-${index}`))
+    ] }, `${target2.target.kind}:${target2.target.target_id}`)) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "mt-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-xs font-semibold text-slate-500", children: "Developer change identity" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "mt-2 block break-all text-[11px] text-slate-500", children: props.preview.canonical_diff_digest })
+    ] })
+  ] });
+}
+function ReviewDrawer(props) {
+  const ref = useModalDialog(props.onClose, !props.busy);
+  const count = props.preview.semantic_preview.changed_target_count;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 bg-slate-950/40", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { ref, tabIndex: -1, role: "dialog", "aria-modal": "true", "aria-labelledby": "extension-policy-review-title", className: "absolute inset-y-0 right-0 w-full max-w-2xl overflow-y-auto bg-white p-5 shadow-2xl focus:outline-none sm:p-6", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start justify-between gap-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-bold uppercase tracking-[0.18em] text-brand-blue", children: "Protection review" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("h2", { id: "extension-policy-review-title", className: "mt-1 text-xl font-semibold text-slate-950", children: [
+          "Review ",
+          count,
+          " protection setting change",
+          count === 1 ? "" : "s"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: props.busy, "aria-label": "Close semantic review", onClick: props.onClose, className: "grid size-11 place-items-center rounded-full text-slate-500 hover:bg-slate-100 disabled:opacity-50", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniXMark, { className: "size-5" }) })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(PreviewPanel, { preview: props.preview }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sticky bottom-0 mt-6 flex flex-wrap justify-end gap-2 border-t border-slate-200 bg-white pt-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: props.busy, onClick: props.onClose, className: "min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700", children: "Continue editing" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: props.busy || count === 0, onClick: props.onApply, className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white disabled:opacity-40", children: "Continue to approval" })
+    ] })
+  ] }) });
+}
+function ExtensionPolicyPanel(props) {
+  const [baseEffective, setBaseEffective] = reactExports.useState(props.effective);
+  const [policyExtension, setPolicyExtension] = reactExports.useState(props.extension);
+  const [draftLayers, setDraftLayers] = reactExports.useState(() => cloneLayers(props.effective));
+  const [identity, setIdentity] = reactExports.useState(() => newExtensionPolicyDraftIdentity());
+  const [preview, setPreview] = reactExports.useState(null);
+  const [previewBusy, setPreviewBusy] = reactExports.useState(false);
+  const [applyBusy, setApplyBusy] = reactExports.useState(false);
+  const [approvalOpen, setApprovalOpen] = reactExports.useState(false);
+  const [reviewOpen, setReviewOpen] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  const [stale, setStale] = reactExports.useState(false);
+  const [pendingRebase, setPendingRebase] = reactExports.useState(null);
+  const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
+  const dirty = reactExports.useMemo(() => extensionPolicyDraftIsDirty(baseEffective, draftLayers), [baseEffective, draftLayers]);
+  const changeCount = reactExports.useMemo(() => draftChangeCount(baseEffective, policyExtension, draftLayers), [baseEffective, draftLayers, policyExtension]);
+  reactExports.useEffect(() => {
+    props.onDirtyChange?.(dirty);
+  }, [dirty, props]);
+  reactExports.useEffect(() => {
+    const beforeUnload = (event) => {
+      if (!dirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty]);
+  reactExports.useEffect(() => {
+    setBaseEffective(props.effective);
+    setPolicyExtension(props.extension);
+    setDraftLayers(cloneLayers(props.effective));
+    setIdentity(newExtensionPolicyDraftIdentity());
+    setPreview(null);
+    setReviewOpen(false);
+    setError(null);
+    setStale(false);
+    setPendingRebase(null);
+  }, [props.effective.revision, props.effective.catalog_digest, props.extension.extension_id]);
+  const resetDraft = reactExports.useCallback(() => {
+    setDraftLayers(cloneLayers(baseEffective));
+    setIdentity(newExtensionPolicyDraftIdentity());
+    setPreview(null);
+    setReviewOpen(false);
+    setError(null);
+    setStale(false);
+    setPendingRebase(null);
+  }, [baseEffective]);
+  const setPermission = reactExports.useCallback((permission2, state) => {
+    if (!permission2.configurable) return;
+    setDraftLayers((current) => setLocalPermissionDraftState(current, baseEffective.catalog_digest, permission2.permission_id, state));
+    setPreview(null);
+    setReviewOpen(false);
+    setError(null);
+    setStale(false);
+    setPendingRebase(null);
+  }, [baseEffective.catalog_digest]);
+  const mutation = reactExports.useCallback(() => buildExtensionPolicyDraftMutation(baseEffective, baseEffective.catalog_digest, draftLayers, identity), [baseEffective, draftLayers, identity]);
+  const handleApiError = reactExports.useCallback((caught, fallback) => {
+    if (caught instanceof ExtensionControlApiError && ["revision_conflict", "catalog_conflict", "authority_conflict"].includes(caught.code ?? "")) {
+      setStale(true);
+      setError("The authoritative extension policy changed while this draft was open. Rebase the draft before applying; Guard will not silently overwrite security policy.");
+      return;
+    }
+    setError(caught instanceof Error ? caught.message : fallback);
+  }, []);
+  const runPreview = reactExports.useCallback(async () => {
+    if (!dirty) return;
+    setPreviewBusy(true);
+    setError(null);
+    setStale(false);
+    try {
+      const next = await previewExtensionMutation(mutation());
+      setPreview(next);
+      setReviewOpen(true);
+    } catch (caught) {
+      handleApiError(caught, "Guard could not preview this draft.");
+    } finally {
+      setPreviewBusy(false);
+    }
+  }, [dirty, handleApiError, mutation]);
+  const openApproval = reactExports.useCallback(async () => {
+    if (!preview || !dirty || stale) return;
+    try {
+      await resolveApprovalGate({ failClosed: true });
+      setReviewOpen(false);
+      setApprovalOpen(true);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Guard could not load the local approval gate.");
+    }
+  }, [dirty, preview, resolveApprovalGate, stale]);
+  const apply = reactExports.useCallback(async (credentials) => {
+    if (!preview || !dirty || stale) return;
+    setApplyBusy(true);
+    setError(null);
+    try {
+      const base = mutation();
+      const proofPreview = await previewExtensionMutation({ ...base, ...credentials, session_nonce: crypto.randomUUID().replaceAll("-", "") });
+      if (!proofPreview.proof_id) throw new Error("Guard did not issue an approval proof for this exact draft.");
+      if (proofPreview.canonical_diff_digest !== preview.canonical_diff_digest) throw new Error("The policy draft changed after preview. Preview it again before applying.");
+      const applied = await applyExtensionMutation({ ...base, proof_id: proofPreview.proof_id });
+      setApprovalOpen(false);
+      setPreview(null);
+      setReviewOpen(false);
+      setError(null);
+      setStale(false);
+      if (applied.revision <= baseEffective.revision) throw new Error("Guard did not advance the committed extension-control revision.");
+      await props.onRefresh();
+    } catch (caught) {
+      handleApiError(caught, "Guard could not apply this draft.");
+    } finally {
+      setApplyBusy(false);
+    }
+  }, [baseEffective.revision, dirty, handleApiError, mutation, preview, props, stale]);
+  const rebaseDraft = reactExports.useCallback(async () => {
+    setPreviewBusy(true);
+    setError(null);
+    try {
+      const [latestCatalog, latestEffective] = await Promise.all([fetchExtensionCatalog(), fetchEffectiveExtensionControls()]);
+      const latestExtension = latestCatalog.extensions.find((item) => item.extension_id === policyExtension.extension_id) ?? latestCatalog.extensions.find((item) => item.aliases.includes(policyExtension.extension_id));
+      if (!latestExtension) {
+        setError("This extension no longer exists in the authoritative catalog. Discard the draft and refresh before continuing.");
+        return;
+      }
+      const result = rebaseExtensionPolicyDraft(baseEffective, latestEffective, policyExtension, latestExtension, draftLayers);
+      setBaseEffective(latestEffective);
+      setPolicyExtension(latestExtension);
+      setIdentity(newExtensionPolicyDraftIdentity());
+      setPreview(null);
+      setReviewOpen(false);
+      if (result.conflicts.length) {
+        setPendingRebase({ result, latestEffective, latestExtension });
+        setDraftLayers(result.draft_layers);
+        setStale(true);
+        setError("The latest policy overlaps this draft. Choose whether to keep your overlapping changes or use current authoritative values. Removed permissions cannot be restored.");
+      } else {
+        setDraftLayers(result.draft_layers);
+        setPendingRebase(null);
+        setStale(false);
+        setError(null);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Guard could not rebase this draft.");
+    } finally {
+      setPreviewBusy(false);
+    }
+  }, [baseEffective, draftLayers, policyExtension]);
+  const keepConflicts = reactExports.useCallback(() => {
+    if (!pendingRebase) return;
+    setDraftLayers(keepExtensionPolicyRebaseConflicts(pendingRebase.result, pendingRebase.latestEffective));
+    setPendingRebase(null);
+    setStale(false);
+    setError(null);
+    setIdentity(newExtensionPolicyDraftIdentity());
+  }, [pendingRebase]);
+  const useCurrent = reactExports.useCallback(() => {
+    if (!pendingRebase) return;
+    setDraftLayers(cloneLayers(pendingRebase.latestEffective));
+    setPendingRebase(null);
+    setStale(false);
+    setError(null);
+    setPreview(null);
+    setIdentity(newExtensionPolicyDraftIdentity());
+  }, [pendingRebase]);
+  const applyProfile = reactExports.useCallback((profile) => {
+    let next = cloneLayers(baseEffective);
+    for (const permission2 of policyExtension.permissions) {
+      if (!permission2.configurable) continue;
+      const state = profile === "recommended" ? "inherit" : profile === "strict" ? "block" : permission2.risk_tier === "critical" || permission2.risk_tier === "high" ? "block" : "inherit";
+      next = setLocalPermissionDraftState(next, baseEffective.catalog_digest, permission2.permission_id, state);
+    }
+    setDraftLayers(next);
+    setIdentity(newExtensionPolicyDraftIdentity());
+    setPreview(null);
+    setReviewOpen(false);
+    setError(null);
+    setStale(false);
+    setPendingRebase(null);
+  }, [baseEffective, policyExtension]);
+  const configurableCount = policyExtension.permissions.filter((permission2) => permission2.configurable).length;
+  const managedCount = policyExtension.permissions.filter((permission2) => managedPermissionState(baseEffective, permission2.permission_id) !== null).length;
+  const confirmationCount = preview?.semantic_preview.changed_target_count ?? changeCount;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { id: "extension-policy-editor", "aria-labelledby": "extension-policy-heading", className: "space-y-5", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-3xl border border-slate-200 bg-white p-5 sm:p-6", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-bold uppercase tracking-[0.18em] text-brand-blue", children: "This device" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "extension-policy-heading", className: "mt-1 text-lg font-semibold text-slate-950", children: "Protection settings" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-3xl text-sm leading-6 text-slate-600", children: "Keep Guard's recommended behavior, make selected capabilities stricter, or allow a capability only where Guard's built-in minimum safety still permits it. Detection and minimum protection never turn off." })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { children: [
+            configurableCount,
+            " configurable"
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { children: [
+            policyExtension.permissions.length - configurableCount,
+            " fixed"
+          ] }),
+          dirty ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { tone: "border-blue-200 bg-blue-50 text-blue-800", children: [
+            changeCount,
+            " staged"
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { children: "Authoritative" })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-semibold uppercase tracking-wide text-slate-500", children: "Quick profiles" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex flex-wrap gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: baseEffective.health !== "protected", onClick: () => applyProfile("recommended"), className: "min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:opacity-40", children: "Recommended" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: baseEffective.health !== "protected", onClick: () => applyProfile("balanced"), className: "min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:opacity-40", children: "Balanced" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: baseEffective.health !== "protected", onClick: () => applyProfile("strict"), className: "min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 disabled:opacity-40", children: "Strict local" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs leading-5 text-slate-500", children: "Profiles only prepare a local draft. You still review exactly what changes and authenticate before anything is applied." })
+      ] }),
+      baseEffective.global_lockdown ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { role: "status", className: "mt-4 flex gap-2 rounded-xl bg-slate-950 p-3 text-sm text-white", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniLockClosed, { className: "mt-0.5 size-4 shrink-0" }),
+        "Emergency Lockdown remains dominant. You can prepare a local draft, but matching commands stay blocked while lockdown is active."
+      ] }) : null,
+      baseEffective.health !== "protected" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { role: "alert", className: "mt-4 flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "mt-0.5 size-4 shrink-0" }),
+        "Settings cannot be changed until Guard verifies local settings integrity."
+      ] }) : null,
+      managedCount ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900", children: [
+        managedCount,
+        " setting",
+        managedCount === 1 ? " is" : "s are",
+        " managed by your organization. This device can add stricter blocks but cannot weaken an organization block."
+      ] }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-3", children: policyExtension.permissions.map((permission2) => /* @__PURE__ */ jsxRuntimeExports.jsx(PermissionPolicyRow, { permission: permission2, extension: policyExtension, effective: baseEffective, draftState: localPermissionDraftState(draftLayers, permission2.permission_id), onChange: (state) => setPermission(permission2, state) }, permission2.permission_id)) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sticky bottom-4 z-20 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur supports-[backdrop-filter]:bg-white/85", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-sm text-slate-600", children: dirty ? `${changeCount} unsaved setting change${changeCount === 1 ? "" : "s"}.` : "No local policy changes drafted." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: !dirty || previewBusy || applyBusy, onClick: resetDraft, className: "min-h-11 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 disabled:opacity-40", children: "Reset changes" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", disabled: !dirty || previewBusy || applyBusy || baseEffective.health !== "protected" || stale, onClick: () => {
+          void runPreview();
+        }, className: "inline-flex min-h-11 items-center gap-2 rounded-xl border border-brand-blue/30 bg-blue-50 px-4 text-sm font-semibold text-brand-blue disabled:opacity-40", children: [
+          previewBusy ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "size-4 animate-spin motion-reduce:animate-none" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "size-4" }),
+          "Review ",
+          changeCount,
+          " change",
+          changeCount === 1 ? "" : "s"
+        ] })
+      ] })
+    ] }) }),
+    error ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { role: "alert", className: "rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "mt-0.5 size-5 shrink-0" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: error })
+      ] }),
+      stale && !pendingRebase ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: previewBusy, onClick: () => {
+        void rebaseDraft();
+      }, className: "mt-3 min-h-11 rounded-xl bg-red-700 px-4 text-sm font-semibold text-white", children: "Update draft with latest protection" }) : null,
+      pendingRebase ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "space-y-2", children: pendingRebase.result.conflicts.map((conflict) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: "rounded-xl bg-white p-3 text-xs", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "break-all", children: conflict.original_permission_id }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1", children: conflict.kind === "removed" ? "Target removed from the current catalog." : `Current ${conflict.latest_state}; your draft requests ${conflict.requested_state}.` })
+        ] }, conflict.original_permission_id)) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: keepConflicts, className: "min-h-11 rounded-xl bg-red-700 px-4 text-sm font-semibold text-white", children: "Keep my compatible changes" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: useCurrent, className: "min-h-11 rounded-xl border border-red-300 bg-white px-4 text-sm font-semibold text-red-800", children: "Use current protection" })
+        ] })
+      ] }) : null
+    ] }) : dirty && !preview ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniInformationCircle, { className: "mt-0.5 size-5 shrink-0" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Review is required before approval. Guard calculates the real outcome from current protections, dependencies, organization settings, and Emergency Lockdown before anything can change." })
+    ] }) : null,
+    reviewOpen && preview ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewDrawer, { preview, busy: previewBusy || applyBusy, onClose: () => setReviewOpen(false), onApply: () => {
+      void openApproval();
+    } }) : null,
+    approvalOpen && preview ? /* @__PURE__ */ jsxRuntimeExports.jsx(ApprovalProofModal, { title: `Apply ${confirmationCount} protection setting change${confirmationCount === 1 ? "" : "s"}`, detail: "Authenticate the exact settings you just reviewed. Guard uses a one-time local proof and rejects the apply if the reviewed settings changed.", confirmLabel: `Apply ${confirmationCount} reviewed change${confirmationCount === 1 ? "" : "s"}`, approvalGate: resolvedApprovalGate, busy: applyBusy, error, onCancel: () => {
+      if (!applyBusy) setApprovalOpen(false);
+    }, onConfirm: (credentials) => {
+      void apply(credentials);
+    } }) : null
+  ] });
+}
 const client = createCommandActivityClient(fetchCommandActivityApi);
 function useProtectionModuleActivity(extensionId) {
   const [items, setItems] = reactExports.useState([]);
@@ -1926,7 +2538,7 @@ function SimpleSettingsSummary(props) {
   const configurable = props.extension.permissions.filter((permission2) => permission2.configurable);
   const blocked = props.extension.permissions.filter((permission2) => permissionEffectiveState(props.effective, props.extension, permission2) === "disabled").length;
   const source = sourceForTarget(props.effective, "extension", props.extension.extension_id);
-  const canChange = props.effective.health === "protected" && !props.extension.required && source !== "organization";
+  const canChange = props.effective.health === "protected" && configurable.length > 0;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "module-settings-heading", className: "rounded-3xl border border-slate-200 bg-white p-5 sm:p-6", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
@@ -1936,7 +2548,7 @@ function SimpleSettingsSummary(props) {
           "."
         ] })
       ] }),
-      props.onChange && canChange ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: props.onChange, className: "min-h-11 shrink-0 rounded-xl border border-brand-blue/25 bg-white px-4 text-sm font-semibold text-brand-blue hover:bg-blue-50", children: "Change protection" }) : null
+      props.onChange && canChange ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: props.onChange, className: "min-h-11 shrink-0 rounded-xl border border-brand-blue/25 bg-white px-4 text-sm font-semibold text-brand-blue hover:bg-blue-50", children: "Change settings" }) : null
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 flex flex-wrap gap-3 text-xs text-slate-600", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(SettingSource, { source }),
@@ -2090,11 +2702,17 @@ function DeveloperModuleDetails(props) {
 }
 function ProtectionModuleDetail(props) {
   const [density, setDensity] = useProtectionDensity();
+  const [editing, setEditing] = reactExports.useState(false);
+  const [policyDirty, setPolicyDirty] = reactExports.useState(false);
   const category = protectionCategoryForExtension(props.extension);
   const state = extensionEffectiveState(props.effective, props.extension);
+  const handleBack = () => {
+    if (policyDirty && !window.confirm("Discard your unreviewed protection setting changes?")) return;
+    props.onBack();
+  };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { "data-testid": "protection-module-detail", className: "mx-auto w-full max-w-6xl px-4 pb-10 pt-5 sm:px-6 lg:px-8", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-3", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onBack, className: "inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm font-semibold text-slate-600 hover:bg-slate-100", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: handleBack, className: "inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm font-semibold text-slate-600 hover:bg-slate-100", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowLeft, { className: "size-4", "aria-hidden": "true" }),
         "Protections"
       ] }),
@@ -2117,8 +2735,9 @@ function ProtectionModuleDetail(props) {
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 grid gap-5 lg:grid-cols-2", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(WhatThisProtects, { extension: props.extension }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(SimpleSettingsSummary, { extension: props.extension, effective: props.effective, onChange: props.onChange })
+      /* @__PURE__ */ jsxRuntimeExports.jsx(SimpleSettingsSummary, { extension: props.extension, effective: props.effective, onChange: () => setEditing(true) })
     ] }),
+    editing ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionPolicyPanel, { extension: props.extension, effective: props.effective, catalogDigest: props.catalogDigest, onRefresh: props.onRefresh, onDirtyChange: setPolicyDirty }) }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(WhyThisHappened, { summary: sourceForTarget(props.effective, "extension", props.extension.extension_id) === "organization" ? "Your organization's signed policy is contributing to the current behavior. Local changes cannot weaken it." : sourceForTarget(props.effective, "extension", props.extension.extension_id) === "device" ? "A protection setting on this device contributes to the current behavior." : "Guard is using its built-in recommended behavior for this protection." }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 grid gap-5 lg:grid-cols-2", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "rounded-3xl border border-slate-200 bg-white p-5 sm:p-6", children: [
@@ -2473,7 +3092,7 @@ function ProtectionCenterWorkspace() {
           effective: state.effective,
           catalogDigest: state.catalog.catalog_digest,
           onBack: closeExtension,
-          onChange: () => requestChange({ extension: selectedExtension, enabled: !isExtensionEnabled(state.effective, selectedExtension) })
+          onRefresh: load
         }
       ),
       pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewModal, { change: pending, busy, error: mutationError, approvalGate: resolvedApprovalGate, onCancel: () => {

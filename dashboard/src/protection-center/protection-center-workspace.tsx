@@ -390,7 +390,7 @@ export function ProtectionCenterWorkspace() {
       effective={state.effective}
       catalogDigest={state.catalog.catalog_digest}
       onBack={closeExtension}
-      onChange={() => requestChange({ extension: selectedExtension, enabled: !isExtensionEnabled(state.effective, selectedExtension) })}
+      onRefresh={load}
     />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}{recoveryModal}</>;
   }
 
