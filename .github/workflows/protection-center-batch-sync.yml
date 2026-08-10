@@ -85,14 +85,6 @@ jobs:
           if text.count(old_health) != 1:
               raise SystemExit("health result marker changed unexpectedly")
           experience.write_text(text.replace(old_health, new_health, 1), encoding="utf-8")
-
-          workflow = Path(".github/workflows/extension-control-center-installed-ci.yml")
-          text = workflow.read_text(encoding="utf-8")
-          marker = '            installed-protection-center-simple-800.png \\\n            installed-protection-center-simple-1440.png; do'
-          replacement = '            installed-protection-center-simple-800.png \\\n            installed-protection-center-simple-1024.png \\\n            installed-protection-center-simple-1440.png \\\n            installed-protection-center-simple-zoom-200.png; do'
-          if text.count(marker) != 1:
-              raise SystemExit("installed proof screenshot list changed unexpectedly")
-          workflow.write_text(text.replace(marker, replacement, 1), encoding="utf-8")
           PY
       - run: cd dashboard && bun install --frozen-lockfile --ignore-scripts
       - run: cd dashboard && bun run test
@@ -111,7 +103,6 @@ jobs:
             dashboard/src/protection-center/components/protection-landing-panels.tsx \
             dashboard/src/protection-center/protection-center-workspace.tsx \
             dashboard/src/protection-center/protection-landing-experience.tsx \
-            .github/workflows/extension-control-center-installed-ci.yml \
             src/codex_plugin_scanner/guard/daemon/static \
             .github/workflows/protection-center-batch-sync.yml
           git diff --cached --check
