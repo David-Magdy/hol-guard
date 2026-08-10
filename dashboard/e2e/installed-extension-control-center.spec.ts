@@ -110,6 +110,9 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
 
   for (const width of [320, 390, 720, 800, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
+    // The shell deliberately animates desktop sidebar padding. Validate the
+    // settled responsive layout rather than sampling that 200 ms transition.
+    await page.waitForTimeout(250);
     await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     const screenshotName = width === 720
@@ -118,6 +121,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
     await page.screenshot({ path: testInfo.outputPath(screenshotName), fullPage: false });
   }
   await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(250);
 
   for (const extensionId of ["command.git", "command.github", "command.package.node"]) {
     await page.goto(`/extensions/${extensionId}`);
