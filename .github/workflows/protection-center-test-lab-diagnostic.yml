@@ -64,24 +64,25 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("dashboard/e2e/installed-extension-control-center.spec.ts")
           text = path.read_text(encoding="utf-8")
-          old = '''  await expect(
-            page.getByRole("status").filter({ hasText: /Guard would (allow|ask first|block) this/ }),
-          ).toContainText(expectedLabTitle);
-          await expect(page.getByRole("alert")).toHaveCount(0);
+          pattern = re.compile(
+              r'''  await expect\(\s*page\.getByRole\("status"\)\.filter\(\{ hasText: /Guard would \(allow\|ask first\|block\) this/ \}\),\s*\)\.toContainText\(expectedLabTitle\);\s*  await expect\(page\.getByRole\("alert"\)\)\.toHaveCount\(0\);\n''',
+              re.MULTILINE,
+          )
+          replacement = '''  await page.waitForTimeout(250);
+            const diagnosticAlerts = (await page.getByRole("alert").allTextContents())
+              .map((value) => value.replaceAll(labCommand, "[redacted]"));
+            const diagnosticStatuses = (await page.getByRole("status").allTextContents())
+              .map((value) => value.replaceAll(labCommand, "[redacted]"));
+            throw new Error(`TEST_LAB_DIAGNOSTIC decision=${String(labDecision)} expected=${expectedLabTitle} alerts=${JSON.stringify(diagnosticAlerts)} statuses=${JSON.stringify(diagnosticStatuses)}`);
           '''
-          new = '''  await page.waitForTimeout(250);
-          const diagnosticAlerts = (await page.getByRole("alert").allTextContents())
-            .map((value) => value.replaceAll(labCommand, "[redacted]"));
-          const diagnosticStatuses = (await page.getByRole("status").allTextContents())
-            .map((value) => value.replaceAll(labCommand, "[redacted]"));
-          throw new Error(`TEST_LAB_DIAGNOSTIC decision=${String(labDecision)} expected=${expectedLabTitle} alerts=${JSON.stringify(diagnosticAlerts)} statuses=${JSON.stringify(diagnosticStatuses)}`);
-          '''
-          if text.count(old) != 1:
-              raise SystemExit("expected one Test Lab assertion block")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          updated, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f"expected one Test Lab assertion block, found {count}")
+          path.write_text(updated, encoding="utf-8")
           PY
 
       - name: Run exact installed daemon Test Lab diagnostic
