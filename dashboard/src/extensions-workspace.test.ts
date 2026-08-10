@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -19,6 +20,11 @@ import {
 } from "./extensions-workspace";
 import { isExtensionEnabled } from "./extensions-filters";
 import { fetchResolvedApprovalGate } from "./use-resolved-approval-gate";
+import {
+  extensionPolicyRadioTabStop,
+  isCurrentExtensionPolicyDraft,
+  nextExtensionPolicyRadioIndex,
+} from "./extension-policy-panel";
 
 assert.equal(extensionRecoveryAction("protected"), null);
 assert.deepEqual(extensionRecoveryAction("recovery-required"), extensionRecoveryAction("tampered"));
@@ -153,5 +159,29 @@ assert.equal(isExtensionEnabled(effective, extension), true);
 assert.equal(permissionEffectiveState(effective, extension, extension.permissions[0]!), "disabled");
 assert.equal(extensionEffectiveState({ ...effective, global_lockdown: true }, { ...extension, required: true }), "disabled");
 assert.equal(extensionEffectiveState({ ...effective, health: "tampered" }, extension), "disabled");
+
+assert.equal(extensionPolicyRadioTabStop([
+  { value: "inherit" },
+  { value: "allow", disabled: true },
+  { value: "block" },
+], "allow", false), 0, "managed-disabled selected choice must leave an enabled radio tabbable");
+assert.equal(extensionPolicyRadioTabStop([{ value: "inherit" }, { value: "block" }], "block", false), 1);
+assert.equal(extensionPolicyRadioTabStop([{ value: "inherit" }], "inherit", true), -1);
+const radioChoices = [{ disabled: false }, { disabled: true }, { disabled: false }];
+assert.equal(nextExtensionPolicyRadioIndex(radioChoices, 0, "ArrowRight", false), 2, "arrows skip disabled choices");
+assert.equal(nextExtensionPolicyRadioIndex(radioChoices, 2, "ArrowRight", false), 0, "arrows wrap");
+assert.equal(nextExtensionPolicyRadioIndex(radioChoices, 0, "ArrowLeft", false), 2, "reverse arrows wrap");
+assert.equal(nextExtensionPolicyRadioIndex(radioChoices, 0, "Enter", false), -1);
+assert.equal(nextExtensionPolicyRadioIndex(radioChoices, 0, "ArrowRight", true), -1);
+assert.equal(isCurrentExtensionPolicyDraft(4, 4), true);
+assert.equal(isCurrentExtensionPolicyDraft(4, 5), false, "stale async completions must not update the active draft");
+
+const policyDetailSource = readFileSync(new URL("./extension-control-center-detail.tsx", import.meta.url), "utf8");
+const policyPanelSource = readFileSync(new URL("./extension-policy-panel.tsx", import.meta.url), "utf8");
+assert.match(policyDetailSource, /id="extension-policy-tabpanel"[\s\S]*role="tabpanel"[\s\S]*aria-labelledby="extension-tab-policy"/);
+assert.match(policyPanelSource, /isCurrentExtensionPolicyDraft\(generation, draftGeneration\.current\)\) handleApiError/);
+assert.match(policyPanelSource, /isCurrentExtensionPolicyDraft\(generation, draftGeneration\.current\)[\s\S]*Guard could not rebase this draft/);
+assert.match(policyPanelSource, /ArrowLeft[\s\S]*ArrowRight[\s\S]*ArrowUp[\s\S]*ArrowDown/);
+assert.match(policyPanelSource, /Policy applied\. Editing stays locked/);
 
 console.log("extensions-workspace.test.ts: all assertions passed");
