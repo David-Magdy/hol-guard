@@ -1,0 +1,51 @@
+name: Protection Center Batch 1 release sync
+
+on:
+  push:
+    branches:
+      - feat/protection-center-01-foundation
+
+permissions:
+  contents: write
+
+concurrency:
+  group: protection-center-batch-1-release-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+      - name: Merge current release/3.0 without touching main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin release/3.0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-edit origin/release/3.0
+      - name: Verify focused dashboard contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.14
+          export PATH="$HOME/.bun/bin:$PATH"
+          cd dashboard
+          bun install --frozen-lockfile --ignore-scripts
+          bun run test
+          bun run build
+      - name: Verify hygiene and push synchronized branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check HEAD^..HEAD
+          rm .github/workflows/protection-center-release-sync.yml
+          git add .github/workflows/protection-center-release-sync.yml
+          git commit -m "chore(protection-center): remove temporary release sync" || true
+          git push origin HEAD:feat/protection-center-01-foundation
