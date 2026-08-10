@@ -1,4 +1,5 @@
 import type { EffectiveExtensionControls, ExtensionCatalogItem } from "./extension-controls-api";
+import { extensionEffectiveState } from "./extension-control-center-model";
 
 /**
  * Risk coverage taxonomy. Guard ships nine distinct risk classes across its
@@ -16,11 +17,6 @@ export type RiskClass =
   | "credential_exfiltration"
   | "execution";
 
-/**
- * Functional domain derived from the `command.<domain>` extension_id prefix.
- * Lets operators browse by the area of the system an extension protects
- * without reading individual action classes.
- */
 export type ExtensionDomain =
   | "core"
   | "package"
@@ -78,11 +74,6 @@ export const RISK_CLASS_LABELS: Record<RiskClass, string> = {
   execution: "Remote execution",
 };
 
-/**
- * Semantic tone tokens for risk-class chips. Each maps to a calm, low-chroma
- * background/text pair so the chips read as quiet labels until a facet is
- * active. Tints are Tailwind classes resolved at build time.
- */
 export const RISK_CLASS_TONE: Record<RiskClass, { idle: string; active: string; label: string }> = {
   destructive_shell: {
     idle: "border-slate-200 bg-white text-slate-600 hover:border-amber-300 hover:bg-amber-50",
@@ -163,12 +154,6 @@ const DOMAIN_PREFIX_MAP: ReadonlyArray<[string, ExtensionDomain]> = [
   ["command.github", "source-control"],
 ];
 
-/**
- * Map an extension_id to its functional domain. Extensions that do not match
- * a specialized prefix (filesystem, git, system, windows, container-runtime,
- * data-protection, encoded-execution, guard-self-protection, kubernetes-secrets,
- * shell-mutations) belong to "core".
- */
 export function classifyDomain(extensionId: string): ExtensionDomain {
   const id = extensionId.toLowerCase();
   for (const [prefix, domain] of DOMAIN_PREFIX_MAP) {
@@ -177,21 +162,12 @@ export function classifyDomain(extensionId: string): ExtensionDomain {
   return "core";
 }
 
-/**
- * Whether an extension is effectively enabled given the resolved authority
- * controls. Required extensions are always enabled. Optional extensions are
- * enabled unless an explicit control disables them.
- */
+/** Shared effective-state resolver used by cards, facets, and details. */
 export function isExtensionEnabled(
   effective: EffectiveExtensionControls,
   extension: ExtensionCatalogItem,
 ): boolean {
-  if (extension.required) return true;
-  const control = effective.controls.find(
-    (candidate) =>
-      candidate.target.kind === "extension" && candidate.target.target_id === extension.extension_id,
-  );
-  return control?.state !== "disabled";
+  return extensionEffectiveState(effective, extension) === "enabled";
 }
 
 export function hasActiveFilters(filters: ExtensionFilterState): boolean {
@@ -204,12 +180,6 @@ export function hasActiveFilters(filters: ExtensionFilterState): boolean {
   );
 }
 
-/**
- * Normalized haystack for free-text search. Indexes every field an operator
- * might reasonably type when looking for an extension: display name, the
- * canonical id, the description, action-class labels, risk-class labels, and
- * the domain word.
- */
 function searchHaystack(extension: ExtensionCatalogItem): string {
   const parts = [
     extension.name,
@@ -226,16 +196,10 @@ function searchHaystack(extension: ExtensionCatalogItem): string {
 export function matchExtensionQuery(extension: ExtensionCatalogItem, query: string): boolean {
   const normalized = query.trim().toLowerCase();
   if (normalized === "") return true;
-  // Support space-separated multi-token search: every token must match.
   const haystack = searchHaystack(extension);
   return normalized.split(/\s+/).every((token) => haystack.includes(token));
 }
 
-/**
- * Apply the full filter pipeline and return a stable, alphabetically sorted
- * list. Pure function: identical inputs yield identical outputs, with no
- * mutation of the source array.
- */
 export function filterExtensions(
   extensions: readonly ExtensionCatalogItem[],
   effective: EffectiveExtensionControls,
@@ -261,10 +225,6 @@ export function filterExtensions(
   return items;
 }
 
-/**
- * Count how many catalog extensions carry a given risk class. Used to show
- * per-facet counts so operators can see coverage before filtering.
- */
 export function countByRiskClass(extensions: readonly ExtensionCatalogItem[]): Map<RiskClass, number> {
   const counts = new Map<RiskClass, number>();
   for (const risk of RISK_CLASS_ORDER) counts.set(risk, 0);
