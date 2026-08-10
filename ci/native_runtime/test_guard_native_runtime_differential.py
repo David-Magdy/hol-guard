@@ -56,18 +56,31 @@ def _inline_request(
     )
 
 
-def _source_request(*, tmp_path: Path, relative_path: str, text: str, request_id: str) -> HookReviewRequest:
-    guard_home = tmp_path / "guard-home"
-    guard_home.mkdir(mode=0o700, exist_ok=True)
-    path = tmp_path / relative_path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+def _source_request(
+    *,
+    workspace: Path,
+    reference_path: str,
+    text: str,
+    request_id: str,
+    actual_path: Path | None = None,
+    home_dir: Path | None = None,
+    guard_home: Path | None = None,
+    write_file: bool = True,
+    external_allowed: bool = False,
+) -> HookReviewRequest:
+    home = home_dir or workspace
+    guard = guard_home or (home / "guard-home")
+    guard.mkdir(parents=True, mode=0o700, exist_ok=True)
+    path = actual_path or (workspace / reference_path)
+    if write_file:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
     source_ref = HookSourceFileRef(
         version=1,
-        path=relative_path,
+        path=reference_path,
         output_sha256=sha256_text(text),
         output_chars=len(text),
-        tool_input_path=relative_path,
+        tool_input_path=reference_path,
     )
     return HookReviewRequest(
         harness="pi",
@@ -75,21 +88,22 @@ def _source_request(*, tmp_path: Path, relative_path: str, text: str, request_id
         payload={
             "hook_event_name": "PostToolUse",
             "tool_name": "Read",
-            "tool_input": {"file_path": relative_path},
+            "tool_input": {"file_path": reference_path},
             "guard_source_ref": {
                 "version": 1,
-                "path": relative_path,
+                "path": reference_path,
                 "output_sha256": source_ref.output_sha256,
                 "output_chars": source_ref.output_chars,
-                "tool_input_path": relative_path,
+                "tool_input_path": reference_path,
             },
         },
         payload_kind="source_file_ref",
         config_path=None,
-        cwd=tmp_path,
-        home_dir=tmp_path,
-        guard_home=guard_home,
+        cwd=workspace,
+        home_dir=home,
+        guard_home=guard,
         source_scope="project",
+        source_ref_external_allowed=external_allowed,
         source_ref=source_ref,
         request_id=request_id,
         deadline_monotonic=time.monotonic() + 5.0,
@@ -154,8 +168,8 @@ def test_compiled_native_clean_source_read_parity(tmp_path: Path) -> None:
     try:
         _assert_parity(
             _source_request(
-                tmp_path=tmp_path,
-                relative_path="src/example.ts",
+                workspace=tmp_path,
+                reference_path="src/example.ts",
                 text="export const value = 1;\n",
                 request_id="source-clean",
             )
@@ -168,10 +182,138 @@ def test_compiled_native_secret_source_read_parity(tmp_path: Path) -> None:
     try:
         _assert_parity(
             _source_request(
-                tmp_path=tmp_path,
-                relative_path="src/private.ts",
+                workspace=tmp_path,
+                reference_path="src/private.ts",
                 text=f"export const value = '{_secret_token()}';\n",
                 request_id="source-secret",
+            )
+        )
+    finally:
+        close_resident_native_runtimes()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "text"),
+    [
+        (".env", "SAFE_PLACEHOLDER=value\n"),
+        (".hidden/config.py", "VALUE = 1\n"),
+        ("credentials", "not-a-secret\n"),
+    ],
+)
+def test_compiled_native_rejected_workspace_source_path_parity(
+    tmp_path: Path,
+    relative_path: str,
+    text: str,
+) -> None:
+    try:
+        _assert_parity(
+            _source_request(
+                workspace=tmp_path,
+                reference_path=relative_path,
+                text=text,
+                request_id=f"source-rejected-{relative_path}",
+            )
+        )
+    finally:
+        close_resident_native_runtimes()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "text"),
+    [
+        (".github/workflows/ci.yml", "name: ci\n"),
+        (".nvmrc", "20\n"),
+        ("docs/guide.md", "# Guide\n"),
+    ],
+)
+def test_compiled_native_allowed_workspace_source_path_parity(
+    tmp_path: Path,
+    relative_path: str,
+    text: str,
+) -> None:
+    try:
+        _assert_parity(
+            _source_request(
+                workspace=tmp_path,
+                reference_path=relative_path,
+                text=text,
+                request_id=f"source-allowed-{relative_path}",
+            )
+        )
+    finally:
+        close_resident_native_runtimes()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink source fixture is POSIX-only")
+def test_compiled_native_source_symlink_rejection_parity(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "actual.ts"
+    source.parent.mkdir(parents=True)
+    text = "export const value = 1;\n"
+    source.write_text(text, encoding="utf-8")
+    link = source.with_name("link.ts")
+    link.symlink_to(source)
+    try:
+        _assert_parity(
+            _source_request(
+                workspace=tmp_path,
+                reference_path="src/link.ts",
+                actual_path=link,
+                text=text,
+                write_file=False,
+                request_id="source-symlink",
+            )
+        )
+    finally:
+        close_resident_native_runtimes()
+
+
+def test_compiled_native_external_sibling_checkout_source_parity(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "workspace"
+    sibling = home / "sibling"
+    workspace.mkdir(parents=True)
+    (sibling / ".git").mkdir(parents=True)
+    source = sibling / "src" / "library.ts"
+    text = "export const library = true;\n"
+    source.parent.mkdir(parents=True)
+    source.write_text(text, encoding="utf-8")
+    try:
+        _assert_parity(
+            _source_request(
+                workspace=workspace,
+                reference_path=str(source),
+                actual_path=source,
+                text=text,
+                home_dir=home,
+                guard_home=home / "guard-home",
+                write_file=False,
+                external_allowed=True,
+                request_id="source-external-sibling",
+            )
+        )
+    finally:
+        close_resident_native_runtimes()
+
+
+def test_compiled_native_known_skill_source_parity(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    workspace = home / "workspace"
+    skill = home / ".codex" / "skills" / "example" / "SKILL.md"
+    workspace.mkdir(parents=True)
+    text = "# Example skill\n"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(text, encoding="utf-8")
+    try:
+        _assert_parity(
+            _source_request(
+                workspace=workspace,
+                reference_path="skill://example",
+                actual_path=skill,
+                text=text,
+                home_dir=home,
+                guard_home=home / "guard-home",
+                write_file=False,
+                request_id="source-known-skill",
             )
         )
     finally:
