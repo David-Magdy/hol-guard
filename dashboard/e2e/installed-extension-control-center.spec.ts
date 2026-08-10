@@ -194,9 +194,17 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   });
   await page.getByRole("button", { name: "Check safely" }).click();
   const labResponse = await labResponsePromise;
-  const labPayload = await labResponse.json();
+  const labPayload = await labResponse.json() as { decision?: unknown };
   expect(JSON.stringify(labPayload)).not.toContain(labCommand);
-  await expect(page.getByRole("status").filter({ hasText: /Guard would (allow|ask first|block) this/ })).toBeVisible();
+  const labDecision = labPayload.decision;
+  expect(["allowed", "ask-first", "blocked"]).toContain(labDecision);
+  const expectedLabTitle = {
+    allowed: "Guard would allow this",
+    "ask-first": "Guard would ask first",
+    blocked: "Guard would block this",
+  }[labDecision as "allowed" | "ask-first" | "blocked"];
+  await expect(page.getByRole("status")).toContainText(expectedLabTitle);
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("installed-protection-test-lab.png"), fullPage: true });
   await selectDensity(page, "Developer");
   await page.getByText("Developer details", { exact: true }).click();
