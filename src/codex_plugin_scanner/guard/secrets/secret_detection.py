@@ -24,7 +24,7 @@ from typing import Literal, TypedDict
 
 SecretSeverity = Literal["medium", "high", "critical"]
 SecretConfidence = Literal["low", "medium", "high"]
-SecretScanSource = Literal["working_tree", "git_history", "text"]
+SecretScanSource = Literal["working_tree", "git_history", "text", "staged"]
 SecretValidationKind = Literal[
     "none",
     "github",
