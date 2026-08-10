@@ -79,11 +79,12 @@ assert.match(html, /data-local-protection-independent="true"/);
 assert.match(html, /data-cloud-value-state="optional"/);
 assert.match(html, /Cloud continuity is optional/);
 assert.match(html, /Available on Solo Cloud/);
-assert.match(html, /Connect Guard Cloud/);
+assert.match(html, /href="https:\/\/hol\.org\/guard\/connect"/);
 assert.match(html, /Hide Cloud continuity/);
 assert.doesNotMatch(html, /upgrade required|local protection disabled/i);
 
 const unsafeHtml = renderToStaticMarkup(createElement(CloudValueGate, { runtime: unsafe, destination: "javascript:alert(1)" }));
-assert.doesNotMatch(unsafeHtml, /javascript:|Connect Guard Cloud/);
+assert.doesNotMatch(unsafeHtml, /href=/);
+assert.doesNotMatch(unsafeHtml, /javascript:/);
 
 console.log("protection-cloud-value.test.tsx: all assertions passed");
