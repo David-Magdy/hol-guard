@@ -60,7 +60,13 @@ from .approval_gate_state import (
     write_state as _write_state,
 )
 from .models import PolicyDecision
-from .totp import TotpSecretStore, build_otpauth_uri, generate_totp_secret, verify_totp_code
+from .totp import (
+    TotpSecretStore,
+    build_otpauth_uri,
+    generate_totp_secret,
+    totp_code_at_counter,
+    verify_totp_code,
+)
 
 APPROVAL_GATE_MIN_PASSWORD_LENGTH = 8
 APPROVAL_GATE_GRANT_TTL_SECONDS = 30
@@ -937,22 +943,27 @@ def _verify_or_raise_locked(
             session_nonce=resolved_session_nonce,
             now_epoch=now_epoch,
         ):
-            return _register_grant(
+            if gate_input.totp_code is None or _recent_totp_auth_code_matches(
                 guard_home,
-                state=state,
-                purpose=purpose,
-                action=action,
-                scope=scope,
-                subject=subject,
-                session_nonce=resolved_session_nonce,
-                factor_set=("totp",),
-                strict=strict,
-                used_cooldown=False,
-                cooldown_expires_at=None,
-                password_verified=False,
-                totp_verified=True,
-                now=now,
-            )
+                state,
+                code=gate_input.totp_code,
+            ):
+                return _register_grant(
+                    guard_home,
+                    state=state,
+                    purpose=purpose,
+                    action=action,
+                    scope=scope,
+                    subject=subject,
+                    session_nonce=resolved_session_nonce,
+                    factor_set=("totp",),
+                    strict=strict,
+                    used_cooldown=False,
+                    cooldown_expires_at=None,
+                    password_verified=False,
+                    totp_verified=True,
+                    now=now,
+                )
         if gate_input.totp_code is None:
             raise ApprovalGateError("approval_gate_totp_required", "TOTP code is required.")
         accepted_counter = _verify_totp_or_raise(
@@ -1190,6 +1201,25 @@ def _recent_totp_auth_valid(
     }
     expected_signature = _totp_recent_auth_signature(secret, payload)
     return hmac.compare_digest(signature, expected_signature)
+
+
+def _recent_totp_auth_code_matches(
+    guard_home: Path,
+    state: dict[str, object],
+    *,
+    code: str,
+) -> bool:
+    """Return whether a supplied code is only a redundant copy of the accepted TOTP."""
+
+    record = state.get("totp_recent_auth")
+    if not isinstance(record, dict):
+        return False
+    accepted_counter = _optional_int(record.get("accepted_counter"))
+    if accepted_counter is None:
+        return False
+    secret = _validate_totp_state_or_raise(guard_home, state)
+    expected_code = totp_code_at_counter(secret=secret, counter=accepted_counter)
+    return hmac.compare_digest(code.strip(), expected_code)
 
 
 def _totp_recent_auth_signature(secret: str, payload: dict[str, object]) -> str:
