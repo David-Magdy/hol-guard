@@ -64,9 +64,7 @@ def evaluate_extension_control_test(
         extension_control_snapshot=runtime.current(),
     )
     relevant = [
-        owned
-        for owned in evaluation.matches
-        if extension_id is None or owned.extension.extension_id == extension_id
+        owned for owned in evaluation.matches if extension_id is None or owned.extension.extension_id == extension_id
     ][:_MAX_TEST_MATCHES]
 
     safer: list[str] = []
