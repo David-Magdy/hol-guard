@@ -51,6 +51,30 @@ export const PROTECTION_AUTHORITY_FIXTURES = {
   localStricterBlock: protectionAuthorityFixture("protected", { layers: [localStricterLayer] }),
 } as const;
 
+export const CONFIGURABLE_PROTECTION_PERMISSION: ExtensionPermission = {
+  permission_id: "command.git.permission.history-rewrite",
+  schema_version: 1,
+  extension_id: "command.git",
+  implementation_version: "1.0.0",
+  label: "Repository history changes",
+  description: "Controls destructive repository history changes.",
+  risk_tier: "high",
+  baseline_floor: "review",
+  default_enabled: true,
+  configurable: true,
+  fixed_reason: null,
+  typed_capabilities: [],
+  action_classes: ["git.history.rewrite"],
+  rule_ids: ["command.git.history-rewrite"],
+  dependencies: [],
+  conflicts: [],
+  implied_permissions: [],
+  introduced_version: "1.0.0",
+  deprecated: false,
+  replacement_permission_id: null,
+  safer_guidance: ["Create a checkpoint before rewriting repository history."],
+};
+
 export function protectionModuleFixture(overrides: Partial<ExtensionCatalogItem> = {}): ExtensionCatalogItem {
   return {
     schema_version: 2,
@@ -74,8 +98,8 @@ export function protectionModuleFixture(overrides: Partial<ExtensionCatalogItem>
     safer_alternatives: ["Create a checkpoint before rewriting repository history."],
     rule_count: 0,
     rules: [],
-    permission_count: 0,
-    permissions: [],
+    permission_count: 1,
+    permissions: [CONFIGURABLE_PROTECTION_PERMISSION],
     ...overrides,
   };
 }
