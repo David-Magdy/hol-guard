@@ -72,16 +72,16 @@ async function openPolicy(page: import("@playwright/test").Page) {
   await expectSecretSafeUrl(page);
   await expect(page.getByTestId("protection-module-detail")).toBeVisible();
   await page.getByRole("button", { name: "Change settings" }).click();
-  await expect(page.getByRole("heading", { name: "Permission controls" })).toBeVisible();
+  await expect(page.locator("#extension-policy-heading")).toHaveText("Protection settings");
   return page.locator(`[data-permission-id="${permissionId}"]`);
 }
 
 async function authenticateAndApply(page: import("@playwright/test").Page, count = 1) {
   expect(approvalPassword.length).toBeGreaterThan(20);
-  const review = page.getByRole("dialog", { name: `Review ${count} permission change${count === 1 ? "" : "s"}` });
+  const review = page.getByRole("dialog", { name: `Review ${count} protection setting change${count === 1 ? "" : "s"}` });
   await expect(review).toBeVisible();
-  await review.getByRole("button", { name: `Apply ${count} reviewed change${count === 1 ? "" : "s"}` }).click();
-  const dialog = page.getByRole("dialog", { name: `Apply ${count} extension permission change${count === 1 ? "" : "s"}` });
+  await review.getByRole("button", { name: "Continue to approval" }).click();
+  const dialog = page.getByRole("dialog", { name: `Apply ${count} protection setting change${count === 1 ? "" : "s"}` });
   await expect(dialog).toBeVisible();
   await dialog.getByLabel("Approval password").fill(approvalPassword);
   const effectiveResponse = page.waitForResponse((response) => {
@@ -188,7 +188,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await expect(page.getByText("command.git.hard-reset", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("installed-extension-rule-detail.png"), fullPage: true });
 
-  await page.getByRole("button", { name: "Protections" }).click();
+  await page.getByRole("button", { name: "Modules" }).click();
   await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
   await page.goBack();
   await expect(page.getByTestId("protection-module-detail")).toBeVisible();
@@ -206,13 +206,13 @@ test("installed dashboard previews and proof-applies a permission block", async 
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
   const row = await openPolicy(page);
   await expect(row).toBeVisible();
-  await expect(row.getByRole("radio", { name: "Block" })).toBeEnabled();
-  await row.getByRole("radio", { name: "Block" }).click();
+  await expect(row.getByRole("radio", { name: "Block matching actions" })).toBeEnabled();
+  await row.getByRole("radio", { name: "Block matching actions" }).click();
   await expect(page.getByText("1 staged", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Review 1 change" }).click();
-  const review = page.getByRole("dialog", { name: "Review 1 permission change" });
-  await expect(review.getByText("Server semantic preview")).toBeVisible();
-  await review.getByText("Affected rule IDs").click();
+  const review = page.getByRole("dialog", { name: "Review 1 protection setting change" });
+  await expect(review.getByText("Protection review", { exact: true }).first()).toBeVisible();
+  await review.getByText("Developer details", { exact: true }).click();
   await expect(review.getByText(governedRuleId, { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("installed-extension-policy-preview.png"), fullPage: true });
 
@@ -233,12 +233,12 @@ test("permission authority persists across daemon restart and can be proof-resto
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
   const row = await openPolicy(page);
   await expect(row.getByText("Blocked", { exact: true })).toBeVisible();
-  await expect(row.getByRole("radio", { name: "Block" })).toHaveAttribute("aria-checked", "true");
+  await expect(row.getByRole("radio", { name: "Block matching actions" })).toHaveAttribute("aria-checked", "true");
   await page.screenshot({ path: testInfo.outputPath("installed-extension-policy-persisted.png"), fullPage: true });
 
-  await row.getByRole("radio", { name: "Inherit" }).click();
+  await row.getByRole("radio", { name: "Use recommended" }).click();
   await page.getByRole("button", { name: "Review 1 change" }).click();
-  await expect(page.getByRole("dialog", { name: "Review 1 permission change" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Review 1 protection setting change" })).toBeVisible();
   const effective = await authenticateAndApply(page);
   expect(effective.controls.some((control) => control.target.kind === "permission" && control.target.target_id === permissionId)).toBe(false);
   const restoredRow = await openPolicy(page);

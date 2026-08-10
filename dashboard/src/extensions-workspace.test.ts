@@ -182,6 +182,6 @@ assert.match(policyDetailSource, /id="extension-policy-tabpanel"[\s\S]*role="tab
 assert.match(policyPanelSource, /isCurrentExtensionPolicyDraft\(generation, draftGeneration\.current\)\) handleApiError/);
 assert.match(policyPanelSource, /isCurrentExtensionPolicyDraft\(generation, draftGeneration\.current\)[\s\S]*Guard could not rebase this draft/);
 assert.match(policyPanelSource, /ArrowLeft[\s\S]*ArrowRight[\s\S]*ArrowUp[\s\S]*ArrowDown/);
-assert.match(policyPanelSource, /Policy applied\. Editing stays locked/);
+assert.match(policyPanelSource, /Settings applied\. Editing stays locked/);
 
 console.log("extensions-workspace.test.ts: all assertions passed");
