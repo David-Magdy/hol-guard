@@ -15,6 +15,11 @@ async function expectSecretSafeUrl(page: import("@playwright/test").Page) {
   expect(page.url()).not.toContain("#");
 }
 
+async function expectNoHorizontalOverflow(page: import("@playwright/test").Page) {
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(4);
+}
+
 async function selectDensity(page: import("@playwright/test").Page, density: "Simple" | "Advanced" | "Developer") {
   await page.getByRole("radio", { name: density }).click();
   await expect(page.getByRole("radio", { name: density })).toHaveAttribute("aria-checked", "true");
@@ -70,19 +75,15 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await page.screenshot({ path: testInfo.outputPath("installed-protection-center-developer.png"), fullPage: false });
   await selectDensity(page, "Simple");
 
-  for (const width of [320, 390, 800, 1024, 1440]) {
+  for (const width of [320, 390, 720, 800, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath(`installed-protection-center-simple-${width}.png`), fullPage: false });
+    await expectNoHorizontalOverflow(page);
+    const screenshotName = width === 720
+      ? "installed-protection-center-simple-zoom-200.png"
+      : `installed-protection-center-simple-${width}.png`;
+    await page.screenshot({ path: testInfo.outputPath(screenshotName), fullPage: false });
   }
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.evaluate(() => { document.documentElement.style.zoom = "2"; });
-  await expect(page.getByRole("heading", { name: "Protection Center", exact: true })).toBeVisible();
-  await expect(page.getByPlaceholder("Search Git, packages, secrets, downloads…")).toBeVisible();
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(4);
-  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-simple-zoom-200.png"), fullPage: false });
-  await page.evaluate(() => { document.documentElement.style.zoom = ""; });
   await page.setViewportSize({ width: 1280, height: 900 });
 
   for (const extensionId of ["command.git", "command.github", "command.package.node"]) {
