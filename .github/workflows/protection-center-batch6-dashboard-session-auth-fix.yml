@@ -55,15 +55,28 @@ jobs:
           path.write_text(text.replace(old, new), encoding='utf-8')
           PY
           git diff --check
-      - name: Verify lint typing and dashboard-session behavior
+      - name: Install verification dependencies
         shell: bash
         run: |
           set -euo pipefail
           uv sync --frozen --extra dev --python 3.12
+      - name: Verify Ruff
+        shell: bash
+        run: |
+          set -euo pipefail
           uv run --no-sync python -m ruff format tests/test_guard_extension_control_dashboard_session_auth.py
           uv run --no-sync python -m ruff check src/codex_plugin_scanner/guard/daemon/server.py tests/test_guard_extension_control_dashboard_session_auth.py
           uv run --no-sync python -m ruff format --check src/codex_plugin_scanner/guard/daemon/server.py tests/test_guard_extension_control_dashboard_session_auth.py
+          git diff --check
+      - name: Verify basedpyright
+        shell: bash
+        run: |
+          set -euo pipefail
           uv run --no-sync basedpyright --level error
+      - name: Verify signed dashboard-session behavior
+        shell: bash
+        run: |
+          set -euo pipefail
           uv run --no-sync pytest -q \
             tests/test_guard_extension_control_dashboard_session_auth.py \
             tests/test_guard_extension_control_test_lab.py \
