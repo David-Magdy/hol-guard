@@ -207,11 +207,9 @@ def _build_findings_summary_lines(findings: tuple[Finding, ...]) -> tuple[str, .
         category = _escape_step_summary_text(finding.category)
         source = _escape_step_summary_text(finding.source)
         description = _escape_step_summary_text(finding.description)
-        remediation = (
-            _escape_step_summary_text(finding.remediation)
-            if finding.remediation
-            else "Not provided."
-        )
+        remediation = "Not provided."
+        if finding.remediation:
+            remediation = _escape_step_summary_text(finding.remediation)
         location = "Not provided."
         if finding.file_path:
             raw_location = finding.file_path
