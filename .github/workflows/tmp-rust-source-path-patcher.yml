@@ -1,0 +1,33 @@
+name: Temporary Rust source path patcher
+
+on:
+  push:
+    branches: [feat/rust-runtime-source-path-parity]
+    paths:
+      - ".github/workflows/tmp-rust-source-path-patcher.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/rust-runtime-source-path-parity
+      - name: Apply exact Rust patch
+        run: |
+          python3 scripts/tmp_patch_rust_source_path.py
+          cd rust
+          cargo fmt --all
+          cd ..
+          git diff --check
+      - name: Commit patched Rust source
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add rust/crates/guard-hook-core/src/lib.rs rust/crates/guard-secure-fs/src/lib.rs
+          git commit -m "feat(guard): enforce Rust source path parity"
+          git push origin HEAD:feat/rust-runtime-source-path-parity
