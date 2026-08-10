@@ -5,7 +5,11 @@ import { emitProtectionTelemetry } from "./protection-telemetry";
 
 export type ProtectionCloudPlan = "free" | "solo" | "pro" | "team" | "enterprise";
 
-const PLAN_IDS = new Set<ProtectionCloudPlan>(["free", "solo", "pro", "team", "enterprise"]);
+const PLAN_IDS = new Set<string>(["free", "solo", "pro", "team", "enterprise"]);
+
+function isProtectionCloudPlan(value: string): value is ProtectionCloudPlan {
+  return PLAN_IDS.has(value);
+}
 
 export type ProtectionCloudValue = {
   state: "offline" | "optional" | "connecting" | "connected";
@@ -16,7 +20,7 @@ export type ProtectionCloudValue = {
 
 export function protectionCloudPlan(runtime: GuardRuntimeSnapshot | null): ProtectionCloudPlan | null {
   const raw = runtime?.cloud_pairing_state?.plan_id?.trim().toLowerCase();
-  return raw && PLAN_IDS.has(raw as ProtectionCloudPlan) ? raw as ProtectionCloudPlan : null;
+  return raw && isProtectionCloudPlan(raw) ? raw : null;
 }
 
 function connectedPlanDetail(plan: ProtectionCloudPlan | null): string {
@@ -140,7 +144,7 @@ export function CloudValueGate(props: {
       plan_id: value.plan ?? "unknown",
       cloud_state: telemetryCloudState(value),
     });
-  }, [dismissed, props.loading, value.plan, value.state]);
+  }, [props.loading, value.plan, value.state]);
 
   if (dismissed) return null;
 
