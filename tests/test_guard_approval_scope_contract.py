@@ -426,6 +426,17 @@ def test_v2_saved_artifact_allow_requires_exact_action_proof(tmp_path: Path) -> 
     assert response["error"] == "saved_allow_scope_ineligible"
 
 
+def test_exact_action_persistence_accepts_envelope_raw_command_text(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    request = replace(
+        _request("envelope-raw-command"),
+        action_envelope_json={"action_type": "shell_command", "raw_command_text": "echo test"},
+    )
+    row = _store_request(store, request)
+
+    assert request_scope_contract(row).exact_action_persistence_eligible is True
+
+
 def test_legacy_unknown_broad_deny_is_not_silently_narrowed(tmp_path: Path) -> None:
     store = GuardStore(tmp_path / "guard-home")
     _store_request(

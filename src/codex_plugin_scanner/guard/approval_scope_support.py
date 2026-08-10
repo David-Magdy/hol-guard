@@ -232,14 +232,12 @@ def exact_action_allow_persistence_eligible(request: Mapping[str, object]) -> bo
     envelope = request.get("action_envelope_json")
     if isinstance(envelope, Mapping):
         typed_envelope = cast(Mapping[str, object], envelope)
-        raw_command_text = raw_command_text or _string_or_none(typed_envelope.get("command"))
-    return bool(
-        artifact_id
-        and artifact_hash
-        and artifact_hash != "unknown"
-        and action_identity
-        and raw_command_text
-    )
+        raw_command_text = (
+            raw_command_text
+            or _string_or_none(typed_envelope.get("raw_command_text"))
+            or _string_or_none(typed_envelope.get("command"))
+        )
+    return bool(artifact_id and artifact_hash and artifact_hash != "unknown" and action_identity and raw_command_text)
 
 
 def resolve_request_scope_selection(
