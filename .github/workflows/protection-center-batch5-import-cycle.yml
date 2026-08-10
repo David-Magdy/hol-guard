@@ -1,0 +1,77 @@
+name: Protection Center Batch 5 import cycle fix
+on:
+  push:
+    branches: [feat/protection-center-05-test-activity]
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Move API error contract to cycle-free module
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          errors = Path('src/codex_plugin_scanner/guard/daemon/extension_control_errors.py')
+          errors.write_text('''"""Shared extension-control daemon API errors.\n\nKept separate from the API service so helper evaluators can raise the same\npublic error type without creating an import cycle.\n"""\n\nfrom __future__ import annotations\n\nfrom dataclasses import dataclass\n\n_RECOVERY_ACTIONS = {\n    "approval_required": "provide_local_approval",\n    "authority_conflict": "refresh_effective_controls",\n    "authority_unavailable": "enroll_or_repair_authority",\n    "catalog_conflict": "refresh_catalog",\n    "immutable_extension": "remove_local_override",\n    "immutable_permission": "remove_local_override",\n    "managed_layer_mutation": "managed_policy_read_only",\n    "proof_invalid": "request_new_proof",\n    "proof_mismatch": "request_new_proof",\n    "proof_not_found": "request_new_proof",\n    "revision_conflict": "refresh_effective_controls",\n}\n\n\n@dataclass(frozen=True, slots=True)\nclass ExtensionControlApiError(Exception):\n    status: int\n    code: str\n\n    def to_payload(self) -> dict[str, object]:\n        payload: dict[str, object] = {"error": self.code}\n        action = _RECOVERY_ACTIONS.get(self.code)\n        if action is not None:\n            payload["recovery"] = {"action": action}\n        return payload\n''')
+
+          api_path = Path('src/codex_plugin_scanner/guard/daemon/extension_control_api.py')
+          api = api_path.read_text()
+          api = api.replace('from .extension_control_projection import build_effective_extension_control_projection\n', 'from .extension_control_errors import ExtensionControlApiError\nfrom .extension_control_projection import build_effective_extension_control_projection\n')
+          pattern = re.compile(r'_RECOVERY_ACTIONS = \{.*?\n\}\n\n\n@dataclass\(frozen=True, slots=True\)\nclass ExtensionControlApiError\(Exception\):.*?\n\n\n(?=@dataclass\(frozen=True, slots=True\)\nclass _PendingMutation)', re.S)
+          api, count = pattern.subn('', api)
+          if count != 1:
+              raise SystemExit(f'expected one API error block, replaced {count}')
+          api_path.write_text(api)
+
+          helper_path = Path('src/codex_plugin_scanner/guard/daemon/extension_control_test_api.py')
+          helper = helper_path.read_text()
+          old = 'from .extension_control_api import ExtensionControlApiError\n'
+          new = 'from .extension_control_errors import ExtensionControlApiError\n'
+          if helper.count(old) != 1:
+              raise SystemExit('unexpected Test Lab error import')
+          helper_path.write_text(helper.replace(old, new))
+          PY
+          git diff --check
+      - name: Verify lint typing and focused behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync python -m ruff check src/
+          uv run --no-sync python -m ruff format --check src/
+          uv run --no-sync basedpyright --level error
+          uv run --no-sync pytest -q \
+            tests/test_guard_extension_control_api.py \
+            tests/test_guard_extension_control_authority.py \
+            tests/test_guard_extension_control_test_lab.py
+      - name: Commit verified import fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/protection-center-batch5-import-cycle.yml
+          git add src/codex_plugin_scanner/guard/daemon/extension_control_api.py \
+            src/codex_plugin_scanner/guard/daemon/extension_control_errors.py \
+            src/codex_plugin_scanner/guard/daemon/extension_control_test_api.py \
+            .github/workflows/protection-center-batch5-import-cycle.yml
+          git diff --cached --check
+          git commit -m "fix(protection-center): break extension-control API import cycle"
+          git push origin HEAD:feat/protection-center-05-test-activity
