@@ -11,6 +11,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Literal, cast
 
 SCHEMA_VERSION = "guard-policy-recipe/v1"
@@ -20,7 +21,7 @@ _ALLOWED_ACTIONS = frozenset({"allow", "block", "review"})
 _ALLOWED_MATCHER_KINDS = frozenset({"path", "package", "command", "mcp", "tool", "domain"})
 _ALLOWED_RISKS = frozenset({"low", "medium", "high", "critical"})
 _ALLOWED_EXPECTED = frozenset({"allow", "block", "review", "unmatched"})
-_GLOB_META_RE = re.compile(r"[*?\[\]{}]")
+_GLOB_META_RE = re.compile(r"[*?\[\]{}]|[@+!]\(")
 
 RecipeAction = Literal["allow", "block", "review"]
 RecipeMatcherKind = Literal["path", "package", "command", "mcp", "tool", "domain"]
@@ -153,6 +154,7 @@ def parse_policy_recipe(value: object) -> PolicyRecipe:
     if not isinstance(tests_raw, Sequence) or isinstance(tests_raw, (str, bytes)) or not 2 <= len(tests_raw) <= 8:
         raise ValueError("tests must contain between 2 and 8 fixtures")
     fixtures: list[PolicyRecipeFixture] = []
+    fixture_identities: set[tuple[str, str, str]] = set()
     for raw_fixture in tests_raw:
         fixture_record = _record(raw_fixture, "fixture")
         _strict_keys(fixture_record, {"label", "matcherKind", "value", "expected"}, "fixture")
@@ -162,20 +164,35 @@ def parse_policy_recipe(value: object) -> PolicyRecipe:
         expected_value = fixture_record.get("expected")
         if not isinstance(expected_value, str) or expected_value not in _ALLOWED_EXPECTED:
             raise ValueError("invalid fixture expected result")
-        fixtures.append(
-            PolicyRecipeFixture(
-                label=_required_string(fixture_record, "label", maximum=120),
-                matcher_kind=cast(RecipeMatcherKind, fixture_kind_value),
-                value=_required_string(fixture_record, "value", maximum=160),
-                expected=cast(RecipeExpected, expected_value),
-            )
+        fixture = PolicyRecipeFixture(
+            label=_required_string(fixture_record, "label", maximum=120),
+            matcher_kind=cast(RecipeMatcherKind, fixture_kind_value),
+            value=_required_string(fixture_record, "value", maximum=160),
+            expected=cast(RecipeExpected, expected_value),
         )
+        identity = (fixture.matcher_kind, fixture.value, fixture.expected)
+        if identity in fixture_identities:
+            raise ValueError("duplicate policy recipe fixture")
+        fixture_identities.add(identity)
+        fixtures.append(fixture)
+
+    if not any(
+        fixture.matcher_kind == kind and fixture.value == matcher_value and fixture.expected == action
+        for fixture in fixtures
+    ):
+        raise ValueError("tests must include a matching fixture for the recipe action")
+    if not any(fixture.expected == "unmatched" for fixture in fixtures):
+        raise ValueError("tests must include an unmatched boundary fixture")
 
     emergency = record.get("emergencyEligible")
     if not isinstance(emergency, bool):
         raise ValueError("emergencyEligible must be boolean")
     reviewed_at = _required_string(record, "reviewedAt", maximum=10)
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", reviewed_at):
+    try:
+        parsed_reviewed_at = date.fromisoformat(reviewed_at)
+    except ValueError as error:
+        raise ValueError("reviewedAt must be a valid YYYY-MM-DD date") from error
+    if parsed_reviewed_at.isoformat() != reviewed_at:
         raise ValueError("reviewedAt must be YYYY-MM-DD")
 
     recipe = PolicyRecipe(

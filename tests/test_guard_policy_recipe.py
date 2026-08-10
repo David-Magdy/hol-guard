@@ -53,7 +53,10 @@ def test_policy_recipe_rejects_unknown_fields() -> None:
         parse_policy_recipe(raw)
 
 
-@pytest.mark.parametrize("matcher_value", ["*", "secret?", "[abc]", "{foo,bar}"])
+@pytest.mark.parametrize(
+    "matcher_value",
+    ["*", "secret?", "[abc]", "{foo,bar}", "@(safe|unsafe)", "+(safe|unsafe)", "!(unsafe)"],
+)
 def test_policy_recipe_rejects_wildcard_matchers(matcher_value: str) -> None:
     raw = _recipe()
     raw["matcher"] = {"kind": "path", "value": matcher_value}
@@ -67,7 +70,32 @@ def test_policy_recipe_rejects_a_fixture_that_does_not_match_expected_behavior()
     assert isinstance(tests, list) and isinstance(tests[0], dict)
     tests[0]["expected"] = "allow"
     raw["tests"] = tests
-    with pytest.raises(ValueError, match="fixture failed"):
+    with pytest.raises(ValueError, match="matching fixture"):
+        parse_policy_recipe(raw)
+
+
+def test_policy_recipe_rejects_an_invalid_calendar_date() -> None:
+    raw = _recipe()
+    raw["reviewedAt"] = "2026-99-99"
+    with pytest.raises(ValueError, match="valid YYYY-MM-DD"):
+        parse_policy_recipe(raw)
+
+
+def test_policy_recipe_requires_positive_and_negative_fixtures() -> None:
+    raw = _recipe()
+    raw["tests"] = [
+        {"label": "first miss", "matcherKind": "path", "value": "one", "expected": "unmatched"},
+        {"label": "second miss", "matcherKind": "path", "value": "two", "expected": "unmatched"},
+    ]
+    with pytest.raises(ValueError, match="matching fixture"):
+        parse_policy_recipe(raw)
+
+    raw = _recipe()
+    raw["tests"] = [
+        {"label": "first match", "matcherKind": "path", "value": ".env", "expected": "review"},
+        {"label": "second match", "matcherKind": "path", "value": ".env", "expected": "review"},
+    ]
+    with pytest.raises(ValueError, match="duplicate"):
         parse_policy_recipe(raw)
 
 
