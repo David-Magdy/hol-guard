@@ -21,7 +21,7 @@ from .github_reporting import (
     should_manage_pr_comment,
     upsert_pr_comment,
 )
-from .models import GRADE_LABELS, max_severity
+from .models import Finding, GRADE_LABELS, SEVERITY_ORDER, max_severity
 from .quality_artifact import build_quality_artifact, write_quality_artifact
 from .reporting import build_json_payload, format_markdown, format_sarif, should_fail_for_severity
 from .submission import (
@@ -175,6 +175,66 @@ def _render_lint_output(result, *, output_format: str, profile: str, policy_pass
     return "\n".join(lines)
 
 
+def _escape_step_summary_text(value: str) -> str:
+    """Normalize scanner-controlled text before embedding it in GitHub-flavored Markdown."""
+
+    text = " ".join(value.split())
+    for character in ("\\", "`", "*", "_", "[", "]", "<", ">"):
+        text = text.replace(character, f"\\{character}")
+    return text
+
+
+def _build_findings_summary_lines(findings: tuple[Finding, ...]) -> tuple[str, ...]:
+    """Render complete, deterministic finding details for the Actions job summary."""
+
+    ordered_findings = sorted(
+        findings,
+        key=lambda finding: (
+            -SEVERITY_ORDER[finding.severity],
+            finding.rule_id,
+            finding.file_path or "",
+            finding.line_number or 0,
+        ),
+    )
+    lines = ["", "### Finding details", ""]
+    if not ordered_findings:
+        lines.append("No findings detected.")
+        return tuple(lines)
+
+    for index, finding in enumerate(ordered_findings, start=1):
+        title = _escape_step_summary_text(finding.title)
+        rule_id = _escape_step_summary_text(finding.rule_id)
+        category = _escape_step_summary_text(finding.category)
+        source = _escape_step_summary_text(finding.source)
+        description = _escape_step_summary_text(finding.description)
+        remediation = (
+            _escape_step_summary_text(finding.remediation)
+            if finding.remediation
+            else "Not provided."
+        )
+        location = "Not provided."
+        if finding.file_path:
+            raw_location = finding.file_path
+            if finding.line_number is not None:
+                raw_location = f"{raw_location}:{finding.line_number}"
+            location = _escape_step_summary_text(raw_location)
+
+        lines.extend(
+            [
+                f"#### {index}. {finding.severity.value.upper()} - {title}",
+                "",
+                f"- Rule ID: {rule_id}",
+                f"- Category: {category}",
+                f"- Source: {source}",
+                f"- Location: {location}",
+                f"- Description: {description}",
+                f"- Remediation: {remediation}",
+                "",
+            ]
+        )
+    return tuple(lines)
+
+
 def _build_step_summary_lines(
     *,
     mode: str,
@@ -191,6 +251,7 @@ def _build_step_summary_lines(
     scope: str = "plugin",
     local_plugin_count: int | None = None,
     skipped_target_count: int | None = None,
+    findings: tuple[Finding, ...] = (),
 ) -> tuple[str, ...]:
     lines = ["## HOL AI Plugin Scanner", "", f"- Mode: {mode}"]
     lines.append(f"- Scope: {scope}")
@@ -215,6 +276,8 @@ def _build_step_summary_lines(
         lines.append(f"- Registry payload: `{registry_payload_path}`")
     if submission_issues:
         lines.append(f"- Submission issues: {', '.join(issue.url for issue in submission_issues)}")
+    if mode in {"scan", "lint", "submit"}:
+        lines.extend(_build_findings_summary_lines(findings))
     return tuple(lines)
 
 
@@ -302,6 +365,7 @@ def main() -> int:
     local_plugin_count: int | None = None
     skipped_target_count: int | None = None
     pr_comment_body = ""
+    summary_findings: tuple[Finding, ...] = ()
 
     def finish(return_code: int) -> int:
         output_values["report_path"] = report_path_value
@@ -354,6 +418,7 @@ def main() -> int:
                     scope=scan_scope,
                     local_plugin_count=local_plugin_count,
                     skipped_target_count=skipped_target_count,
+                    findings=summary_findings,
                 ),
             )
         output_values["action_exit_code"] = str(return_code)
@@ -383,6 +448,7 @@ def main() -> int:
             _config_path,
             _baseline_path,
         ) = _scan_with_policy(args, Path(plugin_dir).resolve())
+        summary_findings = result.findings
         scan_scope = getattr(result, "scope", "plugin")
         if scan_scope == "repository":
             local_plugin_count = len(result.plugin_results)
