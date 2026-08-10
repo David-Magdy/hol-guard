@@ -936,34 +936,41 @@ def _verify_or_raise_locked(
         subject=subject,
         session_nonce=session_nonce,
     )
-    if _totp_enabled(state):
-        if resolved_session_nonce and _recent_totp_auth_valid(
+    if (
+        _totp_enabled(state)
+        and resolved_session_nonce
+        and _recent_totp_auth_valid(
             guard_home,
             state,
             session_nonce=resolved_session_nonce,
             now_epoch=now_epoch,
-        ):
-            if gate_input.totp_code is None or _recent_totp_auth_code_matches(
+        )
+        and (
+            gate_input.totp_code is None
+            or _recent_totp_auth_code_matches(
                 guard_home,
                 state,
                 code=gate_input.totp_code,
-            ):
-                return _register_grant(
-                    guard_home,
-                    state=state,
-                    purpose=purpose,
-                    action=action,
-                    scope=scope,
-                    subject=subject,
-                    session_nonce=resolved_session_nonce,
-                    factor_set=("totp",),
-                    strict=strict,
-                    used_cooldown=False,
-                    cooldown_expires_at=None,
-                    password_verified=False,
-                    totp_verified=True,
-                    now=now,
-                )
+            )
+        )
+    ):
+        return _register_grant(
+            guard_home,
+            state=state,
+            purpose=purpose,
+            action=action,
+            scope=scope,
+            subject=subject,
+            session_nonce=resolved_session_nonce,
+            factor_set=("totp",),
+            strict=strict,
+            used_cooldown=False,
+            cooldown_expires_at=None,
+            password_verified=False,
+            totp_verified=True,
+            now=now,
+        )
+    if _totp_enabled(state):
         if gate_input.totp_code is None:
             raise ApprovalGateError("approval_gate_totp_required", "TOTP code is required.")
         accepted_counter = _verify_totp_or_raise(
