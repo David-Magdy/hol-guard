@@ -1,0 +1,42 @@
+name: Temporary native command observation formatter
+
+on:
+  push:
+    branches: [feat/rust-runtime-command-shadow-observation]
+    paths:
+      - ".github/workflows/tmp-format-native-command-observation.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: false
+      - run: uv sync --frozen --extra dev --python 3.12
+      - name: Format scoped files
+        run: |
+          uv run --no-sync python -m ruff format src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_shadow_activity.py src/codex_plugin_scanner/guard/cli/commands_support_command_activity.py
+          uv run --no-sync python -m ruff check src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_shadow_activity.py src/codex_plugin_scanner/guard/cli/commands_support_command_activity.py
+          git diff --check -- src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_shadow_activity.py src/codex_plugin_scanner/guard/cli/commands_support_command_activity.py
+      - name: Commit formatted files
+        run: |
+          if git diff --quiet -- src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_shadow_activity.py src/codex_plugin_scanner/guard/cli/commands_support_command_activity.py; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_shadow_activity.py src/codex_plugin_scanner/guard/cli/commands_support_command_activity.py
+          git commit -m "style(guard): format native command observation"
+          git push origin HEAD:feat/rust-runtime-command-shadow-observation
