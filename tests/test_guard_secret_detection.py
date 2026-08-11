@@ -145,10 +145,13 @@ def test_history_scan_finds_secret_removed_from_head(tmp_path: Path) -> None:
     _git(tmp_path, "commit", "-m", "remove credential")
 
     head_only = scan_repository_secrets(tmp_path, include_history=False)
-    history = scan_repository_secrets(tmp_path, include_history=True, max_commits=10)
+    history = scan_repository_secrets(tmp_path, include_history=True, max_commits=2)
+    bounded_history = scan_repository_secrets(tmp_path, include_history=True, max_commits=1)
 
     assert head_only.findings == ()
     assert any(finding.source == "git_history" for finding in history.findings)
+    assert history.truncated is False and history.truncation_reasons == ()
+    assert bounded_history.truncated is True and bounded_history.truncation_reasons == ("max_commits",)
     assert secret not in json.dumps(history.to_public_dict())
 
 
@@ -161,7 +164,7 @@ def test_history_enumeration_failure_is_not_reported_as_clean(
 
     result = scan_repository_secrets(tmp_path, include_history=True)
 
-    assert result.truncated is True
+    assert result.truncated is True and result.truncation_reasons == ()
     assert "git_history_enumeration_failed" in result.errors
 
 
@@ -175,7 +178,7 @@ def test_history_changed_path_failure_is_not_reported_as_clean(
 
     result = scan_repository_secrets(tmp_path, include_history=True)
 
-    assert result.truncated is True
+    assert result.truncated is True and result.truncation_reasons == ()
     assert "git_history_changed_paths_failed" in result.errors
 
 
@@ -186,7 +189,7 @@ def test_repository_scan_respects_finding_limit(tmp_path: Path) -> None:
     result = scan_repository_secrets(tmp_path, max_findings=2)
 
     assert len(result.findings) <= 2
-    assert result.truncated is True
+    assert result.truncated is True and result.truncation_reasons == ("max_findings",)
 
 
 def test_cli_scan_json_returns_public_payload(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

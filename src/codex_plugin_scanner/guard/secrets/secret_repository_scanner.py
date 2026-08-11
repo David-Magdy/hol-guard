@@ -26,6 +26,12 @@ DEFAULT_MAX_TOTAL_BYTES = 128 * 1024 * 1024
 DEFAULT_MAX_FINDINGS = 500
 DEFAULT_MAX_COMMITS = 500
 _GIT_TIMEOUT_SECONDS = 20
+_TRUNCATION_REASON_ORDER = (
+    "max_files",
+    "max_total_bytes",
+    "max_findings",
+    "max_commits",
+)
 
 _BINARY_SUFFIXES = frozenset(
     {
@@ -95,6 +101,7 @@ class RepositorySecretScanResult:
     history_enabled: bool
     truncated: bool
     errors: tuple[str, ...]
+    truncation_reasons: tuple[str, ...] = ()
 
     def to_public_dict(self) -> dict[str, object]:
         return {
@@ -105,6 +112,7 @@ class RepositorySecretScanResult:
             "bytes_scanned": self.bytes_scanned,
             "history_enabled": self.history_enabled,
             "truncated": self.truncated,
+            "truncation_reasons": list(self.truncation_reasons),
             "finding_count": len(self.findings),
             "findings": [finding.to_public_dict() for finding in self.findings],
             "errors": list(self.errors),
@@ -119,6 +127,29 @@ def _bounded_positive(value: int, *, default: int, maximum: int) -> int:
     if parsed <= 0:
         return default
     return min(parsed, maximum)
+
+
+def _active_limit_reasons(
+    *,
+    files_scanned: int,
+    bytes_scanned: int,
+    finding_count: int,
+    max_files: int,
+    max_total_bytes: int,
+    max_findings: int,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if files_scanned >= max_files:
+        reasons.append("max_files")
+    if bytes_scanned >= max_total_bytes:
+        reasons.append("max_total_bytes")
+    if finding_count >= max_findings:
+        reasons.append("max_findings")
+    return tuple(reasons)
+
+
+def _ordered_truncation_reasons(reasons: set[str]) -> tuple[str, ...]:
+    return tuple(reason for reason in _TRUNCATION_REASON_ORDER if reason in reasons)
 
 
 def _looks_binary(path: str, data: bytes) -> bool:
@@ -311,19 +342,30 @@ def scan_repository_secrets(
 
     findings: list[SecretFinding] = []
     errors: list[str] = []
+    truncation_reasons: set[str] = set()
     files_scanned = 0
     commits_scanned = 0
     bytes_scanned = 0
     truncated = False
 
     for relative_path in working_paths:
-        if files_scanned >= max_files or bytes_scanned >= max_total_bytes or len(findings) >= max_findings:
+        active_reasons = _active_limit_reasons(
+            files_scanned=files_scanned,
+            bytes_scanned=bytes_scanned,
+            finding_count=len(findings),
+            max_files=max_files,
+            max_total_bytes=max_total_bytes,
+            max_findings=max_findings,
+        )
+        if active_reasons:
+            truncation_reasons.update(active_reasons)
             truncated = True
             break
         data = _read_working_file(scan_root, relative_path, max_file_bytes)
         if data is None:
             continue
         if bytes_scanned + len(data) > max_total_bytes:
+            truncation_reasons.add("max_total_bytes")
             truncated = True
             break
         found, scanned_bytes = _scan_blob(
@@ -337,46 +379,81 @@ def scan_repository_secrets(
         bytes_scanned += scanned_bytes
         findings.extend(found)
 
-    if include_history and git_repo and len(findings) < max_findings and bytes_scanned < max_total_bytes:
-        commits = _git_commits(scan_root, max_commits)
-        if commits is None:
-            errors.append("git_history_enumeration_failed")
+    if include_history and git_repo:
+        active_reasons = _active_limit_reasons(
+            files_scanned=files_scanned,
+            bytes_scanned=bytes_scanned,
+            finding_count=len(findings),
+            max_files=max_files,
+            max_total_bytes=max_total_bytes,
+            max_findings=max_findings,
+        )
+        if active_reasons:
+            truncation_reasons.update(active_reasons)
             truncated = True
-            commits = []
-        for commit in commits:
-            if len(findings) >= max_findings or bytes_scanned >= max_total_bytes or files_scanned >= max_files:
+        else:
+            commit_candidates = _git_commits(scan_root, max_commits + 1)
+            if commit_candidates is None:
+                errors.append("git_history_enumeration_failed")
                 truncated = True
-                break
-            commits_scanned += 1
-            changed_paths = _git_changed_paths(scan_root, commit)
-            if changed_paths is None:
-                errors.append("git_history_changed_paths_failed")
-                truncated = True
-                continue
-            for relative_path in changed_paths:
-                if len(findings) >= max_findings or bytes_scanned >= max_total_bytes or files_scanned >= max_files:
+                commits: list[str] = []
+            else:
+                commits = commit_candidates[:max_commits]
+                if len(commit_candidates) > max_commits:
+                    truncation_reasons.add("max_commits")
                     truncated = True
-                    break
-                data = _git_blob(scan_root, commit, relative_path, max_file_bytes)
-                if data is None:
-                    continue
-                if bytes_scanned + len(data) > max_total_bytes:
-                    truncated = True
-                    break
-                found, scanned_bytes = _scan_blob(
-                    data,
-                    path=relative_path.replace("\\", "/"),
-                    source="git_history",
-                    commit=commit,
-                    finding_budget=max_findings - len(findings),
+            for commit in commits:
+                active_reasons = _active_limit_reasons(
+                    files_scanned=files_scanned,
+                    bytes_scanned=bytes_scanned,
+                    finding_count=len(findings),
+                    max_files=max_files,
+                    max_total_bytes=max_total_bytes,
+                    max_findings=max_findings,
                 )
-                files_scanned += 1
-                bytes_scanned += scanned_bytes
-                findings.extend(found)
-        if len(commits) >= max_commits:
-            truncated = True
+                if active_reasons:
+                    truncation_reasons.update(active_reasons)
+                    truncated = True
+                    break
+                commits_scanned += 1
+                changed_paths = _git_changed_paths(scan_root, commit)
+                if changed_paths is None:
+                    errors.append("git_history_changed_paths_failed")
+                    truncated = True
+                    continue
+                for relative_path in changed_paths:
+                    active_reasons = _active_limit_reasons(
+                        files_scanned=files_scanned,
+                        bytes_scanned=bytes_scanned,
+                        finding_count=len(findings),
+                        max_files=max_files,
+                        max_total_bytes=max_total_bytes,
+                        max_findings=max_findings,
+                    )
+                    if active_reasons:
+                        truncation_reasons.update(active_reasons)
+                        truncated = True
+                        break
+                    data = _git_blob(scan_root, commit, relative_path, max_file_bytes)
+                    if data is None:
+                        continue
+                    if bytes_scanned + len(data) > max_total_bytes:
+                        truncation_reasons.add("max_total_bytes")
+                        truncated = True
+                        break
+                    found, scanned_bytes = _scan_blob(
+                        data,
+                        path=relative_path.replace("\\", "/"),
+                        source="git_history",
+                        commit=commit,
+                        finding_budget=max_findings - len(findings),
+                    )
+                    files_scanned += 1
+                    bytes_scanned += scanned_bytes
+                    findings.extend(found)
     elif include_history and not git_repo:
         errors.append("history_requested_for_non_git_target")
+        truncated = True
 
     # A provider rule can also be recognized by the contextual assignment rule.
     # Keep occurrences stable while preferring the stronger provider format.
@@ -393,6 +470,7 @@ def scan_repository_secrets(
         )[:max_findings]
     )
     if len(deduped) > len(ordered):
+        truncation_reasons.add("max_findings")
         truncated = True
 
     return RepositorySecretScanResult(
@@ -403,6 +481,7 @@ def scan_repository_secrets(
         history_enabled=include_history,
         truncated=truncated,
         errors=tuple(errors),
+        truncation_reasons=_ordered_truncation_reasons(truncation_reasons),
     )
 
 
