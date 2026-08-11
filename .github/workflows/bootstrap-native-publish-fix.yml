@@ -139,4 +139,5 @@ jobs:
           name: native-publication-patch-${{ github.sha }}
           path: native-publication-patch/
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 1
