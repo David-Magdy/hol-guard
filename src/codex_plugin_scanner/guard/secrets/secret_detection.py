@@ -95,12 +95,8 @@ _CODE_REFERENCE_PREFIXES = (
     "var.",
     "vault.",
 )
-_CODE_MEMBER_REFERENCE = re.compile(
-    r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\??\.[A-Za-z_$][A-Za-z0-9_$]*)+$"
-)
-_CODE_CALL_REFERENCE = re.compile(
-    r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\??\.[A-Za-z_$][A-Za-z0-9_$]*)*\s*\("
-)
+_CODE_MEMBER_REFERENCE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\??\.[A-Za-z_$][A-Za-z0-9_$]*)+$")
+_CODE_CALL_REFERENCE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\??\.[A-Za-z_$][A-Za-z0-9_$]*)*\s*\(")
 _CODE_IDENTIFIER_REFERENCE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 _INTERPOLATED_REFERENCE = re.compile(r"^(?:\$\{|\$\(|\{\{|<%|%\{|@\{)")
 _CODE_SUFFIXES = frozenset(
