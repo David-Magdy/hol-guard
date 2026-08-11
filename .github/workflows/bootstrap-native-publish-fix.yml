@@ -1,0 +1,48 @@
+name: Bootstrap native publication repair
+
+on:
+  push:
+    branches: [feat/rust-runtime-native-publish]
+    paths:
+      - ".github/workflows/bootstrap-native-publish-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          ref: feat/rust-runtime-native-publish
+      - name: Repair the release test helper and trigger the deterministic patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          test_path = Path("ci/native_runtime/test_native_runtime_release.py")
+          tests = test_path.read_text(encoding="utf-8")
+          old = "    return tuple(wheels.values()) + (pure, sdist)\n"
+          new = "    return (*tuple(wheels.values()), pure, sdist)\n"
+          if tests.count(old) != 1:
+              raise RuntimeError("Expected exactly one native release tuple concatenation")
+          test_path.write_text(tests.replace(old, new, 1), encoding="utf-8")
+
+          patch_path = Path(".github/workflows/patch-native-publish.yml")
+          patch = patch_path.read_text(encoding="utf-8")
+          marker = "# bootstrap-trigger: native-publication-ruf005\n"
+          if marker not in patch:
+              patch = patch.rstrip() + "\n\n" + marker
+          patch_path.write_text(patch, encoding="utf-8")
+          PY
+          git diff --check
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git add ci/native_runtime/test_native_runtime_release.py .github/workflows/patch-native-publish.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(release): satisfy native publication lint contract"
+          git push origin HEAD:feat/rust-runtime-native-publish
