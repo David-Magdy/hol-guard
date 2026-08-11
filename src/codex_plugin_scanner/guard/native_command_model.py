@@ -24,10 +24,6 @@ _REQUIRED_FEATURE = "pre-tool-command-model-shadow-v1"
 _RESIDENT_FEATURE = "resident-command-model-shadow-v1"
 
 
-def _plain_int(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool)
-
-
 def _assignment_name(token: str) -> str | None:
     name, separator, _value = token.partition("=")
     if not separator or not name:
@@ -96,7 +92,7 @@ def _decode_command_model(
         executable = segment.get("executable")
         segment_path_overridden = segment.get("path_overridden")
         execution_context = segment.get("execution_context")
-        pipeline_index = segment.get("pipeline_index")
+        raw_pipeline_index = segment.get("pipeline_index")
         span = segment.get("span")
         if (
             not isinstance(text, str)
@@ -115,17 +111,26 @@ def _decode_command_model(
             or not isinstance(execution_context, str)
             or not execution_context.startswith("top:")
             or not execution_context.removeprefix("top:").isdigit()
-            or not _plain_int(pipeline_index)
-            or pipeline_index < 0
+            or not isinstance(raw_pipeline_index, int)
+            or isinstance(raw_pipeline_index, bool)
+            or raw_pipeline_index < 0
             or not isinstance(span, dict)
             or span.get("source") != "normalized"
-            or not _plain_int(span.get("start"))
-            or not _plain_int(span.get("end"))
         ):
             return None
 
-        start = span["start"]
-        end = span["end"]
+        raw_start = span.get("start")
+        raw_end = span.get("end")
+        if (
+            not isinstance(raw_start, int)
+            or isinstance(raw_start, bool)
+            or not isinstance(raw_end, int)
+            or isinstance(raw_end, bool)
+        ):
+            return None
+        pipeline_index = raw_pipeline_index
+        start = raw_start
+        end = raw_end
         group_index = int(execution_context.removeprefix("top:"))
         if (
             start < previous_end
