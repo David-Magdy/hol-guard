@@ -1,4 +1,4 @@
-name: Land validated native publication patch
+name: Stage validated native publication patch
 
 on:
   push:
@@ -7,10 +7,10 @@ on:
       - ".github/workflows/bootstrap-native-publish-fix.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  land:
+  stage:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -18,7 +18,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: feat/rust-runtime-native-publish
-          persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
@@ -123,47 +122,31 @@ jobs:
             tests/test_release_train_workflow.py \
             --tb=short
           git diff --check
-      - name: Commit final publication patch and remove bootstrap workflows
+      - name: Stage the verified workflow as a normal Git blob
         shell: bash
         run: |
-          git rm .github/workflows/bootstrap-native-publish-fix.yml
-          git rm .github/workflows/patch-native-publish.yml
+          cp .github/workflows/publish.yml ci/native_runtime/generated_publish_workflow.yml
           git add \
-            .github/workflows/publish.yml \
+            ci/native_runtime/generated_publish_workflow.yml \
             ci/native_runtime/test_native_runtime_release.py \
             tests/test_release_train_workflow.py
           git diff --cached --check
-          test "$(git diff --cached --name-only | sort)" = "$(printf '%s\n' \
-            .github/workflows/bootstrap-native-publish-fix.yml \
-            .github/workflows/patch-native-publish.yml \
-            .github/workflows/publish.yml \
+          expected=$(printf '%s\n' \
+            ci/native_runtime/generated_publish_workflow.yml \
             ci/native_runtime/test_native_runtime_release.py \
-            tests/test_release_train_workflow.py | sort)"
+            tests/test_release_train_workflow.py | sort)
+          actual=$(git diff --cached --name-only | sort)
+          test "$actual" = "$expected"
           git config user.name "Michael Kantor"
           git config user.email "6068672+kantorcodes@users.noreply.github.com"
-          git commit -m "feat(release): publish verified native runtime wheels"
-      - name: Push exact commit with authorized repository token
-        env:
-          ACTION_REPO_TOKEN: ${{ secrets.ACTION_REPO_TOKEN }}
-          AWESOME_CODEX_PLUGINS_TOKEN: ${{ secrets.AWESOME_CODEX_PLUGINS_TOKEN }}
+          git commit -m "fix(release): stage validated native publication payload"
+      - name: Push the non-workflow staging commit
         shell: bash
         run: |
-          set +x
           branch=feat/rust-runtime-native-publish
-          pushed=false
-          for token_name in ACTION_REPO_TOKEN AWESOME_CODEX_PLUGINS_TOKEN; do
-            token="${!token_name:-}"
-            if [[ -z "$token" ]]; then
-              continue
-            fi
-            git remote set-url origin "https://x-access-token:${token}@github.com/${GITHUB_REPOSITORY}.git"
-            if git push --force-with-lease="refs/heads/${branch}:${GITHUB_SHA}" origin "HEAD:refs/heads/${branch}"; then
-              pushed=true
-              break
-            fi
-          done
-          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          if [[ "$pushed" != true ]]; then
-            echo "No configured repository token could update the workflow-bearing branch." >&2
+          remote_sha=$(git ls-remote --exit-code origin "refs/heads/${branch}" | awk '{print $1}')
+          if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
+            echo "Publication branch moved while the payload was validated" >&2
             exit 1
           fi
+          git push origin "HEAD:refs/heads/${branch}"
