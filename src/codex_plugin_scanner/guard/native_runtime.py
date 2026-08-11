@@ -26,6 +26,9 @@ NativeMode = Literal["off", "shadow", "auto", "force"]
 _NATIVE_PROTOCOL_VERSION = 1
 _NATIVE_BINARY_ENV = "HOL_GUARD_NATIVE_BINARY"
 _NATIVE_MODE_ENV = "HOL_GUARD_NATIVE"
+_NATIVE_MANIFEST_NAME = "runtime-manifest.json"
+_NATIVE_MANIFEST_SCHEMA = "hol-guard-native-runtime.v1"
+_MAX_MANIFEST_BYTES = 16 * 1024
 _MAX_REQUEST_BYTES = 6 * 1024 * 1024
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
@@ -46,6 +49,19 @@ class NativeRuntimeCapabilities:
     build_sha: str
     target: str
     features: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class NativeRuntimeManifest:
+    schema: str
+    protocol_version: int
+    package_version: str
+    target: str
+    platform_tag: str
+    source_sha: str
+    rule_digest: str
+    runtime_sha256: str
+    runtime_size: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,28 +88,30 @@ def _bundled_runtime_candidate() -> Path:
 
 
 def _runtime_candidates() -> tuple[Path, ...]:
+    mode = native_mode()
     candidates: list[Path] = []
     override = os.environ.get(_NATIVE_BINARY_ENV)
-    if override and native_mode() in {"shadow", "force"}:
+    if override and mode in {"shadow", "force"}:
         candidate = Path(override).expanduser()
         if candidate.is_absolute():
             candidates.append(candidate)
 
     candidates.append(_bundled_runtime_candidate())
 
-    # Developer compatibility: a separately installed runtime distribution
-    # may be used for shadow/force validation. Production packaging bundles
-    # the binary inside the hol-guard wheel and does not require this project.
-    try:
-        distribution = importlib.metadata.distribution("hol-guard-runtime")
-    except importlib.metadata.PackageNotFoundError:
-        distribution = None
-    if distribution is not None:
-        executable_names = {"hol-guard-runtime", "hol-guard-runtime.exe"}
-        for entry in distribution.files or ():
-            if Path(str(entry)).name not in executable_names:
-                continue
-            candidates.append(Path(str(distribution.locate_file(entry))))
+    # Developer compatibility: a separately installed runtime distribution is
+    # validation-only. Automatic production selection must use the runtime
+    # bundled inside the version-matched hol-guard wheel and its manifest.
+    if mode in {"shadow", "force"}:
+        try:
+            distribution = importlib.metadata.distribution("hol-guard-runtime")
+        except importlib.metadata.PackageNotFoundError:
+            distribution = None
+        if distribution is not None:
+            executable_names = {"hol-guard-runtime", "hol-guard-runtime.exe"}
+            for entry in distribution.files or ():
+                if Path(str(entry)).name not in executable_names:
+                    continue
+                candidates.append(Path(str(distribution.locate_file(entry))))
 
     unique: list[Path] = []
     seen: set[str] = set()
@@ -134,6 +152,95 @@ def _validate_binary(path: Path) -> NativeRuntimeIdentity | None:
         )
     except (OSError, RuntimeError, ValueError):
         return None
+
+
+def _is_lower_hex(value: str, length: int) -> bool:
+    return len(value) == length and all(character in "0123456789abcdef" for character in value)
+
+
+def _decode_runtime_manifest(payload: object) -> NativeRuntimeManifest | None:
+    if not isinstance(payload, dict):
+        return None
+    schema = payload.get("schema")
+    protocol_version = payload.get("protocol_version")
+    package_version = payload.get("package_version")
+    target = payload.get("target")
+    platform_tag = payload.get("platform_tag")
+    source_sha = payload.get("source_sha")
+    rule_digest = payload.get("rule_digest")
+    runtime_sha256 = payload.get("runtime_sha256")
+    runtime_size = payload.get("runtime_size")
+    if (
+        schema != _NATIVE_MANIFEST_SCHEMA
+        or protocol_version != _NATIVE_PROTOCOL_VERSION
+        or not isinstance(package_version, str)
+        or not package_version.strip()
+        or not isinstance(target, str)
+        or not target.strip()
+        or not isinstance(platform_tag, str)
+        or not platform_tag.strip()
+        or not isinstance(source_sha, str)
+        or not _is_lower_hex(source_sha, 40)
+        or not isinstance(rule_digest, str)
+        or not _is_lower_hex(rule_digest, 64)
+        or not isinstance(runtime_sha256, str)
+        or not _is_lower_hex(runtime_sha256, 64)
+        or not isinstance(runtime_size, int)
+        or isinstance(runtime_size, bool)
+        or runtime_size <= 0
+    ):
+        return None
+    return NativeRuntimeManifest(
+        schema=schema,
+        protocol_version=protocol_version,
+        package_version=package_version,
+        target=target,
+        platform_tag=platform_tag,
+        source_sha=source_sha,
+        rule_digest=rule_digest,
+        runtime_sha256=runtime_sha256,
+        runtime_size=runtime_size,
+    )
+
+
+def _manifest_for_bundled_identity(
+    identity: NativeRuntimeIdentity,
+) -> tuple[NativeRuntimeManifest | None, str | None]:
+    manifest_path = identity.path.with_name(_NATIVE_MANIFEST_NAME)
+    try:
+        metadata = manifest_path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            return None, "native_manifest_invalid"
+        if metadata.st_size <= 0 or metadata.st_size > _MAX_MANIFEST_BYTES:
+            return None, "native_manifest_invalid"
+        if os.name != "nt":
+            if stat.S_IMODE(metadata.st_mode) & 0o022:
+                return None, "native_manifest_invalid"
+            current_uid = os.getuid() if hasattr(os, "getuid") else None
+            owner = getattr(metadata, "st_uid", current_uid)
+            if current_uid is not None and owner not in {0, current_uid}:
+                return None, "native_manifest_invalid"
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, "native_manifest_missing"
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, "native_manifest_invalid"
+    manifest = _decode_runtime_manifest(payload)
+    if manifest is None:
+        return None, "native_manifest_invalid"
+    if manifest.runtime_size != identity.size or manifest.runtime_sha256 != identity.sha256:
+        return None, "native_manifest_runtime_mismatch"
+    expected_version = _python_package_version()
+    if expected_version is not None and manifest.package_version != expected_version:
+        return None, "native_manifest_version_mismatch"
+    return manifest, None
+
+
+def _is_bundled_candidate(candidate: Path) -> bool:
+    try:
+        return candidate.expanduser().absolute() == _bundled_runtime_candidate().absolute()
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def _isolated_environment() -> dict[str, str]:
@@ -229,6 +336,17 @@ def native_runtime_status() -> NativeRuntimeStatus:
         identity = _validate_binary(candidate)
         if identity is None:
             continue
+        manifest: NativeRuntimeManifest | None = None
+        if _is_bundled_candidate(candidate):
+            manifest, manifest_error = _manifest_for_bundled_identity(identity)
+            if manifest_error is not None:
+                return NativeRuntimeStatus(
+                    mode=mode,
+                    available=True,
+                    compatible=False,
+                    reason=manifest_error,
+                    identity=identity,
+                )
         capabilities = _capabilities_for_identity(str(identity.path), identity.size, identity.mtime_ns, identity.sha256)
         if capabilities is None:
             continue
@@ -241,6 +359,26 @@ def native_runtime_status() -> NativeRuntimeStatus:
                 identity=identity,
                 capabilities=capabilities,
             )
+        if manifest is not None:
+            if capabilities.protocol_version != manifest.protocol_version:
+                reason = "native_manifest_protocol_mismatch"
+            elif capabilities.runtime_version != manifest.package_version:
+                reason = "native_manifest_version_mismatch"
+            elif capabilities.rule_digest != manifest.rule_digest:
+                reason = "native_manifest_rule_mismatch"
+            elif capabilities.build_sha != manifest.source_sha:
+                reason = "native_manifest_build_mismatch"
+            else:
+                reason = None
+            if reason is not None:
+                return NativeRuntimeStatus(
+                    mode=mode,
+                    available=True,
+                    compatible=False,
+                    reason=reason,
+                    identity=identity,
+                    capabilities=capabilities,
+                )
         expected_version = _python_package_version()
         version_compatible = expected_version is None or capabilities.runtime_version == expected_version
         compatible = version_compatible or mode in {"shadow", "force"}
@@ -389,6 +527,7 @@ def choose_post_tool_response(
 __all__ = [
     "NativeRuntimeCapabilities",
     "NativeRuntimeIdentity",
+    "NativeRuntimeManifest",
     "NativeRuntimeStatus",
     "choose_post_tool_response",
     "native_mode",
