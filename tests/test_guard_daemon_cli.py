@@ -60,6 +60,12 @@ class TestDaemonStatusCommand:
         from codex_plugin_scanner.guard.store import GuardStore
 
         store = GuardStore(tmp_path, prime_policy_integrity=False)
+        baseline_started = time.monotonic()
+        baseline_code, baseline_payload = _run(["daemon", "status"], tmp_path)
+        baseline_elapsed = time.monotonic() - baseline_started
+        assert baseline_code == 0
+        assert baseline_payload.get("running") is False
+
         writer = sqlite3.connect(store.path)
         writer.execute("pragma journal_mode=delete")
         writer.execute("begin exclusive")
@@ -72,7 +78,7 @@ class TestDaemonStatusCommand:
 
         assert code == 0
         assert payload.get("running") is False
-        assert time.monotonic() - started < 1.5
+        assert time.monotonic() - started < baseline_elapsed + 0.5
 
     def test_status_running_true_when_live_state(self, tmp_path: Path) -> None:
         from codex_plugin_scanner.guard.daemon.manager import write_guard_daemon_state
