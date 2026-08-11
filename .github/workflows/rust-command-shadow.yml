@@ -2,14 +2,15 @@ name: Rust command shadow bridge
 
 on:
   pull_request:
-    branches: [release/3.0]
     paths:
       - "rust/crates/guard-command/**"
       - "rust/crates/guard-runtime/**"
       - "src/codex_plugin_scanner/guard/native_command_model.py"
       - "src/codex_plugin_scanner/guard/native_runtime.py"
       - "src/codex_plugin_scanner/guard/native_runtime_resident.py"
+      - "src/codex_plugin_scanner/guard/cli/commands_support_command_activity.py"
       - "ci/native_runtime/test_command_model_resident.py"
+      - "ci/native_runtime/test_command_shadow_activity.py"
       - ".github/workflows/rust-command-shadow.yml"
   push:
     branches: [release/3.0]
@@ -19,7 +20,9 @@ on:
       - "src/codex_plugin_scanner/guard/native_command_model.py"
       - "src/codex_plugin_scanner/guard/native_runtime.py"
       - "src/codex_plugin_scanner/guard/native_runtime_resident.py"
+      - "src/codex_plugin_scanner/guard/cli/commands_support_command_activity.py"
       - "ci/native_runtime/test_command_model_resident.py"
+      - "ci/native_runtime/test_command_shadow_activity.py"
       - ".github/workflows/rust-command-shadow.yml"
   workflow_dispatch:
 
@@ -54,8 +57,17 @@ jobs:
         run: |
           rustfmt --edition 2021 --check rust/crates/guard-runtime/src/main.rs
           cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
-          uv run --no-sync python -m ruff check src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_model_resident.py
-          uv run --no-sync python -m ruff format --check src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_model_resident.py
+          cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+          uv run --no-sync python -m ruff check \
+            src/codex_plugin_scanner/guard/native_command_model.py \
+            src/codex_plugin_scanner/guard/cli/commands_support_command_activity.py \
+            ci/native_runtime/test_command_model_resident.py \
+            ci/native_runtime/test_command_shadow_activity.py
+          uv run --no-sync python -m ruff format --check \
+            src/codex_plugin_scanner/guard/native_command_model.py \
+            src/codex_plugin_scanner/guard/cli/commands_support_command_activity.py \
+            ci/native_runtime/test_command_model_resident.py \
+            ci/native_runtime/test_command_shadow_activity.py
       - name: Build version-matched runtime
         env:
           HOL_GUARD_BUILD_SHA: ${{ github.sha }}
@@ -68,4 +80,8 @@ jobs:
         env:
           HOL_GUARD_NATIVE: force
           HOL_GUARD_NATIVE_BINARY: ${{ github.workspace }}/rust/target/release/hol-guard-runtime
-        run: uv run --no-sync pytest ci/native_runtime/test_command_model_resident.py --tb=short
+        run: >-
+          uv run --no-sync pytest
+          ci/native_runtime/test_command_model_resident.py
+          ci/native_runtime/test_command_shadow_activity.py
+          --tb=short
