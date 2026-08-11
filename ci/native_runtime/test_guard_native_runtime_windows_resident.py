@@ -9,7 +9,11 @@ from pathlib import Path
 import pytest
 
 import codex_plugin_scanner.guard.native_runtime_resident as resident
-from codex_plugin_scanner.guard.native_runtime import native_runtime_status, review_post_tool_native
+from codex_plugin_scanner.guard.native_command_model import review_command_model_native
+from codex_plugin_scanner.guard.native_runtime import (
+    native_runtime_status,
+    review_post_tool_native,
+)
 from codex_plugin_scanner.guard.runtime.hook_review_types import HookReviewRequest
 
 _NATIVE_BINARY = os.environ.get("HOL_GUARD_NATIVE_BINARY")
@@ -74,33 +78,98 @@ def test_invalid_loopback_server_proof_receives_no_authenticated_payload() -> No
     assert received_after_invalid_proof == [b""]
 
 
-def test_loopback_proof_is_role_bound() -> None:
-    token = b"k" * resident._AUTH_TOKEN_BYTES
-    nonce = b"n" * resident._AUTH_NONCE_BYTES
+def test_loopback_proof_is_role_bound_and_matches_known_vector() -> None:
+    token = bytes([7]) * resident._AUTH_TOKEN_BYTES
+    nonce = bytes([9]) * resident._AUTH_NONCE_BYTES
     server = resident._proof(token, resident._SERVER_PROOF_LABEL, nonce)
     client = resident._proof(token, resident._CLIENT_PROOF_LABEL, nonce)
+    assert server.hex() == "b819898f11878c1c148423d0361a9de20d9eca3bb86ce1214cee957f95bb06c4"
+    assert client.hex() == "fef83d9ff5988922ef5c4c7b54d9c666abf42fdfa839448b579f650741d06d97"
     assert len(server) == resident._AUTH_PROOF_BYTES
     assert not hmac.compare_digest(server, client)
+
+
+def test_windows_service_rotates_auth_secret_and_stays_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = tmp_path / "runtime.exe"
+    executable.write_bytes(b"runtime")
+    guard_home = tmp_path / "guard-home"
+    guard_home.mkdir(mode=0o700)
+    service = resident._ResidentService(
+        executable=executable,
+        identity_sha256="a" * 64,
+        guard_home=guard_home,
+        environment={},
+    )
+    service.loopback_address = ("127.0.0.1", 65534)
+    generated = iter(
+        (
+            b"a" * resident._AUTH_TOKEN_BYTES,
+            b"b" * resident._AUTH_TOKEN_BYTES,
+        )
+    )
+    observed: list[bytes | None] = []
+
+    monkeypatch.setattr(resident.os, "name", "nt")
+    monkeypatch.setattr(
+        resident.secrets,
+        "token_bytes",
+        lambda _size: next(generated),
+    )
+    monkeypatch.setattr(
+        service,
+        "_transport_accepts_authenticated_connections",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        service,
+        "_run",
+        lambda _stop_event, auth_token: observed.append(auth_token),
+    )
+
+    assert not service._ensure_started(timeout_seconds=0.1)
+    assert not service._ensure_started(timeout_seconds=0.1)
+    assert observed == [
+        b"a" * resident._AUTH_TOKEN_BYTES,
+        b"b" * resident._AUTH_TOKEN_BYTES,
+    ]
+    assert service.starts == 2
+
+    service.close()
+    assert not service._ensure_started(timeout_seconds=0.1)
+    assert service._auth_token is None
 
 
 @pytest.mark.skipif(
     os.name != "nt" or not _NATIVE_BINARY,
     reason="compiled Windows native runtime is required",
 )
-def test_windows_native_runtime_reuses_authenticated_resident_service(tmp_path: Path) -> None:
+def test_windows_native_runtime_reuses_authenticated_resident_service(
+    tmp_path: Path,
+) -> None:
     status = native_runtime_status()
     assert status.available and status.compatible, status
     assert status.identity is not None
     assert status.capabilities is not None
     assert "authenticated-loopback-resident-v1" in status.capabilities.features
+    assert "resident-command-model-shadow-v1" in status.capabilities.features
 
     first_request = _request(tmp_path, "windows-resident-first")
     second_request = _request(tmp_path, "windows-resident-second")
     try:
         first = review_post_tool_native(first_request, observe_mode=False)
         second = review_post_tool_native(second_request, observe_mode=False)
+        command_model = review_command_model_native(
+            "git status --short",
+            guard_home=first_request.guard_home,
+        )
         assert first is not None and first.decision == "allow"
         assert second is not None and second.decision == "allow"
+        assert command_model is not None
+        assert command_model["confidence"] == "exact"
+        assert command_model["segments"][0]["executable"] == "git"
         assert (
             resident.resident_service_starts(
                 executable=status.identity.path,
