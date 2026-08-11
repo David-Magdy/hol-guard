@@ -244,7 +244,10 @@ def _private_runtime_dir(guard_home: Path) -> Path | None:
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
             return None
         current_uid = os.getuid() if hasattr(os, "getuid") else None
-        if current_uid is not None and getattr(metadata, "st_uid", current_uid) != current_uid:
+        if (
+            current_uid is not None
+            and getattr(metadata, "st_uid", current_uid) != current_uid
+        ):
             return None
         if stat.S_IMODE(metadata.st_mode) & 0o077:
             runtime_dir.chmod(0o700)
