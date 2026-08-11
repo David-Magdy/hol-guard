@@ -977,7 +977,7 @@ export async function fetchCommandActivityApi(input: RequestInfo, init?: Request
 export async function fetchExtensionControlApi(input: RequestInfo, init?: RequestInit): Promise<Response> {
   const approvedPath =
     typeof input === "string" &&
-    /^\/v1\/extension-controls\/(?:catalog|effective|preview|apply|refresh|recover-authority)$/.test(input);
+    /^\/v1\/extension-controls\/(?:catalog|effective|history|preview|test|apply|refresh|recover-authority|acknowledge-degraded)$/.test(input);
   if (!approvedPath) {
     throw new Error("Invalid extension-control API path");
   }

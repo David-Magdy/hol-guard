@@ -10,15 +10,14 @@ import { ExtensionsFilterBar } from "../extensions-filter-bar";
 import type { ExtensionFilterState } from "../extensions-filters";
 import { fetchRuntimeSnapshot } from "../guard-api";
 import {
-  CloudContinuityIndicator,
   ProtectionCategoryGrid,
   ProtectionHealthCheckPanel,
   ProtectionModuleExplorer,
   RecentProtectionDecisions,
 } from "./components/protection-landing-panels";
+import { CloudValueGate } from "./protection-cloud-value";
 import {
   evaluateProtectionHealth,
-  protectionCloudContinuity,
   rankProtectionModules,
   recentProtectionDecisions,
   type ProtectionHealthCheck,
@@ -40,10 +39,6 @@ export function ProtectionLandingExperience(props: {
   const [healthError, setHealthError] = useState<string | null>(null);
   const modules = useMemo(() => rankProtectionModules(props.catalog, landing.activity), [landing.activity, props.catalog]);
   const decisions = useMemo(() => recentProtectionDecisions(landing.activity, props.catalog, 5), [landing.activity, props.catalog]);
-  const continuity = useMemo(
-    () => protectionCloudContinuity(landing.runtime, landing.runtimeError),
-    [landing.runtime, landing.runtimeError],
-  );
 
   async function runHealthCheck() {
     setHealthBusy(true);
@@ -70,7 +65,7 @@ export function ProtectionLandingExperience(props: {
   }
 
   return <>
-    <div className="mt-4"><CloudContinuityIndicator continuity={continuity} loading={landing.runtimeLoading} /></div>
+    <div className="mt-4"><CloudValueGate runtime={landing.runtime} loading={landing.runtimeLoading} loadFailed={landing.runtimeError} /></div>
     <ProtectionCategoryGrid catalog={props.catalog} effective={props.effective} />
     <ProtectionModuleExplorer
       modules={modules}

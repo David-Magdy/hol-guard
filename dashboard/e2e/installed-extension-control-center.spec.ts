@@ -123,7 +123,10 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await expect(page.getByRole("heading", { name: "What HOL Guard protects" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent decisions" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Protection health check" })).toBeVisible();
-  await expect(page.getByLabel("Cloud continuity")).toBeVisible();
+  const cloudContinuity = page.getByRole("complementary", { name: "Cloud continuity" });
+  await expect(cloudContinuity).toBeVisible();
+  await expect(cloudContinuity).not.toContainText("while Cloud status is checked");
+  await expect(cloudContinuity).toContainText("Local protection is active");
   await expect(page.getByRole("heading", { name: /^(Protected|Finish setup|Needs repair|Protection limited|Emergency Lockdown active)$/ })).toBeVisible();
 
   const healthCheck = page.getByRole("button", { name: "Run health check" });
@@ -182,6 +185,29 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
 
   await page.goto("/extensions/command.git");
   await expectSecretSafeUrl(page);
+  await expect(page.getByRole("heading", { name: "Test Lab", exact: true })).toBeVisible();
+  const labCommand = "git reset --hard HEAD~1";
+  await page.getByLabel("Command to check").fill(labCommand);
+  const labResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/v1/extension-controls/test" && response.status() === 200;
+  });
+  await page.getByRole("button", { name: "Check safely" }).click();
+  const labResponse = await labResponsePromise;
+  const labPayload = await labResponse.json() as { decision?: unknown };
+  expect(JSON.stringify(labPayload)).not.toContain(labCommand);
+  const labDecision = labPayload.decision;
+  expect(["allowed", "ask-first", "blocked"]).toContain(labDecision);
+  const expectedLabTitle = {
+    allowed: "Guard would allow this",
+    "ask-first": "Guard would ask first",
+    blocked: "Guard would block this",
+  }[labDecision as "allowed" | "ask-first" | "blocked"];
+  await expect(
+    page.getByRole("status").filter({ hasText: expectedLabTitle }),
+  ).toContainText(expectedLabTitle);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("installed-protection-test-lab.png"), fullPage: true });
   await selectDensity(page, "Developer");
   await page.getByText("Developer details", { exact: true }).click();
   await expect(page.getByRole("table").getByText("Destructive Git reset", { exact: true })).toBeVisible();

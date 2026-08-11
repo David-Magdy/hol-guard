@@ -16242,7 +16242,7 @@ async function fetchCommandActivityApi(input, init) {
   return fetchWithGuardAuth(input, init);
 }
 async function fetchExtensionControlApi(input, init) {
-  const approvedPath = typeof input === "string" && /^\/v1\/extension-controls\/(?:catalog|effective|preview|apply|refresh|recover-authority)$/.test(input);
+  const approvedPath = typeof input === "string" && /^\/v1\/extension-controls\/(?:catalog|effective|history|preview|test|apply|refresh|recover-authority|acknowledge-degraded)$/.test(input);
   if (!approvedPath) {
     throw new Error("Invalid extension-control API path");
   }
@@ -30590,8 +30590,8 @@ export {
   approvalGateCooldownLabel as am,
   fetchExtensionControlApi as an,
   HiMiniInformationCircle as ao,
-  HiMiniArrowPath as ap,
-  commandReasonLabel as aq,
+  commandReasonLabel as ap,
+  HiMiniArrowPath as aq,
   DEFAULT_COMMAND_ACTIVITY_FILTERS as ar,
   HiMiniBeaker as as,
   HiMiniArrowLeft as at,
