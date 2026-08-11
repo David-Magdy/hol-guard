@@ -6,6 +6,7 @@ use guard_contracts::{
     MAX_NATIVE_RESPONSE_BYTES, NATIVE_PROTOCOL_VERSION,
 };
 use guard_hook_core::review_post_tool;
+use serde::Deserialize;
 use std::env;
 use std::io::{self, Read, Write};
 
@@ -18,6 +19,19 @@ const PACKAGE_VERSION: &str = match option_env!("HOL_GUARD_PACKAGE_VERSION") {
     None => env!("CARGO_PKG_VERSION"),
 };
 const MAX_RESIDENT_CONCURRENCY: usize = 16;
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "operation", content = "request", rename_all = "snake_case")]
+enum ResidentOperationV1 {
+    CommandModel(CommandModelRequestV1),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ResidentRequestV1 {
+    Operation(ResidentOperationV1),
+    Hook(NativeHookRequestV1),
+}
 
 fn capabilities() -> RuntimeCapabilitiesV1 {
     RuntimeCapabilitiesV1 {
@@ -34,6 +48,7 @@ fn capabilities() -> RuntimeCapabilitiesV1 {
             "bounded-concurrency-v1".into(),
             "rule-contract-v2".into(),
             "pre-tool-command-model-shadow-v1".into(),
+            "resident-command-model-shadow-v1".into(),
         ],
     }
 }
@@ -53,13 +68,30 @@ fn read_stdin_bounded() -> Result<Vec<u8>, String> {
 fn evaluate_hook_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let request: NativeHookRequestV1 =
         serde_json::from_slice(bytes).map_err(|_| "native_request_invalid_json".to_owned())?;
-    encode_response(&review_post_tool(&request))
+    let response = review_post_tool(&request);
+    encode_response(&response)
+}
+
+fn evaluate_command_model_request(request: &CommandModelRequestV1) -> Result<Vec<u8>, String> {
+    let response = parse_command(request)?;
+    encode_response(&response)
 }
 
 fn evaluate_command_model_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let request: CommandModelRequestV1 = serde_json::from_slice(bytes)
         .map_err(|_| "native_command_model_invalid_json".to_owned())?;
-    encode_response(&parse_command(&request)?)
+    evaluate_command_model_request(&request)
+}
+
+fn evaluate_resident_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let request: ResidentRequestV1 = serde_json::from_slice(bytes)
+        .map_err(|_| "native_resident_request_invalid_json".to_owned())?;
+    match request {
+        ResidentRequestV1::Operation(ResidentOperationV1::CommandModel(request)) => {
+            evaluate_command_model_request(&request)
+        }
+        ResidentRequestV1::Hook(request) => encode_response(&review_post_tool(&request)),
+    }
 }
 
 fn encode_response<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -75,16 +107,6 @@ fn write_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
     serde_json::to_writer(io::stdout().lock(), value)
         .map_err(|_| "native_response_encode_failed".to_owned())?;
     println!();
-    Ok(())
-}
-
-fn write_bytes_response(response: &[u8]) -> Result<(), String> {
-    io::stdout()
-        .write_all(response)
-        .map_err(|_| "native_response_write_failed".to_owned())?;
-    io::stdout()
-        .write_all(b"\n")
-        .map_err(|_| "native_response_write_failed".to_owned())?;
     Ok(())
 }
 
@@ -110,7 +132,7 @@ fn serve(socket_path: &str) -> Result<(), String> {
         stream
             .read_exact(&mut request)
             .map_err(|_| "native_frame_read_failed".to_owned())?;
-        let response = evaluate_hook_bytes(&request)?;
+        let response = evaluate_resident_bytes(&request)?;
         stream
             .write_all(&(response.len() as u32).to_be_bytes())
             .map_err(|_| "native_frame_write_failed".to_owned())?;
@@ -166,6 +188,16 @@ fn serve(_socket_path: &str) -> Result<(), String> {
     Err("native_named_pipe_not_available".into())
 }
 
+fn write_bytes_response(response: &[u8]) -> Result<(), String> {
+    io::stdout()
+        .write_all(response)
+        .map_err(|_| "native_response_write_failed".to_owned())?;
+    io::stdout()
+        .write_all(b"\n")
+        .map_err(|_| "native_response_write_failed".to_owned())?;
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.as_slice() {
@@ -185,11 +217,13 @@ fn run() -> Result<(), String> {
         }
         [command, flag] if command == "hook" && flag == "--stdin" => {
             let bytes = read_stdin_bounded()?;
-            write_bytes_response(&evaluate_hook_bytes(&bytes)?)
+            let response = evaluate_hook_bytes(&bytes)?;
+            write_bytes_response(&response)
         }
         [command, flag] if command == "command-model" && flag == "--stdin" => {
             let bytes = read_stdin_bounded()?;
-            write_bytes_response(&evaluate_command_model_bytes(&bytes)?)
+            let response = evaluate_command_model_bytes(&bytes)?;
+            write_bytes_response(&response)
         }
         [command, flag, path] if command == "serve" && flag == "--socket" => serve(path),
         _ => Err(
