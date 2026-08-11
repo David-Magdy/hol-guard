@@ -1,15 +1,19 @@
-"""Resident local transport for the Rust PostToolUse runtime.
+"""Resident local transport for the Rust Guard runtime.
 
-The resident service is POSIX-only in this wave. It runs through Guard's
-existing contained process launcher, speaks a length-prefixed protocol over an
-owner-only Unix socket, and falls back to the one-shot native path on any
-startup, transport, or lifecycle failure.
+POSIX uses an owner-only Unix socket. Windows uses an authenticated loopback
+transport because default named-pipe ACLs are not acceptable for Guard hook
+material. The per-process authentication secret is generated in Python and is
+sent to the contained Rust child only through inherited stdin. It is never
+placed in argv, environment variables, files, logs, or request payloads.
 """
 
 from __future__ import annotations
 
 import atexit
+import hashlib
+import hmac
 import os
+import secrets
 import socket
 import stat
 import threading
@@ -22,9 +26,14 @@ from .codex_hook_launch_runtime import run_isolated_hook_process
 _MAX_REQUEST_BYTES = 6 * 1024 * 1024
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _MAX_SOCKET_PATH_BYTES = 100
-_START_TIMEOUT_SECONDS = 0.4
+_START_TIMEOUT_SECONDS = 0.6
 _SERVICE_LIFETIME_SECONDS = 7 * 24 * 60 * 60
 _SERVICE_OUTPUT_LIMIT = 64 * 1024
+_AUTH_TOKEN_BYTES = 32
+_AUTH_NONCE_BYTES = 32
+_AUTH_PROOF_BYTES = 32
+_SERVER_PROOF_LABEL = b"hol-guard-resident-server-v1\x00"
+_CLIENT_PROOF_LABEL = b"hol-guard-resident-client-v1\x00"
 
 
 class _ResidentService:
@@ -41,10 +50,13 @@ class _ResidentService:
         self.guard_home = guard_home
         self.environment = dict(environment)
         self.socket_path = _resident_socket_path(guard_home, identity_sha256)
+        self.loopback_address = _select_loopback_address() if os.name == "nt" else None
+        self._auth_token: bytes | None = None
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._starts = 0
+        self._closed = False
 
     @property
     def starts(self) -> int:
@@ -52,24 +64,66 @@ class _ResidentService:
             return self._starts
 
     def request(self, payload: bytes, *, timeout_seconds: float) -> bytes | None:
-        if self.socket_path is None or len(payload) > _MAX_REQUEST_BYTES or timeout_seconds <= 0:
+        if len(payload) > _MAX_REQUEST_BYTES or timeout_seconds <= 0 or not self._transport_configured():
             return None
-        response = _send_request(self.socket_path, payload, timeout_seconds=min(timeout_seconds, 0.05))
+        response = self._send(payload, timeout_seconds=min(timeout_seconds, 0.05))
         if response is not None:
             return response
         if not self._ensure_started(timeout_seconds=min(timeout_seconds, _START_TIMEOUT_SECONDS)):
             return None
-        return _send_request(self.socket_path, payload, timeout_seconds=timeout_seconds)
+        return self._send(payload, timeout_seconds=timeout_seconds)
+
+    def _transport_configured(self) -> bool:
+        with self._lock:
+            if self._closed:
+                return False
+            if os.name == "nt":
+                return self.loopback_address is not None
+            return self.socket_path is not None
+
+    def _send(self, payload: bytes, *, timeout_seconds: float) -> bytes | None:
+        with self._lock:
+            if self._closed:
+                return None
+            loopback_address = self.loopback_address
+            auth_token = self._auth_token
+            socket_path = self.socket_path
+        if os.name == "nt":
+            if loopback_address is None or auth_token is None:
+                return None
+            return _send_authenticated_loopback_request(
+                loopback_address,
+                auth_token,
+                payload,
+                timeout_seconds=timeout_seconds,
+            )
+        if socket_path is None:
+            return None
+        return _send_unix_request(
+            socket_path,
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
 
     def _ensure_started(self, *, timeout_seconds: float) -> bool:
-        if self.socket_path is None or timeout_seconds <= 0:
+        if timeout_seconds <= 0:
             return False
         with self._lock:
+            if self._closed:
+                return False
+            if os.name == "nt" and self.loopback_address is None:
+                return False
+            if os.name != "nt" and self.socket_path is None:
+                return False
             thread = self._thread
             if thread is None or not thread.is_alive():
-                self._stop_event = threading.Event()
+                stop_event = threading.Event()
+                auth_token = secrets.token_bytes(_AUTH_TOKEN_BYTES) if os.name == "nt" else None
+                self._stop_event = stop_event
+                self._auth_token = auth_token
                 thread = threading.Thread(
                     target=self._run,
+                    args=(stop_event, auth_token),
                     name="hol-guard-native-runtime",
                     daemon=True,
                 )
@@ -78,46 +132,88 @@ class _ResidentService:
                 thread.start()
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
-            if self._socket_accepts_connections():
+            if self._transport_accepts_authenticated_connections():
                 return True
             with self._lock:
-                if self._thread is None or not self._thread.is_alive():
+                if self._closed or self._thread is not thread or not thread.is_alive():
                     return False
             time.sleep(0.01)
-        return self._socket_accepts_connections()
+        return self._transport_accepts_authenticated_connections()
 
-    def _socket_accepts_connections(self) -> bool:
-        if self.socket_path is None:
+    def _transport_accepts_authenticated_connections(self) -> bool:
+        with self._lock:
+            if self._closed:
+                return False
+            loopback_address = self.loopback_address
+            auth_token = self._auth_token
+            socket_path = self.socket_path
+        if os.name == "nt":
+            if loopback_address is None or auth_token is None:
+                return False
+            client = _authenticated_loopback_client(
+                loopback_address,
+                auth_token,
+                timeout_seconds=0.05,
+            )
+            if client is None:
+                return False
+            client.close()
+            return True
+        if socket_path is None:
             return False
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.settimeout(0.025)
-                client.connect(str(self.socket_path))
+                client.connect(str(socket_path))
             return True
         except OSError:
             return False
 
-    def _run(self) -> None:
-        socket_path = self.socket_path
-        if socket_path is None:
-            return
+    def _run(
+        self,
+        stop_event: threading.Event,
+        auth_token: bytes | None,
+    ) -> None:
+        if os.name == "nt":
+            if self.loopback_address is None or auth_token is None:
+                return
+            host, port = self.loopback_address
+            command = (
+                str(self.executable),
+                "serve",
+                "--tcp-loopback",
+                f"{host}:{port}",
+            )
+            input_text = auth_token.hex() + "\n"
+        else:
+            if self.socket_path is None:
+                return
+            command = (str(self.executable), "serve", "--socket", str(self.socket_path))
+            input_text = ""
         _ = run_isolated_hook_process(
-            (str(self.executable), "serve", "--socket", str(socket_path)),
-            input_text="",
+            command,
+            input_text=input_text,
             cwd=self.executable.parent,
             environment=self.environment,
             timeout_seconds=_SERVICE_LIFETIME_SECONDS,
             output_limit=_SERVICE_OUTPUT_LIMIT,
-            stop_event=self._stop_event,
+            stop_event=stop_event,
         )
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             self._stop_event.set()
             thread = self._thread
+            self._auth_token = None
         if thread is not None and thread.is_alive():
             thread.join(timeout=1.5)
         _unlink_owned_socket(self.socket_path)
+        with self._lock:
+            if self._thread is thread:
+                self._thread = None
 
 
 _SERVICES_LOCK = threading.Lock()
@@ -161,6 +257,22 @@ def _resident_socket_path(guard_home: Path, identity_sha256: str) -> Path | None
     return socket_path
 
 
+def _select_loopback_address() -> tuple[str, int] | None:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 0))
+            host, port = probe.getsockname()[:2]
+            if host != "127.0.0.1" or not isinstance(port, int) or port <= 0:
+                return None
+            return host, port
+    except OSError:
+        return None
+
+
+def _proof(token: bytes, label: bytes, nonce: bytes) -> bytes:
+    return hmac.new(token, label + nonce, hashlib.sha256).digest()
+
+
 def _read_exact(client: socket.socket, length: int) -> bytes | None:
     if length < 0:
         return None
@@ -175,7 +287,72 @@ def _read_exact(client: socket.socket, length: int) -> bytes | None:
     return b"".join(chunks)
 
 
-def _send_request(socket_path: Path, payload: bytes, *, timeout_seconds: float) -> bytes | None:
+def _authenticated_loopback_client(
+    address: tuple[str, int],
+    token: bytes,
+    *,
+    timeout_seconds: float,
+) -> socket.socket | None:
+    if len(token) != _AUTH_TOKEN_BYTES or timeout_seconds <= 0:
+        return None
+    client: socket.socket | None = None
+    try:
+        client = socket.create_connection(address, timeout=timeout_seconds)
+        client.settimeout(timeout_seconds)
+        nonce = secrets.token_bytes(_AUTH_NONCE_BYTES)
+        client.sendall(nonce)
+        server_proof = _read_exact(client, _AUTH_PROOF_BYTES)
+        expected_server = _proof(token, _SERVER_PROOF_LABEL, nonce)
+        if server_proof is None or not hmac.compare_digest(
+            server_proof,
+            expected_server,
+        ):
+            client.close()
+            return None
+        client.sendall(_proof(token, _CLIENT_PROOF_LABEL, nonce))
+        return client
+    except (OSError, OverflowError):
+        if client is not None:
+            client.close()
+        return None
+
+
+def _send_authenticated_loopback_request(
+    address: tuple[str, int],
+    token: bytes,
+    payload: bytes,
+    *,
+    timeout_seconds: float,
+) -> bytes | None:
+    if len(payload) > _MAX_REQUEST_BYTES or timeout_seconds <= 0:
+        return None
+    client = _authenticated_loopback_client(
+        address,
+        token,
+        timeout_seconds=timeout_seconds,
+    )
+    if client is None:
+        return None
+    try:
+        with client:
+            client.sendall(len(payload).to_bytes(4, "big") + payload)
+            header = _read_exact(client, 4)
+            if header is None:
+                return None
+            response_length = int.from_bytes(header, "big")
+            if response_length > _MAX_RESPONSE_BYTES:
+                return None
+            return _read_exact(client, response_length)
+    except (OSError, OverflowError):
+        return None
+
+
+def _send_unix_request(
+    socket_path: Path,
+    payload: bytes,
+    *,
+    timeout_seconds: float,
+) -> bytes | None:
     if len(payload) > _MAX_REQUEST_BYTES or timeout_seconds <= 0:
         return None
     try:
@@ -204,7 +381,7 @@ def resident_native_request(
     timeout_seconds: float,
 ) -> bytes | None:
     """Send one request to a resident native runtime, starting it lazily."""
-    if os.name == "nt" or not hasattr(socket, "AF_UNIX"):
+    if os.name != "nt" and not hasattr(socket, "AF_UNIX"):
         return None
     try:
         resolved_executable = executable.resolve(strict=True)
@@ -225,7 +402,12 @@ def resident_native_request(
     return service.request(payload, timeout_seconds=timeout_seconds)
 
 
-def resident_service_starts(*, executable: Path, identity_sha256: str, guard_home: Path) -> int:
+def resident_service_starts(
+    *,
+    executable: Path,
+    identity_sha256: str,
+    guard_home: Path,
+) -> int:
     """Return an aggregate-only lifecycle counter for tests and diagnostics."""
     try:
         key = (
