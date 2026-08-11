@@ -472,9 +472,9 @@ def recover_guard_daemon_after_hook_failure(
 
     Recovery is single-flight across threads and processes for one Guard home.
     A hook authentication failure is client evidence, not daemon-health evidence.
-    Recovery therefore preserves every authenticated live generation. Transport
-    failures replace a process only when neither the health probe nor the signed
-    process identity can prove it responsive.
+    Recovery therefore preserves every authenticated live generation. A daemon
+    is replaced only when neither the health probe nor signed process identity
+    can prove that generation is still running.
     """
 
     if failure_kind not in {
@@ -509,9 +509,7 @@ def recover_guard_daemon_after_hook_failure(
             live_process_url = _authenticated_live_current_daemon_url(guard_home, state)
             if current_url is not None:
                 return current_url
-            if live_process_url is not None and (
-                failure_kind != "transport-failure" or _daemon_generation_is_recent(state)
-            ):
+            if live_process_url is not None:
                 return live_process_url
             live_generation_url = current_url or live_process_url
             if live_generation_url is not None:

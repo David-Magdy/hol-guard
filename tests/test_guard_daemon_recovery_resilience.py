@@ -195,7 +195,7 @@ def test_transport_recovery_preserves_authenticated_process_when_health_probe_mi
     assert recovered == "http://127.0.0.1:4781"
 
 
-def test_transport_recovery_replaces_old_process_when_health_probe_misses(
+def test_transport_recovery_preserves_verified_old_process_when_health_probe_misses(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -234,8 +234,8 @@ def test_transport_recovery_replaces_old_process_when_health_probe_misses(
         failure_kind="transport-failure",
     )
 
-    assert recovered == "http://127.0.0.1:4782"
-    assert retired == [guard_home]
+    assert recovered == "http://127.0.0.1:4781"
+    assert retired == []
 
 
 def test_recovery_does_not_reuse_recent_stale_runtime_generation(
@@ -317,12 +317,13 @@ def test_recovery_preserves_old_live_generation_for_concurrent_control_failures(
     monkeypatch.setattr(daemon_manager_module, "ensure_guard_daemon", ensure)
     results: list[str] = []
 
-    workers = [
-        threading.Thread(
-            target=lambda: results.append(daemon_manager_module.recover_guard_daemon_after_hook_failure(guard_home))
-        )
-        for _ in range(32)
-    ]
+    start_gate = threading.Barrier(32, timeout=2)
+
+    def recover() -> None:
+        start_gate.wait()
+        results.append(daemon_manager_module.recover_guard_daemon_after_hook_failure(guard_home))
+
+    workers = [threading.Thread(target=recover) for _ in range(32)]
     for worker in workers:
         worker.start()
     for worker in workers:
