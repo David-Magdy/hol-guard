@@ -1,0 +1,50 @@
+name: Stage native publication dependency fix
+
+on:
+  push:
+    branches: [feat/rust-runtime-native-publish]
+    paths:
+      - ".github/workflows/stage-native-publish-dependency-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          ref: feat/rust-runtime-native-publish
+      - name: Stage the locked publish dependency fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path(".github/workflows/publish.yml")
+          text = source.read_text(encoding="utf-8")
+          start = text.index("  assemble-native-guard-distributions:\n")
+          end = text.index("\n  publish-testpypi:\n", start)
+          section = text[start:end]
+          old = "      - run: uv sync --frozen --extra dev --python 3.12\n"
+          new = "      - run: uv sync --frozen --extra dev --extra publish --python 3.12\n"
+          if section.count(old) != 1:
+              raise RuntimeError("Expected exactly one aggregation dependency install")
+          updated_section = section.replace(old, new, 1)
+          updated = text[:start] + updated_section + text[end:]
+          if updated.count(new) != text.count(new) + 1:
+              raise RuntimeError("Unexpected publish-extra replacement count")
+
+          destination = Path("ci/native_runtime/generated_publish_workflow.yml")
+          destination.write_text(updated, encoding="utf-8")
+          PY
+          git diff --check -- ci/native_runtime/generated_publish_workflow.yml
+          git add ci/native_runtime/generated_publish_workflow.yml
+          test "$(git diff --cached --name-only)" = "ci/native_runtime/generated_publish_workflow.yml"
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git commit --signoff -m "fix(release): install locked publish tools during aggregation"
+          git push origin HEAD:feat/rust-runtime-native-publish
