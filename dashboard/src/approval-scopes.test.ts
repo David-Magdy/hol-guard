@@ -9,6 +9,7 @@ import {
   scopeChoicesForRequest,
   standardScopeChoicesForRequest,
   taskCapabilityExplanation,
+  willPersistExactAction,
 } from "./approval-scopes";
 import type { GuardApprovalRequest } from "./guard-types";
 import { ReviewScopeControls } from "./review-scope-controls";
@@ -102,6 +103,14 @@ const unprovenRememberedPayload = buildDecisionPayload({
   persistExactAction: true,
 });
 assert(unprovenRememberedPayload.persist_policy === undefined, "T-AS-03b: unproven actions cannot be remembered");
+assert(
+  willPersistExactAction(BASE_REQUEST, "block", "artifact", true),
+  "T-AS-03c: eligible exact Watch-only blocks can be persisted",
+);
+assert(
+  !willPersistExactAction({ ...BASE_REQUEST, exact_action_persistence_eligible: false }, "block", "artifact", true),
+  "T-AS-03d: ineligible Watch-only blocks cannot promise persistence",
+);
 
 function ignoreScopeChange(): void {}
 
@@ -125,6 +134,27 @@ function renderExactActionControl(eligible: boolean): string {
   );
 }
 
+function renderExactActionControlWithTimedScopesHidden(): string {
+  return renderToStaticMarkup(
+    createElement(ReviewScopeControls, {
+      commonScopeOptions: standardScopeChoicesForRequest(BASE_REQUEST, "allow"),
+      broaderScopeOptions: [],
+      advancedScopeOptions: [],
+      blockScopeOptions: [],
+      hasAllowScope: true,
+      taskCapabilityCopy: null,
+      exactActionPersistenceEligible: true,
+      rememberExactAction: false,
+      allowScope: "artifact",
+      blockScope: "artifact",
+      showAllowScopes: false,
+      onAllowScopeChange: ignoreScopeChange,
+      onBlockScopeChange: ignoreScopeChange,
+      onRememberExactActionChange: ignoreScopeChange,
+    }),
+  );
+}
+
 assert(
   renderExactActionControl(true).includes("Always allow this exact action"),
   "T-AS-03c: eligible requests render the exact-action permission",
@@ -132,6 +162,10 @@ assert(
 assert(
   !renderExactActionControl(false).includes("Always allow this exact action"),
   "T-AS-03d: unproven requests do not render a durable permission",
+);
+assert(
+  renderExactActionControlWithTimedScopesHidden().includes("Always allow this exact action"),
+  "T-AS-03e: exact-action permission remains available beside bounded MCP choices",
 );
 
 const blockPayload = buildDecisionPayload({
@@ -141,6 +175,17 @@ const blockPayload = buildDecisionPayload({
   reason: "blocked in review",
 });
 assert(blockPayload.workspace === "/workspace/project", "T-AS-04: workspace block sends the request workspace");
+const rememberedExactBlockPayload = buildDecisionPayload({
+  item: BASE_REQUEST,
+  action: "block",
+  scope: "artifact",
+  reason: "blocked after Watch-only review",
+  persistExactAction: true,
+});
+assert(
+  rememberedExactBlockPayload.persist_policy === true,
+  "T-AS-04a: exact-action blocks can be persisted explicitly",
+);
 
 const allowScopes = scopeChoicesForRequest(BASE_REQUEST, "allow").map((choice) => choice.value);
 const blockScopes = scopeChoicesForRequest(BASE_REQUEST, "block").map((choice) => choice.value);

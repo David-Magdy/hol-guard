@@ -74,6 +74,7 @@ def test_action_steps_enable_python_safe_path() -> None:
     steps = parsed["runs"]["steps"]
     install_step = next(step for step in steps if step["name"] == "Install scanner")
     scan_step = next(step for step in steps if step["name"] == "Run scanner")
+    summary_step = next(step for step in steps if step["name"] == "Publish Markdown report to job summary")
 
     assert install_step["env"]["PYTHONNOUSERSITE"] == "1"
     assert install_step["env"]["PYTHONSAFEPATH"] == "1"
@@ -81,7 +82,14 @@ def test_action_steps_enable_python_safe_path() -> None:
     assert "python3 -P -m pip install" in install_step["run"]
     assert scan_step["env"]["PYTHONNOUSERSITE"] == "1"
     assert scan_step["env"]["PYTHONSAFEPATH"] == "1"
+    assert scan_step["env"]["WRITE_STEP_SUMMARY"] == (
+        "${{ inputs.write_step_summary == 'true' && inputs.format != 'markdown' }}"
+    )
     assert scan_step["run"] == "python3 -P -m codex_plugin_scanner.action_runner"
+    assert "inputs.format == 'markdown'" in summary_step["if"]
+    assert summary_step["env"]["REPORT_PATH"] == "${{ steps.scan.outputs.report_path }}"
+    assert 'if [ ! -s "$REPORT_PATH" ]; then' in summary_step["run"]
+    assert 'cat "$REPORT_PATH" >> "$GITHUB_STEP_SUMMARY"' in summary_step["run"]
 
 
 def test_python_safe_path_blocks_workspace_module_shadowing(tmp_path: Path) -> None:
