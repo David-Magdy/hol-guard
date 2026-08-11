@@ -63,11 +63,36 @@ def _pure_wheel(root: Path, project: str) -> Path:
     return wheel
 
 
+def _sdist(root: Path) -> Path:
+    sdist = root / f"hol_guard-{VERSION}.tar.gz"
+    sdist.write_bytes(b"source-distribution-placeholder")
+    return sdist
+
+
+def _guard_set(root: Path) -> tuple[Path, ...]:
+    wheels = _native_set(root)
+    pure = _pure_wheel(root, release.PROJECT)
+    sdist = _sdist(root)
+    return tuple(wheels.values()) + (pure, sdist)
+
+
 def _file(path: Path) -> ReleaseFile:
     return ReleaseFile(
         filename=path.name,
         sha256=release._sha256_file(path),
         download_url=f"https://example.invalid/{path.name}",
+    )
+
+
+def _inspection(
+    *files: ReleaseFile,
+    exists: bool = True,
+) -> ReleaseInspection:
+    return ReleaseInspection(
+        registry=Registry.PYPI,
+        version=VERSION,
+        exists=exists,
+        files=files,
     )
 
 
@@ -84,12 +109,7 @@ def _base_inspection(*native: ReleaseFile) -> ReleaseInspection:
             download_url="https://example.invalid/source.tar.gz",
         ),
     )
-    return ReleaseInspection(
-        registry=Registry.PYPI,
-        version=VERSION,
-        exists=True,
-        files=base + native,
-    )
+    return _inspection(*(base + native))
 
 
 def test_expected_platform_targets_are_explicit() -> None:
@@ -174,16 +194,34 @@ def test_local_native_set_binds_manifest_to_runtime_bytes(tmp_path: Path) -> Non
         )
 
 
-def test_plan_upload_copies_only_missing_native_wheels(
+def test_local_guard_set_requires_exact_six_artifacts(tmp_path: Path) -> None:
+    dist_dir = tmp_path / "dist"
+    artifacts = _guard_set(dist_dir)
+    hashes = release.local_guard_hashes(
+        dist_dir,
+        version=VERSION,
+        source_sha=SOURCE_SHA,
+    )
+    assert set(hashes) == {path.name for path in artifacts}
+
+    _sdist(dist_dir).unlink()
+    with pytest.raises(release.NativeReleaseError, match="wheel and sdist"):
+        release.local_guard_hashes(
+            dist_dir,
+            version=VERSION,
+            source_sha=SOURCE_SHA,
+        )
+
+
+def test_plan_upload_from_absent_registry_copies_complete_release(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    wheels = _native_set(tmp_path / "dist")
-    existing = _file(wheels["manylinux_2_17_x86_64"])
+    artifacts = _guard_set(tmp_path / "dist")
     monkeypatch.setattr(
         release,
         "_inspection",
-        lambda registry, version: _base_inspection(existing),
+        lambda registry, version: _inspection(exists=False),
     )
 
     planned = release.plan_upload(
@@ -193,9 +231,66 @@ def test_plan_upload_copies_only_missing_native_wheels(
         dist_dir=tmp_path / "dist",
         output_dir=tmp_path / "upload",
     )
-    assert len(planned) == 3
-    assert existing.filename not in planned
+
+    assert set(planned) == {path.name for path in artifacts}
     assert {path.name for path in (tmp_path / "upload").iterdir()} == set(planned)
+
+
+def test_plan_upload_copies_only_missing_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _guard_set(tmp_path / "dist")
+    by_name = {path.name: path for path in artifacts}
+    existing_names = {
+        f"hol_guard-{VERSION}-py3-none-any.whl",
+        f"hol_guard-{VERSION}.tar.gz",
+        f"hol_guard-{VERSION}-py3-none-manylinux_2_17_x86_64.whl",
+    }
+    existing = tuple(_file(by_name[name]) for name in sorted(existing_names))
+    monkeypatch.setattr(
+        release,
+        "_inspection",
+        lambda registry, version: _inspection(*existing),
+    )
+
+    planned = release.plan_upload(
+        Registry.PYPI,
+        version=VERSION,
+        source_sha=SOURCE_SHA,
+        dist_dir=tmp_path / "dist",
+        output_dir=tmp_path / "upload",
+    )
+
+    assert len(planned) == 3
+    assert set(planned) == set(by_name) - existing_names
+    assert {path.name for path in (tmp_path / "upload").iterdir()} == set(planned)
+
+
+def test_plan_upload_recovers_when_base_artifacts_are_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _guard_set(tmp_path / "dist")
+    native = next(path for path in artifacts if "win_amd64" in path.name)
+    monkeypatch.setattr(
+        release,
+        "_inspection",
+        lambda registry, version: _inspection(_file(native)),
+    )
+
+    planned = release.plan_upload(
+        Registry.PYPI,
+        version=VERSION,
+        source_sha=SOURCE_SHA,
+        dist_dir=tmp_path / "dist",
+        output_dir=tmp_path / "upload",
+    )
+
+    assert native.name not in planned
+    assert f"hol_guard-{VERSION}-py3-none-any.whl" in planned
+    assert f"hol_guard-{VERSION}.tar.gz" in planned
+    assert len(planned) == 5
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX dangling-symlink regression")
@@ -203,17 +298,17 @@ def test_plan_upload_refuses_dangling_destination_symlink(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    wheels = _native_set(tmp_path / "dist")
+    artifacts = _guard_set(tmp_path / "dist")
     monkeypatch.setattr(
         release,
         "_inspection",
-        lambda registry, version: _base_inspection(),
+        lambda registry, version: _inspection(exists=False),
     )
     output_dir = tmp_path / "upload"
     output_dir.mkdir()
-    first_wheel = min(wheels.values(), key=lambda path: path.name)
+    first_artifact = min(artifacts, key=lambda path: path.name)
     escaped_target = tmp_path / "escaped.whl"
-    (output_dir / first_wheel.name).symlink_to(escaped_target)
+    (output_dir / first_artifact.name).symlink_to(escaped_target)
 
     with pytest.raises(release.NativeReleaseError, match="Refusing to overwrite"):
         release.plan_upload(
@@ -230,16 +325,17 @@ def test_plan_upload_rejects_existing_conflicting_bytes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    wheels = _native_set(tmp_path / "dist")
+    artifacts = _guard_set(tmp_path / "dist")
+    pure = next(path for path in artifacts if path.name.endswith("-py3-none-any.whl"))
     conflicting = ReleaseFile(
-        filename=wheels["win_amd64"].name,
+        filename=pure.name,
         sha256="f" * 64,
         download_url="https://example.invalid/conflict.whl",
     )
     monkeypatch.setattr(
         release,
         "_inspection",
-        lambda registry, version: _base_inspection(conflicting),
+        lambda registry, version: _inspection(conflicting),
     )
     with pytest.raises(release.NativeReleaseError, match="different bytes"):
         release.plan_upload(
@@ -248,6 +344,64 @@ def test_plan_upload_rejects_existing_conflicting_bytes(
             source_sha=SOURCE_SHA,
             dist_dir=tmp_path / "dist",
             output_dir=tmp_path / "upload",
+        )
+
+
+def test_plan_upload_rejects_unexpected_remote_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _guard_set(tmp_path / "dist")
+    unexpected = ReleaseFile(
+        filename="hol_guard-3.0.0a99-1-py3-none-any.whl",
+        sha256="f" * 64,
+        download_url="https://example.invalid/unexpected.whl",
+    )
+    monkeypatch.setattr(
+        release,
+        "_inspection",
+        lambda registry, version: _inspection(unexpected),
+    )
+
+    with pytest.raises(release.NativeReleaseError, match="unexpected artifacts"):
+        release.plan_upload(
+            Registry.PYPI,
+            version=VERSION,
+            source_sha=SOURCE_SHA,
+            dist_dir=tmp_path / "dist",
+            output_dir=tmp_path / "upload",
+        )
+
+
+def test_published_release_requires_exact_complete_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts = _guard_set(tmp_path / "dist")
+    remote = tuple(_file(path) for path in artifacts)
+    monkeypatch.setattr(
+        release,
+        "_inspection",
+        lambda registry, version: _inspection(*remote),
+    )
+    release.assert_published_exact(
+        Registry.PYPI,
+        version=VERSION,
+        source_sha=SOURCE_SHA,
+        dist_dir=tmp_path / "dist",
+    )
+
+    monkeypatch.setattr(
+        release,
+        "_inspection",
+        lambda registry, version: _inspection(*remote[:-1]),
+    )
+    with pytest.raises(release.NativeReleaseError, match="not the exact"):
+        release.assert_published_exact(
+            Registry.PYPI,
+            version=VERSION,
+            source_sha=SOURCE_SHA,
+            dist_dir=tmp_path / "dist",
         )
 
 
