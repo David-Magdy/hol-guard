@@ -14,6 +14,9 @@ from typing import Any
 from .codex_hook_launch_runtime import run_isolated_hook_process
 from .native_runtime import _isolated_environment, native_runtime_status
 from .native_runtime_resident import resident_native_request
+from .runtime.command_evaluation import evaluate_command
+from .runtime.command_model import CanonicalCommand, CommandSegment
+from .runtime.command_shadow_evaluation import CommandShadowCohort, CommandShadowProposal
 
 _MAX_REQUEST_BYTES = 64 * 1024
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -21,6 +24,7 @@ _MAX_SEGMENTS = 128
 _MAX_TOKENS = 2_048
 _REQUIRED_FEATURE = "pre-tool-command-model-shadow-v1"
 _RESIDENT_FEATURE = "resident-command-model-shadow-v1"
+_NATIVE_SHADOW_PROPOSAL_VERSION = "guard.command-shadow-proposal.rust-parser.v1"
 
 
 def _decode_command_model(payload: object) -> dict[str, Any] | None:
@@ -46,8 +50,7 @@ def _decode_command_model(payload: object) -> dict[str, Any] | None:
         or not isinstance(segments, list)
         or len(segments) > _MAX_SEGMENTS
         or confidence not in {"exact", "uncertain"}
-        or uncertainty_reason is not None
-        and not isinstance(uncertainty_reason, str)
+        or (uncertainty_reason is not None and not isinstance(uncertainty_reason, str))
         or not isinstance(path_overridden, bool)
         or not isinstance(parser_profile, str)
     ):
@@ -74,8 +77,7 @@ def _decode_command_model(payload: object) -> dict[str, Any] | None:
             or not all(isinstance(value, str) for value in environment_names)
             or not isinstance(segment_wrappers, list)
             or not all(isinstance(value, str) for value in segment_wrappers)
-            or executable is not None
-            and not isinstance(executable, str)
+            or (executable is not None and not isinstance(executable, str))
             or not isinstance(segment.get("path_overridden"), bool)
             or not isinstance(segment.get("execution_context"), str)
             or not isinstance(pipeline_index, int)
@@ -184,4 +186,137 @@ def review_command_model_native(
         return None
 
 
-__all__ = ["review_command_model_native"]
+def _canonical_command_from_native(
+    command: str,
+    payload: dict[str, Any],
+) -> CanonicalCommand | None:
+    """Convert only a fully exact native parse into the Python canonical type."""
+    raw_text = command.strip()
+    if (
+        not raw_text
+        or payload.get("confidence") != "exact"
+        or payload.get("uncertainty_reason") is not None
+        or payload.get("dialect") != "posix"
+        or payload.get("transport") != "shell_string"
+    ):
+        return None
+    normalized_text = payload.get("normalized_text")
+    provenance = payload.get("extraction_provenance")
+    wrapper_chain = payload.get("wrapper_chain")
+    raw_segments = payload.get("segments")
+    if (
+        not isinstance(normalized_text, str)
+        or not isinstance(provenance, str)
+        or not isinstance(wrapper_chain, list)
+        or not all(isinstance(value, str) for value in wrapper_chain)
+        or not isinstance(raw_segments, list)
+    ):
+        return None
+
+    segments: list[CommandSegment] = []
+    for raw_segment in raw_segments:
+        if not isinstance(raw_segment, dict):
+            return None
+        text = raw_segment.get("text")
+        tokens = raw_segment.get("tokens")
+        executable = raw_segment.get("executable")
+        arguments = raw_segment.get("arguments")
+        environment_names = raw_segment.get("environment_names")
+        segment_wrappers = raw_segment.get("wrapper_chain")
+        path_overridden = raw_segment.get("path_overridden")
+        execution_context = raw_segment.get("execution_context")
+        pipeline_index = raw_segment.get("pipeline_index")
+        span = raw_segment.get("span")
+        if (
+            not isinstance(text, str)
+            or not isinstance(tokens, list)
+            or not all(isinstance(value, str) for value in tokens)
+            or (executable is not None and not isinstance(executable, str))
+            or not isinstance(arguments, list)
+            or not all(isinstance(value, str) for value in arguments)
+            or not isinstance(environment_names, list)
+            or not all(isinstance(value, str) for value in environment_names)
+            or not isinstance(segment_wrappers, list)
+            or not all(isinstance(value, str) for value in segment_wrappers)
+            or not isinstance(path_overridden, bool)
+            or not isinstance(execution_context, str)
+            or not isinstance(pipeline_index, int)
+            or not isinstance(span, dict)
+            or span.get("source") != "normalized"
+            or not isinstance(span.get("start"), int)
+            or not isinstance(span.get("end"), int)
+        ):
+            return None
+        start = span["start"]
+        end = span["end"]
+        if start < 0 or end < start or end > len(normalized_text):
+            return None
+        segments.append(
+            CommandSegment(
+                text=text,
+                tokens=tuple(tokens),
+                executable=executable,
+                arguments=tuple(arguments),
+                environment_names=tuple(environment_names),
+                wrapper_chain=tuple(segment_wrappers),
+                path_overridden=path_overridden,
+                execution_context=execution_context,
+                pipeline_index=pipeline_index,
+                start=start,
+                end=end,
+            )
+        )
+
+    canonical = CanonicalCommand(
+        raw_text=raw_text,
+        normalized_text=normalized_text,
+        dialect="posix",
+        transport="shell_string",
+        extraction_provenance=provenance,
+        wrapper_chain=tuple(wrapper_chain),
+        segments=tuple(segments),
+        redirects=(),
+        embedded_commands=(),
+        confidence="exact",
+        uncertainty_reason=None,
+    )
+    if payload.get("path_overridden") is not canonical.path_overridden:
+        return None
+    return canonical
+
+
+def native_command_shadow_proposal(
+    command: str,
+    *,
+    guard_home: Path,
+    cwd: Path | None,
+    home_dir: Path | None,
+    compatibility_action_class: str | None = None,
+    compatibility_reason: str | None = None,
+) -> CommandShadowProposal | None:
+    """Build a privacy-safe shadow proposal from a Rust parse and Python rules."""
+    payload = review_command_model_native(command, guard_home=guard_home)
+    if payload is None:
+        return None
+    canonical = _canonical_command_from_native(command, payload)
+    if canonical is None:
+        return None
+    evaluation = evaluate_command(
+        command,
+        canonical_command=canonical,
+        compatibility_action_class=compatibility_action_class,
+        compatibility_reason=compatibility_reason,
+        cwd=cwd,
+        home_dir=home_dir,
+    )
+    return CommandShadowProposal(
+        decision=evaluation.decision_plane,
+        cohorts=frozenset({CommandShadowCohort.BASELINE}),
+        version=_NATIVE_SHADOW_PROPOSAL_VERSION,
+    )
+
+
+__all__ = [
+    "native_command_shadow_proposal",
+    "review_command_model_native",
+]
