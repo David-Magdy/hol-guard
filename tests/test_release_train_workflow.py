@@ -212,6 +212,14 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
             step.get("name") == "Keep only the Guard release distribution" and "plugin_scanner" in step.get("run", "")
             for step in steps
         )
+        publish_step = next(step for step in steps if str(step.get("uses", "")).startswith("pypa/"))
+        assert publish_step["with"]["packages-dir"] == "upload-dist/"
+    release_alpha_steps = jobs["release-alpha"]["steps"]
+    assert any(step.get("with", {}).get("name") == "distributions-native" for step in release_alpha_steps)
+    assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in release_alpha_steps)
+    assert any(
+        "sha256sum --check distribution-sha256-native.txt" in step.get("run", "") for step in release_alpha_steps
+    )
     for job_name in ("publish-main-testpypi", "publish-main-pypi"):
         steps = jobs[job_name]["steps"]
         assert any(step.get("run") == "sha256sum --check distribution-sha256.txt" for step in steps)
@@ -265,23 +273,52 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
     workflow = _workflow(PUBLISH_WORKFLOW)
     jobs = workflow["jobs"]
 
-    for job_name in ("publish-alpha-testpypi", "publish-main-testpypi"):
-        steps = jobs[job_name]["steps"]
-        inspect_step = next(step for step in steps if step.get("name") == "Inspect TestPyPI release state")
-        publish_step = next(step for step in steps if str(step.get("uses", "")).startswith("pypa/"))
-        cleanup_step = next(step for step in steps if step.get("name") == "Remove generated upload attestations")
-        verify_step = next(step for step in steps if step.get("name") == "Download and verify exact TestPyPI artifacts")
-        assert "verify-release --registry testpypi" in inspect_step["run"]
-        assert publish_step["if"] == "steps.testpypi.outputs.upload == 'true'"
-        assert cleanup_step["run"] == "rm -f dist/*.publish.attestation"
-        assert steps.index(publish_step) < steps.index(cleanup_step) < steps.index(verify_step)
-        assert "--download-dir verified-testpypi" in verify_step["run"]
-        assert 'uv tool run --from "$wheel"' in verify_step["run"]
-        assert 'status" == "exact"' in verify_step["run"]
-        assert 'status" != "absent"' in verify_step["run"]
-        assert "for attempt in {1..60}" in verify_step["run"]
-        assert 'attempt" == "60"' in verify_step["run"]
-        assert '== "hol-guard $VERSION"' in verify_step["run"]
+    alpha_test_steps = jobs["publish-alpha-testpypi"]["steps"]
+    alpha_test_plan = next(step for step in alpha_test_steps if step.get("name") == "Plan TestPyPI release upload")
+    alpha_test_publish = next(step for step in alpha_test_steps if str(step.get("uses", "")).startswith("pypa/"))
+    alpha_test_cleanup = next(
+        step for step in alpha_test_steps if step.get("name") == "Remove generated upload attestations"
+    )
+    alpha_test_verify = next(
+        step for step in alpha_test_steps if step.get("name") == "Download and verify exact TestPyPI artifacts"
+    )
+    assert "plan-upload --registry testpypi" in alpha_test_plan["run"]
+    assert '--source-sha "$SOURCE_SHA"' in alpha_test_plan["run"]
+    assert alpha_test_publish["if"] == "steps.testpypi.outputs.upload == 'true'"
+    assert alpha_test_publish["with"]["packages-dir"] == "upload-dist/"
+    assert alpha_test_cleanup["run"] == "rm -f dist/*.publish.attestation upload-dist/*.publish.attestation"
+    assert (
+        alpha_test_steps.index(alpha_test_publish)
+        < alpha_test_steps.index(alpha_test_cleanup)
+        < alpha_test_steps.index(alpha_test_verify)
+    )
+    assert "--download-dir verified-testpypi" in alpha_test_verify["run"]
+    assert "verify-published --registry testpypi" in alpha_test_verify["run"]
+    assert 'uv tool run --from "$wheel"' in alpha_test_verify["run"]
+    assert 'status" == "exact"' in alpha_test_verify["run"]
+    assert 'status" != "absent"' in alpha_test_verify["run"]
+    assert "for attempt in {1..60}" in alpha_test_verify["run"]
+    assert 'attempt" == "60"' in alpha_test_verify["run"]
+    assert '== "hol-guard $VERSION"' in alpha_test_verify["run"]
+
+    main_test_steps = jobs["publish-main-testpypi"]["steps"]
+    main_test_inspect = next(step for step in main_test_steps if step.get("name") == "Inspect TestPyPI release state")
+    main_test_publish = next(step for step in main_test_steps if str(step.get("uses", "")).startswith("pypa/"))
+    main_test_cleanup = next(
+        step for step in main_test_steps if step.get("name") == "Remove generated upload attestations"
+    )
+    main_test_verify = next(
+        step for step in main_test_steps if step.get("name") == "Download and verify exact TestPyPI artifacts"
+    )
+    assert "verify-release --registry testpypi" in main_test_inspect["run"]
+    assert main_test_publish["if"] == "steps.testpypi.outputs.upload == 'true'"
+    assert main_test_cleanup["run"] == "rm -f dist/*.publish.attestation"
+    assert (
+        main_test_steps.index(main_test_publish)
+        < main_test_steps.index(main_test_cleanup)
+        < main_test_steps.index(main_test_verify)
+    )
+    assert "--download-dir verified-testpypi" in main_test_verify["run"]
 
     main_revalidation = next(
         step["run"] for step in jobs["publish-main-pypi"]["steps"] if step.get("name") == "Revalidate main publication"
@@ -324,22 +361,35 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert 'for registry in ("pypi.org", "test.pypi.org")' not in workflow_text
 
-    for job_name in ("publish-alpha-pypi", "publish-main-pypi"):
-        steps = jobs[job_name]["steps"]
-        inspect_step = next(step for step in steps if step.get("name") == "Inspect PyPI release state")
-        publish_step = next(step for step in steps if str(step.get("uses", "")).startswith("pypa/"))
-        cleanup_step = next(step for step in steps if step.get("name") == "Remove generated upload attestations")
-        verify_step = next(step for step in steps if step.get("name") == "Download and verify exact PyPI artifacts")
-        assert "verify-release --registry pypi" in inspect_step["run"]
-        assert publish_step["if"] == "steps.pypi.outputs.upload == 'true'"
-        assert cleanup_step["run"] == "rm -f dist/*.publish.attestation"
-        assert steps.index(publish_step) < steps.index(cleanup_step) < steps.index(verify_step)
-        assert "--download-dir verified-pypi" in verify_step["run"]
-        assert 'status" == "exact"' in verify_step["run"]
-        assert 'status" != "absent"' in verify_step["run"]
-        assert "for attempt in {1..60}" in verify_step["run"]
-        assert 'attempt" == "60"' in verify_step["run"]
-        assert '== "hol-guard $VERSION"' in verify_step["run"]
+    alpha_steps = jobs["publish-alpha-pypi"]["steps"]
+    alpha_plan = next(step for step in alpha_steps if step.get("name") == "Plan PyPI release upload")
+    alpha_publish = next(step for step in alpha_steps if str(step.get("uses", "")).startswith("pypa/"))
+    alpha_cleanup = next(step for step in alpha_steps if step.get("name") == "Remove generated upload attestations")
+    alpha_verify = next(step for step in alpha_steps if step.get("name") == "Download and verify exact PyPI artifacts")
+    assert "plan-upload --registry pypi" in alpha_plan["run"]
+    assert '--source-sha "$SOURCE_SHA"' in alpha_plan["run"]
+    assert alpha_publish["if"] == "steps.pypi.outputs.upload == 'true'"
+    assert alpha_publish["with"]["packages-dir"] == "upload-dist/"
+    assert alpha_cleanup["run"] == "rm -f dist/*.publish.attestation upload-dist/*.publish.attestation"
+    assert alpha_steps.index(alpha_publish) < alpha_steps.index(alpha_cleanup) < alpha_steps.index(alpha_verify)
+    assert "--download-dir verified-pypi" in alpha_verify["run"]
+    assert "verify-published --registry pypi" in alpha_verify["run"]
+    assert 'status" == "exact"' in alpha_verify["run"]
+    assert 'status" != "absent"' in alpha_verify["run"]
+    assert "for attempt in {1..60}" in alpha_verify["run"]
+    assert 'attempt" == "60"' in alpha_verify["run"]
+    assert '== "hol-guard $VERSION"' in alpha_verify["run"]
+
+    main_steps = jobs["publish-main-pypi"]["steps"]
+    main_inspect = next(step for step in main_steps if step.get("name") == "Inspect PyPI release state")
+    main_publish = next(step for step in main_steps if str(step.get("uses", "")).startswith("pypa/"))
+    main_cleanup = next(step for step in main_steps if step.get("name") == "Remove generated upload attestations")
+    main_verify = next(step for step in main_steps if step.get("name") == "Download and verify exact PyPI artifacts")
+    assert "verify-release --registry pypi" in main_inspect["run"]
+    assert main_publish["if"] == "steps.pypi.outputs.upload == 'true'"
+    assert main_cleanup["run"] == "rm -f dist/*.publish.attestation"
+    assert main_steps.index(main_publish) < main_steps.index(main_cleanup) < main_steps.index(main_verify)
+    assert "--download-dir verified-pypi" in main_verify["run"]
 
 
 def test_release_tags_are_bound_to_the_exact_published_source() -> None:

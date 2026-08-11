@@ -30,11 +30,7 @@ def _native_wheel(
     target: str | None = None,
 ) -> Path:
     wheel = root / f"hol_guard-{VERSION}-py3-none-{platform}.whl"
-    runtime_path = (
-        release.WINDOWS_RUNTIME_PATH
-        if platform.startswith("win")
-        else release.RUNTIME_PATH
-    )
+    runtime_path = release.WINDOWS_RUNTIME_PATH if platform.startswith("win") else release.RUNTIME_PATH
     manifest = {
         "schema": "hol-guard-native-runtime.v1",
         "protocol_version": 1,
@@ -73,7 +69,7 @@ def _guard_set(root: Path) -> tuple[Path, ...]:
     wheels = _native_set(root)
     pure = _pure_wheel(root, release.PROJECT)
     sdist = _sdist(root)
-    return tuple(wheels.values()) + (pure, sdist)
+    return (*tuple(wheels.values()), pure, sdist)
 
 
 def _file(path: Path) -> ReleaseFile:
