@@ -382,6 +382,183 @@ jobs:
           if-no-files-found: error
 
 
+
+  build-native-guard-wheels:
+    name: Build native Guard wheel (${{ matrix.target }})
+    if: >-
+      needs.build.result == 'success' &&
+      (
+        (
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          contains(github.event.pull_request.labels.*.name, 'publish-testpypi-canary') &&
+          needs.build.outputs.channel == 'canary'
+        ) ||
+        (
+          needs.build.outputs.channel == 'alpha' &&
+          (
+            (github.event_name == 'push' && github.ref == 'refs/heads/release/3.0') ||
+            (github.event_name == 'workflow_dispatch' && github.event.inputs.release_train == '3.0')
+          )
+        )
+      )
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform_tag: manylinux_2_17_x86_64
+            target: x86_64-unknown-linux-musl
+            runtime: rust/target/x86_64-unknown-linux-musl/release/hol-guard-runtime
+          - runner: macos-15-intel
+            platform_tag: macosx_13_0_x86_64
+            target: x86_64-apple-darwin
+            runtime: rust/target/x86_64-apple-darwin/release/hol-guard-runtime
+          - runner: macos-15
+            platform_tag: macosx_11_0_arm64
+            target: aarch64-apple-darwin
+            runtime: rust/target/aarch64-apple-darwin/release/hol-guard-runtime
+          - runner: windows-latest
+            platform_tag: win_amd64
+            target: x86_64-pc-windows-msvc
+            runtime: rust/target/x86_64-pc-windows-msvc/release/hol-guard-runtime.exe
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+          ref: ${{ needs.build.outputs.source_sha }}
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - run: uv sync --frozen --extra dev --python 3.12
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: distributions
+          path: base-dist/
+      - name: Install pinned Rust target
+        shell: bash
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+          rustup target add "$RUST_TARGET"
+      - name: Install Linux static toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+      - name: Build version-matched runtime
+        shell: bash
+        env:
+          HOL_GUARD_BUILD_SHA: ${{ needs.build.outputs.source_sha }}
+          HOL_GUARD_PACKAGE_VERSION: ${{ needs.build.outputs.version }}
+          RUST_TARGET: ${{ matrix.target }}
+          RUNTIME: ${{ matrix.runtime }}
+        run: |
+          cargo build --manifest-path rust/Cargo.toml --locked --release --target "$RUST_TARGET" -p hol-guard-runtime
+          "$RUNTIME" self-test --json
+      - name: Verify Linux runtime is static
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+        run: |
+          LDD_OUTPUT=$(ldd "$RUNTIME" 2>&1 || true)
+          if ! grep -Eq 'not a dynamic executable|statically linked' <<< "$LDD_OUTPUT"; then
+            printf '%s\n' "$LDD_OUTPUT" >&2
+            exit 1
+          fi
+      - name: Assemble native wheel
+        shell: bash
+        env:
+          PLATFORM_TAG: ${{ matrix.platform_tag }}
+          RUNTIME: ${{ matrix.runtime }}
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          RULE_DIGEST=$("$RUNTIME" capabilities --json | python -c 'import json,sys; print(json.load(sys.stdin)["rule_digest"])')
+          uv run --no-sync python scripts/build_native_hol_guard_wheel.py \
+            --wheel "base-dist/hol_guard-${VERSION}-py3-none-any.whl" \
+            --runtime "$RUNTIME" \
+            --output-dir native-dist \
+            --version "$VERSION" \
+            --platform-tag "$PLATFORM_TAG" \
+            --target "$TARGET" \
+            --source-sha "$SOURCE_SHA" \
+            --rule-digest "$RULE_DIGEST"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-guard-wheel-${{ matrix.platform_tag }}
+          path: native-dist/*.whl
+          if-no-files-found: error
+
+  assemble-native-guard-distributions:
+    name: Assemble native Guard distributions
+    if: >-
+      needs.build.result == 'success' &&
+      needs.build-native-guard-wheels.result == 'success'
+    needs: [build, build-native-guard-wheels]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+          ref: ${{ needs.build.outputs.source_sha }}
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - run: uv sync --frozen --extra dev --python 3.12
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: distributions
+          path: dist/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: native-guard-wheel-*
+          path: dist/
+          merge-multiple: true
+      - name: Validate exact native artifact set
+        env:
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          uv run --no-sync python scripts/verify_native_runtime_release.py validate-local \
+            --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --dist-dir dist
+          uv run --no-sync twine check dist/*
+      - name: Record aggregate immutable hashes
+        run: |
+          find dist -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > distribution-sha256-native.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: distributions-native
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: distribution-sha256-native
+          path: distribution-sha256-native.txt
+          if-no-files-found: error
+
   publish-testpypi:
     name: Publish PR canary to TestPyPI
     if: >-
@@ -389,7 +566,7 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'publish-testpypi-canary')
-    needs: build
+    needs: [build, assemble-native-guard-distributions]
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -397,7 +574,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distributions
+          name: distributions-native
           path: dist/
       - name: Keep only the Guard canary distribution
         run: rm -f dist/plugin_scanner-* dist/plugin-scanner-*
@@ -444,7 +621,7 @@ jobs:
           bun-version: "1.3.14"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distributions
+          name: distributions-native
           path: dist/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -638,13 +815,14 @@ jobs:
       vars.RELEASE_PUBLISHING_ENABLED == 'true' &&
       vars.ALPHA_TESTPYPI_ENABLED == 'true' &&
       needs.build.result == 'success' &&
+      needs.assemble-native-guard-distributions.result == 'success' &&
       needs.reserve-alpha-tag.result == 'success' &&
       needs.build.outputs.channel == 'alpha' &&
       (
         (github.event_name == 'workflow_dispatch' && github.run_attempt == 1) ||
         (github.event_name == 'push' && github.ref == 'refs/heads/release/3.0')
       )
-    needs: [build, reserve-alpha-tag]
+    needs: [build, reserve-alpha-tag, assemble-native-guard-distributions]
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -659,13 +837,13 @@ jobs:
           version: "0.9.26"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distributions
+          name: distributions-native
           path: dist/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distribution-sha256
+          name: distribution-sha256-native
       - name: Verify immutable build artifact
-        run: sha256sum --check distribution-sha256.txt
+        run: sha256sum --check distribution-sha256-native.txt
       - name: Keep only the Guard release distribution
         run: rm -f dist/plugin_scanner-* dist/plugin-scanner-*
       - name: Revalidate alpha source before TestPyPI
@@ -727,7 +905,7 @@ jobs:
             fi
             sleep 5
           done
-          wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$result")
+          wheel=$(jq -r '.install_paths[] | select(endswith("-py3-none-any.whl"))' <<< "$result")
           [[ -n "$wheel" ]]
           [[ "$(uv tool run --from "$wheel" hol-guard --version)" == "hol-guard $VERSION" ]]
 
@@ -737,13 +915,14 @@ jobs:
       always() &&
       vars.RELEASE_PUBLISHING_ENABLED == 'true' &&
       needs.build.result == 'success' &&
+      needs.assemble-native-guard-distributions.result == 'success' &&
       needs.reserve-alpha-tag.result == 'success' &&
       needs.build.outputs.channel == 'alpha' &&
       (
         (github.event_name == 'workflow_dispatch' && github.run_attempt == 1) ||
         (github.event_name == 'push' && github.ref == 'refs/heads/release/3.0')
       )
-    needs: [build, reserve-alpha-tag]
+    needs: [build, reserve-alpha-tag, assemble-native-guard-distributions]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -759,13 +938,13 @@ jobs:
           version: "0.9.26"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distributions
+          name: distributions-native
           path: dist/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distribution-sha256
+          name: distribution-sha256-native
       - name: Verify the TestPyPI-proven artifact
-        run: sha256sum --check distribution-sha256.txt
+        run: sha256sum --check distribution-sha256-native.txt
       - name: Keep only the Guard release distribution
         run: rm -f dist/plugin_scanner-* dist/plugin-scanner-*
       - name: Inspect PyPI release state
@@ -845,7 +1024,7 @@ jobs:
             fi
             sleep 5
           done
-          wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$result")
+          wheel=$(jq -r '.install_paths[] | select(endswith("-py3-none-any.whl"))' <<< "$result")
           [[ -n "$wheel" ]]
           [[ "$(uv tool run --from "$wheel" hol-guard --version)" == "hol-guard $VERSION" ]]
 

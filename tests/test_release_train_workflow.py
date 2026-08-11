@@ -184,16 +184,35 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     assert "distribution-sha256" in {
         step.get("with", {}).get("name") for step in jobs["build"]["steps"] if isinstance(step, dict)
     }
-    assert jobs["publish-alpha-pypi"]["needs"] == ["build", "reserve-alpha-tag"]
+    alpha_needs = ["build", "reserve-alpha-tag", "assemble-native-guard-distributions"]
+    assert jobs["publish-alpha-testpypi"]["needs"] == alpha_needs
+    assert jobs["publish-alpha-pypi"]["needs"] == alpha_needs
+    assemble = jobs["assemble-native-guard-distributions"]
+    assert assemble["needs"] == ["build", "build-native-guard-wheels"]
+    assert "needs.build.result == 'success'" in assemble["if"]
+    assert "needs.build-native-guard-wheels.result == 'success'" in assemble["if"]
+    assemble_steps = assemble["steps"]
+    assert any(step.get("with", {}).get("name") == "distributions" for step in assemble_steps)
+    assert any(
+        step.get("with", {}).get("pattern") == "native-guard-wheel-*"
+        and step.get("with", {}).get("merge-multiple") is True
+        for step in assemble_steps
+    )
+    assert any(step.get("with", {}).get("name") == "distributions-native" for step in assemble_steps)
+    assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in assemble_steps)
     assert "needs.publish-alpha-testpypi" not in jobs["publish-alpha-pypi"]["if"]
     assert "vars.ALPHA_TESTPYPI_ENABLED" not in jobs["publish-alpha-pypi"]["if"]
     assert "vars.ALPHA_TESTPYPI_ENABLED == 'true'" in jobs["publish-alpha-testpypi"]["if"]
-    for job_name in (
-        "publish-alpha-testpypi",
-        "publish-alpha-pypi",
-        "publish-main-testpypi",
-        "publish-main-pypi",
-    ):
+    for job_name in ("publish-alpha-testpypi", "publish-alpha-pypi"):
+        steps = jobs[job_name]["steps"]
+        assert any(step.get("with", {}).get("name") == "distributions-native" for step in steps)
+        assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in steps)
+        assert any(step.get("run") == "sha256sum --check distribution-sha256-native.txt" for step in steps)
+        assert any(
+            step.get("name") == "Keep only the Guard release distribution" and "plugin_scanner" in step.get("run", "")
+            for step in steps
+        )
+    for job_name in ("publish-main-testpypi", "publish-main-pypi"):
         steps = jobs[job_name]["steps"]
         assert any(step.get("run") == "sha256sum --check distribution-sha256.txt" for step in steps)
         assert any(
