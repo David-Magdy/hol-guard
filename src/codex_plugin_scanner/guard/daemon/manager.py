@@ -511,11 +511,6 @@ def recover_guard_daemon_after_hook_failure(
                 return current_url
             if live_process_url is not None:
                 return live_process_url
-            live_generation_url = current_url or live_process_url
-            if live_generation_url is not None:
-                retire_all_guard_daemons_for_home(guard_home)
-                if not guard_daemon_retirement_is_complete(guard_home):
-                    raise RuntimeError("Unresponsive Guard daemon could not be retired safely.")
         if os.name == "nt":
             return ensure_guard_daemon(
                 guard_home,

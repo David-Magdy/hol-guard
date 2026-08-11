@@ -317,10 +317,15 @@ def test_recovery_preserves_old_live_generation_for_concurrent_control_failures(
     monkeypatch.setattr(daemon_manager_module, "ensure_guard_daemon", ensure)
     results: list[str] = []
 
-    start_gate = threading.Barrier(32, timeout=2)
+    start_gate = threading.Barrier(32, timeout=10)
+    barrier_errors: list[threading.BrokenBarrierError] = []
 
     def recover() -> None:
-        start_gate.wait()
+        try:
+            start_gate.wait()
+        except threading.BrokenBarrierError as error:
+            barrier_errors.append(error)
+            return
         results.append(daemon_manager_module.recover_guard_daemon_after_hook_failure(guard_home))
 
     workers = [threading.Thread(target=recover) for _ in range(32)]
@@ -330,6 +335,7 @@ def test_recovery_preserves_old_live_generation_for_concurrent_control_failures(
         worker.join(timeout=2)
 
     assert all(not worker.is_alive() for worker in workers)
+    assert barrier_errors == []
     assert retire_count == 0
     assert start_count == 0
     assert results == ["http://127.0.0.1:4781"] * 32
