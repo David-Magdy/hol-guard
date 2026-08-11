@@ -1,4 +1,4 @@
-name: Stage validated native publication patch
+name: Stage verified native publication artifact
 
 on:
   push:
@@ -7,146 +7,67 @@ on:
       - ".github/workflows/bootstrap-native-publish-fix.yml"
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
   stage:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
           ref: feat/rust-runtime-native-publish
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      - name: Download the previously validated payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
-        with:
-          version: "0.9.26"
-          enable-cache: true
-      - run: uv sync --frozen --extra dev --python 3.12
-      - name: Generate deterministic publication patch
+          name: native-publication-patch-1ee58e55249bd16f4e8137e8cefbad899e12e629
+          path: validated-native-publication
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 31512198169
+      - name: Verify the immutable payload
         shell: bash
         run: |
-          uv run --no-sync python - <<'PY'
-          from hashlib import sha256
-          from pathlib import Path
-          import subprocess
-          import textwrap
-
-          import yaml
-
-          test_path = Path("ci/native_runtime/test_native_runtime_release.py")
-          tests = test_path.read_text(encoding="utf-8")
-          old = "    return tuple(wheels.values()) + (pure, sdist)\n"
-          new = "    return (*tuple(wheels.values()), pure, sdist)\n"
-          if tests.count(old) != 1:
-              raise RuntimeError("Expected exactly one native release tuple concatenation")
-          test_path.write_text(tests.replace(old, new, 1), encoding="utf-8")
-
-          patch_workflow = Path(".github/workflows/patch-native-publish.yml").read_text(encoding="utf-8")
-          marker = "          python - <<'PY'\n"
-          start = patch_workflow.index(marker) + len(marker)
-          end = patch_workflow.rindex("\n          PY\n", start)
-          code = textwrap.dedent(patch_workflow[start:end])
-          exec(compile(code, "apply_native_publication_patch.py", "exec"), {"__name__": "__main__"})
-
-          publish_path = Path(".github/workflows/publish.yml")
-          publish_lines = publish_path.read_text(encoding="utf-8").splitlines(keepends=True)
-
-          def indent_job_body(start_job: str, end_job: str) -> None:
-              start_line = f"  {start_job}:"
-              end_line = f"  {end_job}:"
-              start_index = next(
-                  index
-                  for index, line in enumerate(publish_lines)
-                  if line.rstrip("\r\n") == start_line
-              )
-              end_index = next(
-                  index
-                  for index in range(start_index + 1, len(publish_lines))
-                  if publish_lines[index].rstrip("\r\n") == end_line
-              )
-              for index in range(start_index + 1, end_index):
-                  if publish_lines[index].strip():
-                      publish_lines[index] = "  " + publish_lines[index]
-
-          indent_job_body("publish-alpha-testpypi", "publish-alpha-pypi")
-          indent_job_body("publish-alpha-pypi", "publish-main-testpypi")
-          publish_path.write_text("".join(publish_lines), encoding="utf-8")
-
-          parsed = yaml.safe_load(publish_path.read_text(encoding="utf-8"))
-          jobs = parsed.get("jobs") if isinstance(parsed, dict) else None
-          if not isinstance(jobs, dict):
-              raise RuntimeError("Generated publication workflow has no jobs mapping")
-          for job_name in ("publish-alpha-testpypi", "publish-alpha-pypi"):
-              if not isinstance(jobs.get(job_name), dict):
-                  raise RuntimeError(f"Generated publication job {job_name} is malformed")
-
-          expected_files = {
-              ".github/workflows/publish.yml",
-              "ci/native_runtime/test_native_runtime_release.py",
-              "tests/test_release_train_workflow.py",
-          }
-          changed = set(
-              subprocess.check_output(["git", "diff", "--name-only"], text=True).splitlines()
-          )
-          if changed != expected_files:
-              raise RuntimeError(f"Unexpected generated file set: {sorted(changed)}")
-
-          expected_sha256 = {
-              ".github/workflows/publish.yml": "695cba2f71d77e32fda83768153f7b6cebd039621fabe3acfe475e53f766449b",
-              "ci/native_runtime/test_native_runtime_release.py": "031c3b0179ccddd7e15718a4aa3fbf196be00fdae7c2caeccb8d83fbb47529a0",
-              "tests/test_release_train_workflow.py": "da8aad15ede53f5560a0d0f74a304e49abb49ca9cda68fa3dd3c77c72673a31f",
-          }
-          for path, expected in expected_sha256.items():
-              actual = sha256(Path(path).read_bytes()).hexdigest()
-              if actual != expected:
-                  raise RuntimeError(f"Generated {path} digest changed: {actual}")
-          PY
-          git diff --check
-      - name: Validate generated patch
+          set -euo pipefail
+          test "$(find validated-native-publication -type f | sort | sed 's#^validated-native-publication/##')" = "$(printf '%s\n' \
+            .github/workflows/publish.yml \
+            ci/native_runtime/test_native_runtime_release.py \
+            manifest.json \
+            tests/test_release_train_workflow.py | sort)"
+          test "$(sha256sum validated-native-publication/.github/workflows/publish.yml | awk '{print $1}')" = "695cba2f71d77e32fda83768153f7b6cebd039621fabe3acfe475e53f766449b"
+          test "$(sha256sum validated-native-publication/ci/native_runtime/test_native_runtime_release.py | awk '{print $1}')" = "031c3b0179ccddd7e15718a4aa3fbf196be00fdae7c2caeccb8d83fbb47529a0"
+          test "$(sha256sum validated-native-publication/tests/test_release_train_workflow.py | awk '{print $1}')" = "da8aad15ede53f5560a0d0f74a304e49abb49ca9cda68fa3dd3c77c72673a31f"
+          grep -Fq '"source_sha": "1ee58e55249bd16f4e8137e8cefbad899e12e629"' validated-native-publication/manifest.json
+      - name: Stage only non-workflow paths
         shell: bash
         run: |
-          uv run --no-sync python -m ruff format --check \
-            scripts/verify_native_runtime_release.py \
-            ci/native_runtime/test_native_runtime_release.py \
-            tests/test_release_train_workflow.py
-          uv run --no-sync python -m ruff check \
-            scripts/verify_native_runtime_release.py \
-            ci/native_runtime/test_native_runtime_release.py \
-            tests/test_release_train_workflow.py
-          uv run --no-sync pytest \
-            ci/native_runtime/test_native_runtime_release.py \
-            tests/test_release_train_workflow.py \
-            --tb=short
-          git diff --check
-      - name: Stage the verified workflow as a normal Git blob
-        shell: bash
-        run: |
-          cp .github/workflows/publish.yml ci/native_runtime/generated_publish_workflow.yml
+          set -euo pipefail
+          cp validated-native-publication/.github/workflows/publish.yml ci/native_runtime/generated_publish_workflow.yml
+          cp validated-native-publication/ci/native_runtime/test_native_runtime_release.py ci/native_runtime/test_native_runtime_release.py
+          cp validated-native-publication/tests/test_release_train_workflow.py tests/test_release_train_workflow.py
           git add \
             ci/native_runtime/generated_publish_workflow.yml \
             ci/native_runtime/test_native_runtime_release.py \
             tests/test_release_train_workflow.py
           git diff --cached --check
-          expected=$(printf '%s\n' \
-            ci/native_runtime/generated_publish_workflow.yml \
-            ci/native_runtime/test_native_runtime_release.py \
-            tests/test_release_train_workflow.py | sort)
-          actual=$(git diff --cached --name-only | sort)
-          test "$actual" = "$expected"
+          if git diff --cached --name-only | grep -q '^\.github/'; then
+            echo "The staging commit must not modify GitHub workflow paths" >&2
+            exit 1
+          fi
+          git diff --cached --name-only | grep -Fxq 'ci/native_runtime/generated_publish_workflow.yml'
           git config user.name "Michael Kantor"
           git config user.email "6068672+kantorcodes@users.noreply.github.com"
           git commit -m "fix(release): stage validated native publication payload"
-      - name: Push the non-workflow staging commit
+      - name: Push the staging commit
         shell: bash
         run: |
+          set -euo pipefail
           branch=feat/rust-runtime-native-publish
           remote_sha=$(git ls-remote --exit-code origin "refs/heads/${branch}" | awk '{print $1}')
           if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
-            echo "Publication branch moved while the payload was validated" >&2
+            echo "Publication branch moved while the payload was staged" >&2
             exit 1
           fi
           git push origin "HEAD:refs/heads/${branch}"
