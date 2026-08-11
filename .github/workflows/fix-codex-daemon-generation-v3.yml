@@ -36,12 +36,9 @@ jobs:
           from pathlib import Path
 
           runner_temp = Path(os.environ["RUNNER_TEMP"])
-          transport_path = Path(
-              "src/codex_plugin_scanner/guard/adapters/codex_daemon_hook_transport.py"
-          )
+          transport_path = Path("src/codex_plugin_scanner/guard/adapters/codex_daemon_hook_transport.py")
           fixture_path = Path("tests/codex_daemon_hook_bridge_fixtures.py")
           test_path = Path("tests/test_codex_daemon_hook_bridge.py")
-
           original_transport = transport_path.read_text(encoding="utf-8")
           original_fixture = fixture_path.read_text(encoding="utf-8")
           original_test = test_path.read_text(encoding="utf-8")
@@ -56,95 +53,76 @@ jobs:
               encoding="utf-8",
           )
 
-          generation_check = (
-              "current_state != state or not secrets.compare_digest(current_key, discovery_key)"
-          )
-          replacement = (
-              "_daemon_generation_identity(current_state) != "
-              "_daemon_generation_identity(state)\n"
-              "                or not secrets.compare_digest(current_key, discovery_key)"
-          )
+          generation_check = "current_state != state or not secrets.compare_digest(current_key, discovery_key)"
+          replacement = "_daemon_generation_identity(current_state) != _daemon_generation_identity(state)\n                or not secrets.compare_digest(current_key, discovery_key)"
           if original_transport.count(generation_check) != 2:
               raise RuntimeError("Expected exactly two whole-state generation checks")
-          updated_transport = original_transport.replace(generation_check, replacement)
-          transport_path.write_text(updated_transport, encoding="utf-8")
-
-          fixture_anchor = '''            if type(self).challenge_mode == "replace-state":
-                daemon_manager.write_guard_daemon_state(
-                    guard_home,
-                    self.server.server_address[1],
-                    type(self).auth_token,
-                    pid=os.getpid(),
-                    state_id="replacement-state",
-                )
-                type(self).challenge_mode = "valid"
-'''
-          fixture_replacement = '''            if type(self).challenge_mode == "refresh-trust-status":
-                current_state_id = state.get("state_id")
-                current_started_at = state.get("started_at")
-                assert isinstance(current_state_id, str)
-                assert isinstance(current_started_at, str)
-                daemon_manager.write_guard_daemon_state(
-                    guard_home,
-                    self.server.server_address[1],
-                    type(self).auth_token,
-                    pid=os.getpid(),
-                    state_id=current_state_id,
-                    started_at=current_started_at,
-                    trust_status={"status": "verified"},
-                )
-                type(self).challenge_mode = "valid"
-            if type(self).challenge_mode == "replace-state":
-                daemon_manager.write_guard_daemon_state(
-                    guard_home,
-                    self.server.server_address[1],
-                    type(self).auth_token,
-                    pid=os.getpid(),
-                    state_id="replacement-state",
-                )
-                type(self).challenge_mode = "valid"
-'''
-          if original_fixture.count(fixture_anchor) != 1:
-              raise RuntimeError("Expected the generation replacement fixture once")
-          fixture_path.write_text(
-              original_fixture.replace(fixture_anchor, fixture_replacement, 1),
+          transport_path.write_text(
+              original_transport.replace(generation_check, replacement),
               encoding="utf-8",
           )
 
-          test_anchor = '''def test_repeated_generation_rollover_stays_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
-'''
-          regression = '''def test_authenticated_trust_metadata_refresh_keeps_same_generation(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    guard_home = tmp_path / "guard-home"
-    daemon = HTTPServer(("127.0.0.1", 0), _DaemonHandler)
-    daemon_thread = threading.Thread(target=daemon.serve_forever, daemon=True)
-    daemon_thread.start()
-    _write_authenticated_daemon_files(guard_home, daemon.server_address[1])
-    _DaemonHandler.challenge_mode = "refresh-trust-status"
-    monkeypatch.setattr(
-        "sys.stdin",
-        io.StringIO(json.dumps({"hook_event_name": "UserPromptSubmit"})),
-    )
-    config = _bridge_config(guard_home, daemon.server_address[1])
-    config["fallback_command"] = [sys.executable, "-c", "raise SystemExit(1)"]
+          fixture_anchor = "            if type(self).challenge_mode == \"replace-state\":\n"
+          fixture_lines = [
+              "            if type(self).challenge_mode == \"refresh-trust-status\":",
+              "                current_state_id = state.get(\"state_id\")",
+              "                current_started_at = state.get(\"started_at\")",
+              "                assert isinstance(current_state_id, str)",
+              "                assert isinstance(current_started_at, str)",
+              "                daemon_manager.write_guard_daemon_state(",
+              "                    guard_home,",
+              "                    self.server.server_address[1],",
+              "                    type(self).auth_token,",
+              "                    pid=os.getpid(),",
+              "                    state_id=current_state_id,",
+              "                    started_at=current_started_at,",
+              "                    trust_status={\"status\": \"verified\"},",
+              "                )",
+              "                type(self).challenge_mode = \"valid\"",
+          ]
+          fixture_insertion = "\n".join(fixture_lines) + "\n"
+          if original_fixture.count(fixture_anchor) != 1:
+              raise RuntimeError("Expected the replacement-state fixture anchor once")
+          fixture_path.write_text(
+              original_fixture.replace(fixture_anchor, fixture_insertion + fixture_anchor, 1),
+              encoding="utf-8",
+          )
 
-    try:
-        exit_code = bridge.main(**config)
-    finally:
-        daemon.shutdown()
-        daemon_thread.join(timeout=5)
-
-    assert exit_code == 0
-    assert _DaemonHandler.challenge_count == 1
-    assert _DaemonHandler.captured_guard_token == "fixture-token"
-    assert json.loads(str(_DaemonHandler.captured_hook_body))["hook_event_name"] == "UserPromptSubmit"
-    assert json.loads(capsys.readouterr().out) == {}
-
-
-'''
+          test_anchor = "def test_repeated_generation_rollover_stays_bounded(monkeypatch: pytest.MonkeyPatch) -> None:\n"
+          regression_lines = [
+              "def test_authenticated_trust_metadata_refresh_keeps_same_generation(",
+              "    tmp_path: Path,",
+              "    monkeypatch: pytest.MonkeyPatch,",
+              "    capsys: pytest.CaptureFixture[str],",
+              ") -> None:",
+              "    guard_home = tmp_path / \"guard-home\"",
+              "    daemon = HTTPServer((\"127.0.0.1\", 0), _DaemonHandler)",
+              "    daemon_thread = threading.Thread(target=daemon.serve_forever, daemon=True)",
+              "    daemon_thread.start()",
+              "    _write_authenticated_daemon_files(guard_home, daemon.server_address[1])",
+              "    _DaemonHandler.challenge_mode = \"refresh-trust-status\"",
+              "    monkeypatch.setattr(",
+              "        \"sys.stdin\",",
+              "        io.StringIO(json.dumps({\"hook_event_name\": \"UserPromptSubmit\"})),",
+              "    )",
+              "    config = _bridge_config(guard_home, daemon.server_address[1])",
+              "    config[\"fallback_command\"] = [sys.executable, \"-c\", \"raise SystemExit(1)\"]",
+              "",
+              "    try:",
+              "        exit_code = bridge.main(**config)",
+              "    finally:",
+              "        daemon.shutdown()",
+              "        daemon_thread.join(timeout=5)",
+              "",
+              "    assert exit_code == 0",
+              "    assert _DaemonHandler.challenge_count == 1",
+              "    assert _DaemonHandler.captured_guard_token == \"fixture-token\"",
+              "    assert json.loads(str(_DaemonHandler.captured_hook_body))[\"hook_event_name\"] == \"UserPromptSubmit\"",
+              "    assert json.loads(capsys.readouterr().out) == {}",
+              "",
+              "",
+          ]
+          regression = "\n".join(regression_lines)
           if original_test.count(test_anchor) != 1:
               raise RuntimeError("Expected the bounded rollover test anchor once")
           test_path.write_text(
@@ -157,28 +135,23 @@ jobs:
       - name: Format and update the test-suite ratchet exactly
         shell: bash
         run: |
-          uv run --no-sync ruff format \
-            src/codex_plugin_scanner/guard/adapters/codex_daemon_hook_transport.py \
-            tests/codex_daemon_hook_bridge_fixtures.py \
+          files=(
+            src/codex_plugin_scanner/guard/adapters/codex_daemon_hook_transport.py
+            tests/codex_daemon_hook_bridge_fixtures.py
             tests/test_codex_daemon_hook_bridge.py
-          uv run --no-sync ruff check \
-            src/codex_plugin_scanner/guard/adapters/codex_daemon_hook_transport.py \
-            tests/codex_daemon_hook_bridge_fixtures.py \
-            tests/test_codex_daemon_hook_bridge.py
-          uv run --no-sync ruff format --check \
-            src/codex_plugin_scanner/guard/adapters/codex_daemon_hook_transport.py \
-            tests/codex_daemon_hook_bridge_fixtures.py \
-            tests/test_codex_daemon_hook_bridge.py
+          )
+          uv run --no-sync ruff format "${files[@]}"
+          uv run --no-sync ruff check "${files[@]}"
+          uv run --no-sync ruff format --check "${files[@]}"
           python - <<'PY'
           import json
           import os
           from pathlib import Path
 
           original = json.loads(
-              Path(
-                  os.environ["RUNNER_TEMP"],
-                  "daemon-generation-original-test-lines.json",
-              ).read_text(encoding="utf-8")
+              Path(os.environ["RUNNER_TEMP"], "daemon-generation-original-test-lines.json").read_text(
+                  encoding="utf-8"
+              )
           )
           delta = sum(
               len(Path(path).read_text(encoding="utf-8").splitlines()) - old_lines
@@ -191,7 +164,7 @@ jobs:
           baseline["maximum_test_source_lines"] += delta
           baseline_path.write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
           PY
-      - name: Verify generation security and the formerly flaky real-daemon path
+      - name: Verify generation security and formerly flaky real-daemon path
         shell: bash
         run: |
           uv run --no-sync pytest -q \
