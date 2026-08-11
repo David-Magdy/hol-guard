@@ -34,6 +34,8 @@ jobs:
           import subprocess
           import textwrap
 
+          import yaml
+
           test_path = Path("ci/native_runtime/test_native_runtime_release.py")
           tests = test_path.read_text(encoding="utf-8")
           old = "    return tuple(wheels.values()) + (pure, sdist)\n"
@@ -48,6 +50,38 @@ jobs:
           end = patch_workflow.rindex("\n          PY\n", start)
           code = textwrap.dedent(patch_workflow[start:end])
           exec(compile(code, "apply_native_publication_patch.py", "exec"), {"__name__": "__main__"})
+
+          publish_path = Path(".github/workflows/publish.yml")
+          publish_lines = publish_path.read_text(encoding="utf-8").splitlines(keepends=True)
+
+          def indent_job_body(start_job: str, end_job: str) -> None:
+              start_line = f"  {start_job}:"
+              end_line = f"  {end_job}:"
+              start_index = next(
+                  index
+                  for index, line in enumerate(publish_lines)
+                  if line.rstrip("\r\n") == start_line
+              )
+              end_index = next(
+                  index
+                  for index in range(start_index + 1, len(publish_lines))
+                  if publish_lines[index].rstrip("\r\n") == end_line
+              )
+              for index in range(start_index + 1, end_index):
+                  if publish_lines[index].strip():
+                      publish_lines[index] = "  " + publish_lines[index]
+
+          indent_job_body("publish-alpha-testpypi", "publish-alpha-pypi")
+          indent_job_body("publish-alpha-pypi", "publish-main-testpypi")
+          publish_path.write_text("".join(publish_lines), encoding="utf-8")
+
+          parsed = yaml.safe_load(publish_path.read_text(encoding="utf-8"))
+          jobs = parsed.get("jobs") if isinstance(parsed, dict) else None
+          if not isinstance(jobs, dict):
+              raise RuntimeError("Generated publication workflow has no jobs mapping")
+          for job_name in ("publish-alpha-testpypi", "publish-alpha-pypi"):
+              if not isinstance(jobs.get(job_name), dict):
+                  raise RuntimeError(f"Generated publication job {job_name} is malformed")
 
           expected = {
               ".github/workflows/publish.yml",
@@ -93,14 +127,14 @@ jobs:
 
           root = Path("native-publication-patch")
           files = {}
-          for path in sorted(p for p in root.rglob("*") if p.is_file()):
+          for path in sorted(path for path in root.rglob("*") if path.is_file()):
               files[path.relative_to(root).as_posix()] = sha256(path.read_bytes()).hexdigest()
           (root / "manifest.json").write_text(
               json.dumps({"source_sha": "${{ github.sha }}", "files": files}, indent=2) + "\n",
               encoding="utf-8",
           )
           PY
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-publication-patch-${{ github.sha }}
           path: native-publication-patch/
