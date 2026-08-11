@@ -22,14 +22,17 @@ from packaging.version import InvalidVersion, Version
 
 if __package__:
     from .release_registry_types import Registry, RegistryVerificationError, ReleaseInspection
-    from .verify_release_registry import inspect_release
+    from .verify_release_registry import compute_local_distribution_hashes, inspect_release
 else:
     from release_registry_types import (  # pyright: ignore[reportImplicitRelativeImport]
         Registry,
         RegistryVerificationError,
         ReleaseInspection,
     )
-    from verify_release_registry import inspect_release  # pyright: ignore[reportImplicitRelativeImport]
+    from verify_release_registry import (  # pyright: ignore[reportImplicitRelativeImport]
+        compute_local_distribution_hashes,
+        inspect_release,
+    )
 
 PROJECT: Final = "hol-guard"
 SCANNER_PROJECT: Final = "plugin-scanner"
@@ -45,6 +48,7 @@ EXPECTED_TARGETS: Final[Mapping[str, str]] = {
 }
 EXPECTED_PLATFORMS: Final = frozenset(EXPECTED_TARGETS)
 _MAX_NATIVE_WHEEL_BYTES: Final = 256 * 1024 * 1024
+_MAX_BASE_DISTRIBUTION_BYTES: Final = 256 * 1024 * 1024
 _MAX_RUNTIME_BYTES: Final = 128 * 1024 * 1024
 _MAX_MANIFEST_BYTES: Final = 64 * 1024
 _MAX_WHEEL_ENTRIES: Final = 16_384
@@ -190,6 +194,22 @@ def _wheel_identity(
     return name, next(iter(tags))
 
 
+def _assert_regular_distribution(path: Path, *, label: str) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise NativeReleaseError(f"{label} could not be inspected") from exc
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_size <= 0
+        or metadata.st_size > _MAX_BASE_DISTRIBUTION_BYTES
+    ):
+        raise NativeReleaseError(
+            f"{label} size or file type is outside the accepted release bound"
+        )
+
+
 def local_native_hashes(
     dist_dir: Path,
     *,
@@ -286,6 +306,39 @@ def local_native_hashes(
     return hashes
 
 
+def local_guard_hashes(
+    dist_dir: Path,
+    *,
+    version: str,
+    source_sha: str,
+) -> dict[str, str]:
+    """Return the exact six-file Guard release set after validating native bytes."""
+    version = _canonical_version(version)
+    native = local_native_hashes(
+        dist_dir,
+        version=version,
+        source_sha=source_sha,
+    )
+    try:
+        complete = compute_local_distribution_hashes(dist_dir, version)
+    except RegistryVerificationError as exc:
+        raise NativeReleaseError(str(exc)) from exc
+
+    pure_wheel = f"hol_guard-{version.replace('-', '_')}-py3-none-any.whl"
+    sdist = f"hol_guard-{version}.tar.gz"
+    expected = set(native) | {pure_wheel, sdist}
+    actual = set(complete)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise NativeReleaseError(
+            f"Guard release artifact set is not exact: missing={missing}, extra={extra}"
+        )
+    _assert_regular_distribution(dist_dir / pure_wheel, label="Guard pure wheel")
+    _assert_regular_distribution(dist_dir / sdist, label="Guard source distribution")
+    return {filename: complete[filename] for filename in sorted(expected)}
+
+
 def _inspection(registry: Registry, version: str) -> ReleaseInspection:
     try:
         return inspect_release(registry, version)
@@ -343,16 +396,20 @@ def plan_upload(
     dist_dir: Path,
     output_dir: Path,
 ) -> tuple[str, ...]:
-    local = local_native_hashes(
+    local = local_guard_hashes(
         dist_dir,
         version=version,
         source_sha=source_sha,
     )
     inspection = _inspection(registry, version)
-    _assert_base_ready(inspection)
-    remote = inspection.digests
-    for filename, digest in local.items():
-        if filename in remote and remote[filename] != digest:
+    remote = inspection.digests if inspection.exists else {}
+    unexpected = sorted(set(remote) - set(local))
+    if unexpected:
+        raise NativeReleaseError(
+            f"Registry release contains unexpected artifacts: {unexpected}"
+        )
+    for filename, digest in remote.items():
+        if local.get(filename) != digest:
             raise NativeReleaseError(
                 f"Registry already contains different bytes for {filename}"
             )
@@ -376,19 +433,27 @@ def assert_published_exact(
     source_sha: str,
     dist_dir: Path,
 ) -> None:
-    local = local_native_hashes(
+    local = local_guard_hashes(
         dist_dir,
         version=version,
         source_sha=source_sha,
     )
     inspection = _inspection(registry, version)
-    _assert_base_ready(inspection)
-    for filename, digest in local.items():
-        remote_digest = inspection.digests.get(filename)
-        if remote_digest != digest:
-            raise NativeReleaseError(
-                f"Registry native artifact is absent or mismatched: {filename}"
-            )
+    if not inspection.exists:
+        raise NativeReleaseError("Registry release is absent")
+    remote = inspection.digests
+    if remote != local:
+        missing = sorted(set(local) - set(remote))
+        extra = sorted(set(remote) - set(local))
+        mismatched = sorted(
+            filename
+            for filename in set(local) & set(remote)
+            if local[filename] != remote[filename]
+        )
+        raise NativeReleaseError(
+            "Registry release is not the exact Guard artifact set: "
+            f"missing={missing}, extra={extra}, mismatched={mismatched}"
+        )
 
 
 def _parser() -> argparse.ArgumentParser:
