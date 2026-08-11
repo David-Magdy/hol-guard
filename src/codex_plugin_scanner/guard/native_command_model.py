@@ -14,6 +14,9 @@ from typing import Any
 from .codex_hook_launch_runtime import run_isolated_hook_process
 from .native_runtime import _isolated_environment, native_runtime_status
 from .native_runtime_resident import resident_native_request
+from .runtime.command_evaluation import evaluate_command
+from .runtime.command_model import CanonicalCommand, CommandSegment
+from .runtime.command_shadow_evaluation import CommandShadowCohort, CommandShadowProposal
 
 _MAX_REQUEST_BYTES = 64 * 1024
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -22,6 +25,7 @@ _MAX_TOKENS = 2_048
 _PARSER_PROFILE = "posix-simple-v1"
 _REQUIRED_FEATURE = "pre-tool-command-model-shadow-v1"
 _RESIDENT_FEATURE = "resident-command-model-shadow-v1"
+_NATIVE_SHADOW_PROPOSAL_VERSION = "guard.command-shadow-proposal.rust-parser.v1"
 
 
 def _plain_int(value: object) -> bool:
@@ -35,7 +39,10 @@ def _assignment_name(token: str) -> str | None:
     first = name[0]
     if first != "_" and not (first.isascii() and first.isalpha()):
         return None
-    if not all(character == "_" or (character.isascii() and character.isalnum()) for character in name[1:]):
+    if not all(
+        character == "_" or (character.isascii() and character.isalnum())
+        for character in name[1:]
+    ):
         return None
     return name
 
@@ -74,7 +81,12 @@ def _decode_command_model(
         return None
 
     if confidence == "uncertain":
-        if segments or not isinstance(uncertainty_reason, str) or not uncertainty_reason.strip() or path_overridden:
+        if (
+            segments
+            or not isinstance(uncertainty_reason, str)
+            or not uncertainty_reason.strip()
+            or path_overridden
+        ):
             return None
         return payload
     if uncertainty_reason is not None or not segments:
@@ -267,7 +279,12 @@ def review_command_model_native(
         timeout_seconds=timeout_seconds,
         output_limit=_MAX_RESPONSE_BYTES,
     )
-    if result.returncode != 0 or result.timed_out or result.output_limit_exceeded or result.containment_failed:
+    if (
+        result.returncode != 0
+        or result.timed_out
+        or result.output_limit_exceeded
+        or result.containment_failed
+    ):
         return None
     try:
         return _decode_command_model(json.loads(result.stdout), **decoder_arguments)
@@ -275,4 +292,122 @@ def review_command_model_native(
         return None
 
 
-__all__ = ["review_command_model_native"]
+def _canonical_command_from_native(
+    command: str,
+    payload: dict[str, Any],
+) -> CanonicalCommand | None:
+    """Convert only request-bound exact native evidence into the Python type."""
+    validated = _decode_command_model(
+        payload,
+        command=command,
+        dialect="posix",
+        transport="shell_string",
+        extraction_provenance="guard-shell",
+    )
+    if validated is None or validated.get("confidence") != "exact":
+        return None
+
+    normalized_text = validated.get("normalized_text")
+    raw_segments = validated.get("segments")
+    if not isinstance(normalized_text, str) or not isinstance(raw_segments, list):
+        return None
+
+    segments: list[CommandSegment] = []
+    for raw_segment in raw_segments:
+        if not isinstance(raw_segment, dict):
+            return None
+        text = raw_segment.get("text")
+        tokens = raw_segment.get("tokens")
+        executable = raw_segment.get("executable")
+        arguments = raw_segment.get("arguments")
+        environment_names = raw_segment.get("environment_names")
+        path_overridden = raw_segment.get("path_overridden")
+        execution_context = raw_segment.get("execution_context")
+        pipeline_index = raw_segment.get("pipeline_index")
+        span = raw_segment.get("span")
+        if (
+            not isinstance(text, str)
+            or not isinstance(tokens, list)
+            or not all(isinstance(value, str) for value in tokens)
+            or (executable is not None and not isinstance(executable, str))
+            or not isinstance(arguments, list)
+            or not all(isinstance(value, str) for value in arguments)
+            or not isinstance(environment_names, list)
+            or not all(isinstance(value, str) for value in environment_names)
+            or not isinstance(path_overridden, bool)
+            or not isinstance(execution_context, str)
+            or not _plain_int(pipeline_index)
+            or not isinstance(span, dict)
+            or not _plain_int(span.get("start"))
+            or not _plain_int(span.get("end"))
+        ):
+            return None
+        segments.append(
+            CommandSegment(
+                text=text,
+                tokens=tuple(tokens),
+                executable=executable,
+                arguments=tuple(arguments),
+                environment_names=tuple(environment_names),
+                wrapper_chain=(),
+                path_overridden=path_overridden,
+                execution_context=execution_context,
+                pipeline_index=pipeline_index,
+                start=span["start"],
+                end=span["end"],
+            )
+        )
+
+    canonical = CanonicalCommand(
+        raw_text=command.strip(),
+        normalized_text=normalized_text,
+        dialect="posix",
+        transport="shell_string",
+        extraction_provenance="guard-shell",
+        wrapper_chain=(),
+        segments=tuple(segments),
+        redirects=(),
+        embedded_commands=(),
+        confidence="exact",
+        uncertainty_reason=None,
+    )
+    if validated.get("path_overridden") is not canonical.path_overridden:
+        return None
+    return canonical
+
+
+def native_command_shadow_proposal(
+    command: str,
+    *,
+    guard_home: Path,
+    cwd: Path | None,
+    home_dir: Path | None,
+    compatibility_action_class: str | None = None,
+    compatibility_reason: str | None = None,
+) -> CommandShadowProposal | None:
+    """Build a privacy-safe shadow proposal from a Rust parse and Python rules."""
+    payload = review_command_model_native(command, guard_home=guard_home)
+    if payload is None:
+        return None
+    canonical = _canonical_command_from_native(command, payload)
+    if canonical is None:
+        return None
+    evaluation = evaluate_command(
+        command,
+        canonical_command=canonical,
+        compatibility_action_class=compatibility_action_class,
+        compatibility_reason=compatibility_reason,
+        cwd=cwd,
+        home_dir=home_dir,
+    )
+    return CommandShadowProposal(
+        decision=evaluation.decision_plane,
+        cohorts=frozenset({CommandShadowCohort.BASELINE}),
+        version=_NATIVE_SHADOW_PROPOSAL_VERSION,
+    )
+
+
+__all__ = [
+    "native_command_shadow_proposal",
+    "review_command_model_native",
+]
