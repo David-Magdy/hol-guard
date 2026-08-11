@@ -315,7 +315,7 @@ fn serve_loopback(address: &str) -> Result<(), String> {
     let requested: SocketAddr = address
         .parse()
         .map_err(|_| "native_resident_address_invalid".to_owned())?;
-    if requested.ip() != Ipv4Addr::LOCALHOST.into() || requested.port() == 0 {
+    if requested.ip() != Ipv4Addr::LOCALHOST || requested.port() == 0 {
         return Err("native_resident_address_not_loopback".into());
     }
     let token = Arc::new(read_resident_auth_token()?);
