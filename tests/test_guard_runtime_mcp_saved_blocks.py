@@ -1041,6 +1041,11 @@ def test_package_observe_mode_records_each_authority_without_approval_requests(
     monkeypatch.setattr(proxy, "_drain_and_validate_catalog_authority", lambda **_kwargs: True)
     monkeypatch.setattr(proxy, "_resolve_tool_call_authority", lambda **_kwargs: tool_authority)
     monkeypatch.setattr(proxy, "_resolve_package_policy", lambda **_kwargs: package_resolution)
+    monkeypatch.setattr(
+        runtime_mcp_module,
+        "ensure_guard_daemon",
+        lambda _guard_home: "http://127.0.0.1:5474",
+    )
 
     def capture_forward(**kwargs: object) -> tuple[dict[str, Any], dict[str, Any]]:
         forwarded.update(kwargs)
