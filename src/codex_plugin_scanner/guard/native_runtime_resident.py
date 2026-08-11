@@ -64,18 +64,12 @@ class _ResidentService:
             return self._starts
 
     def request(self, payload: bytes, *, timeout_seconds: float) -> bytes | None:
-        if (
-            len(payload) > _MAX_REQUEST_BYTES
-            or timeout_seconds <= 0
-            or not self._transport_configured()
-        ):
+        if len(payload) > _MAX_REQUEST_BYTES or timeout_seconds <= 0 or not self._transport_configured():
             return None
         response = self._send(payload, timeout_seconds=min(timeout_seconds, 0.05))
         if response is not None:
             return response
-        if not self._ensure_started(
-            timeout_seconds=min(timeout_seconds, _START_TIMEOUT_SECONDS)
-        ):
+        if not self._ensure_started(timeout_seconds=min(timeout_seconds, _START_TIMEOUT_SECONDS)):
             return None
         return self._send(payload, timeout_seconds=timeout_seconds)
 
@@ -124,9 +118,7 @@ class _ResidentService:
             thread = self._thread
             if thread is None or not thread.is_alive():
                 stop_event = threading.Event()
-                auth_token = (
-                    secrets.token_bytes(_AUTH_TOKEN_BYTES) if os.name == "nt" else None
-                )
+                auth_token = secrets.token_bytes(_AUTH_TOKEN_BYTES) if os.name == "nt" else None
                 self._stop_event = stop_event
                 self._auth_token = auth_token
                 thread = threading.Thread(
@@ -234,9 +226,7 @@ def _private_runtime_dir(guard_home: Path) -> Path | None:
     try:
         resolved_guard_home = guard_home.expanduser().resolve(strict=True)
         guard_metadata = resolved_guard_home.lstat()
-        if stat.S_ISLNK(guard_metadata.st_mode) or not stat.S_ISDIR(
-            guard_metadata.st_mode
-        ):
+        if stat.S_ISLNK(guard_metadata.st_mode) or not stat.S_ISDIR(guard_metadata.st_mode):
             return None
         runtime_dir = resolved_guard_home / "native-runtime"
         runtime_dir.mkdir(mode=0o700, exist_ok=True)
@@ -244,10 +234,7 @@ def _private_runtime_dir(guard_home: Path) -> Path | None:
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
             return None
         current_uid = os.getuid() if hasattr(os, "getuid") else None
-        if (
-            current_uid is not None
-            and getattr(metadata, "st_uid", current_uid) != current_uid
-        ):
+        if current_uid is not None and getattr(metadata, "st_uid", current_uid) != current_uid:
             return None
         if stat.S_IMODE(metadata.st_mode) & 0o077:
             runtime_dir.chmod(0o700)
