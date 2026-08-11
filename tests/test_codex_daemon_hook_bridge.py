@@ -235,6 +235,36 @@ def test_authenticated_generation_rollover_is_rediscovered_once(
     assert json.loads(capsys.readouterr().out) == {}
 
 
+def test_authenticated_trust_refresh_preserves_daemon_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    daemon = HTTPServer(("127.0.0.1", 0), _DaemonHandler)
+    daemon_thread = threading.Thread(target=daemon.serve_forever, daemon=True)
+    daemon_thread.start()
+    _write_authenticated_daemon_files(guard_home, daemon.server_address[1])
+    _DaemonHandler.challenge_mode = "refresh-trust-status"
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash"})),
+    )
+
+    try:
+        exit_code = bridge.main(**_bridge_config(guard_home, daemon.server_address[1]))
+    finally:
+        daemon.shutdown()
+        daemon_thread.join(timeout=5)
+
+    state = json.loads((guard_home / "daemon-state.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert _DaemonHandler.challenge_count == 1
+    assert _DaemonHandler.captured_guard_token == "fixture-token"
+    assert state["trust_status"] == {"status": "refreshed-1"}
+    assert json.loads(capsys.readouterr().out) == {}
+
+
 def test_repeated_generation_rollover_stays_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = 0
 
