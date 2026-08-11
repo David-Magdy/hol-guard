@@ -13264,18 +13264,27 @@ function buildDecisionPayload(input) {
     throw new Error(`No eligible ${input.action} scope is available for this request.`);
   }
   const workspace = normalizedScope === "workspace" && typeof input.item.workspace === "string" ? input.item.workspace : void 0;
+  const persistExactAction = willPersistExactAction(
+    input.item,
+    input.action,
+    normalizedScope,
+    input.persistExactAction === true
+  );
   return {
     requestId: input.item.request_id,
     action: input.action,
     scope: normalizedScope,
     workspace,
     reason: input.reason,
-    ...input.action === "allow" && normalizedScope === "artifact" && input.persistExactAction === true && input.item.exact_action_persistence_eligible === true ? { persist_policy: true } : {},
+    ...persistExactAction ? { persist_policy: true } : {},
     ...hasCompleteBinding ? {
       scope_contract_version: contractVersion,
       scope_contract_digest: contractDigest
     } : {}
   };
+}
+function willPersistExactAction(item, action, scope, requested) {
+  return requested && normalizeDecisionScope(item, action, scope) === "artifact" && item.exact_action_persistence_eligible === true;
 }
 const REVIEW_SEMANTIC_GROUPS = [
   { id: "all", label: "All", matches: [] },
@@ -14552,6 +14561,11 @@ function whyPaused(request) {
 }
 const QUEUE_CONNECTION_ERROR_HEADLINE = "Guard daemon not reachable: approval links work when Guard is running on this device.";
 const QUEUE_CONNECTION_ERROR_INSTRUCTION = "Start Guard on this machine, then reload to continue approving or blocking.";
+function isWatchOnlyObservation(item) {
+  return (item.scanner_evidence ?? []).some(
+    (evidence) => typeof evidence === "object" && evidence !== null && "source" in evidence && evidence.source === "observe_mode_inbox"
+  );
+}
 function deriveDataFlowEvidence(item) {
   const signals = item.decision_v2_json?.signals ?? [];
   const dataFlowSignals = signals.filter(
@@ -14595,8 +14609,15 @@ function resolveDataFlowSinkLabel(signal) {
   }
   return "External sink";
 }
-function buildRetryAfterApprovalCopy(item, action) {
+function buildRetryAfterApprovalCopy(item, action, persistedExactAction2 = false) {
   const harness = harnessDisplayName(item.harness);
+  if (isWatchOnlyObservation(item)) {
+    if (persistedExactAction2 && action === "allow") {
+      return "Saved. Guard will allow this exact action next time when the remembered option is selected.";
+    }
+    if (persistedExactAction2) return "Saved. Guard will stop this exact action next time.";
+    return "Reviewed. Watch only already allowed this action to run; no future rule was saved.";
+  }
   if (action === "allow") {
     return `Approved. Return to ${harness} to resume, or it will continue automatically if still running.`;
   }
@@ -28780,8 +28801,8 @@ function LocalToolApprovalControls(props) {
   ] });
 }
 const commonScopeValues = /* @__PURE__ */ new Set(["artifact"]);
-function resolvedActionCopy(item, action) {
-  if (item !== null) return buildRetryAfterApprovalCopy(item, action);
+function resolvedActionCopy(item, action, persistedExactAction2) {
+  if (item !== null) return buildRetryAfterApprovalCopy(item, action, persistedExactAction2);
   if (action === "allow") return "Approved: action can proceed";
   return "Blocked: action stopped";
 }
@@ -28839,6 +28860,7 @@ function ReviewDecisionCard(props) {
     () => item ? localToolApprovalOptions(item) : null,
     [item]
   );
+  const watchOnlyObservation = item !== null && isWatchOnlyObservation(item);
   const hasAllowScope = availableScopeChoices.length + advancedScopeOptions.length > 0;
   const decisionContractKey = item ? `${item.request_id}:${item.scope_contract_version ?? "legacy"}:${item.scope_contract_digest ?? "legacy"}` : null;
   reactExports.useEffect(() => {
@@ -28895,6 +28917,12 @@ function ReviewDecisionCard(props) {
       setErrorMessage(null);
       try {
         const requestedScope = action === "allow" ? allowScope : blockScope;
+        const persistExactAction = willPersistExactAction(
+          item,
+          action,
+          requestedScope,
+          action === "allow" ? rememberExactAction : watchOnlyObservation
+        );
         const gate = props.approvalGate;
         const needsPassword = approvalProofRequiresPassword(gate);
         const includeGateFields = gate?.enabled === true && gate?.configured === true && requiresApprovalPasswordPrompt(gate.cooldown_active, gate.strict_all_decisions, requestedScope);
@@ -28904,7 +28932,7 @@ function ReviewDecisionCard(props) {
             action,
             scope: requestedScope,
             reason: action === "allow" ? "approved in review" : "blocked in review",
-            persistExactAction: action === "allow" ? rememberExactAction : false
+            persistExactAction
           }),
           ...includeGateFields && needsPassword ? { approval_password: approvalPassword } : {},
           ...includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {},
@@ -28917,7 +28945,7 @@ function ReviewDecisionCard(props) {
           ) : {},
           ...action === "allow" && temporaryMcpOptions === null ? buildLocalToolResolutionFields(localToolOptions, localToolGrantTarget, localToolGrantDuration) : {}
         });
-        setResolved(action);
+        setResolved({ action, persistedExactAction });
         setApprovalPassword("");
         setApprovalTotpCode("");
         setUseCooldown(false);
@@ -28934,6 +28962,7 @@ function ReviewDecisionCard(props) {
       item,
       allowScope,
       blockScope,
+      watchOnlyObservation,
       rememberExactAction,
       props.onResolve,
       props.approvalGate,
@@ -29056,7 +29085,7 @@ function ReviewDecisionCard(props) {
       EmptyState,
       {
         title: "Select an action",
-        body: "Choose a paused action from the queue to review and decide.",
+        body: "Choose an action or Watch-only finding to review.",
         tone: "teach"
       }
     );
@@ -29068,8 +29097,10 @@ function ReviewDecisionCard(props) {
   const evidenceItems = buildEvidenceItems(item);
   const actionPresentation = guardActionPresentation(item.policy_action);
   let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
-  if (rememberExactAction && allowScope === "artifact") {
-    resolvedAllowButtonLabel = "Approve and remember";
+  const persistExactAllow = item !== null && willPersistExactAction(item, "allow", allowScope, rememberExactAction);
+  const persistExactBlock = item !== null && willPersistExactAction(item, "block", blockScope, watchOnlyObservation);
+  if (persistExactAllow) {
+    resolvedAllowButtonLabel = watchOnlyObservation ? "Allow next time" : "Approve and remember";
   }
   if (temporaryMcpOptions !== null && !rememberExactAction) {
     resolvedAllowButtonLabel = temporaryMcpAllowButtonLabel(mcpGrantDuration);
@@ -29080,32 +29111,32 @@ function ReviewDecisionCard(props) {
     resolved && /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
-        className: `guard-fade-in flex items-center gap-3 rounded-xl border px-4 py-3 transition-all ${resolved === "allow" ? "border-brand-green/25 bg-brand-green-bg/30" : "border-brand-attention/25 bg-brand-attention/[0.04]"}`,
+        className: `guard-fade-in flex items-center gap-3 rounded-xl border px-4 py-3 transition-all ${resolved.action === "allow" ? "border-brand-green/25 bg-brand-green-bg/30" : "border-brand-attention/25 bg-brand-attention/[0.04]"}`,
         role: "status",
         "aria-live": "polite",
         children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             HiMiniCheckCircle,
             {
-              className: `h-5 w-5 shrink-0 ${resolved === "allow" ? "text-brand-green" : "text-brand-attention"}`,
+              className: `h-5 w-5 shrink-0 ${resolved.action === "allow" ? "text-brand-green" : "text-brand-attention"}`,
               "aria-hidden": "true"
             }
           ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `text-sm font-medium ${resolved === "allow" ? "text-brand-green-text" : "text-brand-attention"}`, children: resolvedActionCopy(item, resolved) })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `text-sm font-medium ${resolved.action === "allow" ? "text-brand-green-text" : "text-brand-attention"}`, children: resolvedActionCopy(item, resolved.action, resolved.persistedExactAction) })
         ]
       }
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl border border-slate-100 p-4 sm:p-5", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start justify-between gap-3", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: "Paused action" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: watchOnlyObservation ? "Watch-only finding" : "Paused action" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "mt-2 text-lg font-semibold text-brand-dark", children: plainTitle }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-sm text-muted-foreground", children: [
             "From ",
             harnessName
           ] })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: actionPresentation.tone, children: actionPresentation.label })
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: watchOnlyObservation ? "info" : actionPresentation.tone, children: watchOnlyObservation ? "Ran in Watch only" : actionPresentation.label })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(PrimaryActionCard, { item }),
       resolutionBlockReason !== null && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-xl border border-brand-attention/30 bg-brand-attention/[0.06] p-4", role: "alert", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
@@ -29225,7 +29256,7 @@ function ReviewDecisionCard(props) {
               "Blocking..."
             ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniNoSymbol, { className: "h-4 w-4", "aria-hidden": "true" }),
-              blockButtonLabel(blockScope)
+              persistExactBlock ? "Block next time" : blockButtonLabel(blockScope)
             ] })
           }
         )
@@ -29308,6 +29339,7 @@ function QueueItemRow({ item, active, readState, index, onOpenRequest, selection
   const CategoryIcon = iconForQueueCategory(category.id);
   const preview = queueItemPreview(item);
   const isRead = readState.isRead(item.request_id);
+  const watchOnlyObservation = isWatchOnlyObservation(item);
   const showCheckbox = selectionMode;
   const canSelect = selectionMode && selectable;
   const handleClick = reactExports.useCallback(() => {
@@ -29385,7 +29417,8 @@ function QueueItemRow({ item, active, readState, index, onOpenRequest, selection
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "truncate text-[11px] text-muted-foreground", children: [
                   harnessDisplayName(item.harness),
                   " · ",
-                  formatQueueRequestDate(item)
+                  formatQueueRequestDate(item),
+                  watchOnlyObservation ? " · Watch only" : ""
                 ] })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs(
@@ -29496,7 +29529,7 @@ function ReviewHeader({
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-semibold tracking-[-0.02em] text-brand-dark sm:text-2xl", children: "Review" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground", children: "Guard paused these actions before they ran. Review each one and decide what should happen." })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground", children: "Review actions Guard paused and findings recorded while Watch only was active." })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-muted-foreground", children: [
       progress,
