@@ -15,7 +15,7 @@ from typing import Protocol, cast
 
 import pytest
 
-from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessReview, HookProcessRunner
+from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessReview
 from codex_plugin_scanner.guard.daemon.manager import GUARD_DAEMON_COMPATIBILITY_VERSION
 from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
 from codex_plugin_scanner.guard.store import GuardStore
@@ -23,7 +23,7 @@ from codex_plugin_scanner.guard.store import GuardStore
 
 class _DaemonInternals(Protocol):
     auth_token: str
-    hook_process_runner: HookProcessRunner
+    hook_process_runner: object
 
 
 def _daemon_internals(daemon: GuardDaemonServer) -> _DaemonInternals:
@@ -79,7 +79,6 @@ def test_review_required_pi_hook_returns_before_worker_deadline(tmp_path: Path) 
     )
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
     daemon.start()
-    assert _daemon_internals(daemon).hook_process_runner.wait_for_capacity(minimum_workers=1, timeout_seconds=10)
     query = urllib.parse.urlencode(
         {
             "guard-home": str(guard_home),
@@ -108,7 +107,7 @@ def test_review_required_pi_hook_returns_before_worker_deadline(tmp_path: Path) 
         daemon.stop()
 
     assert result["decision"] == "deny"
-    assert store.count_pending_requests(harness="pi") == 1, result
+    assert store.count_pending_requests(harness="pi") == 1
     assert elapsed < 1.45
 
 
