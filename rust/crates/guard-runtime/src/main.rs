@@ -10,7 +10,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::env;
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -315,7 +315,7 @@ fn serve_loopback(address: &str) -> Result<(), String> {
     let requested: SocketAddr = address
         .parse()
         .map_err(|_| "native_resident_address_invalid".to_owned())?;
-    if !requested.ip().is_loopback() || requested.port() == 0 {
+    if requested.ip() != Ipv4Addr::LOCALHOST || requested.port() == 0 {
         return Err("native_resident_address_not_loopback".into());
     }
     let token = Arc::new(read_resident_auth_token()?);
@@ -404,11 +404,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resident_hmac_is_role_bound_and_deterministic() {
+    fn resident_hmac_matches_cross_language_vectors() {
         let token = [7u8; AUTH_TOKEN_BYTES];
         let nonce = [9u8; AUTH_NONCE_BYTES];
         let server = hmac_sha256(&token, SERVER_PROOF_LABEL, &nonce);
         let client = hmac_sha256(&token, CLIENT_PROOF_LABEL, &nonce);
+        assert_eq!(
+            server,
+            [
+                0xb8, 0x19, 0x89, 0x8f, 0x11, 0x87, 0x8c, 0x1c, 0x14, 0x84, 0x23, 0xd0, 0x36, 0x1a,
+                0x9d, 0xe2, 0x0d, 0x9e, 0xca, 0x3b, 0xb8, 0x6c, 0xe1, 0x21, 0x4c, 0xee, 0x95, 0x7f,
+                0x95, 0xbb, 0x06, 0xc4,
+            ]
+        );
+        assert_eq!(
+            client,
+            [
+                0xfe, 0xf8, 0x3d, 0x9f, 0xf5, 0x98, 0x89, 0x22, 0xef, 0x5c, 0x4c, 0x7b, 0x54, 0xd9,
+                0xc6, 0x66, 0xab, 0xf4, 0x2f, 0xdf, 0xa8, 0x39, 0x44, 0x8b, 0x57, 0x9f, 0x65, 0x07,
+                0x41, 0xd0, 0x6d, 0x97,
+            ]
+        );
         assert_eq!(server, hmac_sha256(&token, SERVER_PROOF_LABEL, &nonce));
         assert_ne!(server, client);
         assert!(constant_time_eq(&server, &server));
