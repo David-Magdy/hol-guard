@@ -197,7 +197,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
   const [lastCompleted, setLastCompleted] = useState<CompletedOp | null>(null);
   const [lastFailed, setLastFailed] = useState<FailedOp | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [activationAssistError, setActivationAssistError] = useState<string | null>(null);
+  const [activationAssist, setActivationAssist] = useState<{ message: string; isError: boolean } | null>(null);
   const [startingConnect, setStartingConnect] = useState(false);
   const [activatingRuntime, setActivatingRuntime] = useState(false);
   const [confirmRemoveManager, setConfirmRemoveManager] = useState<string | null>(null);
@@ -448,7 +448,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
   const handleStartConnect = useCallback(async () => {
     setStartingConnect(true);
     setConnectError(null);
-    setActivationAssistError(null);
+    setActivationAssist(null);
     try {
       const connectFlow = await startPackageFirewallConnect();
       const popupBlocked = Boolean(
@@ -828,11 +828,15 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
     setActivatingRuntime(true);
     setActivationAssistError(null);
     try {
-      await activatePackageFirewallRuntime();
+      const message = await activatePackageFirewallRuntime();
+      setActivationAssist({ message, isError: false });
       await refreshAfterOp();
       await onStateChanged?.();
     } catch (error) {
-      setActivationAssistError(error instanceof Error ? error.message : "Unable to activate package protection.");
+      setActivationAssist({
+        message: error instanceof Error ? error.message : "Unable to activate package protection.",
+        isError: true,
+      });
     } finally {
       setActivatingRuntime(false);
     }
@@ -981,7 +985,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
             onRefreshStatus={handleRetry}
             onOpenManagerDetails={handleOpenManagerDetails}
             activatingRuntime={activatingRuntime}
-            activationAssistError={activationAssistError}
+            activationAssist={activationAssist}
           />
         </>
       )}

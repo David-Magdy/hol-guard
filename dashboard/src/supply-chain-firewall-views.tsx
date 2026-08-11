@@ -559,12 +559,12 @@ export function EntitlementNotice({
 function activationHeadline(protection: PackageManagerProtection | null): string {
   if (protection === null) return "Activation status unavailable";
   if (protection.path_status === "in_path") return "Protection live now";
-  if (protection.path_status === "restart_required") return "Finish activation in Guard";
+  if (protection.path_status === "restart_required") return "New terminal required";
   return "Fix PATH to finish activation";
 }
 
 type ActivationSummaryProps = {
-  activationAssistError: string | null;
+  activationAssist: { message: string; isError: boolean } | null;
   lastAuditProofAt?: string | null;
   activatingRuntime: boolean;
   onActivateRuntime: () => void;
@@ -573,7 +573,7 @@ type ActivationSummaryProps = {
 };
 
 export function ActivationSummary({
-  activationAssistError,
+  activationAssist,
   lastAuditProofAt = null,
   activatingRuntime,
   onActivateRuntime,
@@ -620,7 +620,7 @@ export function ActivationSummary({
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {canActivateRuntime && (
                 <ActionButton variant="primary" onClick={onActivateRuntime} disabled={activatingRuntime}>
-                  {activatingRuntime ? "Finishing activation…" : "Finish activation"}
+                  {activatingRuntime ? "Verifying setup…" : "Verify shell setup"}
                 </ActionButton>
               )}
               <ActionButton variant="outline" onClick={onRefreshStatus} disabled={activatingRuntime}>
@@ -628,8 +628,10 @@ export function ActivationSummary({
               </ActionButton>
             </div>
           )}
-          {activationAssistError !== null && (
-            <p className="mt-2 text-xs text-brand-attention">{activationAssistError}</p>
+          {activationAssist !== null && (
+            <p className={`mt-2 text-xs ${activationAssist.isError ? "text-brand-attention" : "text-slate-600"}`}>
+              {activationAssist.message}
+            </p>
           )}
         </div>
       </div>

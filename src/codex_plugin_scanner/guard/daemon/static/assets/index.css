@@ -4450,6 +4450,10 @@
     text-decoration-line: underline;
   }
 
+  .underline-offset-2 {
+    text-underline-offset: 2px;
+  }
+
   .accent-brand-blue {
     accent-color: var(--brand-blue);
   }
@@ -5206,6 +5210,10 @@
 
     .hover\:text-white:hover {
       color: var(--color-white);
+    }
+
+    .hover\:no-underline:hover {
+      text-decoration-line: none;
     }
 
     .hover\:underline:hover {

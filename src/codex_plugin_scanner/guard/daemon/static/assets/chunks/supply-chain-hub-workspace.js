@@ -941,7 +941,7 @@ function FailureBanner({ failed }) {
   );
 }
 function FirewallControlsView({
-  activationAssistError,
+  activationAssist,
   activatingRuntime,
   data,
   pendingOp,
@@ -1014,7 +1014,7 @@ function FirewallControlsView({
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       ActivationSummary,
       {
-        activationAssistError,
+        activationAssist,
         lastAuditProofAt: data.last_audit_proof_at,
         activatingRuntime,
         onActivateRuntime,
@@ -1622,7 +1622,7 @@ const PackageFirewallPanel = reactExports.forwardRef(function PackageFirewallPan
   const [lastCompleted, setLastCompleted] = reactExports.useState(null);
   const [lastFailed, setLastFailed] = reactExports.useState(null);
   const [connectError, setConnectError] = reactExports.useState(null);
-  const [activationAssistError, setActivationAssistError] = reactExports.useState(null);
+  const [activationAssist, setActivationAssist] = reactExports.useState(null);
   const [startingConnect, setStartingConnect] = reactExports.useState(false);
   const [activatingRuntime, setActivatingRuntime] = reactExports.useState(false);
   const [confirmRemoveManager, setConfirmRemoveManager] = reactExports.useState(null);
@@ -1855,7 +1855,7 @@ const PackageFirewallPanel = reactExports.forwardRef(function PackageFirewallPan
   const handleStartConnect = reactExports.useCallback(async () => {
     setStartingConnect(true);
     setConnectError(null);
-    setActivationAssistError(null);
+    setActivationAssist(null);
     try {
       const connectFlow = await startPackageFirewallConnect();
       const popupBlocked = Boolean(
@@ -2200,11 +2200,15 @@ const PackageFirewallPanel = reactExports.forwardRef(function PackageFirewallPan
     setActivatingRuntime(true);
     setActivationAssistError(null);
     try {
-      await activatePackageFirewallRuntime();
+      const message = await activatePackageFirewallRuntime();
+      setActivationAssist({ message, isError: false });
       await refreshAfterOp();
       await onStateChanged?.();
     } catch (error) {
-      setActivationAssistError(error instanceof Error ? error.message : "Unable to activate package protection.");
+      setActivationAssist({
+        message: error instanceof Error ? error.message : "Unable to activate package protection.",
+        isError: true
+      });
     } finally {
       setActivatingRuntime(false);
     }
@@ -2327,7 +2331,7 @@ const PackageFirewallPanel = reactExports.forwardRef(function PackageFirewallPan
           onRefreshStatus: handleRetry,
           onOpenManagerDetails: handleOpenManagerDetails,
           activatingRuntime,
-          activationAssistError
+          activationAssist
         }
       )
     ] }),
