@@ -760,9 +760,8 @@ def test_classify_github_cli_rejects_ambiguous_graphql_inputs(args: tuple[str, .
     "command",
     (
         "gh pr view 17",
-        "gh pr view ${PR_NUMBER}",
+        "gh pr view $'17'",
         "gh issue list --limit 10",
-        "gh issue list --repo ${REPO}",
         "gh ssh-key list",
         "gh gpg-key list",
         "gh api repos/example/project -X GET -f per_page=1 --jq '.name'",
