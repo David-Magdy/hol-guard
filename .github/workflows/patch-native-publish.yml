@@ -1,0 +1,544 @@
+name: Patch native publication contract
+
+on:
+  push:
+    branches: [feat/rust-runtime-native-publish]
+    paths:
+      - ".github/workflows/patch-native-publish.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          ref: feat/rust-runtime-native-publish
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - run: uv sync --frozen --extra dev --python 3.12
+      - name: Apply deterministic publication patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          gha = "$" + "{{"
+          workflow_path = Path(".github/workflows/publish.yml")
+          workflow = workflow_path.read_text(encoding="utf-8")
+
+          testpypi_job = r'''  publish-alpha-testpypi:
+            name: Verify alpha artifact on TestPyPI
+            if: >-
+              always() &&
+              vars.RELEASE_PUBLISHING_ENABLED == 'true' &&
+              vars.ALPHA_TESTPYPI_ENABLED == 'true' &&
+              needs.build.result == 'success' &&
+              needs.assemble-native-guard-distributions.result == 'success' &&
+              needs.reserve-alpha-tag.result == 'success' &&
+              needs.build.outputs.channel == 'alpha' &&
+              (
+                (github.event_name == 'workflow_dispatch' && github.run_attempt == 1) ||
+                (github.event_name == 'push' && github.ref == 'refs/heads/release/3.0')
+              )
+            needs: [build, reserve-alpha-tag, assemble-native-guard-distributions]
+            runs-on: ubuntu-latest
+            environment: testpypi
+            permissions:
+              contents: read
+              id-token: write
+            steps:
+              - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+                with:
+                  ref: __GHA__ needs.build.outputs.source_sha }}
+              - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+                with:
+                  version: "0.9.26"
+              - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+                with:
+                  name: distributions-native
+                  path: dist/
+              - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+                with:
+                  name: distribution-sha256-native
+              - name: Verify immutable build artifact
+                run: sha256sum --check distribution-sha256-native.txt
+              - name: Keep only the Guard release distribution
+                run: rm -f dist/plugin_scanner-* dist/plugin-scanner-*
+              - name: Revalidate alpha source before TestPyPI
+                env:
+                  SOURCE_SHA: __GHA__ needs.build.outputs.source_sha }}
+                  TRAIN: __GHA__ needs.build.outputs.release_train }}
+                  VERSION: __GHA__ needs.build.outputs.version }}
+                run: |
+                  train_ref="refs/heads/release/${TRAIN}"
+                  remote_train_sha=$(git ls-remote --exit-code origin "$train_ref" | awk '{print $1}')
+                  if [[ "$remote_train_sha" != "$SOURCE_SHA" ]]; then
+                    echo "Alpha publication source is no longer the release train head" >&2
+                    exit 1
+                  fi
+                  remote_alpha_tag_sha=$(git ls-remote --exit-code origin "refs/tags/alpha/v${VERSION}" | awk '{print $1}')
+                  if [[ "$remote_alpha_tag_sha" != "$SOURCE_SHA" ]]; then
+                    echo "Alpha tag targets a different source" >&2
+                    exit 1
+                  fi
+              - name: Plan TestPyPI release upload
+                id: testpypi
+                env:
+                  SOURCE_SHA: __GHA__ needs.build.outputs.source_sha }}
+                  VERSION: __GHA__ needs.build.outputs.version }}
+                run: |
+                  rm -rf upload-dist
+                  result=$(uv run --with packaging==25.0 python scripts/verify_native_runtime_release.py \
+                    plan-upload --registry testpypi --version "$VERSION" \
+                    --source-sha "$SOURCE_SHA" --dist-dir dist --output-dir upload-dist)
+                  file_count=$(jq '.files | length' <<< "$result")
+                  if [[ "$file_count" -gt 0 ]]; then
+                    echo "upload=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "upload=false" >> "$GITHUB_OUTPUT"
+                  fi
+              - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+                if: steps.testpypi.outputs.upload == 'true'
+                with:
+                  repository-url: https://test.pypi.org/legacy/
+                  packages-dir: upload-dist/
+              - name: Remove generated upload attestations
+                run: rm -f dist/*.publish.attestation upload-dist/*.publish.attestation
+              - name: Download and verify exact TestPyPI artifacts
+                env:
+                  SOURCE_SHA: __GHA__ needs.build.outputs.source_sha }}
+                  VERSION: __GHA__ needs.build.outputs.version }}
+                run: |
+                  for attempt in {1..60}; do
+                    if ! result=$(uv run --with packaging==25.0 python scripts/verify_release_registry.py \
+                      verify-release --registry testpypi --version "$VERSION" --dist-dir dist \
+                      --download-dir verified-testpypi); then
+                      exit 1
+                    fi
+                    status=$(jq -r '.status' <<< "$result")
+                    if [[ "$status" == "exact" ]]; then
+                      break
+                    fi
+                    if [[ "$status" != "absent" || "$attempt" == "60" ]]; then
+                      echo "TestPyPI did not expose the exact release artifacts" >&2
+                      exit 1
+                    fi
+                    sleep 5
+                  done
+                  wheel=$(jq -r '.install_paths[] | select(endswith("-py3-none-any.whl"))' <<< "$result")
+                  [[ -n "$wheel" ]]
+                  [[ "$(uv tool run --from "$wheel" hol-guard --version)" == "hol-guard $VERSION" ]]
+                  uv run --with packaging==25.0 python scripts/verify_native_runtime_release.py \
+                    verify-published --registry testpypi --version "$VERSION" \
+                    --source-sha "$SOURCE_SHA" --dist-dir dist
+          '''.replace("__GHA__", gha)
+
+          pypi_job = r'''  publish-alpha-pypi:
+            name: Publish alpha to PyPI
+            if: >-
+              always() &&
+              vars.RELEASE_PUBLISHING_ENABLED == 'true' &&
+              needs.build.result == 'success' &&
+              needs.assemble-native-guard-distributions.result == 'success' &&
+              needs.reserve-alpha-tag.result == 'success' &&
+              needs.build.outputs.channel == 'alpha' &&
+              (
+                (github.event_name == 'workflow_dispatch' && github.run_attempt == 1) ||
+                (github.event_name == 'push' && github.ref == 'refs/heads/release/3.0')
+              )
+            needs: [build, reserve-alpha-tag, assemble-native-guard-distributions]
+            runs-on: ubuntu-latest
+            environment: pypi
+            permissions:
+              contents: read
+              id-token: write
+            steps:
+              - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+                with:
+                  fetch-depth: 0
+                  ref: __GHA__ needs.build.outputs.source_sha }}
+              - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+                with:
+                  version: "0.9.26"
+              - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+                with:
+                  name: distributions-native
+                  path: dist/
+              - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+                with:
+                  name: distribution-sha256-native
+              - name: Verify the TestPyPI-proven artifact
+                run: sha256sum --check distribution-sha256-native.txt
+              - name: Keep only the Guard release distribution
+                run: rm -f dist/plugin_scanner-* dist/plugin-scanner-*
+              - name: Revalidate alpha publication authorization
+                env:
+                  ACTUAL_REF: __GHA__ github.ref }}
+                  EXPECTED_SHA: __GHA__ github.event.inputs.expected_sha || needs.build.outputs.source_sha }}
+                  SOURCE_SHA: __GHA__ needs.build.outputs.source_sha }}
+                  TRAIN: __GHA__ needs.build.outputs.release_train }}
+                  VERSION: __GHA__ needs.build.outputs.version }}
+                run: |
+                  train_ref="refs/heads/release/${TRAIN}"
+                  remote_train_sha=$(git ls-remote --exit-code origin "$train_ref" | awk '{print $1}')
+                  if [[ "$remote_train_sha" != "$SOURCE_SHA" ]]; then
+                    echo "Alpha publication source is no longer the release train head" >&2
+                    exit 1
+                  fi
+                  remote_alpha_tag_sha=$(git ls-remote --exit-code origin "refs/tags/alpha/v${VERSION}" | awk '{print $1}')
+                  if [[ "$remote_alpha_tag_sha" != "$SOURCE_SHA" ]]; then
+                    echo "Alpha tag targets a different source" >&2
+                    exit 1
+                  fi
+                  versions=$(uv run --with packaging==25.0 python scripts/verify_release_registry.py \
+                    list-versions --registry pypi)
+                  mapfile -t existing_versions < <(jq -r --arg version "$VERSION" '.[] | select(. != $version)' <<< "$versions")
+                  mapfile -t alpha_tags < <(
+                    git tag --list 'alpha/v*' | sed 's#^alpha/v##' | awk -v candidate="$VERSION" '$0 != candidate'
+                  )
+                  validator_args=(
+                    --channel alpha
+                    --version "$VERSION"
+                    --git-ref "$train_ref"
+                    --actual-ref "$ACTUAL_REF"
+                    --github-sha "$SOURCE_SHA"
+                    --expected-sha "$EXPECTED_SHA"
+                  )
+                  for existing_version in "${existing_versions[@]}" "${alpha_tags[@]}"; do
+                    [[ -z "$existing_version" ]] || validator_args+=(--existing-version "$existing_version")
+                  done
+                  uv run --with packaging==25.0 python scripts/validate_alpha_release.py "${validator_args[@]}"
+              - name: Plan PyPI release upload
+                id: pypi
+                env:
+                  SOURCE_SHA: __GHA__ needs.build.outputs.source_sha }}
+                  VERSION: __GHA__ needs.build.outputs.version }}
+                run: |
+                  rm -rf upload-dist
+                  result=$(uv run --with packaging==25.0 python scripts/verify_native_runtime_release.py \
+                    plan-upload --registry pypi --version "$VERSION" \
+                    --source-sha "$SOURCE_SHA" --dist-dir dist --output-dir upload-dist)
+                  file_count=$(jq '.files | length' <<< "$result")
+                  if [[ "$file_count" -gt 0 ]]; then
+                    echo "upload=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "upload=false" >> "$GITHUB_OUTPUT"
+                  fi
+              - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+                if: steps.pypi.outputs.upload == 'true'
+                with:
+                  packages-dir: upload-dist/
+              - name: Remove generated upload attestations
+                run: rm -f dist/*.publish.attestation upload-dist/*.publish.attestation
+              - name: Download and verify exact PyPI artifacts
+                env:
+                  SOURCE_SHA: __GHA__ needs.build.outputs.source_sha }}
+                  VERSION: __GHA__ needs.build.outputs.version }}
+                run: |
+                  for attempt in {1..60}; do
+                    if ! result=$(uv run --with packaging==25.0 python scripts/verify_release_registry.py \
+                      verify-release --registry pypi --version "$VERSION" --dist-dir dist \
+                      --download-dir verified-pypi); then
+                      exit 1
+                    fi
+                    status=$(jq -r '.status' <<< "$result")
+                    if [[ "$status" == "exact" ]]; then
+                      break
+                    fi
+                    if [[ "$status" != "absent" || "$attempt" == "60" ]]; then
+                      echo "PyPI did not expose the exact release artifacts" >&2
+                      exit 1
+                    fi
+                    sleep 5
+                  done
+                  wheel=$(jq -r '.install_paths[] | select(endswith("-py3-none-any.whl"))' <<< "$result")
+                  [[ -n "$wheel" ]]
+                  [[ "$(uv tool run --from "$wheel" hol-guard --version)" == "hol-guard $VERSION" ]]
+                  uv run --with packaging==25.0 python scripts/verify_native_runtime_release.py \
+                    verify-published --registry pypi --version "$VERSION" \
+                    --source-sha "$SOURCE_SHA" --dist-dir dist
+          '''.replace("__GHA__", gha)
+
+          def replace_section(text: str, start_marker: str, end_marker: str, replacement: str) -> str:
+              start = text.index(start_marker)
+              end = text.index(end_marker, start)
+              return text[:start] + replacement + text[end:]
+
+          workflow = replace_section(
+              workflow,
+              "  publish-alpha-testpypi:\n",
+              "\n  publish-alpha-pypi:\n",
+              testpypi_job,
+          )
+          workflow = replace_section(
+              workflow,
+              "  publish-alpha-pypi:\n",
+              "\n  publish-main-testpypi:\n",
+              pypi_job,
+          )
+
+          release_start = workflow.index("  release-alpha:\n")
+          release_end = workflow.index("\n  publish-container:\n", release_start)
+          release_alpha = workflow[release_start:release_end]
+          if release_alpha.count("          name: distributions\n") != 1:
+              raise RuntimeError("Expected one alpha distribution artifact reference")
+          if release_alpha.count("          name: distribution-sha256\n") != 1:
+              raise RuntimeError("Expected one alpha hash artifact reference")
+          if release_alpha.count("sha256sum --check distribution-sha256.txt") != 1:
+              raise RuntimeError("Expected one alpha hash verification")
+          release_alpha = release_alpha.replace(
+              "          name: distributions\n",
+              "          name: distributions-native\n",
+              1,
+          ).replace(
+              "          name: distribution-sha256\n",
+              "          name: distribution-sha256-native\n",
+              1,
+          ).replace(
+              "sha256sum --check distribution-sha256.txt",
+              "sha256sum --check distribution-sha256-native.txt",
+              1,
+          )
+          workflow = workflow[:release_start] + release_alpha + workflow[release_end:]
+          workflow_path.write_text(workflow, encoding="utf-8")
+
+          tests_path = Path("tests/test_release_train_workflow.py")
+          tests = tests_path.read_text(encoding="utf-8")
+          publication_test = '''def test_release_publication_reuses_one_hashed_build_artifact() -> None:
+              workflow = _workflow(PUBLISH_WORKFLOW)
+              jobs = workflow["jobs"]
+
+              assert "distribution-sha256" in {
+                  step.get("with", {}).get("name") for step in jobs["build"]["steps"] if isinstance(step, dict)
+              }
+              alpha_needs = ["build", "reserve-alpha-tag", "assemble-native-guard-distributions"]
+              assert jobs["publish-alpha-testpypi"]["needs"] == alpha_needs
+              assert jobs["publish-alpha-pypi"]["needs"] == alpha_needs
+              assemble = jobs["assemble-native-guard-distributions"]
+              assert assemble["needs"] == ["build", "build-native-guard-wheels"]
+              assert "needs.build.result == 'success'" in assemble["if"]
+              assert "needs.build-native-guard-wheels.result == 'success'" in assemble["if"]
+              assemble_steps = assemble["steps"]
+              assert any(step.get("with", {}).get("name") == "distributions" for step in assemble_steps)
+              assert any(
+                  step.get("with", {}).get("pattern") == "native-guard-wheel-*"
+                  and step.get("with", {}).get("merge-multiple") is True
+                  for step in assemble_steps
+              )
+              assert any(step.get("with", {}).get("name") == "distributions-native" for step in assemble_steps)
+              assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in assemble_steps)
+              assert "needs.publish-alpha-testpypi" not in jobs["publish-alpha-pypi"]["if"]
+              assert "vars.ALPHA_TESTPYPI_ENABLED" not in jobs["publish-alpha-pypi"]["if"]
+              assert "vars.ALPHA_TESTPYPI_ENABLED == 'true'" in jobs["publish-alpha-testpypi"]["if"]
+              for job_name in ("publish-alpha-testpypi", "publish-alpha-pypi"):
+                  steps = jobs[job_name]["steps"]
+                  assert any(step.get("with", {}).get("name") == "distributions-native" for step in steps)
+                  assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in steps)
+                  assert any(step.get("run") == "sha256sum --check distribution-sha256-native.txt" for step in steps)
+                  assert any(
+                      step.get("name") == "Keep only the Guard release distribution"
+                      and "plugin_scanner" in step.get("run", "")
+                      for step in steps
+                  )
+                  publish_step = next(step for step in steps if str(step.get("uses", "")).startswith("pypa/"))
+                  assert publish_step["with"]["packages-dir"] == "upload-dist/"
+              release_alpha_steps = jobs["release-alpha"]["steps"]
+              assert any(step.get("with", {}).get("name") == "distributions-native" for step in release_alpha_steps)
+              assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in release_alpha_steps)
+              assert any(
+                  "sha256sum --check distribution-sha256-native.txt" in step.get("run", "")
+                  for step in release_alpha_steps
+              )
+              for job_name in ("publish-main-testpypi", "publish-main-pypi"):
+                  steps = jobs[job_name]["steps"]
+                  assert any(step.get("run") == "sha256sum --check distribution-sha256.txt" for step in steps)
+                  assert any(
+                      step.get("name") == "Keep only the Guard release distribution"
+                      and "plugin_scanner" in step.get("run", "")
+                      for step in steps
+                  )
+
+              workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+              assert "skip-existing" not in workflow_text and "pytest" not in workflow_text
+          '''
+
+          registry_test = '''def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
+              workflow = _workflow(PUBLISH_WORKFLOW)
+              jobs = workflow["jobs"]
+
+              alpha_test_steps = jobs["publish-alpha-testpypi"]["steps"]
+              alpha_test_plan = next(step for step in alpha_test_steps if step.get("name") == "Plan TestPyPI release upload")
+              alpha_test_publish = next(step for step in alpha_test_steps if str(step.get("uses", "")).startswith("pypa/"))
+              alpha_test_cleanup = next(
+                  step for step in alpha_test_steps if step.get("name") == "Remove generated upload attestations"
+              )
+              alpha_test_verify = next(
+                  step for step in alpha_test_steps if step.get("name") == "Download and verify exact TestPyPI artifacts"
+              )
+              assert "plan-upload --registry testpypi" in alpha_test_plan["run"]
+              assert '--source-sha "$SOURCE_SHA"' in alpha_test_plan["run"]
+              assert alpha_test_publish["if"] == "steps.testpypi.outputs.upload == 'true'"
+              assert alpha_test_publish["with"]["packages-dir"] == "upload-dist/"
+              assert alpha_test_cleanup["run"] == "rm -f dist/*.publish.attestation upload-dist/*.publish.attestation"
+              assert alpha_test_steps.index(alpha_test_publish) < alpha_test_steps.index(alpha_test_cleanup) < alpha_test_steps.index(alpha_test_verify)
+              assert "--download-dir verified-testpypi" in alpha_test_verify["run"]
+              assert "verify-published --registry testpypi" in alpha_test_verify["run"]
+              assert 'uv tool run --from "$wheel"' in alpha_test_verify["run"]
+              assert 'status" == "exact"' in alpha_test_verify["run"]
+              assert 'status" != "absent"' in alpha_test_verify["run"]
+              assert "for attempt in {1..60}" in alpha_test_verify["run"]
+              assert 'attempt" == "60"' in alpha_test_verify["run"]
+              assert '== "hol-guard $VERSION"' in alpha_test_verify["run"]
+
+              main_test_steps = jobs["publish-main-testpypi"]["steps"]
+              main_test_inspect = next(step for step in main_test_steps if step.get("name") == "Inspect TestPyPI release state")
+              main_test_publish = next(step for step in main_test_steps if str(step.get("uses", "")).startswith("pypa/"))
+              main_test_cleanup = next(
+                  step for step in main_test_steps if step.get("name") == "Remove generated upload attestations"
+              )
+              main_test_verify = next(
+                  step for step in main_test_steps if step.get("name") == "Download and verify exact TestPyPI artifacts"
+              )
+              assert "verify-release --registry testpypi" in main_test_inspect["run"]
+              assert main_test_publish["if"] == "steps.testpypi.outputs.upload == 'true'"
+              assert main_test_cleanup["run"] == "rm -f dist/*.publish.attestation"
+              assert main_test_steps.index(main_test_publish) < main_test_steps.index(main_test_cleanup) < main_test_steps.index(main_test_verify)
+              assert "--download-dir verified-testpypi" in main_test_verify["run"]
+
+              main_revalidation = next(
+                  step["run"] for step in jobs["publish-main-pypi"]["steps"] if step.get("name") == "Revalidate main publication"
+              )
+              main_testpypi_revalidation = next(
+                  step["run"]
+                  for step in jobs["publish-main-testpypi"]["steps"]
+                  if step.get("name") == "Revalidate main source before TestPyPI"
+              )
+              for main_source_revalidation in (main_testpypi_revalidation, main_revalidation):
+                  assert "git ls-remote --exit-code origin refs/heads/main" in main_source_revalidation
+                  assert '[[ "$remote_main_sha" != "$SOURCE_SHA" ]]' in main_source_revalidation
+                  assert "Main publication source is no longer the branch head" in main_source_revalidation
+                  assert 'git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main' not in main_source_revalidation
+              assert "compute_main_release_version.py" in main_revalidation
+              assert main_revalidation.count("uv run --with packaging==25.0") == 5
+              assert "uv run --no-sync" not in main_revalidation
+              assert "list-versions --registry pypi" in main_revalidation
+              assert "list-versions --registry testpypi" in main_revalidation
+              assert "'$pypi + $testpypi + [$version] | unique'" in main_revalidation
+              assert '<<< "$RELEASE_VERSIONS"' in main_revalidation
+              assert '[[ "$LATEST_RELEASE_VERSION" != "$VERSION" ]]' in main_revalidation
+              assert "--latest-existing" in main_revalidation
+              assert '<<< "$PRIOR_PYPI_VERSIONS"' in main_revalidation
+              assert "refs/tags/v${LATEST_VERSION}" in main_revalidation
+              assert 'git merge-base --is-ancestor "v${LATEST_VERSION}^{commit}" "$SOURCE_SHA"' in main_revalidation
+
+              alpha_run = next(
+                  step["run"]
+                  for step in jobs["publish-alpha-pypi"]["steps"]
+                  if step.get("name") == "Revalidate alpha publication authorization"
+              )
+              assert "list-versions --registry pypi" in alpha_run
+              assert 'git ls-remote --exit-code origin "$train_ref"' in alpha_run
+              assert '"$remote_train_sha" != "$SOURCE_SHA"' in alpha_run
+              assert "validate_alpha_release.py" in alpha_run
+              assert "refs/tags/alpha/v${VERSION}" in alpha_run
+              assert 'awk -v candidate="$VERSION"' in alpha_run
+
+              workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+              assert 'for registry in ("pypi.org", "test.pypi.org")' not in workflow_text
+
+              alpha_steps = jobs["publish-alpha-pypi"]["steps"]
+              alpha_plan = next(step for step in alpha_steps if step.get("name") == "Plan PyPI release upload")
+              alpha_publish = next(step for step in alpha_steps if str(step.get("uses", "")).startswith("pypa/"))
+              alpha_cleanup = next(
+                  step for step in alpha_steps if step.get("name") == "Remove generated upload attestations"
+              )
+              alpha_verify = next(
+                  step for step in alpha_steps if step.get("name") == "Download and verify exact PyPI artifacts"
+              )
+              assert "plan-upload --registry pypi" in alpha_plan["run"]
+              assert '--source-sha "$SOURCE_SHA"' in alpha_plan["run"]
+              assert alpha_publish["if"] == "steps.pypi.outputs.upload == 'true'"
+              assert alpha_publish["with"]["packages-dir"] == "upload-dist/"
+              assert alpha_cleanup["run"] == "rm -f dist/*.publish.attestation upload-dist/*.publish.attestation"
+              assert alpha_steps.index(alpha_publish) < alpha_steps.index(alpha_cleanup) < alpha_steps.index(alpha_verify)
+              assert "--download-dir verified-pypi" in alpha_verify["run"]
+              assert "verify-published --registry pypi" in alpha_verify["run"]
+              assert 'status" == "exact"' in alpha_verify["run"]
+              assert 'status" != "absent"' in alpha_verify["run"]
+              assert "for attempt in {1..60}" in alpha_verify["run"]
+              assert 'attempt" == "60"' in alpha_verify["run"]
+              assert '== "hol-guard $VERSION"' in alpha_verify["run"]
+
+              main_steps = jobs["publish-main-pypi"]["steps"]
+              main_inspect = next(step for step in main_steps if step.get("name") == "Inspect PyPI release state")
+              main_publish = next(step for step in main_steps if str(step.get("uses", "")).startswith("pypa/"))
+              main_cleanup = next(
+                  step for step in main_steps if step.get("name") == "Remove generated upload attestations"
+              )
+              main_verify = next(
+                  step for step in main_steps if step.get("name") == "Download and verify exact PyPI artifacts"
+              )
+              assert "verify-release --registry pypi" in main_inspect["run"]
+              assert main_publish["if"] == "steps.pypi.outputs.upload == 'true'"
+              assert main_cleanup["run"] == "rm -f dist/*.publish.attestation"
+              assert main_steps.index(main_publish) < main_steps.index(main_cleanup) < main_steps.index(main_verify)
+              assert "--download-dir verified-pypi" in main_verify["run"]
+          '''
+
+          def replace_function(text: str, name: str, next_name: str, replacement: str) -> str:
+              start = text.index(f"def {name}")
+              end = text.index(f"\ndef {next_name}", start)
+              return text[:start] + replacement + text[end + 1 :]
+
+          tests = replace_function(
+              tests,
+              "test_release_publication_reuses_one_hashed_build_artifact() -> None:\n",
+              "test_alpha_tag_reservation_binds_version_to_build_source() -> None:\n",
+              publication_test,
+          )
+          tests = replace_function(
+              tests,
+              "test_registry_state_is_revalidated_at_each_publication_boundary() -> None:\n",
+              "test_release_tags_are_bound_to_the_exact_published_source() -> None:\n",
+              registry_test,
+          )
+          tests_path.write_text(tests, encoding="utf-8")
+          PY
+      - name: Format and verify release contract
+        run: |
+          uv run --no-sync python -m ruff format \
+            scripts/verify_native_runtime_release.py \
+            ci/native_runtime/test_native_runtime_release.py \
+            tests/test_release_train_workflow.py
+          uv run --no-sync python -m ruff check \
+            scripts/verify_native_runtime_release.py \
+            ci/native_runtime/test_native_runtime_release.py \
+            tests/test_release_train_workflow.py
+          uv run --no-sync pytest \
+            ci/native_runtime/test_native_runtime_release.py \
+            tests/test_release_train_workflow.py \
+            --tb=short
+      - name: Commit verified patch
+        run: |
+          rm .github/workflows/patch-native-publish.yml
+          touch .native-publish-patched
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/publish.yml \
+            scripts/verify_native_runtime_release.py \
+            ci/native_runtime/test_native_runtime_release.py \
+            tests/test_release_train_workflow.py \
+            .github/workflows/patch-native-publish.yml \
+            .native-publish-patched
+          git commit -m "fix(release): make native alpha publication resumable"
+          git push origin HEAD:feat/rust-runtime-native-publish
