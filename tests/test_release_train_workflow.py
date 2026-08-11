@@ -468,3 +468,12 @@ def test_release_3x_alpha_branches_remain_alpha_while_main_is_stable() -> None:
     assert "--channel stable" not in workflow_text
     inputs = workflow[True]["workflow_dispatch"]["inputs"]
     assert inputs["release_channel"]["options"] == ["alpha"]
+
+
+def test_release_push_can_be_explicitly_suppressed_by_merge_marker() -> None:
+    workflow = _workflow(PUBLISH_WORKFLOW)
+    condition = workflow["jobs"]["build"]["if"]
+
+    assert "github.event_name != 'push'" in condition
+    assert "github.event.head_commit.message" in condition
+    assert "[skip release publish]" in condition
