@@ -29,7 +29,7 @@ jobs:
       - name: Generate deterministic publication patch
         shell: bash
         run: |
-          python - <<'PY'
+          uv run --no-sync python - <<'PY'
           from pathlib import Path
           import subprocess
           import textwrap
@@ -120,7 +120,7 @@ jobs:
           cp .github/workflows/publish.yml native-publication-patch/.github/workflows/publish.yml
           cp ci/native_runtime/test_native_runtime_release.py native-publication-patch/ci/native_runtime/test_native_runtime_release.py
           cp tests/test_release_train_workflow.py native-publication-patch/tests/test_release_train_workflow.py
-          python - <<'PY'
+          uv run --no-sync python - <<'PY'
           from hashlib import sha256
           import json
           from pathlib import Path
