@@ -39,10 +39,7 @@ def _assignment_name(token: str) -> str | None:
     first = name[0]
     if first != "_" and not (first.isascii() and first.isalpha()):
         return None
-    if not all(
-        character == "_" or (character.isascii() and character.isalnum())
-        for character in name[1:]
-    ):
+    if not all(character == "_" or (character.isascii() and character.isalnum()) for character in name[1:]):
         return None
     return name
 
@@ -81,12 +78,7 @@ def _decode_command_model(
         return None
 
     if confidence == "uncertain":
-        if (
-            segments
-            or not isinstance(uncertainty_reason, str)
-            or not uncertainty_reason.strip()
-            or path_overridden
-        ):
+        if segments or not isinstance(uncertainty_reason, str) or not uncertainty_reason.strip() or path_overridden:
             return None
         return payload
     if uncertainty_reason is not None or not segments:
@@ -279,12 +271,7 @@ def review_command_model_native(
         timeout_seconds=timeout_seconds,
         output_limit=_MAX_RESPONSE_BYTES,
     )
-    if (
-        result.returncode != 0
-        or result.timed_out
-        or result.output_limit_exceeded
-        or result.containment_failed
-    ):
+    if result.returncode != 0 or result.timed_out or result.output_limit_exceeded or result.containment_failed:
         return None
     try:
         return _decode_command_model(json.loads(result.stdout), **decoder_arguments)
