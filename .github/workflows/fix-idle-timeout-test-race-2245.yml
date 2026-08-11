@@ -1,0 +1,101 @@
+name: Fix idle-timeout lifecycle test race
+
+on:
+  push:
+    branches: [feat/rust-runtime-native-publish]
+    paths:
+      - ".github/workflows/fix-idle-timeout-test-race-2245.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          ref: feat/rust-runtime-native-publish
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - run: uv sync --frozen --extra dev --python 3.12
+      - name: Replace wall-clock polling with lifecycle synchronization
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("tests/test_guard_surface_server.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            runtime_state = store.get_runtime_state()
+            daemon_thread = daemon._thread
+            if runtime_state is None and daemon_thread is not None and not daemon_thread.is_alive():
+                break
+            time.sleep(0.02)
+
+        runtime_state = store.get_runtime_state()
+        daemon_thread = daemon._thread
+        daemon.stop()
+
+        assert runtime_state is None
+        assert daemon_thread is not None
+        assert daemon_thread.is_alive() is False
+'''
+          new = '''        assert daemon._shutdown_started.wait(timeout=3)
+        daemon_thread = daemon._thread
+        assert daemon_thread is not None
+        daemon_thread.join(timeout=10)
+        runtime_state = store.get_runtime_state()
+        daemon.stop()
+
+        assert runtime_state is None
+        assert daemon_thread.is_alive() is False
+'''
+          if text.count(old) != 1:
+              raise RuntimeError("Expected exactly one idle-timeout polling block")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          uv run --no-sync python -m ruff format tests/test_guard_surface_server.py
+          uv run --no-sync python -m ruff check tests/test_guard_surface_server.py
+      - name: Exercise the lifecycle contract repeatedly
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 16); do
+            echo "idle lifecycle attempt ${attempt}"
+            uv run --no-sync pytest -q \
+              tests/test_guard_surface_server.py::TestGuardSurfaceServer::test_guard_daemon_background_start_auto_stops_after_idle_timeout \
+              tests/test_guard_surface_server.py::TestGuardSurfaceServer::test_guard_daemon_keeps_stream_clients_alive_past_idle_timeout \
+              tests/test_guard_supply_chain_daemon.py::test_daemon_retains_blocked_aibom_refresh_thread_during_shutdown
+          done
+      - name: Verify test-suite ratchet remains within the accepted ceiling
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/ci/test_inventory.py --output "$RUNNER_TEMP/inventory.json"
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --inventory "$RUNNER_TEMP/inventory.json" \
+            --baseline ci/test-suite-ratchet-baseline.json
+      - name: Commit verified test synchronization and remove helper
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/fix-idle-timeout-test-race-2245.yml
+          git add tests/test_guard_surface_server.py
+          git diff --cached --check
+          branch=feat/rust-runtime-native-publish
+          remote_sha=$(git ls-remote --exit-code origin "refs/heads/${branch}" | awk '{print $1}')
+          if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
+            echo "Release candidate moved while applying the lifecycle test fix" >&2
+            exit 1
+          fi
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git commit --signoff -m "test(guard): synchronize idle-timeout lifecycle assertion"
+          git push origin "HEAD:refs/heads/${branch}"
