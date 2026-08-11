@@ -55,9 +55,7 @@ jobs:
           rustfmt --edition 2021 --check rust/crates/guard-runtime/src/main.rs
           cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
           uv run --no-sync python -m ruff check src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_model_resident.py
-          uv run --no-sync python -m ruff format src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_model_resident.py
-          git diff -- src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_model_resident.py
-          exit 1
+          uv run --no-sync python -m ruff format --check src/codex_plugin_scanner/guard/native_command_model.py ci/native_runtime/test_command_model_resident.py
       - name: Build version-matched runtime
         env:
           HOL_GUARD_BUILD_SHA: ${{ github.sha }}
