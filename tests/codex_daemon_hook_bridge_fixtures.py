@@ -71,6 +71,21 @@ class _DaemonHandler(BaseHTTPRequestHandler):
             )
             if type(self).challenge_mode == "wrong-proof":
                 response["proof"] = "0" * 64
+            if type(self).challenge_mode == "refresh-trust-status":
+                current_state_id = state.get("state_id")
+                current_started_at = state.get("started_at")
+                assert isinstance(current_state_id, str)
+                assert isinstance(current_started_at, str)
+                daemon_manager.write_guard_daemon_state(
+                    guard_home,
+                    self.server.server_address[1],
+                    type(self).auth_token,
+                    pid=os.getpid(),
+                    state_id=current_state_id,
+                    started_at=current_started_at,
+                    trust_status={"status": "verified"},
+                )
+                type(self).challenge_mode = "valid"
             if type(self).challenge_mode == "replace-state":
                 daemon_manager.write_guard_daemon_state(
                     guard_home,
