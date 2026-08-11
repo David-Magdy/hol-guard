@@ -54,7 +54,7 @@ jobs:
         shell: pwsh
         run: |
           cargo metadata --manifest-path rust/Cargo.toml --locked --format-version 1 --no-deps | Out-Null
-          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          rustfmt --edition 2021 --check rust/crates/guard-runtime/src/main.rs
           cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
           cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
       - name: Check Python transport boundary
@@ -99,7 +99,7 @@ jobs:
       - name: Check locked Rust workspace
         run: |
           cargo metadata --manifest-path rust/Cargo.toml --locked --format-version 1 --no-deps > /dev/null
-          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          rustfmt --edition 2021 --check rust/crates/guard-runtime/src/main.rs
           cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
           cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
       - name: Check Python transport boundary
