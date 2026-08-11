@@ -276,7 +276,7 @@ def test_recovery_does_not_reuse_recent_stale_runtime_generation(
     assert start_count == 1
 
 
-def test_recovery_retires_one_old_generation_for_concurrent_control_failures(
+def test_recovery_preserves_old_live_generation_for_concurrent_control_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -284,8 +284,6 @@ def test_recovery_retires_one_old_generation_for_concurrent_control_failures(
     generation_lock = threading.Lock()
     generation_state = _old_generation()
     generation_url: str | None = "http://127.0.0.1:4781"
-    retirement_started = threading.Event()
-    allow_retirement = threading.Event()
     retire_count = 0
     start_count = 0
 
@@ -298,12 +296,8 @@ def test_recovery_retires_one_old_generation_for_concurrent_control_failures(
             return generation_url
 
     def retire(_home: Path) -> list[int]:
-        nonlocal generation_url, retire_count
+        nonlocal retire_count
         retire_count += 1
-        retirement_started.set()
-        assert allow_retirement.wait(timeout=2)
-        with generation_lock:
-            generation_url = None
         return []
 
     def ensure(_home: Path, *, home_dir: Path | None = None) -> str:
@@ -323,26 +317,21 @@ def test_recovery_retires_one_old_generation_for_concurrent_control_failures(
     monkeypatch.setattr(daemon_manager_module, "ensure_guard_daemon", ensure)
     results: list[str] = []
 
-    first = threading.Thread(
-        target=lambda: results.append(daemon_manager_module.recover_guard_daemon_after_hook_failure(guard_home))
-    )
-    second = threading.Thread(
-        target=lambda: results.append(daemon_manager_module.recover_guard_daemon_after_hook_failure(guard_home))
-    )
-    first.start()
-    assert retirement_started.wait(timeout=1)
-    second.start()
-    time.sleep(0.05)
-    assert second.is_alive()
-    allow_retirement.set()
-    first.join(timeout=2)
-    second.join(timeout=2)
+    workers = [
+        threading.Thread(
+            target=lambda: results.append(daemon_manager_module.recover_guard_daemon_after_hook_failure(guard_home))
+        )
+        for _ in range(32)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=2)
 
-    assert not first.is_alive()
-    assert not second.is_alive()
-    assert retire_count == 1
-    assert start_count == 1
-    assert results == ["http://127.0.0.1:4782"] * 2
+    assert all(not worker.is_alive() for worker in workers)
+    assert retire_count == 0
+    assert start_count == 0
+    assert results == ["http://127.0.0.1:4781"] * 32
 
 
 def test_recovery_lock_serializes_separate_processes(tmp_path: Path) -> None:
