@@ -35,10 +35,7 @@ def _assignment_name(token: str) -> str | None:
     first = name[0]
     if first != "_" and not (first.isascii() and first.isalpha()):
         return None
-    if not all(
-        character == "_" or (character.isascii() and character.isalnum())
-        for character in name[1:]
-    ):
+    if not all(character == "_" or (character.isascii() and character.isalnum()) for character in name[1:]):
         return None
     return name
 
@@ -77,12 +74,7 @@ def _decode_command_model(
         return None
 
     if confidence == "uncertain":
-        if (
-            segments
-            or not isinstance(uncertainty_reason, str)
-            or not uncertainty_reason.strip()
-            or path_overridden
-        ):
+        if segments or not isinstance(uncertainty_reason, str) or not uncertainty_reason.strip() or path_overridden:
             return None
         return payload
     if uncertainty_reason is not None or not segments:
@@ -163,12 +155,8 @@ def _decode_command_model(
                 break
             expected_environment_names.append(name)
             executable_index += 1
-        expected_executable = (
-            tokens[executable_index] if executable_index < len(tokens) else None
-        )
-        expected_arguments = (
-            tokens[executable_index + 1 :] if expected_executable is not None else []
-        )
+        expected_executable = tokens[executable_index] if executable_index < len(tokens) else None
+        expected_arguments = tokens[executable_index + 1 :] if expected_executable is not None else []
         expected_path_override = "PATH" in expected_environment_names
         if (
             environment_names != expected_environment_names
@@ -204,9 +192,7 @@ def _request_payload(
         "transport": transport,
         "extraction_provenance": extraction_provenance,
     }
-    encoded = json.dumps(
-        request, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    encoded = json.dumps(request, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if len(encoded) > _MAX_REQUEST_BYTES:
         return None
     return request, encoded
@@ -267,9 +253,7 @@ def review_command_model_native(
         )
         if resident_output is not None:
             try:
-                decoded = _decode_command_model(
-                    json.loads(resident_output), **decoder_arguments
-                )
+                decoded = _decode_command_model(json.loads(resident_output), **decoder_arguments)
             except (UnicodeDecodeError, json.JSONDecodeError):
                 decoded = None
             if decoded is not None:
@@ -283,12 +267,7 @@ def review_command_model_native(
         timeout_seconds=timeout_seconds,
         output_limit=_MAX_RESPONSE_BYTES,
     )
-    if (
-        result.returncode != 0
-        or result.timed_out
-        or result.output_limit_exceeded
-        or result.containment_failed
-    ):
+    if result.returncode != 0 or result.timed_out or result.output_limit_exceeded or result.containment_failed:
         return None
     try:
         return _decode_command_model(json.loads(result.stdout), **decoder_arguments)
