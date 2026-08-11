@@ -13,6 +13,7 @@ import {
   buildRetryAfterApprovalCopy,
   formatRelativeTime,
   harnessDisplayName,
+  isWatchOnlyObservation,
   requestResolutionBlockReason,
 } from "./approval-center-utils";
 import { ApprovalPasswordModal } from "./approval-center-review-cards";
@@ -23,6 +24,7 @@ import {
   scopeChoicesForRequest,
   standardScopeChoicesForRequest,
   taskCapabilityExplanation,
+  willPersistExactAction,
 } from "./approval-scopes";
 import { approvalProofRequiresPassword } from "./approval-proof-inline";
 import { ConsolidatedEvidenceAlert } from "./consolidated-evidence-alert";
@@ -66,8 +68,12 @@ import {
 
 const commonScopeValues = new Set<DecisionScope>(["artifact"]);
 
-function resolvedActionCopy(item: GuardApprovalRequest | null, action: "allow" | "block"): string {
-  if (item !== null) return buildRetryAfterApprovalCopy(item, action);
+function resolvedActionCopy(
+  item: GuardApprovalRequest | null,
+  action: "allow" | "block",
+  persistedExactAction: boolean,
+): string {
+  if (item !== null) return buildRetryAfterApprovalCopy(item, action, persistedExactAction);
   if (action === "allow") return "Approved: action can proceed";
   return "Blocked: action stopped";
 }
@@ -84,7 +90,7 @@ export function ReviewDecisionCard(props: {
   const [allowScope, setAllowScope] = useState<DecisionScope>("artifact");
   const [blockScope, setBlockScope] = useState<DecisionScope>("artifact");
   const [submitting, setSubmitting] = useState<"allow" | "block" | null>(null);
-  const [resolved, setResolved] = useState<"allow" | "block" | null>(null);
+  const [resolved, setResolved] = useState<{ action: "allow" | "block"; persistedExactAction: boolean } | null>(null);
   const [showConsequences, setShowConsequences] = useState(false);
   const [showEvidence, setShowEvidence] = useState(false);
   const [lastAction, setLastAction] = useState<"allow" | "block" | null>(null);
@@ -131,6 +137,7 @@ export function ReviewDecisionCard(props: {
     () => (item ? localToolApprovalOptions(item) : null),
     [item],
   );
+  const watchOnlyObservation = item !== null && isWatchOnlyObservation(item);
   const hasAllowScope = availableScopeChoices.length + advancedScopeOptions.length > 0;
   const decisionContractKey = item
     ? `${item.request_id}:${item.scope_contract_version ?? "legacy"}:${item.scope_contract_digest ?? "legacy"}`
@@ -194,6 +201,12 @@ export function ReviewDecisionCard(props: {
       setErrorMessage(null);
       try {
         const requestedScope = action === "allow" ? allowScope : blockScope;
+        const persistExactAction = willPersistExactAction(
+          item,
+          action,
+          requestedScope,
+          action === "allow" ? rememberExactAction : watchOnlyObservation,
+        );
         const gate = props.approvalGate;
         const needsPassword = approvalProofRequiresPassword(gate);
         const includeGateFields =
@@ -206,7 +219,7 @@ export function ReviewDecisionCard(props: {
             action,
             scope: requestedScope,
             reason: action === "allow" ? "approved in review" : "blocked in review",
-            persistExactAction: action === "allow" ? rememberExactAction : false,
+            persistExactAction,
           }),
           ...(includeGateFields && needsPassword ? { approval_password: approvalPassword } : {}),
           ...(includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {}),
@@ -223,7 +236,7 @@ export function ReviewDecisionCard(props: {
             ? buildLocalToolResolutionFields(localToolOptions, localToolGrantTarget, localToolGrantDuration)
             : {}),
         });
-        setResolved(action);
+        setResolved({ action, persistedExactAction });
         setApprovalPassword("");
         setApprovalTotpCode("");
         setUseCooldown(false);
@@ -240,6 +253,7 @@ export function ReviewDecisionCard(props: {
       item,
       allowScope,
       blockScope,
+      watchOnlyObservation,
       rememberExactAction,
       props.onResolve,
       props.approvalGate,
@@ -374,7 +388,7 @@ export function ReviewDecisionCard(props: {
     return (
       <EmptyState
         title="Select an action"
-        body="Choose a paused action from the queue to review and decide."
+        body="Choose an action or Watch-only finding to review."
         tone="teach"
       />
     );
@@ -387,8 +401,10 @@ export function ReviewDecisionCard(props: {
   const evidenceItems = buildEvidenceItems(item);
   const actionPresentation = guardActionPresentation(item.policy_action);
   let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
-  if (rememberExactAction && allowScope === "artifact") {
-    resolvedAllowButtonLabel = "Approve and remember";
+  const persistExactAllow = item !== null && willPersistExactAction(item, "allow", allowScope, rememberExactAction);
+  const persistExactBlock = item !== null && willPersistExactAction(item, "block", blockScope, watchOnlyObservation);
+  if (persistExactAllow) {
+    resolvedAllowButtonLabel = watchOnlyObservation ? "Allow next time" : "Approve and remember";
   }
   if (temporaryMcpOptions !== null && !rememberExactAction) {
     resolvedAllowButtonLabel = temporaryMcpAllowButtonLabel(mcpGrantDuration);
@@ -400,7 +416,7 @@ export function ReviewDecisionCard(props: {
       {resolved && (
         <div
           className={`guard-fade-in flex items-center gap-3 rounded-xl border px-4 py-3 transition-all ${
-            resolved === "allow"
+            resolved.action === "allow"
               ? "border-brand-green/25 bg-brand-green-bg/30"
               : "border-brand-attention/25 bg-brand-attention/[0.04]"
           }`}
@@ -408,11 +424,11 @@ export function ReviewDecisionCard(props: {
           aria-live="polite"
         >
           <HiMiniCheckCircle
-            className={`h-5 w-5 shrink-0 ${resolved === "allow" ? "text-brand-green" : "text-brand-attention"}`}
+            className={`h-5 w-5 shrink-0 ${resolved.action === "allow" ? "text-brand-green" : "text-brand-attention"}`}
             aria-hidden="true"
           />
-          <p className={`text-sm font-medium ${resolved === "allow" ? "text-brand-green-text" : "text-brand-attention"}`}>
-            {resolvedActionCopy(item, resolved)}
+          <p className={`text-sm font-medium ${resolved.action === "allow" ? "text-brand-green-text" : "text-brand-attention"}`}>
+            {resolvedActionCopy(item, resolved.action, resolved.persistedExactAction)}
           </p>
         </div>
       )}
@@ -420,14 +436,14 @@ export function ReviewDecisionCard(props: {
       <div className="rounded-xl border border-slate-100 p-4 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <SectionLabel>Paused action</SectionLabel>
+            <SectionLabel>{watchOnlyObservation ? "Watch-only finding" : "Paused action"}</SectionLabel>
             <h2 className="mt-2 text-lg font-semibold text-brand-dark">{plainTitle}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               From {harnessName}
             </p>
           </div>
-          <Badge tone={actionPresentation.tone}>
-            {actionPresentation.label}
+          <Badge tone={watchOnlyObservation ? "info" : actionPresentation.tone}>
+            {watchOnlyObservation ? "Ran in Watch only" : actionPresentation.label}
           </Badge>
         </div>
 
@@ -573,7 +589,7 @@ export function ReviewDecisionCard(props: {
             ) : (
               <span className="flex items-center gap-2">
                 <HiMiniNoSymbol className="h-4 w-4" aria-hidden="true" />
-                {blockButtonLabel(blockScope)}
+                {persistExactBlock ? "Block next time" : blockButtonLabel(blockScope)}
               </span>
             )}
           </ActionButton>

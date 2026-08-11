@@ -1372,20 +1372,34 @@ def _runtime_scoped_exact_match_key(
     return f"{_RUNTIME_SCOPED_EXACT_MATCH_PREFIX}{digest}"
 
 
+def runtime_tool_action_policy_artifact_id(artifact_id: str | None) -> str | None:
+    """Return a scoped family identity for one exact runtime tool action."""
+
+    if artifact_id is None or not artifact_id.strip():
+        return None
+    family_key = _artifact_family_key(artifact_id)
+    if family_key is not None and _family_key_value(family_key) in _SCOPED_RUNTIME_EXACT_FAMILIES:
+        return artifact_id
+    digest = sha256(artifact_id.strip().encode("utf-8")).hexdigest()
+    return f"guard:runtime:tool-action:{digest}"
+
+
 def runtime_tool_action_exact_match_context(
     *,
     config_path: str | None,
     source_scope: str | None,
     raw_command_text: str | None = None,
     wrapper_chain: Sequence[object] | None = None,
+    permission_mode: str | None = None,
 ) -> str | None:
-    if not config_path and not source_scope and not raw_command_text and not wrapper_chain:
+    if not config_path and not source_scope and not raw_command_text and not wrapper_chain and not permission_mode:
         return None
     payload: dict[str, object] = {
         "config_path": str(Path(config_path).expanduser()) if config_path else None,
         "source_scope": source_scope,
         "raw_command_text": raw_command_text,
         "wrapper_chain": [item for item in wrapper_chain or () if isinstance(item, str) and item],
+        "permission_mode": permission_mode,
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -1405,6 +1419,7 @@ def runtime_tool_action_portable_match_context(runtime_exact_match_context: str 
     if not isinstance(raw_command_text, str) or not raw_command_text:
         return None
     wrapper_chain = payload.get("wrapper_chain")
+    permission_mode = payload.get("permission_mode")
     normalized_wrapper_chain = (
         wrapper_chain if isinstance(wrapper_chain, Sequence) and not isinstance(wrapper_chain, str) else None
     )
@@ -1413,6 +1428,7 @@ def runtime_tool_action_portable_match_context(runtime_exact_match_context: str 
         source_scope=None,
         raw_command_text=raw_command_text,
         wrapper_chain=normalized_wrapper_chain,
+        permission_mode=permission_mode if isinstance(permission_mode, str) and permission_mode else None,
     )
 
 
