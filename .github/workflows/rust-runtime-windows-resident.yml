@@ -54,16 +54,14 @@ jobs:
         shell: pwsh
         run: |
           cargo metadata --manifest-path rust/Cargo.toml --locked --format-version 1 --no-deps | Out-Null
-          rustfmt --edition 2021 rust/crates/guard-runtime/src/main.rs
-          git diff --check -- rust/crates/guard-runtime/src/main.rs
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
           cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
           cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
       - name: Check Python transport boundary
         shell: pwsh
         run: |
-          uv run --no-sync python -m ruff format src/codex_plugin_scanner/guard/native_runtime_resident.py ci/native_runtime/test_guard_native_runtime_windows_resident.py
+          uv run --no-sync python -m ruff format --check src/codex_plugin_scanner/guard/native_runtime_resident.py ci/native_runtime/test_guard_native_runtime_windows_resident.py
           uv run --no-sync python -m ruff check src/codex_plugin_scanner/guard/native_runtime_resident.py ci/native_runtime/test_guard_native_runtime_windows_resident.py
-          git diff --check -- src/codex_plugin_scanner/guard/native_runtime_resident.py ci/native_runtime/test_guard_native_runtime_windows_resident.py
       - name: Build version-matched Windows runtime
         shell: pwsh
         run: |
@@ -101,15 +99,13 @@ jobs:
       - name: Check locked Rust workspace
         run: |
           cargo metadata --manifest-path rust/Cargo.toml --locked --format-version 1 --no-deps > /dev/null
-          rustfmt --edition 2021 rust/crates/guard-runtime/src/main.rs
-          git diff --check -- rust/crates/guard-runtime/src/main.rs
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
           cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
           cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
       - name: Check Python transport boundary
         run: |
-          uv run --no-sync python -m ruff format src/codex_plugin_scanner/guard/native_runtime_resident.py ci/native_runtime/test_guard_native_runtime_windows_resident.py
+          uv run --no-sync python -m ruff format --check src/codex_plugin_scanner/guard/native_runtime_resident.py ci/native_runtime/test_guard_native_runtime_windows_resident.py
           uv run --no-sync python -m ruff check src/codex_plugin_scanner/guard/native_runtime_resident.py ci/native_runtime/test_guard_native_runtime_windows_resident.py
-          git diff --check -- src/codex_plugin_scanner/guard/native_runtime_resident.py ci/native_runtime/test_guard_native_runtime_windows_resident.py
       - name: Build version-matched Unix runtime
         env:
           HOL_GUARD_BUILD_SHA: ${{ github.sha }}
