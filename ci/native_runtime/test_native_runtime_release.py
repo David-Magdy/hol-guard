@@ -22,16 +22,24 @@ TARGETS = {
 }
 
 
-def _native_wheel(root: Path, platform: str, *, runtime: bytes = b"native-runtime") -> Path:
+def _native_wheel(
+    root: Path,
+    platform: str,
+    *,
+    runtime: bytes = b"native-runtime",
+    target: str | None = None,
+) -> Path:
     wheel = root / f"hol_guard-{VERSION}-py3-none-{platform}.whl"
     runtime_path = (
-        release.WINDOWS_RUNTIME_PATH if platform.startswith("win") else release.RUNTIME_PATH
+        release.WINDOWS_RUNTIME_PATH
+        if platform.startswith("win")
+        else release.RUNTIME_PATH
     )
     manifest = {
         "schema": "hol-guard-native-runtime.v1",
         "protocol_version": 1,
         "package_version": VERSION,
-        "target": TARGETS[platform],
+        "target": target or TARGETS[platform],
         "platform_tag": platform,
         "source_sha": SOURCE_SHA,
         "rule_digest": RULE_DIGEST,
@@ -84,6 +92,10 @@ def _base_inspection(*native: ReleaseFile) -> ReleaseInspection:
     )
 
 
+def test_expected_platform_targets_are_explicit() -> None:
+    assert dict(release.EXPECTED_TARGETS) == TARGETS
+
+
 def test_local_native_set_requires_all_four_platforms(tmp_path: Path) -> None:
     wheels = _native_set(tmp_path / "dist")
     hashes = release.local_native_hashes(
@@ -102,7 +114,9 @@ def test_local_native_set_requires_all_four_platforms(tmp_path: Path) -> None:
         )
 
 
-def test_local_native_set_accepts_complete_distribution_wheels(tmp_path: Path) -> None:
+def test_local_native_set_accepts_complete_distribution_wheels(
+    tmp_path: Path,
+) -> None:
     dist_dir = tmp_path / "dist"
     wheels = _native_set(dist_dir)
     _pure_wheel(dist_dir, release.PROJECT)
@@ -123,6 +137,23 @@ def test_local_native_set_rejects_unexpected_wheel_project(tmp_path: Path) -> No
     _pure_wheel(dist_dir, "unexpected-project")
 
     with pytest.raises(release.NativeReleaseError, match="Unexpected pure release wheel"):
+        release.local_native_hashes(
+            dist_dir,
+            version=VERSION,
+            source_sha=SOURCE_SHA,
+        )
+
+
+def test_local_native_set_binds_platform_tag_to_target(tmp_path: Path) -> None:
+    dist_dir = tmp_path / "dist"
+    _native_set(dist_dir)
+    _native_wheel(
+        dist_dir,
+        "win_amd64",
+        target=TARGETS["manylinux_2_17_x86_64"],
+    )
+
+    with pytest.raises(release.NativeReleaseError, match="manifest identity"):
         release.local_native_hashes(
             dist_dir,
             version=VERSION,
@@ -236,5 +267,36 @@ def test_base_release_requires_pure_wheel_and_sdist(
         ),
     )
     monkeypatch.setattr(release, "_inspection", lambda registry, version: inspection)
-    with pytest.raises(release.NativeReleaseError, match="pure wheel or source distribution"):
+    with pytest.raises(
+        release.NativeReleaseError,
+        match="pure wheel or source distribution",
+    ):
+        release.assert_base_release_ready(Registry.PYPI, version=VERSION)
+
+
+def test_base_release_rejects_non_sdist_impostor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inspection = ReleaseInspection(
+        registry=Registry.PYPI,
+        version=VERSION,
+        exists=True,
+        files=(
+            ReleaseFile(
+                filename=f"hol_guard-{VERSION}-py3-none-any.whl",
+                sha256="1" * 64,
+                download_url="https://example.invalid/pure.whl",
+            ),
+            ReleaseFile(
+                filename="release-notes.txt",
+                sha256="2" * 64,
+                download_url="https://example.invalid/release-notes.txt",
+            ),
+        ),
+    )
+    monkeypatch.setattr(release, "_inspection", lambda registry, version: inspection)
+    with pytest.raises(
+        release.NativeReleaseError,
+        match="pure wheel or source distribution",
+    ):
         release.assert_base_release_ready(Registry.PYPI, version=VERSION)
