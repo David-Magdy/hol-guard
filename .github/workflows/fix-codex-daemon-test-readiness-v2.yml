@@ -31,11 +31,15 @@ jobs:
           python - <<'PY'
           from __future__ import annotations
 
-          import json
+          import os
           from pathlib import Path
 
           test_path = Path("tests/test_codex_daemon_hook_bridge.py")
           original = test_path.read_text(encoding="utf-8")
+          Path(os.environ["RUNNER_TEMP"], "original-test-lines.txt").write_text(
+              str(len(original.splitlines())),
+              encoding="utf-8",
+          )
           updated = original
 
           import_anchor = "import io\nimport json\n"
@@ -99,8 +103,32 @@ jobs:
           if updated == original:
               raise RuntimeError("Codex daemon readiness patch made no changes")
           test_path.write_text(updated, encoding="utf-8")
+          PY
+      - name: Install locked test dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+      - name: Format, ratchet, and verify focused readiness regressions repeatedly
+        shell: bash
+        run: |
+          uv run --no-sync ruff check tests/test_codex_daemon_hook_bridge.py
+          uv run --no-sync ruff format tests/test_codex_daemon_hook_bridge.py
+          uv run --no-sync ruff check tests/test_codex_daemon_hook_bridge.py
+          uv run --no-sync ruff format --check tests/test_codex_daemon_hook_bridge.py
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-          line_delta = len(updated.splitlines()) - len(original.splitlines())
+          original_lines = int(
+              Path(os.environ["RUNNER_TEMP"], "original-test-lines.txt").read_text(
+                  encoding="utf-8"
+              )
+          )
+          current_lines = len(
+              Path("tests/test_codex_daemon_hook_bridge.py")
+              .read_text(encoding="utf-8")
+              .splitlines()
+          )
+          line_delta = current_lines - original_lines
           if line_delta <= 0:
               raise RuntimeError("Expected the readiness regression coverage to add test lines")
           baseline_path = Path("ci/test-suite-ratchet-baseline.json")
@@ -108,13 +136,6 @@ jobs:
           baseline["maximum_test_source_lines"] += line_delta
           baseline_path.write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
           PY
-      - name: Install locked test dependencies
-        run: uv sync --frozen --extra dev --python 3.12
-      - name: Verify focused readiness regressions repeatedly
-        shell: bash
-        run: |
-          uv run --no-sync ruff check tests/test_codex_daemon_hook_bridge.py
-          uv run --no-sync ruff format --check tests/test_codex_daemon_hook_bridge.py
           node_one='tests/test_codex_daemon_hook_bridge.py::test_bridge_real_daemon_allows_static_github_content_read_with_safe_jq_filter[gh pr view 1 -tREVIEW]'
           node_two='tests/test_codex_daemon_hook_bridge.py::test_bridge_real_daemon_allows_static_github_content_read_with_safe_jq_filter[gh run list -cREVIEW_SHA]'
           for attempt in 1 2 3; do
@@ -141,5 +162,5 @@ jobs:
           fi
           git config user.name "Michael Kantor"
           git config user.email "6068672+kantorcodes@users.noreply.github.com"
-          git commit --signoff -m "test(daemon): wait for authenticated bridge readiness"
+          git commit --signoff -m "test(daemon): wait for request readiness"
           git push origin HEAD:feat/rust-runtime-native-publish
