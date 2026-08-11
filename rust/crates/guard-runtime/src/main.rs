@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use guard_command::{parse_command, CommandModelRequestV1};
 use guard_contracts::{
     NativeHookRequestV1, RuntimeCapabilitiesV1, MAX_NATIVE_REQUEST_BYTES,
     MAX_NATIVE_RESPONSE_BYTES, NATIVE_PROTOCOL_VERSION,
@@ -32,6 +33,7 @@ fn capabilities() -> RuntimeCapabilitiesV1 {
             "framed-serve-v1".into(),
             "bounded-concurrency-v1".into(),
             "rule-contract-v2".into(),
+            "pre-tool-command-model-shadow-v1".into(),
         ],
     }
 }
@@ -48,12 +50,21 @@ fn read_stdin_bounded() -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn evaluate_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
+fn evaluate_hook_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
     let request: NativeHookRequestV1 =
         serde_json::from_slice(bytes).map_err(|_| "native_request_invalid_json".to_owned())?;
-    let response = review_post_tool(&request);
+    encode_response(&review_post_tool(&request))
+}
+
+fn evaluate_command_model_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let request: CommandModelRequestV1 = serde_json::from_slice(bytes)
+        .map_err(|_| "native_command_model_invalid_json".to_owned())?;
+    encode_response(&parse_command(&request)?)
+}
+
+fn encode_response<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
     let encoded =
-        serde_json::to_vec(&response).map_err(|_| "native_response_encode_failed".to_owned())?;
+        serde_json::to_vec(value).map_err(|_| "native_response_encode_failed".to_owned())?;
     if encoded.len() > MAX_NATIVE_RESPONSE_BYTES {
         return Err("native_response_too_large".into());
     }
@@ -64,6 +75,16 @@ fn write_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
     serde_json::to_writer(io::stdout().lock(), value)
         .map_err(|_| "native_response_encode_failed".to_owned())?;
     println!();
+    Ok(())
+}
+
+fn write_bytes_response(response: &[u8]) -> Result<(), String> {
+    io::stdout()
+        .write_all(response)
+        .map_err(|_| "native_response_write_failed".to_owned())?;
+    io::stdout()
+        .write_all(b"\n")
+        .map_err(|_| "native_response_write_failed".to_owned())?;
     Ok(())
 }
 
@@ -89,7 +110,7 @@ fn serve(socket_path: &str) -> Result<(), String> {
         stream
             .read_exact(&mut request)
             .map_err(|_| "native_frame_read_failed".to_owned())?;
-        let response = evaluate_bytes(&request)?;
+        let response = evaluate_hook_bytes(&request)?;
         stream
             .write_all(&(response.len() as u32).to_be_bytes())
             .map_err(|_| "native_frame_write_failed".to_owned())?;
@@ -164,18 +185,15 @@ fn run() -> Result<(), String> {
         }
         [command, flag] if command == "hook" && flag == "--stdin" => {
             let bytes = read_stdin_bounded()?;
-            let response = evaluate_bytes(&bytes)?;
-            io::stdout()
-                .write_all(&response)
-                .map_err(|_| "native_response_write_failed".to_owned())?;
-            io::stdout()
-                .write_all(b"\n")
-                .map_err(|_| "native_response_write_failed".to_owned())?;
-            Ok(())
+            write_bytes_response(&evaluate_hook_bytes(&bytes)?)
+        }
+        [command, flag] if command == "command-model" && flag == "--stdin" => {
+            let bytes = read_stdin_bounded()?;
+            write_bytes_response(&evaluate_command_model_bytes(&bytes)?)
         }
         [command, flag, path] if command == "serve" && flag == "--socket" => serve(path),
         _ => Err(
-            "usage: hol-guard-runtime capabilities --json | rule-contract --json | self-test --json | hook --stdin | serve --socket PATH"
+            "usage: hol-guard-runtime capabilities --json | rule-contract --json | self-test --json | hook --stdin | command-model --stdin | serve --socket PATH"
                 .into(),
         ),
     }
