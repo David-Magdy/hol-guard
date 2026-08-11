@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from .codex_hook_launch_runtime import run_isolated_hook_process
+from .native_runtime_resident import resident_native_request
 from .runtime.hook_review_types import HookReviewRequest, HookReviewResponse
 
 NativeMode = Literal["off", "shadow", "auto", "force"]
@@ -315,9 +316,28 @@ def review_post_tool_native(request: HookReviewRequest, *, observe_mode: bool) -
         "deadline_budget_ms": _deadline_budget_ms(request),
     }
     input_text = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False)
-    if len(input_text.encode("utf-8")) > _MAX_REQUEST_BYTES:
+    encoded = input_text.encode("utf-8")
+    if len(encoded) > _MAX_REQUEST_BYTES:
         return None
     timeout_seconds = max(0.05, min(9.0, _deadline_budget_ms(request) / 1000.0))
+
+    resident_output = resident_native_request(
+        executable=status.identity.path,
+        identity_sha256=status.identity.sha256,
+        guard_home=request.guard_home,
+        environment=_isolated_environment(),
+        payload=encoded,
+        timeout_seconds=timeout_seconds,
+    )
+    if resident_output is not None:
+        try:
+            payload = json.loads(resident_output)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+        response = _response_from_payload(payload)
+        if response is not None:
+            return response
+
     output = _run_native_process(
         status.identity.path,
         ("hook", "--stdin"),

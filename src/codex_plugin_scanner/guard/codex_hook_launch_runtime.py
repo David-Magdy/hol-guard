@@ -209,8 +209,14 @@ def run_isolated_hook_process(
     timeout_seconds: float,
     output_limit: int = _HOOK_SUBPROCESS_OUTPUT_LIMIT,
     allow_windows_breakaway: bool = False,
+    stop_event: threading.Event | None = None,
 ) -> BoundedHookProcessResult:
-    """Run one child with bounded input lifetime and combined output bytes."""
+    """Run one child with bounded input lifetime and combined output bytes.
+
+    ``stop_event`` lets a long-lived reviewed helper terminate through the same
+    process-group / Windows Job containment path used for deadlines. Existing
+    one-shot callers do not need to supply it.
+    """
 
     if _HOOK_PROCESS_CONTAINMENT_FAILED.is_set() and not _retry_quarantined_hook_processes():
         return BoundedHookProcessResult(None, "", False, False, containment_failed=True)
@@ -277,6 +283,9 @@ def run_isolated_hook_process(
     timed_out = False
     containment_confirmed = True
     while process.poll() is None:
+        if stop_event is not None and stop_event.is_set():
+            containment_confirmed = _kill_hook_process(process, windows_job)
+            break
         if output_limit_exceeded.is_set():
             containment_confirmed = _kill_hook_process(process, windows_job)
             break

@@ -97,6 +97,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "guard-rule-contract"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "guard-rules"
 version = "0.1.0"
 dependencies = [
@@ -135,7 +144,7 @@ version = "0.1.0"
 dependencies = [
  "guard-contracts",
  "guard-hook-core",
- "guard-rules",
+ "guard-rule-contract",
  "serde",
  "serde_json",
 ]
