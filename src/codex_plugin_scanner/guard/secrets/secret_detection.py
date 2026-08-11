@@ -67,6 +67,71 @@ _ASSIGNMENT = re.compile(
     r"(?im)(?P<name>[A-Za-z_][A-Za-z0-9_.-]{1,80})\s*[:=]\s*"
     r"(?P<quote>[\"']?)(?P<secret>[^\s\"',}{]{12,256})(?P=quote)"
 )
+_GENERIC_CANDIDATE_POLICY_VERSION = "credential-expression-filter-v1"
+_CODE_REFERENCE_PREFIXES = (
+    "config.",
+    "context.",
+    "crypto.",
+    "data.",
+    "deno.env.",
+    "env.",
+    "headers.",
+    "import.meta.env.",
+    "local.",
+    "module.",
+    "os.environ",
+    "os.getenv",
+    "params.",
+    "payload.",
+    "process.env.",
+    "request.",
+    "response.",
+    "secret.",
+    "secrets.",
+    "self.",
+    "settings.",
+    "this.",
+    "values.",
+    "var.",
+    "vault.",
+)
+_CODE_MEMBER_REFERENCE = re.compile(
+    r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\??\.[A-Za-z_$][A-Za-z0-9_$]*)+$"
+)
+_CODE_CALL_REFERENCE = re.compile(
+    r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\??\.[A-Za-z_$][A-Za-z0-9_$]*)*\s*\("
+)
+_CODE_IDENTIFIER_REFERENCE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_INTERPOLATED_REFERENCE = re.compile(r"^(?:\$\{|\$\(|\{\{|<%|%\{|@\{)")
+_CODE_SUFFIXES = frozenset(
+    {
+        ".bash",
+        ".cjs",
+        ".cs",
+        ".dart",
+        ".go",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".kts",
+        ".lua",
+        ".mjs",
+        ".php",
+        ".ps1",
+        ".py",
+        ".rb",
+        ".rs",
+        ".scala",
+        ".sh",
+        ".svelte",
+        ".swift",
+        ".ts",
+        ".tsx",
+        ".vue",
+        ".zsh",
+    }
+)
 _DATABASE_URL = re.compile(
     r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis)://"
     r"[^\s:/@]{1,128}:(?P<secret>[^\s/@]{6,256})@[^\s]+"
@@ -325,11 +390,21 @@ SECRET_RULES: tuple[SecretRule, ...] = (
 
 
 def detector_version() -> str:
-    material = "\n".join(
+    material_parts = [
         f"{rule.rule_id}|{rule.severity}|{rule.validation}|{rule.pattern.pattern}|{rule.pattern.flags}"
         for rule in SECRET_RULES
+    ]
+    material_parts.append(
+        "|".join(
+            (
+                "credential-assignment",
+                _ASSIGNMENT.pattern,
+                str(_ASSIGNMENT.flags),
+                _GENERIC_CANDIDATE_POLICY_VERSION,
+            )
+        )
     )
-    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256("\n".join(material_parts).encode("utf-8")).hexdigest()[:16]
     return f"{_DETECTOR_VERSION}:{digest}"
 
 
@@ -419,6 +494,41 @@ def _obvious_sample(candidate: str, context: str) -> bool:
     # Do not suppress a structurally strong, long random-looking token just
     # because nearby documentation contains the word "example".
     return _rarity_score(candidate) < 0.76 or len(candidate) < 28
+
+
+def _candidate_is_indirect_reference(
+    candidate: str,
+    *,
+    quoted: bool,
+    path: str,
+) -> bool:
+    """Reject code/config expressions that name a secret without containing it."""
+
+    value = candidate.strip()
+    if not value:
+        return True
+    lowered = value.lower()
+    if lowered in {"false", "none", "null", "true", "undefined"}:
+        return True
+    if _INTERPOLATED_REFERENCE.match(value) is not None:
+        return True
+    if lowered.startswith(_CODE_REFERENCE_PREFIXES):
+        return True
+    if quoted:
+        return False
+    if _CODE_CALL_REFERENCE.match(value) is not None:
+        return True
+    if any(operator in value for operator in ("=>", "??", "||", "&&")):
+        return True
+    if any(character in value for character in "()[]{};`"):
+        return True
+    if _CODE_MEMBER_REFERENCE.fullmatch(value) is not None:
+        return True
+    suffix = PurePosixPath(_normalized_path(path)).suffix
+    if suffix not in _CODE_SUFFIXES or _CODE_IDENTIFIER_REFERENCE.fullmatch(value) is None:
+        return False
+    digit_count = sum(character.isdigit() for character in value)
+    return value[0].islower() and digit_count <= 1
 
 
 def _confidence_label(score: float) -> SecretConfidence:
@@ -561,6 +671,12 @@ def scan_secret_text(
     for match in _ASSIGNMENT.finditer(text):
         candidate = match.group("secret")
         if candidate in provider_candidates:
+            continue
+        if _candidate_is_indirect_reference(
+            candidate,
+            quoted=bool(match.group("quote")),
+            path=path,
+        ):
             continue
         name = match.group("name")
         if _CREDENTIAL_KEYWORDS.search(name) is None:
