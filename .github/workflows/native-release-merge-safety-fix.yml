@@ -105,3 +105,5 @@ jobs:
           git config user.email "6068672+kantorcodes@users.noreply.github.com"
           git commit --signoff -m "fix(release): allow explicit no-publish merge commits"
           git push origin "HEAD:refs/heads/${branch}"
+
+# Retriggered after preserving the concurrent branch advance.
