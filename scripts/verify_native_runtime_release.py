@@ -92,20 +92,14 @@ def _read_zip_member_bounded(
     if info.flag_bits & 0x1:
         raise NativeReleaseError(f"Native wheel {label} entry cannot be encrypted")
     if info.file_size <= 0 or info.file_size > max_bytes:
-        raise NativeReleaseError(
-            f"Native wheel {label} size is outside the accepted release bound"
-        )
+        raise NativeReleaseError(f"Native wheel {label} size is outside the accepted release bound")
     try:
         with archive.open(info, "r") as handle:
             payload = handle.read(max_bytes + 1)
     except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
-        raise NativeReleaseError(
-            f"Native wheel {label} could not be read safely"
-        ) from exc
+        raise NativeReleaseError(f"Native wheel {label} could not be read safely") from exc
     if len(payload) != info.file_size or len(payload) > max_bytes:
-        raise NativeReleaseError(
-            f"Native wheel {label} expanded past its declared size"
-        )
+        raise NativeReleaseError(f"Native wheel {label} expanded past its declared size")
     return payload
 
 
@@ -121,14 +115,8 @@ def _wheel_payload(
             if len(infos) > _MAX_WHEEL_ENTRIES:
                 raise NativeReleaseError("Native wheel contains too many archive entries")
             names = [entry.filename for entry in infos]
-            if (
-                len(names) != len(set(names))
-                or MANIFEST_PATH not in names
-                or runtime_path not in names
-            ):
-                raise NativeReleaseError(
-                    "Native wheel manifest/runtime is missing or archive entries are duplicated"
-                )
+            if len(names) != len(set(names)) or MANIFEST_PATH not in names or runtime_path not in names:
+                raise NativeReleaseError("Native wheel manifest/runtime is missing or archive entries are duplicated")
             manifest_info = archive.getinfo(MANIFEST_PATH)
             runtime_info = archive.getinfo(runtime_path)
             manifest_bytes = _read_zip_member_bounded(
@@ -151,12 +139,8 @@ def _wheel_payload(
         json.JSONDecodeError,
         KeyError,
     ) as exc:
-        raise NativeReleaseError(
-            "Native wheel manifest/runtime could not be read"
-        ) from exc
-    if not isinstance(manifest, dict) or not all(
-        isinstance(key, str) for key in manifest
-    ):
+        raise NativeReleaseError("Native wheel manifest/runtime could not be read") from exc
+    if not isinstance(manifest, dict) or not all(isinstance(key, str) for key in manifest):
         raise NativeReleaseError("Native wheel manifest must be an object")
     return manifest, runtime
 
@@ -169,28 +153,20 @@ def _wheel_identity(
     try:
         metadata = wheel.lstat()
     except OSError as exc:
-        raise NativeReleaseError(
-            "Release wheel must be a regular non-symlink file"
-        ) from exc
+        raise NativeReleaseError("Release wheel must be a regular non-symlink file") from exc
     if (
         stat.S_ISLNK(metadata.st_mode)
         or not stat.S_ISREG(metadata.st_mode)
         or metadata.st_size <= 0
         or metadata.st_size > _MAX_NATIVE_WHEEL_BYTES
     ):
-        raise NativeReleaseError(
-            "Release wheel size or file type is outside the accepted release bound"
-        )
+        raise NativeReleaseError("Release wheel size or file type is outside the accepted release bound")
     try:
         name, wheel_version, build, tags = parse_wheel_filename(wheel.name)
     except InvalidWheelFilename as exc:
-        raise NativeReleaseError(
-            f"Invalid release wheel filename: {wheel.name}"
-        ) from exc
+        raise NativeReleaseError(f"Invalid release wheel filename: {wheel.name}") from exc
     if str(wheel_version) != version or build or len(tags) != 1:
-        raise NativeReleaseError(
-            "Release wheel version, build tag, or tag set is invalid"
-        )
+        raise NativeReleaseError("Release wheel version, build tag, or tag set is invalid")
     return name, next(iter(tags))
 
 
@@ -205,9 +181,7 @@ def _assert_regular_distribution(path: Path, *, label: str) -> None:
         or metadata.st_size <= 0
         or metadata.st_size > _MAX_BASE_DISTRIBUTION_BYTES
     ):
-        raise NativeReleaseError(
-            f"{label} size or file type is outside the accepted release bound"
-        )
+        raise NativeReleaseError(f"{label} size or file type is outside the accepted release bound")
 
 
 def local_native_hashes(
@@ -218,13 +192,9 @@ def local_native_hashes(
 ) -> dict[str, str]:
     version = _canonical_version(version)
     if _SHA40.fullmatch(source_sha) is None:
-        raise NativeReleaseError(
-            "Native release source SHA must be a full lowercase Git SHA"
-        )
+        raise NativeReleaseError("Native release source SHA must be a full lowercase Git SHA")
     if not dist_dir.is_dir() or dist_dir.is_symlink():
-        raise NativeReleaseError(
-            "Native distribution directory must be a regular directory"
-        )
+        raise NativeReleaseError("Native distribution directory must be a regular directory")
 
     hashes: dict[str, str] = {}
     platforms: set[str] = set()
@@ -232,33 +202,19 @@ def local_native_hashes(
     for wheel in sorted(dist_dir.glob("*.whl")):
         name, tag = _wheel_identity(wheel, version=version)
         if tag.platform == "any":
-            if (
-                name not in PURE_WHEEL_PROJECTS
-                or tag.interpreter != "py3"
-                or tag.abi != "none"
-            ):
-                raise NativeReleaseError(
-                    f"Unexpected pure release wheel: {wheel.name}"
-                )
+            if name not in PURE_WHEEL_PROJECTS or tag.interpreter != "py3" or tag.abi != "none":
+                raise NativeReleaseError(f"Unexpected pure release wheel: {wheel.name}")
             if name in pure_projects:
-                raise NativeReleaseError(
-                    f"Duplicate pure release wheel project: {name}"
-                )
+                raise NativeReleaseError(f"Duplicate pure release wheel project: {name}")
             pure_projects.add(name)
             continue
 
         if name != PROJECT:
             raise NativeReleaseError(f"Unexpected native wheel project: {name}")
-        if (
-            tag.interpreter != "py3"
-            or tag.abi != "none"
-            or tag.platform not in EXPECTED_PLATFORMS
-        ):
+        if tag.interpreter != "py3" or tag.abi != "none" or tag.platform not in EXPECTED_PLATFORMS:
             raise NativeReleaseError(f"Unsupported native wheel tag: {tag}")
         if tag.platform in platforms:
-            raise NativeReleaseError(
-                f"Duplicate native wheel platform: {tag.platform}"
-            )
+            raise NativeReleaseError(f"Duplicate native wheel platform: {tag.platform}")
         platforms.add(tag.platform)
 
         manifest, runtime = _wheel_payload(wheel, platform=tag.platform)
@@ -274,9 +230,7 @@ def local_native_hashes(
             "runtime_size",
         }
         if set(manifest) != expected_keys:
-            raise NativeReleaseError(
-                "Native wheel manifest has an unexpected shape"
-            )
+            raise NativeReleaseError("Native wheel manifest has an unexpected shape")
         if (
             manifest.get("schema") != "hol-guard-native-runtime.v1"
             or manifest.get("protocol_version") != 1
@@ -292,17 +246,13 @@ def local_native_hashes(
             or manifest.get("runtime_size") != len(runtime)
             or manifest.get("runtime_sha256") != _sha256_bytes(runtime)
         ):
-            raise NativeReleaseError(
-                "Native wheel manifest identity does not match the embedded runtime"
-            )
+            raise NativeReleaseError("Native wheel manifest identity does not match the embedded runtime")
         hashes[wheel.name] = _sha256_file(wheel)
 
     if platforms != EXPECTED_PLATFORMS:
         missing = sorted(EXPECTED_PLATFORMS - platforms)
         extra = sorted(platforms - EXPECTED_PLATFORMS)
-        raise NativeReleaseError(
-            f"Native wheel platform set is incomplete: missing={missing}, extra={extra}"
-        )
+        raise NativeReleaseError(f"Native wheel platform set is incomplete: missing={missing}, extra={extra}")
     return hashes
 
 
@@ -331,9 +281,7 @@ def local_guard_hashes(
     if actual != expected:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
-        raise NativeReleaseError(
-            f"Guard release artifact set is not exact: missing={missing}, extra={extra}"
-        )
+        raise NativeReleaseError(f"Guard release artifact set is not exact: missing={missing}, extra={extra}")
     _assert_regular_distribution(dist_dir / pure_wheel, label="Guard pure wheel")
     _assert_regular_distribution(dist_dir / sdist, label="Guard source distribution")
     return {filename: complete[filename] for filename in sorted(expected)}
@@ -355,9 +303,7 @@ def _assert_base_ready(inspection: ReleaseInspection) -> None:
     expected_sdist = f"hol_guard-{version}.tar.gz"
     filenames = {item.filename for item in inspection.files}
     if expected_pure_wheel not in filenames or expected_sdist not in filenames:
-        raise NativeReleaseError(
-            "Base Guard release is missing its pure wheel or source distribution"
-        )
+        raise NativeReleaseError("Base Guard release is missing its pure wheel or source distribution")
 
 
 def assert_base_release_ready(registry: Registry, *, version: str) -> None:
@@ -371,9 +317,7 @@ def _copy_exclusive(source: Path, target: Path) -> None:
             try:
                 target_handle = target.open("xb")
             except FileExistsError as exc:
-                raise NativeReleaseError(
-                    f"Refusing to overwrite upload artifact: {target.name}"
-                ) from exc
+                raise NativeReleaseError(f"Refusing to overwrite upload artifact: {target.name}") from exc
             created = True
             with target_handle:
                 shutil.copyfileobj(source_handle, target_handle, length=1024 * 1024)
@@ -383,9 +327,7 @@ def _copy_exclusive(source: Path, target: Path) -> None:
         if created:
             with contextlib.suppress(OSError):
                 target.unlink()
-        raise NativeReleaseError(
-            f"Native upload artifact could not be copied: {target.name}"
-        ) from exc
+        raise NativeReleaseError(f"Native upload artifact could not be copied: {target.name}") from exc
 
 
 def plan_upload(
@@ -405,14 +347,10 @@ def plan_upload(
     remote = inspection.digests if inspection.exists else {}
     unexpected = sorted(set(remote) - set(local))
     if unexpected:
-        raise NativeReleaseError(
-            f"Registry release contains unexpected artifacts: {unexpected}"
-        )
+        raise NativeReleaseError(f"Registry release contains unexpected artifacts: {unexpected}")
     for filename, digest in remote.items():
         if local.get(filename) != digest:
-            raise NativeReleaseError(
-                f"Registry already contains different bytes for {filename}"
-            )
+            raise NativeReleaseError(f"Registry already contains different bytes for {filename}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     if output_dir.is_symlink():
@@ -445,11 +383,7 @@ def assert_published_exact(
     if remote != local:
         missing = sorted(set(local) - set(remote))
         extra = sorted(set(remote) - set(local))
-        mismatched = sorted(
-            filename
-            for filename in set(local) & set(remote)
-            if local[filename] != remote[filename]
-        )
+        mismatched = sorted(filename for filename in set(local) & set(remote) if local[filename] != remote[filename])
         raise NativeReleaseError(
             "Registry release is not the exact Guard artifact set: "
             f"missing={missing}, extra={extra}, mismatched={mismatched}"
