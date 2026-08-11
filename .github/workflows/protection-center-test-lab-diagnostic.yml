@@ -42,7 +42,25 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin release/3.0
-          git merge --no-edit origin/release/3.0
+          if ! git merge --no-edit origin/release/3.0; then
+            mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
+            printf 'merge conflicts: %s\n' "${conflicts[*]:-none}"
+            test "${#conflicts[@]}" -gt 0
+            for path in "${conflicts[@]}"; do
+              case "$path" in
+                ci/test-suite-ratchet-baseline.json|tests/test_pi_hook_latency.py)
+                  git checkout --theirs -- "$path"
+                  git add -- "$path"
+                  ;;
+                *)
+                  echo "unexpected release composition conflict: $path" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+            test -z "$(git diff --name-only --diff-filter=U)"
+            git commit --no-edit
+          fi
 
           # Batch 6 does not own the Pi latency suite. Restore the exact live
           # release version so this PR cannot carry the earlier accidental
