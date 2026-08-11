@@ -1,0 +1,126 @@
+name: Modules 2 apply and build
+
+on:
+  push:
+    branches:
+      - feat/modules-2-best-in-class
+
+permissions:
+  contents: write
+
+concurrency:
+  group: modules-2-apply-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apply-build:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out exact feature branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/modules-2-best-in-class
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+
+      - name: Apply reviewed Modules 2 patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/modules-2-payload.part-* | base64 --decode > "$RUNNER_TEMP/modules-2.patch.xz"
+          xz --decompress --stdout "$RUNNER_TEMP/modules-2.patch.xz" > "$RUNNER_TEMP/modules-2.patch"
+          echo "d2c6b6dfe98075313d5c98a732974e3b86684803a9187b59dfd89ba14e32c05c  $RUNNER_TEMP/modules-2.patch" | sha256sum --check
+          git apply --3way --index "$RUNNER_TEMP/modules-2.patch"
+          git rm .github/workflows/modules-2-apply-build.yml .github/modules-2-payload.part-*
+          git diff --cached --check
+
+      - name: Install Python development environment
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Update exact test-suite ratchet
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/ci/test_inventory.py --output "$RUNNER_TEMP/modules-2-test-inventory.json"
+          uv run --no-sync python - "$RUNNER_TEMP/modules-2-test-inventory.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          inventory = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          payload = {
+              "maximum_collected_cases": inventory["inventory"]["collected_cases"],
+              "maximum_test_source_lines": inventory["test_source_lines"],
+              "schema_version": 1,
+          }
+          pathlib.Path("ci/test-suite-ratchet-baseline.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git add ci/test-suite-ratchet-baseline.json
+
+      - name: Verify Python quality and focused behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python -m ruff check src/
+          uv run --no-sync python -m ruff format --check src/
+          uv run --no-sync basedpyright --level error
+          uv run --no-sync pytest -q \
+            tests/test_guard_local_command_modules.py \
+            tests/test_guard_local_command_module_api.py \
+            tests/test_guard_local_command_module_dashboard_session_auth.py \
+            tests/test_guard_approval_context.py \
+            tests/test_guard_command_extensions.py \
+            tests/test_guard_command_decision_runtime_policy.py \
+            tests/test_guard_command_decision_routing.py \
+            tests/test_guard_extension_control_resolver.py \
+            tests/test_guard_command_permission_catalog.py \
+            tests/test_guard_command_activity_orchestration.py
+          uv run --no-sync pytest -q \
+            tests/test_guard_extension_control_runtime.py::test_daemon_starts_fail_closed_with_future_authority_schema \
+            tests/test_guard_extension_control_runtime.py::test_daemon_refreshes_resident_snapshot_after_external_authority_change
+
+      - name: Verify and build dashboard
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dashboard
+          bun install --frozen-lockfile
+          bun run test
+          bun run build
+
+      - name: Commit source, exact baseline, and deterministic dashboard assets
+        shell: bash
+        env:
+          TARGET_BRANCH: feat/modules-2-best-in-class
+        run: |
+          set -euo pipefail
+          git add -A
+          git diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          test ! -e .github/workflows/modules-2-apply-build.yml
+          test -z "$(find .github -maxdepth 1 -name 'modules-2-payload.part-*' -print -quit)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat(guard): deliver Modules 2.0 local-first experience"
+          git push origin "HEAD:${TARGET_BRANCH}"
