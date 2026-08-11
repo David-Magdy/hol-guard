@@ -10,6 +10,7 @@ name = "hol-guard-runtime"
 path = "src/main.rs"
 
 [dependencies]
+guard-command = { path = "../guard-command" }
 guard-contracts = { path = "../guard-contracts" }
 guard-hook-core = { path = "../guard-hook-core" }
 guard-rule-contract = { path = "../guard-rule-contract" }
