@@ -1,0 +1,278 @@
+"""Shadow-only Python bridge to the native command model.
+
+This module never makes a PreToolUse decision. It exists to exercise and compare
+the native parser through the same version-matched resident runtime used by the
+PostToolUse path. Python remains authoritative until later rollout gates land.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from .codex_hook_launch_runtime import run_isolated_hook_process
+from .native_runtime import _isolated_environment, native_runtime_status
+from .native_runtime_resident import resident_native_request
+
+_MAX_REQUEST_BYTES = 64 * 1024
+_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+_MAX_SEGMENTS = 128
+_MAX_TOKENS = 2_048
+_PARSER_PROFILE = "posix-simple-v1"
+_REQUIRED_FEATURE = "pre-tool-command-model-shadow-v1"
+_RESIDENT_FEATURE = "resident-command-model-shadow-v1"
+
+
+def _plain_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _assignment_name(token: str) -> str | None:
+    name, separator, _value = token.partition("=")
+    if not separator or not name:
+        return None
+    first = name[0]
+    if first != "_" and not (first.isascii() and first.isalpha()):
+        return None
+    if not all(character == "_" or (character.isascii() and character.isalnum()) for character in name[1:]):
+        return None
+    return name
+
+
+def _decode_command_model(
+    payload: object,
+    *,
+    command: str,
+    dialect: str,
+    transport: str,
+    extraction_provenance: str,
+) -> dict[str, Any] | None:
+    """Validate and bind one native response to the request that produced it."""
+    if not isinstance(payload, dict):
+        return None
+    normalized_text = payload.get("normalized_text")
+    wrapper_chain = payload.get("wrapper_chain")
+    segments = payload.get("segments")
+    confidence = payload.get("confidence")
+    uncertainty_reason = payload.get("uncertainty_reason")
+    path_overridden = payload.get("path_overridden")
+    if (
+        not isinstance(normalized_text, str)
+        or not normalized_text
+        or normalized_text != command.strip()
+        or payload.get("dialect") != dialect
+        or payload.get("transport") != transport
+        or payload.get("extraction_provenance") != extraction_provenance
+        or wrapper_chain != []
+        or not isinstance(segments, list)
+        or len(segments) > _MAX_SEGMENTS
+        or confidence not in {"exact", "uncertain"}
+        or not isinstance(path_overridden, bool)
+        or payload.get("parser_profile") != _PARSER_PROFILE
+    ):
+        return None
+
+    if confidence == "uncertain":
+        if segments or not isinstance(uncertainty_reason, str) or not uncertainty_reason.strip() or path_overridden:
+            return None
+        return payload
+    if uncertainty_reason is not None or not segments:
+        return None
+
+    total_tokens = 0
+    aggregate_path_override = False
+    previous_end = 0
+    previous_group = -1
+    previous_pipeline = -1
+    for index, segment in enumerate(segments):
+        if not isinstance(segment, dict):
+            return None
+        text = segment.get("text")
+        tokens = segment.get("tokens")
+        arguments = segment.get("arguments")
+        environment_names = segment.get("environment_names")
+        segment_wrappers = segment.get("wrapper_chain")
+        executable = segment.get("executable")
+        segment_path_overridden = segment.get("path_overridden")
+        execution_context = segment.get("execution_context")
+        pipeline_index = segment.get("pipeline_index")
+        span = segment.get("span")
+        if (
+            not isinstance(text, str)
+            or not text
+            or text.strip() != text
+            or not isinstance(tokens, list)
+            or not tokens
+            or not all(isinstance(value, str) for value in tokens)
+            or not isinstance(arguments, list)
+            or not all(isinstance(value, str) for value in arguments)
+            or not isinstance(environment_names, list)
+            or not all(isinstance(value, str) for value in environment_names)
+            or segment_wrappers != []
+            or (executable is not None and not isinstance(executable, str))
+            or not isinstance(segment_path_overridden, bool)
+            or not isinstance(execution_context, str)
+            or not execution_context.startswith("top:")
+            or not execution_context.removeprefix("top:").isdigit()
+            or not _plain_int(pipeline_index)
+            or pipeline_index < 0
+            or not isinstance(span, dict)
+            or span.get("source") != "normalized"
+            or not _plain_int(span.get("start"))
+            or not _plain_int(span.get("end"))
+        ):
+            return None
+
+        start = span["start"]
+        end = span["end"]
+        group_index = int(execution_context.removeprefix("top:"))
+        if (
+            start < previous_end
+            or start < 0
+            or end <= start
+            or end > len(normalized_text)
+            or normalized_text[start:end] != text
+        ):
+            return None
+        if index == 0:
+            if group_index != 0 or pipeline_index != 0:
+                return None
+        elif group_index == previous_group:
+            if pipeline_index != previous_pipeline + 1:
+                return None
+        elif group_index == previous_group + 1:
+            if pipeline_index != 0:
+                return None
+        else:
+            return None
+
+        executable_index = 0
+        expected_environment_names: list[str] = []
+        while executable_index < len(tokens):
+            name = _assignment_name(tokens[executable_index])
+            if name is None:
+                break
+            expected_environment_names.append(name)
+            executable_index += 1
+        expected_executable = tokens[executable_index] if executable_index < len(tokens) else None
+        expected_arguments = tokens[executable_index + 1 :] if expected_executable is not None else []
+        expected_path_override = "PATH" in expected_environment_names
+        if (
+            environment_names != expected_environment_names
+            or executable != expected_executable
+            or arguments != expected_arguments
+            or segment_path_overridden != expected_path_override
+        ):
+            return None
+
+        total_tokens += len(tokens)
+        if total_tokens > _MAX_TOKENS:
+            return None
+        aggregate_path_override = aggregate_path_override or segment_path_overridden
+        previous_end = end
+        previous_group = group_index
+        previous_pipeline = pipeline_index
+
+    if path_overridden != aggregate_path_override:
+        return None
+    return payload
+
+
+def _request_payload(
+    command: str,
+    *,
+    dialect: str,
+    transport: str,
+    extraction_provenance: str,
+) -> tuple[dict[str, str], bytes] | None:
+    request = {
+        "command": command,
+        "dialect": dialect,
+        "transport": transport,
+        "extraction_provenance": extraction_provenance,
+    }
+    encoded = json.dumps(request, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if len(encoded) > _MAX_REQUEST_BYTES:
+        return None
+    return request, encoded
+
+
+def review_command_model_native(
+    command: str,
+    *,
+    guard_home: Path,
+    dialect: str = "posix",
+    transport: str = "shell_string",
+    extraction_provenance: str = "guard-shell",
+    timeout_seconds: float = 0.25,
+) -> dict[str, Any] | None:
+    """Return native command-model evidence in explicit shadow/force modes only."""
+    status = native_runtime_status()
+    if (
+        status.mode not in {"shadow", "force"}
+        or not status.available
+        or not status.compatible
+        or status.identity is None
+        or status.capabilities is None
+        or _REQUIRED_FEATURE not in status.capabilities.features
+        or timeout_seconds <= 0
+    ):
+        return None
+    prepared = _request_payload(
+        command,
+        dialect=dialect,
+        transport=transport,
+        extraction_provenance=extraction_provenance,
+    )
+    if prepared is None:
+        return None
+    request, request_bytes = prepared
+    timeout_seconds = min(timeout_seconds, 1.0)
+    environment = _isolated_environment()
+    decoder_arguments = {
+        "command": command,
+        "dialect": dialect,
+        "transport": transport,
+        "extraction_provenance": extraction_provenance,
+    }
+
+    if _RESIDENT_FEATURE in status.capabilities.features:
+        resident_envelope = json.dumps(
+            {"operation": "command_model", "request": request},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        resident_output = resident_native_request(
+            executable=status.identity.path,
+            identity_sha256=status.identity.sha256,
+            guard_home=guard_home,
+            environment=environment,
+            payload=resident_envelope,
+            timeout_seconds=timeout_seconds,
+        )
+        if resident_output is not None:
+            try:
+                decoded = _decode_command_model(json.loads(resident_output), **decoder_arguments)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                decoded = None
+            if decoded is not None:
+                return decoded
+
+    result = run_isolated_hook_process(
+        (str(status.identity.path), "command-model", "--stdin"),
+        input_text=request_bytes.decode("utf-8"),
+        cwd=status.identity.path.parent,
+        environment=environment,
+        timeout_seconds=timeout_seconds,
+        output_limit=_MAX_RESPONSE_BYTES,
+    )
+    if result.returncode != 0 or result.timed_out or result.output_limit_exceeded or result.containment_failed:
+        return None
+    try:
+        return _decode_command_model(json.loads(result.stdout), **decoder_arguments)
+    except json.JSONDecodeError:
+        return None
+
+
+__all__ = ["review_command_model_native"]
