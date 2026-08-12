@@ -264,10 +264,7 @@ fn error_response(code: &'static str, retryable: bool) -> Vec<u8> {
     )
 }
 
-fn write_overload(
-    pending: &mut PendingRequest,
-    generation_id: &[u8; GENERATION_ID_BYTES],
-) {
+fn write_overload(pending: &mut PendingRequest, generation_id: &[u8; GENERATION_ID_BYTES]) {
     let response = error_response("native_overloaded", true);
     let _ = write_bound_response(pending, generation_id, &response);
 }
@@ -372,9 +369,7 @@ fn admit_connection(
 ) -> Result<(), String> {
     match sender.try_send(stream) {
         Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
-        Err(TrySendError::Disconnected(_)) => {
-            Err("native_resident_worker_pool_stopped".to_owned())
-        }
+        Err(TrySendError::Disconnected(_)) => Err("native_resident_worker_pool_stopped".to_owned()),
     }
 }
 
@@ -485,10 +480,10 @@ fn decode_hex<const N: usize>(encoded: &str) -> Result<[u8; N], String> {
     }
     let mut output = [0u8; N];
     for (index, pair) in encoded.as_bytes().chunks_exact(2).enumerate() {
-        let high = hex_nibble(pair[0])
-            .ok_or_else(|| "native_resident_bootstrap_invalid".to_owned())?;
-        let low = hex_nibble(pair[1])
-            .ok_or_else(|| "native_resident_bootstrap_invalid".to_owned())?;
+        let high =
+            hex_nibble(pair[0]).ok_or_else(|| "native_resident_bootstrap_invalid".to_owned())?;
+        let low =
+            hex_nibble(pair[1]).ok_or_else(|| "native_resident_bootstrap_invalid".to_owned())?;
         output[index] = (high << 4) | low;
     }
     Ok(output)
@@ -510,10 +505,8 @@ fn read_line_bounded(reader: &mut dyn BufRead, maximum: usize) -> Result<String,
 fn read_resident_bootstrap() -> Result<ResidentBootstrap, String> {
     let stdin = io::stdin();
     let mut reader = io::BufReader::new(stdin.lock());
-    let token = decode_hex::<AUTH_TOKEN_BYTES>(&read_line_bounded(
-        &mut reader,
-        AUTH_TOKEN_BYTES * 2,
-    )?)?;
+    let token =
+        decode_hex::<AUTH_TOKEN_BYTES>(&read_line_bounded(&mut reader, AUTH_TOKEN_BYTES * 2)?)?;
     let generation_id = decode_hex::<GENERATION_ID_BYTES>(&read_line_bounded(
         &mut reader,
         GENERATION_ID_BYTES * 2,
