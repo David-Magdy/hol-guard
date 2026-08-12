@@ -46,7 +46,7 @@ jobs:
           uv run --no-sync python -m ruff format --check tests/test_rust_hardening_contracts.py
           uv run --no-sync python -m ruff check tests/test_rust_hardening_contracts.py
           uv run --no-sync pytest -q tests/test_rust_hardening_contracts.py --tb=short
-          git diff --check
+          git diff --cached --check
       - name: Commit validated foundation
         shell: bash
         run: |
