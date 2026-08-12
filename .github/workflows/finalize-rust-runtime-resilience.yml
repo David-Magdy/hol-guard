@@ -1,0 +1,97 @@
+name: Finalize Rust runtime resilience
+
+on:
+  push:
+    branches: [feat/rust-runtime-resilience-v2]
+    paths:
+      - ".github/workflows/finalize-rust-runtime-resilience.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          ref: feat/rust-runtime-resilience-v2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Prepare clean validation tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -r --ignore-unmatch rust/target
+          uv sync --frozen --extra dev --python 3.12
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.88.0
+      - name: Validate Python and Rust resilience boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python_files=(
+            src/codex_plugin_scanner/guard/native_runtime.py
+            src/codex_plugin_scanner/guard/native_runtime_resident.py
+            src/codex_plugin_scanner/guard/native_runtime_resilience.py
+            ci/native_runtime/test_guard_native_runtime_resident.py
+            ci/native_runtime/test_guard_native_runtime_windows_resident.py
+            ci/native_runtime/test_native_runtime_recovery.py
+            tests/test_native_runtime_resilience.py
+            tests/test_rust_hardening_contracts.py
+          )
+          uv run --no-sync python -m ruff format "${python_files[@]}"
+          uv run --no-sync python -m ruff check "${python_files[@]}"
+          cargo fmt --manifest-path rust/Cargo.toml --all --check
+          cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+          uv run --no-sync pytest -q \
+            tests/test_native_runtime_resilience.py \
+            tests/test_rust_hardening_contracts.py \
+            ci/native_runtime/test_guard_native_runtime_resident.py \
+            ci/native_runtime/test_guard_native_runtime_windows_resident.py \
+            ci/native_runtime/test_native_runtime_recovery.py \
+            --tb=short
+          uv run --no-sync python - <<'PY'
+          from pathlib import Path
+          from codex_plugin_scanner.guard.native_runtime import native_runtime_health
+          from codex_plugin_scanner.guard.native_runtime_resilience import NativeRuntimeHealthSnapshot
+
+          snapshot = native_runtime_health(Path.cwd())
+          assert isinstance(snapshot, NativeRuntimeHealthSnapshot)
+          assert not hasattr(__import__(
+              "codex_plugin_scanner.guard.native_runtime",
+              fromlist=["choose_post_tool_response"],
+          ), "choose_post_tool_response")
+          PY
+          git diff --check
+      - name: Commit validated cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=feat/rust-runtime-resilience-v2
+          remote_sha=$(git ls-remote --exit-code origin "refs/heads/${branch}" | awk '{print $1}')
+          if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
+            echo "Branch moved while resilience validation ran" >&2
+            exit 1
+          fi
+          rm -f .github/workflows/finalize-rust-runtime-resilience.yml
+          git add -A
+          git diff --cached --check
+          if git diff --cached --name-only | grep -q '^rust/target/'; then
+            if git diff --cached --name-status | awk '$1 != "D" && $2 ~ /^rust\/target\//' | grep -q .; then
+              echo "Rust build output would remain in the branch" >&2
+              exit 1
+            fi
+          fi
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git commit --signoff -m "fix(guard): complete native runtime resilience boundary"
+          git push origin "HEAD:refs/heads/${branch}"
