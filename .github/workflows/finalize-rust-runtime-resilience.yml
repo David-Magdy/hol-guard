@@ -1,5 +1,6 @@
 name: Finalize Rust runtime resilience
 
+# Temporary self-removing validation workflow for the feature branch.
 on:
   push:
     branches: [feat/rust-runtime-resilience-v2]
