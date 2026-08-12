@@ -90,6 +90,73 @@ def test_fail_closed_uses_supported_codex_deny_shapes() -> None:
     assert prompt["continue"] is False
 
 
+def test_unavailable_prompt_warns_without_stopping_conversation() -> None:
+    assert bridge._unavailable_response("UserPromptSubmit", "review failed") == {
+        "continue": True,
+        "systemMessage": "review failed",
+    }
+    assert (
+        bridge._unavailable_response("PreToolUse", "review failed")["hookSpecificOutput"]["permissionDecision"]
+        == "deny"
+    )
+
+
+def test_launcher_integrity_failure_does_not_stop_user_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": "resume"})),
+    )
+    monkeypatch.setattr(bridge, "_daemon_response", lambda **_kwargs: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(
+        bridge,
+        "_trusted_hook_launch",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("stale manifest")),
+    )
+    config = _bridge_config(guard_home, 5474)
+    config["manifest_path"] = guard_home / "managed" / "codex" / "hooks-fixture.manifest.json"
+    config["config_json"] = "{}"
+
+    assert bridge.main(**config) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "continue": True,
+        "systemMessage": bridge._LAUNCH_INTEGRITY_REASON,
+    }
+
+
+def test_launcher_integrity_failure_still_denies_pretool_use(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash"})),
+    )
+    monkeypatch.setattr(bridge, "_daemon_response", lambda **_kwargs: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(
+        bridge,
+        "_trusted_hook_launch",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("stale manifest")),
+    )
+    config = _bridge_config(guard_home, 5474)
+    config["manifest_path"] = guard_home / "managed" / "codex" / "hooks-fixture.manifest.json"
+    config["config_json"] = "{}"
+
+    assert bridge.main(**config) == 0
+    response = json.loads(capsys.readouterr().out)
+    assert response["hookSpecificOutput"] == {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": bridge._LAUNCH_INTEGRITY_REASON,
+    }
+
+
 def test_codex_post_tool_response_excludes_daemon_metadata() -> None:
     response = bridge._codex_hook_response(
         {
