@@ -98,7 +98,7 @@ while True:
 
 def test_resident_runtime_reuses_one_contained_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resident, "_START_TIMEOUT_SECONDS", 2.0)
-    with tempfile.TemporaryDirectory(prefix="hgr-", dir=Path.cwd()) as short_tmp:
+    with tempfile.TemporaryDirectory(prefix="hgr-") as short_tmp:
         root = Path(short_tmp)
         executable = _fake_runtime(root)
         guard_home = root / "guard-home"
