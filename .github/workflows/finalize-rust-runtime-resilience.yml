@@ -33,7 +33,7 @@ jobs:
           uv sync --frozen --extra dev --python 3.12
           rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
           rustup default 1.88.0
-      - name: Validate Python and Rust resilience boundaries
+      - name: Ruff format and lint
         shell: bash
         run: |
           set -euo pipefail
@@ -49,9 +49,25 @@ jobs:
           )
           uv run --no-sync python -m ruff format "${python_files[@]}"
           uv run --no-sync python -m ruff check "${python_files[@]}"
+      - name: Rust format
+        shell: bash
+        run: |
+          set -euo pipefail
           cargo fmt --manifest-path rust/Cargo.toml --all --check
+      - name: Rust clippy
+        shell: bash
+        run: |
+          set -euo pipefail
           cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+      - name: Rust tests
+        shell: bash
+        run: |
+          set -euo pipefail
           cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+      - name: Python resilience tests
+        shell: bash
+        run: |
+          set -euo pipefail
           uv run --no-sync pytest -q \
             tests/test_native_runtime_resilience.py \
             tests/test_rust_hardening_contracts.py \
@@ -59,6 +75,10 @@ jobs:
             ci/native_runtime/test_guard_native_runtime_windows_resident.py \
             ci/native_runtime/test_native_runtime_recovery.py \
             --tb=short
+      - name: Import and health smoke
+        shell: bash
+        run: |
+          set -euo pipefail
           uv run --no-sync python - <<'PY'
           from pathlib import Path
           from codex_plugin_scanner.guard.native_runtime import native_runtime_health
@@ -71,6 +91,10 @@ jobs:
               fromlist=["choose_post_tool_response"],
           ), "choose_post_tool_response")
           PY
+      - name: Diff hygiene
+        shell: bash
+        run: |
+          set -euo pipefail
           git diff --check
       - name: Commit validated cleanup
         shell: bash
