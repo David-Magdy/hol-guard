@@ -29,6 +29,8 @@ jobs:
             echo "Feature branch moved before release-train synchronization" >&2
             exit 1
           fi
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
           git fetch --no-tags origin release/3.0
           release_sha=$(git rev-parse 'origin/release/3.0^{commit}')
           echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
@@ -39,6 +41,11 @@ jobs:
           if [[ "$merge_status" -ne 0 ]]; then
             mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
             printf 'merge conflicts: %s\n' "${conflicts[*]:-none}"
+            if [[ "${#conflicts[@]}" -eq 0 ]]; then
+              echo "git merge failed without content conflicts" >&2
+              git status --short >&2
+              exit 1
+            fi
             if [[ "${#conflicts[@]}" -ne 1 || "${conflicts[0]}" != "ci/test-suite-ratchet-baseline.json" ]]; then
               echo "Release train introduced an unexpected conflict" >&2
               exit 1
@@ -149,7 +156,5 @@ jobs:
             exit 1
           fi
           test -f .git/MERGE_HEAD
-          git config user.name "Michael Kantor"
-          git config user.email "6068672+kantorcodes@users.noreply.github.com"
           git commit --signoff -m "merge: synchronize native publication candidate"
           git push origin "HEAD:refs/heads/${branch}"
