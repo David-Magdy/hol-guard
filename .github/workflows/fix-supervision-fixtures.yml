@@ -33,14 +33,16 @@ jobs:
               raise RuntimeError("NativeHookRequestV1 fixture anchor changed")
           path.write_text(text.replace(old, new, 1), encoding="utf-8")
           PY
-      - name: Refresh and verify Rust dependency graph
+      - name: Refresh, format, and verify Rust dependency graph
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
           rustup default 1.88.0
           cargo check --manifest-path rust/Cargo.toml --workspace --all-targets
+          cargo fmt --manifest-path rust/Cargo.toml --all
           cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo check --manifest-path rust/Cargo.toml --locked --workspace --all-targets
           git diff --check
       - name: Commit fixture repair
         shell: bash
