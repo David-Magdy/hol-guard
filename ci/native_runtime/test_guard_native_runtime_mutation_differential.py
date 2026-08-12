@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import random
 import string
+import tempfile
 import time
 from pathlib import Path
 
@@ -99,17 +100,21 @@ def _payload(rng: random.Random, case_index: int) -> dict[str, object]:
     return payload
 
 
-def _request(tmp_path: Path, *, payload: dict[str, object], request_id: str) -> HookReviewRequest:
-    guard_home = tmp_path / "guard-home"
-    guard_home.mkdir(mode=0o700, exist_ok=True)
+def _request(
+    workspace: Path,
+    *,
+    guard_home: Path,
+    payload: dict[str, object],
+    request_id: str,
+) -> HookReviewRequest:
     return HookReviewRequest(
         harness="claude-code",
         event_name="PostToolUse",
         payload=payload,
         payload_kind="inline",
         config_path=None,
-        cwd=tmp_path,
-        home_dir=tmp_path,
+        cwd=workspace,
+        home_dir=workspace,
         guard_home=guard_home,
         source_scope="project",
         request_id=request_id,
@@ -120,27 +125,31 @@ def _request(tmp_path: Path, *, payload: dict[str, object], request_id: str) -> 
 @pytest.mark.parametrize("seed", _SEEDS)
 def test_mutated_inline_corpus_keeps_exact_python_rust_parity(tmp_path: Path, seed: int) -> None:
     rng = random.Random(seed)
-    store = GuardStore(tmp_path / "guard-home")
-    engine = _engine(store)
-    try:
-        for case_index in range(_CASES_PER_SEED):
-            request = _request(
-                tmp_path,
-                payload=_payload(rng, case_index),
-                request_id=f"mutation-{seed}-{case_index}",
-            )
-            python_response = engine.review(request)
-            native_response = review_post_tool_native(request, observe_mode=False)
-            assert native_response is not None
-            assert parity_signature(native_response) == parity_signature(python_response), (
-                seed,
-                case_index,
-                request.payload,
-                native_response,
-                python_response,
-            )
-    finally:
-        close_resident_native_runtimes()
+    with tempfile.TemporaryDirectory(prefix=f"hgm-{seed}-", dir="/tmp") as short_tmp:
+        guard_home = Path(short_tmp) / "guard-home"
+        guard_home.mkdir(mode=0o700)
+        store = GuardStore(guard_home)
+        engine = _engine(store)
+        try:
+            for case_index in range(_CASES_PER_SEED):
+                request = _request(
+                    tmp_path,
+                    guard_home=guard_home,
+                    payload=_payload(rng, case_index),
+                    request_id=f"mutation-{seed}-{case_index}",
+                )
+                python_response = engine.review(request)
+                native_response = review_post_tool_native(request, observe_mode=False)
+                assert native_response is not None, (seed, case_index)
+                assert parity_signature(native_response) == parity_signature(python_response), (
+                    seed,
+                    case_index,
+                    request.payload,
+                    native_response,
+                    python_response,
+                )
+        finally:
+            close_resident_native_runtimes()
 
 
 def test_mutation_corpus_is_deterministic() -> None:
