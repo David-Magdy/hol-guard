@@ -1,5 +1,6 @@
 name: Finalize Rust runtime supervision
 
+# Self-removing validation workflow rerun after the Rust fixture repair.
 on:
   push:
     branches: [feat/rust-runtime-supervision-final]
