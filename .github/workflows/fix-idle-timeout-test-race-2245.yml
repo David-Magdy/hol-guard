@@ -26,10 +26,10 @@ jobs:
           version: "0.9.26"
           enable-cache: true
       - run: uv sync --frozen --extra dev --python 3.12
-      - name: Replace wall-clock polling with lifecycle synchronization
+      - name: Isolate idle shutdown from independent worker backfill
         env:
-          OLD_BLOCK_B64: "ICAgICAgICBkZWFkbGluZSA9IHRpbWUubW9ub3RvbmljKCkgKyAyCiAgICAgICAgd2hpbGUgdGltZS5tb25vdG9uaWMoKSA8IGRlYWRsaW5lOgogICAgICAgICAgICBydW50aW1lX3N0YXRlID0gc3RvcmUuZ2V0X3J1bnRpbWVfc3RhdGUoKQogICAgICAgICAgICBkYWVtb25fdGhyZWFkID0gZGFlbW9uLl90aHJlYWQKICAgICAgICAgICAgaWYgcnVudGltZV9zdGF0ZSBpcyBOb25lIGFuZCBkYWVtb25fdGhyZWFkIGlzIG5vdCBOb25lIGFuZCBub3QgZGFlbW9uX3RocmVhZC5pc19hbGl2ZSgpOgogICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgdGltZS5zbGVlcCgwLjAyKQoKICAgICAgICBydW50aW1lX3N0YXRlID0gc3RvcmUuZ2V0X3J1bnRpbWVfc3RhdGUoKQogICAgICAgIGRhZW1vbl90aHJlYWQgPSBkYWVtb24uX3RocmVhZAogICAgICAgIGRhZW1vbi5zdG9wKCkKCiAgICAgICAgYXNzZXJ0IHJ1bnRpbWVfc3RhdGUgaXMgTm9uZQogICAgICAgIGFzc2VydCBkYWVtb25fdGhyZWFkIGlzIG5vdCBOb25lCiAgICAgICAgYXNzZXJ0IGRhZW1vbl90aHJlYWQuaXNfYWxpdmUoKSBpcyBGYWxzZQo="
-          NEW_BLOCK_B64: "ICAgICAgICBhc3NlcnQgZGFlbW9uLl9zaHV0ZG93bl9zdGFydGVkLndhaXQodGltZW91dD0zKQogICAgICAgIGRhZW1vbl90aHJlYWQgPSBkYWVtb24uX3RocmVhZAogICAgICAgIGFzc2VydCBkYWVtb25fdGhyZWFkIGlzIG5vdCBOb25lCiAgICAgICAgZGFlbW9uX3RocmVhZC5qb2luKHRpbWVvdXQ9MTApCiAgICAgICAgcnVudGltZV9zdGF0ZSA9IHN0b3JlLmdldF9ydW50aW1lX3N0YXRlKCkKICAgICAgICBkYWVtb24uc3RvcCgpCgogICAgICAgIGFzc2VydCBydW50aW1lX3N0YXRlIGlzIE5vbmUKICAgICAgICBhc3NlcnQgZGFlbW9uX3RocmVhZC5pc19hbGl2ZSgpIGlzIEZhbHNlCg=="
+          OLD_METHOD_B64: "ICAgIGRlZiB0ZXN0X2d1YXJkX2RhZW1vbl9iYWNrZ3JvdW5kX3N0YXJ0X2F1dG9fc3RvcHNfYWZ0ZXJfaWRsZV90aW1lb3V0KHNlbGYsIHRtcF9wYXRoKSAtPiBOb25lOgogICAgICAgIGd1YXJkX2hvbWUgPSB0bXBfcGF0aCAvICJweXRlc3Qtb2YtdXNlciIgLyAiZ3VhcmQtaG9tZSIKICAgICAgICBzdG9yZSA9IEd1YXJkU3RvcmUoZ3VhcmRfaG9tZSkKICAgICAgICBkYWVtb24gPSBHdWFyZERhZW1vblNlcnZlcihzdG9yZSwgaG9zdD0iMTI3LjAuMC4xIiwgcG9ydD0wLCBpZGxlX3RpbWVvdXRfc2Vjb25kcz0wLjA1KQogICAgICAgIGRhZW1vbi5zdGFydCgpCgogICAgICAgIGRlYWRsaW5lID0gdGltZS5tb25vdG9uaWMoKSArIDIKICAgICAgICB3aGlsZSB0aW1lLm1vbm90b25pYygpIDwgZGVhZGxpbmU6CiAgICAgICAgICAgIHJ1bnRpbWVfc3RhdGUgPSBzdG9yZS5nZXRfcnVudGltZV9zdGF0ZSgpCiAgICAgICAgICAgIGRhZW1vbl90aHJlYWQgPSBkYWVtb24uX3RocmVhZAogICAgICAgICAgICBpZiBydW50aW1lX3N0YXRlIGlzIE5vbmUgYW5kIGRhZW1vbl90aHJlYWQgaXMgbm90IE5vbmUgYW5kIG5vdCBkYWVtb25fdGhyZWFkLmlzX2FsaXZlKCk6CiAgICAgICAgICAgICAgICBicmVhawogICAgICAgICAgICB0aW1lLnNsZWVwKDAuMDIpCgogICAgICAgIHJ1bnRpbWVfc3RhdGUgPSBzdG9yZS5nZXRfcnVudGltZV9zdGF0ZSgpCiAgICAgICAgZGFlbW9uX3RocmVhZCA9IGRhZW1vbi5fdGhyZWFkCiAgICAgICAgZGFlbW9uLnN0b3AoKQoKICAgICAgICBhc3NlcnQgcnVudGltZV9zdGF0ZSBpcyBOb25lCiAgICAgICAgYXNzZXJ0IGRhZW1vbl90aHJlYWQgaXMgbm90IE5vbmUKICAgICAgICBhc3NlcnQgZGFlbW9uX3RocmVhZC5pc19hbGl2ZSgpIGlzIEZhbHNlCg=="
+          NEW_METHOD_B64: "ICAgIGRlZiB0ZXN0X2d1YXJkX2RhZW1vbl9iYWNrZ3JvdW5kX3N0YXJ0X2F1dG9fc3RvcHNfYWZ0ZXJfaWRsZV90aW1lb3V0KAogICAgICAgIHNlbGYsCiAgICAgICAgdG1wX3BhdGgsCiAgICAgICAgbW9ua2V5cGF0Y2g6IHB5dGVzdC5Nb25rZXlQYXRjaCwKICAgICkgLT4gTm9uZToKICAgICAgICBndWFyZF9ob21lID0gdG1wX3BhdGggLyAicHl0ZXN0LW9mLXVzZXIiIC8gImd1YXJkLWhvbWUiCiAgICAgICAgc3RvcmUgPSBHdWFyZFN0b3JlKGd1YXJkX2hvbWUpCiAgICAgICAgZGFlbW9uID0gR3VhcmREYWVtb25TZXJ2ZXIoc3RvcmUsIGhvc3Q9IjEyNy4wLjAuMSIsIHBvcnQ9MCwgaWRsZV90aW1lb3V0X3NlY29uZHM9MC4wNSkKICAgICAgICBtb25rZXlwYXRjaC5zZXRhdHRyKAogICAgICAgICAgICBkYWVtb24uX3NlcnZlci5ob29rX3Byb2Nlc3NfcnVubmVyLAogICAgICAgICAgICAiZW5hYmxlX2Z1bGxfY2FwYWNpdHkiLAogICAgICAgICAgICBsYW1iZGEgKipfa3dhcmdzOiBOb25lLAogICAgICAgICkKICAgICAgICBkYWVtb24uc3RhcnQoKQoKICAgICAgICBhc3NlcnQgZGFlbW9uLl9zaHV0ZG93bl9zdGFydGVkLndhaXQodGltZW91dD0zKQogICAgICAgIGRhZW1vbl90aHJlYWQgPSBkYWVtb24uX3RocmVhZAogICAgICAgIGFzc2VydCBkYWVtb25fdGhyZWFkIGlzIG5vdCBOb25lCiAgICAgICAgZGFlbW9uX3RocmVhZC5qb2luKHRpbWVvdXQ9MTApCiAgICAgICAgcnVudGltZV9zdGF0ZSA9IHN0b3JlLmdldF9ydW50aW1lX3N0YXRlKCkKICAgICAgICBkYWVtb24uc3RvcCgpCgogICAgICAgIGFzc2VydCBydW50aW1lX3N0YXRlIGlzIE5vbmUKICAgICAgICBhc3NlcnQgZGFlbW9uX3RocmVhZC5pc19hbGl2ZSgpIGlzIEZhbHNlCg=="
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -39,24 +39,31 @@ jobs:
 
           path = Path("tests/test_guard_surface_server.py")
           text = path.read_text(encoding="utf-8")
-          old = base64.b64decode(os.environ["OLD_BLOCK_B64"]).decode("utf-8")
-          new = base64.b64decode(os.environ["NEW_BLOCK_B64"]).decode("utf-8")
+          old = base64.b64decode(os.environ["OLD_METHOD_B64"]).decode("utf-8")
+          new = base64.b64decode(os.environ["NEW_METHOD_B64"]).decode("utf-8")
           if text.count(old) != 1:
-              raise RuntimeError("Expected exactly one idle-timeout polling block")
+              raise RuntimeError("Expected exactly one idle-timeout lifecycle test")
           path.write_text(text.replace(old, new, 1), encoding="utf-8")
           PY
           uv run --no-sync python -m ruff format tests/test_guard_surface_server.py
           uv run --no-sync python -m ruff check tests/test_guard_surface_server.py
-      - name: Exercise idle and stream lifecycle contracts repeatedly
+      - name: Stress the isolated idle-shutdown contract
         run: |
           set -euo pipefail
           for attempt in $(seq 1 16); do
-            echo "idle lifecycle attempt ${attempt}"
+            echo "idle shutdown attempt ${attempt}"
             uv run --no-sync pytest -q \
-              tests/test_guard_surface_server.py::TestGuardSurfaceServer::test_guard_daemon_background_start_auto_stops_after_idle_timeout \
+              tests/test_guard_surface_server.py::TestGuardSurfaceServer::test_guard_daemon_background_start_auto_stops_after_idle_timeout
+          done
+      - name: Stress the active-stream liveness contract
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 8); do
+            echo "active stream attempt ${attempt}"
+            uv run --no-sync pytest -q \
               tests/test_guard_surface_server.py::TestGuardSurfaceServer::test_guard_daemon_keeps_stream_clients_alive_past_idle_timeout
           done
-      - name: Verify blocked AIBOM containment contract once
+      - name: Verify blocked AIBOM containment remains fail-closed
         run: |
           set -euo pipefail
           uv run --no-sync pytest -q \
@@ -80,7 +87,7 @@ jobs:
               raise SystemExit(f"test-line ceiling exceeded: {lines} > {baseline['maximum_test_source_lines']}")
           print(f"ratchet ok: collected={collected} lines={lines}")
           PY
-      - name: Commit verified test synchronization and remove helper
+      - name: Commit verified test isolation and remove helper
         run: |
           set -euo pipefail
           git rm .github/workflows/fix-idle-timeout-test-race-2245.yml
@@ -94,5 +101,5 @@ jobs:
           fi
           git config user.name "Michael Kantor"
           git config user.email "6068672+kantorcodes@users.noreply.github.com"
-          git commit --signoff -m "test(guard): synchronize idle-timeout lifecycle assertion"
+          git commit --signoff -m "test(guard): isolate idle shutdown from worker backfill"
           git push origin "HEAD:refs/heads/${branch}"
