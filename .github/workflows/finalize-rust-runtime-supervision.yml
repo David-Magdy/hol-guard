@@ -87,6 +87,19 @@ jobs:
           if text.count(old) != 1:
               raise RuntimeError("resident rotation anchor changed")
           resident.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          rust_resident = Path("rust/crates/guard-runtime/src/resident.rs")
+          text = rust_resident.read_text(encoding="utf-8")
+          old = '''        let mut pending = match read_request_header(stream) {\n            Ok(value) => value,\n            Err(_) => return,\n        };\n'''
+          new = '''        let pending = match read_request_header(stream) {\n            Ok(value) => value,\n            Err(_) => return,\n        };\n'''
+          if text.count(old) != 1:
+              raise RuntimeError("resident admission binding anchor changed")
+          text = text.replace(old, new, 1)
+          old = '''            Err(TrySendError::Full(returned)) => {\n                pending = returned;\n                write_overload(&mut pending, &authentication_generation);\n            }\n'''
+          new = '''            Err(TrySendError::Full(mut returned)) => {\n                write_overload(&mut returned, &authentication_generation);\n            }\n'''
+          if text.count(old) != 1:
+              raise RuntimeError("resident overload return anchor changed")
+          rust_resident.write_text(text.replace(old, new, 1), encoding="utf-8")
           PY
       - name: Refresh Rust lockfile and compile
         shell: bash
