@@ -23,10 +23,12 @@ def test_privacy_safe_reason_validation_uses_bounded_safe_characters() -> None:
     assert _public_reason("unsafe reason /private/path", "fallback") == "fallback"
 
 
-def test_native_error_requires_the_exact_retryable_error_envelope() -> None:
+def test_native_error_requires_a_bounded_known_error_envelope() -> None:
     assert _native_error({"error": "native_overloaded", "retryable": True}) == "native_overloaded"
-    assert _native_error({"error": "native_overloaded", "retryable": False}) is None
+    assert _native_error({"error": "native_overloaded", "retryable": False}) == "native_overloaded"
+    assert _native_error({"error": "native_overloaded", "retryable": "yes"}) is None
     assert _native_error({"error": "native_overloaded", "retryable": True, "extra": 1}) is None
+    assert _native_error({"error": "unknown", "retryable": True}) is None
 
 
 def test_command_model_reuses_the_canonical_native_error_parser() -> None:
