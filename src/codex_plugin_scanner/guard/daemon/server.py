@@ -8008,6 +8008,10 @@ class GuardDaemonServer:
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
+            if self._shutdown_started.is_set():
+                if self._aibom_refresh_thread is not None and self._aibom_refresh_thread.is_alive():
+                    raise RuntimeError("AIBOM inventory refresh is still stopping")
+                raise RuntimeError("Guard daemon is still stopping")
             return
         self._thread = None
         self._begin_service()
