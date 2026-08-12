@@ -88,12 +88,20 @@ jobs:
               raise RuntimeError("resident rotation anchor changed")
           resident.write_text(text.replace(old, new, 1), encoding="utf-8")
           PY
-      - name: Refresh lockfile and format
+      - name: Refresh Rust lockfile and compile
         shell: bash
         run: |
           set -euo pipefail
           cargo check --manifest-path rust/Cargo.toml --workspace --all-targets
+      - name: Format Rust
+        shell: bash
+        run: |
+          set -euo pipefail
           cargo fmt --manifest-path rust/Cargo.toml --all
+      - name: Format Python
+        shell: bash
+        run: |
+          set -euo pipefail
           python_files=(
             src/codex_plugin_scanner/guard/native_runtime.py
             src/codex_plugin_scanner/guard/native_runtime_identity.py
