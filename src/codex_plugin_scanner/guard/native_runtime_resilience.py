@@ -249,11 +249,7 @@ def native_runtime_health_snapshot(
         now = time.monotonic()
         _refresh_circuit(state, now)
         circuit_open = state.permanently_quarantined or state.circuit_until > now
-        cooldown = (
-            _CIRCUIT_COOLDOWN_SECONDS
-            if state.permanently_quarantined
-            else max(0.0, state.circuit_until - now)
-        )
+        cooldown = _CIRCUIT_COOLDOWN_SECONDS if state.permanently_quarantined else max(0.0, state.circuit_until - now)
         return NativeRuntimeHealthSnapshot(
             state=state.state,
             reason=state.reason,
