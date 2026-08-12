@@ -50,31 +50,21 @@ jobs:
           uv run --no-sync python -m ruff format "${python_files[@]}"
           uv run --no-sync python -m ruff check "${python_files[@]}"
       - name: Rust format
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo fmt --manifest-path rust/Cargo.toml --all --check
+        run: cargo fmt --manifest-path rust/Cargo.toml --all --check
       - name: Rust clippy
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
       - name: Rust tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
-      - name: Python resilience tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv run --no-sync pytest -q \
-            tests/test_native_runtime_resilience.py \
-            tests/test_rust_hardening_contracts.py \
-            ci/native_runtime/test_guard_native_runtime_resident.py \
-            ci/native_runtime/test_guard_native_runtime_windows_resident.py \
-            ci/native_runtime/test_native_runtime_recovery.py \
-            --tb=short
+        run: cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+      - name: Python health-state contracts
+        run: uv run --no-sync pytest -x -vv tests/test_native_runtime_resilience.py --tb=short
+      - name: Rust hardening document contracts
+        run: uv run --no-sync pytest -x -vv tests/test_rust_hardening_contracts.py --tb=short
+      - name: Resident runtime contracts
+        run: uv run --no-sync pytest -x -vv ci/native_runtime/test_guard_native_runtime_resident.py --tb=short
+      - name: Windows resident runtime contracts
+        run: uv run --no-sync pytest -x -vv ci/native_runtime/test_guard_native_runtime_windows_resident.py --tb=short
+      - name: Native recovery contracts
+        run: uv run --no-sync pytest -x -vv ci/native_runtime/test_native_runtime_recovery.py --tb=short
       - name: Import and health smoke
         shell: bash
         run: |
@@ -92,10 +82,7 @@ jobs:
           ), "choose_post_tool_response")
           PY
       - name: Diff hygiene
-        shell: bash
-        run: |
-          set -euo pipefail
-          git diff --check
+        run: git diff --check
       - name: Commit validated cleanup
         shell: bash
         run: |
