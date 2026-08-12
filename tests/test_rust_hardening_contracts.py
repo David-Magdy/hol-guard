@@ -31,7 +31,7 @@ def test_native_capability_ownership_has_one_declared_owner_per_capability() -> 
             "hook_worker_direct",
         }
         assert isinstance(item["python_owner"], str) and item["python_owner"]
-        if item["python_removal_status"] == "dead_duplicate_remove":
+        if item["python_removal_status"] in {"dead_duplicate_remove", "removed"}:
             dead_duplicates += 1
     assert dead_duplicates >= 1
 
@@ -95,7 +95,7 @@ def test_dead_python_cleanup_is_an_explicit_release_gate() -> None:
     selector = next(
         item for item in capabilities if isinstance(item, dict) and item.get("id") == "native_backend_response_selector"
     )
-    assert selector["python_removal_status"] == "dead_duplicate_remove"
+    assert selector["python_removal_status"] == "removed"
     evidence = selector["evidence"]
     assert isinstance(evidence, dict)
     assert evidence["deletion_task"] == "NRH-T112"
@@ -104,3 +104,12 @@ def test_dead_python_cleanup_is_an_explicit_release_gate() -> None:
     todo = (ROOT / "docs" / "guard" / "rust-runtime-hardening-todo.md").read_text(encoding="utf-8")
     assert "replaced, unreachable, or untested python" in prd.lower()
     assert "NRH-T112" in todo and "choose_post_tool_response" in todo
+
+
+def test_removed_native_selector_is_absent_from_the_package() -> None:
+    from codex_plugin_scanner.guard import native_runtime
+
+    assert not hasattr(native_runtime, "choose_post_tool_response")
+    source = (ROOT / "src" / "codex_plugin_scanner" / "guard" / "native_runtime.py").read_text(encoding="utf-8")
+    assert "def choose_post_tool_response" not in source
+    assert '"choose_post_tool_response"' not in source

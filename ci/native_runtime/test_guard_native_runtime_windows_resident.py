@@ -126,7 +126,7 @@ def test_windows_service_rotates_auth_secret_and_stays_closed(
     monkeypatch.setattr(
         service,
         "_run",
-        lambda _stop_event, auth_token: observed.append(auth_token),
+        lambda _stop_event, auth_token, _generation: observed.append(auth_token),
     )
 
     assert not service._ensure_started(timeout_seconds=0.1)

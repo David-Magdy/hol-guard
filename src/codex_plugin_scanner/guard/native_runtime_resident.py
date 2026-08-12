@@ -1,10 +1,13 @@
-"""Resident local transport for the Rust Guard runtime.
+"""Authenticated, bounded resident transport for the Rust Guard runtime.
 
-POSIX uses an owner-only Unix socket. Windows uses an authenticated loopback
-transport because default named-pipe ACLs are not acceptable for Guard hook
-material. The per-process authentication secret is generated in Python and is
-sent to the contained Rust child only through inherited stdin. It is never
-placed in argv, environment variables, files, logs, or request payloads.
+Linux and macOS use an owner-private Unix socket. Windows uses IPv4 loopback
+because default named-pipe ACLs are not strong enough for hook material. Every
+platform also performs mutual HMAC authentication with a fresh per-child
+256-bit secret delivered only through inherited stdin.
+
+Protocol v2 binds each response to a random request identifier and the exact
+request/response bytes. Client admission is non-blocking so resident overload
+cannot amplify into Python thread or process growth.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import atexit
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import socket
@@ -22,6 +26,12 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .codex_hook_launch_runtime import run_isolated_hook_process
+from .native_runtime_resilience import (
+    native_record_resident_failure,
+    native_record_restart,
+    native_record_starting,
+    native_runtime_health_snapshot,
+)
 
 _MAX_REQUEST_BYTES = 6 * 1024 * 1024
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -32,8 +42,17 @@ _SERVICE_OUTPUT_LIMIT = 64 * 1024
 _AUTH_TOKEN_BYTES = 32
 _AUTH_NONCE_BYTES = 32
 _AUTH_PROOF_BYTES = 32
+_AUTH_TIMEOUT_SECONDS = 0.25
+_FRAME_REQUEST_ID_BYTES = 32
+_FRAME_DIGEST_BYTES = 32
+_FRAME_HEADER_BYTES = 4 + _FRAME_REQUEST_ID_BYTES + _FRAME_DIGEST_BYTES + 4
+_REQUEST_MAGIC = b"HGR2"
+_RESPONSE_MAGIC = b"HGS2"
 _SERVER_PROOF_LABEL = b"hol-guard-resident-server-v1\x00"
 _CLIENT_PROOF_LABEL = b"hol-guard-resident-client-v1\x00"
+_MAX_CLIENT_IN_FLIGHT = 16
+_OVERLOAD_RESPONSE = b'{"error":"native_overloaded","retryable":true}'
+_HEALTH_REQUEST = b'{"operation":"health","request":{}}'
 
 
 class _ResidentService:
@@ -56,6 +75,7 @@ class _ResidentService:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._starts = 0
+        self._generation = 0
         self._closed = False
 
     @property
@@ -66,12 +86,17 @@ class _ResidentService:
     def request(self, payload: bytes, *, timeout_seconds: float) -> bytes | None:
         if len(payload) > _MAX_REQUEST_BYTES or timeout_seconds <= 0 or not self._transport_configured():
             return None
-        response = self._send(payload, timeout_seconds=min(timeout_seconds, 0.05))
-        if response is not None:
-            return response
-        if not self._ensure_started(timeout_seconds=min(timeout_seconds, _START_TIMEOUT_SECONDS)):
-            return None
-        return self._send(payload, timeout_seconds=timeout_seconds)
+        if not _CLIENT_IN_FLIGHT.acquire(blocking=False):
+            return _OVERLOAD_RESPONSE
+        try:
+            response = self._send(payload, timeout_seconds=min(timeout_seconds, 0.05))
+            if response is not None:
+                return response
+            if not self._ensure_started(timeout_seconds=min(timeout_seconds, _START_TIMEOUT_SECONDS)):
+                return None
+            return self._send(payload, timeout_seconds=timeout_seconds)
+        finally:
+            _CLIENT_IN_FLIGHT.release()
 
     def _transport_configured(self) -> bool:
         with self._lock:
@@ -88,8 +113,10 @@ class _ResidentService:
             loopback_address = self.loopback_address
             auth_token = self._auth_token
             socket_path = self.socket_path
+        if auth_token is None:
+            return None
         if os.name == "nt":
-            if loopback_address is None or auth_token is None:
+            if loopback_address is None:
                 return None
             return _send_authenticated_loopback_request(
                 loopback_address,
@@ -99,14 +126,18 @@ class _ResidentService:
             )
         if socket_path is None:
             return None
-        return _send_unix_request(
+        return _send_authenticated_unix_request(
             socket_path,
+            auth_token,
             payload,
             timeout_seconds=timeout_seconds,
         )
 
     def _ensure_started(self, *, timeout_seconds: float) -> bool:
         if timeout_seconds <= 0:
+            return False
+        health = native_runtime_health_snapshot(self.identity_sha256, self.guard_home)
+        if health.circuit_open or health.state in {"integrity_failed", "quarantined"}:
             return False
         with self._lock:
             if self._closed:
@@ -118,12 +149,18 @@ class _ResidentService:
             thread = self._thread
             if thread is None or not thread.is_alive():
                 stop_event = threading.Event()
-                auth_token = secrets.token_bytes(_AUTH_TOKEN_BYTES) if os.name == "nt" else None
+                auth_token = secrets.token_bytes(_AUTH_TOKEN_BYTES)
                 self._stop_event = stop_event
                 self._auth_token = auth_token
+                self._generation += 1
+                generation = self._generation
+                if self._starts == 0:
+                    native_record_starting(self.identity_sha256, self.guard_home)
+                else:
+                    native_record_restart(self.identity_sha256, self.guard_home)
                 thread = threading.Thread(
                     target=self._run,
-                    args=(stop_event, auth_token),
+                    args=(stop_event, auth_token, generation),
                     name="hol-guard-native-runtime",
                     daemon=True,
                 )
@@ -141,41 +178,23 @@ class _ResidentService:
         return self._transport_accepts_authenticated_connections()
 
     def _transport_accepts_authenticated_connections(self) -> bool:
-        with self._lock:
-            if self._closed:
-                return False
-            loopback_address = self.loopback_address
-            auth_token = self._auth_token
-            socket_path = self.socket_path
-        if os.name == "nt":
-            if loopback_address is None or auth_token is None:
-                return False
-            client = _authenticated_loopback_client(
-                loopback_address,
-                auth_token,
-                timeout_seconds=0.05,
-            )
-            if client is None:
-                return False
-            client.close()
-            return True
-        if socket_path is None:
+        response = self._send(_HEALTH_REQUEST, timeout_seconds=0.1)
+        if response is None:
             return False
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(0.025)
-                client.connect(str(socket_path))
-            return True
-        except OSError:
+            payload = json.loads(response)
+        except (UnicodeDecodeError, json.JSONDecodeError):
             return False
+        return payload == {"status": "ready", "protocol_version": 2}
 
     def _run(
         self,
         stop_event: threading.Event,
-        auth_token: bytes | None,
+        auth_token: bytes,
+        generation: int,
     ) -> None:
         if os.name == "nt":
-            if self.loopback_address is None or auth_token is None:
+            if self.loopback_address is None:
                 return
             host, port = self.loopback_address
             command = (
@@ -184,21 +203,40 @@ class _ResidentService:
                 "--tcp-loopback",
                 f"{host}:{port}",
             )
-            input_text = auth_token.hex() + "\n"
         else:
             if self.socket_path is None:
                 return
             command = (str(self.executable), "serve", "--socket", str(self.socket_path))
-            input_text = ""
-        _ = run_isolated_hook_process(
+        result = run_isolated_hook_process(
             command,
-            input_text=input_text,
+            input_text=auth_token.hex() + "\n",
             cwd=self.executable.parent,
             environment=self.environment,
             timeout_seconds=_SERVICE_LIFETIME_SECONDS,
             output_limit=_SERVICE_OUTPUT_LIMIT,
             stop_event=stop_event,
         )
+        with self._lock:
+            current_generation = generation == self._generation
+            intentional_stop = self._closed or stop_event.is_set()
+            if current_generation:
+                self._auth_token = None
+        if current_generation and not intentional_stop:
+            if result.containment_failed:
+                reason = "native_resident_containment_failed"
+            elif result.output_limit_exceeded:
+                reason = "native_resident_output_limit"
+            elif result.timed_out:
+                reason = "native_resident_lifetime_expired"
+            elif result.returncode != 0:
+                reason = "native_resident_exited"
+            else:
+                reason = "native_resident_stopped"
+            native_record_resident_failure(
+                self.identity_sha256,
+                self.guard_home,
+                reason=reason,
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -218,6 +256,7 @@ class _ResidentService:
 
 _SERVICES_LOCK = threading.Lock()
 _SERVICES: dict[tuple[str, str, str], _ResidentService] = {}
+_CLIENT_IN_FLIGHT = threading.BoundedSemaphore(_MAX_CLIENT_IN_FLIGHT)
 
 
 def _private_runtime_dir(guard_home: Path) -> Path | None:
@@ -251,7 +290,7 @@ def _resident_socket_path(guard_home: Path, identity_sha256: str) -> Path | None
     if runtime_dir is None:
         return None
     suffix = identity_sha256[:16] if identity_sha256 else "unknown"
-    socket_path = runtime_dir / f"hook-v1-{suffix}.sock"
+    socket_path = runtime_dir / f"hook-v2-{suffix}.sock"
     if len(os.fsencode(socket_path)) > _MAX_SOCKET_PATH_BYTES:
         return None
     return socket_path
@@ -287,33 +326,119 @@ def _read_exact(client: socket.socket, length: int) -> bytes | None:
     return b"".join(chunks)
 
 
+def _authenticate_client(
+    client: socket.socket,
+    token: bytes,
+    *,
+    timeout_seconds: float,
+) -> bool:
+    if len(token) != _AUTH_TOKEN_BYTES or timeout_seconds <= 0:
+        return False
+    try:
+        client.settimeout(min(timeout_seconds, _AUTH_TIMEOUT_SECONDS))
+        nonce = secrets.token_bytes(_AUTH_NONCE_BYTES)
+        client.sendall(nonce)
+        server_proof = _read_exact(client, _AUTH_PROOF_BYTES)
+        expected_server = _proof(token, _SERVER_PROOF_LABEL, nonce)
+        if server_proof is None or not hmac.compare_digest(server_proof, expected_server):
+            return False
+        client.sendall(_proof(token, _CLIENT_PROOF_LABEL, nonce))
+        client.settimeout(timeout_seconds)
+        return True
+    except (OSError, OverflowError):
+        return False
+
+
 def _authenticated_loopback_client(
     address: tuple[str, int],
     token: bytes,
     *,
     timeout_seconds: float,
 ) -> socket.socket | None:
-    if len(token) != _AUTH_TOKEN_BYTES or timeout_seconds <= 0:
-        return None
     client: socket.socket | None = None
     try:
         client = socket.create_connection(address, timeout=timeout_seconds)
-        client.settimeout(timeout_seconds)
-        nonce = secrets.token_bytes(_AUTH_NONCE_BYTES)
-        client.sendall(nonce)
-        server_proof = _read_exact(client, _AUTH_PROOF_BYTES)
-        expected_server = _proof(token, _SERVER_PROOF_LABEL, nonce)
-        if server_proof is None or not hmac.compare_digest(
-            server_proof,
-            expected_server,
-        ):
-            client.close()
-            return None
-        client.sendall(_proof(token, _CLIENT_PROOF_LABEL, nonce))
-        return client
+        if _authenticate_client(client, token, timeout_seconds=timeout_seconds):
+            return client
     except (OSError, OverflowError):
-        if client is not None:
-            client.close()
+        pass
+    if client is not None:
+        client.close()
+    return None
+
+
+def _authenticated_unix_client(
+    socket_path: Path,
+    token: bytes,
+    *,
+    timeout_seconds: float,
+) -> socket.socket | None:
+    if not hasattr(socket, "AF_UNIX"):
+        return None
+    client: socket.socket | None = None
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(timeout_seconds)
+        client.connect(str(socket_path))
+        if _authenticate_client(client, token, timeout_seconds=timeout_seconds):
+            return client
+    except (OSError, OverflowError):
+        pass
+    if client is not None:
+        client.close()
+    return None
+
+
+def _frame_request(payload: bytes) -> tuple[bytes, bytes]:
+    if not payload or len(payload) > _MAX_REQUEST_BYTES:
+        raise ValueError("native resident payload is outside the accepted bound")
+    request_id = secrets.token_bytes(_FRAME_REQUEST_ID_BYTES)
+    digest = hashlib.sha256(payload).digest()
+    header = _REQUEST_MAGIC + request_id + digest + len(payload).to_bytes(4, "big")
+    assert len(header) == _FRAME_HEADER_BYTES
+    return request_id, header + payload
+
+
+def _read_bound_response(
+    client: socket.socket,
+    request_id: bytes,
+) -> bytes | None:
+    header = _read_exact(client, _FRAME_HEADER_BYTES)
+    if header is None or header[:4] != _RESPONSE_MAGIC:
+        return None
+    response_request_id = header[4 : 4 + _FRAME_REQUEST_ID_BYTES]
+    if not hmac.compare_digest(response_request_id, request_id):
+        return None
+    digest_start = 4 + _FRAME_REQUEST_ID_BYTES
+    response_digest = header[digest_start : digest_start + _FRAME_DIGEST_BYTES]
+    length = int.from_bytes(header[-4:], "big")
+    if length <= 0 or length > _MAX_RESPONSE_BYTES:
+        return None
+    response = _read_exact(client, length)
+    if response is None:
+        return None
+    if not hmac.compare_digest(hashlib.sha256(response).digest(), response_digest):
+        return None
+    return response
+
+
+def _send_authenticated_request(
+    client: socket.socket,
+    token: bytes,
+    payload: bytes,
+    *,
+    timeout_seconds: float,
+) -> bytes | None:
+    if timeout_seconds <= 0:
+        return None
+    try:
+        with client:
+            if not _authenticate_client(client, token, timeout_seconds=timeout_seconds):
+                return None
+            request_id, frame = _frame_request(payload)
+            client.sendall(frame)
+            return _read_bound_response(client, request_id)
+    except (OSError, OverflowError, ValueError):
         return None
 
 
@@ -324,51 +449,43 @@ def _send_authenticated_loopback_request(
     *,
     timeout_seconds: float,
 ) -> bytes | None:
-    if len(payload) > _MAX_REQUEST_BYTES or timeout_seconds <= 0:
-        return None
-    client = _authenticated_loopback_client(
-        address,
-        token,
-        timeout_seconds=timeout_seconds,
-    )
-    if client is None:
-        return None
+    client: socket.socket | None = None
     try:
-        with client:
-            client.sendall(len(payload).to_bytes(4, "big") + payload)
-            header = _read_exact(client, 4)
-            if header is None:
-                return None
-            response_length = int.from_bytes(header, "big")
-            if response_length > _MAX_RESPONSE_BYTES:
-                return None
-            return _read_exact(client, response_length)
+        client = socket.create_connection(address, timeout=timeout_seconds)
     except (OSError, OverflowError):
         return None
+    return _send_authenticated_request(
+        client,
+        token,
+        payload,
+        timeout_seconds=timeout_seconds,
+    )
 
 
-def _send_unix_request(
+def _send_authenticated_unix_request(
     socket_path: Path,
+    token: bytes,
     payload: bytes,
     *,
     timeout_seconds: float,
 ) -> bytes | None:
-    if len(payload) > _MAX_REQUEST_BYTES or timeout_seconds <= 0:
+    if not hasattr(socket, "AF_UNIX"):
         return None
+    client: socket.socket | None = None
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(timeout_seconds)
-            client.connect(str(socket_path))
-            client.sendall(len(payload).to_bytes(4, "big") + payload)
-            header = _read_exact(client, 4)
-            if header is None:
-                return None
-            response_length = int.from_bytes(header, "big")
-            if response_length > _MAX_RESPONSE_BYTES:
-                return None
-            return _read_exact(client, response_length)
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(timeout_seconds)
+        client.connect(str(socket_path))
     except (OSError, OverflowError):
+        if client is not None:
+            client.close()
         return None
+    return _send_authenticated_request(
+        client,
+        token,
+        payload,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def resident_native_request(
@@ -380,7 +497,7 @@ def resident_native_request(
     payload: bytes,
     timeout_seconds: float,
 ) -> bytes | None:
-    """Send one request to a resident native runtime, starting it lazily."""
+    """Send one bounded request to a lazily supervised native runtime."""
     if os.name != "nt" and not hasattr(socket, "AF_UNIX"):
         return None
     try:
@@ -402,12 +519,7 @@ def resident_native_request(
     return service.request(payload, timeout_seconds=timeout_seconds)
 
 
-def resident_service_starts(
-    *,
-    executable: Path,
-    identity_sha256: str,
-    guard_home: Path,
-) -> int:
+def resident_service_starts(*, executable: Path, identity_sha256: str, guard_home: Path) -> int:
     """Return an aggregate-only lifecycle counter for tests and diagnostics."""
     try:
         key = (

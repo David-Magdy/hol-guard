@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -50,13 +49,12 @@ def _fake_capability_runtime(tmp_path: Path, *, runtime_version: str) -> Path:
         separators=(",", ":"),
     )
     path.write_text(
-        f"""#!{sys.executable}
-import sys
-if sys.argv[1:3] == ['capabilities', '--json']:
-    print({capabilities!r})
-else:
-    raise SystemExit(2)
-""",
+        "#!/bin/sh\n"
+        'if [ "$1" = capabilities ] && [ "$2" = --json ]; then\n'
+        f"  printf '%s\\n' {capabilities!r}\n"
+        "else\n"
+        "  exit 2\n"
+        "fi\n",
         encoding="utf-8",
     )
     path.chmod(0o700)
@@ -67,6 +65,7 @@ def test_auto_rejects_version_mismatched_runtime(tmp_path: Path, monkeypatch: py
     runtime = _fake_capability_runtime(tmp_path, runtime_version="0.0.0-mismatch")
     monkeypatch.setenv("HOL_GUARD_NATIVE", "auto")
     monkeypatch.setattr(native_runtime, "_runtime_candidates", lambda: (runtime,))
+    monkeypatch.setattr(native_runtime, "_python_package_version", lambda: "test")
     native_runtime._capabilities_for_identity.cache_clear()
     status = native_runtime_status()
     assert status.available is True
@@ -106,7 +105,7 @@ def test_poisoned_socket_symlink_falls_back_without_touching_target(tmp_path: Pa
     runtime_dir.mkdir(mode=0o700, exist_ok=True)
     victim = tmp_path / "victim.txt"
     victim.write_text("keep", encoding="utf-8")
-    socket_path = runtime_dir / f"hook-v1-{status.identity.sha256[:16]}.sock"
+    socket_path = runtime_dir / f"hook-v2-{status.identity.sha256[:16]}.sock"
     socket_path.symlink_to(victim)
     try:
         response = review_post_tool_native(request, observe_mode=False)

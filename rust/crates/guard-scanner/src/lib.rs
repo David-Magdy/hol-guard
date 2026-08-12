@@ -35,16 +35,99 @@ struct PatternDef {
 }
 
 const PATTERNS: &[PatternDef] = &[
-    PatternDef { classifier: "npm-auth-token", family: "npm auth token", sensitivity: "high", reason: "Guard found an npm registry token pattern.", pattern: r#"[\"']?\b[A-Za-z0-9_-]*(?:_authToken|npm[_-]?token)\b[\"']?\s*[:=]\s*(?:\"[^\"\r\n]+\"|'[^'\r\n]+'|[^ \t\r\n\"',}]+)"#, case_insensitive: true, multi_line: true },
-    PatternDef { classifier: "github-token", family: "GitHub token", sensitivity: "high", reason: "Guard found a GitHub token pattern.", pattern: concat!(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github", r"_pat_[A-Za-z0-9_]{20,}_[A-Za-z0-9_]{20,})\b"), case_insensitive: false, multi_line: false },
-    PatternDef { classifier: "aws-access-key", family: "AWS access key", sensitivity: "high", reason: "Guard found an AWS access key pattern.", pattern: r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b", case_insensitive: false, multi_line: false },
-    PatternDef { classifier: "openai-api-key", family: "OpenAI API key", sensitivity: "high", reason: "Guard found an OpenAI API key pattern.", pattern: r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b", case_insensitive: false, multi_line: false },
-    PatternDef { classifier: "anthropic-api-key", family: "Anthropic API key", sensitivity: "high", reason: "Guard found an Anthropic API key pattern.", pattern: r"\bsk-ant-api03-[A-Za-z0-9_-]{20,}\b", case_insensitive: false, multi_line: false },
-    PatternDef { classifier: "hedera-private-key", family: "Hedera private key", sensitivity: "critical", reason: "Guard found a Hedera private-key-like value.", pattern: r#"[\"']?\b[A-Za-z0-9_-]*(?:hedera[_-]?)?(?:operator[_-]?)?private[_-]?key\b[\"']?\s*[:=]\s*(?:\"(?:0x)?[0-9a-f]{64,96}\"|'(?:0x)?[0-9a-f]{64,96}'|(?:0x)?[0-9a-f]{64,96}\b)"#, case_insensitive: true, multi_line: true },
-    PatternDef { classifier: "pem-private-key", family: "PEM private key", sensitivity: "critical", reason: "Guard found a PEM private key header.", pattern: r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", case_insensitive: false, multi_line: true },
-    PatternDef { classifier: "generic-bearer-token", family: "generic bearer token", sensitivity: "medium", reason: "Guard found a bearer token pattern.", pattern: r"\bbearer\s+[A-Za-z0-9._~+/=-]{16,}\b", case_insensitive: true, multi_line: true },
-    PatternDef { classifier: "credential-marker", family: "credential assignment", sensitivity: "medium", reason: "Guard found credential-looking marker text.", pattern: r"(?:^|[^a-z0-9])fake[_-]?(?:credential|secret)\b", case_insensitive: true, multi_line: false },
-    PatternDef { classifier: "credential-assignment", family: "credential assignment", sensitivity: "medium", reason: "Guard found credential-looking assignment text.", pattern: r#"[\"']?\b[A-Za-z0-9_-]*(?:api[_-]?key|auth[_-]?token|credential|credentials|npm[_-]?token|private[_-]?key|secret|token|password)\b[\"']?\s*[:=]\s*(?:\"[^\"\r\n]+\"|'[^'\r\n]+'|[^ \t\r\n\"',}]+)"#, case_insensitive: true, multi_line: true },
+    PatternDef {
+        classifier: "npm-auth-token",
+        family: "npm auth token",
+        sensitivity: "high",
+        reason: "Guard found an npm registry token pattern.",
+        pattern: r#"[\"']?\b[A-Za-z0-9_-]*(?:_authToken|npm[_-]?token)\b[\"']?\s*[:=]\s*(?:\"[^\"\r\n]+\"|'[^'\r\n]+'|[^ \t\r\n\"',}]+)"#,
+        case_insensitive: true,
+        multi_line: true,
+    },
+    PatternDef {
+        classifier: "github-token",
+        family: "GitHub token",
+        sensitivity: "high",
+        reason: "Guard found a GitHub token pattern.",
+        pattern: concat!(
+            r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github",
+            r"_pat_[A-Za-z0-9_]{20,}_[A-Za-z0-9_]{20,})\b"
+        ),
+        case_insensitive: false,
+        multi_line: false,
+    },
+    PatternDef {
+        classifier: "aws-access-key",
+        family: "AWS access key",
+        sensitivity: "high",
+        reason: "Guard found an AWS access key pattern.",
+        pattern: r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
+        case_insensitive: false,
+        multi_line: false,
+    },
+    PatternDef {
+        classifier: "openai-api-key",
+        family: "OpenAI API key",
+        sensitivity: "high",
+        reason: "Guard found an OpenAI API key pattern.",
+        pattern: r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b",
+        case_insensitive: false,
+        multi_line: false,
+    },
+    PatternDef {
+        classifier: "anthropic-api-key",
+        family: "Anthropic API key",
+        sensitivity: "high",
+        reason: "Guard found an Anthropic API key pattern.",
+        pattern: r"\bsk-ant-api03-[A-Za-z0-9_-]{20,}\b",
+        case_insensitive: false,
+        multi_line: false,
+    },
+    PatternDef {
+        classifier: "hedera-private-key",
+        family: "Hedera private key",
+        sensitivity: "critical",
+        reason: "Guard found a Hedera private-key-like value.",
+        pattern: r#"[\"']?\b[A-Za-z0-9_-]*(?:hedera[_-]?)?(?:operator[_-]?)?private[_-]?key\b[\"']?\s*[:=]\s*(?:\"(?:0x)?[0-9a-f]{64,96}\"|'(?:0x)?[0-9a-f]{64,96}'|(?:0x)?[0-9a-f]{64,96}\b)"#,
+        case_insensitive: true,
+        multi_line: true,
+    },
+    PatternDef {
+        classifier: "pem-private-key",
+        family: "PEM private key",
+        sensitivity: "critical",
+        reason: "Guard found a PEM private key header.",
+        pattern: r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
+        case_insensitive: false,
+        multi_line: true,
+    },
+    PatternDef {
+        classifier: "generic-bearer-token",
+        family: "generic bearer token",
+        sensitivity: "medium",
+        reason: "Guard found a bearer token pattern.",
+        pattern: r"\bbearer\s+[A-Za-z0-9._~+/=-]{16,}\b",
+        case_insensitive: true,
+        multi_line: true,
+    },
+    PatternDef {
+        classifier: "credential-marker",
+        family: "credential assignment",
+        sensitivity: "medium",
+        reason: "Guard found credential-looking marker text.",
+        pattern: r"(?:^|[^a-z0-9])fake[_-]?(?:credential|secret)\b",
+        case_insensitive: true,
+        multi_line: false,
+    },
+    PatternDef {
+        classifier: "credential-assignment",
+        family: "credential assignment",
+        sensitivity: "medium",
+        reason: "Guard found credential-looking assignment text.",
+        pattern: r#"[\"']?\b[A-Za-z0-9_-]*(?:api[_-]?key|auth[_-]?token|credential|credentials|npm[_-]?token|private[_-]?key|secret|token|password)\b[\"']?\s*[:=]\s*(?:\"[^\"\r\n]+\"|'[^'\r\n]+'|[^ \t\r\n\"',}]+)"#,
+        case_insensitive: true,
+        multi_line: true,
+    },
 ];
 
 static COMPILED: OnceLock<Vec<Regex>> = OnceLock::new();
@@ -105,7 +188,11 @@ fn has_long_alphanumeric_run(token: &str) -> bool {
 
 fn assignment_value(matched: &str) -> Option<&str> {
     let index = matched.find([':', '='])?;
-    Some(matched[index + 1..].trim().trim_matches(|character| character == '\'' || character == '"'))
+    Some(
+        matched[index + 1..]
+            .trim()
+            .trim_matches(|character| character == '\'' || character == '"'),
+    )
 }
 
 fn is_sample(classifier: &str, matched: &str, documentation_sample_context: bool) -> bool {
@@ -139,7 +226,12 @@ fn classify_window(
             continue;
         }
         let has_match = compiled()[index].find_iter(text).any(|matched| {
-            !(suppress_samples && is_sample(def.classifier, matched.as_str(), documentation_sample_context))
+            !(suppress_samples
+                && is_sample(
+                    def.classifier,
+                    matched.as_str(),
+                    documentation_sample_context,
+                ))
         });
         if has_match {
             found.insert(
@@ -283,7 +375,10 @@ mod tests {
         let token = github_like_token();
         let text = format!("token={token}");
         let result = scan_text(&text, true, true, MAX_SCAN_BYTES, None);
-        assert!(result.matches.iter().any(|matched| matched.classifier == "github-token"));
+        assert!(result
+            .matches
+            .iter()
+            .any(|matched| matched.classifier == "github-token"));
         assert!(!format!("{:?}", result.matches).contains(&token));
     }
 
@@ -293,13 +388,28 @@ mod tests {
         let split_at = 16.min(token.len());
         let first = format!("prefix {}", &token[..split_at]);
         let second = format!("{} suffix", &token[split_at..]);
-        let result = scan_chunks([first.as_str(), second.as_str()], true, true, MAX_SCAN_BYTES, None);
-        assert!(result.matches.iter().any(|matched| matched.classifier == "github-token"));
+        let result = scan_chunks(
+            [first.as_str(), second.as_str()],
+            true,
+            true,
+            MAX_SCAN_BYTES,
+            None,
+        );
+        assert!(result
+            .matches
+            .iter()
+            .any(|matched| matched.classifier == "github-token"));
     }
 
     #[test]
     fn documentation_placeholder_is_suppressed() {
-        let result = scan_text("token = placeholder-only", false, true, MAX_SCAN_BYTES, None);
+        let result = scan_text(
+            "token = placeholder-only",
+            false,
+            true,
+            MAX_SCAN_BYTES,
+            None,
+        );
         assert!(result.matches.is_empty());
     }
 }
