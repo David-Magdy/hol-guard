@@ -146,6 +146,7 @@ from __future__ import annotations
 import inspect
 import json
 import sys
+import time
 from pathlib import Path
 
 from codex_plugin_scanner.guard.daemon.manager import (
@@ -173,7 +174,17 @@ try:
 except (OSError, json.JSONDecodeError):
     state = {}
 preferred_port = state.get("port") if isinstance(state.get("port"), int) else None
-retired = retire_all_guard_daemons_for_home(guard_home)
+retired = []
+retirement_deadline = time.monotonic() + 5.0
+while True:
+    for pid in retire_all_guard_daemons_for_home(guard_home):
+        if pid not in retired:
+            retired.append(pid)
+    if guard_daemon_retirement_is_complete(guard_home):
+        break
+    if time.monotonic() >= retirement_deadline:
+        break
+    time.sleep(0.1)
 if not guard_daemon_retirement_is_complete(guard_home):
     print(json.dumps({"status": "retirement_failed", "retired": retired}))
     raise SystemExit(1)
