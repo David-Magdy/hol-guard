@@ -57,7 +57,14 @@ _DETECTOR_VERSION = "guard-secrets-v1"
 
 _SAMPLE_WORDS = re.compile(
     r"(?i)(?:example|sample|dummy|fake|fixture|placeholder|changeme|replace[_-]?me|"
-    r"your[_-]?(?:api[_-]?)?(?:key|token|secret|password)|test[_-]?(?:key|token|secret))"
+    r"redacted|synthetic|mock(?:ed)?|canary|not[_-]?real|invalid[_-]?"
+    r"(?:key|token|secret|password)?|your[_-]?(?:api[_-]?)?"
+    r"(?:key|token|secret|password)|test[_-]?(?:key|token|secret|password))"
+)
+_COMMON_PLACEHOLDER = re.compile(
+    r"(?i)^(?:p@?ssw0rd(?:1234?|[!@#$%^&*]+)?|password(?:1234?|[!@#$%^&*]+)?|"
+    r"(?:super|my|your|replace|change|invalid|fake|dummy|sample|test|fixture|not[_-]?real)"
+    r"[_-](?:api[_-]?)?(?:secret|token|password|key)(?:[_-].*)?)$"
 )
 _CREDENTIAL_KEYWORDS = re.compile(
     r"(?i)(?:api[_-]?key|access[_-]?key|auth[_-]?token|bearer|credential|password|passwd|"
@@ -67,7 +74,7 @@ _ASSIGNMENT = re.compile(
     r"(?im)(?P<name>[A-Za-z_][A-Za-z0-9_.-]{1,80})\s*[:=]\s*"
     r"(?P<quote>[\"']?)(?P<secret>[^\s\"',}{]{12,256})(?P=quote)"
 )
-_GENERIC_CANDIDATE_POLICY_VERSION = "credential-expression-filter-v1"
+_GENERIC_CANDIDATE_POLICY_VERSION = "credential-expression-filter-v2"
 _CODE_REFERENCE_PREFIXES = (
     "config.",
     "context.",
@@ -99,6 +106,110 @@ _CODE_MEMBER_REFERENCE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\??\.[A-Za-z_$
 _CODE_CALL_REFERENCE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\??\.[A-Za-z_$][A-Za-z0-9_$]*)*\s*\(")
 _CODE_IDENTIFIER_REFERENCE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 _INTERPOLATED_REFERENCE = re.compile(r"^(?:\$\{|\$\(|\{\{|<%|%\{|@\{)")
+_SHELL_VARIABLE_REFERENCE = re.compile(
+    r"^\$(?:(?:env|global|local|private|script):)?[A-Za-z_][A-Za-z0-9_]*$",
+    re.IGNORECASE,
+)
+_CODE_COORDINATE = re.compile(r"^[A-Za-z0-9_.@/+~-]+:[A-Za-z0-9_.@/+~:-]+$")
+_TEST_FIXTURE_CONTEXT = re.compile(
+    r"(?i)(?:\bdescribe\s*\(|\bit\s*\(|\btest\s*\(|\bexpect\s*\(|\bassert\b|"
+    r"\bmock(?:ed)?\b|\bfixture\b|\bsample\b|\bfake\b|\bsynthetic\b|\bcanary\b|"
+    r"\bredact(?:ed|ion)?\b|\bsanitiz(?:e|ed|ation)\b|\bmask(?:ed|ing)?\b|"
+    r"\bscrub(?:bed|bing)?\b|\bnot[_ -]?real\b|\binvalid\b)"
+)
+_SAMPLE_PATH_TOKEN = re.compile(
+    r"(?i)(?:^|[._-])(?:test|tests|spec|fixture|fixtures|example|examples|sample|samples|"
+    r"mock|mocks|demo|benchmark|scenario|scenarios|proof|canary)(?:[._-]|$)"
+)
+_PUBLIC_CLIENT_CONFIG_BASENAMES = frozenset({"google-services.json", "googleservice-info.plist"})
+_NON_SECRET_NAME_TERMINALS = frozenset(
+    {
+        "config",
+        "configs",
+        "count",
+        "counts",
+        "endpoint",
+        "endpoints",
+        "event",
+        "events",
+        "field",
+        "fields",
+        "header",
+        "headers",
+        "id",
+        "ids",
+        "input",
+        "inputs",
+        "kind",
+        "label",
+        "labels",
+        "limit",
+        "limits",
+        "mode",
+        "name",
+        "names",
+        "options",
+        "output",
+        "outputs",
+        "path",
+        "paths",
+        "pattern",
+        "payload",
+        "prefix",
+        "provider",
+        "record",
+        "records",
+        "regex",
+        "request",
+        "response",
+        "result",
+        "results",
+        "row",
+        "rows",
+        "schema",
+        "schemas",
+        "scope",
+        "scopes",
+        "size",
+        "sizes",
+        "state",
+        "status",
+        "suffix",
+        "table",
+        "tables",
+        "type",
+        "types",
+        "uri",
+        "url",
+        "version",
+        "versions",
+    }
+)
+_SECRET_ASSIGNMENT_SUFFIXES = (
+    "access_key",
+    "access_token",
+    "api_key",
+    "auth_token",
+    "bearer_token",
+    "client_secret",
+    "credential",
+    "credentials",
+    "database_password",
+    "encryption_key",
+    "password",
+    "passwd",
+    "private_key",
+    "refresh_token",
+    "secret",
+    "secret_key",
+    "session_token",
+    "signing_secret",
+    "smtp_password",
+    "token",
+    "webhook",
+    "webhook_secret",
+    "webhook_token",
+)
 _CODE_SUFFIXES = frozenset(
     {
         ".bash",
@@ -106,6 +217,7 @@ _CODE_SUFFIXES = frozenset(
         ".cs",
         ".dart",
         ".go",
+        ".gradle",
         ".java",
         ".js",
         ".jsx",
@@ -128,6 +240,7 @@ _CODE_SUFFIXES = frozenset(
         ".zsh",
     }
 )
+_SHELL_SUFFIXES = frozenset({".bash", ".ps1", ".sh", ".zsh"})
 _DATABASE_URL = re.compile(
     r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis)://"
     r"[^\s:/@]{1,128}:(?P<secret>[^\s/@]{6,256})@[^\s]+"
@@ -472,6 +585,20 @@ def _path_is_documentation(path: str) -> bool:
     return bool(parts & _DOC_SEGMENTS) or pure.suffix in _DOC_SUFFIXES
 
 
+def _path_is_sample_fixture(path: str) -> bool:
+    normalized = _normalized_path(path)
+    if not normalized:
+        return False
+    pure = PurePosixPath(normalized)
+    if set(pure.parts) & _DOC_SEGMENTS:
+        return True
+    return _SAMPLE_PATH_TOKEN.search(pure.name) is not None
+
+
+def _path_is_public_client_config(path: str) -> bool:
+    return PurePosixPath(_normalized_path(path)).name in _PUBLIC_CLIENT_CONFIG_BASENAMES
+
+
 def _path_is_high_signal(path: str) -> bool:
     normalized = _normalized_path(path)
     if not normalized:
@@ -483,13 +610,62 @@ def _path_is_high_signal(path: str) -> bool:
     return basename in _HIGH_SIGNAL_BASENAMES or any(part in {".aws", ".ssh", ".gnupg"} for part in pure.parts)
 
 
-def _obvious_sample(candidate: str, context: str) -> bool:
-    combined = f"{candidate}\n{context}"
-    if _SAMPLE_WORDS.search(combined) is None:
+def _character_class_count(value: str) -> int:
+    return sum(
+        (
+            any(character.islower() for character in value),
+            any(character.isupper() for character in value),
+            any(character.isdigit() for character in value),
+            any(not character.isalnum() for character in value),
+        )
+    )
+
+
+def _largest_character_share(value: str) -> float:
+    if not value:
+        return 1.0
+    counts: dict[str, int] = {}
+    for character in value:
+        counts[character] = counts.get(character, 0) + 1
+    return max(counts.values()) / len(value)
+
+
+def _surrounding_context(text: str, match_start: int, *, radius: int = 3) -> str:
+    lines = text.splitlines()
+    line_index = text.count("\n", 0, match_start)
+    start = max(0, line_index - radius)
+    end = min(len(lines), line_index + radius + 1)
+    return "\n".join(lines[start:end])[:4096]
+
+
+def _obvious_sample(candidate: str, context: str, *, path: str = "") -> bool:
+    value = candidate.strip()
+    unwrapped = value.strip("<>[]{}()")
+    if _COMMON_PLACEHOLDER.fullmatch(unwrapped) is not None:
+        return True
+    if _SAMPLE_WORDS.search(value) is not None:
+        return True
+    has_sample_context = _SAMPLE_WORDS.search(context) is not None or _path_is_sample_fixture(path)
+    if not has_sample_context:
         return False
-    # Do not suppress a structurally strong, long random-looking token just
-    # because nearby documentation contains the word "example".
-    return _rarity_score(candidate) < 0.76 or len(candidate) < 28
+    return _rarity_score(value) < 0.62 or len(value) < 20 or _largest_character_share(value) >= 0.4
+
+
+def _normalized_assignment_name(name: str) -> str:
+    snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    return re.sub(r"[^A-Za-z0-9]+", "_", snake).strip("_").lower()
+
+
+def _assignment_name_likely_holds_secret(name: str) -> bool:
+    normalized = _normalized_assignment_name(name)
+    if not normalized:
+        return False
+    if normalized.startswith(("indexnow_", "next_public_", "public_")):
+        return False
+    terminal = normalized.rsplit("_", maxsplit=1)[-1]
+    if terminal in _NON_SECRET_NAME_TERMINALS:
+        return False
+    return any(normalized == suffix or normalized.endswith(f"_{suffix}") for suffix in _SECRET_ASSIGNMENT_SUFFIXES)
 
 
 def _candidate_is_indirect_reference(
@@ -508,23 +684,78 @@ def _candidate_is_indirect_reference(
         return True
     if _INTERPOLATED_REFERENCE.match(value) is not None:
         return True
+    if _SHELL_VARIABLE_REFERENCE.fullmatch(value) is not None:
+        return True
     if lowered.startswith(_CODE_REFERENCE_PREFIXES):
         return True
-    if quoted:
-        return False
     if _CODE_CALL_REFERENCE.match(value) is not None:
-        return True
-    if any(operator in value for operator in ("=>", "??", "||", "&&")):
-        return True
-    if any(character in value for character in "()[]{};`"):
         return True
     if _CODE_MEMBER_REFERENCE.fullmatch(value) is not None:
         return True
     suffix = PurePosixPath(_normalized_path(path)).suffix
+    if not quoted and _CODE_COORDINATE.fullmatch(value) is not None:
+        return True
+    if quoted:
+        return False
+    if any(operator in value for operator in ("=>", "??", "||", "&&", "::")):
+        return True
+    if any(character in value for character in "()[]{};`<>:"):
+        return True
     if suffix not in _CODE_SUFFIXES or _CODE_IDENTIFIER_REFERENCE.fullmatch(value) is None:
         return False
     digit_count = sum(character.isdigit() for character in value)
     return value[0].islower() and digit_count <= 1
+
+
+def _generic_candidate_is_plausible(
+    candidate: str,
+    *,
+    quoted: bool,
+    path: str,
+    context: str,
+) -> bool:
+    value = candidate.strip()
+    if not value or _obvious_sample(value, context, path=path):
+        return False
+    lowered = value.lower()
+    if re.match(r"^[a-z][a-z0-9+.-]*://", lowered) is not None:
+        return False
+    if "/" in value or "\\" in value:
+        return False
+    if _largest_character_share(value) >= 0.55:
+        return False
+    entropy = shannon_entropy(value)
+    classes = _character_class_count(value)
+    suffix = PurePosixPath(_normalized_path(path)).suffix
+    if _path_is_high_signal(path):
+        return len(value) >= 12 and (entropy >= 3.2 or classes >= 3)
+    if re.fullmatch(r"[A-Fa-f0-9]{32,}", value) is not None:
+        return True
+    if suffix in _CODE_SUFFIXES:
+        return len(value) >= 20 and ((classes >= 3 and entropy >= 3.65) or entropy >= 4.2)
+    return len(value) >= 16 and _rarity_score(value) >= 0.58
+
+
+def _provider_match_is_fixture(
+    *,
+    rule: SecretRule,
+    candidate: str,
+    text: str,
+    match_start: int,
+    path: str,
+) -> bool:
+    if rule.rule_id == "google-api-key" and _path_is_public_client_config(path):
+        return True
+    context = _surrounding_context(text, match_start)
+    unwrapped = candidate.strip().strip("<>[]{}()")
+    explicit_placeholder = (
+        _COMMON_PLACEHOLDER.fullmatch(unwrapped) is not None or _SAMPLE_WORDS.search(candidate) is not None
+    )
+    if explicit_placeholder and (_path_is_sample_fixture(path) or _SAMPLE_WORDS.search(context) is not None):
+        return True
+    if _path_is_high_signal(path):
+        return False
+    return _path_is_sample_fixture(path) and _TEST_FIXTURE_CONTEXT.search(context) is not None
 
 
 def _confidence_label(score: float) -> SecretConfidence:
@@ -586,7 +817,16 @@ def _finding_from_match(
     commit: str | None,
 ) -> SecretFinding | None:
     line_text = _line_text(text, match_start)
-    if _obvious_sample(candidate, line_text) and not rule.strong_format:
+    if rule.strong_format:
+        if _provider_match_is_fixture(
+            rule=rule,
+            candidate=candidate,
+            text=text,
+            match_start=match_start,
+            path=path,
+        ):
+            return None
+    elif _obvious_sample(candidate, line_text, path=path):
         return None
     score, reasons = _context_score(
         candidate,
@@ -668,18 +908,22 @@ def scan_secret_text(
         candidate = match.group("secret")
         if candidate in provider_candidates:
             continue
+        name = match.group("name")
+        if not _assignment_name_likely_holds_secret(name):
+            continue
+        quoted = bool(match.group("quote"))
         if _candidate_is_indirect_reference(
             candidate,
-            quoted=bool(match.group("quote")),
+            quoted=quoted,
             path=path,
         ):
             continue
-        name = match.group("name")
-        if _CREDENTIAL_KEYWORDS.search(name) is None:
-            continue
-        if _obvious_sample(candidate, match.group(0)):
-            continue
-        if _rarity_score(candidate) < 0.54 and len(candidate) < 24:
+        if not _generic_candidate_is_plausible(
+            candidate,
+            quoted=quoted,
+            path=path,
+            context=match.group(0),
+        ):
             continue
         finding = _finding_from_match(
             rule=generic_rule,
