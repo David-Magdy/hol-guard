@@ -1,0 +1,142 @@
+name: Finalize Rust runtime supervision
+
+on:
+  push:
+    branches: [feat/rust-runtime-supervision-final]
+    paths:
+      - ".github/workflows/finalize-rust-runtime-supervision.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          ref: feat/rust-runtime-supervision-final
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Prepare toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --python 3.12
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.88.0
+      - name: Wire identity projection and safe restart handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          native = Path("src/codex_plugin_scanner/guard/native_runtime.py")
+          text = native.read_text(encoding="utf-8")
+          old = "from .native_runtime_resident import resident_native_request\n"
+          new = (
+              "from .native_runtime_identity import native_request_identity\n"
+              "from .native_runtime_resident import resident_native_request\n"
+          )
+          if text.count(old) != 1:
+              raise RuntimeError("native identity import anchor changed")
+          text = text.replace(old, new, 1)
+          old = '''        "native_overloaded",\n        "native_frame_read_failed",\n        "native_request_digest_mismatch",\n'''
+          new = '''        "native_overloaded",\n        "native_deadline_exceeded",\n        "native_deadline_invalid",\n        "native_frame_read_failed",\n        "native_frame_reserved_invalid",\n        "native_operation_mismatch",\n        "native_payload_size_mismatch",\n        "native_policy_identity_mismatch",\n        "native_request_digest_mismatch",\n        "native_runtime_identity_mismatch",\n'''
+          if text.count(old) != 1:
+              raise RuntimeError("native error-code anchor changed")
+          text = text.replace(old, new, 1)
+          old = '''    envelope = {\n        "protocol_version": _NATIVE_PROTOCOL_VERSION,\n        "request_id": request.request_id,\n        "harness": request.harness,\n        "event_name": request.event_name,\n        "payload": request.payload,\n        "cwd": str(request.cwd) if request.cwd is not None else None,\n        "home_dir": str(request.home_dir),\n        "guard_home": str(request.guard_home),\n        "source_ref_external_allowed": request.source_ref_external_allowed,\n        "observe_mode": observe_mode,\n        "deadline_budget_ms": _deadline_budget_ms(request),\n    }\n    input_text = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False)\n'''
+          new = '''    capabilities = status.capabilities\n    if capabilities is None:\n        return None\n    try:\n        identity = native_request_identity(\n            binary_sha256=status.identity.sha256,\n            runtime_version=capabilities.runtime_version,\n            build_sha=capabilities.build_sha,\n            rule_digest=capabilities.rule_digest,\n            payload=request.payload,\n            source_ref_external_allowed=request.source_ref_external_allowed,\n            payload_kind=request.payload_kind,\n            source_scope=request.source_scope,\n        )\n        envelope = {\n            "protocol_version": _NATIVE_PROTOCOL_VERSION,\n            "request_id": request.request_id,\n            **identity,\n            "harness": request.harness,\n            "event_name": request.event_name,\n            "payload": request.payload,\n            "cwd": str(request.cwd) if request.cwd is not None else None,\n            "home_dir": str(request.home_dir),\n            "guard_home": str(request.guard_home),\n            "source_ref_external_allowed": request.source_ref_external_allowed,\n            "observe_mode": observe_mode,\n            "deadline_budget_ms": _deadline_budget_ms(request),\n        }\n        input_text = json.dumps(\n            envelope,\n            separators=(",", ":"),\n            ensure_ascii=False,\n            allow_nan=False,\n        )\n    except (TypeError, ValueError):\n        return None\n'''
+          if text.count(old) != 1:
+              raise RuntimeError("native envelope anchor changed")
+          native.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          resident = Path("src/codex_plugin_scanner/guard/native_runtime_resident.py")
+          text = resident.read_text(encoding="utf-8")
+          old = '''    def _wait_for_ready(self, *, deadline: float) -> bool:\n        while time.monotonic() < deadline:\n            if self._transport_accepts_authenticated_connections():\n                return True\n            if not self._active_generation_is_alive():\n                return False\n            time.sleep(0.01)\n        return self._transport_accepts_authenticated_connections()\n\n    def _ensure_started(self, *, timeout_seconds: float) -> bool:\n'''
+          new = '''    def _wait_for_ready(self, *, deadline: float) -> bool:\n        while time.monotonic() < deadline:\n            if self._transport_accepts_authenticated_connections():\n                return True\n            if not self._active_generation_is_alive():\n                return False\n            time.sleep(0.01)\n        return self._transport_accepts_authenticated_connections()\n\n    def _stop_unhealthy_generation(self, *, deadline: float) -> bool:\n        with self._lock:\n            thread = self._thread\n            if thread is None or not thread.is_alive():\n                return True\n            stop_event = self._stop_event\n            generation = self._generation\n            was_ready = generation == self._ready_generation\n            stop_event.set()\n            self._auth_token = None\n            self._generation_id = None\n        if was_ready:\n            native_supervisor_record_child_exit(\n                self.identity_sha256,\n                self.guard_home,\n                generation=generation,\n                reason="native_resident_unresponsive",\n            )\n        else:\n            native_supervisor_record_start_failed(\n                self.identity_sha256,\n                self.guard_home,\n                generation=generation,\n                reason="native_start_unresponsive",\n            )\n        if thread is not threading.current_thread():\n            thread.join(timeout=max(0.0, deadline - time.monotonic()))\n        if thread.is_alive():\n            return False\n        _unlink_owned_socket(self.socket_path)\n        with self._lock:\n            if self._thread is thread:\n                self._thread = None\n        return True\n\n    def _ensure_started(self, *, timeout_seconds: float) -> bool:\n'''
+          if text.count(old) != 1:
+              raise RuntimeError("resident stop-handoff anchor changed")
+          text = text.replace(old, new, 1)
+          old = '''        try:\n            if self._active_generation_is_alive() and self._wait_for_ready(deadline=deadline):\n                return True\n            with self._lock:\n'''
+          new = '''        try:\n            if self._active_generation_is_alive() and self._wait_for_ready(deadline=deadline):\n                return True\n            if not self._stop_unhealthy_generation(deadline=deadline):\n                return False\n            with self._lock:\n'''
+          if text.count(old) != 1:
+              raise RuntimeError("resident restart anchor changed")
+          text = text.replace(old, new, 1)
+          old = '''                previous_stop = self._stop_event\n                self._stop_event = stop_event\n'''
+          new = '''                self._stop_event = stop_event\n'''
+          if text.count(old) != 1:
+              raise RuntimeError("resident previous-stop anchor changed")
+          text = text.replace(old, new, 1)
+          old = '''                thread.start()\n            previous_stop.set()\n            ready = self._wait_for_ready(deadline=deadline)\n'''
+          new = '''                thread.start()\n            ready = self._wait_for_ready(deadline=deadline)\n'''
+          if text.count(old) != 1:
+              raise RuntimeError("resident start-order anchor changed")
+          text = text.replace(old, new, 1)
+          old = '''    stale: list[_ResidentService] = []\n    with _SERVICES_LOCK:\n        for key, candidate in tuple(_SERVICES.items()):\n            if key == active_key:\n                continue\n            if key[0] == executable and key[2] == guard_home and key[1] != identity_sha256:\n                stale.append(_SERVICES.pop(key))\n    for candidate in stale:\n        candidate.close()\n    if stale:\n        active = _SERVICES.get(active_key)\n        if active is not None:\n            snapshot = native_supervisor_snapshot(active.identity_sha256, active.guard_home)\n            native_supervisor_record_rotation(\n                active.identity_sha256,\n                active.guard_home,\n                generation=snapshot.generation,\n            )\n'''
+          new = '''    stale: list[_ResidentService] = []\n    with _SERVICES_LOCK:\n        for key, candidate in tuple(_SERVICES.items()):\n            if key == active_key:\n                continue\n            if key[0] == executable and key[2] == guard_home and key[1] != identity_sha256:\n                stale.append(_SERVICES.pop(key))\n        active = _SERVICES.get(active_key)\n    for candidate in stale:\n        candidate.close()\n    if stale and active is not None:\n        snapshot = native_supervisor_snapshot(active.identity_sha256, active.guard_home)\n        if snapshot.generation > 0:\n            native_supervisor_record_rotation(\n                active.identity_sha256,\n                active.guard_home,\n                generation=snapshot.generation,\n            )\n'''
+          if text.count(old) != 1:
+              raise RuntimeError("resident rotation anchor changed")
+          resident.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+      - name: Refresh lockfile and format
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo check --manifest-path rust/Cargo.toml --workspace --all-targets
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          python_files=(
+            src/codex_plugin_scanner/guard/native_runtime.py
+            src/codex_plugin_scanner/guard/native_runtime_identity.py
+            src/codex_plugin_scanner/guard/native_runtime_resident.py
+            src/codex_plugin_scanner/guard/native_runtime_supervisor.py
+            tests/test_native_runtime_identity.py
+            tests/test_native_runtime_supervisor.py
+          )
+          uv run --no-sync python -m ruff format "${python_files[@]}"
+      - name: Validate Rust and Python foundations
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all --check
+          cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+          uv run --no-sync python -m ruff check \
+            src/codex_plugin_scanner/guard/native_runtime.py \
+            src/codex_plugin_scanner/guard/native_runtime_identity.py \
+            src/codex_plugin_scanner/guard/native_runtime_resident.py \
+            src/codex_plugin_scanner/guard/native_runtime_supervisor.py \
+            tests/test_native_runtime_identity.py \
+            tests/test_native_runtime_supervisor.py
+          uv run --no-sync pytest -q \
+            tests/test_native_runtime_identity.py \
+            tests/test_native_runtime_supervisor.py \
+            tests/test_rust_hardening_contracts.py \
+            --tb=short
+          git diff --check
+      - name: Commit validated supervision foundation
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=feat/rust-runtime-supervision-final
+          remote_sha=$(git ls-remote --exit-code origin "refs/heads/${branch}" | awk '{print $1}')
+          if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
+            echo "Branch moved while supervision validation ran" >&2
+            exit 1
+          fi
+          rm -f .github/workflows/finalize-rust-runtime-supervision.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git commit --signoff -m "feat(guard): complete native supervision foundation"
+          git push origin "HEAD:refs/heads/${branch}"
