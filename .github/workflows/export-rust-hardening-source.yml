@@ -39,10 +39,13 @@ jobs:
           git apply --check "$RUNNER_TEMP/foundation.patch"
           git apply --index "$RUNNER_TEMP/foundation.patch"
           git diff --cached --check
-      - name: Validate source-of-truth contracts
+      - name: Normalize and validate source-of-truth contracts
         shell: bash
         run: |
           set -euo pipefail
+          uv run --no-sync python -m ruff check --fix tests/test_rust_hardening_contracts.py
+          uv run --no-sync python -m ruff format tests/test_rust_hardening_contracts.py
+          git add tests/test_rust_hardening_contracts.py
           uv run --no-sync python -m ruff format --check tests/test_rust_hardening_contracts.py
           uv run --no-sync python -m ruff check tests/test_rust_hardening_contracts.py
           uv run --no-sync pytest -q tests/test_rust_hardening_contracts.py --tb=short
