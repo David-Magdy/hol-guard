@@ -5,7 +5,7 @@ Status: canonical follow-up backlog for `release/3.0`.
 ## Execution rules
 
 - Work from the latest `release/3.0`; never merge it into `main` here.
-- Native remains source-default `off` until a dedicated release gate.
+- Eligible PostToolUse uses verified bundled Rust in source-default `auto`; explicit `off` and pure-Python fallback remain rollback paths, while PreToolUse stays Python-authoritative.
 - Every task needs code, tests, installed-artifact evidence, and matching documentation.
 - Any security-lowering Python/Rust mismatch blocks authority.
 - Never persist raw commands, prompts, output, paths, endpoints, database strings, environment values, secrets, tokens, or proofs.
@@ -123,12 +123,12 @@ Status: canonical follow-up backlog for `release/3.0`.
 - [ ] NRH-T125 measure installed adapter-to-decision p50/p95/p99/max, throughput, CPU, RSS, threads, handles, FDs, sockets, processes, queue, and fallback;
 - [ ] NRH-T126 enforce PR no-regression and documented-hardware absolute SLOs without weakening security;
 - [ ] NRH-T127 complete independent security review and resolve all unsafe/unexplained mismatches;
-- [ ] NRH-T128 open dedicated opt-in eligible PostToolUse `auto` PR only after all prior gates pass;
+- [x] NRH-T128 enable eligible PostToolUse `auto` by default only for verified bundled wheels, retaining explicit `off` and Python fallback;
 - [ ] NRH-T129 retain pure-Python/reference rollback and do not enable PreToolUse allow authority.
 
 ## Final release gate
 
 - [ ] all transport, overload, fallback, supervision, daemon-failure, privacy, cross-platform, catastrophic-risk, safe-autonomy, performance, fuzz, chaos, soak, artifact, review, and rollback gates pass;
 - [ ] dead replaced Python code is removed and retained Python ownership is explicit;
-- [ ] a separate dedicated PR may change eligible PostToolUse source default only after approval;
+- [x] a dedicated PR changes eligible PostToolUse source default to `auto` with installed-wheel and rollback evidence;
 - [ ] `release/3.0` remains unmerged to `main` during this program.

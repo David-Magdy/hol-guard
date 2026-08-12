@@ -37,6 +37,7 @@ NativeMode = Literal["off", "shadow", "auto", "force"]
 _NATIVE_PROTOCOL_VERSION = 1
 _NATIVE_BINARY_ENV = "HOL_GUARD_NATIVE_BINARY"
 _NATIVE_MODE_ENV = "HOL_GUARD_NATIVE"
+_DEFAULT_NATIVE_MODE: NativeMode = "auto"
 _NATIVE_MANIFEST_NAME = "runtime-manifest.json"
 _NATIVE_MANIFEST_SCHEMA = "hol-guard-native-runtime.v1"
 _MAX_MANIFEST_BYTES = 16 * 1024
@@ -110,9 +111,19 @@ class NativeRuntimeStatus:
 
 
 def native_mode() -> NativeMode:
-    value = os.environ.get(_NATIVE_MODE_ENV, "off").strip().lower()
+    """Return the configured native mode, defaulting to bundled auto selection.
+
+    Explicit ``off`` remains the emergency rollback. Invalid or empty values do
+    not silently disable the native safety path; they resolve to the product
+    default and still retain Python fallback when native is unavailable.
+    """
+
+    raw_value = os.environ.get(_NATIVE_MODE_ENV)
+    if raw_value is None:
+        return _DEFAULT_NATIVE_MODE
+    value = raw_value.strip().lower()
     if value not in {"off", "shadow", "auto", "force"}:
-        return "off"
+        return _DEFAULT_NATIVE_MODE
     return cast(NativeMode, value)
 
 

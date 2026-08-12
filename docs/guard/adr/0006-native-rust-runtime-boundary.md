@@ -1,6 +1,6 @@
 # ADR 0006: Python control plane with Rust runtime data plane
 
-Status: accepted for the 3.0 prerelease train. This ADR does not authorize stable default enablement.
+Status: accepted for the 3.0 prerelease train. Eligible PostToolUse default-`auto` is authorized by ADR 0010; broader native authority remains out of scope.
 
 ## Decision
 
@@ -21,4 +21,4 @@ The first authoritative migration surface is PostToolUse. PreToolUse, approvals,
 
 ## Rollout
 
-`HOL_GUARD_NATIVE=off|shadow|auto|force` controls the backend. The source default is `off`. `shadow` keeps Python authoritative. `auto` requires protocol and exact package version compatibility. Default `auto` requires a dedicated release-gate PR with differential and performance evidence.
+`HOL_GUARD_NATIVE=off|shadow|auto|force` controls the backend. Eligible PostToolUse defaults to `auto`, which accepts only the verified bundled runtime with protocol and exact package-version compatibility and otherwise falls back to Python. Explicit `off` remains the immediate rollback, `shadow` keeps Python authoritative, and `force` remains a developer/test mode. See ADR 0010 for the release-gate decision.

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import codex_plugin_scanner.guard.native_runtime as native_runtime_module
 from codex_plugin_scanner.guard.native_runtime import (
     native_mode,
     native_runtime_status,
@@ -14,15 +15,33 @@ from codex_plugin_scanner.guard.native_runtime import (
 from codex_plugin_scanner.guard.runtime.hook_review_types import HookReviewResponse
 
 
-def test_native_mode_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_native_mode_defaults_auto(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HOL_GUARD_NATIVE", raising=False)
+    monkeypatch.setattr(native_runtime_module, "_runtime_candidates", lambda: ())
+    assert native_mode() == "auto"
+    status = native_runtime_status()
+    assert status.mode == "auto"
+    assert status.reason == "native_unavailable"
+
+
+def test_explicit_off_remains_emergency_rollback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOL_GUARD_NATIVE", "off")
     assert native_mode() == "off"
-    assert native_runtime_status().reason == "native_disabled"
+    status = native_runtime_status()
+    assert status.mode == "off"
+    assert status.reason == "native_disabled"
 
 
-def test_invalid_native_mode_fails_to_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_invalid_native_mode_fails_to_auto(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOL_GUARD_NATIVE", "unexpected")
-    assert native_mode() == "off"
+    monkeypatch.setattr(native_runtime_module, "_runtime_candidates", lambda: ())
+    assert native_mode() == "auto"
+    assert native_runtime_status().reason == "native_unavailable"
+
+
+def test_empty_native_mode_fails_to_auto(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOL_GUARD_NATIVE", "  ")
+    assert native_mode() == "auto"
 
 
 def test_parity_signature_hashes_excerpt() -> None:

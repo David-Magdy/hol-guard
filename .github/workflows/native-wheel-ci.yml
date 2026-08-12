@@ -7,6 +7,7 @@ on:
       - "rust/**"
       - "scripts/build_native_hol_guard_wheel.py"
       - "ci/native_runtime/test_native_hol_guard_wheel.py"
+      - "ci/native_runtime/probe_native_default_auto.py"
       - "src/codex_plugin_scanner/guard/native_runtime.py"
       - ".github/workflows/native-wheel-ci.yml"
   push:
@@ -15,6 +16,7 @@ on:
       - "rust/**"
       - "scripts/build_native_hol_guard_wheel.py"
       - "ci/native_runtime/test_native_hol_guard_wheel.py"
+      - "ci/native_runtime/probe_native_default_auto.py"
       - "src/codex_plugin_scanner/guard/native_runtime.py"
       - ".github/workflows/native-wheel-ci.yml"
   workflow_dispatch:
@@ -87,14 +89,8 @@ jobs:
             --source-sha "$SOURCE_SHA" \
             --rule-digest "$RULE_DIGEST"
           uv pip install --python .venv/bin/python --no-deps --force-reinstall native-dist/*.whl
-          HOL_GUARD_NATIVE=auto uv run --no-sync python - <<'PY'
-          from codex_plugin_scanner.guard.native_runtime import native_runtime_status
-          status = native_runtime_status()
-          assert status.available and status.compatible, status
-          assert status.reason == "native_ready"
-          assert status.capabilities is not None
-          print(status.capabilities)
-          PY
+          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY
+          uv run --no-sync python ci/native_runtime/probe_native_default_auto.py
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hol-guard-native-wheel-linux-x64
@@ -162,12 +158,8 @@ jobs:
             --source-sha "$SOURCE_SHA" \
             --rule-digest "$RULE_DIGEST"
           uv pip install --python .venv/bin/python --no-deps --force-reinstall native-dist/*.whl
-          HOL_GUARD_NATIVE=auto uv run --no-sync python - <<'PY'
-          from codex_plugin_scanner.guard.native_runtime import native_runtime_status
-          status = native_runtime_status()
-          assert status.available and status.compatible, status
-          assert status.reason == "native_ready"
-          PY
+          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY
+          uv run --no-sync python ci/native_runtime/probe_native_default_auto.py
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hol-guard-native-wheel-${{ matrix.target }}
@@ -224,8 +216,9 @@ jobs:
             --rule-digest $caps.rule_digest
           $wheel = (Get-ChildItem native-dist\*.whl).FullName
           uv pip install --python .venv\Scripts\python.exe --no-deps --force-reinstall $wheel
-          $env:HOL_GUARD_NATIVE = "auto"
-          uv run --no-sync python -c "from codex_plugin_scanner.guard.native_runtime import native_runtime_status; s=native_runtime_status(); assert s.available and s.compatible and s.reason == 'native_ready', s"
+          Remove-Item Env:HOL_GUARD_NATIVE -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_NATIVE_BINARY -ErrorAction SilentlyContinue
+          uv run --no-sync python ci/native_runtime/probe_native_default_auto.py
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hol-guard-native-wheel-windows-x64
