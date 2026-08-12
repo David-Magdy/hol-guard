@@ -41,6 +41,7 @@ class NativeSupervisorSnapshot:
     starts: int
     restarts: int
     failures: int
+    consecutive_failures: int
     rotations: int
     start_in_flight: bool
     child_alive: bool
@@ -64,6 +65,7 @@ class _MutableSupervisor:
     starts: int = 0
     restarts: int = 0
     failures: int = 0
+    consecutive_failures: int = 0
     rotations: int = 0
     start_in_flight: bool = False
     child_alive: bool = False
@@ -217,6 +219,7 @@ def native_supervisor_record_ready(
         supervisor.child_alive = True
         supervisor.next_start_at = 0.0
         supervisor.circuit_until = 0.0
+        supervisor.consecutive_failures = 0
         assert supervisor.restart_times is not None
         supervisor.restart_times.clear()
         _record(supervisor, state="healthy", reason="native_ready")
@@ -270,6 +273,7 @@ def _record_failure(
         supervisor.start_in_flight = False
         supervisor.child_alive = False
         supervisor.failures += 1
+        supervisor.consecutive_failures += 1
         assert supervisor.restart_times is not None
         while supervisor.restart_times and now - supervisor.restart_times[0] > _RESTART_WINDOW_SECONDS:
             supervisor.restart_times.popleft()
@@ -287,13 +291,13 @@ def _record_failure(
                 reason="native_supervisor_circuit_open",
             )
             return
-        exponent = min(supervisor.failures - 1, 8)
+        exponent = min(supervisor.consecutive_failures - 1, 8)
         delay = min(
             _RESTART_MAX_DELAY_SECONDS,
             _RESTART_BASE_DELAY_SECONDS * (2**exponent),
         )
         jitter_digest = hashlib.sha256(
-            f"{_key(identity_sha256, guard_home)}:{generation}:{supervisor.failures}".encode()
+            f"{_key(identity_sha256, guard_home)}:{generation}:{supervisor.consecutive_failures}".encode()
         ).digest()
         jitter = (int.from_bytes(jitter_digest[:2], "big") / 65_535.0) * delay * 0.25
         supervisor.next_start_at = now + delay + jitter
@@ -326,6 +330,11 @@ def native_supervisor_record_stopped(
             return
         supervisor.start_in_flight = False
         supervisor.child_alive = False
+        supervisor.next_start_at = 0.0
+        supervisor.circuit_until = 0.0
+        supervisor.consecutive_failures = 0
+        assert supervisor.restart_times is not None
+        supervisor.restart_times.clear()
         _record(supervisor, state="disabled", reason="native_stopped")
 
 
@@ -344,6 +353,7 @@ def native_supervisor_snapshot(
             starts=supervisor.starts,
             restarts=supervisor.restarts,
             failures=supervisor.failures,
+            consecutive_failures=supervisor.consecutive_failures,
             rotations=supervisor.rotations,
             start_in_flight=supervisor.start_in_flight,
             child_alive=supervisor.child_alive,
