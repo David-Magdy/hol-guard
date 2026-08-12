@@ -31,11 +31,11 @@ jobs:
         run: |
           set -euo pipefail
           cat ci/rust-hardening-foundation.patch.gz.b64.part{00,01,02,03} > "$RUNNER_TEMP/foundation.patch.gz.b64"
-          echo "9c086e123a1099b24640192c32291bfe7d1a1083db0c17e0ea1b258ccfa859b5  $RUNNER_TEMP/foundation.patch.gz.b64" | sha256sum --check
+          test "$(sha256sum "$RUNNER_TEMP/foundation.patch.gz.b64" | awk '{print $1}')" = "9c086e123a1099b24640192c32291bfe7d1a1083db0c17e0ea1b258ccfa859b5"
           base64 --decode "$RUNNER_TEMP/foundation.patch.gz.b64" > "$RUNNER_TEMP/foundation.patch.gz"
-          echo "89968dede8a147c825c2f48d25e01de025cb7dd3f2368fb2209acb98d1d683e0  $RUNNER_TEMP/foundation.patch.gz" | sha256sum --check
+          test "$(sha256sum "$RUNNER_TEMP/foundation.patch.gz" | awk '{print $1}')" = "89968dede8a147c825c2f48d25e01de025cb7dd3f2368fb2209acb98d1d683e0"
           gzip --decompress --stdout "$RUNNER_TEMP/foundation.patch.gz" > "$RUNNER_TEMP/foundation.patch"
-          echo "54f6fbaa5124406bf33ac0dcecb2cf5b6553260d106830be96e508143bee63f3  $RUNNER_TEMP/foundation.patch" | sha256sum --check
+          test "$(sha256sum "$RUNNER_TEMP/foundation.patch" | awk '{print $1}')" = "54f6fbaa5124406bf33ac0dcecb2cf5b6553260d106830be96e508143bee63f3"
           git apply --check "$RUNNER_TEMP/foundation.patch"
           git apply --index "$RUNNER_TEMP/foundation.patch"
           git diff --cached --check
