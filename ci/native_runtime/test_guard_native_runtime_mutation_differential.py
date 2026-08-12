@@ -125,7 +125,7 @@ def _request(
 @pytest.mark.parametrize("seed", _SEEDS)
 def test_mutated_inline_corpus_keeps_exact_python_rust_parity(tmp_path: Path, seed: int) -> None:
     rng = random.Random(seed)
-    with tempfile.TemporaryDirectory(prefix=f"hgm-{seed}-", dir="/tmp") as short_tmp:
+    with tempfile.TemporaryDirectory(prefix=f"hgm-{seed}-", dir=tempfile.gettempdir()) as short_tmp:
         guard_home = Path(short_tmp) / "guard-home"
         guard_home.mkdir(mode=0o700)
         store = GuardStore(guard_home)
@@ -155,6 +155,4 @@ def test_mutated_inline_corpus_keeps_exact_python_rust_parity(tmp_path: Path, se
 def test_mutation_corpus_is_deterministic() -> None:
     first = random.Random(_SEEDS[0])
     second = random.Random(_SEEDS[0])
-    assert [_payload(first, index) for index in range(12)] == [
-        _payload(second, index) for index in range(12)
-    ]
+    assert [_payload(first, index) for index in range(12)] == [_payload(second, index) for index in range(12)]

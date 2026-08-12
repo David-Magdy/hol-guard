@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .codex_hook_launch_runtime import run_isolated_hook_process
-from .native_runtime import _isolated_environment, native_runtime_status
+from .native_runtime import _isolated_environment, _native_error, native_runtime_status
 from .native_runtime_resident import resident_native_request
 from .native_runtime_resilience import (
     native_oneshot_lease,
@@ -278,7 +278,7 @@ def review_command_model_native(
                 resident_payload = json.loads(resident_output)
             except (UnicodeDecodeError, json.JSONDecodeError):
                 resident_payload = None
-            if resident_payload == {"error": "native_overloaded", "retryable": True}:
+            if _native_error(resident_payload) == "native_overloaded":
                 native_record_overload(status.identity.sha256, guard_home)
                 return None
             decoded = _decode_command_model(resident_payload, **decoder_arguments)

@@ -23,6 +23,7 @@ _CIRCUIT_COOLDOWN_SECONDS = 15.0
 _ONESHOT_RETRY_COOLDOWN_SECONDS = 0.05
 _GLOBAL_ONESHOT_LIMIT = 2
 _REASON_MAX_LENGTH = 96
+_REASON_CHARACTERS = frozenset("_-.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +79,7 @@ def _privacy_safe_key(identity_sha256: str, guard_home: Path) -> str:
 
 def _public_reason(reason: str, fallback: str) -> str:
     candidate = reason.strip().lower()[:_REASON_MAX_LENGTH]
-    if candidate and all(character.isalnum() or character in {"_", "-", "."} for character in candidate):
+    if candidate and all(character.isalnum() or character in _REASON_CHARACTERS for character in candidate):
         return candidate
     return fallback
 

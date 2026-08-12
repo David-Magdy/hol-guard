@@ -95,3 +95,12 @@ def test_integrity_failure_quarantines_without_exposing_arbitrary_text(tmp_path:
     still_quarantined = native_runtime_health_snapshot(identity, tmp_path)
     assert still_quarantined.state == "quarantined"
     assert still_quarantined.circuit_open is True
+
+
+def test_compatibility_mismatches_are_recoverable() -> None:
+    from codex_plugin_scanner.guard.native_runtime import _INTEGRITY_FAILURE_REASONS
+
+    assert "native_protocol_mismatch" not in _INTEGRITY_FAILURE_REASONS
+    assert "native_version_mismatch" not in _INTEGRITY_FAILURE_REASONS
+    assert "native_manifest_protocol_mismatch" in _INTEGRITY_FAILURE_REASONS
+    assert "native_manifest_version_mismatch" in _INTEGRITY_FAILURE_REASONS

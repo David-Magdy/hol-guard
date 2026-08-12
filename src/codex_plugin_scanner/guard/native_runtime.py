@@ -53,8 +53,6 @@ _INTEGRITY_FAILURE_REASONS = frozenset(
         "native_manifest_protocol_mismatch",
         "native_manifest_rule_mismatch",
         "native_manifest_build_mismatch",
-        "native_protocol_mismatch",
-        "native_version_mismatch",
     }
 )
 _NATIVE_ERROR_CODES = frozenset(

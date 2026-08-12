@@ -99,7 +99,7 @@ def test_runtime_rejects_symlink_binary(tmp_path: Path, monkeypatch: pytest.Monk
 def test_poisoned_socket_symlink_falls_back_without_touching_target(tmp_path: Path) -> None:
     status = native_runtime_status()
     assert status.available and status.compatible and status.identity is not None
-    with tempfile.TemporaryDirectory(prefix="hgr-poison-", dir="/tmp") as short_tmp:
+    with tempfile.TemporaryDirectory(prefix="hgr-poison-", dir=tempfile.gettempdir()) as short_tmp:
         guard_home = Path(short_tmp) / "guard-home"
         guard_home.mkdir(mode=0o700)
         request = _request(tmp_path, guard_home=guard_home, request_id="poisoned-socket")
@@ -122,7 +122,7 @@ def test_poisoned_socket_symlink_falls_back_without_touching_target(tmp_path: Pa
 
 @pytest.mark.skipif(not _NATIVE_BINARY or os.name == "nt", reason="compiled POSIX resident runtime is required")
 def test_resident_runtime_restarts_after_contained_shutdown(tmp_path: Path) -> None:
-    with tempfile.TemporaryDirectory(prefix="hgr-restart-", dir="/tmp") as short_tmp:
+    with tempfile.TemporaryDirectory(prefix="hgr-restart-", dir=tempfile.gettempdir()) as short_tmp:
         guard_home = Path(short_tmp) / "guard-home"
         guard_home.mkdir(mode=0o700)
         first_request = _request(
