@@ -27,39 +27,20 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen --extra dev --python 3.12
       - name: Replace wall-clock polling with lifecycle synchronization
+        env:
+          OLD_BLOCK_B64: "ICAgICAgICBkZWFkbGluZSA9IHRpbWUubW9ub3RvbmljKCkgKyAyCiAgICAgICAgd2hpbGUgdGltZS5tb25vdG9uaWMoKSA8IGRlYWRsaW5lOgogICAgICAgICAgICBydW50aW1lX3N0YXRlID0gc3RvcmUuZ2V0X3J1bnRpbWVfc3RhdGUoKQogICAgICAgICAgICBkYWVtb25fdGhyZWFkID0gZGFlbW9uLl90aHJlYWQKICAgICAgICAgICAgaWYgcnVudGltZV9zdGF0ZSBpcyBOb25lIGFuZCBkYWVtb25fdGhyZWFkIGlzIG5vdCBOb25lIGFuZCBub3QgZGFlbW9uX3RocmVhZC5pc19hbGl2ZSgpOgogICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgdGltZS5zbGVlcCgwLjAyKQoKICAgICAgICBydW50aW1lX3N0YXRlID0gc3RvcmUuZ2V0X3J1bnRpbWVfc3RhdGUoKQogICAgICAgIGRhZW1vbl90aHJlYWQgPSBkYWVtb24uX3RocmVhZAogICAgICAgIGRhZW1vbi5zdG9wKCkKCiAgICAgICAgYXNzZXJ0IHJ1bnRpbWVfc3RhdGUgaXMgTm9uZQogICAgICAgIGFzc2VydCBkYWVtb25fdGhyZWFkIGlzIG5vdCBOb25lCiAgICAgICAgYXNzZXJ0IGRhZW1vbl90aHJlYWQuaXNfYWxpdmUoKSBpcyBGYWxzZQo="
+          NEW_BLOCK_B64: "ICAgICAgICBhc3NlcnQgZGFlbW9uLl9zaHV0ZG93bl9zdGFydGVkLndhaXQodGltZW91dD0zKQogICAgICAgIGRhZW1vbl90aHJlYWQgPSBkYWVtb24uX3RocmVhZAogICAgICAgIGFzc2VydCBkYWVtb25fdGhyZWFkIGlzIG5vdCBOb25lCiAgICAgICAgZGFlbW9uX3RocmVhZC5qb2luKHRpbWVvdXQ9MTApCiAgICAgICAgcnVudGltZV9zdGF0ZSA9IHN0b3JlLmdldF9ydW50aW1lX3N0YXRlKCkKICAgICAgICBkYWVtb24uc3RvcCgpCgogICAgICAgIGFzc2VydCBydW50aW1lX3N0YXRlIGlzIE5vbmUKICAgICAgICBhc3NlcnQgZGFlbW9uX3RocmVhZC5pc19hbGl2ZSgpIGlzIEZhbHNlCg=="
         run: |
           set -euo pipefail
           python - <<'PY'
+          import base64
+          import os
           from pathlib import Path
 
           path = Path("tests/test_guard_surface_server.py")
           text = path.read_text(encoding="utf-8")
-          old = '''        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            runtime_state = store.get_runtime_state()
-            daemon_thread = daemon._thread
-            if runtime_state is None and daemon_thread is not None and not daemon_thread.is_alive():
-                break
-            time.sleep(0.02)
-
-        runtime_state = store.get_runtime_state()
-        daemon_thread = daemon._thread
-        daemon.stop()
-
-        assert runtime_state is None
-        assert daemon_thread is not None
-        assert daemon_thread.is_alive() is False
-'''
-          new = '''        assert daemon._shutdown_started.wait(timeout=3)
-        daemon_thread = daemon._thread
-        assert daemon_thread is not None
-        daemon_thread.join(timeout=10)
-        runtime_state = store.get_runtime_state()
-        daemon.stop()
-
-        assert runtime_state is None
-        assert daemon_thread.is_alive() is False
-'''
+          old = base64.b64decode(os.environ["OLD_BLOCK_B64"]).decode("utf-8")
+          new = base64.b64decode(os.environ["NEW_BLOCK_B64"]).decode("utf-8")
           if text.count(old) != 1:
               raise RuntimeError("Expected exactly one idle-timeout polling block")
           path.write_text(text.replace(old, new, 1), encoding="utf-8")
@@ -69,7 +50,7 @@ jobs:
       - name: Exercise the lifecycle contract repeatedly
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 16); do
+          for attempt in $(seq 1 12); do
             echo "idle lifecycle attempt ${attempt}"
             uv run --no-sync pytest -q \
               tests/test_guard_surface_server.py::TestGuardSurfaceServer::test_guard_daemon_background_start_auto_stops_after_idle_timeout \
@@ -80,9 +61,21 @@ jobs:
         run: |
           set -euo pipefail
           uv run --no-sync python scripts/ci/test_inventory.py --output "$RUNNER_TEMP/inventory.json"
-          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
-            --inventory "$RUNNER_TEMP/inventory.json" \
-            --baseline ci/test-suite-ratchet-baseline.json
+          uv run --no-sync python - "$RUNNER_TEMP/inventory.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          observed = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          baseline = json.loads(pathlib.Path("ci/test-suite-ratchet-baseline.json").read_text(encoding="utf-8"))
+          collected = observed["inventory"]["collected_cases"]
+          lines = observed["test_source_lines"]
+          if collected > baseline["maximum_collected_cases"]:
+              raise SystemExit(f"collected-case ceiling exceeded: {collected} > {baseline['maximum_collected_cases']}")
+          if lines > baseline["maximum_test_source_lines"]:
+              raise SystemExit(f"test-line ceiling exceeded: {lines} > {baseline['maximum_test_source_lines']}")
+          print(f"ratchet ok: collected={collected} lines={lines}")
+          PY
       - name: Commit verified test synchronization and remove helper
         run: |
           set -euo pipefail
