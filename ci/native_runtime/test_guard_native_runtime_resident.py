@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import codex_plugin_scanner.guard.native_runtime_resident as resident
 from codex_plugin_scanner.guard.daemon.hook_worker import HookWorker
 from codex_plugin_scanner.guard.native_runtime_resident import (
     close_resident_native_runtimes,
@@ -24,30 +25,70 @@ def _fake_runtime(path: Path) -> Path:
     executable = path / "fake-native-runtime"
     executable.write_text(
         f"""#!{sys.executable}
+import hashlib
+import hmac
 import socket
 import sys
+import tempfile
 
+REQUEST_MAGIC = b'HGR2'
+RESPONSE_MAGIC = b'HGS2'
+SERVER_LABEL = b'hol-guard-resident-server-v1\\x00'
+CLIENT_LABEL = b'hol-guard-resident-client-v1\\x00'
+HEADER_BYTES = 72
+
+def read_exact(client, length):
+    chunks = []
+    while length:
+        chunk = client.recv(length)
+        if not chunk:
+            return None
+        chunks.append(chunk)
+        length -= len(chunk)
+    return b''.join(chunks)
+
+token = bytes.fromhex(sys.stdin.readline().strip())
+assert len(token) == 32
 socket_path = sys.argv[3]
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(socket_path)
+server.listen(8)
 while True:
-    server.listen(8)
     client, _ = server.accept()
     with client:
-        header = client.recv(4)
-        if len(header) != 4:
+        client.settimeout(1.0)
+        nonce = read_exact(client, 32)
+        if nonce is None:
             continue
-        length = int.from_bytes(header, 'big')
-        remaining = length
-        while remaining:
-            chunk = client.recv(min(remaining, 65536))
-            if not chunk:
-                break
-            remaining -= len(chunk)
-        if remaining:
+        client.sendall(hmac.new(token, SERVER_LABEL + nonce, hashlib.sha256).digest())
+        proof = read_exact(client, 32)
+        expected = hmac.new(token, CLIENT_LABEL + nonce, hashlib.sha256).digest()
+        if proof is None or not hmac.compare_digest(proof, expected):
             continue
-        response = b'{{"decision":"allow","model_output_action":"allow_original","notice":"none","reason_code":"ok"}}'
-        client.sendall(len(response).to_bytes(4, 'big') + response)
+        header = read_exact(client, HEADER_BYTES)
+        if header is None or header[:4] != REQUEST_MAGIC:
+            continue
+        request_id = header[4:36]
+        request_digest = header[36:68]
+        length = int.from_bytes(header[68:72], 'big')
+        request = read_exact(client, length)
+        if request is None or hashlib.sha256(request).digest() != request_digest:
+            continue
+        if request == b'{{"operation":"health","request":{{}}}}':
+            response = b'{{"status":"ready","protocol_version":2}}'
+        else:
+            response = (
+                b'{{"decision":"allow","model_output_action":'
+                b'"allow_original","notice":"none",'
+                b'"reason_code":"ok"}}'
+            )
+        response_header = (
+            RESPONSE_MAGIC
+            + request_id
+            + hashlib.sha256(response).digest()
+            + len(response).to_bytes(4, 'big')
+        )
+        client.sendall(response_header + response)
 """,
         encoding="utf-8",
     )
@@ -55,8 +96,9 @@ while True:
     return executable
 
 
-def test_resident_runtime_reuses_one_contained_service() -> None:
-    with tempfile.TemporaryDirectory(prefix="hgr-", dir="/tmp") as short_tmp:
+def test_resident_runtime_reuses_one_contained_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resident, "_START_TIMEOUT_SECONDS", 2.0)
+    with tempfile.TemporaryDirectory(prefix="hgr-") as short_tmp:
         root = Path(short_tmp)
         executable = _fake_runtime(root)
         guard_home = root / "guard-home"
@@ -70,7 +112,7 @@ def test_resident_runtime_reuses_one_contained_service() -> None:
                 guard_home=guard_home,
                 environment=environment,
                 payload=b"{}",
-                timeout_seconds=1.0,
+                timeout_seconds=3.0,
             )
             second = resident_native_request(
                 executable=executable,
@@ -78,7 +120,7 @@ def test_resident_runtime_reuses_one_contained_service() -> None:
                 guard_home=guard_home,
                 environment=environment,
                 payload=b"{}",
-                timeout_seconds=1.0,
+                timeout_seconds=3.0,
             )
             assert first == second
             assert first is not None and b'"decision":"allow"' in first

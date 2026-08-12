@@ -12,8 +12,16 @@ from pathlib import Path
 from typing import Any
 
 from .codex_hook_launch_runtime import run_isolated_hook_process
-from .native_runtime import _isolated_environment, native_runtime_status
+from .native_runtime import _isolated_environment, _native_error, native_runtime_status
 from .native_runtime_resident import resident_native_request
+from .native_runtime_resilience import (
+    native_oneshot_lease,
+    native_record_oneshot_failure,
+    native_record_oneshot_success,
+    native_record_overload,
+    native_record_resident_failure,
+    native_record_resident_success,
+)
 from .runtime.command_evaluation import evaluate_command
 from .runtime.command_model import CanonicalCommand, CommandSegment
 from .runtime.command_shadow_evaluation import CommandShadowCohort, CommandShadowProposal
@@ -25,6 +33,7 @@ _MAX_TOKENS = 2_048
 _PARSER_PROFILE = "posix-simple-v1"
 _REQUIRED_FEATURE = "pre-tool-command-model-shadow-v1"
 _RESIDENT_FEATURE = "resident-command-model-shadow-v1"
+_RESIDENT_PROTOCOL_FEATURE = "resident-protocol-v2"
 _NATIVE_SHADOW_PROPOSAL_VERSION = "guard.command-shadow-proposal.rust-parser.v1"
 
 
@@ -250,7 +259,7 @@ def review_command_model_native(
         "extraction_provenance": extraction_provenance,
     }
 
-    if _RESIDENT_FEATURE in status.capabilities.features:
+    if {_RESIDENT_FEATURE, _RESIDENT_PROTOCOL_FEATURE} <= set(status.capabilities.features):
         resident_envelope = json.dumps(
             {"operation": "command_model", "request": request},
             separators=(",", ":"),
@@ -266,26 +275,53 @@ def review_command_model_native(
         )
         if resident_output is not None:
             try:
-                decoded = _decode_command_model(json.loads(resident_output), **decoder_arguments)
+                resident_payload = json.loads(resident_output)
             except (UnicodeDecodeError, json.JSONDecodeError):
-                decoded = None
+                resident_payload = None
+            if _native_error(resident_payload) == "native_overloaded":
+                native_record_overload(status.identity.sha256, guard_home)
+                return None
+            decoded = _decode_command_model(resident_payload, **decoder_arguments)
             if decoded is not None:
+                native_record_resident_success(status.identity.sha256, guard_home)
                 return decoded
+        native_record_resident_failure(
+            status.identity.sha256,
+            guard_home,
+            reason="native_command_resident_unavailable",
+        )
 
-    result = run_isolated_hook_process(
-        (str(status.identity.path), "command-model", "--stdin"),
-        input_text=request_bytes.decode("utf-8"),
-        cwd=status.identity.path.parent,
-        environment=environment,
-        timeout_seconds=timeout_seconds,
-        output_limit=_MAX_RESPONSE_BYTES,
-    )
-    if result.returncode != 0 or result.timed_out or result.output_limit_exceeded or result.containment_failed:
-        return None
-    try:
-        return _decode_command_model(json.loads(result.stdout), **decoder_arguments)
-    except json.JSONDecodeError:
-        return None
+    with native_oneshot_lease(status.identity.sha256, guard_home) as acquired:
+        if not acquired:
+            return None
+        result = run_isolated_hook_process(
+            (str(status.identity.path), "command-model", "--stdin"),
+            input_text=request_bytes.decode("utf-8"),
+            cwd=status.identity.path.parent,
+            environment=environment,
+            timeout_seconds=timeout_seconds,
+            output_limit=_MAX_RESPONSE_BYTES,
+        )
+        if result.returncode != 0 or result.timed_out or result.output_limit_exceeded or result.containment_failed:
+            native_record_oneshot_failure(
+                status.identity.sha256,
+                guard_home,
+                reason="native_command_oneshot_failed",
+            )
+            return None
+        try:
+            decoded = _decode_command_model(json.loads(result.stdout), **decoder_arguments)
+        except json.JSONDecodeError:
+            decoded = None
+        if decoded is None:
+            native_record_oneshot_failure(
+                status.identity.sha256,
+                guard_home,
+                reason="native_command_oneshot_invalid",
+            )
+            return None
+        native_record_oneshot_success(status.identity.sha256, guard_home)
+        return decoded
 
 
 def _canonical_command_from_native(

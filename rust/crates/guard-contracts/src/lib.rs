@@ -155,7 +155,8 @@ mod tests {
 
     #[test]
     fn response_omits_empty_optionals() {
-        let encoded = serde_json::to_value(HookReviewResponseV1::allow("output_scan_allow")).unwrap();
+        let encoded =
+            serde_json::to_value(HookReviewResponseV1::allow("output_scan_allow")).unwrap();
         assert!(encoded.get("reason").is_none());
         assert_eq!(encoded["decision"], "allow");
         assert_eq!(encoded["reason_code"], "output_scan_allow");

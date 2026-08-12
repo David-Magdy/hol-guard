@@ -20,6 +20,17 @@ from typing import Literal, cast
 
 from .codex_hook_launch_runtime import run_isolated_hook_process
 from .native_runtime_resident import resident_native_request
+from .native_runtime_resilience import (
+    NativeRuntimeHealthSnapshot,
+    native_oneshot_lease,
+    native_record_integrity_failure,
+    native_record_oneshot_failure,
+    native_record_oneshot_success,
+    native_record_overload,
+    native_record_resident_failure,
+    native_record_resident_success,
+    native_runtime_health_snapshot,
+)
 from .runtime.hook_review_types import HookReviewRequest, HookReviewResponse
 
 NativeMode = Literal["off", "shadow", "auto", "force"]
@@ -31,6 +42,30 @@ _NATIVE_MANIFEST_SCHEMA = "hol-guard-native-runtime.v1"
 _MAX_MANIFEST_BYTES = 16 * 1024
 _MAX_REQUEST_BYTES = 6 * 1024 * 1024
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+_RESIDENT_PROTOCOL_FEATURE = "resident-protocol-v2"
+_UNAVAILABLE_IDENTITY = "0" * 64
+_INTEGRITY_FAILURE_REASONS = frozenset(
+    {
+        "native_manifest_invalid",
+        "native_manifest_missing",
+        "native_manifest_runtime_mismatch",
+        "native_manifest_version_mismatch",
+        "native_manifest_protocol_mismatch",
+        "native_manifest_rule_mismatch",
+        "native_manifest_build_mismatch",
+    }
+)
+_NATIVE_ERROR_CODES = frozenset(
+    {
+        "native_overloaded",
+        "native_frame_read_failed",
+        "native_request_digest_mismatch",
+        "native_request_invalid_json",
+        "native_request_too_large",
+        "native_response_encode_failed",
+        "native_runtime_panicked",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,9 +344,19 @@ def _decode_capabilities(payload: object) -> NativeRuntimeCapabilities | None:
 
 
 @functools.lru_cache(maxsize=16)
-def _capabilities_for_identity(path: str, size: int, mtime_ns: int, sha256: str) -> NativeRuntimeCapabilities | None:
+def _capabilities_for_identity(
+    path: str,
+    size: int,
+    mtime_ns: int,
+    sha256: str,
+) -> NativeRuntimeCapabilities | None:
     del size, mtime_ns, sha256
-    output = _run_native_process(Path(path), ("capabilities", "--json"), input_text="", timeout_seconds=1.0)
+    output = _run_native_process(
+        Path(path),
+        ("capabilities", "--json"),
+        input_text="",
+        timeout_seconds=1.0,
+    )
     if output is None:
         return None
     try:
@@ -331,7 +376,12 @@ def _python_package_version() -> str | None:
 def native_runtime_status() -> NativeRuntimeStatus:
     mode = native_mode()
     if mode == "off":
-        return NativeRuntimeStatus(mode=mode, available=False, compatible=False, reason="native_disabled")
+        return NativeRuntimeStatus(
+            mode=mode,
+            available=False,
+            compatible=False,
+            reason="native_disabled",
+        )
     for candidate in _runtime_candidates():
         identity = _validate_binary(candidate)
         if identity is None:
@@ -347,7 +397,12 @@ def native_runtime_status() -> NativeRuntimeStatus:
                     reason=manifest_error,
                     identity=identity,
                 )
-        capabilities = _capabilities_for_identity(str(identity.path), identity.size, identity.mtime_ns, identity.sha256)
+        capabilities = _capabilities_for_identity(
+            str(identity.path),
+            identity.size,
+            identity.mtime_ns,
+            identity.sha256,
+        )
         if capabilities is None:
             continue
         if capabilities.protocol_version != _NATIVE_PROTOCOL_VERSION:
@@ -390,7 +445,12 @@ def native_runtime_status() -> NativeRuntimeStatus:
             identity=identity,
             capabilities=capabilities,
         )
-    return NativeRuntimeStatus(mode=mode, available=False, compatible=False, reason="native_unavailable")
+    return NativeRuntimeStatus(
+        mode=mode,
+        available=False,
+        compatible=False,
+        reason="native_unavailable",
+    )
 
 
 def _response_from_payload(payload: object) -> HookReviewResponse | None:
@@ -420,26 +480,70 @@ def _response_from_payload(payload: object) -> HookReviewResponse | None:
         decision=decision,
         reason=reason if isinstance(reason, str) else None,
         model_output_action=model_output_action,
-        reviewed_output_sha256=reviewed_output_sha256 if isinstance(reviewed_output_sha256, str) else None,
-        reviewed_excerpt=reviewed_excerpt if isinstance(reviewed_excerpt, str) else None,
+        reviewed_output_sha256=(reviewed_output_sha256 if isinstance(reviewed_output_sha256, str) else None),
+        reviewed_excerpt=(reviewed_excerpt if isinstance(reviewed_excerpt, str) else None),
         notice=notice,
         reason_code=reason_code,
         policy_action=policy_action if isinstance(policy_action, str) else None,
-        observed_policy_action=observed_policy_action if isinstance(observed_policy_action, str) else None,
+        observed_policy_action=(observed_policy_action if isinstance(observed_policy_action, str) else None),
         observe_mode=payload.get("observe_mode") is True,
     )
+
+
+def _native_error(payload: object) -> str | None:
+    if not isinstance(payload, dict) or set(payload) - {"error", "retryable"}:
+        return None
+    error = payload.get("error")
+    if not isinstance(error, str) or error not in _NATIVE_ERROR_CODES:
+        return None
+    retryable = payload.get("retryable")
+    if retryable is not None and not isinstance(retryable, bool):
+        return None
+    return error
 
 
 def _deadline_budget_ms(request: HookReviewRequest) -> int:
     if request.deadline_monotonic is None:
         return 750
-    return max(1, min(9_000, int((request.deadline_monotonic - time.monotonic()) * 1000)))
+    return max(
+        1,
+        min(9_000, int((request.deadline_monotonic - time.monotonic()) * 1_000)),
+    )
 
 
-def review_post_tool_native(request: HookReviewRequest, *, observe_mode: bool) -> HookReviewResponse | None:
+def _identity_key(status: NativeRuntimeStatus) -> str:
+    return status.identity.sha256 if status.identity is not None else _UNAVAILABLE_IDENTITY
+
+
+def native_runtime_health(guard_home: Path) -> NativeRuntimeHealthSnapshot:
     status = native_runtime_status()
+    return native_runtime_health_snapshot(_identity_key(status), guard_home)
+
+
+def review_post_tool_native(
+    request: HookReviewRequest,
+    *,
+    observe_mode: bool,
+) -> HookReviewResponse | None:
+    """Review PostToolUse with resident Rust, then one bounded Rust recovery.
+
+    Native failure is reported as ``None`` so the currently supported Python
+    reference backend remains authoritative until the dedicated cutover gate.
+    The native one-shot path is globally bounded and never used as overflow
+    capacity after an explicit resident overload response.
+    """
+
+    status = native_runtime_status()
+    identity_key = _identity_key(status)
     if not status.available or not status.compatible or status.identity is None:
+        if status.reason in _INTEGRITY_FAILURE_REASONS:
+            native_record_integrity_failure(
+                identity_key,
+                request.guard_home,
+                reason=status.reason,
+            )
         return None
+
     envelope = {
         "protocol_version": _NATIVE_PROTOCOL_VERSION,
         "request_id": request.request_id,
@@ -457,38 +561,80 @@ def review_post_tool_native(request: HookReviewRequest, *, observe_mode: bool) -
     encoded = input_text.encode("utf-8")
     if len(encoded) > _MAX_REQUEST_BYTES:
         return None
-    timeout_seconds = max(0.05, min(9.0, _deadline_budget_ms(request) / 1000.0))
-
-    resident_output = resident_native_request(
-        executable=status.identity.path,
-        identity_sha256=status.identity.sha256,
-        guard_home=request.guard_home,
-        environment=_isolated_environment(),
-        payload=encoded,
-        timeout_seconds=timeout_seconds,
+    timeout_seconds = max(
+        0.05,
+        min(9.0, _deadline_budget_ms(request) / 1_000.0),
     )
+
+    resident_output = None
+    if status.capabilities is not None and _RESIDENT_PROTOCOL_FEATURE in status.capabilities.features:
+        resident_output = resident_native_request(
+            executable=status.identity.path,
+            identity_sha256=status.identity.sha256,
+            guard_home=request.guard_home,
+            environment=_isolated_environment(),
+            payload=encoded,
+            timeout_seconds=timeout_seconds,
+        )
     if resident_output is not None:
         try:
-            payload = json.loads(resident_output)
+            resident_payload = json.loads(resident_output)
         except (UnicodeDecodeError, json.JSONDecodeError):
-            payload = None
-        response = _response_from_payload(payload)
+            resident_payload = None
+        resident_error = _native_error(resident_payload)
+        if resident_error == "native_overloaded":
+            native_record_overload(status.identity.sha256, request.guard_home)
+            return None
+        response = _response_from_payload(resident_payload)
         if response is not None:
+            native_record_resident_success(status.identity.sha256, request.guard_home)
             return response
+        failure_reason = resident_error or "native_resident_invalid_response"
+    else:
+        failure_reason = (
+            "native_resident_unavailable"
+            if status.capabilities is not None and _RESIDENT_PROTOCOL_FEATURE in status.capabilities.features
+            else "native_resident_protocol_unsupported"
+        )
 
-    output = _run_native_process(
-        status.identity.path,
-        ("hook", "--stdin"),
-        input_text=input_text,
-        timeout_seconds=timeout_seconds,
+    native_record_resident_failure(
+        status.identity.sha256,
+        request.guard_home,
+        reason=failure_reason,
     )
-    if output is None:
-        return None
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError:
-        return None
-    return _response_from_payload(payload)
+    with native_oneshot_lease(
+        status.identity.sha256,
+        request.guard_home,
+    ) as acquired:
+        if not acquired:
+            return None
+        output = _run_native_process(
+            status.identity.path,
+            ("hook", "--stdin"),
+            input_text=input_text,
+            timeout_seconds=timeout_seconds,
+        )
+        if output is None:
+            native_record_oneshot_failure(
+                status.identity.sha256,
+                request.guard_home,
+                reason="native_oneshot_failed",
+            )
+            return None
+        try:
+            oneshot_payload = json.loads(output)
+        except json.JSONDecodeError:
+            oneshot_payload = None
+        response = _response_from_payload(oneshot_payload)
+        if response is None:
+            native_record_oneshot_failure(
+                status.identity.sha256,
+                request.guard_home,
+                reason=_native_error(oneshot_payload) or "native_oneshot_invalid_response",
+            )
+            return None
+        native_record_oneshot_success(status.identity.sha256, request.guard_home)
+        return response
 
 
 def parity_signature(response: HookReviewResponse) -> tuple[object, ...]:
@@ -509,28 +655,14 @@ def parity_signature(response: HookReviewResponse) -> tuple[object, ...]:
     )
 
 
-def choose_post_tool_response(
-    request: HookReviewRequest,
-    *,
-    python_response: HookReviewResponse,
-    observe_mode: bool,
-) -> HookReviewResponse:
-    mode = native_mode()
-    if mode == "off":
-        return python_response
-    native_response = review_post_tool_native(request, observe_mode=observe_mode)
-    if mode == "shadow" or native_response is None:
-        return python_response
-    return native_response
-
-
 __all__ = [
     "NativeRuntimeCapabilities",
+    "NativeRuntimeHealthSnapshot",
     "NativeRuntimeIdentity",
     "NativeRuntimeManifest",
     "NativeRuntimeStatus",
-    "choose_post_tool_response",
     "native_mode",
+    "native_runtime_health",
     "native_runtime_status",
     "parity_signature",
     "review_post_tool_native",

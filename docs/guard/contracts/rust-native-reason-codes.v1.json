@@ -95,6 +95,16 @@
       "code": "emergency_profile_denied",
       "category": "fail_safe",
       "retryable": false
+    },
+    {
+      "code": "native_unavailable",
+      "category": "availability",
+      "retryable": true
+    },
+    {
+      "code": "native_request_rejected",
+      "category": "input_bound",
+      "retryable": false
     }
   ]
 }

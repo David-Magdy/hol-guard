@@ -33,7 +33,11 @@ pub fn validate(snapshot: &PolicySnapshotV1, minimum_generation: u64) -> Result<
     if snapshot.generation < minimum_generation {
         return Err(SnapshotError::Downgrade);
     }
-    for digest in [&snapshot.policy_digest, &snapshot.config_digest, &snapshot.rule_digest] {
+    for digest in [
+        &snapshot.policy_digest,
+        &snapshot.config_digest,
+        &snapshot.rule_digest,
+    ] {
         if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(SnapshotError::Digest);
         }
@@ -54,7 +58,14 @@ mod tests {
     #[test]
     fn rejects_generation_downgrade() {
         let digest = "a".repeat(64);
-        let snapshot = PolicySnapshotV1 { schema: POLICY_SNAPSHOT_SCHEMA.into(), generation: 1, policy_digest: digest.clone(), config_digest: digest.clone(), rule_digest: digest, mode: "enforce".into() };
+        let snapshot = PolicySnapshotV1 {
+            schema: POLICY_SNAPSHOT_SCHEMA.into(),
+            generation: 1,
+            policy_digest: digest.clone(),
+            config_digest: digest.clone(),
+            rule_digest: digest,
+            mode: "enforce".into(),
+        };
         assert_eq!(validate(&snapshot, 2), Err(SnapshotError::Downgrade));
     }
 }
