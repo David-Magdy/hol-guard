@@ -93,12 +93,13 @@
       "rust_owner": null,
       "python_owner": "guard.native_runtime.choose_post_tool_response",
       "supported_native_platforms": [],
-      "fallback": "hook_worker_direct_selection",
-      "python_removal_status": "dead_duplicate_remove",
+      "fallback": "not_applicable",
+      "python_removal_status": "removed",
       "evidence": {
         "definition": "src/codex_plugin_scanner/guard/native_runtime.py::choose_post_tool_response",
         "call_graph": "no supported callers in repository source, tests, scripts, actions, or dashboard",
-        "deletion_task": "NRH-T112"
+        "deletion_task": "NRH-T112",
+        "removal": "src/codex_plugin_scanner/guard/native_runtime.py no longer defines or exports choose_post_tool_response"
       }
     }
   ],

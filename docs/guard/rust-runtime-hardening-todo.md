@@ -104,7 +104,7 @@ Status: canonical follow-up backlog for `release/3.0`.
 - [ ] NRH-T109 delete dead duplicate Python implementations, including the unused `choose_post_tool_response` selector, plus its tests, imports, dependencies, package entries, flags, and shims;
 - [ ] NRH-T110 move reusable cases to language-neutral fixtures and add package-content/import-removal tests;
 - [ ] NRH-T111 publish Python LOC/dependency delta and require every retained reference backend to run in named CI.
-- [ ] NRH-T112 delete `choose_post_tool_response` after repository-wide static and dynamic caller proof;
+- [x] NRH-T112 delete `choose_post_tool_response` after repository-wide static and dynamic caller proof;
 - [ ] NRH-T113 delete replaced PostToolUse traversal, scanning, secure-read, hashing, and path-validation Python implementations in the same authority-cutover wave;
 - [ ] NRH-T114 delete replaced command parsing and catastrophic-risk Python implementations only after cross-shell native authority gates pass;
 - [ ] NRH-T115 remove dependencies and build/package metadata used only by deleted implementations;

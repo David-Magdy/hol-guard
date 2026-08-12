@@ -128,16 +128,10 @@ pub fn parse_command(request: &CommandModelRequestV1) -> Result<CanonicalCommand
         } else {
             Vec::new()
         };
-        if executable
-            .as_deref()
-            .is_some_and(is_shell_control_keyword)
-        {
+        if executable.as_deref().is_some_and(is_shell_control_keyword) {
             return Ok(uncertain(request, raw, "compound_shell_not_yet_supported"));
         }
-        if executable
-            .as_deref()
-            .is_some_and(is_transparent_wrapper)
-        {
+        if executable.as_deref().is_some_and(is_transparent_wrapper) {
             return Ok(uncertain(
                 request,
                 raw,
@@ -233,9 +227,7 @@ fn split_execution_segments(command: &str) -> Result<Vec<RawSegment>, &'static s
                     quote = Quote::None;
                 } else if current == '\\' {
                     escaped = true;
-                } else if current == '`'
-                    || (current == '$' && chars.get(index + 1) == Some(&'('))
-                {
+                } else if current == '`' || (current == '$' && chars.get(index + 1) == Some(&'(')) {
                     return Err("command_substitution_not_yet_supported");
                 }
                 index += 1;
@@ -252,10 +244,9 @@ fn split_execution_segments(command: &str) -> Result<Vec<RawSegment>, &'static s
             '$' if chars.get(index + 1) == Some(&'(') => {
                 return Err("command_substitution_not_yet_supported");
             }
-            '$'
-                if chars
-                    .get(index + 1)
-                    .is_some_and(|next| *next == '\'' || *next == '"') =>
+            '$' if chars
+                .get(index + 1)
+                .is_some_and(|next| *next == '\'' || *next == '"') =>
             {
                 return Err("non_posix_quoting_not_yet_supported");
             }
@@ -504,7 +495,10 @@ fn is_transparent_wrapper(executable: &str) -> bool {
 
 fn is_nested_command_executor(executable: &str, arguments: &[String]) -> bool {
     let basename = executable_basename(executable);
-    if matches!(basename, "." | "eval" | "exec" | "parallel" | "source" | "xargs") {
+    if matches!(
+        basename,
+        "." | "eval" | "exec" | "parallel" | "source" | "xargs"
+    ) {
         return true;
     }
     basename == "find"

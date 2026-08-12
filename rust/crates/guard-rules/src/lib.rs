@@ -14,7 +14,9 @@ pub const MAX_MATCHES: usize = 16;
 pub const CONTEXT_CHARS: usize = 8192;
 pub const REVIEWED_EXCERPT_CHARS: usize = 1024 * 1024;
 
-pub const OUTPUT_TEXT_KEYS: &[&str] = &["stdout", "stderr", "output", "content", "result", "message", "text"];
+pub const OUTPUT_TEXT_KEYS: &[&str] = &[
+    "stdout", "stderr", "output", "content", "result", "message", "text",
+];
 pub const PAYLOAD_OUTPUT_KEYS: &[&str] = &[
     "tool_response",
     "tool_output",
