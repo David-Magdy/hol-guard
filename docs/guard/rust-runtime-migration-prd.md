@@ -1,41 +1,54 @@
 # HOL Guard Rust runtime migration
 
-Status: implementation in progress on the 3.0 prerelease train.
+Status: foundation implemented on the 3.0 prerelease train. The canonical follow-up is `docs/guard/rust-runtime-hardening-prd.md`.
 
 ## Objective
 
-Keep `hol-guard` primarily a Python package while moving latency-sensitive deterministic runtime work to Rust. The goal is materially lower end-to-end hook latency, process count, CPU, and RSS without changing the public CLI/API, action lattice, approval semantics, reason-code contracts, or containment guarantees.
+Keep `hol-guard` primarily a Python-facing package while moving latency-sensitive deterministic enforcement into the version-matched Rust safety kernel. Native work must reduce hook latency and process overhead without weakening action, approval, reason-code, path, containment, privacy, or artifact-integrity contracts.
 
-## Architecture
+## Current architecture
 
-Python remains authoritative for CLI/API presentation, config and policy authoring, approvals, SQLite migrations and durable receipts, dashboard, cloud sync, MDM, MCP, Cisco/LiteLLM integration, and containment orchestration. A standalone Rust executable owns eligible PostToolUse payload traversal, secret scanning, secure source reads, hashing, path validation, and decision composition. Later waves may add command parsing/evaluation, safe decode, and bounded package-tree work only after profiling and parity proof.
+Python remains the control plane for CLI and API presentation, configuration and policy authoring, approvals, SQLite migrations and durable receipts, dashboard, cloud sync, MDM, MCP, Cisco/LiteLLM integration, and containment orchestration.
+
+The bundled standalone Rust runtime now provides:
+
+- Bounded PostToolUse payload traversal and secret scanning.
+- Bounded secure source reads, hashing, sensitive-path handling, and decision composition.
+- Versioned request/response contracts and exact rule-contract provenance.
+- Resident Unix-domain-socket transport on POSIX.
+- Mutually authenticated IPv4-loopback resident transport on Windows.
+- Bounded native one-shot fallback.
+- A shadow-only command model for a conservative POSIX subset.
+- Version-matched Linux x64, macOS Intel, macOS Apple Silicon, and Windows x64 wheel artifacts plus a pure-Python compatibility wheel.
+- Manifest binding for package version, source SHA, rule digest, platform tag, runtime digest, and runtime size.
+
+Native execution remains source-default `off`. Python is authoritative in `off` and `shadow`; `auto` and `force` may use native PostToolUse results under the current compatibility contract. PreToolUse command authority remains Python-owned.
 
 ## Current performance premise
 
-The existing 3.0 baseline shows `evaluate_command()` is already sub-millisecond. The primary opportunity is eliminating interpreter startup, nested Python worker/guardian/evaluator processes, repeated imports, JSON/pipe coordination, and Python-heavy file/output scanning from the interactive hook path. Performance claims must therefore be measured from actual adapter or installed-wheel boundaries, not only direct engine calls.
+The dominant opportunity is avoiding interpreter startup, nested Python worker processes, repeated imports, and Python-heavy output and file scanning. Performance is measured from installed adapter and hook boundaries. The current minimum gates remain warm resident p95 <=20 ms, cold one-shot p95 <=100 ms with at least 5x cold speedup, and readiness <=250 ms. The hardening PRD adds overload, recovery, concurrency, memory, and cross-platform installed-wheel gates.
 
-## Performance gates
-
-After cross-platform baselines are ratified, require both relative and absolute improvement: warm small PostToolUse at least 3x and p95 <=20 ms; 250 KB at least 3x and <=50 ms; 1 MB source read at least 3x and <=120 ms; cold one-shot at least 5x and <=100 ms; runtime readiness at least 3x and <=250 ms; 16-way fixed-resource throughput at least 4x; resident hook RSS at least 60% lower. No security budget or scan scope may be weakened to hit these numbers.
-
-## Migration waves
+## Completed migration waves
 
 1. Evidence and benchmark correction.
-2. Rust workspace, protocol contracts, rule metadata, CI and provenance.
+2. Pinned Rust workspace, protocol contracts, rule provenance, CI, and artifact identity.
 3. Bounded output traversal and secret scanner parity.
-4. Secure source-read parity using validated handles and bounded reads.
-5. Native PostToolUse engine with differential fixtures.
-6. Resident native runtime plus one-shot fallback.
-7. Python facade and shadow mode.
-8. Version-matched platform packaging and installed-wheel canaries.
-9. Direct harness PostToolUse transport.
-10. Profile-gated PreToolUse, safe decode, and supply-chain acceleration.
-11. Dedicated default-enable PR after security, parity, rollback, and performance gates.
+4. Secure source-read parity for the supported source-ref contract.
+5. Native PostToolUse engine and differential fixtures.
+6. Resident runtime plus one-shot fallback.
+7. Python facade, shadow mode, and native-first opt-in modes.
+8. Version-matched platform wheel assembly and trusted publication integration.
+9. Shadow command model and privacy-safe live observation.
+10. Authenticated Windows residency.
+
+## Remaining release gates
+
+The canonical remaining work is tracked in `docs/guard/rust-runtime-hardening-todo.md` and includes protocol v2, authentication-first bounded admission, fixed workers, overload and fallback circuit breaking, crash supervision, daemon fail-safe behavior, cross-platform installed-wheel parity and performance, catastrophic-risk effect expansion, DX, privacy-safe diagnostics, and capability-by-capability deletion of dead Python duplicates.
 
 ## Non-goals
 
-Do not rewrite the dashboard, cloud plane, MDM, whole daemon, gVisor/OCI/Kubernetes integration, or third-party Python scanners merely to increase Rust percentage. Do not remove the Python reference backend during the first stable release carrying native support.
+Do not rewrite the dashboard, cloud plane, MDM, approvals, durable receipts, containment providers, or third-party scanners merely to increase Rust percentage. Do delete Python runtime implementations once they are replaced, unreachable, and no longer part of a named supported compatibility path.
 
 ## Release blockers
 
-Any Python/native mismatch that would lower a decision, expose more model-visible output, change a security-critical reason, weaken path handling, or create unbounded memory/process behavior blocks native authority. Any crash, version mismatch, stale endpoint, binary replacement, or unavailable native target falls back to the Python reference path unless an existing stronger fail-closed contract applies.
+Any native mismatch that lowers severity, exposes more model-visible output, broadens approval, weakens path handling, creates unbounded resource use, or converts runtime failure into an unsafe allow blocks native authority. After a capability cuts over, the valid recovery chain is verified resident Rust, bounded verified one-shot Rust, then fail-safe pause.
