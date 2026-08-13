@@ -100,7 +100,8 @@ async function authenticateAndApply(page: import("@playwright/test").Page, count
 async function selectDensity(page: import("@playwright/test").Page, density: "Simple" | "Advanced" | "Developer") {
   const radio = page.getByRole("radio", { name: density });
   if (!(await radio.isVisible())) {
-    await page.locator("summary", { hasText: "More detail" }).click();
+    await page.getByTestId("protection-more-detail").locator("summary").click();
+    await expect(radio).toBeVisible();
   }
   await radio.click();
   await expect(radio).toHaveAttribute("aria-checked", "true");

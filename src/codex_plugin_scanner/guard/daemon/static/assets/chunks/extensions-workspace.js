@@ -3556,6 +3556,7 @@ function ProtectionCenterWorkspace() {
   const [recoveryStatus, setRecoveryStatus] = reactExports.useState(null);
   const [filters, setFilters] = reactExports.useState(EMPTY_EXTENSION_FILTERS);
   const [density, setDensity] = useProtectionDensity();
+  const [moreDetailOpen, setMoreDetailOpen] = reactExports.useState(() => density !== "simple");
   const [provenanceOpen, setProvenanceOpen] = reactExports.useState(false);
   const [troubleshootingOpen, setTroubleshootingOpen] = reactExports.useState(false);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
@@ -3573,6 +3574,9 @@ function ProtectionCenterWorkspace() {
   reactExports.useEffect(() => {
     void load();
   }, [load]);
+  reactExports.useEffect(() => {
+    if (density !== "simple") setMoreDetailOpen(true);
+  }, [density]);
   reactExports.useEffect(() => {
     const onPopState = () => setRouteState(currentExtensionRouteState());
     window.addEventListener("popstate", onPopState);
@@ -3740,10 +3744,19 @@ function ProtectionCenterWorkspace() {
         /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "mt-2 text-3xl font-semibold tracking-tight text-slate-950", children: PROTECTION_TERMS.pageTitle }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-2xl text-sm leading-6 text-slate-800", children: "See what Guard is watching on this device, then open a tool to understand or change it." })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "w-full max-w-sm", "data-testid": "protection-more-detail", open: density !== "simple", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-sm font-semibold text-slate-800", children: "More detail" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionDensityControl, { value: density, onChange: setDensity }) })
-      ] })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "details",
+        {
+          className: "w-full max-w-sm",
+          "data-testid": "protection-more-detail",
+          open: moreDetailOpen,
+          onToggle: (event) => setMoreDetailOpen(event.currentTarget.open),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-sm font-semibold text-slate-800", children: "More detail" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionDensityControl, { value: density, onChange: setDensity }) })
+          ]
+        }
+      )
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionStatusHero, { status, busy: recoveryBusy, onPrimaryAction: status.primaryAction === "none" ? void 0 : handlePrimaryStatusAction, children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-slate-600", children: "Cloud continuity is separate from local protection. Signing out or losing Cloud connectivity does not turn local protection off." }) }) }),
     mutationError && !pending ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: mutationError }) }) : null,

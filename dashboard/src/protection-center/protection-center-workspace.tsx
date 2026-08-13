@@ -280,6 +280,7 @@ export function ProtectionCenterWorkspace() {
   const [recoveryStatus, setRecoveryStatus] = useState<string | null>(null);
   const [filters, setFilters] = useState<ExtensionFilterState>(EMPTY_EXTENSION_FILTERS);
   const [density, setDensity] = useProtectionDensity();
+  const [moreDetailOpen, setMoreDetailOpen] = useState(() => density !== "simple");
   const [provenanceOpen, setProvenanceOpen] = useState(false);
   const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
@@ -297,6 +298,9 @@ export function ProtectionCenterWorkspace() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (density !== "simple") setMoreDetailOpen(true);
+  }, [density]);
   useEffect(() => {
     const onPopState = () => setRouteState(currentExtensionRouteState());
     window.addEventListener("popstate", onPopState);
@@ -454,7 +458,12 @@ export function ProtectionCenterWorkspace() {
   return <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
     <header className="flex flex-col gap-5 border-b border-slate-200 pb-7 lg:flex-row lg:items-end lg:justify-between">
       <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-blue">Local protection</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{PROTECTION_TERMS.pageTitle}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-800">See what Guard is watching on this device, then open a tool to understand or change it.</p></div>
-      <details className="w-full max-w-sm" data-testid="protection-more-detail" open={density !== "simple"}>
+      <details
+        className="w-full max-w-sm"
+        data-testid="protection-more-detail"
+        open={moreDetailOpen}
+        onToggle={(event) => setMoreDetailOpen(event.currentTarget.open)}
+      >
         <summary className="cursor-pointer text-sm font-semibold text-slate-800">More detail</summary>
         <div className="mt-3"><ProtectionDensityControl value={density} onChange={setDensity} /></div>
       </details>
