@@ -63,10 +63,11 @@ jobs:
           import json
           from pathlib import Path
 
-          inventory = json.loads(Path('/tmp/test-inventory.json').read_text(encoding='utf-8'))
+          metrics = json.loads(Path('/tmp/test-inventory.json').read_text(encoding='utf-8'))
+          inventory = metrics['inventory']
           baseline = {
               'maximum_collected_cases': inventory['collected_cases'],
-              'maximum_test_source_lines': inventory['test_source_lines'],
+              'maximum_test_source_lines': metrics['test_source_lines'],
               'schema_version': 1,
           }
           Path('ci/test-suite-ratchet-baseline.json').write_text(
