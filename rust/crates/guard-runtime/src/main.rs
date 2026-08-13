@@ -42,7 +42,7 @@ enum ResidentOperationV1 {
 #[serde(untagged)]
 enum ResidentRequestV1 {
     Operation(ResidentOperationV1),
-    Hook(NativeHookRequestV1),
+    Hook(Box<NativeHookRequestV1>),
 }
 
 #[derive(Clone, Copy)]

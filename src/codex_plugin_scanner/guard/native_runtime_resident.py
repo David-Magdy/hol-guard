@@ -675,7 +675,7 @@ def _retire_stale_services(active_key: tuple[str, str, str]) -> None:
     executable, identity_sha256, guard_home = active_key
     stale: list[_ResidentService] = []
     with _SERVICES_LOCK:
-        for key, candidate in tuple(_SERVICES.items()):
+        for key in tuple(_SERVICES):
             if key == active_key:
                 continue
             if key[0] == executable and key[2] == guard_home and key[1] != identity_sha256:
