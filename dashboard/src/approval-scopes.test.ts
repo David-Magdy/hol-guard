@@ -156,15 +156,16 @@ function renderExactActionControlWithTimedScopesHidden(): string {
 }
 
 assert(
-  renderExactActionControl(true).includes("Always allow this exact action"),
+  renderExactActionControl(true).includes("Always allow exact action") &&
+    renderExactActionControl(true).includes("Retry within 15 minutes"),
   "T-AS-03c: eligible requests render the exact-action permission",
 );
 assert(
-  !renderExactActionControl(false).includes("Always allow this exact action"),
+  !renderExactActionControl(false).includes("Always allow exact action"),
   "T-AS-03d: unproven requests do not render a durable permission",
 );
 assert(
-  renderExactActionControlWithTimedScopesHidden().includes("Always allow this exact action"),
+  renderExactActionControlWithTimedScopesHidden().includes("Always allow exact action"),
   "T-AS-03e: exact-action permission remains available beside bounded MCP choices",
 );
 
