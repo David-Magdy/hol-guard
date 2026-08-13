@@ -126,6 +126,7 @@ def test_macos_feed_avoids_bash4_only_builtins_and_binds_mode() -> None:
     assert '--pattern "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl"' in text
     assert '-name "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl"' in text
     assert '--pattern "hol_guard-${CORE_VERSION}-*.whl"' not in text
+    assert '-name "hol_guard-${CORE_VERSION}-*.whl"' not in text
 
 
 def test_existing_asset_set_is_all_or_nothing(tmp_path: Path, capsys) -> None:
