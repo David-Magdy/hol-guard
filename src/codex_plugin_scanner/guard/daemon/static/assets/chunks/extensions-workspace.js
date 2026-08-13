@@ -1254,8 +1254,7 @@ function useModalDialog(onClose, canClose = true) {
   return dialogRef;
 }
 const PROTECTION_TERMS = {
-  pageTitle: "Extensions",
-  modules: "Extensions"
+  pageTitle: "Extensions"
 };
 function looksLikeUnauthorizedSession(message) {
   const lower = message.trim().toLowerCase();
@@ -3691,10 +3690,10 @@ function ProtectionCenterWorkspace() {
     density !== "simple" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-modules-heading", className: "mt-8", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-modules-heading", className: "text-xl font-semibold text-slate-950", children: PROTECTION_TERMS.modules }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: "Open a protection to understand its current behavior and available controls." })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-modules-heading", className: "text-xl font-semibold text-slate-950", children: "All extensions" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-800", children: "Open an extension to understand its current behavior and available controls." })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-slate-500", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-slate-800", children: [
           catalogExtensions.length,
           " available"
         ] })

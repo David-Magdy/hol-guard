@@ -498,7 +498,7 @@ export function ProtectionCenterWorkspace() {
     </section> : null}
 
     {density !== "simple" ? <section aria-labelledby="protection-modules-heading" className="mt-8">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><h2 id="protection-modules-heading" className="text-xl font-semibold text-slate-950">{PROTECTION_TERMS.modules}</h2><p className="mt-1 text-sm text-slate-500">Open a protection to understand its current behavior and available controls.</p></div><span className="text-sm text-slate-500">{catalogExtensions.length} available</span></div>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><h2 id="protection-modules-heading" className="text-xl font-semibold text-slate-950">All extensions</h2><p className="mt-1 text-sm text-slate-800">Open an extension to understand its current behavior and available controls.</p></div><span className="text-sm text-slate-800">{catalogExtensions.length} available</span></div>
       <div className="mt-4"><ExtensionsFilterBar filters={filters} onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))} onClear={() => setFilters(EMPTY_EXTENSION_FILTERS)} extensions={catalogExtensions} effective={state.effective} /></div>
       {visible.length ? <div className="mt-4 space-y-2">{visible.map((extension) => <ProtectionModuleRow
         key={extension.extension_id}

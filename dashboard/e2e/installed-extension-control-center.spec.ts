@@ -123,7 +123,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
 
   await page.goto("/extensions");
   await expectSecretSafeUrl(page);
-  await expect(page.getByRole("heading", { name: "Extensions", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Extensions", level: 1 })).toBeVisible();
   await expect(page.getByRole("heading", { name: /^(In use|Ready)$/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Guard is watching the tools your agent uses." })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent decisions" })).toBeVisible();
@@ -167,7 +167,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
     // The shell deliberately animates desktop sidebar padding. Validate the
     // settled responsive layout rather than sampling that 200 ms transition.
     await page.waitForTimeout(250);
-    await expect(page.getByRole("heading", { name: "Extensions", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Extensions", level: 1 })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     const screenshotName = width === 720
       ? "installed-protection-center-simple-zoom-200.png"
@@ -222,7 +222,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await page.screenshot({ path: testInfo.outputPath("installed-extension-rule-detail.png"), fullPage: true });
 
   await page.getByTestId("protection-module-detail").getByRole("button", { name: "Extensions" }).click();
-  await expect(page.getByRole("heading", { name: "Extensions", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Extensions", level: 1 })).toBeVisible();
   await page.goBack();
   await expect(page.getByTestId("protection-module-detail")).toBeVisible();
 
