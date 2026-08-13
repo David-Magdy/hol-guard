@@ -299,8 +299,10 @@ export function ProtectionCenterWorkspace() {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
+    // Open with Advanced/Developer. Stay open on Simple so density radios remain usable after the user reveals them.
     if (density !== "simple") setMoreDetailOpen(true);
   }, [density]);
+
   useEffect(() => {
     const onPopState = () => setRouteState(currentExtensionRouteState());
     window.addEventListener("popstate", onPopState);

@@ -1257,9 +1257,13 @@ const PROTECTION_TERMS = {
   pageTitle: "Protection Center",
   modules: "Protection modules"
 };
-function protectionCenterLoadError(message) {
+function looksLikeUnauthorizedSession(message) {
   const lower = message.trim().toLowerCase();
-  if (!lower || lower === "unauthorized" || lower.includes("unauthorized") || lower.includes("401") || lower.includes("session")) {
+  if (!lower || lower === "unauthorized" || lower.includes("unauthorized") || lower.includes("session")) return true;
+  return /(^|[^0-9])401([^0-9]|$)/.test(lower);
+}
+function protectionCenterLoadError(message) {
+  if (looksLikeUnauthorizedSession(message)) {
     return {
       title: "This view needs a signed local session",
       detail: "Local protection is still running on this device. Open Protection Center from the local Guard dashboard and try again after Guard signs this session."

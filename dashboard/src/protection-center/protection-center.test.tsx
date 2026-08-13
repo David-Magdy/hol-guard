@@ -102,6 +102,8 @@ assert.throws(() => assertSimpleCopySafe("The semantic blast radius changed."), 
 assert.equal(protectionCenterLoadError("unauthorized").title, "This view needs a signed local session");
 assert.match(protectionCenterLoadError("unauthorized").detail, /Local protection is still running/);
 assert.doesNotMatch(protectionCenterLoadError("unauthorized").detail, /^unauthorized$/);
+assert.equal(protectionCenterLoadError("HTTP 401").title, "This view needs a signed local session");
+assert.equal(protectionCenterLoadError("catalog 1401 mismatch").title, "Protection Center unavailable");
 assert.match(protectionCenterLoadError("catalog mismatch").detail, /catalog mismatch/);
 
 const hero = renderToStaticMarkup(createElement(ProtectionStatusHero, { status: deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.protected) }));
