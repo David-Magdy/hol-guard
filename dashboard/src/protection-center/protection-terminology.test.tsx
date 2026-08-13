@@ -18,12 +18,12 @@ for (const legacy of [
   "Semantic review",
   "Blast radius",
   "Global lockdown",
-  ">Extensions<",
+  ">Modules<",
 ]) {
-  assert.equal(simple.includes(legacy), false, `Simple Protection Center must not surface legacy wording: ${legacy}`);
+  assert.equal(simple.includes(legacy), false, `Simple Extensions must not surface legacy wording: ${legacy}`);
 }
-assert.match(simple, /Protection module/);
+assert.match(simple, />Extension</);
 assert.match(simple, /Protection settings/);
-assert.match(simple, /Modules/);
+assert.match(simple, /Extensions/);
 
 console.log("protection-terminology.test.tsx: all assertions passed");

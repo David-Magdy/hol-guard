@@ -19,8 +19,8 @@ import {
 import { groupProtectionModules, protectionCategoryIdForExtension } from "./model/protection-categories";
 import { deriveProtectionStatus, parseProtectionDensity, readProtectionDensity, writeProtectionDensity } from "./model/protection-presentation";
 
-assert.equal(PROTECTION_TERMS.navigation, "Protections");
-assert.equal(PROTECTION_TERMS.pageTitle, "Protection Center");
+assert.equal(PROTECTION_TERMS.navigation, "Extensions");
+assert.equal(PROTECTION_TERMS.pageTitle, "Extensions");
 assert.equal(localSettingChoiceLabel("inherit"), "Recommended");
 assert.equal(localSettingChoiceLabel("allow"), "Permit when Guard considers it safe");
 assert.equal(localSettingChoiceLabel("block"), "Always block matching actions");
@@ -103,7 +103,7 @@ assert.equal(protectionCenterLoadError("unauthorized").title, "This view needs a
 assert.match(protectionCenterLoadError("unauthorized").detail, /Local protection is still running/);
 assert.doesNotMatch(protectionCenterLoadError("unauthorized").detail, /^unauthorized$/);
 assert.equal(protectionCenterLoadError("HTTP 401").title, "This view needs a signed local session");
-assert.equal(protectionCenterLoadError("catalog 1401 mismatch").title, "Protection Center unavailable");
+assert.equal(protectionCenterLoadError("catalog 1401 mismatch").title, "Extensions unavailable");
 assert.match(protectionCenterLoadError("catalog mismatch").detail, /catalog mismatch/);
 
 const hero = renderToStaticMarkup(createElement(ProtectionStatusHero, { status: deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.protected) }));

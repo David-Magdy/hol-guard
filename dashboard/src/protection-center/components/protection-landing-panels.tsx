@@ -14,12 +14,10 @@ import { isExtensionEnabled } from "../../extensions-filters";
 import { ProtectionDecisionBadge, ProtectionModuleRow } from "./protection-primitives";
 import {
   filterProtectionModulesByHumanQuery,
-  protectionCategorySummary,
   type ProtectionCloudContinuity,
   type ProtectionDecisionView,
   type ProtectionHealthCheck,
   type ProtectionModuleRank,
-  type ProtectionModuleSection,
 } from "../model/protection-landing";
 
 function managedByOrganization(effective: EffectiveExtensionControls, extensionId: string): boolean {
@@ -44,68 +42,28 @@ export function CloudContinuityIndicator(props: {
 }
 
 export function ProtectionWatchingMap(props: {
-  catalog: readonly ExtensionCatalogItem[];
-  effective: EffectiveExtensionControls;
-  inUseExtensionIds?: ReadonlySet<string>;
-  selectedId?: string | null;
-  onSelect?: (searchAlias: string, categoryId: string) => void;
+  modules: readonly ProtectionModuleRank[];
+  onOpen: (extension: ExtensionCatalogItem) => void;
 }) {
-  const areas = useMemo(
-    () => protectionCategorySummary(props.catalog, props.effective, props.inUseExtensionIds),
-    [props.catalog, props.effective, props.inUseExtensionIds],
-  );
-  const featured = areas.filter((area) => area.inUse > 0);
-  const rest = featured.length ? areas.filter((area) => area.inUse === 0) : areas.slice(4);
-  const primary = featured.length ? featured : areas.slice(0, 4);
-
-  return <section aria-labelledby="what-guard-protects-heading" className="mt-8">
-    <div>
-      <h2 id="what-guard-protects-heading" className="text-xl font-semibold text-slate-950">What HOL Guard protects</h2>
-      <p className="mt-1 max-w-3xl text-sm text-slate-800">Guard is watching the tools your agent uses on this device. Open an area to see the matching protections.</p>
-    </div>
-    <ol className="mt-4 divide-y divide-slate-200 border-y border-slate-200">
-      {primary.map((area) => {
-        const selected = props.selectedId === area.id;
-        const status = area.inUse
-          ? `${area.inUse} in use`
-          : area.blocked
-            ? `${area.blocked} blocked locally`
-            : `${area.total} ready`;
-        return <li key={area.id}>
-          <button
-            type="button"
-            aria-pressed={selected}
-            onClick={() => props.onSelect?.(area.searchAlias, area.id)}
-            className={`flex min-h-16 w-full items-baseline justify-between gap-4 py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue ${selected ? "text-brand-blue" : "text-slate-950 hover:text-brand-blue"}`}
-          >
-            <span className="min-w-0">
-              <span className="block text-base font-semibold tracking-tight">{area.label}</span>
-              <span className={`mt-0.5 block text-sm ${selected ? "text-brand-blue" : "text-slate-800"}`}>{area.description}</span>
-            </span>
-            <span className={`shrink-0 text-xs font-semibold ${selected ? "text-brand-blue" : "text-slate-800"}`}>{status}</span>
-          </button>
-        </li>;
-      })}
-    </ol>
-    {rest.length ? <details className="mt-3">
-      <summary className="cursor-pointer text-sm font-semibold text-slate-800">More areas</summary>
-      <ol className="mt-2 divide-y divide-slate-200">
-        {rest.map((area) => <li key={area.id}>
-          <button type="button" onClick={() => props.onSelect?.(area.searchAlias, area.id)} className="flex min-h-12 w-full items-baseline justify-between gap-4 py-2 text-left text-sm text-slate-950 hover:text-brand-blue">
-            <span className="font-medium">{area.label}</span>
-            <span className="text-xs font-medium text-slate-800">{area.total} ready</span>
-          </button>
-        </li>)}
-      </ol>
-    </details> : null}
+  const inUse = props.modules.filter((module) => module.section === "in-use");
+  return <section aria-labelledby="extensions-watching-heading" className="mt-10">
+    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Watching</p>
+    <h2 id="extensions-watching-heading" className="mt-2 max-w-3xl text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
+      Guard is watching the tools your agent uses.
+    </h2>
+    {inUse.length ? <ul className="mt-6 flex flex-wrap gap-x-3 gap-y-2">
+      {inUse.map((module) => <li key={module.extension.extension_id}>
+        <button
+          type="button"
+          onClick={() => props.onOpen(module.extension)}
+          className="min-h-11 rounded-full border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-950 hover:border-brand-blue hover:text-brand-blue"
+        >
+          {module.extension.name}
+        </button>
+      </li>)}
+    </ul> : <p className="mt-4 max-w-2xl text-base leading-7 text-slate-800">No recent tool activity yet. Recommended extensions are ready below.</p>}
   </section>;
 }
-
-const SECTION_LABELS: Record<ProtectionModuleSection, string> = {
-  "in-use": "In use",
-  recommended: "Recommended",
-  all: "All",
-};
 
 export function ProtectionModuleExplorer(props: {
   modules: readonly ProtectionModuleRank[];
@@ -114,71 +72,44 @@ export function ProtectionModuleExplorer(props: {
   advancedFilters?: React.ReactNode;
   focusQuery?: string;
 }) {
-  const hasInUse = props.modules.some((module) => module.section === "in-use");
-  const [section, setSection] = useState<ProtectionModuleSection>(hasInUse ? "in-use" : "recommended");
-  const sectionTouched = useRef(false);
+  const inUse = useMemo(() => props.modules.filter((module) => module.section === "in-use"), [props.modules]);
+  const recommended = useMemo(() => props.modules.filter((module) => module.section === "recommended"), [props.modules]);
+  const primary = inUse.length ? inUse : recommended.slice(0, 6);
+  const heading = inUse.length ? "In use" : "Ready";
   const [query, setQuery] = useState("");
+  const [browseOpen, setBrowseOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (hasInUse && !sectionTouched.current && section !== "in-use") setSection("in-use");
-  }, [hasInUse, section]);
-  useEffect(() => {
     if (!props.focusQuery) return;
     setQuery(props.focusQuery);
-    sectionTouched.current = true;
-    setSection("all");
+    setBrowseOpen(true);
     searchRef.current?.focus();
   }, [props.focusQuery]);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
-      event.preventDefault();
-      searchRef.current?.focus();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
   const queried = useMemo(() => filterProtectionModulesByHumanQuery(props.modules, query), [props.modules, query]);
-  const visible = queried.filter((module) => section === "all" || module.section === section);
+  const browseList = query.trim() ? queried : props.modules;
 
-  return <section aria-labelledby="protection-modules-heading" className="mt-8">
-    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <h2 id="protection-modules-heading" className="text-xl font-semibold text-slate-950">Protection modules</h2>
-        <p className="mt-1 text-sm text-slate-800">Start with tools already in use. Search or browse all when you need a specific protection.</p>
+  return <section aria-labelledby="protection-modules-heading" className="mt-10">
+    <h2 id="protection-modules-heading" className="text-xl font-semibold tracking-tight text-slate-950">{heading}</h2>
+    <p className="mt-1 text-sm text-slate-800">Open an extension to see what Guard does, then try a command.</p>
+    {primary.length ? <div className="mt-4 divide-y divide-slate-200 border-y border-slate-200">{primary.map((module) => <ProtectionModuleRow key={module.extension.extension_id} name={module.extension.name} description={module.extension.description} behavior={isExtensionEnabled(props.effective, module.extension) ? "Guard defaults active" : "Blocked on this device"} required={module.extension.required} managed={managedByOrganization(props.effective, module.extension.extension_id)} onOpen={() => props.onOpen(module.extension)} />)}</div> : <p className="mt-4 text-sm text-slate-800">No extensions are registered yet.</p>}
+    <details className="mt-5" open={browseOpen} onToggle={(event) => setBrowseOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer text-sm font-semibold text-slate-800">Browse all extensions</summary>
+      <div className="mt-3">
+        <label className="relative block">
+          <span className="sr-only">Search extensions</span>
+          <HiMiniMagnifyingGlass className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-700" aria-hidden="true" />
+          <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value.slice(0, 160))} placeholder="Search Git, packages, secrets, downloads…" className="min-h-11 w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-950 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" />
+        </label>
+        {props.advancedFilters ? <div className="mt-3">
+          <button type="button" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((value) => !value)} className="inline-flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-slate-800 hover:bg-slate-100">
+            Advanced filters <HiMiniChevronDown className={`size-4 ${advancedOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+          </button>
+          {advancedOpen ? <div className="mt-2">{props.advancedFilters}</div> : null}
+        </div> : null}
+        {browseList.length ? <div className="mt-4 divide-y divide-slate-200 border-y border-slate-200">{browseList.map((module) => <ProtectionModuleRow key={`all-${module.extension.extension_id}`} name={module.extension.name} description={module.extension.description} behavior={isExtensionEnabled(props.effective, module.extension) ? "Guard defaults active" : "Blocked on this device"} required={module.extension.required} managed={managedByOrganization(props.effective, module.extension.extension_id)} onOpen={() => props.onOpen(module.extension)} />)}</div> : <p className="mt-4 text-sm text-slate-800">No extensions match this search.</p>}
       </div>
-      <span className="text-sm font-medium text-slate-800">{props.modules.length} available</span>
-    </div>
-    <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-100 p-3 sm:flex-row sm:items-center">
-      <label className="relative min-w-0 flex-1">
-        <span className="sr-only">Search protection modules</span>
-        <HiMiniMagnifyingGlass className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-700" aria-hidden="true" />
-        <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value.slice(0, 160))} placeholder="Search Git, packages, secrets, downloads…" className="min-h-11 w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-950 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" />
-      </label>
-      <div role="tablist" aria-label="Protection module groups" className="flex shrink-0 rounded-xl border border-slate-200 bg-white p-1">
-        {(["in-use", "recommended", "all"] as const).map((id) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={section === id}
-            disabled={id === "in-use" && !hasInUse}
-            onClick={() => { sectionTouched.current = true; setSection(id); }}
-            className={`min-h-9 rounded-lg px-3 text-xs font-semibold disabled:opacity-40 ${section === id ? "bg-slate-950 text-white" : "text-slate-800 hover:bg-slate-100"}`}
-          >{SECTION_LABELS[id]}</button>
-        ))}
-      </div>
-    </div>
-    {props.advancedFilters ? <div className="mt-3">
-      <button type="button" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((value) => !value)} className="inline-flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-slate-800 hover:bg-slate-100">
-        Advanced filters <HiMiniChevronDown className={`size-4 transition motion-reduce:transition-none ${advancedOpen ? "rotate-180" : ""}`} aria-hidden="true" />
-      </button>
-      {advancedOpen ? <div className="mt-2">{props.advancedFilters}</div> : null}
-    </div> : null}
-    {visible.length ? <div className="mt-4 space-y-2">{visible.map((module) => <ProtectionModuleRow key={module.extension.extension_id} name={module.extension.name} description={module.extension.description} behavior={isExtensionEnabled(props.effective, module.extension) ? "Guard defaults active" : "Blocked on this device"} required={module.extension.required} managed={managedByOrganization(props.effective, module.extension.extension_id)} onOpen={() => props.onOpen(module.extension)} />)}</div> : <div className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center"><p className="text-sm font-semibold text-slate-950">No protection modules match this view.</p><p className="mt-1 text-sm text-slate-800">Try All modules or a simpler search.</p></div>}
+    </details>
   </section>;
 }
 
