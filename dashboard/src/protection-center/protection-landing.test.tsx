@@ -125,14 +125,13 @@ assert.match(decisionMarkup, /Why\?/);
 assert.doesNotMatch(decisionMarkup, /Users\/private|workspace\/secret|\.env\/private/i);
 
 const watching = renderToStaticMarkup(createElement(ProtectionWatchingMap, {
-  catalog,
-  effective: PROTECTION_AUTHORITY_FIXTURES.protected,
-  inUseExtensionIds: new Set(["command.git"]),
+  modules: ranked,
+  onOpen: () => undefined,
 }));
-assert.match(watching, /What HOL Guard protects/);
-assert.match(watching, /Source control/);
-assert.match(watching, /in use/);
-assert.doesNotMatch(watching, /grid size-9 shrink-0 place-items-center rounded-xl bg-blue-50/);
+assert.match(watching, /Watching/);
+assert.match(watching, /Git/);
+assert.doesNotMatch(watching, /Source control/);
+assert.doesNotMatch(watching, /What HOL Guard protects/);
 
 const areas = protectionCategorySummary(catalog, PROTECTION_AUTHORITY_FIXTURES.protected, new Set(["command.git"]));
 assert.equal(areas[0]?.id, "source-control");

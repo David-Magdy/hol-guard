@@ -36,7 +36,7 @@ const simple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   onBack: () => undefined,
   onRefresh: () => undefined,
 }));
-assert.match(simple, /Protection module/);
+assert.match(simple, />Extension</);
 assert.match(simple, /What this protects/);
 assert.match(simple, /Common examples/);
 assert.match(simple, /Protection settings/);

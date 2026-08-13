@@ -26,7 +26,7 @@ assert(resolveView("/about") === "about", "/about resolves to about view");
 assert(resolveView("/extensions/command.git") === "extensions", "canonical extension detail route resolves to extensions view");
 assert(resolveView("/extensions/%2Fetc%2Fpasswd") === "extensions", "invalid nested extension route stays inside extensions fail-closed view");
 assert(viewTitle("about") === "About", "about view title is About");
-assert(viewTitle("extensions") === "Protection Center", "extensions compatibility view uses Protection Center title");
+assert(viewTitle("extensions") === "Extensions", "extensions view uses Extensions title");
 
 assert(normalizeHarnessSlug(" OpenCode ") === "opencode", "normalizer trims and lowercases app slugs");
 assert(normalizeHarnessSlug("*") === null, "normalizer rejects wildcard pseudo-harness");

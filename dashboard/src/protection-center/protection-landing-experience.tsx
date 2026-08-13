@@ -37,13 +37,7 @@ export function ProtectionLandingExperience(props: {
   const [healthBusy, setHealthBusy] = useState(false);
   const [healthResult, setHealthResult] = useState<ProtectionHealthCheck | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-  const [areaQuery, setAreaQuery] = useState("");
-  const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
   const modules = useMemo(() => rankProtectionModules(props.catalog, landing.activity), [landing.activity, props.catalog]);
-  const inUseExtensionIds = useMemo(
-    () => new Set(modules.filter((module) => module.section === "in-use").map((module) => module.extension.extension_id)),
-    [modules],
-  );
   const decisions = useMemo(() => recentProtectionDecisions(landing.activity, props.catalog, 3), [landing.activity, props.catalog]);
 
   async function runHealthCheck() {
@@ -58,7 +52,7 @@ export function ProtectionLandingExperience(props: {
       const result = evaluateProtectionHealth(catalog.catalog_digest, effective, runtime);
       if (catalog.catalog_digest !== props.catalogDigest) {
         result.status = "needs-attention";
-        result.summary = "Protection data changed since this page loaded. Refresh Protection Center before making changes.";
+        result.summary = "Protection data changed since this page loaded. Refresh Extensions before making changes.";
         result.checks.push({ id: "view-freshness", label: "This page matches the latest protection catalog", passed: false });
       }
       setHealthResult(result);
@@ -71,25 +65,18 @@ export function ProtectionLandingExperience(props: {
   }
 
   return <>
-    <ProtectionWatchingMap
-      catalog={props.catalog}
-      effective={props.effective}
-      inUseExtensionIds={inUseExtensionIds}
-      selectedId={selectedAreaId}
-      onSelect={(searchAlias, categoryId) => {
-        setSelectedAreaId(categoryId);
-        setAreaQuery(searchAlias);
-      }}
-    />
+    <ProtectionWatchingMap modules={modules} onOpen={props.onOpen} />
     <ProtectionModuleExplorer
       modules={modules}
       effective={props.effective}
       onOpen={props.onOpen}
-      focusQuery={areaQuery}
       advancedFilters={<ExtensionsFilterBar filters={props.filters} onChange={props.onFilters} onClear={props.onClearFilters} extensions={props.catalog as ExtensionCatalogItem[]} effective={props.effective} />}
     />
     <RecentProtectionDecisions decisions={decisions} loading={landing.activityLoading} unavailable={landing.activityError} />
     <div className="mt-8"><CloudValueGate runtime={landing.runtime} loading={landing.runtimeLoading} loadFailed={landing.runtimeError} /></div>
-    <ProtectionHealthCheckPanel result={healthResult} busy={healthBusy} error={healthError} onRun={() => { void runHealthCheck(); }} />
+    <details className="mt-8">
+      <summary className="cursor-pointer text-sm font-semibold text-slate-800">Check protection health</summary>
+      <ProtectionHealthCheckPanel result={healthResult} busy={healthBusy} error={healthError} onRun={() => { void runHealthCheck(); }} />
+    </details>
   </>;
 }
