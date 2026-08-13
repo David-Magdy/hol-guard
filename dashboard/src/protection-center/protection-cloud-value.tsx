@@ -53,8 +53,8 @@ export function protectionCloudValue(runtime: GuardRuntimeSnapshot | null, loadF
     return {
       state: "optional",
       plan: protectionCloudPlan(runtime),
-      label: "Cloud continuity is optional",
-      detail: "Local protection is active on this device. Connect Guard Cloud only if you want continuity, history, or organization coordination.",
+      label: "This device is already protected",
+      detail: "Local protection is active on this device. Guard Cloud keeps the same protections with you: synced module settings, searchable history, and organization policy your laptop cannot weaken.",
     };
   }
   if (runtime.cloud_state === "paired_waiting") {
@@ -102,7 +102,7 @@ function benefitForPlan(plan: ProtectionCloudPlan | null): string {
     case "enterprise":
       return "Centralize oversight and delegated workflows while every device continues enforcing locally.";
     default:
-      return "Add continuity and history without changing how this device protects you locally.";
+      return "Keep module settings and decision history with you across devices without moving local blocking into the Cloud.";
   }
 }
 

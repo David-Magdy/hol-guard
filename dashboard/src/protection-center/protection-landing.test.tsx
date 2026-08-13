@@ -4,11 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { CommandActivityItem } from "../command-activity/command-activity-types";
 import type { GuardRuntimeSnapshot } from "../guard-types";
-import { CloudContinuityIndicator, RecentProtectionDecisions } from "./components/protection-landing-panels";
+import { CloudContinuityIndicator, ProtectionWatchingMap, RecentProtectionDecisions } from "./components/protection-landing-panels";
 import { PROTECTION_AUTHORITY_FIXTURES, protectionModuleFixture } from "./fixtures/protection-fixtures";
 import {
   evaluateProtectionHealth,
   filterProtectionModulesByHumanQuery,
+  protectionCategorySummary,
   protectionCloudContinuity,
   protectionDecisionForAction,
   rankProtectionModules,
@@ -122,5 +123,19 @@ assert.match(decisionMarkup, /Blocked/);
 assert.match(decisionMarkup, /Allowed/);
 assert.match(decisionMarkup, /Why\?/);
 assert.doesNotMatch(decisionMarkup, /Users\/private|workspace\/secret|\.env\/private/i);
+
+const watching = renderToStaticMarkup(createElement(ProtectionWatchingMap, {
+  catalog,
+  effective: PROTECTION_AUTHORITY_FIXTURES.protected,
+  inUseExtensionIds: new Set(["command.git"]),
+}));
+assert.match(watching, /What HOL Guard protects/);
+assert.match(watching, /Source control/);
+assert.match(watching, /in use/);
+assert.doesNotMatch(watching, /grid size-9 shrink-0 place-items-center rounded-xl bg-blue-50/);
+
+const areas = protectionCategorySummary(catalog, PROTECTION_AUTHORITY_FIXTURES.protected, new Set(["command.git"]));
+assert.equal(areas[0]?.id, "source-control");
+assert.equal(areas[0]?.inUse, 1);
 
 console.log("protection-landing.test.tsx: all assertions passed");

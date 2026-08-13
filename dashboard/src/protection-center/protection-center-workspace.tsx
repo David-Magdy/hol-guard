@@ -53,7 +53,7 @@ import type { GuardApprovalGatePublicConfig } from "../guard-types";
 import { useDebounce } from "../use-debounce";
 import { useModalDialog } from "../use-modal-dialog";
 import { useResolvedApprovalGate } from "../use-resolved-approval-gate";
-import { PROTECTION_TERMS } from "./copy/protection-copy";
+import { PROTECTION_TERMS, protectionCenterLoadError } from "./copy/protection-copy";
 import { ProtectionLandingExperience } from "./protection-landing-experience";
 import { ProtectionModuleDetail } from "./protection-module-detail";
 import {
@@ -64,7 +64,6 @@ import {
   TechnicalDetails,
   useProtectionDensity,
 } from "./components/protection-primitives";
-import { protectionCategoryForExtension } from "./model/protection-categories";
 import { deriveProtectionStatus } from "./model/protection-presentation";
 
 type LoadState =
@@ -203,7 +202,7 @@ export function ExtensionStatusBanner(props: {
   }
   const repairable = props.effective.health === "tampered" || props.effective.health === "recovery-required" || props.effective.health === "degraded-unacknowledged";
   const busyLabel = props.effective.health === "degraded-unacknowledged" ? "Acknowledging…" : "Repairing…";
-  return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><div className="flex items-start gap-3"><span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700"><HiMiniExclamationTriangle className="size-5" aria-hidden="true" /></span><div className="min-w-0 flex-1"><h2 className="font-semibold text-slate-950">{recovery?.title}</h2><p className="mt-1 text-sm leading-6 text-slate-700">{recovery?.description}</p><div className="mt-4 flex flex-wrap items-center gap-2">{repairable && props.onRecover ? <button type="button" aria-busy={props.busy} disabled={props.busy} onClick={props.onRecover} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-brand-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{props.busy ? <HiMiniArrowPath className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <HiMiniShieldCheck className="size-4" aria-hidden="true" />}{props.busy ? busyLabel : recovery?.actionLabel}</button> : null}<button type="button" onClick={props.onRetry} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"><HiMiniArrowPath className="size-4" aria-hidden="true" />Check again</button></div><div className="mt-4 border-t border-amber-200 pt-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Command-line fallback</p><div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center"><code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800">{recovery?.command}</code><button type="button" onClick={handleCopy} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-brand-blue">{copyState === "copied" ? <HiMiniClipboardDocumentCheck className="size-4" aria-hidden="true" /> : <HiMiniClipboard className="size-4" aria-hidden="true" />}{copyState === "copied" ? "Copied" : recovery?.copyLabel}</button></div>{copyState === "failed" ? <span role="status" className="mt-2 block text-sm text-red-700">Copy failed. Select the command above.</span> : null}</div>{props.error ? <p role="alert" className="mt-3 text-sm font-medium text-red-700">{props.error}</p> : null}{props.status ? <p role="status" className="mt-3 text-sm font-medium text-slate-800">{props.status}</p> : null}</div></div></div>;
+  return <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><div className="flex items-start gap-3"><span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-800"><HiMiniExclamationTriangle className="size-5" aria-hidden="true" /></span><div className="min-w-0 flex-1"><h2 className="font-semibold text-amber-950">{recovery?.title}</h2><p className="mt-1 text-sm leading-6 text-amber-950">{recovery?.description}</p><div className="mt-4 flex flex-wrap items-center gap-2">{repairable && props.onRecover ? <button type="button" aria-busy={props.busy} disabled={props.busy} onClick={props.onRecover} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-brand-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{props.busy ? <HiMiniArrowPath className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <HiMiniShieldCheck className="size-4" aria-hidden="true" />}{props.busy ? busyLabel : recovery?.actionLabel}</button> : null}<button type="button" onClick={props.onRetry} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-950 hover:bg-amber-100"><HiMiniArrowPath className="size-4" aria-hidden="true" />Check again</button></div><div className="mt-4 border-t border-amber-200 pt-3"><p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Command-line fallback</p><div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center"><code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-amber-950">{recovery?.command}</code><button type="button" onClick={handleCopy} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-brand-blue">{copyState === "copied" ? <HiMiniClipboardDocumentCheck className="size-4" aria-hidden="true" /> : <HiMiniClipboard className="size-4" aria-hidden="true" />}{copyState === "copied" ? "Copied" : recovery?.copyLabel}</button></div>{copyState === "failed" ? <span role="status" className="mt-2 block text-sm text-red-800">Copy failed. Select the command above.</span> : null}</div>{props.error ? <p role="alert" className="mt-3 text-sm font-medium text-red-800">{props.error}</p> : null}{props.status ? <p role="status" className="mt-3 text-sm font-medium text-amber-950">{props.status}</p> : null}</div></div></div>;
 }
 
 export function ReviewModal(props: {
@@ -231,7 +230,38 @@ export function ReviewModal(props: {
     props.onConfirm(buildApprovalProofCredentials(props.approvalGate, { approvalPassword: password, approvalTotpCode: totp }));
   }, [password, props, totp]);
   const submitDisabled = isApprovalProofSubmitDisabled(props.approvalGate, { approvalPassword: password, approvalTotpCode: totp }, props.busy);
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm"><form ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="protection-review-title" onSubmit={handleSubmit} className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-blue">Review protection change</p><h2 id="protection-review-title" className="mt-2 text-xl font-semibold text-slate-950">{title}</h2></div><button type="button" disabled={props.busy} onClick={props.onCancel} aria-label="Close review" className="grid size-11 place-items-center rounded-full text-slate-500 hover:bg-slate-100 disabled:opacity-50"><HiMiniXMark className="size-5" /></button></div><div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-2xl bg-slate-50 p-4 text-sm"><span className="text-slate-500">Current</span><span aria-hidden="true">→</span><strong className="text-slate-950">Requested</strong><span>{current}</span><span /><span>{requested}</span></div><p className="mt-4 text-sm leading-6 text-slate-600">Guard's built-in minimum safety rules and organization policy remain active. This change does not disable detection.</p><div className="mt-5"><ApprovalProofFieldInputs approvalGate={props.approvalGate} approvalPassword={password} approvalTotpCode={totp} onApprovalPasswordChange={(event) => setPassword(event.target.value)} onApprovalTotpCodeChange={(event) => setTotp(event.target.value)} /></div>{props.error ? <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{props.error}</p> : null}<div className="mt-6 flex justify-end gap-3"><button type="button" disabled={props.busy} onClick={props.onCancel} className="min-h-11 rounded-xl px-4 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50">Cancel</button><button type="submit" disabled={submitDisabled} className="min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60">{props.busy ? "Verifying…" : "Confirm change"}</button></div></form></div>;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm">
+      <form ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="protection-review-title" onSubmit={handleSubmit} className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-blue">Review protection change</p>
+            <h2 id="protection-review-title" className="mt-2 text-xl font-semibold text-slate-950">{title}</h2>
+          </div>
+          <button type="button" disabled={props.busy} onClick={props.onCancel} aria-label="Close review" className="grid size-11 place-items-center rounded-full text-slate-950 hover:bg-slate-100 disabled:opacity-50">
+            <HiMiniXMark className="size-5" />
+          </button>
+        </div>
+        <div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-2xl bg-slate-100 p-4 text-sm text-slate-950">
+          <span>Current</span>
+          <span aria-hidden="true">→</span>
+          <strong>Requested</strong>
+          <span>{current}</span>
+          <span />
+          <span>{requested}</span>
+        </div>
+        <p className="mt-4 text-sm leading-6 text-slate-950">Guard's built-in minimum safety rules and organization policy remain active. This change does not disable detection.</p>
+        <div className="mt-5">
+          <ApprovalProofFieldInputs approvalGate={props.approvalGate} approvalPassword={password} approvalTotpCode={totp} onApprovalPasswordChange={(event) => setPassword(event.target.value)} onApprovalTotpCodeChange={(event) => setTotp(event.target.value)} />
+        </div>
+        {props.error ? <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{props.error}</p> : null}
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" disabled={props.busy} onClick={props.onCancel} className="min-h-11 rounded-xl px-4 text-sm font-semibold text-slate-950 hover:bg-slate-100 disabled:opacity-50">Cancel</button>
+          <button type="submit" disabled={submitDisabled} className="min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-60">{props.busy ? "Verifying…" : "Confirm change"}</button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 function sourceIsManaged(effective: EffectiveExtensionControls, extensionId: string): boolean {
@@ -250,6 +280,7 @@ export function ProtectionCenterWorkspace() {
   const [recoveryStatus, setRecoveryStatus] = useState<string | null>(null);
   const [filters, setFilters] = useState<ExtensionFilterState>(EMPTY_EXTENSION_FILTERS);
   const [density, setDensity] = useProtectionDensity();
+  const [moreDetailOpen, setMoreDetailOpen] = useState(() => density !== "simple");
   const [provenanceOpen, setProvenanceOpen] = useState(false);
   const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
@@ -267,6 +298,11 @@ export function ProtectionCenterWorkspace() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    // Open with Advanced/Developer. Stay open on Simple so density radios remain usable after the user reveals them.
+    if (density !== "simple") setMoreDetailOpen(true);
+  }, [density]);
+
   useEffect(() => {
     const onPopState = () => setRouteState(currentExtensionRouteState());
     window.addEventListener("popstate", onPopState);
@@ -379,7 +415,10 @@ export function ProtectionCenterWorkspace() {
   }, [resolveApprovalGate, state]);
 
   if (state.kind === "loading") return <main className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" aria-label="Loading Protection Center" /></main>;
-  if (state.kind === "error") return <main className="mx-auto max-w-4xl p-6"><div className="rounded-3xl border border-red-200 bg-red-50 p-6"><h1 className="text-xl font-semibold text-red-950">Protection Center unavailable</h1><p role="alert" className="mt-2 text-sm text-red-800">{state.message}</p><button type="button" onClick={load} className="mt-4 min-h-11 rounded-xl bg-red-700 px-4 text-sm font-semibold text-white">Try again</button></div></main>;
+  if (state.kind === "error") {
+    const loadError = protectionCenterLoadError(state.message);
+    return <main className="mx-auto max-w-4xl p-6"><div className="rounded-3xl border border-red-200 bg-red-50 p-6"><h1 className="text-xl font-semibold text-red-950">{loadError.title}</h1><p role="alert" className="mt-2 text-sm text-red-800">{loadError.detail}</p><p className="mt-3 text-xs font-medium text-red-900">Local protection continues on this device.</p><button type="button" onClick={load} className="mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white">Try again</button></div></main>;
+  }
 
   const recoveryModal = recoveryApprovalOpen ? <ApprovalProofModal
     title={state.effective.health === "degraded-unacknowledged" ? "Confirm limited protection state" : "Repair local protection"}
@@ -420,8 +459,16 @@ export function ProtectionCenterWorkspace() {
 
   return <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
     <header className="flex flex-col gap-5 border-b border-slate-200 pb-7 lg:flex-row lg:items-end lg:justify-between">
-      <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-blue">Local protection</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{PROTECTION_TERMS.pageTitle}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">See what Guard protects on this device, understand the current behavior, and make deliberate local changes without learning internal policy terminology.</p></div>
-      <ProtectionDensityControl value={density} onChange={setDensity} />
+      <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-blue">Local protection</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{PROTECTION_TERMS.pageTitle}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-800">See what Guard is watching on this device, then open a tool to understand or change it.</p></div>
+      <details
+        className="w-full max-w-sm"
+        data-testid="protection-more-detail"
+        open={moreDetailOpen}
+        onToggle={(event) => setMoreDetailOpen(event.currentTarget.open)}
+      >
+        <summary className="cursor-pointer text-sm font-semibold text-slate-800">More detail</summary>
+        <div className="mt-3"><ProtectionDensityControl value={density} onChange={setDensity} /></div>
+      </details>
     </header>
 
     <div className="mt-6"><ProtectionStatusHero status={status} busy={recoveryBusy} onPrimaryAction={status.primaryAction === "none" ? undefined : handlePrimaryStatusAction}>
@@ -452,7 +499,7 @@ export function ProtectionCenterWorkspace() {
 
     {density !== "simple" ? <section aria-labelledby="protection-modules-heading" className="mt-8">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><h2 id="protection-modules-heading" className="text-xl font-semibold text-slate-950">{PROTECTION_TERMS.modules}</h2><p className="mt-1 text-sm text-slate-500">Open a protection to understand its current behavior and available controls.</p></div><span className="text-sm text-slate-500">{catalogExtensions.length} available</span></div>
-      {density !== "simple" ? <div className="mt-4"><ExtensionsFilterBar filters={filters} onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))} onClear={() => setFilters(EMPTY_EXTENSION_FILTERS)} extensions={catalogExtensions} effective={state.effective} /></div> : null}
+      <div className="mt-4"><ExtensionsFilterBar filters={filters} onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))} onClear={() => setFilters(EMPTY_EXTENSION_FILTERS)} extensions={catalogExtensions} effective={state.effective} /></div>
       {visible.length ? <div className="mt-4 space-y-2">{visible.map((extension) => <ProtectionModuleRow
         key={extension.extension_id}
         name={extension.name}

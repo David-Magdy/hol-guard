@@ -62,3 +62,22 @@ export const CLOUD_LOCAL_BOUNDARY_COPY = {
   cloudDisconnected: "Cloud continuity is not connected. Local protection continues.",
   cloudUnavailable: "Cloud sync is temporarily unavailable. Local protection continues.",
 } as const;
+
+function looksLikeUnauthorizedSession(message: string): boolean {
+  const lower = message.trim().toLowerCase();
+  if (!lower || lower === "unauthorized" || lower.includes("unauthorized") || lower.includes("session")) return true;
+  return /(^|[^0-9])401([^0-9]|$)/.test(lower);
+}
+
+export function protectionCenterLoadError(message: string): { title: string; detail: string } {
+  if (looksLikeUnauthorizedSession(message)) {
+    return {
+      title: "This view needs a signed local session",
+      detail: "Local protection is still running on this device. Open Protection Center from the local Guard dashboard and try again after Guard signs this session.",
+    };
+  }
+  return {
+    title: "Protection Center unavailable",
+    detail: message.trim() || "Guard could not load protection settings. Local protection continues. Try again.",
+  };
+}
