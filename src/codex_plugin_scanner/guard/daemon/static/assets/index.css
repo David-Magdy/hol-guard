@@ -4866,7 +4866,7 @@
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
 
-  .focus-within\:ring-brand-blue\/20:focus-within {
+  .focus-within\:ring-brand-blue:focus-within, .focus-within\:ring-brand-blue\/20:focus-within {
     --tw-ring-color: var(--brand-blue);
   }
 

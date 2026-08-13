@@ -28458,40 +28458,42 @@ function ExactActionPersistenceChoice(props) {
   const handleAlways = reactExports.useCallback(() => props.onChange(true), [props.onChange]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("fieldset", { className: "rounded-lg border border-brand-blue/20 bg-brand-blue/[0.03] p-3", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("legend", { className: "px-1 text-sm font-semibold text-brand-dark", children: "How long should Guard allow it?" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2", role: "radiogroup", "aria-label": "Exact action approval duration", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          type: "button",
-          role: "radio",
-          "aria-checked": !props.checked,
-          onClick: handleOnce,
-          className: exactActionChoiceClassName(!props.checked),
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-sm font-semibold text-brand-dark", children: "This time" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block text-xs text-muted-foreground", children: "Retry within 15 minutes." })
-          ]
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          type: "button",
-          role: "radio",
-          "aria-checked": props.checked,
-          onClick: handleAlways,
-          className: exactActionChoiceClassName(props.checked),
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-sm font-semibold text-brand-dark", children: "Always allow exact action" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block text-xs text-muted-foreground", children: "Changed commands still need review." })
-          ]
-        }
-      )
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: exactActionChoiceClassName(!props.checked), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            type: "radio",
+            name: "exact-action-approval-duration",
+            value: "once",
+            checked: !props.checked,
+            onChange: handleOnce,
+            className: "sr-only"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-sm font-semibold text-brand-dark", children: "This time" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block text-xs text-muted-foreground", children: "Retry within 15 minutes." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: exactActionChoiceClassName(props.checked), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            type: "radio",
+            name: "exact-action-approval-duration",
+            value: "always",
+            checked: props.checked,
+            onChange: handleAlways,
+            className: "sr-only"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-sm font-semibold text-brand-dark", children: "Always allow exact action" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block text-xs text-muted-foreground", children: "Changed commands still need review." })
+      ] })
     ] })
   ] });
 }
 function exactActionChoiceClassName(selected) {
-  const base = "min-h-20 rounded-md border px-3 py-2 text-left transition-colors";
+  const base = "min-h-20 cursor-pointer rounded-md border px-3 py-2 text-left transition-colors focus-within:ring-2 focus-within:ring-brand-blue";
   if (selected) return `${base} border-brand-blue bg-white ring-1 ring-brand-blue/20`;
   return `${base} border-slate-200 bg-white/60 hover:border-brand-blue/40`;
 }
