@@ -64,6 +64,8 @@ def validate_manifest(
 ) -> tuple[str, ...]:
     if exact_release_commit is not None and not _SHA.fullmatch(exact_release_commit):
         raise ClaimGateError("exact release commit must be a full lowercase SHA")
+    if require_parity and exact_release_commit is None:
+        raise ClaimGateError("parity enforcement requires an exact release commit")
     raw_capabilities = payload.get("capabilities")
     if not isinstance(raw_capabilities, list):
         raise ClaimGateError("capabilities must be an array")
