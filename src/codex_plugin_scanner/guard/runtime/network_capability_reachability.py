@@ -45,7 +45,9 @@ def _repository_path(root: Path, value: object, *, field: str, capability_id: st
     return None
 
 
-def validate_reachability_manifest(payload: Mapping[str, object], *, repository_root: Path) -> tuple[str, ...]:
+def validate_reachability_manifest(
+    payload: Mapping[str, object], *, repository_root: Path
+) -> tuple[str, ...]:
     """Return deterministic validation errors for one reachability manifest."""
 
     errors: list[str] = []
@@ -89,8 +91,10 @@ def validate_reachability_manifest(payload: Mapping[str, object], *, repository_
         if state not in _ALLOWED_STATES:
             errors.append(f"{capability_id}: state is invalid")
         platforms = capability.get("platforms")
-        if not isinstance(platforms, list) or not platforms or any(
-            not isinstance(platform, str) or not platform for platform in platforms
+        if (
+            not isinstance(platforms, list)
+            or not platforms
+            or any(not isinstance(platform, str) or not platform for platform in platforms)
         ):
             errors.append(f"{capability_id}: platforms must contain non-empty strings")
         contract_error = _repository_path(
