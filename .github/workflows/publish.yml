@@ -35,8 +35,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  # Isolate by event and SHA so a pending release/3.0 push publish is not
-  # cancelled when another pull_request run shares the branch group.
+  # Serialize publish-capable events for one release branch while keeping
+  # ordinary pull-request validation isolated by its merge ref.
   group: hol-guard-publish-${{ github.event.pull_request.merged && format('refs/heads/{0}', github.event.pull_request.base.ref) || github.ref }}
   cancel-in-progress: false
 
