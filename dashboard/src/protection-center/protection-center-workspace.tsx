@@ -293,7 +293,7 @@ export function ProtectionCenterWorkspace() {
       if (catalog.catalog_digest !== effective.catalog_digest) throw new Error("Protection data changed while Guard was loading. Check again before making changes.");
       setState({ kind: "ready", catalog, effective });
     } catch (error) {
-      setState({ kind: "error", message: error instanceof Error ? error.message : "Protection Center is unavailable" });
+      setState({ kind: "error", message: error instanceof Error ? error.message : "Extensions are unavailable" });
     }
   }, []);
 
@@ -414,7 +414,7 @@ export function ProtectionCenterWorkspace() {
     }
   }, [resolveApprovalGate, state]);
 
-  if (state.kind === "loading") return <main className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" aria-label="Loading Protection Center" /></main>;
+  if (state.kind === "loading") return <main className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" aria-label="Loading Extensions" /></main>;
   if (state.kind === "error") {
     const loadError = protectionCenterLoadError(state.message);
     return <main className="mx-auto max-w-4xl p-6"><div className="rounded-3xl border border-red-200 bg-red-50 p-6"><h1 className="text-xl font-semibold text-red-950">{loadError.title}</h1><p role="alert" className="mt-2 text-sm text-red-800">{loadError.detail}</p><p className="mt-3 text-xs font-medium text-red-900">Local protection continues on this device.</p><button type="button" onClick={load} className="mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white">Try again</button></div></main>;
@@ -436,7 +436,7 @@ export function ProtectionCenterWorkspace() {
   }
 
   if (routeState.route.kind === "detail" || routeState.route.kind === "invalid") {
-    return <><main className="mx-auto max-w-4xl p-6"><div className="rounded-3xl border border-amber-200 bg-amber-50 p-6"><h1 className="font-semibold text-amber-950">Protection module not found</h1><p className="mt-2 text-sm text-amber-800">This link does not match a protection module in the current Guard catalog.</p><button type="button" onClick={closeExtension} className="mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Back to Protections</button></div></main>{recoveryModal}</>;
+    return <><main className="mx-auto max-w-4xl p-6"><div className="rounded-3xl border border-amber-200 bg-amber-50 p-6"><h1 className="font-semibold text-amber-950">Extension not found</h1><p className="mt-2 text-sm text-amber-800">This link does not match an extension in the current Guard catalog.</p><button type="button" onClick={closeExtension} className="mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Back to Extensions</button></div></main>{recoveryModal}</>;
   }
 
   const status = deriveProtectionStatus(state.effective);
@@ -459,7 +459,7 @@ export function ProtectionCenterWorkspace() {
 
   return <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
     <header className="flex flex-col gap-5 border-b border-slate-200 pb-7 lg:flex-row lg:items-end lg:justify-between">
-      <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-blue">Local protection</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{PROTECTION_TERMS.pageTitle}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-800">See what Guard is watching on this device, then open a tool to understand or change it.</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-blue">On this device</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">{PROTECTION_TERMS.pageTitle}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-800">See which tools Guard is watching, then open one to understand or change it.</p></div>
       <details
         className="w-full max-w-sm"
         data-testid="protection-more-detail"

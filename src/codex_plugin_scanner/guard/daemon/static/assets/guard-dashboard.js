@@ -19672,7 +19672,7 @@ const sidebarLinks = [
   { href: "/evidence", label: "Evidence", view: "evidence", icon: HiMiniDocumentText },
   { href: "/supply-chain", label: "Supply chain", view: "supply-chain", icon: HiMiniSquares2X2 },
   { href: "/policy", label: "Policy", view: "policy", icon: HiMiniClipboardDocumentList },
-  { href: "/extensions", label: "Modules", view: "extensions", icon: HiMiniPuzzlePiece },
+  { href: "/extensions", label: "Extensions", view: "extensions", icon: HiMiniPuzzlePiece },
   { href: "/settings", label: "Settings", view: "settings", icon: HiMiniAdjustmentsHorizontal },
   { href: "/about", label: "About", view: "about", icon: HiMiniInformationCircle }
 ];
@@ -29800,7 +29800,7 @@ function viewTitle(view) {
   if (view === "policy") return "Policy";
   if (view === "feed-health") return "Feed Health";
   if (view === "about") return "About";
-  if (view === "extensions") return "Protection Center";
+  if (view === "extensions") return "Extensions";
   return "App detail";
 }
 function parseAppDetail(pathname) {

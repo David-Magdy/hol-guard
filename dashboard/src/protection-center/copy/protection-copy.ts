@@ -1,8 +1,8 @@
 export const PROTECTION_TERMS = {
-  navigation: "Protections",
-  pageTitle: "Protection Center",
-  module: "Protection module",
-  modules: "Protection modules",
+  navigation: "Extensions",
+  pageTitle: "Extensions",
+  module: "Extension",
+  modules: "Extensions",
   setting: "Protection setting",
   detection: "Detection",
   lockdown: "Emergency Lockdown",
@@ -73,11 +73,11 @@ export function protectionCenterLoadError(message: string): { title: string; det
   if (looksLikeUnauthorizedSession(message)) {
     return {
       title: "This view needs a signed local session",
-      detail: "Local protection is still running on this device. Open Protection Center from the local Guard dashboard and try again after Guard signs this session.",
+      detail: "Local protection is still running on this device. Open Extensions from the local Guard dashboard and try again after Guard signs this session.",
     };
   }
   return {
-    title: "Protection Center unavailable",
+    title: "Extensions unavailable",
     detail: message.trim() || "Guard could not load protection settings. Local protection continues. Try again.",
   };
 }
