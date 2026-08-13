@@ -1591,11 +1591,10 @@ def _with_pipx_no_cache_args(args: list[str]) -> list[str]:
         if token.startswith("--pip-args="):
             value = token.split("=", 1)[1]
             if _PIP_NO_CACHE_ARG not in value.split():
-                rest[index] = (
-                    f"--pip-args={value} {_PIP_NO_CACHE_ARG}".strip()
-                    if value
-                    else f"--pip-args={_PIP_NO_CACHE_ARG}"
-                )
+                if value:
+                    rest[index] = f"--pip-args={value} {_PIP_NO_CACHE_ARG}"
+                else:
+                    rest[index] = f"--pip-args={_PIP_NO_CACHE_ARG}"
             return rest
     rest.append(f"--pip-args={_PIP_NO_CACHE_ARG}")
     return rest
