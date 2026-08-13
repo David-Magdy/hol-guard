@@ -1405,6 +1405,7 @@ def probe_package_shim_intercepts(
     managers: tuple[str, ...] | None = None,
     workspace_dir: Path | None = None,
     allow_inactive_path: bool = False,
+    timeout_seconds: int = _PACKAGE_SHIM_PROBE_TIMEOUT_SECONDS,
 ) -> dict[str, object]:
     """Execute installed package-manager shims to prove intercept wiring is live."""
 
@@ -1479,7 +1480,7 @@ def probe_package_shim_intercepts(
                 cwd=target_workspace,
                 env=probe_env,
                 text=True,
-                timeout=_PACKAGE_SHIM_PROBE_TIMEOUT_SECONDS,
+                timeout=timeout_seconds,
             )
         except (subprocess.TimeoutExpired, OSError):
             manager_results.append(

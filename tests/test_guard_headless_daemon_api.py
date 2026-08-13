@@ -1545,6 +1545,32 @@ def test_package_firewall_activation_uses_scoped_shim_proof(
     assert daemon_server.os.environ.get("PATH") == previous_path
 
 
+def test_package_firewall_activation_stops_after_first_valid_shim_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = HarnessContext(home_dir=tmp_path, workspace_dir=None, guard_home=tmp_path / "guard")
+    monkeypatch.setattr(
+        daemon_server,
+        "package_shim_status",
+        lambda _context: {"installed_managers": ["npm", "npx", "pip"]},
+    )
+    probed: list[tuple[str, ...]] = []
+
+    def probe(_context, *, managers, **kwargs):
+        assert kwargs["timeout_seconds"] == 10
+        probed.append(managers)
+        return {"intercept_proved": True, "manager_results": [{"manager": managers[0]}]}
+
+    monkeypatch.setattr(daemon_server, "probe_package_shim_intercepts", probe)
+
+    status, body = daemon_server._activate_package_firewall_runtime(context)
+
+    assert status == 200
+    assert body["status"] == "verified"
+    assert probed == [("npm",)]
+
+
 def test_supply_chain_package_firewall_paid_install_and_test_roundtrip(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
