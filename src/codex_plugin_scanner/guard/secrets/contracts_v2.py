@@ -387,10 +387,8 @@ class SecretIgnoreDecisionV2:
         if self.expires_at is not None:
             if self.expires_at.tzinfo is None:
                 raise SecretContractError("expires_at must be timezone-aware")
-            if (
-                self.state in _ACTIVE_IGNORE_STATES
-                and self.expires_at.astimezone(timezone.utc)
-                <= datetime.now(timezone.utc)
+            if self.state in _ACTIVE_IGNORE_STATES and self.expires_at.astimezone(timezone.utc) <= datetime.now(
+                timezone.utc
             ):
                 raise SecretContractError("expires_at must be in the future")
         if self.state is SecretIgnoreState.APPROVED and not self.approver_id:
@@ -406,11 +404,7 @@ class SecretIgnoreDecisionV2:
             "requested_scope": self.requested_scope.value,
             "durable_match_key": self.durable_match_key,
             "reason": self.reason,
-            "expires_at": (
-                self.expires_at.astimezone(timezone.utc).isoformat()
-                if self.expires_at
-                else None
-            ),
+            "expires_at": (self.expires_at.astimezone(timezone.utc).isoformat() if self.expires_at else None),
             "detector_version": self.detector_version,
             "model_version": self.model_version,
             "requester_id": self.requester_id,
