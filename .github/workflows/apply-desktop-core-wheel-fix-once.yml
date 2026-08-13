@@ -69,8 +69,8 @@ jobs:
           tests.write_text(text.replace(anchor, replacement, 1), encoding='utf-8')
           PY
           git diff --check
-          mkdir -p patch-output/.github/workflows patch-output/tests
-          cp .github/workflows/desktop-core-alpha-feed.yml patch-output/.github/workflows/
+          mkdir -p patch-output/tests
+          cp .github/workflows/desktop-core-alpha-feed.yml patch-output/desktop-core-alpha-feed.yml
           cp tests/test_desktop_core_alpha_feed_security.py patch-output/tests/
           git diff -- .github/workflows/desktop-core-alpha-feed.yml tests/test_desktop_core_alpha_feed_security.py > patch-output/change.patch
           test -s patch-output/change.patch
@@ -78,7 +78,7 @@ jobs:
       - name: Upload exact generated files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: desktop-core-wheel-fix-files
+          name: desktop-core-wheel-fix-complete-files
           path: patch-output
           if-no-files-found: error
           retention-days: 1
