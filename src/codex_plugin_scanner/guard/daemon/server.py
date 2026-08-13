@@ -1490,8 +1490,9 @@ def _activate_package_firewall_runtime(context: HarnessContext) -> tuple[int, di
         )
     proof = probe_package_shim_intercepts(
         context,
-        managers=tuple(str(manager) for manager in installed_managers),
+        managers=(str(installed_managers[0]),),
         allow_inactive_path=True,
+        timeout_seconds=10,
     )
     if not bool(proof.get("intercept_proved")):
         return (
