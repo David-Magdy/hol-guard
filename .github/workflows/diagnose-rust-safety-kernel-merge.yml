@@ -24,15 +24,18 @@ jobs:
           git config user.name "HOL Guard merge diagnostic"
           git config user.email "noreply@hol.org"
           git fetch origin release/3.0 feat/rust-runtime-supervision-final
-          git merge --no-commit --no-ff origin/release/3.0 || true
-          if git diff --name-only --diff-filter=U | grep -q .; then
-            echo "release/3.0 conflicts:"
-            git diff --name-only --diff-filter=U
+          git merge --no-commit --no-ff origin/release/3.0 >/tmp/release-merge.log 2>&1 || true
+          release_conflicts="$(git diff --name-only --diff-filter=U)"
+          echo "RELEASE_CONFLICTS_BEGIN"
+          printf '%s\n' "$release_conflicts"
+          echo "RELEASE_CONFLICTS_END"
+          if [[ -n "$release_conflicts" ]]; then
             exit 1
           fi
-          git commit -m "temporary release merge" || true
-          git merge --no-commit --no-ff origin/feat/rust-runtime-supervision-final || true
-          echo "supervision conflicts:"
-          git diff --name-only --diff-filter=U
-          git diff --cc
-          test -z "$(git diff --name-only --diff-filter=U)"
+          git commit -m "temporary release merge" >/dev/null 2>&1 || true
+          git merge --no-commit --no-ff origin/feat/rust-runtime-supervision-final >/tmp/supervision-merge.log 2>&1 || true
+          supervision_conflicts="$(git diff --name-only --diff-filter=U)"
+          echo "SUPERVISION_CONFLICTS_BEGIN"
+          printf '%s\n' "$supervision_conflicts"
+          echo "SUPERVISION_CONFLICTS_END"
+          test -z "$supervision_conflicts"
