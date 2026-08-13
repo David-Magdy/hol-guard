@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-_GATE_PATH = Path("scripts/ci/guard_secrets_release_claim_gate.py")
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+_GATE_PATH = _REPOSITORY_ROOT / "scripts/ci/guard_secrets_release_claim_gate.py"
 _SPEC = importlib.util.spec_from_file_location(
     "guard_secrets_release_claim_gate",
     _GATE_PATH,
@@ -42,7 +43,8 @@ def _manifest(**overrides: object) -> dict[str, object]:
 
 def test_repository_manifest_is_structurally_valid() -> None:
     manifest = load_manifest(
-        Path("docs/guard/contracts/guard-secrets-capability-evidence.v2.json")
+        _REPOSITORY_ROOT
+        / "docs/guard/contracts/guard-secrets-capability-evidence.v2.json"
     )
     errors = validate_manifest(
         manifest,
