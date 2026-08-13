@@ -102,6 +102,47 @@ def test_approved_ignore_requires_approver() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "state",
+    [SecretIgnoreState.EXPIRED, SecretIgnoreState.REVOKED, SecretIgnoreState.DENIED],
+)
+def test_terminal_ignore_state_retains_past_expiry(state: SecretIgnoreState) -> None:
+    decision = SecretIgnoreDecisionV2(
+        decision_id="ignore:terminal",
+        state=state,
+        requested_scope=SecretIgnoreScope.OCCURRENCE,
+        durable_match_key="c" * 64,
+        reason="Historical decision",
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+        detector_version="guard-secrets-v2",
+        model_version=None,
+        requester_id="user:1",
+        approver_id=None,
+        policy_source="personal",
+        propagation=("cli",),
+    )
+
+    assert decision.expires_at is not None
+
+
+def test_active_ignore_rejects_past_expiry() -> None:
+    with pytest.raises(SecretContractError, match="must be in the future"):
+        SecretIgnoreDecisionV2(
+            decision_id="ignore:active",
+            state=SecretIgnoreState.REQUESTED,
+            requested_scope=SecretIgnoreScope.OCCURRENCE,
+            durable_match_key="d" * 64,
+            reason="Pending review",
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+            detector_version="guard-secrets-v2",
+            model_version=None,
+            requester_id="user:1",
+            approver_id=None,
+            policy_source="personal",
+            propagation=("cli",),
+        )
+
+
 def test_non_expiring_ignore_requires_fixture_justification() -> None:
     with pytest.raises(SecretContractError, match="justification"):
         SecretIgnoreDecisionV2(
