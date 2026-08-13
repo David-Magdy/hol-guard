@@ -8,7 +8,7 @@ Make the bundled Rust runtime a cross-platform, low-latency safety kernel for ca
 
 The native kernel must reliably pause or block secret exfiltration, prompt injection, broad deletion, destructive production database or infrastructure actions, supply-chain compromise, and Guard tampering. Routine reads, tests, builds, linting, bounded workspace edits, and exact low-impact cleanup must remain quiet and autonomous.
 
-Native execution remains default-off until a separate release-gate PR proves every requirement below.
+Eligible PostToolUse review uses the verified bundled Rust runtime in `auto` mode by default. Python remains the control plane and fail-safe fallback, explicit `HOL_GUARD_NATIVE=off` remains the emergency rollback, and PreToolUse authority remains Python-only.
 
 ## Security invariants
 
@@ -193,8 +193,8 @@ Do not remove the active Python reference backend while this PRD requires it. An
 4. Equivalent Tier 1 installed-wheel evidence.
 5. Catastrophic-risk effect/detector parity and safe-corpus autonomy.
 6. DX, diagnostics, privacy, repair, and rollout controls.
-7. Dedicated opt-in PostToolUse `auto` PR.
-8. Separate default-enable PR only after independent security review and all gates pass.
+7. Dedicated eligible PostToolUse default-`auto` PR with installed-wheel and rollback evidence.
+8. Separate future expansion of native authority only after the remaining independent security and catastrophic-risk gates pass.
 9. Separate future PreToolUse authority PR.
 
 `release/3.0` must not be merged into `main` as part of this work.
@@ -210,4 +210,4 @@ Do not remove the active Python reference backend while this PRD requires it. An
 - Native doctor/status/repair are accurate and privacy safe.
 - Dead replaced Python code is deleted; active Python control/reference code is explicitly retained and tested.
 - Cargo lock/fmt/Clippy/tests/audit/deny/SBOM/provenance, CodeQL, Security Gates, fuzz, differential, chaos, soak, CI, and review gates pass.
-- Native source default remains `off` until the dedicated default-enable release gate.
+- Eligible PostToolUse source default is `auto`; explicit `off`, pure-Python unsupported-platform fallback, and Python control/reference ownership remain tested rollback paths.
