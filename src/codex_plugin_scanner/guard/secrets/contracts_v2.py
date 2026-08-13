@@ -92,6 +92,15 @@ class SecretIgnoreState(str, Enum):
     EXPIRED = "expired"
 
 
+_ACTIVE_IGNORE_STATES: Final = frozenset(
+    {
+        SecretIgnoreState.REQUESTED,
+        SecretIgnoreState.APPROVED,
+        SecretIgnoreState.CHANGES_REQUESTED,
+    }
+)
+
+
 class SecretRuleMatcherKind(str, Enum):
     PREFIX = "prefix"
     REGEX = "regex"
@@ -374,13 +383,15 @@ class SecretIgnoreDecisionV2:
         if len(self.reason.strip()) < 3 or len(self.reason) > 500:
             raise SecretContractError("ignore reason must be between 3 and 500 characters")
         if self.expires_at is None and not self.permanent_fixture_justification:
-            raise SecretContractError(
-                "non-expiring decisions require permanent fixture justification"
-            )
+            raise SecretContractError("non-expiring decisions require permanent fixture justification")
         if self.expires_at is not None:
             if self.expires_at.tzinfo is None:
                 raise SecretContractError("expires_at must be timezone-aware")
-            if self.expires_at.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            if (
+                self.state in _ACTIVE_IGNORE_STATES
+                and self.expires_at.astimezone(timezone.utc)
+                <= datetime.now(timezone.utc)
+            ):
                 raise SecretContractError("expires_at must be in the future")
         if self.state is SecretIgnoreState.APPROVED and not self.approver_id:
             raise SecretContractError("approved ignore decisions require an approver")
@@ -438,15 +449,17 @@ class SecretCustomRuleV2:
             if not _DIGEST.fullmatch(digest):
                 raise SecretContractError(f"{field_name} must be SHA-256")
         if not 1 <= self.complexity_budget <= 100_000:
-            raise SecretContractError(
-                "complexity_budget is outside the supported bound"
-            )
+            raise SecretContractError("complexity_budget is outside the supported bound")
         if not self.surfaces or len(set(self.surfaces)) != len(self.surfaces):
             raise SecretContractError("rule surfaces must be non-empty and unique")
-        if self.rollout_state in {
-            SecretRolloutState.CANARY,
-            SecretRolloutState.ACTIVE,
-        } and self.compile_state is not SecretRuleCompileState.VALID:
+        if (
+            self.rollout_state
+            in {
+                SecretRolloutState.CANARY,
+                SecretRolloutState.ACTIVE,
+            }
+            and self.compile_state is not SecretRuleCompileState.VALID
+        ):
             raise SecretContractError("only valid compiled rules may be canary or active")
 
     def to_public_dict(self) -> dict[str, object]:
@@ -483,26 +496,24 @@ class CapabilityEvidenceV2:
             raise SecretContractError("capability_id is invalid")
         if not self.surfaces or not self.plans:
             raise SecretContractError("capability surfaces and plans must be non-empty")
-        if self.state in {
-            ParityState.TESTED,
-            ParityState.VERIFIED_ON_RELEASE_CANDIDATE,
-            ParityState.GENERALLY_AVAILABLE,
-        } and not self.acceptance_tests:
+        if (
+            self.state
+            in {
+                ParityState.TESTED,
+                ParityState.VERIFIED_ON_RELEASE_CANDIDATE,
+                ParityState.GENERALLY_AVAILABLE,
+            }
+            and not self.acceptance_tests
+        ):
             raise SecretContractError("tested capability requires acceptance tests")
         if self.state in {
             ParityState.VERIFIED_ON_RELEASE_CANDIDATE,
             ParityState.GENERALLY_AVAILABLE,
         }:
-            if not self.release_commit or not re.fullmatch(
-                r"[a-f0-9]{40}", self.release_commit
-            ):
-                raise SecretContractError(
-                    "release-candidate capability requires an exact commit SHA"
-                )
+            if not self.release_commit or not re.fullmatch(r"[a-f0-9]{40}", self.release_commit):
+                raise SecretContractError("release-candidate capability requires an exact commit SHA")
             if not self.evidence_artifacts:
-                raise SecretContractError(
-                    "release-candidate capability requires evidence artifacts"
-                )
+                raise SecretContractError("release-candidate capability requires evidence artifacts")
 
 
 @dataclass(frozen=True, slots=True)
@@ -621,19 +632,13 @@ def validate_capability_manifest(
         raise SecretContractError("capability IDs must be unique")
     missing = sorted(required_capability_ids - set(by_id))
     if missing:
-        raise SecretContractError(
-            f"required capabilities are unmapped: {', '.join(missing)}"
-        )
+        raise SecretContractError(f"required capabilities are unmapped: {', '.join(missing)}")
     for capability_id in sorted(required_capability_ids):
         capability = by_id[capability_id]
         if capability.state not in {
             ParityState.VERIFIED_ON_RELEASE_CANDIDATE,
             ParityState.GENERALLY_AVAILABLE,
         }:
-            raise SecretContractError(
-                f"{capability_id}: not verified on a release candidate"
-            )
+            raise SecretContractError(f"{capability_id}: not verified on a release candidate")
         if capability.release_commit != exact_release_commit:
-            raise SecretContractError(
-                f"{capability_id}: evidence is bound to a different commit"
-            )
+            raise SecretContractError(f"{capability_id}: evidence is bound to a different commit")
