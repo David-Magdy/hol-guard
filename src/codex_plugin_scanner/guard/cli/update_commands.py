@@ -68,6 +68,8 @@ _ALREADY_CURRENT_HINTS = (
 _PIPX_LAUNCHER_FAILURE_HINTS = (
     "ModuleNotFoundError: No module named 'pipx'",
     'ModuleNotFoundError: No module named "pipx"',
+    "venv for 'hol-guard' was not found",
+    'venv for "hol-guard" was not found',
 )
 _PYPI_PROPAGATION_FAILURE_HINTS = (
     "No matching distribution found for hol-guard==",
