@@ -1,0 +1,66 @@
+name: Apply Desktop Core wheel fix once
+
+on:
+  push:
+    branches:
+      - fix/desktop-core-feed-arm64-wheel
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/desktop-core-feed-arm64-wheel
+          persist-credentials: true
+
+      - name: Apply fail-closed Apple silicon wheel selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/desktop-core-alpha-feed.yml')
+          text = workflow.read_text(encoding='utf-8')
+          old_download = '''          gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \\
+            --pattern "hol_guard-${CORE_VERSION}-*.whl" --dir "$TRUST_ASSETS"'''
+          new_download = '''          gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \\
+            --pattern "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" \\
+            --dir "$TRUST_ASSETS"'''
+          old_find = '''          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f -name "hol_guard-${CORE_VERSION}-*.whl" -print)'''
+          new_find = '''          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f \\
+            -name "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" -print)'''
+          if text.count(old_download) != 1 or text.count(old_find) != 1:
+              raise SystemExit('Desktop Core feed wheel-selection anchors changed unexpectedly')
+          text = text.replace(old_download, new_download, 1).replace(old_find, new_find, 1)
+          workflow.write_text(text, encoding='utf-8')
+
+          tests = Path('tests/test_desktop_core_alpha_feed_security.py')
+          text = tests.read_text(encoding='utf-8')
+          anchor = '''    assert 'test "$WHEEL_COUNT" -eq 1' in text
+    assert 'test -f "$WHEEL"' in text
+'''
+          replacement = '''    assert 'test "$WHEEL_COUNT" -eq 1' in text
+    assert 'test -f "$WHEEL"' in text
+    assert '--pattern "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl"' in text
+    assert '-name "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl"' in text
+    assert '--pattern "hol_guard-${CORE_VERSION}-*.whl"' not in text
+'''
+          if text.count(anchor) != 1:
+              raise SystemExit('Desktop Core feed security-test anchor changed unexpectedly')
+          tests.write_text(text.replace(anchor, replacement, 1), encoding='utf-8')
+          PY
+          git diff --check
+          git rm .github/workflows/apply-desktop-core-wheel-fix-once.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/desktop-core-alpha-feed.yml tests/test_desktop_core_alpha_feed_security.py
+          git commit -m "fix(release): select the Apple silicon Core wheel"
+          git push origin HEAD:fix/desktop-core-feed-arm64-wheel
