@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   apply:
-    if: github.actor != 'github-actions[bot]'
+    if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -29,30 +29,41 @@ jobs:
 
           workflow = Path('.github/workflows/desktop-core-alpha-feed.yml')
           text = workflow.read_text(encoding='utf-8')
-          old_download = '''          gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \\
-            --pattern "hol_guard-${CORE_VERSION}-*.whl" --dir "$TRUST_ASSETS"'''
-          new_download = '''          gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \\
-            --pattern "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" \\
-            --dir "$TRUST_ASSETS"'''
-          old_find = '''          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f -name "hol_guard-${CORE_VERSION}-*.whl" -print)'''
-          new_find = '''          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f \\
-            -name "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" -print)'''
+          old_download = (
+              '          gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \\\n'
+              '            --pattern "hol_guard-${CORE_VERSION}-*.whl" --dir "$TRUST_ASSETS"'
+          )
+          new_download = (
+              '          gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \\\n'
+              '            --pattern "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" \\\n'
+              '            --dir "$TRUST_ASSETS"'
+          )
+          old_find = (
+              '          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f '
+              '-name "hol_guard-${CORE_VERSION}-*.whl" -print)'
+          )
+          new_find = (
+              '          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f \\\n'
+              '            -name "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" -print)'
+          )
           if text.count(old_download) != 1 or text.count(old_find) != 1:
               raise SystemExit('Desktop Core feed wheel-selection anchors changed unexpectedly')
-          text = text.replace(old_download, new_download, 1).replace(old_find, new_find, 1)
-          workflow.write_text(text, encoding='utf-8')
+          workflow.write_text(
+              text.replace(old_download, new_download, 1).replace(old_find, new_find, 1),
+              encoding='utf-8',
+          )
 
           tests = Path('tests/test_desktop_core_alpha_feed_security.py')
           text = tests.read_text(encoding='utf-8')
-          anchor = '''    assert 'test "$WHEEL_COUNT" -eq 1' in text
-    assert 'test -f "$WHEEL"' in text
-'''
-          replacement = '''    assert 'test "$WHEEL_COUNT" -eq 1' in text
-    assert 'test -f "$WHEEL"' in text
-    assert '--pattern "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl"' in text
-    assert '-name "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl"' in text
-    assert '--pattern "hol_guard-${CORE_VERSION}-*.whl"' not in text
-'''
+          anchor = (
+              '    assert \'test "$WHEEL_COUNT" -eq 1\' in text\n'
+              '    assert \'test -f "$WHEEL"\' in text\n'
+          )
+          replacement = anchor + (
+              '    assert \'--pattern "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl"\' in text\n'
+              '    assert \'-name "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl"\' in text\n'
+              '    assert \'--pattern "hol_guard-${CORE_VERSION}-*.whl"\' not in text\n'
+          )
           if text.count(anchor) != 1:
               raise SystemExit('Desktop Core feed security-test anchor changed unexpectedly')
           tests.write_text(text.replace(anchor, replacement, 1), encoding='utf-8')
