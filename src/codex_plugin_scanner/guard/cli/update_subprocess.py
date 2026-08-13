@@ -1587,6 +1587,26 @@ def _pipx_execution_command(executable: str, args: list[str], *, python: str, in
             python,
             *args[1:],
         ]
+    if len(args) >= 5 and args[:3] == ["runpip", "hol-guard", "install"]:
+        install_args = args[3:]
+        target = install_args[-1]
+        flags = install_args[:-1]
+        allowed_flags = (
+            ["--force-reinstall"],
+            ["--upgrade", "--force-reinstall"],
+            ["--upgrade", "--force-reinstall", "--pre"],
+        )
+        if flags in allowed_flags and target and not target.startswith("-"):
+            return [
+                executable,
+                "runpip",
+                "hol-guard",
+                "install",
+                *flags,
+                target,
+                "--index-url",
+                index_url,
+            ]
     raise UpdateSubprocessError("update_installer_command_invalid")
 
 

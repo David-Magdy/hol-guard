@@ -101,10 +101,13 @@ def test_update_alpha_pins_latest_alpha_release(monkeypatch: pytest.MonkeyPatch)
     assert exit_code == 0
     assert payload["command"] == [
         "pipx",
+        "runpip",
+        "hol-guard",
         "install",
-        "--force",
+        "--upgrade",
+        "--force-reinstall",
+        "--pre",
         "hol-guard==2.1.0a35",
-        "--pip-args=--pre",
     ]
     assert payload["retry_command"] == "hol-guard update --alpha"
     assert payload["release_channel"] == "alpha"
@@ -130,7 +133,7 @@ def test_update_command_allows_prerelease_for_alpha_pins() -> None:
         "pipx",
         use_pypi=True,
         target_version="2.1.0a51",
-    ) == ["pipx", "install", "--force", "hol-guard==2.1.0a51", "--pip-args=--pre"]
+    ) == ["pipx", "runpip", "hol-guard", "install", "--upgrade", "--force-reinstall", "--pre", "hol-guard==2.1.0a51"]
     assert update_commands._update_command(
         "pip",
         use_pypi=True,
@@ -678,6 +681,7 @@ def test_install_native_contract_output_prefers_native_hooks_for_supported_harne
     assert managed_install["primary_integration"] == "native_hooks"
     assert managed_install["manifest"]["mode"] == "codex-mcp-proxy"
 
+
 def test_success_status_treats_uv_pin_noop_as_current() -> None:
     payload = {
         "current_version": "3.0.0a9",
@@ -707,4 +711,3 @@ def test_success_status_marks_equal_versions_current_without_installer_hints() -
         "version_check": {"update_available": False, "latest_version": "3.0.0a9"},
     }
     assert update_commands._success_status(payload) == "current"
-
