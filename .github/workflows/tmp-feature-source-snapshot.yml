@@ -1,0 +1,42 @@
+name: Temporary Rust completion source snapshot
+
+on:
+  push:
+    branches:
+      - feat/rust-safety-kernel-pretool-completion-v2
+    paths:
+      - .github/workflows/tmp-feature-source-snapshot.yml
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/rust-safety-kernel-pretool-completion-v2
+          fetch-depth: 1
+      - name: Archive exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git --exclude=.venv --exclude=.uv-cache --exclude=feature-source.tgz -czf "$RUNNER_TEMP/feature-source.tgz" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-completion-source-${{ github.sha }}
+          path: ${{ runner.temp }}/feature-source.tgz
+          if-no-files-found: error
+          retention-days: 1
+      - name: Remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/tmp-feature-source-snapshot.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/tmp-feature-source-snapshot.yml
+          git commit -m "chore(ci): remove temporary source snapshot"
+          git push origin HEAD:feat/rust-safety-kernel-pretool-completion-v2
