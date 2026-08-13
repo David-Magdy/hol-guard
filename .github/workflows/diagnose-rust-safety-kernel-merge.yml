@@ -1,4 +1,4 @@
-name: Diagnose Rust safety-kernel merge
+name: Finalize Rust safety-kernel integration
 
 on:
   push:
@@ -7,35 +7,108 @@ on:
       - ".github/workflows/diagnose-rust-safety-kernel-merge.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  finalize:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
           ref: feat/rust-safety-kernel-integration-final
-      - name: Diagnose merge conflicts
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Prepare toolchains
         shell: bash
         run: |
-          set -u
-          git config user.name "HOL Guard merge diagnostic"
-          git config user.email "noreply@hol.org"
-          git fetch origin release/3.0 feat/rust-runtime-supervision-final
-          git merge --no-commit --no-ff origin/release/3.0 >/tmp/release-merge.log 2>&1 || true
-          release_conflicts="$(git diff --name-only --diff-filter=U)"
-          echo "RELEASE_CONFLICTS_BEGIN"
-          printf '%s\n' "$release_conflicts"
-          echo "RELEASE_CONFLICTS_END"
-          if [[ -n "$release_conflicts" ]]; then
-            exit 1
-          fi
-          git commit -m "temporary release merge" >/dev/null 2>&1 || true
-          git merge --no-commit --no-ff origin/feat/rust-runtime-supervision-final >/tmp/supervision-merge.log 2>&1 || true
-          supervision_conflicts="$(git diff --name-only --diff-filter=U)"
-          echo "SUPERVISION_CONFLICTS_BEGIN"
-          printf '%s\n' "$supervision_conflicts"
-          echo "SUPERVISION_CONFLICTS_END"
-          test -z "$supervision_conflicts"
+          set -euo pipefail
+          uv sync --frozen --extra dev --python 3.12
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.88.0
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+      - name: Reconcile current release with validated supervision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin release/3.0 feat/rust-runtime-supervision-final feat/rust-safety-kernel-pretool-completion-v2
+          printf '%s' "$(git rev-parse origin/release/3.0)" > /tmp/release_sha
+          printf '%s' "$(git rev-parse origin/feat/rust-runtime-supervision-final)" > /tmp/supervision_sha
+
+          git merge --no-edit --no-ff origin/release/3.0
+          git merge --no-edit --no-ff -Xours origin/feat/rust-runtime-supervision-final
+
+          # The release ratchet is newer than the supervision branch and must win.
+          git show origin/release/3.0:ci/test-suite-ratchet-baseline.json > ci/test-suite-ratchet-baseline.json
+
+          # Assert the two validated supervision lint fixes survived conflict resolution.
+          python - <<'PY'
+          from pathlib import Path
+
+          rust = Path("rust/crates/guard-runtime/src/main.rs").read_text(encoding="utf-8")
+          if "Hook(Box<NativeHookRequestV1>)" not in rust:
+              raise RuntimeError("validated boxed resident hook request was lost during integration")
+
+          resident = Path("src/codex_plugin_scanner/guard/native_runtime_resident.py").read_text(encoding="utf-8")
+          if "for key, candidate in tuple(_SERVICES.items()):" in resident:
+              raise RuntimeError("validated resident supervisor lint fix was lost during integration")
+          PY
+      - name: Validate integrated runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          cargo fmt --manifest-path rust/Cargo.toml --all --check
+          cargo check --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+          cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+
+          uv run --no-sync python -m ruff check \
+            src/codex_plugin_scanner/guard/native_command_model.py \
+            src/codex_plugin_scanner/guard/native_runtime.py \
+            src/codex_plugin_scanner/guard/native_runtime_identity.py \
+            src/codex_plugin_scanner/guard/native_runtime_resident.py \
+            src/codex_plugin_scanner/guard/native_runtime_resilience.py \
+            src/codex_plugin_scanner/guard/native_runtime_supervisor.py \
+            ci/native_runtime/test_guard_native_runtime_mutation_differential.py \
+            ci/native_runtime/test_guard_native_runtime_resident.py \
+            ci/native_runtime/test_guard_native_runtime_windows_resident.py \
+            ci/native_runtime/test_native_runtime_recovery.py \
+            tests/test_native_runtime_identity.py \
+            tests/test_native_runtime_resilience.py \
+            tests/test_native_runtime_supervisor.py \
+            tests/test_rust_hardening_contracts.py
+
+          uv run --no-sync pytest -q \
+            ci/native_runtime/test_guard_native_runtime_mutation_differential.py \
+            ci/native_runtime/test_guard_native_runtime_resident.py \
+            ci/native_runtime/test_guard_native_runtime_windows_resident.py \
+            ci/native_runtime/test_native_runtime_recovery.py \
+            tests/test_native_runtime_identity.py \
+            tests/test_native_runtime_resilience.py \
+            tests/test_native_runtime_supervisor.py \
+            tests/test_rust_hardening_contracts.py \
+            --tb=short
+
+          git diff --check
+      - name: Publish validated integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch=feat/rust-safety-kernel-integration-final
+          [[ "$(git ls-remote --exit-code origin refs/heads/release/3.0 | awk '{print $1}')" == "$(cat /tmp/release_sha)" ]]
+          [[ "$(git ls-remote --exit-code origin refs/heads/feat/rust-runtime-supervision-final | awk '{print $1}')" == "$(cat /tmp/supervision_sha)" ]]
+          [[ "$(git ls-remote --exit-code origin refs/heads/${branch} | awk '{print $1}')" == "$GITHUB_SHA" ]]
+
+          rm -f .github/workflows/diagnose-rust-safety-kernel-merge.yml
+          git add -A
+          git diff --cached --check
+          git commit --signoff -m "fix(guard): reconcile Rust safety-kernel integration"
+          git push origin "HEAD:refs/heads/${branch}"
