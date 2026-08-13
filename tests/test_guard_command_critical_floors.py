@@ -124,6 +124,8 @@ CRITICAL_COMMAND_FLOORS: tuple[tuple[str, GuardAction], ...] = (
     ("parallel sh -c 'hol-guard uninstall --all'", "block"),
     ("xargs aws route53 delete-hosted-zone --id zone", "block"),
     ("xargs gh pr merge 17 --repo example/repo --squash", "require-reapproval"),
+    ("sh -c 'gh pr merge 17 --repo example/repo --squash'", "require-reapproval"),
+    ("bash -lc 'gh pr merge 17 --repo example/repo --squash'", "require-reapproval"),
     ("aws.exe route53 delete-hosted-zone --id zone", "block"),
     ("/usr/bin/stripe.exe products delete product", "block"),
     ("hol-guard.exe uninstall --all", "block"),
