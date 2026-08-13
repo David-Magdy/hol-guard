@@ -10,7 +10,9 @@ from codex_plugin_scanner.guard.runtime.network_capability_contract import (
     PlatformFamily,
     default_platform_profiles,
 )
-from codex_plugin_scanner.guard.runtime.network_legacy_config import migrate_new_network_domain_action
+from codex_plugin_scanner.guard.runtime.network_legacy_config import (
+    migrate_new_network_domain_action,
+)
 from codex_plugin_scanner.guard.runtime.network_policy_contract import EnforcementGrade
 from codex_plugin_scanner.guard.runtime.network_supervisor import NetworkSupervisorHealth
 
