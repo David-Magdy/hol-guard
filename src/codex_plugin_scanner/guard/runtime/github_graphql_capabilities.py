@@ -9,16 +9,17 @@ from .github_capability_contract import GitHubCommandAssessment, GitHubCommandCa
 _GRAPHQL_NAME = re.compile(r"\b[_A-Za-z][_0-9A-Za-z]*\b")
 _GRAPHQL_ALIAS = re.compile(r"\b(?P<name>[_A-Za-z][_0-9A-Za-z]*)\s*:")
 _ROUTINE_REVIEW_THREAD_ID = r"PRRT_[A-Za-z0-9_-]{8,}"
+_ROUTINE_REVIEW_THREAD_SELECTION = r"(?:id\s+isResolved|isResolved\s+id|id|isResolved)"
 _ROUTINE_REVIEW_THREAD_LITERAL = re.compile(
     rf'''\A\s*mutation\s*\{{\s*
     resolveReviewThread\s*\(\s*input\s*:\s*\{{\s*threadId\s*:\s*"{_ROUTINE_REVIEW_THREAD_ID}"\s*\}}\s*\)\s*
-    \{{\s*thread\s*\{{\s*isResolved\s*\}}\s*\}}\s*\}}\s*\Z''',
+    \{{\s*thread\s*\{{\s*{_ROUTINE_REVIEW_THREAD_SELECTION}\s*\}}\s*\}}\s*\}}\s*\Z''',
     re.VERBOSE | re.ASCII,
 )
 _ROUTINE_REVIEW_THREAD_VARIABLE = re.compile(
-    r"""\A\s*mutation\s*\(\s*\$threadId\s*:\s*ID!\s*\)\s*\{\s*
-    resolveReviewThread\s*\(\s*input\s*:\s*\{\s*threadId\s*:\s*\$threadId\s*\}\s*\)\s*
-    \{\s*thread\s*\{\s*isResolved\s*\}\s*\}\s*\}\s*\Z""",
+    rf"""\A\s*mutation\s*\(\s*\$threadId\s*:\s*ID!\s*\)\s*\{{\s*
+    resolveReviewThread\s*\(\s*input\s*:\s*\{{\s*threadId\s*:\s*\$threadId\s*\}}\s*\)\s*
+    \{{\s*thread\s*\{{\s*{_ROUTINE_REVIEW_THREAD_SELECTION}\s*\}}\s*\}}\s*\}}\s*\Z""",
     re.VERBOSE | re.ASCII,
 )
 _ROUTINE_REVIEW_THREAD_VALUE = re.compile(rf"\A{_ROUTINE_REVIEW_THREAD_ID}\Z", re.ASCII)

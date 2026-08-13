@@ -379,7 +379,7 @@ def test_classify_github_cli_rejects_ambiguous_graphql_inputs(args: tuple[str, .
             "api",
             "graphql",
             "-f",
-            'query=mutation{resolveReviewThread(input:{threadId:"PRRT_kwDOQGomAs6T6b-G"}){thread{id}}}',
+            'query=mutation{resolveReviewThread(input:{threadId:"PRRT_kwDOQGomAs6T6b-G"}){thread{id id}}}',
         ),
         (
             "api",
@@ -424,12 +424,45 @@ def test_guard_keeps_exact_review_thread_resolution_prompt_free() -> None:
     assert match is None
 
 
+@pytest.mark.parametrize("selection", ("id", "id isResolved", "isResolved id"))
+def test_guard_keeps_routine_review_thread_response_selections_prompt_free(selection: str) -> None:
+    command = (
+        "gh api graphql -f "
+        f"'query=mutation($threadId:ID!){{resolveReviewThread(input:{{threadId:$threadId}})"
+        f"{{thread{{{selection}}}}}}}' -f threadId=PRRT_kwDOQGomAs6T6b-G"
+    )
+
+    match = extract_sensitive_tool_action_request("Bash", {"command": command})
+
+    assert match is None
+
+
 def test_guard_keeps_exact_failed_job_rerun_prompt_free() -> None:
     command = "gh run rerun 31707639186 --repo hashgraph-online/hol-guard --failed"
 
     match = extract_sensitive_tool_action_request("Bash", {"command": command})
 
     assert match is None
+
+
+@pytest.mark.parametrize(
+    "selection",
+    (
+        "id repository { name }",
+        "id: isResolved",
+        "...ThreadFields",
+    ),
+)
+def test_guard_reviews_unbounded_review_thread_response_selections(selection: str) -> None:
+    command = (
+        "gh api graphql -f "
+        f"'query=mutation($threadId:ID!){{resolveReviewThread(input:{{threadId:$threadId}})"
+        f"{{thread{{{selection}}}}}}}' -f threadId=PRRT_kwDOQGomAs6T6b-G"
+    )
+
+    match = extract_sensitive_tool_action_request("Bash", {"command": command})
+
+    assert match is not None
 
 
 @pytest.mark.parametrize(
