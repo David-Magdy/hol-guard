@@ -43,7 +43,7 @@ jobs:
           printf '%s' "$(git rev-parse origin/feat/rust-runtime-supervision-final)" > /tmp/supervision_sha
 
           git merge --no-edit --no-ff origin/release/3.0
-          git merge --no-edit --no-ff -Xours origin/feat/rust-runtime-supervision-final
+          git merge --no-edit --no-ff --allow-unrelated-histories -Xours origin/feat/rust-runtime-supervision-final
 
           # The release ratchet is newer than the supervision branch and must win.
           git show origin/release/3.0:ci/test-suite-ratchet-baseline.json > ci/test-suite-ratchet-baseline.json
