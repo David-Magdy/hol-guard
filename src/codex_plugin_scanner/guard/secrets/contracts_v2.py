@@ -9,10 +9,11 @@ exclude raw credential material and arbitrary source context.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Final, Mapping, Sequence, cast
+from typing import Final, cast
 
 
 class SecretContractError(ValueError):
@@ -249,7 +250,7 @@ class SecretScanCoverageV2:
         return payload
 
     @classmethod
-    def from_mapping(cls, payload: Mapping[str, object]) -> "SecretScanCoverageV2":
+    def from_mapping(cls, payload: Mapping[str, object]) -> SecretScanCoverageV2:
         allowed = {
             "schema",
             "source_set",
