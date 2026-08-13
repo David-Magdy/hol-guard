@@ -1,9 +1,9 @@
 """Versioned cross-surface contracts for HOL Guard Secrets.
 
-The contracts in this module are intentionally dependency-free so the same
-semantics can be used by the local CLI, hooks, IDE bridge, isolated workers,
-and release evidence tooling. Serializable forms are strict and explicitly
-exclude raw credential material and arbitrary source context.
+The contracts in this module are dependency-free so the same semantics can be
+used by the local CLI, hooks, IDE bridge, isolated workers, and release evidence
+tooling. Serializable forms are strict and explicitly exclude raw credential
+material and arbitrary source context.
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ class SecretContractError(ValueError):
 
 
 class ParityState(str, Enum):
+    """Evidence state for one public capability claim."""
+
     UNMAPPED = "unmapped"
     DESIGNED = "designed"
     IMPLEMENTED = "implemented"
@@ -30,6 +32,8 @@ class ParityState(str, Enum):
 
 
 class PreventionOutcome(str, Enum):
+    """Canonical cross-surface prevention outcomes."""
+
     CLEAN = "clean"
     WARN = "warn"
     SOFT_BLOCK = "soft_block"
@@ -40,6 +44,8 @@ class PreventionOutcome(str, Enum):
 
 
 class SecretClass(str, Enum):
+    """Canonical candidate classification labels."""
+
     REAL = "real"
     PLACEHOLDER_OR_EXAMPLE = "placeholder_or_example"
     WEAK_OR_AMBIGUOUS = "weak_or_ambiguous"
@@ -47,6 +53,8 @@ class SecretClass(str, Enum):
 
 
 class SecretValidity(str, Enum):
+    """Safe normalized result of optional credential validation."""
+
     ACTIVE = "active"
     INACTIVE = "inactive"
     UNKNOWN = "unknown"
@@ -56,6 +64,8 @@ class SecretValidity(str, Enum):
 
 
 class SecretExposure(str, Enum):
+    """Normalized exposure surface for one occurrence."""
+
     LOCAL_ONLY = "local_only"
     PRIVATE_REPOSITORY = "private_repository"
     PUBLIC_REPOSITORY = "public_repository"
@@ -64,6 +74,8 @@ class SecretExposure(str, Enum):
 
 
 class SecretLifecycle(str, Enum):
+    """Canonical logical-finding lifecycle."""
+
     NEW = "new"
     TRIAGED = "triaged"
     REMEDIATING = "remediating"
@@ -74,6 +86,8 @@ class SecretLifecycle(str, Enum):
 
 
 class SecretIgnoreScope(str, Enum):
+    """Supported exact suppression scopes."""
+
     OCCURRENCE = "occurrence"
     SECRET_IDENTITY = "secret_identity"
     PATH_HASH = "path_hash"
@@ -84,6 +98,8 @@ class SecretIgnoreScope(str, Enum):
 
 
 class SecretIgnoreState(str, Enum):
+    """Lifecycle states for an ignore decision."""
+
     REQUESTED = "requested"
     APPROVED = "approved"
     DENIED = "denied"
@@ -102,6 +118,8 @@ _ACTIVE_IGNORE_STATES: Final = frozenset(
 
 
 class SecretRuleMatcherKind(str, Enum):
+    """Bounded declarative custom-rule matcher kinds."""
+
     PREFIX = "prefix"
     REGEX = "regex"
     ASSIGNMENT = "assignment"
@@ -109,6 +127,8 @@ class SecretRuleMatcherKind(str, Enum):
 
 
 class SecretRuleCompileState(str, Enum):
+    """Safe custom-rule compilation states."""
+
     PENDING = "pending"
     VALID = "valid"
     INVALID = "invalid"
@@ -116,6 +136,8 @@ class SecretRuleCompileState(str, Enum):
 
 
 class SecretRolloutState(str, Enum):
+    """Versioned custom-rule rollout states."""
+
     DRAFT = "draft"
     SHADOW = "shadow"
     CANARY = "canary"
@@ -131,15 +153,65 @@ _PROHIBITED_KEY = re.compile(
     re.IGNORECASE,
 )
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
+_COMMIT_SHA = re.compile(r"^[a-f0-9]{40}$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:@/-]{1,160}$")
 _SCHEMA_COVERAGE: Final = "guard-secret-coverage.v2"
 _SCHEMA_IGNORE: Final = "guard-secret-ignore-decision.v2"
 _SCHEMA_RULE: Final = "guard-secret-custom-rule.v2"
+_SCHEMA_CAPABILITY_EVIDENCE: Final = "guard-secrets-capability-evidence.v2"
+
+PARITY_STATES_V2: Final[tuple[str, ...]] = tuple(state.value for state in ParityState)
+_RELEASE_STATES: Final = frozenset(
+    {
+        ParityState.VERIFIED_ON_RELEASE_CANDIDATE,
+        ParityState.GENERALLY_AVAILABLE,
+    }
+)
+_PARITY_STATE_RANK: Final = {state: index for index, state in enumerate(ParityState)}
+
+REASON_CODES_V2: Final[frozenset[str]] = frozenset(
+    {
+        "archive_budget_exceeded",
+        "binary_skipped",
+        "cache_stale",
+        "cleanup_failed",
+        "detector_bundle_invalid",
+        "detector_unavailable",
+        "encoding_unsupported",
+        "file_changed_during_scan",
+        "git_object_missing",
+        "history_shallow",
+        "lfs_object_missing",
+        "max_bytes",
+        "max_commits",
+        "max_files",
+        "max_findings",
+        "model_bundle_invalid",
+        "model_degraded",
+        "policy_block",
+        "policy_refresh_required",
+        "source_unreadable",
+        "validation_error",
+        "validation_rate_limited",
+        "validation_unknown",
+        "validation_unsupported",
+        "worker_cancelled",
+        "worker_timeout",
+    }
+)
 
 
 def _normalized_key(value: str) -> str:
+    """Normalize a field name before prohibited-field matching."""
+
     value = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
     return re.sub(r"[^A-Za-z0-9]+", "_", value).lower().strip("_")
+
+
+def is_exact_commit_sha(value: str) -> bool:
+    """Return whether *value* is a full lowercase Git commit SHA."""
+
+    return _COMMIT_SHA.fullmatch(value) is not None
 
 
 def reject_prohibited_fields(value: object, *, path: str = "$") -> None:
@@ -157,14 +229,36 @@ def reject_prohibited_fields(value: object, *, path: str = "$") -> None:
             reject_prohibited_fields(nested, path=f"{path}[{index}]")
 
 
-def _strict_keys(payload: Mapping[str, object], allowed: set[str], *, schema: str) -> None:
+def _strict_keys(
+    payload: Mapping[str, object],
+    allowed: set[str],
+    *,
+    schema: str,
+) -> None:
+    """Reject undeclared and prohibited keys for a versioned contract."""
+
     unknown = sorted(set(payload) - allowed)
     if unknown:
         raise SecretContractError(f"{schema}: unknown fields: {', '.join(unknown)}")
     reject_prohibited_fields(payload)
 
 
-def _str_tuple(value: object, *, field_name: str, allow_empty: bool = True) -> tuple[str, ...]:
+def _mapping(value: object, *, field_name: str) -> Mapping[str, object]:
+    """Return a mapping or raise a stable contract error."""
+
+    if not isinstance(value, Mapping):
+        raise SecretContractError(f"{field_name}: expected an object")
+    return cast(Mapping[str, object], value)
+
+
+def _str_tuple(
+    value: object,
+    *,
+    field_name: str,
+    allow_empty: bool = True,
+) -> tuple[str, ...]:
+    """Parse an array of strings into an immutable tuple."""
+
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise SecretContractError(f"{field_name}: expected an array of strings")
     result = tuple(cast(list[str], value))
@@ -174,12 +268,16 @@ def _str_tuple(value: object, *, field_name: str, allow_empty: bool = True) -> t
 
 
 def _non_negative_int(value: object, *, field_name: str) -> int:
+    """Parse a non-negative integer without accepting booleans."""
+
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise SecretContractError(f"{field_name}: expected a non-negative integer")
     return value
 
 
 def _required_text(value: object, *, field_name: str, limit: int = 200) -> str:
+    """Parse bounded non-empty text."""
+
     if not isinstance(value, str):
         raise SecretContractError(f"{field_name}: expected text")
     normalized = value.strip()
@@ -188,14 +286,31 @@ def _required_text(value: object, *, field_name: str, limit: int = 200) -> str:
     return normalized
 
 
-def _optional_text(value: object, *, field_name: str, limit: int = 200) -> str | None:
+def _optional_text(
+    value: object,
+    *,
+    field_name: str,
+    limit: int = 200,
+) -> str | None:
+    """Parse optional bounded text."""
+
     if value is None:
         return None
     return _required_text(value, field_name=field_name, limit=limit)
 
 
+def _required_bool(value: object, *, field_name: str) -> bool:
+    """Parse a required boolean without truthy coercion."""
+
+    if not isinstance(value, bool):
+        raise SecretContractError(f"{field_name}: expected a boolean")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class SecretScanCoverageV2:
+    """Fail-honest source coverage for one Secrets scan."""
+
     source_set: tuple[str, ...]
     requested_refs: tuple[str, ...]
     completed_refs: tuple[str, ...]
@@ -213,8 +328,24 @@ class SecretScanCoverageV2:
     degraded: bool = False
     error_code: str | None = None
 
+    def __post_init__(self) -> None:
+        """Enforce cross-field coverage and reason-code invariants."""
+
+        if self.truncation_codes and not self.partial:
+            raise SecretContractError("truncation requires partial=true")
+        if set(self.completed_refs) - set(self.requested_refs):
+            raise SecretContractError("completed_refs must be a subset of requested_refs")
+        reason_codes = {*self.skipped_codes, *self.truncation_codes}
+        if self.error_code is not None:
+            reason_codes.add(self.error_code)
+        unknown = sorted(reason_codes - REASON_CODES_V2)
+        if unknown:
+            raise SecretContractError(f"unknown reason codes: {', '.join(unknown)}")
+
     @property
     def clean_eligible(self) -> bool:
+        """Return whether complete coverage can truthfully support a clean result."""
+
         return (
             not self.partial
             and not self.degraded
@@ -224,6 +355,8 @@ class SecretScanCoverageV2:
         )
 
     def assert_outcome(self, outcome: PreventionOutcome) -> None:
+        """Reject an outcome incompatible with the coverage record."""
+
         if outcome is PreventionOutcome.CLEAN and not self.clean_eligible:
             raise SecretContractError("incomplete coverage cannot produce a clean outcome")
         if self.error_code is not None and outcome not in {
@@ -235,6 +368,8 @@ class SecretScanCoverageV2:
             raise SecretContractError("degraded coverage cannot produce a clean outcome")
 
     def to_public_dict(self) -> dict[str, object]:
+        """Serialize only the privacy-safe public coverage contract."""
+
         payload: dict[str, object] = {
             "schema": _SCHEMA_COVERAGE,
             "source_set": list(self.source_set),
@@ -260,6 +395,8 @@ class SecretScanCoverageV2:
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> SecretScanCoverageV2:
+        """Parse the strict v2 coverage contract."""
+
         allowed = {
             "schema",
             "source_set",
@@ -286,7 +423,7 @@ class SecretScanCoverageV2:
         degraded = payload.get("degraded", False)
         if not isinstance(partial, bool) or not isinstance(degraded, bool):
             raise SecretContractError("coverage partial/degraded flags must be boolean")
-        instance = cls(
+        return cls(
             source_set=_str_tuple(
                 payload.get("source_set"),
                 field_name="source_set",
@@ -347,15 +484,12 @@ class SecretScanCoverageV2:
                 field_name="error_code",
             ),
         )
-        if instance.truncation_codes and not instance.partial:
-            raise SecretContractError("truncation requires partial=true")
-        if set(instance.completed_refs) - set(instance.requested_refs):
-            raise SecretContractError("completed_refs must be a subset of requested_refs")
-        return instance
 
 
 @dataclass(frozen=True, slots=True)
 class SecretIgnoreDecisionV2:
+    """Privacy-safe, durable ignore-decision contract."""
+
     decision_id: str
     state: SecretIgnoreState
     requested_scope: SecretIgnoreScope
@@ -371,6 +505,8 @@ class SecretIgnoreDecisionV2:
     permanent_fixture_justification: str | None = None
 
     def __post_init__(self) -> None:
+        """Enforce scope, expiry, actor, and durable-key invariants."""
+
         for field_name, value in {
             "decision_id": self.decision_id,
             "requester_id": self.requester_id,
@@ -397,6 +533,8 @@ class SecretIgnoreDecisionV2:
             raise SecretContractError("propagation surfaces must be unique")
 
     def to_public_dict(self) -> dict[str, object]:
+        """Serialize the decision without credential or source material."""
+
         payload: dict[str, object] = {
             "schema": _SCHEMA_IGNORE,
             "decision_id": self.decision_id,
@@ -419,6 +557,8 @@ class SecretIgnoreDecisionV2:
 
 @dataclass(frozen=True, slots=True)
 class SecretCustomRuleV2:
+    """Versioned declarative custom-rule contract."""
+
     rule_id: str
     version: str
     matcher_kind: SecretRuleMatcherKind
@@ -431,6 +571,8 @@ class SecretCustomRuleV2:
     surfaces: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        """Enforce digests, complexity, and rollout safety."""
+
         if not _IDENTIFIER.fullmatch(self.rule_id):
             raise SecretContractError("rule_id is invalid")
         if not _IDENTIFIER.fullmatch(self.version):
@@ -457,6 +599,8 @@ class SecretCustomRuleV2:
             raise SecretContractError("only valid compiled rules may be canary or active")
 
     def to_public_dict(self) -> dict[str, object]:
+        """Serialize the rule as digest-bound metadata only."""
+
         payload: dict[str, object] = {
             "schema": _SCHEMA_RULE,
             "rule_id": self.rule_id,
@@ -476,6 +620,8 @@ class SecretCustomRuleV2:
 
 @dataclass(frozen=True, slots=True)
 class CapabilityEvidenceV2:
+    """One capability row bound to tests, evidence, and rollout state."""
+
     capability_id: str
     product_boundary: str
     surfaces: tuple[str, ...]
@@ -484,12 +630,20 @@ class CapabilityEvidenceV2:
     acceptance_tests: tuple[str, ...]
     evidence_artifacts: tuple[str, ...]
     release_commit: str | None = None
+    owner: str | None = None
+    gap_label: str | None = None
 
     def __post_init__(self) -> None:
+        """Enforce capability identity and evidence-state invariants."""
+
         if not _IDENTIFIER.fullmatch(self.capability_id):
             raise SecretContractError("capability_id is invalid")
         if not self.surfaces or not self.plans:
             raise SecretContractError("capability surfaces and plans must be non-empty")
+        if self.owner is not None and not _IDENTIFIER.fullmatch(self.owner):
+            raise SecretContractError("owner is invalid")
+        if self.gap_label is not None and not self.gap_label.strip():
+            raise SecretContractError("gap_label must not be blank")
         if (
             self.state
             in {
@@ -500,18 +654,107 @@ class CapabilityEvidenceV2:
             and not self.acceptance_tests
         ):
             raise SecretContractError("tested capability requires acceptance tests")
-        if self.state in {
-            ParityState.VERIFIED_ON_RELEASE_CANDIDATE,
-            ParityState.GENERALLY_AVAILABLE,
-        }:
-            if not self.release_commit or not re.fullmatch(r"[a-f0-9]{40}", self.release_commit):
+        if self.state in _RELEASE_STATES:
+            if not self.release_commit or not is_exact_commit_sha(self.release_commit):
                 raise SecretContractError("release-candidate capability requires an exact commit SHA")
             if not self.evidence_artifacts:
                 raise SecretContractError("release-candidate capability requires evidence artifacts")
 
+    @classmethod
+    def from_mapping(
+        cls,
+        payload: Mapping[str, object],
+        *,
+        label: str,
+        require_gap_label: bool,
+    ) -> CapabilityEvidenceV2:
+        """Parse one strict capability row from a manifest mapping."""
+
+        allowed = {
+            "capability_id",
+            "product_boundary",
+            "surfaces",
+            "plans",
+            "owner",
+            "state",
+            "acceptance_tests",
+            "evidence_artifacts",
+            "release_commit",
+            "gap_label",
+        }
+        _strict_keys(payload, allowed, schema=label)
+        capability_id = _required_text(
+            payload.get("capability_id"),
+            field_name=f"{label}.capability_id",
+        )
+        try:
+            state = ParityState(
+                _required_text(
+                    payload.get("state"),
+                    field_name=f"{capability_id}.state",
+                )
+            )
+        except ValueError as error:
+            raise SecretContractError(f"{capability_id}: invalid parity state") from error
+        gap_label = _optional_text(
+            payload.get("gap_label"),
+            field_name=f"{capability_id}.gap_label",
+            limit=500,
+        )
+        if require_gap_label and state not in _RELEASE_STATES and gap_label is None:
+            raise SecretContractError(f"{capability_id}: non-release state requires an explicit gap label")
+        return cls(
+            capability_id=capability_id,
+            product_boundary=_required_text(
+                payload.get("product_boundary"),
+                field_name=f"{capability_id}.product_boundary",
+            ),
+            surfaces=_str_tuple(
+                payload.get("surfaces"),
+                field_name=f"{capability_id}.surfaces",
+                allow_empty=False,
+            ),
+            plans=_str_tuple(
+                payload.get("plans"),
+                field_name=f"{capability_id}.plans",
+                allow_empty=False,
+            ),
+            state=state,
+            acceptance_tests=_str_tuple(
+                payload.get("acceptance_tests"),
+                field_name=f"{capability_id}.acceptance_tests",
+            ),
+            evidence_artifacts=_str_tuple(
+                payload.get("evidence_artifacts"),
+                field_name=f"{capability_id}.evidence_artifacts",
+            ),
+            release_commit=_optional_text(
+                payload.get("release_commit"),
+                field_name=f"{capability_id}.release_commit",
+            ),
+            owner=_required_text(
+                payload.get("owner"),
+                field_name=f"{capability_id}.owner",
+            ),
+            gap_label=gap_label,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityManifestV2:
+    """Parsed capability manifest and its policy-declared validation result."""
+
+    capabilities: tuple[CapabilityEvidenceV2, ...]
+    row_errors: tuple[str, ...]
+    public_parity_requires: ParityState
+    exact_release_commit_required: bool
+    remaining_gaps_must_be_labeled: bool
+
 
 @dataclass(frozen=True, slots=True)
 class OrganizationMetricDefinitionV2:
+    """Unambiguous organization-level reporting metric definition."""
+
     metric_id: str
     numerator: str
     denominator: str
@@ -520,6 +763,8 @@ class OrganizationMetricDefinitionV2:
     incomplete_scan_handling: str
 
     def __post_init__(self) -> None:
+        """Reject invalid identifiers and empty metric semantics."""
+
         if not _IDENTIFIER.fullmatch(self.metric_id):
             raise SecretContractError("metric_id is invalid")
         for value in (
@@ -579,36 +824,103 @@ OUTCOME_SURFACE_MAPPING: Final[dict[PreventionOutcome, dict[str, str]]] = {
 }
 
 
-REASON_CODES_V2: Final[frozenset[str]] = frozenset(
-    {
-        "archive_budget_exceeded",
-        "binary_skipped",
-        "cache_stale",
-        "cleanup_failed",
-        "detector_bundle_invalid",
-        "detector_unavailable",
-        "encoding_unsupported",
-        "file_changed_during_scan",
-        "git_object_missing",
-        "history_shallow",
-        "lfs_object_missing",
-        "max_bytes",
-        "max_commits",
-        "max_files",
-        "max_findings",
-        "model_bundle_invalid",
-        "model_degraded",
-        "policy_block",
-        "policy_refresh_required",
-        "source_unreadable",
-        "validation_error",
-        "validation_rate_limited",
-        "validation_unknown",
-        "validation_unsupported",
-        "worker_cancelled",
-        "worker_timeout",
+def parse_capability_evidence_manifest(
+    payload: Mapping[str, object],
+) -> CapabilityManifestV2:
+    """Parse the v2 capability manifest and surface row-level errors safely.
+
+    Top-level schema or policy drift raises ``SecretContractError`` because the
+    caller cannot safely interpret the document. Invalid capability rows are
+    accumulated so a release operator can repair all bounded manifest errors in
+    one pass without duplicating validation in the CLI gate.
+    """
+
+    allowed = {
+        "schema",
+        "generated_at",
+        "parity_states",
+        "claim_policy",
+        "capabilities",
     }
-)
+    _strict_keys(payload, allowed, schema=_SCHEMA_CAPABILITY_EVIDENCE)
+    if payload.get("schema") != _SCHEMA_CAPABILITY_EVIDENCE:
+        raise SecretContractError("unsupported capability manifest schema")
+    _required_text(
+        payload.get("generated_at"),
+        field_name="generated_at",
+        limit=40,
+    )
+    declared_states = _str_tuple(
+        payload.get("parity_states"),
+        field_name="parity_states",
+        allow_empty=False,
+    )
+    if declared_states != PARITY_STATES_V2:
+        raise SecretContractError("parity_states do not match the runtime contract")
+
+    claim_policy = _mapping(payload.get("claim_policy"), field_name="claim_policy")
+    _strict_keys(
+        claim_policy,
+        {
+            "public_parity_requires",
+            "exact_release_commit_required",
+            "remaining_gaps_must_be_labeled",
+        },
+        schema="claim_policy",
+    )
+    try:
+        public_parity_requires = ParityState(
+            _required_text(
+                claim_policy.get("public_parity_requires"),
+                field_name="claim_policy.public_parity_requires",
+            )
+        )
+    except ValueError as error:
+        raise SecretContractError("claim_policy.public_parity_requires is not a parity state") from error
+    if public_parity_requires not in _RELEASE_STATES:
+        raise SecretContractError("claim_policy.public_parity_requires must be release-candidate verified or GA")
+    exact_release_commit_required = _required_bool(
+        claim_policy.get("exact_release_commit_required"),
+        field_name="claim_policy.exact_release_commit_required",
+    )
+    if not exact_release_commit_required:
+        raise SecretContractError("claim_policy must require an exact release commit")
+    remaining_gaps_must_be_labeled = _required_bool(
+        claim_policy.get("remaining_gaps_must_be_labeled"),
+        field_name="claim_policy.remaining_gaps_must_be_labeled",
+    )
+
+    raw_capabilities = payload.get("capabilities")
+    if not isinstance(raw_capabilities, list):
+        raise SecretContractError("capabilities: expected an array")
+
+    capabilities: list[CapabilityEvidenceV2] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, raw_capability in enumerate(raw_capabilities):
+        label = f"capabilities[{index}]"
+        try:
+            capability = CapabilityEvidenceV2.from_mapping(
+                _mapping(raw_capability, field_name=label),
+                label=label,
+                require_gap_label=remaining_gaps_must_be_labeled,
+            )
+        except SecretContractError as error:
+            errors.append(str(error))
+            continue
+        if capability.capability_id in seen:
+            errors.append(f"{capability.capability_id}: duplicate capability")
+            continue
+        seen.add(capability.capability_id)
+        capabilities.append(capability)
+
+    return CapabilityManifestV2(
+        capabilities=tuple(capabilities),
+        row_errors=tuple(errors),
+        public_parity_requires=public_parity_requires,
+        exact_release_commit_required=exact_release_commit_required,
+        remaining_gaps_must_be_labeled=remaining_gaps_must_be_labeled,
+    )
 
 
 def validate_capability_manifest(
@@ -616,23 +928,24 @@ def validate_capability_manifest(
     *,
     required_capability_ids: frozenset[str],
     exact_release_commit: str,
+    minimum_state: ParityState = ParityState.VERIFIED_ON_RELEASE_CANDIDATE,
 ) -> None:
-    """Fail unless every claimed parity row is release-candidate verified."""
+    """Fail unless every claimed row has exact release-candidate evidence."""
 
-    if not re.fullmatch(r"[a-f0-9]{40}", exact_release_commit):
+    if not is_exact_commit_sha(exact_release_commit):
         raise SecretContractError("exact_release_commit must be a full commit SHA")
+    if minimum_state not in _RELEASE_STATES:
+        raise SecretContractError("minimum parity state must be release-candidate verified or GA")
     by_id = {capability.capability_id: capability for capability in capabilities}
     if len(by_id) != len(capabilities):
         raise SecretContractError("capability IDs must be unique")
     missing = sorted(required_capability_ids - set(by_id))
     if missing:
         raise SecretContractError(f"required capabilities are unmapped: {', '.join(missing)}")
+    minimum_rank = _PARITY_STATE_RANK[minimum_state]
     for capability_id in sorted(required_capability_ids):
         capability = by_id[capability_id]
-        if capability.state not in {
-            ParityState.VERIFIED_ON_RELEASE_CANDIDATE,
-            ParityState.GENERALLY_AVAILABLE,
-        }:
-            raise SecretContractError(f"{capability_id}: not verified on a release candidate")
+        if _PARITY_STATE_RANK[capability.state] < minimum_rank:
+            raise SecretContractError(f"{capability_id}: not verified at the required release state")
         if capability.release_commit != exact_release_commit:
             raise SecretContractError(f"{capability_id}: evidence is bound to a different commit")

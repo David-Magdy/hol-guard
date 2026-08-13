@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -37,15 +38,31 @@ def _manifest(**overrides: object) -> dict[str, object]:
     capability.update(overrides)
     return {
         "schema": "guard-secrets-capability-evidence.v2",
+        "generated_at": "2026-08-12",
+        "parity_states": [
+            "unmapped",
+            "designed",
+            "implemented",
+            "tested",
+            "verified_on_release_candidate",
+            "generally_available",
+        ],
+        "claim_policy": {
+            "public_parity_requires": "verified_on_release_candidate",
+            "exact_release_commit_required": True,
+            "remaining_gaps_must_be_labeled": True,
+        },
         "capabilities": [capability],
     }
 
 
+def _write_manifest(path: Path, payload: object) -> Path:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
 def test_repository_manifest_is_structurally_valid() -> None:
-    manifest = load_manifest(
-        _REPOSITORY_ROOT
-        / "docs/guard/contracts/guard-secrets-capability-evidence.v2.json"
-    )
+    manifest = load_manifest(_REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-capability-evidence.v2.json")
     errors = validate_manifest(
         manifest,
         exact_release_commit=None,
@@ -72,9 +89,7 @@ def test_non_release_state_requires_gap_label() -> None:
         require_parity=False,
         required_capabilities=frozenset(),
     )
-    assert errors == (
-        "cli_precommit: non-release state requires an explicit gap label",
-    )
+    assert errors == ("cli_precommit: non-release state requires an explicit gap label",)
 
 
 def test_release_state_requires_exact_evidence() -> None:
@@ -89,10 +104,7 @@ def test_release_state_requires_exact_evidence() -> None:
         require_parity=False,
         required_capabilities=frozenset(),
     )
-    assert errors == (
-        "cli_precommit: release state requires exact commit",
-        "cli_precommit: release state requires evidence artifacts",
-    )
+    assert errors == ("release-candidate capability requires an exact commit SHA",)
 
 
 def test_parity_claim_requires_same_release_commit() -> None:
@@ -107,7 +119,7 @@ def test_parity_claim_requires_same_release_commit() -> None:
         require_parity=True,
         required_capabilities=frozenset({"cli_precommit"}),
     )
-    assert errors == ("cli_precommit: evidence is bound to another commit",)
+    assert errors == ("cli_precommit: evidence is bound to a different commit",)
 
 
 def test_required_unmapped_capability_fails() -> None:
@@ -117,7 +129,17 @@ def test_required_unmapped_capability_fails() -> None:
         require_parity=True,
         required_capabilities=frozenset({"ide_prevention"}),
     )
-    assert errors == ("ide_prevention: required capability is unmapped",)
+    assert errors == ("required capabilities are unmapped: ide_prevention",)
+
+
+def test_parity_claim_requires_release_commit() -> None:
+    with pytest.raises(ClaimGateError, match="requires an exact release commit"):
+        validate_manifest(
+            _manifest(),
+            exact_release_commit=None,
+            require_parity=True,
+            required_capabilities=frozenset({"cli_precommit"}),
+        )
 
 
 def test_invalid_release_sha_is_rejected() -> None:
@@ -131,9 +153,83 @@ def test_invalid_release_sha_is_rejected() -> None:
 
 
 def test_future_manifest_schema_is_rejected(tmp_path: Path) -> None:
-    path = tmp_path / "manifest.json"
-    path.write_text(
-        json.dumps({"schema": "guard-secrets-capability-evidence.v3"})
+    path = _write_manifest(
+        tmp_path / "manifest.json",
+        {"schema": "guard-secrets-capability-evidence.v3"},
     )
+    payload = load_manifest(path)
+
     with pytest.raises(ClaimGateError, match="unsupported"):
-        load_manifest(path)
+        validate_manifest(
+            payload,
+            exact_release_commit=None,
+            require_parity=False,
+            required_capabilities=frozenset(),
+        )
+
+
+def test_parity_state_declaration_drift_is_rejected() -> None:
+    payload = _manifest()
+    payload["parity_states"] = ["unmapped", "tested"]
+
+    with pytest.raises(ClaimGateError, match="do not match"):
+        validate_manifest(
+            payload,
+            exact_release_commit=None,
+            require_parity=False,
+            required_capabilities=frozenset(),
+        )
+
+
+def test_claim_policy_drift_is_rejected() -> None:
+    payload = _manifest()
+    payload["claim_policy"] = {
+        "public_parity_requires": "tested",
+        "exact_release_commit_required": True,
+        "remaining_gaps_must_be_labeled": True,
+    }
+
+    with pytest.raises(ClaimGateError, match="release-candidate verified or GA"):
+        validate_manifest(
+            payload,
+            exact_release_commit=None,
+            require_parity=False,
+            required_capabilities=frozenset(),
+        )
+
+
+def test_main_returns_zero_for_valid_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = _write_manifest(tmp_path / "valid.json", _manifest())
+    monkeypatch.setattr(sys, "argv", ["gate", "--manifest", str(path)])
+
+    assert _GATE.main() == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_main_returns_one_for_validation_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = _write_manifest(tmp_path / "invalid-row.json", _manifest(gap_label=None))
+    monkeypatch.setattr(sys, "argv", ["gate", "--manifest", str(path)])
+
+    assert _GATE.main() == 1
+    assert "non-release state requires" in capsys.readouterr().err
+
+
+def test_main_returns_two_for_input_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = tmp_path / "malformed.json"
+    path.write_text("{", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["gate", "--manifest", str(path)])
+
+    assert _GATE.main() == 2
+    assert "guard-secrets-claim-gate:" in capsys.readouterr().err
