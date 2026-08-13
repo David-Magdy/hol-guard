@@ -157,7 +157,8 @@ function renderExactActionControlWithTimedScopesHidden(): string {
 
 assert(
   renderExactActionControl(true).includes("Always allow exact action") &&
-    renderExactActionControl(true).includes("Retry within 15 minutes"),
+    renderExactActionControl(true).includes("Retry within 15 minutes") &&
+    renderExactActionControl(true).match(/type="radio"/g)?.length === 2,
   "T-AS-03c: eligible requests render the exact-action permission",
 );
 assert(
