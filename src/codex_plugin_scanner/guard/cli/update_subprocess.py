@@ -1604,17 +1604,36 @@ def _pipx_execution_command(executable: str, args: list[str], *, python: str, in
     if not args:
         raise UpdateSubprocessError("update_installer_command_invalid")
     action = args[0]
-    if action not in {"install", "upgrade"}:
-        raise UpdateSubprocessError("update_installer_command_invalid")
-    rest = _with_pipx_no_cache_args(list(args[1:]))
-    command = [executable, action, "--index-url", index_url]
-    # pipx ignores --python when --force reuses an existing venv, and the extra
-    # flag makes pipx create a throwaway interpreter venv that can fail index
-    # resolution before the real install. PIPX_DEFAULT_PYTHON already pins new venvs.
-    if action == "install" and "--force" not in rest:
-        command.extend(["--python", python])
-    command.extend(rest)
-    return command
+    if action in {"install", "upgrade"}:
+        rest = _with_pipx_no_cache_args(list(args[1:]))
+        command = [executable, action, "--index-url", index_url]
+        if action == "install" and "--force" not in rest:
+            command.extend(["--python", python])
+        command.extend(rest)
+        return command
+    if len(args) >= 5 and args[:3] == ["runpip", "hol-guard", "install"]:
+        install_args = args[3:]
+        target = install_args[-1]
+        flags = install_args[:-1]
+        allowed_flags = (
+            ["--force-reinstall"],
+            ["--upgrade", "--force-reinstall"],
+            ["--upgrade", "--force-reinstall", "--pre"],
+        )
+        if flags in allowed_flags and target and not target.startswith("-"):
+            if _PIP_NO_CACHE_ARG not in flags:
+                flags = [*flags, _PIP_NO_CACHE_ARG]
+            return [
+                executable,
+                "runpip",
+                "hol-guard",
+                "install",
+                *flags,
+                target,
+                "--index-url",
+                index_url,
+            ]
+    raise UpdateSubprocessError("update_installer_command_invalid")
 
 
 def _run_bounded_process(

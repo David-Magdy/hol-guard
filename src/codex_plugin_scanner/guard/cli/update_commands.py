@@ -69,6 +69,8 @@ _ALREADY_CURRENT_HINTS = (
 _PIPX_LAUNCHER_FAILURE_HINTS = (
     "ModuleNotFoundError: No module named 'pipx'",
     'ModuleNotFoundError: No module named "pipx"',
+    "venv for 'hol-guard' was not found",
+    'venv for "hol-guard" was not found',
 )
 _PYPI_PROPAGATION_FAILURE_HINTS = (
     "No matching distribution found for hol-guard==",
@@ -92,10 +94,13 @@ _PYPI_PROPAGATION_EXCLUSION_HINTS = (
     "tls",
     "unauthorized",
 )
-_PYPI_PROPAGATION_STATUS_FAILURE = re.compile(
-    r"(?:http(?:s)?\s+)?(?:error|status(?:\s*code)?)\s*[:\s]+(?:401|403)\b",
+_PYPI_AUTH_STATUS_RE = re.compile(
+    r"(?:\b(?:http(?:\s+error)?|status(?:\s+code)?|error:)\s*(?:401|403)\b|"
+    r"\b(?:401|403)\s+(?:unauthorized|forbidden)\b)",
     re.IGNORECASE,
 )
+_PYPI_PROPAGATION_RETRY_DELAY_SECONDS = 2.0
+_PYPI_PROPAGATION_RETRY_LIMIT = 1
 _PYPI_JSON_URL = "https://pypi.org/pypi/hol-guard/json"
 _PYPI_TIMEOUT_SECONDS = 3.0
 _PYPI_RESPONSE_LIMIT_BYTES = 8 * 1024 * 1024
@@ -615,6 +620,7 @@ def run_guard_update(
         return result
 
     attempted_pipx_recovery = False
+    propagation_retries = 0
     installer_execution_started = False
     while True:
         try:
@@ -672,10 +678,7 @@ def run_guard_update(
             if (
                 installer == "pipx"
                 and not attempted_pipx_recovery
-                and _pipx_should_retry_with_trusted_pip(
-                    installer_output,
-                    requested_wheel_path=requested_wheel_path,
-                )
+                and _contains_any(installer_output, _PIPX_LAUNCHER_FAILURE_HINTS)
             ):
                 pip_display_command = _update_command(
                     "pip",
@@ -698,6 +701,11 @@ def run_guard_update(
                 payload["installer_recovery"] = "trusted_python_pip"
                 continue
             if requested_wheel_path is None and _is_pypi_propagation_failure(installer_output):
+                if propagation_retries < _PYPI_PROPAGATION_RETRY_LIMIT:
+                    propagation_retries += 1
+                    payload["propagation_retries"] = propagation_retries
+                    time.sleep(_PYPI_PROPAGATION_RETRY_DELAY_SECONDS)
+                    continue
                 payload["status"] = "deferred"
                 payload["changed"] = False
                 payload["reason_code"] = "update_release_propagating"
@@ -1586,19 +1594,9 @@ def _is_pypi_propagation_failure(installer_output: str) -> bool:
     if not _contains_any(installer_output, _PYPI_PROPAGATION_FAILURE_HINTS):
         return False
     lowered = installer_output.lower()
-    if _contains_any(lowered, _PYPI_PROPAGATION_EXCLUSION_HINTS):
-        return False
-    return _PYPI_PROPAGATION_STATUS_FAILURE.search(installer_output) is None
-
-
-def _pipx_should_retry_with_trusted_pip(
-    installer_output: str,
-    *,
-    requested_wheel_path: Path | None,
-) -> bool:
-    if _contains_any(installer_output, _PIPX_LAUNCHER_FAILURE_HINTS):
-        return True
-    return requested_wheel_path is None and _is_pypi_propagation_failure(installer_output)
+    return not _contains_any(lowered, _PYPI_PROPAGATION_EXCLUSION_HINTS) and not _PYPI_AUTH_STATUS_RE.search(
+        installer_output
+    )
 
 
 def _dependency_conflict_message(installer_output: str) -> str | None:
@@ -1629,7 +1627,7 @@ def _update_command(
         if installer == "uv":
             return ["uv", "tool", "install", "--force", wheel]
         if installer == "pipx":
-            return ["pipx", "install", "--force", wheel]
+            return ["pipx", "runpip", "hol-guard", "install", "--force-reinstall", wheel]
         return [sys.executable, "-m", "pip", "install", "--force-reinstall", wheel]
     package = _hol_guard_package_spec(target_version)
     allow_prerelease = _target_version_is_prerelease(target_version)
@@ -1641,9 +1639,10 @@ def _update_command(
             command.append(package)
             return command
         if installer == "pipx":
-            command = ["pipx", "install", "--force", package]
+            command = ["pipx", "runpip", "hol-guard", "install", "--upgrade", "--force-reinstall"]
             if allow_prerelease:
-                command.append("--pip-args=--pre")
+                command.append("--pre")
+            command.append(package)
             return command
         command = [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall"]
         if allow_prerelease:

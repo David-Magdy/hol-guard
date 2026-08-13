@@ -6919,7 +6919,15 @@ url = http://127.0.0.1:8787/guard-canary
             {
                 "current_version": "2.2.1",
                 "installer": "pipx",
-                "command": ["pipx", "install", "--force", "hol-guard==2.2.3"],
+                "command": [
+                    "pipx",
+                    "runpip",
+                    "hol-guard",
+                    "install",
+                    "--upgrade",
+                    "--force-reinstall",
+                    "hol-guard==2.2.3",
+                ],
                 "dry_run": False,
                 "resulting_version": "2.2.1",
                 "status": "deferred",
