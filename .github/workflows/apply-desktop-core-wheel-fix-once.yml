@@ -1,4 +1,4 @@
-name: Materialize Desktop Core wheel fix once
+name: Apply Desktop Core feed regression test once
 
 on:
   push:
@@ -6,10 +6,10 @@ on:
       - fix/desktop-core-feed-arm64-wheel
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  materialize:
+  apply-test:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -18,43 +18,17 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           ref: fix/desktop-core-feed-arm64-wheel
-          persist-credentials: false
+          persist-credentials: true
 
-      - name: Apply fail-closed Apple silicon wheel selection
+      - name: Add wheel-selection regression assertions
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          workflow = Path('.github/workflows/desktop-core-alpha-feed.yml')
-          text = workflow.read_text(encoding='utf-8')
-          old_download = (
-              '          gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \\\n'
-              '            --pattern "hol_guard-${CORE_VERSION}-*.whl" --dir "$TRUST_ASSETS"'
-          )
-          new_download = (
-              '          gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \\\n'
-              '            --pattern "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" \\\n'
-              '            --dir "$TRUST_ASSETS"'
-          )
-          old_find = (
-              '          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f '
-              '-name "hol_guard-${CORE_VERSION}-*.whl" -print)'
-          )
-          new_find = (
-              '          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f \\\n'
-              '            -name "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" -print)'
-          )
-          if text.count(old_download) != 1 or text.count(old_find) != 1:
-              raise SystemExit('Desktop Core feed wheel-selection anchors changed unexpectedly')
-          workflow.write_text(
-              text.replace(old_download, new_download, 1).replace(old_find, new_find, 1),
-              encoding='utf-8',
-          )
-
-          tests = Path('tests/test_desktop_core_alpha_feed_security.py')
-          text = tests.read_text(encoding='utf-8')
+          path = Path('tests/test_desktop_core_alpha_feed_security.py')
+          text = path.read_text(encoding='utf-8')
           anchor = (
               '    assert \'test "$WHEEL_COUNT" -eq 1\' in text\n'
               '    assert \'test -f "$WHEEL"\' in text\n'
@@ -66,19 +40,11 @@ jobs:
           )
           if text.count(anchor) != 1:
               raise SystemExit('Desktop Core feed security-test anchor changed unexpectedly')
-          tests.write_text(text.replace(anchor, replacement, 1), encoding='utf-8')
+          path.write_text(text.replace(anchor, replacement, 1), encoding='utf-8')
           PY
           git diff --check
-          mkdir -p patch-output/tests
-          cp .github/workflows/desktop-core-alpha-feed.yml patch-output/desktop-core-alpha-feed.yml
-          cp tests/test_desktop_core_alpha_feed_security.py patch-output/tests/
-          git diff -- .github/workflows/desktop-core-alpha-feed.yml tests/test_desktop_core_alpha_feed_security.py > patch-output/change.patch
-          test -s patch-output/change.patch
-
-      - name: Upload exact generated files
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: desktop-core-wheel-fix-complete-files
-          path: patch-output
-          if-no-files-found: error
-          retention-days: 1
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add tests/test_desktop_core_alpha_feed_security.py
+          git commit -m "test(release): bind Core feed to the arm64 wheel"
+          git push origin HEAD:fix/desktop-core-feed-arm64-wheel
