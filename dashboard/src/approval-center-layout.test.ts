@@ -1,3 +1,4 @@
+import { createElement } from "react";
 import {
   resolveEnvelopeDisplayText,
   resolveStoppedCommandText,
@@ -8,6 +9,9 @@ import {
   QUEUE_CONNECTION_ERROR_HEADLINE,
   QUEUE_CONNECTION_ERROR_INSTRUCTION,
   buildRecommendation,
+  buildRetryAfterApprovalCopy,
+  buildPauseLine,
+  isWatchOnlyObservation,
   requestResolutionBlockReason,
   scopeLabel,
   buildCodexResumeUx,
@@ -17,6 +21,7 @@ import {
 import type { GuardActionEnvelope, GuardApprovalRequest, GuardCodexResumeResult } from "./guard-types";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PrimaryActionCard } from "./review-states";
+import { ReviewDecisionCard } from "./review-decision-card";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -301,6 +306,51 @@ assert(
 assert(
   buildRecommendation(BASE_REQUEST).includes("Project approval remembers this same action"),
   "C9: Recommendation explains project approval does not trust new sensitive actions"
+);
+
+const watchOnlyRequest: GuardApprovalRequest = {
+  ...BASE_REQUEST,
+  scanner_evidence: [
+    {
+      source: "observe_mode_inbox",
+      observed_policy_action: "require-reapproval",
+      queued_policy_action: "require-reapproval",
+      authoritative_action: "allow",
+    },
+  ] as unknown as NonNullable<GuardApprovalRequest["scanner_evidence"]>,
+};
+assert(isWatchOnlyObservation(watchOnlyRequest), "Watch-only findings are identified from trusted queue evidence");
+assert(
+  buildPauseLine(watchOnlyRequest).startsWith("Watch only let this action run."),
+  "Watch-only findings never claim the action was paused",
+);
+assert(
+  buildRecommendation(watchOnlyRequest).includes("Save an exact allow"),
+  "Watch-only findings explain how to prevent the same false positive",
+);
+assert(
+  buildRetryAfterApprovalCopy(watchOnlyRequest, "allow").includes("no future rule was saved"),
+  "Watch-only one-time review copy never promises a remembered allow",
+);
+assert(
+  buildRetryAfterApprovalCopy(watchOnlyRequest, "allow", true).includes("allow this exact action next time"),
+  "Watch-only persisted allow copy describes the exact future rule",
+);
+assert(
+  buildRetryAfterApprovalCopy(watchOnlyRequest, "block", true).includes("stop this exact action next time"),
+  "Watch-only persisted block copy describes the exact future rule",
+);
+const watchOnlyDecisionMarkup = renderToStaticMarkup(
+  createElement(ReviewDecisionCard, {
+    detail: { item: watchOnlyRequest, diff: null, receipt: null, policy: [] },
+    onResolve: () => undefined,
+    onGoHome: () => undefined,
+    approvalGate: null,
+  }),
+);
+assert(
+  watchOnlyDecisionMarkup.includes("Watch-only finding") && watchOnlyDecisionMarkup.includes("Ran in Watch only"),
+  "Watch-only decision card renders its observation state without crashing",
 );
 
 const sandboxRequest: GuardApprovalRequest = { ...BASE_REQUEST, policy_action: "sandbox-required" };

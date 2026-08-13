@@ -81,6 +81,54 @@ def test_refresh_script_adapts_to_new_manager_signature(
     }
 
 
+def test_refresh_script_converges_when_supervisor_respawns_daemon(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home_dir = tmp_path / "home"
+    guard_home = home_dir / ".hol-guard"
+    _ = guard_home.mkdir(parents=True)
+    _ = (guard_home / "daemon-state.json").write_text('{"port":8125}', encoding="utf-8")
+    retirement_checks = 0
+    retirement_calls = 0
+
+    def retire(_guard_home: Path) -> list[int]:
+        nonlocal retirement_calls
+        retirement_calls += 1
+        return [20 + retirement_calls]
+
+    def retirement_complete(_guard_home: Path) -> bool:
+        nonlocal retirement_checks
+        retirement_checks += 1
+        return retirement_checks >= 3
+
+    monkeypatch.setattr(manager, "retire_all_guard_daemons_for_home", retire)
+    monkeypatch.setattr(manager, "guard_daemon_retirement_is_complete", retirement_complete)
+    monkeypatch.setattr(manager, "clear_guard_daemon_state", lambda _guard_home: None)
+    monkeypatch.setattr(manager, "repair_approval_center_locator", lambda _guard_home: None)
+    monkeypatch.setattr(
+        manager,
+        "ensure_guard_daemon_after_update",
+        lambda _guard_home, **_kwargs: "http://127.0.0.1:8125",
+    )
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(json.dumps({"guard_home": str(guard_home), "home_dir": str(home_dir)})),
+    )
+
+    refresh_script = cast(str, update_commands.__dict__["_DAEMON_REFRESH_SCRIPT"])
+    exec(refresh_script, {})
+
+    assert retirement_calls == 3
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "restarted",
+        "retired": [21, 22, 23],
+        "daemon_url": "http://127.0.0.1:8125",
+    }
+
+
 def test_refresh_script_preserves_legacy_manager_signature(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

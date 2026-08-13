@@ -18,9 +18,15 @@ from codex_plugin_scanner.guard.approval_scope_support import (
     request_scope_contract,
     supported_request_scopes,
 )
+from codex_plugin_scanner.guard.approvals import apply_approval_resolution
 from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
 from codex_plugin_scanner.guard.models import GuardAction, GuardApprovalRequest
-from codex_plugin_scanner.guard.store import GuardStore
+from codex_plugin_scanner.guard.runtime.approval_context import build_approval_context_token
+from codex_plugin_scanner.guard.store import (
+    GuardStore,
+    runtime_tool_action_exact_match_context,
+    runtime_tool_action_policy_artifact_id,
+)
 
 
 def _request(
@@ -101,8 +107,8 @@ def _mapping(value: object) -> Mapping[str, object]:
 @pytest.mark.parametrize(
     ("policy_action", "expected_allow"),
     [
-        ("require-reapproval", ("artifact",)),
-        ("review", ("artifact",)),
+        ("require-reapproval", ("artifact", "workspace", "harness", "global")),
+        ("review", ("artifact", "workspace", "harness", "global")),
         ("sandbox-required", ()),
         ("block", ()),
     ],
@@ -162,23 +168,24 @@ def test_package_context_never_invents_workspace_allow() -> None:
 
 
 @pytest.mark.parametrize(
-    ("artifact_type", "family", "action_type"),
+    ("artifact_type", "family", "action_type", "expected_allow"),
     [
-        ("file_read_request", "file-read", "file_read"),
-        ("mcp_server", "mcp", "mcp_tool_call"),
-        ("package_request", "package-request", "package_install"),
-        ("prompt_request", "prompt", "prompt_submit"),
-        ("tool_action_request", "tool-action", "workspace_write"),
-        ("tool_action_request", "tool-action", "network_write"),
-        ("tool_action_request", "tool-action", "remote_state_mutation"),
-        ("tool_action_request", "tool-action", "destructive_operation"),
-        ("tool_action_request", "tool-action", "dynamic_unknown"),
+        ("file_read_request", "file-read", "file_read", ("artifact", "workspace")),
+        ("mcp_server", "mcp", "mcp_tool_call", ("artifact",)),
+        ("package_request", "package-request", "package_install", ("artifact",)),
+        ("prompt_request", "prompt", "prompt_submit", ("artifact", "workspace")),
+        ("tool_action_request", "tool-action", "workspace_write", ("artifact", "workspace", "harness", "global")),
+        ("tool_action_request", "tool-action", "network_write", ("artifact", "workspace", "harness", "global")),
+        ("tool_action_request", "tool-action", "remote_state_mutation", ("artifact", "workspace", "harness", "global")),
+        ("tool_action_request", "tool-action", "destructive_operation", ("artifact", "workspace", "harness", "global")),
+        ("tool_action_request", "tool-action", "dynamic_unknown", ("artifact", "workspace", "harness", "global")),
     ],
 )
-def test_request_type_matrix_never_infers_broad_allow(
+def test_request_type_matrix_derives_only_action_bound_allow_scopes(
     artifact_type: str,
     family: str,
     action_type: str,
+    expected_allow: tuple[str, ...],
 ) -> None:
     request = _request(
         "request-matrix",
@@ -187,7 +194,15 @@ def test_request_type_matrix_never_infers_broad_allow(
         action_type=action_type,
     ).to_dict()
 
-    assert request_scope_contract(request).allow_scopes == ("artifact",)
+    assert request_scope_contract(request).allow_scopes == expected_allow
+
+
+def test_tool_action_without_exact_command_proof_stays_project_only() -> None:
+    request = _request("missing-command").to_dict()
+    request["action_envelope_json"] = {"action_type": "shell_command"}
+    request["raw_command_text"] = None
+
+    assert request_scope_contract(request).allow_scopes == ("artifact", "workspace")
 
 
 def test_contract_digest_is_deterministic_and_binds_security_fields() -> None:
@@ -242,12 +257,17 @@ def test_stored_payload_overrides_untrusted_decision_scope_advertisement(tmp_pat
     store = GuardStore(tmp_path / "guard-home")
     row = _store_request(store, _request("sanitize", decision_scopes=["artifact", "global"]))
 
-    assert row["allowed_scopes"] == ["artifact"]
+    assert row["allowed_scopes"] == ["artifact", "workspace", "harness", "global"]
     assert row["allowed_scopes_by_action"] == {
-        "allow": ["artifact"],
+        "allow": ["artifact", "workspace", "harness", "global"],
         "block": ["artifact", "workspace", "publisher", "harness", "global"],
     }
-    assert _mapping(row["decision_v2_json"])["approval_scopes"] == ["artifact"]
+    assert _mapping(row["decision_v2_json"])["approval_scopes"] == [
+        "artifact",
+        "workspace",
+        "harness",
+        "global",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -322,36 +342,319 @@ def test_v2_ineligible_scope_returns_422_without_policy_or_resolution(tmp_path: 
         status, response = _post(
             daemon,
             "/v1/requests/ineligible/approve",
-            _v2_selection(row, "global"),
+            _v2_selection(row, "publisher"),
         )
     finally:
         daemon.stop()
 
     assert status == 422
     assert response["error"] == "ineligible_request_scope"
-    assert _mapping(response["allowed_scopes_by_action"])["allow"] == ["artifact"]
+    assert _mapping(response["allowed_scopes_by_action"])["allow"] == [
+        "artifact",
+        "workspace",
+        "harness",
+        "global",
+    ]
     stored = store.get_approval_request("ineligible")
     assert stored is not None
     assert stored["status"] == "pending"
     assert store.list_policy_decisions() == []
 
 
-def test_v2_saved_artifact_allow_is_rejected_as_ineligible(tmp_path: Path) -> None:
+def test_v2_saved_artifact_allow_persists_only_the_exact_action(tmp_path: Path) -> None:
     store = GuardStore(tmp_path / "guard-home")
     row = _store_request(store, _request("saved-allow"))
     payload = {**_v2_selection(row, "artifact"), "persist_policy": True}
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
     daemon.start()
     try:
-        status, response = _post(daemon, "/v1/requests/saved-allow/approve", payload)
+        status, _response = _post(daemon, "/v1/requests/saved-allow/approve", payload)
+    finally:
+        daemon.stop()
+
+    assert status == 200
+    stored = store.get_approval_request("saved-allow")
+    assert stored is not None
+    assert stored["status"] == "resolved"
+    decisions = store.list_policy_decisions()
+    assert len(decisions) == 1
+    assert decisions[0]["scope"] == "artifact"
+    assert decisions[0]["expires_at"] is None
+    same_action_context = runtime_tool_action_exact_match_context(
+        config_path="/workspace/repo/.guard/config.toml",
+        source_scope="project",
+        raw_command_text="echo test",
+    )
+    changed_action_context = runtime_tool_action_exact_match_context(
+        config_path="/workspace/repo/.guard/config.toml",
+        source_scope="project",
+        raw_command_text="echo changed",
+    )
+    assert (
+        store.resolve_policy_decision(
+            "codex",
+            "codex:project:tool-action:saved-allow",
+            "hash-retry",
+            runtime_exact_match_context=same_action_context,
+            consume_one_shot=False,
+        )
+        is not None
+    )
+    assert (
+        store.resolve_policy_decision(
+            "codex",
+            "codex:project:tool-action:saved-allow",
+            "hash-retry",
+            runtime_exact_match_context=changed_action_context,
+            consume_one_shot=False,
+        )
+        is None
+    )
+
+
+def test_context_bound_saved_allow_survives_context_token_changes_but_not_command_changes(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    context_token = build_approval_context_token(
+        identity={"harness": "codex", "tool": "Bash"},
+        content={"command": "npm run guard:acquisition-loop"},
+        capabilities={"action_type": "shell_command"},
+        policy={"mode": "observe", "action": "require-reapproval"},
+        sandbox={"mode": "workspace-write"},
+    )
+    request = replace(
+        _request(
+            "saved-context-action",
+            artifact_id="codex:project:Bash",
+            artifact_hash=context_token,
+        ),
+        launch_target="npm run guard:acquisition-loop",
+        raw_command_text="npm run guard:acquisition-loop",
+        action_envelope_json={
+            "action_type": "shell_command",
+            "tool_name": "Bash",
+            "command": "npm run guard:acquisition-loop",
+        },
+    )
+    row = _store_request(store, request)
+    apply_approval_resolution(
+        store=store,
+        request_id="saved-context-action",
+        action="allow",
+        scope="artifact",
+        workspace=None,
+        reason="remember exact action",
+        persist_policy=True,
+        scope_contract_version=str(row["scope_contract_version"]),
+        scope_contract_digest=str(row["scope_contract_digest"]),
+    )
+    same_action_context = runtime_tool_action_exact_match_context(
+        config_path="/workspace/repo/.guard/config.toml",
+        source_scope="project",
+        raw_command_text="npm run guard:acquisition-loop",
+    )
+    changed_action_context = runtime_tool_action_exact_match_context(
+        config_path="/workspace/repo/.guard/config.toml",
+        source_scope="project",
+        raw_command_text="npm run guard:other",
+    )
+    policy_artifact_id = runtime_tool_action_policy_artifact_id("codex:project:Bash")
+    assert policy_artifact_id is not None
+
+    assert (
+        store.resolve_policy_decision(
+            "codex",
+            policy_artifact_id,
+            artifact_hash="guard-approval-context:v1:different-mode-token",
+            runtime_exact_match_context=same_action_context,
+            consume_one_shot=False,
+        )
+        is not None
+    )
+    assert (
+        store.resolve_policy_decision(
+            "codex",
+            policy_artifact_id,
+            artifact_hash="guard-approval-context:v1:different-mode-token",
+            runtime_exact_match_context=changed_action_context,
+            consume_one_shot=False,
+        )
+        is None
+    )
+
+
+def test_persisted_exact_action_does_not_resolve_sibling_command_request(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    artifact_id = "codex:project:Bash"
+
+    def exact_request(request_id: str, command: str) -> GuardApprovalRequest:
+        context_token = build_approval_context_token(
+            identity={"harness": "codex", "tool": "Bash"},
+            content={"command": command},
+            capabilities={"action_type": "shell_command"},
+            policy={"action": "require-reapproval"},
+            sandbox={"permission_mode": "ask"},
+        )
+        return replace(
+            _request(request_id, artifact_id=artifact_id, artifact_hash=context_token),
+            launch_target=command,
+            raw_command_text=command,
+            action_envelope_json={
+                "action_type": "shell_command",
+                "tool_name": "Bash",
+                "command": command,
+                "raw_payload_redacted": {"permission_mode": "ask"},
+            },
+        )
+
+    selected = _store_request(store, exact_request("selected-command", "npm run guard:acquisition-loop"))
+    _store_request(store, exact_request("sibling-command", "npm run guard:other"))
+
+    apply_approval_resolution(
+        store=store,
+        request_id="selected-command",
+        action="allow",
+        scope="artifact",
+        workspace=None,
+        reason="remember exact action",
+        persist_policy=True,
+        scope_contract_version=str(selected["scope_contract_version"]),
+        scope_contract_digest=str(selected["scope_contract_digest"]),
+    )
+
+    assert store.get_approval_request("selected-command")["status"] == "resolved"
+    assert store.get_approval_request("sibling-command")["status"] == "pending"
+
+
+def test_v2_saved_artifact_allow_requires_exact_action_proof(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    request = replace(
+        _request("unproven-saved-allow"),
+        action_envelope_json={"action_type": "shell_command"},
+    )
+    row = _store_request(store, request)
+    payload = {**_v2_selection(row, "artifact"), "persist_policy": True}
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        status, response = _post(daemon, "/v1/requests/unproven-saved-allow/approve", payload)
     finally:
         daemon.stop()
 
     assert status == 422
     assert response["error"] == "saved_allow_scope_ineligible"
-    stored = store.get_approval_request("saved-allow")
-    assert stored is not None
-    assert stored["status"] == "pending"
+
+
+def test_exact_action_persistence_accepts_envelope_raw_command_text(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    request = replace(
+        _request("envelope-raw-command"),
+        action_envelope_json={"action_type": "shell_command", "raw_command_text": "echo test"},
+    )
+    row = _store_request(store, request)
+
+    assert request_scope_contract(row).exact_action_persistence_eligible is True
+
+
+def test_exact_action_persistence_accepts_context_bound_tool_call(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    context_token = build_approval_context_token(
+        identity={"server": "browser", "tool": "navigate"},
+        content={"url": "http://127.0.0.1:3000"},
+        capabilities={"risk_categories": ["browser_navigation"]},
+        policy={"action": "review"},
+        sandbox={"mode": "workspace-write"},
+    )
+    request = replace(
+        _request(
+            "context-bound-tool-call",
+            artifact_id="codex:runtime:global:browser:navigate",
+            artifact_type="tool_call",
+            artifact_hash=context_token,
+        ),
+        raw_command_text="navigate http://127.0.0.1:3000",
+    )
+    row = _store_request(store, request)
+
+    assert request_scope_contract(row).exact_action_persistence_eligible is True
+
+
+def test_v2_saved_tool_call_allow_remains_bound_to_exact_context(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    context_token = build_approval_context_token(
+        identity={"server": "browser", "tool": "navigate"},
+        content={"url": "http://127.0.0.1:3000"},
+        capabilities={"risk_categories": ["browser_navigation"]},
+        policy={"action": "review"},
+        sandbox={"mode": "workspace-write"},
+    )
+    artifact_id = "codex:runtime:global:browser:navigate"
+    request = replace(
+        _request(
+            "saved-tool-call",
+            artifact_id=artifact_id,
+            artifact_type="tool_call",
+            artifact_hash=context_token,
+        ),
+        raw_command_text="navigate http://127.0.0.1:3000",
+    )
+    row = _store_request(store, request)
+    payload = {**_v2_selection(row, "artifact"), "persist_policy": True}
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+    try:
+        status, response = _post(daemon, "/v1/requests/saved-tool-call/approve", payload)
+    finally:
+        daemon.stop()
+
+    assert status == 200
+    assert response["applied_scope"] == "artifact"
+    decisions = store.list_policy_decisions()
+    assert len(decisions) == 1
+    assert decisions[0]["expires_at"] is None
+    assert (
+        store.resolve_policy(
+            "codex",
+            artifact_id,
+            context_token,
+            now="2026-07-19T00:01:00+00:00",
+            consume_one_shot=False,
+        )
+        == "allow"
+    )
+    changed_token = build_approval_context_token(
+        identity={"server": "browser", "tool": "navigate"},
+        content={"url": "https://example.com"},
+        capabilities={"risk_categories": ["browser_navigation"]},
+        policy={"action": "review"},
+        sandbox={"mode": "workspace-write"},
+    )
+    assert (
+        store.resolve_policy(
+            "codex",
+            artifact_id,
+            changed_token,
+            now="2026-07-19T00:02:00+00:00",
+            consume_one_shot=False,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("artifact_hash", ["unknown", "plain-hash", "guard-approval-context:v1:invalid"])
+def test_exact_action_persistence_rejects_unbound_tool_call(tmp_path: Path, artifact_hash: str) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    request = replace(
+        _request(
+            f"unbound-tool-call-{len(artifact_hash)}",
+            artifact_id="codex:runtime:global:browser:navigate",
+            artifact_type="tool_call",
+            artifact_hash=artifact_hash,
+        ),
+        raw_command_text="navigate http://127.0.0.1:3000",
+    )
+    row = _store_request(store, request)
+
+    assert request_scope_contract(row).exact_action_persistence_eligible is False
 
 
 def test_legacy_unknown_broad_deny_is_not_silently_narrowed(tmp_path: Path) -> None:
@@ -379,9 +682,17 @@ def test_legacy_unknown_broad_deny_is_not_silently_narrowed(tmp_path: Path) -> N
     assert response["error"] == "ineligible_request_scope"
 
 
-def test_legacy_global_allow_narrows_to_artifact_once(tmp_path: Path) -> None:
+def test_legacy_global_allow_persists_an_action_bound_rule(tmp_path: Path) -> None:
     store = GuardStore(tmp_path / "guard-home")
-    _store_request(store, _request("legacy"))
+    request = replace(
+        _request("legacy"),
+        action_envelope_json={
+            "action_type": "shell_command",
+            "command": "echo test",
+            "raw_payload_redacted": {"permission_mode": "ask"},
+        },
+    )
+    _store_request(store, request)
     daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
     daemon.start()
     try:
@@ -395,14 +706,111 @@ def test_legacy_global_allow_narrows_to_artifact_once(tmp_path: Path) -> None:
 
     assert status == 200
     assert response["requested_scope"] == "global"
-    assert response["applied_scope"] == "artifact"
-    assert response["scope_warning"] == "legacy_scope_narrowed_to_artifact"
-    assert _mapping(response["resolved_request"])["resolution_scope"] == "artifact"
+    assert response["applied_scope"] == "global"
+    assert "scope_warning" not in response
+    assert _mapping(response["resolved_request"])["resolution_scope"] == "global"
     decisions = store.list_policy_decisions()
-    assert decisions == []
+    assert len(decisions) == 1
+    assert decisions[0]["scope"] == "global"
     with sqlite3.connect(store.path) as connection:
-        stored_scope = connection.execute("select scope from policy_decisions").fetchone()
-    assert stored_scope == ("artifact",)
+        stored_scope, stored_hash = connection.execute("select scope, artifact_hash from policy_decisions").fetchone()
+    assert stored_scope == "global"
+    assert str(stored_hash).startswith("runtime-exact:")
+
+    same_action_context = runtime_tool_action_exact_match_context(
+        config_path="/workspace/other/.guard/config.toml",
+        source_scope="project",
+        raw_command_text="echo test",
+        permission_mode="ask",
+    )
+    changed_action_context = runtime_tool_action_exact_match_context(
+        config_path="/workspace/other/.guard/config.toml",
+        source_scope="project",
+        raw_command_text="echo changed",
+        permission_mode="ask",
+    )
+    changed_mode_context = runtime_tool_action_exact_match_context(
+        config_path="/workspace/other/.guard/config.toml",
+        source_scope="project",
+        raw_command_text="echo test",
+        permission_mode="bypassPermissions",
+    )
+    same_action = store.resolve_policy_decision(
+        "pi",
+        "codex:project:tool-action:legacy",
+        "hash-retry",
+        runtime_exact_match_context=same_action_context,
+        consume_one_shot=False,
+    )
+    assert same_action is not None and same_action["action"] == "allow"
+    assert (
+        store.resolve_policy_decision(
+            "pi",
+            "codex:project:tool-action:legacy",
+            "hash-retry",
+            runtime_exact_match_context=changed_mode_context,
+            consume_one_shot=False,
+        )
+        is None
+    )
+    assert (
+        store.resolve_policy_decision(
+            "pi",
+            "codex:project:tool-action:legacy",
+            "hash-retry",
+            runtime_exact_match_context=changed_action_context,
+            consume_one_shot=False,
+        )
+        is None
+    )
+
+
+def test_project_allow_does_not_resolve_or_authorize_a_changed_action(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    artifact_id = "codex:project:tool-action:shell"
+    first = _request("project-first", artifact_id=artifact_id, artifact_hash="hash-first")
+    changed = replace(
+        _request("project-changed", artifact_id=artifact_id, artifact_hash="hash-changed"),
+        launch_target="echo changed",
+        action_envelope_json={"action_type": "shell_command", "command": "echo changed"},
+    )
+    _store_request(store, first)
+    _store_request(store, changed)
+
+    result = apply_approval_resolution(
+        store=store,
+        request_id=first.request_id,
+        action="allow",
+        scope="workspace",
+        workspace=first.workspace,
+        reason="same action in this project",
+        now="2026-07-19T00:01:00+00:00",
+        return_queue_result=True,
+    )
+
+    assert result["applied_scope"] == "workspace"
+    stored_first = store.get_approval_request(first.request_id)
+    stored_changed = store.get_approval_request(changed.request_id)
+    assert stored_first is not None and stored_first["status"] == "resolved"
+    assert stored_changed is not None and stored_changed["status"] == "pending"
+    exact = store.resolve_policy_decision(
+        "codex",
+        artifact_id,
+        "hash-first",
+        workspace=first.workspace,
+        consume_one_shot=False,
+    )
+    assert exact is not None and exact["action"] == "allow"
+    assert (
+        store.resolve_policy_decision(
+            "codex",
+            artifact_id,
+            "hash-changed",
+            workspace=first.workspace,
+            consume_one_shot=False,
+        )
+        is None
+    )
 
 
 def test_same_resolution_replay_is_idempotent_and_conflict_is_409(tmp_path: Path) -> None:

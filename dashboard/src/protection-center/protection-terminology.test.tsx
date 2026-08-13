@@ -1,0 +1,29 @@
+import assert from "node:assert/strict";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+import { ProtectionModuleDetail } from "./protection-module-detail";
+import { FIXED_PROTECTION_MODULE, PROTECTION_AUTHORITY_FIXTURES } from "./fixtures/protection-fixtures";
+
+const simple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
+  extension: FIXED_PROTECTION_MODULE,
+  effective: PROTECTION_AUTHORITY_FIXTURES.protected,
+  catalogDigest: "a".repeat(64),
+  onBack: () => undefined,
+  onRefresh: () => undefined,
+}));
+
+for (const legacy of [
+  "Permission controls",
+  "Semantic review",
+  "Blast radius",
+  "Global lockdown",
+  ">Extensions<",
+]) {
+  assert.equal(simple.includes(legacy), false, `Simple Protection Center must not surface legacy wording: ${legacy}`);
+}
+assert.match(simple, /Protection module/);
+assert.match(simple, /Protection settings/);
+assert.match(simple, /Modules/);
+
+console.log("protection-terminology.test.tsx: all assertions passed");

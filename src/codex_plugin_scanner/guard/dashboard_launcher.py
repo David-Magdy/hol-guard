@@ -5,9 +5,12 @@ trusted local launch surfaces. Callers must use this service rather than
 duplicating authentication and browser-launch logic.
 
 Security contract:
-    - Daemon auth tokens are loaded in-process and placed only in the
-      browser URL fragment. They never appear in return values, logs,
-      process arguments, or diagnostics.
+    - Daemon auth tokens are loaded in-process and never returned.
+    - Browser launches put a short-lived, surface-scoped dashboard session token
+      only in the URL fragment so it is never sent in an HTTP request.
+    - ``build_desktop_dashboard_session_url`` is reserved for the trusted local
+      Desktop bootstrap contract. It returns a short-lived dashboard session URL,
+      never the daemon auth token, and callers must treat that URL as sensitive.
     - The returned ``DashboardLaunchResult.browser_url`` is the public
       (redacted) URL without the token fragment. The authenticated URL
       is passed directly to the browser opener and discarded.
@@ -30,9 +33,7 @@ from .local_dashboard_session import build_local_dashboard_session_token
 from .runtime.surface_server import GuardSurfaceRuntime
 from .secret_redaction import sanitize_secret
 
-# ---------------------------------------------------------------------------
-# Result type
-# ---------------------------------------------------------------------------
+DESKTOP_DASHBOARD_EMBED_QUERY_KEY = "desktop_embed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,13 +68,38 @@ class DashboardLaunchResult:
         }
 
 
-# ---------------------------------------------------------------------------
-# Launch coalescing
-# ---------------------------------------------------------------------------
-
 _launch_lock = threading.Lock()
 _in_flight = False
 _last_result: DashboardLaunchResult | None = None
+
+
+def build_desktop_dashboard_session_url(*, guard_home: Path) -> str:
+    """Return a short-lived canonical dashboard URL for trusted Desktop embedding.
+
+    The daemon's long-lived auth token never crosses this boundary. Desktop only
+    receives a surface-scoped local dashboard session token in the URL fragment.
+    The explicit query marker allows the local daemon to relax frame ancestry for
+    the Tauri host on this document only; ordinary browser dashboard responses
+    remain non-frameable.
+    """
+
+    approval_center_url = ensure_guard_daemon(guard_home)
+    auth_token = load_guard_daemon_auth_token(guard_home)
+    if auth_token is None:
+        raise RuntimeError("Guard daemon auth token is not available")
+    parsed = urllib.parse.urlparse(approval_center_url)
+    query_pairs = [
+        (key, value)
+        for key, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        if key != DESKTOP_DASHBOARD_EMBED_QUERY_KEY
+    ]
+    query_pairs.append((DESKTOP_DASHBOARD_EMBED_QUERY_KEY, "1"))
+    embed_url = urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(query_pairs)))
+    return _build_authenticated_browser_url(
+        embed_url,
+        auth_token=auth_token,
+        surface="approval-center",
+    )
 
 
 def open_dashboard(
@@ -106,10 +132,6 @@ def open_dashboard(
 
     with _launch_lock:
         if _in_flight:
-            # Coalesce repeated activations: return a stable "in-flight"
-            # result rather than a stale _last_result from a previous launch.
-            # The caller can poll or wait; a prior result would be misleading
-            # because it describes a different invocation.
             return DashboardLaunchResult(
                 opened=False,
                 approval_center_url="",
@@ -119,7 +141,6 @@ def open_dashboard(
         _in_flight = True
 
     try:
-        # 1. Ensure daemon is running
         try:
             approval_center_url = ensure_guard_daemon(guard_home)
         except RuntimeError as error:
@@ -133,7 +154,6 @@ def open_dashboard(
             _last_result = result
             return result
 
-        # 2. Load auth token
         auth_token = load_guard_daemon_auth_token(guard_home)
         if auth_token is None:
             result = DashboardLaunchResult(
@@ -146,14 +166,10 @@ def open_dashboard(
             _last_result = result
             return result
 
-        # 3. Construct authenticated browser URL (token in fragment)
         browser_url = _build_authenticated_browser_url(
             approval_center_url, auth_token=auth_token, surface="approval-center"
         )
 
-        # 4. Open via surface runtime with deduplication. Wrap in try so any
-        # unexpected failure is normalized into a clean redacted error payload
-        # instead of propagating to a local UI caller.
         surface_runtime = GuardSurfaceRuntime(store)
         try:
             open_result = surface_runtime.ensure_surface(
@@ -176,7 +192,6 @@ def open_dashboard(
             _last_result = result
             return result
 
-        # 5. Return redacted result (no token in browser_url)
         public_url = _redact_token_from_url(browser_url)
         result = DashboardLaunchResult(
             opened=bool(open_result.get("opened")),
@@ -190,11 +205,6 @@ def open_dashboard(
     finally:
         with _launch_lock:
             _in_flight = False
-
-
-# ---------------------------------------------------------------------------
-# URL construction helpers (token never leaves this module)
-# ---------------------------------------------------------------------------
 
 
 def _build_authenticated_browser_url(

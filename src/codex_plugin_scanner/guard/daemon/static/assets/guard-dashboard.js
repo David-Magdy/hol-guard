@@ -13264,17 +13264,27 @@ function buildDecisionPayload(input) {
     throw new Error(`No eligible ${input.action} scope is available for this request.`);
   }
   const workspace = normalizedScope === "workspace" && typeof input.item.workspace === "string" ? input.item.workspace : void 0;
+  const persistExactAction = willPersistExactAction(
+    input.item,
+    input.action,
+    normalizedScope,
+    input.persistExactAction === true
+  );
   return {
     requestId: input.item.request_id,
     action: input.action,
     scope: normalizedScope,
     workspace,
     reason: input.reason,
+    ...persistExactAction ? { persist_policy: true } : {},
     ...hasCompleteBinding ? {
       scope_contract_version: contractVersion,
       scope_contract_digest: contractDigest
     } : {}
   };
+}
+function willPersistExactAction(item, action, scope, requested) {
+  return requested && normalizeDecisionScope(item, action, scope) === "artifact" && item.exact_action_persistence_eligible === true;
 }
 const REVIEW_SEMANTIC_GROUPS = [
   { id: "all", label: "All", matches: [] },
@@ -14551,6 +14561,11 @@ function whyPaused(request) {
 }
 const QUEUE_CONNECTION_ERROR_HEADLINE = "Guard daemon not reachable: approval links work when Guard is running on this device.";
 const QUEUE_CONNECTION_ERROR_INSTRUCTION = "Start Guard on this machine, then reload to continue approving or blocking.";
+function isWatchOnlyObservation(item) {
+  return (item.scanner_evidence ?? []).some(
+    (evidence) => typeof evidence === "object" && evidence !== null && "source" in evidence && evidence.source === "observe_mode_inbox"
+  );
+}
 function deriveDataFlowEvidence(item) {
   const signals = item.decision_v2_json?.signals ?? [];
   const dataFlowSignals = signals.filter(
@@ -14594,8 +14609,15 @@ function resolveDataFlowSinkLabel(signal) {
   }
   return "External sink";
 }
-function buildRetryAfterApprovalCopy(item, action) {
+function buildRetryAfterApprovalCopy(item, action, persistedExactAction = false) {
   const harness = harnessDisplayName(item.harness);
+  if (isWatchOnlyObservation(item)) {
+    if (persistedExactAction && action === "allow") {
+      return "Saved. Guard will allow this exact action next time when the remembered option is selected.";
+    }
+    if (persistedExactAction) return "Saved. Guard will stop this exact action next time.";
+    return "Reviewed. Watch only already allowed this action to run; no future rule was saved.";
+  }
   if (action === "allow") {
     return `Approved. Return to ${harness} to resume, or it will continue automatically if still running.`;
   }
@@ -16241,7 +16263,7 @@ async function fetchCommandActivityApi(input, init) {
   return fetchWithGuardAuth(input, init);
 }
 async function fetchExtensionControlApi(input, init) {
-  const approvedPath = typeof input === "string" && /^\/v1\/extension-controls\/(?:catalog|effective|preview|apply|refresh|recover-authority)$/.test(input);
+  const approvedPath = typeof input === "string" && /^\/v1\/extension-controls\/(?:catalog|effective|history|preview|test|apply|refresh|recover-authority|acknowledge-degraded)$/.test(input);
   if (!approvedPath) {
     throw new Error("Invalid extension-control API path");
   }
@@ -19650,7 +19672,7 @@ const sidebarLinks = [
   { href: "/evidence", label: "Evidence", view: "evidence", icon: HiMiniDocumentText },
   { href: "/supply-chain", label: "Supply chain", view: "supply-chain", icon: HiMiniSquares2X2 },
   { href: "/policy", label: "Policy", view: "policy", icon: HiMiniClipboardDocumentList },
-  { href: "/extensions", label: "Extensions", view: "extensions", icon: HiMiniPuzzlePiece },
+  { href: "/extensions", label: "Modules", view: "extensions", icon: HiMiniPuzzlePiece },
   { href: "/settings", label: "Settings", view: "settings", icon: HiMiniAdjustmentsHorizontal },
   { href: "/about", label: "About", view: "about", icon: HiMiniInformationCircle }
 ];
@@ -27900,6 +27922,13 @@ function ReviewScopeControls(props) {
       },
       choice.value
     )) }),
+    props.exactActionPersistenceEligible && props.allowScope === "artifact" && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      ExactActionPersistenceChoice,
+      {
+        checked: props.rememberExactAction,
+        onChange: props.onRememberExactActionChange
+      }
+    ),
     props.broaderScopeOptions.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "rounded-xl border border-brand-blue/15 bg-brand-blue/[0.03] p-3", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer select-none text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue", children: "Save for project or app" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs text-brand-dark/70", children: "These options save a decision that skips review for matching actions going forward. Choose the narrowest scope that fits what you meant to allow." }),
@@ -27942,6 +27971,29 @@ function ReviewScopeControls(props) {
         },
         choice.value
       )) })
+    ] })
+  ] });
+}
+function ExactActionPersistenceChoice(props) {
+  const handleChange = reactExports.useCallback(
+    (event) => {
+      props.onChange(event.target.checked);
+    },
+    [props.onChange]
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "flex cursor-pointer items-start gap-3 rounded-lg border border-brand-blue/20 bg-brand-blue/[0.03] px-4 py-3", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "input",
+      {
+        type: "checkbox",
+        checked: props.checked,
+        onChange: handleChange,
+        className: "mt-0.5 h-4 w-4 accent-brand-blue"
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-sm font-medium text-brand-dark", children: "Always allow this exact action" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block text-xs text-muted-foreground", children: "Save only this exact action for this AI app. Changed actions still need review." })
     ] })
   ] });
 }
@@ -28141,8 +28193,8 @@ function pastDecisionVerb(decision) {
   }
 }
 const commonScopeValues = /* @__PURE__ */ new Set(["artifact"]);
-function resolvedActionCopy(item, action) {
-  if (item !== null) return buildRetryAfterApprovalCopy(item, action);
+function resolvedActionCopy(item, action, persistedExactAction) {
+  if (item !== null) return buildRetryAfterApprovalCopy(item, action, persistedExactAction);
   if (action === "allow") return "Approved: action can proceed";
   return "Blocked: action stopped";
 }
@@ -28163,6 +28215,7 @@ function ReviewDecisionCard(props) {
   const [useCooldown, setUseCooldown] = reactExports.useState(false);
   const [pendingAction, setPendingAction] = reactExports.useState(null);
   const [pendingContractKey, setPendingContractKey] = reactExports.useState(null);
+  const [rememberExactAction, setRememberExactAction] = reactExports.useState(false);
   const timerRef = reactExports.useRef(null);
   const allowButtonRef = reactExports.useRef(null);
   const availableScopeChoices = reactExports.useMemo(
@@ -28186,6 +28239,7 @@ function ReviewDecisionCard(props) {
     [item]
   );
   const taskCapabilityCopy = item ? taskCapabilityExplanation(item) : null;
+  const watchOnlyObservation = item !== null && isWatchOnlyObservation(item);
   const hasAllowScope = availableScopeChoices.length + advancedScopeOptions.length > 0;
   const decisionContractKey = item ? `${item.request_id}:${item.scope_contract_version ?? "legacy"}:${item.scope_contract_digest ?? "legacy"}` : null;
   reactExports.useEffect(() => {
@@ -28201,6 +28255,7 @@ function ReviewDecisionCard(props) {
       setUseCooldown(false);
       setPendingAction(null);
       setPendingContractKey(null);
+      setRememberExactAction(false);
     }
   }, [item?.request_id, item?.scope_contract_version, item?.scope_contract_digest]);
   reactExports.useEffect(() => {
@@ -28218,6 +28273,12 @@ function ReviewDecisionCard(props) {
       setErrorMessage(null);
       try {
         const requestedScope = action === "allow" ? allowScope : blockScope;
+        const persistExactAction = willPersistExactAction(
+          item,
+          action,
+          requestedScope,
+          action === "allow" ? rememberExactAction : watchOnlyObservation
+        );
         const gate = props.approvalGate;
         const needsPassword = approvalProofRequiresPassword(gate);
         const includeGateFields = gate?.enabled === true && gate?.configured === true && requiresApprovalPasswordPrompt(gate.cooldown_active, gate.strict_all_decisions, requestedScope);
@@ -28226,13 +28287,14 @@ function ReviewDecisionCard(props) {
             item,
             action,
             scope: requestedScope,
-            reason: action === "allow" ? "approved in review" : "blocked in review"
+            reason: action === "allow" ? "approved in review" : "blocked in review",
+            persistExactAction
           }),
           ...includeGateFields && needsPassword ? { approval_password: approvalPassword } : {},
           ...includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {},
           ...includeGateFields ? { approval_gate_use_cooldown: useCooldown } : {}
         });
-        setResolved(action);
+        setResolved({ action, persistedExactAction: persistExactAction });
         setApprovalPassword("");
         setApprovalTotpCode("");
         setUseCooldown(false);
@@ -28253,6 +28315,8 @@ function ReviewDecisionCard(props) {
       item,
       allowScope,
       blockScope,
+      watchOnlyObservation,
+      rememberExactAction,
       props.onResolve,
       props.approvalGate,
       approvalPassword,
@@ -28368,7 +28432,7 @@ function ReviewDecisionCard(props) {
       EmptyState,
       {
         title: "Select an action",
-        body: "Choose a paused action from the queue to review and decide.",
+        body: "Choose an action or Watch-only finding to review.",
         tone: "teach"
       }
     );
@@ -28379,36 +28443,42 @@ function ReviewDecisionCard(props) {
   const topAlertItems = buildTopAlertItems(item);
   const evidenceItems = buildEvidenceItems(item);
   const actionPresentation = guardActionPresentation(item.policy_action);
+  const persistExactAllow = item !== null && willPersistExactAction(item, "allow", allowScope, rememberExactAction);
+  const persistExactBlock = item !== null && willPersistExactAction(item, "block", blockScope, watchOnlyObservation);
+  let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
+  if (persistExactAllow) {
+    resolvedAllowButtonLabel = watchOnlyObservation ? "Allow next time" : "Approve and remember";
+  }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-5", children: [
     resolved && /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
-        className: `guard-fade-in flex items-center gap-3 rounded-xl border px-4 py-3 transition-all ${resolved === "allow" ? "border-brand-green/25 bg-brand-green-bg/30" : "border-brand-attention/25 bg-brand-attention/[0.04]"}`,
+        className: `guard-fade-in flex items-center gap-3 rounded-xl border px-4 py-3 transition-all ${resolved.action === "allow" ? "border-brand-green/25 bg-brand-green-bg/30" : "border-brand-attention/25 bg-brand-attention/[0.04]"}`,
         role: "status",
         "aria-live": "polite",
         children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             HiMiniCheckCircle,
             {
-              className: `h-5 w-5 shrink-0 ${resolved === "allow" ? "text-brand-green" : "text-brand-attention"}`,
+              className: `h-5 w-5 shrink-0 ${resolved.action === "allow" ? "text-brand-green" : "text-brand-attention"}`,
               "aria-hidden": "true"
             }
           ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `text-sm font-medium ${resolved === "allow" ? "text-brand-green-text" : "text-brand-attention"}`, children: resolvedActionCopy(item, resolved) })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `text-sm font-medium ${resolved.action === "allow" ? "text-brand-green-text" : "text-brand-attention"}`, children: resolvedActionCopy(item, resolved.action, resolved.persistedExactAction) })
         ]
       }
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl border border-slate-100 p-4 sm:p-5", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start justify-between gap-3", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: "Paused action" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: watchOnlyObservation ? "Watch-only finding" : "Paused action" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "mt-2 text-lg font-semibold text-brand-dark", children: plainTitle }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-sm text-muted-foreground", children: [
             "From ",
             harnessName
           ] })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: actionPresentation.tone, children: actionPresentation.label })
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: watchOnlyObservation ? "info" : actionPresentation.tone, children: watchOnlyObservation ? "Ran in Watch only" : actionPresentation.label })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(PrimaryActionCard, { item }),
       resolutionBlockReason !== null && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-xl border border-brand-attention/30 bg-brand-attention/[0.06] p-4", role: "alert", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
@@ -28451,10 +28521,13 @@ function ReviewDecisionCard(props) {
           blockScopeOptions,
           hasAllowScope,
           taskCapabilityCopy,
+          exactActionPersistenceEligible: item.exact_action_persistence_eligible === true,
+          rememberExactAction,
           allowScope,
           blockScope,
           onAllowScopeChange: setAllowScope,
-          onBlockScopeChange: setBlockScope
+          onBlockScopeChange: setBlockScope,
+          onRememberExactActionChange: setRememberExactAction
         }
       ),
       errorMessage && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-fade-in mt-4 rounded-xl border border-brand-purple/25 bg-brand-purple/[0.05] p-4", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
@@ -28485,7 +28558,7 @@ function ReviewDecisionCard(props) {
               "Approving..."
             ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "h-4 w-4", "aria-hidden": "true" }),
-              allowButtonLabel(allowScope)
+              resolvedAllowButtonLabel
             ] })
           }
         ),
@@ -28500,7 +28573,7 @@ function ReviewDecisionCard(props) {
               "Blocking..."
             ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniNoSymbol, { className: "h-4 w-4", "aria-hidden": "true" }),
-              blockButtonLabel(blockScope)
+              persistExactBlock ? "Block next time" : blockButtonLabel(blockScope)
             ] })
           }
         )
@@ -28552,7 +28625,7 @@ function ReviewDecisionCard(props) {
         onUseCooldownChange: handleUseCooldownChange,
         onSubmit: handleModalSubmit,
         onCancel: handleModalCancel,
-        submitLabel: pendingAction === "allow" ? allowButtonLabel(allowScope) : blockButtonLabel(blockScope)
+        submitLabel: pendingAction === "allow" ? resolvedAllowButtonLabel : blockButtonLabel(blockScope)
       }
     )
   ] });
@@ -28583,6 +28656,7 @@ function QueueItemRow({ item, active, readState, index, onOpenRequest, selection
   const CategoryIcon = iconForQueueCategory(category.id);
   const preview = queueItemPreview(item);
   const isRead = readState.isRead(item.request_id);
+  const watchOnlyObservation = isWatchOnlyObservation(item);
   const showCheckbox = selectionMode;
   const canSelect = selectionMode && selectable;
   const handleClick = reactExports.useCallback(() => {
@@ -28660,7 +28734,8 @@ function QueueItemRow({ item, active, readState, index, onOpenRequest, selection
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "truncate text-[11px] text-muted-foreground", children: [
                   harnessDisplayName(item.harness),
                   " · ",
-                  formatQueueRequestDate(item)
+                  formatQueueRequestDate(item),
+                  watchOnlyObservation ? " · Watch only" : ""
                 ] })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs(
@@ -28771,7 +28846,7 @@ function ReviewHeader({
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-semibold tracking-[-0.02em] text-brand-dark sm:text-2xl", children: "Review" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground", children: "Guard paused these actions before they ran. Review each one and decide what should happen." })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground", children: "Review actions Guard paused and findings recorded while Watch only was active." })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-muted-foreground", children: [
       progress,
@@ -29725,7 +29800,7 @@ function viewTitle(view) {
   if (view === "policy") return "Policy";
   if (view === "feed-health") return "Feed Health";
   if (view === "about") return "About";
-  if (view === "extensions") return "Extensions";
+  if (view === "extensions") return "Protection Center";
   return "App detail";
 }
 function parseAppDetail(pathname) {
@@ -30498,7 +30573,7 @@ export {
   HiMiniLockClosed as Z,
   HiMiniBellAlert as _,
   EvidenceActivityHeatmapMini as a,
-  GuardModalLayer as a$,
+  HiMiniBugAnt as a$,
   HiMiniCircleStack as a0,
   TabBar as a1,
   resolveProtectionLevelCopy as a2,
@@ -30509,33 +30584,33 @@ export {
   clearReviewQueue as a7,
   revokeApprovalGateCooldown as a8,
   disableApprovalGateTotp as a9,
-  DEFAULT_FILTER_STATE as aA,
-  filterEvidence as aB,
-  sortEvidence as aC,
-  computeMetrics as aD,
-  CommandActivityWorkspace as aE,
-  EvidenceFilterBar as aF,
-  EvidenceInsightStrip as aG,
-  EvidenceActionList as aH,
-  EvidenceActionDetail as aI,
-  policyIdentityKey as aJ,
-  HiMiniChartBar as aK,
-  runHarnessAction as aL,
-  GuardHarnessActionError as aM,
-  HiMiniRocketLaunch as aN,
-  HiMiniTrash as aO,
-  clearLabelForScope as aP,
-  formatHarnessCommand as aQ,
-  isSupplyChainAuditIncomplete as aR,
-  isSupplyChainAuditEvidence as aS,
-  readString$1 as aT,
-  isRecord$2 as aU,
-  HiMiniClock as aV,
-  IconActionButton as aW,
-  HiMiniBeaker as aX,
-  ActivationSummary as aY,
-  ActionResultPanel as aZ,
-  HiMiniBugAnt as a_,
+  HiMiniHome as aA,
+  guardActionPresentation as aB,
+  DEFAULT_FILTER_STATE as aC,
+  filterEvidence as aD,
+  sortEvidence as aE,
+  computeMetrics as aF,
+  CommandActivityWorkspace as aG,
+  EvidenceFilterBar as aH,
+  EvidenceInsightStrip as aI,
+  EvidenceActionList as aJ,
+  EvidenceActionDetail as aK,
+  policyIdentityKey as aL,
+  HiMiniChartBar as aM,
+  runHarnessAction as aN,
+  GuardHarnessActionError as aO,
+  HiMiniRocketLaunch as aP,
+  HiMiniTrash as aQ,
+  clearLabelForScope as aR,
+  formatHarnessCommand as aS,
+  isSupplyChainAuditIncomplete as aT,
+  isSupplyChainAuditEvidence as aU,
+  readString$1 as aV,
+  isRecord$2 as aW,
+  HiMiniClock as aX,
+  IconActionButton as aY,
+  ActivationSummary as aZ,
+  ActionResultPanel as a_,
   importSettings as aa,
   resetSettings as ab,
   enrollApprovalGateTotp as ac,
@@ -30549,78 +30624,80 @@ export {
   HiMiniMagnifyingGlass as ak,
   HiMiniCog6Tooth as al,
   approvalGateCooldownLabel as am,
-  HiMiniArrowLeft as an,
-  HiMiniArrowTopRightOnSquare as ao,
-  HiMiniInformationCircle as ap,
-  fetchExtensionControlApi as aq,
-  HiMiniArrowPath as ar,
-  buildApprovalProofCredentials as as,
-  isApprovalProofSubmitDisabled as at,
-  ApprovalProofFieldInputs as au,
-  HiMiniPuzzlePiece as av,
-  fetchApprovalPage as aw,
-  fetchPolicy as ax,
-  HiMiniHome as ay,
-  guardActionPresentation as az,
+  fetchExtensionControlApi as an,
+  HiMiniInformationCircle as ao,
+  commandReasonLabel as ap,
+  HiMiniArrowPath as aq,
+  DEFAULT_COMMAND_ACTIVITY_FILTERS as ar,
+  HiMiniBeaker as as,
+  HiMiniArrowLeft as at,
+  HiMiniArrowTopRightOnSquare as au,
+  buildApprovalProofCredentials as av,
+  isApprovalProofSubmitDisabled as aw,
+  ApprovalProofFieldInputs as ax,
+  fetchApprovalPage as ay,
+  fetchPolicy as az,
   HiMiniCommandLine as b,
-  ConnectFlowCard as b0,
-  ApprovalProofInline as b1,
-  HiMiniCloudArrowDown as b2,
-  fetchPackageFirewallStatus as b3,
-  runPackageAudit as b4,
-  resolveSupplyChainAuditFailure as b5,
-  runPackageSync as b6,
-  startPackageFirewallConnect as b7,
-  openPackageFirewallAuthorizeFallback as b8,
-  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b9,
-  PaginationControls as bA,
-  HiMiniNoSymbol as bB,
-  HiMiniCube as bC,
-  HiMiniArrowDownTray as bD,
-  HiMiniQueueList as bE,
-  fetchMcpPolicyRequest as bF,
-  resolveMcpPolicyRequest as bG,
-  HiMiniDocumentPlus as bH,
-  HiMiniDocumentMagnifyingGlass as bI,
-  Surface as bJ,
-  HiMiniCheckBadge as bK,
-  fetchSupplyChainBundle as bL,
-  isSupplyChainScannerEvidence as bM,
-  isBlockedGuardAction as bN,
-  HiMiniShieldExclamation as bO,
-  HiMiniComputerDesktop as bP,
-  HiMiniChevronLeft as bQ,
-  HiMiniFunnel as bR,
-  HiMiniArrowDown as bS,
-  HiMiniArrowUp as bT,
-  runAuditRemediation as bU,
-  HiMiniSignal as bV,
-  repairSupplyChainProtection as ba,
-  runPackageFirewallAction as bb,
-  parseInterceptProofSnapshot as bc,
-  activatePackageFirewallRuntime as bd,
-  EntitlementNotice as be,
-  fetchReceipts as bf,
-  WorkspacePageHeader as bg,
-  __vitePreload as bh,
-  scopeLabel as bi,
-  guardAwareHref as bj,
-  HiMiniDocumentText as bk,
-  HiMiniCloudArrowUp as bl,
-  HiMiniCheck as bm,
-  HiMiniCodeBracket as bn,
-  HiMiniClipboardDocument as bo,
-  HiMiniUsers as bp,
-  HiMiniFolder as bq,
-  HiMiniIdentification as br,
-  policyActionLabel as bs,
-  createCloudExceptionRequest as bt,
-  HiMiniArrowRight as bu,
-  HiMiniGlobeAlt as bv,
-  fetchCloudExceptions as bw,
-  fetchCloudExceptionRequests as bx,
-  downloadBlob as by,
-  PolicyStatField as bz,
+  GuardModalLayer as b0,
+  ConnectFlowCard as b1,
+  ApprovalProofInline as b2,
+  HiMiniCloudArrowDown as b3,
+  fetchPackageFirewallStatus as b4,
+  runPackageAudit as b5,
+  resolveSupplyChainAuditFailure as b6,
+  runPackageSync as b7,
+  startPackageFirewallConnect as b8,
+  openPackageFirewallAuthorizeFallback as b9,
+  downloadBlob as bA,
+  PolicyStatField as bB,
+  PaginationControls as bC,
+  HiMiniNoSymbol as bD,
+  HiMiniCube as bE,
+  HiMiniArrowDownTray as bF,
+  HiMiniQueueList as bG,
+  fetchMcpPolicyRequest as bH,
+  resolveMcpPolicyRequest as bI,
+  HiMiniDocumentPlus as bJ,
+  HiMiniDocumentMagnifyingGlass as bK,
+  Surface as bL,
+  HiMiniCheckBadge as bM,
+  fetchSupplyChainBundle as bN,
+  isSupplyChainScannerEvidence as bO,
+  isBlockedGuardAction as bP,
+  HiMiniShieldExclamation as bQ,
+  HiMiniComputerDesktop as bR,
+  HiMiniChevronLeft as bS,
+  HiMiniFunnel as bT,
+  HiMiniArrowDown as bU,
+  HiMiniArrowUp as bV,
+  runAuditRemediation as bW,
+  HiMiniSignal as bX,
+  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as ba,
+  repairSupplyChainProtection as bb,
+  runPackageFirewallAction as bc,
+  parseInterceptProofSnapshot as bd,
+  activatePackageFirewallRuntime as be,
+  EntitlementNotice as bf,
+  fetchReceipts as bg,
+  WorkspacePageHeader as bh,
+  __vitePreload as bi,
+  scopeLabel as bj,
+  guardAwareHref as bk,
+  HiMiniDocumentText as bl,
+  HiMiniCloudArrowUp as bm,
+  HiMiniCheck as bn,
+  HiMiniCodeBracket as bo,
+  HiMiniClipboardDocument as bp,
+  HiMiniUsers as bq,
+  HiMiniFolder as br,
+  HiMiniIdentification as bs,
+  policyActionLabel as bt,
+  createCloudExceptionRequest as bu,
+  HiMiniArrowRight as bv,
+  HiMiniPuzzlePiece as bw,
+  HiMiniGlobeAlt as bx,
+  fetchCloudExceptions as by,
+  fetchCloudExceptionRequests as bz,
   HiMiniChevronRight as c,
   createCommandActivityClient as d,
   harnessDisplayName as e,

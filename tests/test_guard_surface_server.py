@@ -1937,10 +1937,21 @@ class TestGuardSurfaceServer:
     def test_guard_daemon_normalizes_decision_lane_event_aliases(self, event_key: str, event_value: str) -> None:
         assert daemon_server_module._GuardDaemonHandler._runtime_hook_lane({event_key: event_value}) == "decision"
 
-    def test_guard_daemon_claude_hook_endpoint_preserves_workspace_none_sentinel(self, tmp_path) -> None:
+    def test_guard_daemon_claude_hook_endpoint_preserves_workspace_none_sentinel(self, tmp_path, monkeypatch) -> None:
         store = GuardStore(tmp_path / "guard-home")
+        captured: dict[str, object] = {}
+
+        def fake_review(**kwargs):
+            captured["workspace"] = kwargs["workspace"]
+            from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessReview
+
+            return HookProcessReview({}, None)
+
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        monkeypatch.setattr(daemon._server.hook_process_runner, "start", lambda **_: None)
         daemon.start()
+        daemon._server.runtime_hook_process_scheduler.set_active_limit(1)
+        monkeypatch.setattr(daemon._server.hook_process_runner, "review", fake_review)
 
         try:
             request = urllib.request.Request(
@@ -1961,7 +1972,8 @@ class TestGuardSurfaceServer:
             daemon.stop()
 
         assert response.status == 200
-        assert payload == {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit"}}
+        assert payload == {}
+        assert captured == {"workspace": None}
 
     def test_guard_daemon_claude_hook_endpoint_preserves_workspace_trailing_none_sentinel(
         self, tmp_path, monkeypatch
@@ -2788,26 +2800,29 @@ class TestGuardSurfaceServer:
         assert hook_payload["decision"] == "block"
         assert "bypass" in hook_payload["reason"].lower() or "disable" in hook_payload["reason"].lower()
 
-    def test_guard_daemon_background_start_auto_stops_after_idle_timeout(self, tmp_path) -> None:
+    def test_guard_daemon_background_start_auto_stops_after_idle_timeout(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         guard_home = tmp_path / "pytest-of-user" / "guard-home"
         store = GuardStore(guard_home)
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0, idle_timeout_seconds=0.05)
+        monkeypatch.setattr(
+            daemon._server.hook_process_runner,
+            "enable_full_capacity",
+            lambda **_kwargs: None,
+        )
         daemon.start()
 
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            runtime_state = store.get_runtime_state()
-            daemon_thread = daemon._thread
-            if runtime_state is None and daemon_thread is not None and not daemon_thread.is_alive():
-                break
-            time.sleep(0.02)
-
-        runtime_state = store.get_runtime_state()
+        assert daemon._shutdown_started.wait(timeout=3)
         daemon_thread = daemon._thread
+        assert daemon_thread is not None
+        daemon_thread.join(timeout=10)
+        runtime_state = store.get_runtime_state()
         daemon.stop()
 
         assert runtime_state is None
-        assert daemon_thread is not None
         assert daemon_thread.is_alive() is False
 
     def test_guard_daemon_keeps_stream_clients_alive_past_idle_timeout(self, tmp_path) -> None:

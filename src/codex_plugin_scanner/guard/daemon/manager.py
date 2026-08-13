@@ -285,6 +285,23 @@ def _guard_daemon_launch_command(
     gate_on_stdin: bool = False,
 ) -> list[str]:
     trusted_home = _trusted_daemon_home(home_dir)
+    if bool(getattr(sys, "frozen", False)):
+        executable = Path(sys.executable).expanduser()
+        if not executable.is_absolute() or not executable.is_file():
+            raise RuntimeError("Frozen Guard daemon requires the signed Guard executable.")
+        if gate_on_stdin:
+            raise RuntimeError("Frozen Guard daemon gated launch is unavailable on this platform.")
+        return [
+            str(executable.resolve(strict=True)),
+            "daemon",
+            "--serve",
+            "--guard-home",
+            str(guard_home),
+            "--home",
+            str(trusted_home),
+            "--port",
+            str(port),
+        ]
     return _isolated_python_module_command(
         "codex_plugin_scanner.cli",
         _trusted_daemon_import_paths(),
@@ -471,11 +488,10 @@ def recover_guard_daemon_after_hook_failure(
     """Recover daemon service after a classified hook endpoint failure.
 
     Recovery is single-flight across threads and processes for one Guard home.
-    Capacity rejection preserves an authenticated current process even when
-    its health endpoint is saturated. Transport and authenticated control-plane
-    failures replace a process only when health cannot prove it responsive,
-    while the cooldown preserves a replacement long enough for concurrent and
-    immediately repeated callers to converge.
+    A hook authentication failure is client evidence, not daemon-health evidence.
+    Recovery therefore preserves every authenticated live generation. A daemon
+    is replaced only when neither the health probe nor signed process identity
+    can prove that generation is still running.
     """
 
     if failure_kind not in {
@@ -509,15 +525,9 @@ def recover_guard_daemon_after_hook_failure(
             current_url = load_guard_daemon_url(guard_home)
             live_process_url = _authenticated_live_current_daemon_url(guard_home, state)
             if current_url is not None:
-                if failure_kind != "authenticated-control-plane-failure" or _daemon_generation_is_recent(state):
-                    return current_url
-            elif live_process_url is not None and (failure_kind == "overload" or _daemon_generation_is_recent(state)):
+                return current_url
+            if live_process_url is not None:
                 return live_process_url
-            live_generation_url = current_url or live_process_url
-            if live_generation_url is not None:
-                retire_all_guard_daemons_for_home(guard_home)
-                if not guard_daemon_retirement_is_complete(guard_home):
-                    raise RuntimeError("Unresponsive Guard daemon could not be retired safely.")
         if os.name == "nt":
             return ensure_guard_daemon(
                 guard_home,

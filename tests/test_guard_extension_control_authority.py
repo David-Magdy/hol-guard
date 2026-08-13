@@ -994,3 +994,70 @@ def test_control_change_payload_counts_extension_and_permission_blocks() -> None
 
     assert payload["disabledExtensionCount"] == 1
     assert payload["disabledPermissionCount"] == 1
+
+def test_authenticated_history_returns_only_verified_prior_device_layers(tmp_path: Path) -> None:
+    secrets = MemorySecretStore()
+    store = _store(tmp_path, secrets)
+    first = (_disabled_layer(),)
+    committed = store.commit_extension_control_layers(
+        first,
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+        actor_id="history-test",
+        expected_revision=0,
+        idempotency_key="history-1",
+        nonce="history-nonce-1",
+        proof=_proof(store, first, revision=0, key="history-1", actor_id="history-test", nonce="history-nonce-1"),
+    )
+    assert committed.revision == 1
+    second: tuple[ExtensionControlLayer, ...] = ()
+    committed = store.commit_extension_control_layers(
+        second,
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+        actor_id="history-test",
+        expected_revision=1,
+        idempotency_key="history-2",
+        nonce="history-nonce-2",
+        proof=_proof(store, second, revision=1, key="history-2", actor_id="history-test", nonce="history-nonce-2"),
+    )
+    assert committed.revision == 2
+    history = store.list_extension_control_authority_history(
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+        limit=20,
+    )
+    assert [item["revision"] for item in history] == [1]
+    assert history[0]["layers"][0]["kind"] == "local-admin"
+    encoded = json.dumps(history, sort_keys=True)
+    for private_name in ("actor_id_hash", "idempotency_key_hash", "nonce_hash", "snapshot_mac", "transition_mac", "proof"):
+        assert private_name not in encoded
+
+
+def test_authenticated_history_fails_closed_on_tampered_transition(tmp_path: Path) -> None:
+    secrets = MemorySecretStore()
+    store = _store(tmp_path, secrets)
+    first = (_disabled_layer(),)
+    _ = store.commit_extension_control_layers(
+        first,
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+        actor_id="history-test",
+        expected_revision=0,
+        idempotency_key="history-tamper-1",
+        nonce="history-tamper-nonce-1",
+        proof=_proof(store, first, revision=0, key="history-tamper-1", actor_id="history-test", nonce="history-tamper-nonce-1"),
+    )
+    second: tuple[ExtensionControlLayer, ...] = ()
+    _ = store.commit_extension_control_layers(
+        second,
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+        actor_id="history-test",
+        expected_revision=1,
+        idempotency_key="history-tamper-2",
+        nonce="history-tamper-nonce-2",
+        proof=_proof(store, second, revision=1, key="history-tamper-2", actor_id="history-test", nonce="history-tamper-nonce-2"),
+    )
+    with store._connect() as connection:
+        connection.execute("update extension_control_authority_transition set transition_mac = ? where revision = 1", ("invalid",))
+    with pytest.raises(ExtensionControlAuthorityError):
+        store.list_extension_control_authority_history(
+            catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+            limit=20,
+        )

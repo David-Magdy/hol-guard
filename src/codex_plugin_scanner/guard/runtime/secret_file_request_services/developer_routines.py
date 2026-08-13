@@ -96,6 +96,8 @@ def _looks_like_safe_compound_developer_inspection(
             command_name or "",
             args,
             cwd=segment.effective_cwd or home_dir,
+            command_token=segment.tokens[command_index],
+            command_index=command_index,
         ):
             continue
         if command_name != "git":
@@ -112,6 +114,7 @@ def _looks_like_safe_compound_developer_inspection(
                 continue
             if effect is DeveloperShellEffect.STREAM_FILTER and command_name in {
                 *_READ_ONLY_LOOKUP_FILTERS,
+                "jq",
                 "sort",
             }:
                 continue
@@ -161,7 +164,13 @@ def _looks_like_safe_cli_metadata_command(command_text: str, parts: list[str], *
     executable = segments[0][0]
     if "/" in executable or "\\" in executable:
         return False
-    return _safe_cli_metadata_segment_is_safe(command_name, segments[0][1:], cwd=cwd or Path.cwd())
+    return _safe_cli_metadata_segment_is_safe(
+        command_name,
+        segments[0][1:],
+        cwd=cwd or Path.cwd(),
+        command_token=segments[0][0],
+        command_index=command_index,
+    )
 
 
 def _safe_dependency_symlink_execution_context(

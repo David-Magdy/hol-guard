@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Final
@@ -11,6 +12,7 @@ from typing import Final
 from .git_execution_safety import (
     git_config_routing_environment_is_clean,
     git_fetch_origin_has_execution_free_config,
+    git_object_query_has_no_lazy_fetch,
     git_push_origin_has_execution_free_config,
     git_status_has_execution_free_config,
     trusted_git_binary_for_cwd,
@@ -18,6 +20,9 @@ from .git_execution_safety import (
 from .shell_execution_context import ShellExecutionContext, ShellExecutionSegment
 
 _REF: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}")
+_OBJECT_EXISTENCE_QUERY: Final = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._/-]{0,255}(?:\^|\^\{(?:blob|commit|object|tag|tree)\})?"
+)
 _REPOSITORY_PATH_COMPONENT: Final = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 _BOUND: Final = 1000
 
@@ -186,10 +191,36 @@ def is_low_risk_standalone_git_routine(context: ShellExecutionContext) -> bool:
     )
 
 
+def is_safe_standalone_git_object_existence_query(
+    command_text: str,
+    *,
+    cwd: Path,
+) -> bool:
+    """Recognize an exact, output-free Git object existence query."""
+
+    try:
+        parts = tuple(shlex.split(command_text))
+        execution_cwd = cwd.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    resolved_git = trusted_git_binary_for_cwd(execution_cwd)
+    return bool(
+        len(parts) == 4
+        and parts[:3] == ("git", "cat-file", "-e")
+        and _safe_cat_file_exists_args(parts[2:])
+        and resolved_git is not None
+        and git_object_query_has_no_lazy_fetch(execution_cwd, git_binary=resolved_git)
+    )
+
+
 def _safe_rev_parse_args(args: tuple[str, ...]) -> bool:
     return args in {("--show-toplevel",), ("--show-prefix",), ("--is-inside-work-tree",)} or (
         len(args) == 1 and _safe_ref(args[0])
     )
+
+
+def _safe_cat_file_exists_args(args: tuple[str, ...]) -> bool:
+    return bool(len(args) == 2 and args[0] == "-e" and _OBJECT_EXISTENCE_QUERY.fullmatch(args[1]))
 
 
 def _safe_status_arg(value: str) -> bool:
@@ -358,7 +389,10 @@ def _git_log_has_execution_free_config(
     git_binary: Path,
     pager_key: str = "pager.log",
 ) -> bool:
-    if any(os.environ.get(key, "").strip() not in {"", "cat"} for key in ("GIT_PAGER", "PAGER")):
+    git_pager = os.environ.get("GIT_PAGER")
+    if git_pager is not None:
+        return git_pager.strip() in {"", "cat"} and git_config_routing_environment_is_clean()
+    if os.environ.get("PAGER", "").strip() not in {"", "cat"}:
         return False
     if not git_config_routing_environment_is_clean():
         return False
@@ -382,6 +416,17 @@ def _git_log_has_execution_free_config(
         if any(value != "cat" for value in values):
             return False
     return True
+
+
+def git_log_has_execution_free_config(
+    cwd: Path,
+    *,
+    git_binary: Path,
+    pager_key: str = "pager.log",
+) -> bool:
+    """Return whether Git log-family output cannot invoke an executable pager."""
+
+    return _git_log_has_execution_free_config(cwd, git_binary=git_binary, pager_key=pager_key)
 
 
 def _safe_ls_files_args(args: tuple[str, ...]) -> bool:

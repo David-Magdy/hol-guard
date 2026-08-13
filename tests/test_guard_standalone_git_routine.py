@@ -12,6 +12,7 @@ from codex_plugin_scanner.guard.runtime.git_execution_safety import (
     git_fetch_origin_has_execution_free_config,
 )
 from codex_plugin_scanner.guard.runtime.secret_file_requests import (
+    extract_sensitive_tool_action_request,
     is_explicitly_benign_tool_action_request,
 )
 
@@ -26,6 +27,19 @@ def _isolate_user_git_config(  # pyright: ignore[reportUnusedFunction]
     config.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    for variable in (
+        "GIT_CONFIG",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_NAMESPACE",
+        "GIT_WORK_TREE",
+    ):
+        monkeypatch.delenv(variable, raising=False)
 
 
 def _repository(tmp_path: Path) -> tuple[Path, Path]:
@@ -80,6 +94,52 @@ def test_standalone_origin_ref_refresh_and_resolution_are_explicitly_benign(tmp_
         )
 
 
+@pytest.mark.parametrize(
+    "command",
+    (
+        "git fetch origin release/2.2",
+        "git --no-pager fetch origin release/2.2",
+        "git -c credential.helper='!echo pwn' fetch origin release/2.2",
+        "/usr/bin/git fetch origin release/2.2",
+        "git fetch origin release/2.2; true",
+        "true && git fetch origin release/2.2",
+        "GIT_DIR=example/.git git fetch origin release/2.2",
+        "git --exec-path=/tmp fetch origin release/2.2",
+        "git -P fetch origin release/2.2",
+        "git -p fetch origin release/2.2",
+        "git --no-lazy-fetch fetch origin release/2.2",
+        "git --no-optional-locks fetch origin release/2.2",
+        "git --no-advice fetch origin release/2.2",
+        "git --literal-pathspecs fetch origin release/2.2",
+    ),
+)
+def test_git_fetch_without_repository_bound_cwd_is_sensitive(tmp_path: Path, command: str) -> None:
+    home, repository = _repository(tmp_path)
+    session_workspace = repository.parent
+
+    request = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": command},
+        cwd=session_workspace,
+        home_dir=home,
+    )
+
+    assert request is not None
+    assert request.action_class == "unverified Git remote refresh"
+
+
+def test_git_fetch_without_any_cwd_is_sensitive(tmp_path: Path) -> None:
+    request = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": "git fetch origin main"},
+        cwd=None,
+        home_dir=tmp_path,
+    )
+
+    assert request is not None
+    assert request.action_class == "unverified Git remote refresh"
+
+
 def test_standalone_verified_origin_reads_are_explicitly_benign(tmp_path: Path) -> None:
     home, repository = _repository(tmp_path)
 
@@ -102,6 +162,79 @@ def test_standalone_verified_origin_reads_are_explicitly_benign(tmp_path: Path) 
 @pytest.mark.parametrize(
     "command",
     (
+        "git cat-file -e HEAD",
+        "git cat-file -e f3270157fc59c04cf676e6bdf4f440f95eac890c^{commit}",
+        "git cat-file -e release/3.0^{tree}",
+    ),
+)
+def test_standalone_object_existence_queries_are_explicitly_benign(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    home, repository = _repository(tmp_path)
+
+    assert _is_benign(command, home=home, repository=repository)
+    assert (
+        _hook_runtime_artifact(
+            harness="codex",
+            payload={
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            },
+            action_envelope=None,
+            home_dir=home,
+            guard_home=home / ".guard",
+            workspace=repository,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "git cat-file -p HEAD",
+        "git cat-file --batch",
+        "git cat-file -e HEAD:secret.txt",
+        "git cat-file -e 'HEAD^{/payload}'",
+        "git cat-file -e '$(payload)'",
+        "git cat-file -e HEAD | cat",
+        "git cat-file -e HEAD; payload",
+    ),
+)
+def test_standalone_object_queries_reject_content_and_execution_syntax(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    home, repository = _repository(tmp_path)
+
+    assert not _is_benign(command, home=home, repository=repository)
+
+
+def test_standalone_object_existence_rejects_partial_clone_configuration(tmp_path: Path) -> None:
+    home, repository = _repository(tmp_path)
+    _ = subprocess.run(
+        ["git", "-C", str(repository), "config", "remote.origin.promisor", "true"],
+        check=True,
+    )
+
+    assert not _is_benign("git cat-file -e deadbeef^{commit}", home=home, repository=repository)
+
+
+def test_standalone_object_existence_rejects_config_routing_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, repository = _repository(tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+
+    assert not _is_benign("git cat-file -e deadbeef^{commit}", home=home, repository=repository)
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
         "git ls-remote origin main",
         "git ls-remote --heads https://github.com/example/project.git main",
         "git ls-remote --upload-pack=payload origin main",
@@ -117,8 +250,13 @@ def test_standalone_verified_origin_reads_reject_widening_syntax(tmp_path: Path,
     assert not _is_benign(command, home=home, repository=repository)
 
 
-def test_remote_branch_listing_rejects_executable_pager(tmp_path: Path) -> None:
+def test_remote_branch_listing_rejects_executable_pager(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     home, repository = _repository(tmp_path)
+    monkeypatch.delenv("GIT_PAGER", raising=False)
+    monkeypatch.delenv("PAGER", raising=False)
     _ = subprocess.run(["git", "-C", str(repository), "config", "pager.branch", "!payload"], check=True)
 
     assert not _is_benign("git branch -r --list origin/main", home=home, repository=repository)

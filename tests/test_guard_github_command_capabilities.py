@@ -478,8 +478,6 @@ GITHUB_REVIEW_FLOORS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 
-
-
 @pytest.mark.parametrize(
     ("args", "capability", "reason_code"),
     (
@@ -758,16 +756,48 @@ def test_classify_github_cli_rejects_ambiguous_graphql_inputs(args: tuple[str, .
     assert assessment.capability == "unknown"
 
 
+@pytest.mark.parametrize("selection", ("id", "isResolved", "id isResolved", "isResolved id"))
+def test_guard_keeps_routine_review_thread_resolution_prompt_free(selection: str) -> None:
+    command = (
+        "gh api graphql -f "
+        f"'query=mutation($threadId:ID!){{resolveReviewThread(input:{{threadId:$threadId}})"
+        f"{{thread{{{selection}}}}}}}' -f threadId=PRRT_kwDOQGomAs6T6b-G"
+    )
+
+    match = extract_sensitive_tool_action_request("Bash", {"command": command})
+
+    assert match is None
+
+
+@pytest.mark.parametrize(
+    "selection",
+    ("id repository { name }", "id: isResolved", "...ThreadFields"),
+)
+def test_guard_reviews_unbounded_review_thread_response_selections(selection: str) -> None:
+    command = (
+        "gh api graphql -f "
+        f"'query=mutation($threadId:ID!){{resolveReviewThread(input:{{threadId:$threadId}})"
+        f"{{thread{{{selection}}}}}}}' -f threadId=PRRT_kwDOQGomAs6T6b-G"
+    )
+
+    match = extract_sensitive_tool_action_request("Bash", {"command": command})
+
+    assert match is not None
+
+
 @pytest.mark.parametrize(
     "command",
     (
         "gh pr view 17",
-        "gh pr view ${PR_NUMBER}",
+        "gh pr view $'17'",
         "gh issue list --limit 10",
-        "gh issue list --repo ${REPO}",
         "gh ssh-key list",
         "gh gpg-key list",
         "gh api repos/example/project -X GET -f per_page=1 --jq '.name'",
+        (
+            "gh api -H 'Accept: application/vnd.github.raw+json' "
+            "'repos/example/project/contents/ci/baseline.json?ref=main'"
+        ),
         "gh api graphql -f 'query=query { viewer { login } }' | jq -r '.data.viewer.login'",
         (
             "gh api graphql -f 'query=query { viewer { login } }' 2>&1 | "

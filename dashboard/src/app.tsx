@@ -152,7 +152,7 @@ export function viewTitle(view: AppView): string {
   if (view === "policy") return "Policy";
   if (view === "feed-health") return "Feed Health";
   if (view === "about") return "About";
-  if (view === "extensions") return "Extensions";
+  if (view === "extensions") return "Protection Center";
   return "App detail";
 }
 

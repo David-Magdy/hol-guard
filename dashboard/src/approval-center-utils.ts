@@ -24,6 +24,16 @@ export type DataFlowEvidenceSummary = {
   count: number;
 };
 
+export function isWatchOnlyObservation(item: GuardApprovalRequest): boolean {
+  return (item.scanner_evidence as unknown[] | undefined ?? []).some(
+    (evidence) =>
+      typeof evidence === "object" &&
+      evidence !== null &&
+      "source" in evidence &&
+      evidence.source === "observe_mode_inbox",
+  );
+}
+
 export function deriveDataFlowEvidence(item: GuardApprovalRequest): DataFlowEvidenceSummary | null {
   const signals = item.decision_v2_json?.signals ?? [];
   const dataFlowSignals = signals.filter(
@@ -72,8 +82,19 @@ function resolveDataFlowSinkLabel(signal: RiskSignalV2): string {
   return "External sink";
 }
 
-export function buildRetryAfterApprovalCopy(item: GuardApprovalRequest, action: "allow" | "block"): string {
+export function buildRetryAfterApprovalCopy(
+  item: GuardApprovalRequest,
+  action: "allow" | "block",
+  persistedExactAction = false,
+): string {
   const harness = harnessDisplayName(item.harness);
+  if (isWatchOnlyObservation(item)) {
+    if (persistedExactAction && action === "allow") {
+      return "Saved. Guard will allow this exact action next time when the remembered option is selected.";
+    }
+    if (persistedExactAction) return "Saved. Guard will stop this exact action next time.";
+    return "Reviewed. Watch only already allowed this action to run; no future rule was saved.";
+  }
   if (action === "allow") {
     return `Approved. Return to ${harness} to resume, or it will continue automatically if still running.`;
   }
@@ -191,6 +212,9 @@ export function buildPauseLine(item: GuardApprovalRequest): string {
   if (resolutionBlockReason !== null) {
     return resolutionBlockReason;
   }
+  if (isWatchOnlyObservation(item)) {
+    return "Watch only let this action run. Guard recorded it because the current policy would have paused it in an enforcing mode.";
+  }
   if (item.changed_fields.length === 1 && item.changed_fields[0] === "first_seen") {
     return `${harnessDisplayName(item.harness)} has not run this exact action here before, so HOL Guard paused it for you to review.`;
   }
@@ -201,6 +225,9 @@ export function buildRecommendation(item: GuardApprovalRequest): string {
   const resolutionBlockReason = requestResolutionBlockReason(item);
   if (resolutionBlockReason !== null) {
     return resolutionBlockReason;
+  }
+  if (isWatchOnlyObservation(item)) {
+    return "Save an exact allow only when this action is expected. Changed commands, paths, hosts, or tools will still need review.";
   }
   if (item.changed_fields.length === 1 && item.changed_fields[0] === "first_seen") {
     return "If this is what you expected, approve this retry. Project approval remembers this same action here without trusting new sensitive actions.";

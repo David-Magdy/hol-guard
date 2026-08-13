@@ -15,6 +15,9 @@ from ..command_evaluation import evaluate_command
 from ..direct_vitest import direct_local_typescript_execution_context, direct_local_vitest_execution_context
 from ..extension_control_contract import ExtensionControlLayer
 from ..github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
+from ..github_capability_contract import GitHubCommandAssessment
+from ..github_capability_interaction import github_capability_requires_confirmation
+from ..read_only_git_audit import is_read_only_git_ancestry_audit
 from ..routine_setup_commands import is_safe_codex_memory_registry_search, is_safe_git_worktree_add
 from ..shell_command_wrappers import normalize_transparent_shell_command
 from .constants_core import _SHELL_TOOL_NAMES
@@ -30,7 +33,11 @@ from .git_routines import (
     _looks_like_safe_git_status_command,
     _looks_like_safe_standalone_git_routine,
 )
-from .github_shell_capabilities import _ShellTokenWithQuoteContext
+from .github_shell_capabilities import (
+    _ShellTokenWithQuoteContext,
+    classify_github_shell_capabilities,
+    github_argument_token_has_untrusted_expansion,
+)
 from .interpreter_identity import _python_interpreter_executable_identities
 from .interpreter_observers import (
     _looks_like_benign_interpreter_wait,
@@ -40,15 +47,17 @@ from .interpreter_observers import (
 )
 from .request_artifacts import _candidate_command_texts
 from .request_models import ToolActionRequestMatch, _normalize_tool_name
+from .routine_directory_creation import is_safe_routine_directory_creation
 from .sensitive_read_pipeline import _runtime_read_root_texts
-from .shell_static_safety import _path_text_is_within_root_text
+from .shell_quote_tokens import shell_token_segments, shell_tokens_preserving_quote_context
+from .shell_static_safety import _path_text_is_within_root_text, _without_safe_inspection_redirections
 from .shell_stdin_sources import (
     _cat_reads_local_file,
     _cat_stdout_payloads,
     _echo_stdout_payload,
     _printf_stdout_payloads,
 )
-from .shell_tokenization import _shell_segment_primary_command, _split_shell_parts
+from .shell_tokenization import _iter_shell_command_segments, _shell_segment_primary_command, _split_shell_parts
 
 
 def is_explicitly_benign_tool_action_request(
@@ -63,6 +72,7 @@ def is_explicitly_benign_tool_action_request(
         return False
     found_benign_candidate = False
     for command_text in _candidate_command_texts(arguments):
+        raw_command_text = command_text
         interpreter_evidence = _python_interpreter_executable_identities(
             command_text,
             cwd=cwd,
@@ -71,11 +81,30 @@ def is_explicitly_benign_tool_action_request(
         if any(evidence.get("trust") not in {"trusted_guard", "trusted_system"} for evidence in interpreter_evidence):
             return False
         if normalized_tool_name in _SHELL_TOOL_NAMES:
-            command_text = normalize_transparent_shell_command(
-                command_text, cwd=cwd, home_dir=home_dir
-            ).normalized_command
+            normalization = normalize_transparent_shell_command(command_text, cwd=cwd, home_dir=home_dir)
+            command_text = normalization.normalized_command
+            if normalization.wrapper_chain:
+                raw_github_assessment = classify_github_shell_capabilities(raw_command_text, home_dir=home_dir)
+                if raw_github_assessment is not None and github_capability_requires_confirmation(raw_github_assessment):
+                    return False
+                normalized_parts = _split_shell_parts(command_text)
+                normalized_segments = _iter_shell_command_segments(normalized_parts)
+                invokes_guard = any(
+                    _shell_segment_primary_command(segment)[0] == "hol-guard" for segment in normalized_segments
+                )
+                if invokes_guard and command_text != raw_command_text:
+                    return False
         stripped_command = command_text.strip()
         if not stripped_command:
+            continue
+        if is_nonexecuting_github_actions_read_workflow(stripped_command, cwd=cwd):
+            found_benign_candidate = True
+            continue
+        github_assessment = classify_github_shell_capabilities(stripped_command, home_dir=home_dir)
+        if github_assessment is not None and github_capability_requires_confirmation(github_assessment):
+            return False
+        if _quote_aware_direct_github_read_is_safe(stripped_command, assessment=github_assessment):
+            found_benign_candidate = True
             continue
         if home_dir is not None and _is_guard_safety_doc_read(stripped_command, home_dir=home_dir):
             found_benign_candidate = True
@@ -84,9 +113,6 @@ def is_explicitly_benign_tool_action_request(
         if not parts:
             return False
         parsed_command_names = list(_shell_command_names_from_parts(parts))
-        if is_nonexecuting_github_actions_read_workflow(stripped_command, cwd=cwd):
-            found_benign_candidate = True
-            continue
         if _looks_like_benign_interpreter_wait(stripped_command, parts, parsed_command_names):
             found_benign_candidate = True
             continue
@@ -101,6 +127,12 @@ def is_explicitly_benign_tool_action_request(
             parts,
             home_dir=home_dir,
         ):
+            found_benign_candidate = True
+            continue
+        if _looks_like_safe_existence_probe(stripped_command, cwd=cwd, home_dir=home_dir):
+            found_benign_candidate = True
+            continue
+        if is_safe_routine_directory_creation(stripped_command, cwd=cwd, home_dir=home_dir):
             found_benign_candidate = True
             continue
         if _looks_like_safe_cli_metadata_command(stripped_command, parts, cwd=cwd):
@@ -161,11 +193,75 @@ def is_explicitly_benign_tool_action_request(
         ):
             found_benign_candidate = True
             continue
+        if home_dir is not None and is_read_only_git_ancestry_audit(
+            stripped_command,
+            cwd=cwd,
+            home_dir=home_dir,
+        ):
+            found_benign_candidate = True
+            continue
         if _looks_like_safe_kubernetes_inventory_command(stripped_command, parts, cwd=cwd):
             found_benign_candidate = True
             continue
         return False
     return found_benign_candidate
+
+
+def _quote_aware_direct_github_read_is_safe(
+    command_text: str,
+    *,
+    assessment: GitHubCommandAssessment | None,
+) -> bool:
+    if assessment is None:
+        return False
+    segments = shell_token_segments(shell_tokens_preserving_quote_context(command_text))
+    if len(segments) != 1 or not segments[0] or segments[0][0].raw != "gh":
+        return False
+    segment = segments[0]
+    plain_segment = [token.plain for token in segment]
+    command_name, command_index = _shell_segment_primary_command(plain_segment)
+    if command_name != "gh" or command_index != 0:
+        return False
+    if _without_safe_inspection_redirections(plain_segment[1:]) is None:
+        return False
+    return not any(github_argument_token_has_untrusted_expansion(token.raw) for token in segment[1:])
+
+
+def _looks_like_safe_existence_probe(
+    command_text: str,
+    *,
+    cwd: Path | None,
+    home_dir: Path | None,
+) -> bool:
+    """Recognize a metadata-only local path existence check with literal output."""
+
+    try:
+        lexer = shlex.shlex(command_text, posix=True, punctuation_chars=";&|<>()")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        parts = list(lexer)
+    except ValueError:
+        return False
+    if len(parts) != 9 or parts[:2] != ["test", "-e"]:
+        return False
+    if parts[3:] != ["&&", "echo", "exists", "||", "echo", "absent"]:
+        return False
+    target = parts[2]
+    if any(marker in target for marker in ("$", "`", "*", "?", "[", "]", "{", "}")):
+        return False
+    try:
+        candidate = Path(target).expanduser()
+        if not candidate.is_absolute():
+            if cwd is None:
+                return False
+            if ".." in candidate.parts:
+                return False
+            candidate = cwd / candidate
+        resolved = candidate.resolve(strict=False)
+        allowed_roots = tuple(root.resolve() for root in (cwd, home_dir) if root is not None)
+    except (OSError, RuntimeError):
+        return False
+    return bool(allowed_roots) and any(resolved.is_relative_to(root) for root in allowed_roots)
 
 
 def _is_guard_safety_doc_read(command_text: str, *, home_dir: Path) -> bool:

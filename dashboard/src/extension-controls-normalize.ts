@@ -7,6 +7,7 @@ import type {
   ExtensionRule,
   ExtensionRuleSafeVariant,
 } from "./extension-controls-api";
+import { normalizeEffectiveExtensionControlProjection } from "./extension-control-projection-normalize";
 
 const EXTENSION_ID = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const PERMISSION_ID = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*\.permission\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -217,7 +218,7 @@ function extension(value: unknown, label: string): ExtensionCatalogItem {
   };
 }
 
-function controlLayer(value: unknown, label: string): ExtensionControlLayer {
+export function normalizeExtensionControlLayer(value: unknown, label = "layer"): ExtensionControlLayer {
   const item = record(value, label);
   const controls = array(item.controls, `${label}.controls`, EXTENSION_CLIENT_LIMITS.controls).map((entry, index) => {
     const raw = record(entry, `${label}.controls[${index}]`);
@@ -274,7 +275,7 @@ export function normalizeEffectiveExtensionControls(value: unknown): EffectiveEx
   });
   const keys = controls.map((control) => `${control.target.kind}:${control.target.target_id}`);
   if (new Set(keys).size !== keys.length) throw new ExtensionControlProtocolError("effective.controls contains duplicate targets");
-  const layers = array(root.layers, "effective.layers", EXTENSION_CLIENT_LIMITS.layers).map((entry, index) => controlLayer(entry, `effective.layers[${index}]`));
+  const layers = array(root.layers, "effective.layers", EXTENSION_CLIENT_LIMITS.layers).map((entry, index) => normalizeExtensionControlLayer(entry, `effective.layers[${index}]`));
   const failures = array(root.failures, "effective.failures", EXTENSION_CLIENT_LIMITS.failures).map((entry, index) => {
     const raw = record(entry, `effective.failures[${index}]`);
     return {
@@ -292,5 +293,6 @@ export function normalizeEffectiveExtensionControls(value: unknown): EffectiveEx
     controls,
     layers,
     failures,
+    projection: root.projection === undefined ? undefined : normalizeEffectiveExtensionControlProjection(root.projection),
   };
 }
