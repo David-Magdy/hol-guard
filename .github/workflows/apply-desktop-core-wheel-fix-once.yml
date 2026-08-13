@@ -1,4 +1,4 @@
-name: Apply Desktop Core wheel fix once
+name: Materialize Desktop Core wheel fix once
 
 on:
   push:
@@ -6,10 +6,10 @@ on:
       - fix/desktop-core-feed-arm64-wheel
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply:
+  materialize:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           ref: fix/desktop-core-feed-arm64-wheel
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Apply fail-closed Apple silicon wheel selection
         shell: bash
@@ -69,9 +69,16 @@ jobs:
           tests.write_text(text.replace(anchor, replacement, 1), encoding='utf-8')
           PY
           git diff --check
-          git rm .github/workflows/apply-desktop-core-wheel-fix-once.yml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .github/workflows/desktop-core-alpha-feed.yml tests/test_desktop_core_alpha_feed_security.py
-          git commit -m "fix(release): select the Apple silicon Core wheel"
-          git push origin HEAD:fix/desktop-core-feed-arm64-wheel
+          mkdir -p patch-output/.github/workflows patch-output/tests
+          cp .github/workflows/desktop-core-alpha-feed.yml patch-output/.github/workflows/
+          cp tests/test_desktop_core_alpha_feed_security.py patch-output/tests/
+          git diff -- .github/workflows/desktop-core-alpha-feed.yml tests/test_desktop_core_alpha_feed_security.py > patch-output/change.patch
+          test -s patch-output/change.patch
+
+      - name: Upload exact generated files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: desktop-core-wheel-fix-files
+          path: patch-output
+          if-no-files-found: error
+          retention-days: 1
