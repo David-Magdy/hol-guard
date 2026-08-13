@@ -37,7 +37,7 @@ permissions:
 concurrency:
   # Isolate by event and SHA so a pending release/3.0 push publish is not
   # cancelled when another pull_request run shares the branch group.
-  group: hol-guard-publish-${{ github.event_name }}-${{ github.sha }}
+  group: hol-guard-publish-${{ github.event.pull_request.merged && format('refs/heads/{0}', github.event.pull_request.base.ref) || github.ref }}
   cancel-in-progress: false
 
 jobs:
