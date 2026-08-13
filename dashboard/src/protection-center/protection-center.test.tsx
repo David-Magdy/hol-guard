@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { assertSimpleCopySafe, localSettingChoiceLabel, PROTECTION_TERMS, simpleCopyViolations } from "./copy/protection-copy";
+import { assertSimpleCopySafe, localSettingChoiceLabel, PROTECTION_TERMS, protectionCenterLoadError, simpleCopyViolations } from "./copy/protection-copy";
 import { ProtectionDensityControl, ProtectionModuleRow, ProtectionStatusHero, TechnicalDetails } from "./components/protection-primitives";
 import {
   CLOUD_CONNECTED_FIXTURE,
@@ -98,6 +98,11 @@ assert.deepEqual(simpleCopyViolations("Protection is active on this device."), [
 assert.deepEqual(simpleCopyViolations("Catalog digest is hidden here."), ["catalog digest"]);
 assert.doesNotThrow(() => assertSimpleCopySafe("Guard is protecting source control on this device."));
 assert.throws(() => assertSimpleCopySafe("The semantic blast radius changed."), /semantic blast radius/);
+
+assert.equal(protectionCenterLoadError("unauthorized").title, "This view needs a signed local session");
+assert.match(protectionCenterLoadError("unauthorized").detail, /Local protection is still running/);
+assert.doesNotMatch(protectionCenterLoadError("unauthorized").detail, /^unauthorized$/);
+assert.match(protectionCenterLoadError("catalog mismatch").detail, /catalog mismatch/);
 
 const hero = renderToStaticMarkup(createElement(ProtectionStatusHero, { status: deriveProtectionStatus(PROTECTION_AUTHORITY_FIXTURES.protected) }));
 assert.match(hero, /Local protection/);

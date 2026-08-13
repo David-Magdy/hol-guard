@@ -47,8 +47,9 @@ export function ProtectionTestLab({ extension }: { extension: ExtensionCatalogIt
     <div className="flex items-start gap-3">
       <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-700" aria-hidden="true"><HiMiniBeaker className="size-5" /></span>
       <div className="min-w-0">
-        <h2 id="protection-test-lab-heading" className="text-lg font-semibold text-slate-950">Test Lab</h2>
-        <p className="mt-1 text-sm leading-6 text-slate-600">See how Guard would handle a command without running it.</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-blue">Try a command</p>
+        <h2 id="protection-test-lab-heading" className="mt-1 text-lg font-semibold text-slate-950">Test Lab</h2>
+        <p className="mt-1 text-sm leading-6 text-slate-800">See how Guard would handle a command without running it.</p>
       </div>
     </div>
     <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">

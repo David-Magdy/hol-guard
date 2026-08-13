@@ -98,8 +98,12 @@ async function authenticateAndApply(page: import("@playwright/test").Page, count
 }
 
 async function selectDensity(page: import("@playwright/test").Page, density: "Simple" | "Advanced" | "Developer") {
-  await page.getByRole("radio", { name: density }).click();
-  await expect(page.getByRole("radio", { name: density })).toHaveAttribute("aria-checked", "true");
+  const radio = page.getByRole("radio", { name: density });
+  if (!(await radio.isVisible())) {
+    await page.locator("summary", { hasText: "More detail" }).click();
+  }
+  await radio.click();
+  await expect(radio).toHaveAttribute("aria-checked", "true");
 }
 
 test("installed Protection Center keeps canonical routes and real-daemon inspection", async ({ page }, testInfo) => {

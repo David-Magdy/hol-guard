@@ -164,27 +164,46 @@ export function protectionCloudContinuity(
   };
 }
 
+export type ProtectionAreaView = {
+  id: string;
+  label: string;
+  description: string;
+  searchAlias: string;
+  total: number;
+  allowed: number;
+  blocked: number;
+  inUse: number;
+};
+
 export function protectionCategorySummary(
   catalog: readonly ExtensionCatalogItem[],
   effective: EffectiveExtensionControls,
-) {
-  const groups = new Map<string, { id: string; label: string; description: string; total: number; allowed: number; blocked: number }>();
+  inUseExtensionIds: ReadonlySet<string> = new Set(),
+): ProtectionAreaView[] {
+  const groups = new Map<string, ProtectionAreaView>();
   for (const extension of catalog) {
     const category = protectionCategoryForExtension(extension);
     const group = groups.get(category.id) ?? {
       id: category.id,
       label: category.label,
       description: category.description,
+      searchAlias: category.searchAliases[0] ?? category.label,
       total: 0,
       allowed: 0,
       blocked: 0,
+      inUse: 0,
     };
     group.total += 1;
     if (isExtensionEnabled(effective, extension)) group.allowed += 1;
     else group.blocked += 1;
+    if (inUseExtensionIds.has(extension.extension_id)) group.inUse += 1;
     groups.set(category.id, group);
   }
-  return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label));
+  return [...groups.values()].sort((left, right) =>
+    right.inUse - left.inUse
+    || right.blocked - left.blocked
+    || left.label.localeCompare(right.label)
+  );
 }
 
 export function evaluateProtectionHealth(

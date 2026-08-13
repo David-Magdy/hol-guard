@@ -77,7 +77,7 @@ assert.equal(protectionCloudDestination(unsafe), null);
 const html = renderToStaticMarkup(createElement(CloudValueGate, { runtime: localOnly, eligiblePlan: "solo" }));
 assert.match(html, /data-local-protection-independent="true"/);
 assert.match(html, /data-cloud-value-state="optional"/);
-assert.match(html, /Cloud continuity is optional/);
+assert.match(html, /This device is already protected/);
 assert.match(html, /Available on Solo Cloud/);
 assert.match(html, /href="https:\/\/hol\.org\/guard\/connect"/);
 assert.match(html, /Hide Cloud continuity/);
