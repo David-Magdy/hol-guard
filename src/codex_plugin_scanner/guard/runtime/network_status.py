@@ -29,6 +29,8 @@ def _host_platform_family(platform_name: str | None = None) -> PlatformFamily | 
 
 
 def _default_host_profiles(platform_name: str | None = None) -> tuple[PlatformCapabilityProfile, ...]:
+    if platform_name is None:
+        return default_platform_profiles()
     family = _host_platform_family(platform_name)
     if family is None:
         return ()
@@ -51,7 +53,11 @@ def build_network_status(
     backends: list[dict[str, object]] = []
     active_grade = EnforcementGrade.UNAVAILABLE
     for profile in resolved:
-        selected = supervisor_health is not None and supervisor_health.backend_id == profile.backend_id
+        selected = (
+            host_family is profile.platform
+            and supervisor_health is not None
+            and supervisor_health.backend_id == profile.backend_id
+        )
         installed = selected and supervisor_health.backend_digest is not None
         verified = installed and supervisor_health.effective_grade is not EnforcementGrade.UNAVAILABLE
         active = selected and supervisor_health.permits_enforcement
@@ -106,7 +112,6 @@ def build_network_status(
         status["legacy_domain_policy"] = {
             "action": migrated.action.value,
             "sandbox_required": migrated.sandbox_required,
-            "enforcement_authority": False,
         }
     if supervisor_health is not None:
         status["supervisor"] = project_network_supervisor_health(supervisor_health)
