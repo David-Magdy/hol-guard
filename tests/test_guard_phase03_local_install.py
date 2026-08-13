@@ -353,8 +353,16 @@ def test_update_retries_release_that_appears_during_index_propagation(
     assert sleep_calls == [2.0]
 
 
+@pytest.mark.parametrize(
+    "pipx_error",
+    [
+        "ModuleNotFoundError: No module named 'pipx'",
+        "venv for 'hol-guard' was not found",
+    ],
+)
 def test_update_recovers_from_broken_pipx_launcher_with_trusted_python(
     monkeypatch: pytest.MonkeyPatch,
+    pipx_error: str,
 ) -> None:
     monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
     resulting_versions = iter(("2.2.1", "2.2.3"))
@@ -378,7 +386,7 @@ def test_update_recovers_from_broken_pipx_launcher_with_trusted_python(
                 command,
                 1,
                 "",
-                "ModuleNotFoundError: No module named 'pipx'",
+                pipx_error,
             )
         return subprocess.CompletedProcess(command, 0, "installed hol-guard 2.2.3", "")
 
