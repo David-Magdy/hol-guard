@@ -677,7 +677,8 @@ def test_pip_execution_argv_is_isolated_absolute_and_source_pinned(
         "-S",
         "-c",
         update_subprocess_module._TRUSTED_MODULE_BOOTSTRAP,
-        json.dumps([str(path) for path in context.python_import_paths], separators=(",", ":")), str(context.install_prefix),
+        json.dumps([str(path) for path in context.python_import_paths], separators=(",", ":")),
+        str(context.install_prefix),
         "pip",
         "--isolated",
         "--disable-pip-version-check",
@@ -710,7 +711,8 @@ def test_manager_recovery_pip_uses_authenticated_python_and_pinned_source(
         "-S",
         "-c",
         update_subprocess_module._TRUSTED_MODULE_BOOTSTRAP,
-        json.dumps([str(path) for path in context.python_import_paths], separators=(",", ":")), str(context.install_prefix),
+        json.dumps([str(path) for path in context.python_import_paths], separators=(",", ":")),
+        str(context.install_prefix),
         "pip",
         "--isolated",
         "--disable-pip-version-check",
@@ -801,6 +803,74 @@ def test_pipx_execution_argv_is_absolute_and_source_pinned(
     assert context.environment["PIPX_DEFAULT_BACKEND"] == "pip"
     assert context.environment["PIPX_DEFAULT_PYTHON"] == str(context.python.launch_path)
     assert context.environment["PIPX_FETCH_PYTHON"] == "never"
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="uses an extensionless POSIX shebang executable as the pipx manager fixture",
+)
+def test_pipx_runpip_execution_is_source_pinned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context, manager = _build_manager_context(
+        tmp_path,
+        monkeypatch,
+        "pipx",
+        source_url="https://packages.enterprise.example/simple",
+    )
+
+    command = context.build_installer_command(
+        [
+            "pipx",
+            "runpip",
+            "hol-guard",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "--pre",
+            "hol-guard==3.0.0a116",
+        ]
+    )
+
+    assert command == [
+        str(manager),
+        "runpip",
+        "hol-guard",
+        "install",
+        "--upgrade",
+        "--force-reinstall",
+        "--pre",
+        "hol-guard==3.0.0a116",
+        "--index-url",
+        "https://packages.enterprise.example/simple",
+    ]
+
+
+@pytest.mark.parametrize(
+    "display",
+    [
+        ["pipx", "runpip", "other", "install", "--force-reinstall", "hol-guard==3.0.0"],
+        ["pipx", "runpip", "hol-guard", "uninstall", "hol-guard"],
+        ["pipx", "runpip", "hol-guard", "install", "--index-url", "https://example.test", "hol-guard"],
+        ["pipx", "runpip", "hol-guard", "install", "--force-reinstall"],
+    ],
+)
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="uses an extensionless POSIX shebang executable as the pipx manager fixture",
+)
+def test_pipx_runpip_rejects_untrusted_shapes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    display: list[str],
+) -> None:
+    context, _manager = _build_manager_context(tmp_path, monkeypatch, "pipx")
+
+    with pytest.raises(UpdateSubprocessError) as error:
+        context.build_installer_command(display)
+
+    assert _error_reason(error) == "update_installer_command_invalid"
 
 
 @pytest.mark.parametrize("installer_kind", ["uv", "pipx"])

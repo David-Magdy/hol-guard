@@ -199,16 +199,26 @@ def test_update_defers_when_latest_release_is_still_propagating(monkeypatch: pyt
     monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
     monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
     monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
-    monkeypatch.setattr(
-        update_commands.subprocess,
-        "run",
-        lambda command, **_: subprocess.CompletedProcess(
+    installer_calls: list[list[str]] = []
+    sleep_calls: list[float] = []
+
+    def unavailable_release(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        installer_calls.append(command)
+        return subprocess.CompletedProcess(
             command,
             1,
             "",
+            "ERROR: Could not find a version that satisfies the requirement hol-guard==2.2.3 "
+            "(from versions: 2.0.401, 2.0.403, 2.2.1)\n"
             "ERROR: No matching distribution found for hol-guard==2.2.3",
-        ),
+        )
+
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        unavailable_release,
     )
+    monkeypatch.setattr(update_commands.time, "sleep", sleep_calls.append)
 
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
@@ -216,12 +226,62 @@ def test_update_defers_when_latest_release_is_still_propagating(monkeypatch: pyt
     assert payload["status"] == "deferred"
     assert payload["reason_code"] == "update_release_propagating"
     assert payload["changed"] is False
+    assert payload["propagation_retries"] == 1
     assert "current installation remains active" in str(payload["message"])
     assert "retry_command" not in payload
+    assert len(installer_calls) == 2
+    assert sleep_calls == [2.0]
 
 
+def test_update_retries_release_that_appears_during_index_propagation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
+    resulting_versions = iter(("2.2.1", "2.2.3"))
+    monkeypatch.setattr(
+        update_commands,
+        "_current_version_from_subprocess",
+        lambda *_args, **_kwargs: next(resulting_versions),
+    )
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.3")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    results = iter(
+        (
+            subprocess.CompletedProcess(
+                [],
+                1,
+                "",
+                "ERROR: No matching distribution found for hol-guard==2.2.3",
+            ),
+            subprocess.CompletedProcess([], 0, "installed", ""),
+        )
+    )
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(update_commands.subprocess, "run", lambda *_args, **_kwargs: next(results))
+    monkeypatch.setattr(update_commands.time, "sleep", sleep_calls.append)
+    monkeypatch.setattr(update_commands, "_refresh_package_shims_after_update", lambda **_: (None, None))
+    monkeypatch.setattr(update_commands, "_repair_supported_harnesses", lambda **_: ([], []))
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False)
+
+    assert exit_code == 0, json.dumps(payload, sort_keys=True)
+    assert payload["status"] == "updated"
+    assert payload["resulting_version"] == "2.2.3"
+    assert payload["propagation_retries"] == 1
+    assert sleep_calls == [2.0]
+
+
+@pytest.mark.parametrize(
+    "pipx_error",
+    [
+        "ModuleNotFoundError: No module named 'pipx'",
+        "venv for 'hol-guard' was not found",
+    ],
+)
 def test_update_recovers_from_broken_pipx_launcher_with_trusted_python(
     monkeypatch: pytest.MonkeyPatch,
+    pipx_error: str,
 ) -> None:
     monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.1")
     resulting_versions = iter(("2.2.1", "2.2.3"))
@@ -245,7 +305,7 @@ def test_update_recovers_from_broken_pipx_launcher_with_trusted_python(
                 command,
                 1,
                 "",
-                "ModuleNotFoundError: No module named 'pipx'",
+                pipx_error,
             )
         return subprocess.CompletedProcess(command, 0, "installed hol-guard 2.2.3", "")
 
@@ -257,7 +317,7 @@ def test_update_recovers_from_broken_pipx_launcher_with_trusted_python(
     assert payload["status"] == "updated"
     assert payload["installer_recovery"] == "trusted_python_pip"
     assert commands == [
-        ["pipx", "install", "--force", "hol-guard==2.2.3"],
+        ["pipx", "runpip", "hol-guard", "install", "--upgrade", "--force-reinstall", "hol-guard==2.2.3"],
         [
             "/opt/guard/bin/python",
             "-m",
@@ -318,7 +378,7 @@ def test_update_preserves_requested_wheel_during_broken_pipx_recovery(
         str(wheel),
     ]
     assert commands == [
-        ["pipx", "install", "--force", str(wheel)],
+        ["pipx", "runpip", "hol-guard", "install", "--force-reinstall", str(wheel)],
         [
             "/opt/guard/bin/python",
             "-m",
@@ -493,7 +553,15 @@ def test_update_uses_real_pipx_binary_when_guard_package_shims_are_installed(
     monkeypatch.setattr(update_commands, "_refresh_package_shims_after_update", lambda **_: (None, None))
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert command == ["pipx", "install", "--force", "hol-guard==2.0.830"]
+        assert command == [
+            "pipx",
+            "runpip",
+            "hol-guard",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "hol-guard==2.0.830",
+        ]
         return subprocess.CompletedProcess(command, 0, "installed hol-guard 2.0.830", "")
 
     monkeypatch.setattr(update_commands.subprocess, "run", fake_run)
@@ -502,7 +570,15 @@ def test_update_uses_real_pipx_binary_when_guard_package_shims_are_installed(
 
     assert exit_code == 0
     assert payload["status"] == "updated"
-    assert payload["command"] == ["pipx", "install", "--force", "hol-guard==2.0.830"]
+    assert payload["command"] == [
+        "pipx",
+        "runpip",
+        "hol-guard",
+        "install",
+        "--upgrade",
+        "--force-reinstall",
+        "hol-guard==2.0.830",
+    ]
 
 
 def test_build_guard_install_surface_payload_stays_local(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -641,7 +717,7 @@ def test_update_requested_local_wheel_bypasses_python_incompatible_latest_releas
     payload, exit_code = update_commands.run_guard_update(dry_run=False, wheel=str(wheel))
 
     assert exit_code == 0
-    assert captured_commands == [["pipx", "install", "--force", str(wheel)]]
+    assert captured_commands == [["pipx", "runpip", "hol-guard", "install", "--force-reinstall", str(wheel)]]
     assert payload["status"] == "updated"
     assert payload["upgrade_source"] == "local_wheel"
     assert payload["requested_wheel"] == str(wheel)
@@ -706,7 +782,15 @@ def test_update_repairs_missing_pipx_local_source_install(monkeypatch: pytest.Mo
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
     assert exit_code == 0
-    assert captured_commands[0] == ["pipx", "install", "--force", "hol-guard==2.0.489"]
+    assert captured_commands[0] == [
+        "pipx",
+        "runpip",
+        "hol-guard",
+        "install",
+        "--upgrade",
+        "--force-reinstall",
+        "hol-guard==2.0.489",
+    ]
     assert payload["recovery_source_install"] is True
     assert payload["source_install"]["path_exists"] is False
     assert payload["status"] == "updated"
@@ -734,7 +818,15 @@ def test_update_rejects_nonzero_pipx_result_even_when_version_changed(
     )
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert command == ["pipx", "install", "--force", "hol-guard==2.0.628"]
+        assert command == [
+            "pipx",
+            "runpip",
+            "hol-guard",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "hol-guard==2.0.628",
+        ]
         return subprocess.CompletedProcess(
             command,
             1,
@@ -856,7 +948,7 @@ def test_update_installs_requested_local_wheel_with_pipx(monkeypatch: pytest.Mon
     payload, exit_code = update_commands.run_guard_update(dry_run=False, wheel=str(wheel))
 
     assert exit_code == 0
-    assert captured_commands == [["pipx", "install", "--force", str(wheel)]]
+    assert captured_commands == [["pipx", "runpip", "hol-guard", "install", "--force-reinstall", str(wheel)]]
     assert payload["upgrade_source"] == "local_wheel"
     assert payload["requested_wheel"] == str(wheel)
     assert payload["resulting_version"] == "2.0.345"
@@ -939,7 +1031,7 @@ def test_update_installs_requested_local_wheel_from_editable_install(
     payload, exit_code = update_commands.run_guard_update(dry_run=False, wheel=str(wheel))
 
     assert exit_code == 0
-    assert captured_commands == [["pipx", "install", "--force", str(wheel)]]
+    assert captured_commands == [["pipx", "runpip", "hol-guard", "install", "--force-reinstall", str(wheel)]]
     assert payload["upgrade_source"] == "local_wheel"
 
 
@@ -964,8 +1056,10 @@ def test_update_resolves_requested_wheel_from_directory(monkeypatch: pytest.Monk
     assert payload["requested_wheel"] == str(newer_wheel)
     assert payload["command"] == [
         "pipx",
+        "runpip",
+        "hol-guard",
         "install",
-        "--force",
+        "--force-reinstall",
         str(newer_wheel),
     ]
     assert payload["message"] == "Review the planned local wheel install command before updating."
@@ -1477,7 +1571,9 @@ def test_update_does_not_sync_dashboard_assets_from_caller_checkout(monkeypatch:
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
     assert exit_code == 0
-    assert captured_commands == [["pipx", "install", "--force", "hol-guard==2.0.489"]]
+    assert captured_commands == [
+        ["pipx", "runpip", "hol-guard", "install", "--upgrade", "--force-reinstall", "hol-guard==2.0.489"]
+    ]
     assert payload["status"] == "stale"
     assert payload["changed"] is True
     assert "dashboard_sync" not in payload
@@ -1563,7 +1659,15 @@ def test_update_records_package_shim_refresh_after_successful_update(
     )
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert command == ["pipx", "install", "--force", "hol-guard==2.0.830"]
+        assert command == [
+            "pipx",
+            "runpip",
+            "hol-guard",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "hol-guard==2.0.830",
+        ]
         return subprocess.CompletedProcess(command, 0, "installed hol-guard 2.0.830", "")
 
     monkeypatch.setattr(update_commands.subprocess, "run", fake_run)
@@ -1597,7 +1701,15 @@ def test_update_keeps_success_when_package_shim_refresh_warns(
     )
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert command == ["pipx", "install", "--force", "hol-guard==2.0.830"]
+        assert command == [
+            "pipx",
+            "runpip",
+            "hol-guard",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "hol-guard==2.0.830",
+        ]
         return subprocess.CompletedProcess(command, 0, "installed hol-guard 2.0.830", "")
 
     monkeypatch.setattr(update_commands.subprocess, "run", fake_run)
@@ -1733,7 +1845,9 @@ def test_update_skips_package_shim_refresh_for_stale_no_change(
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
     assert exit_code == 0
-    assert captured_commands == [["pipx", "install", "--force", "hol-guard==2.0.585"]]
+    assert captured_commands == [
+        ["pipx", "runpip", "hol-guard", "install", "--upgrade", "--force-reinstall", "hol-guard==2.0.585"]
+    ]
     assert payload["status"] == "stale"
     assert refresh_attempted is False
 
@@ -1768,7 +1882,9 @@ def test_update_marks_pinned_pipx_install_as_stale_when_version_does_not_change(
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
     assert exit_code == 0
-    assert captured_commands == [["pipx", "install", "--force", "hol-guard==2.0.585"]]
+    assert captured_commands == [
+        ["pipx", "runpip", "hol-guard", "install", "--upgrade", "--force-reinstall", "hol-guard==2.0.585"]
+    ]
     assert payload["status"] == "stale"
     assert payload["changed"] is False
     assert payload["resulting_version"] == "2.0.584"
@@ -1791,7 +1907,15 @@ def test_update_reports_blocked_when_force_install_hits_dependency_conflict(
     )
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert command == ["pipx", "install", "--force", "hol-guard==2.0.749"]
+        assert command == [
+            "pipx",
+            "runpip",
+            "hol-guard",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "hol-guard==2.0.749",
+        ]
         return subprocess.CompletedProcess(
             command,
             1,
@@ -1829,7 +1953,15 @@ def test_update_installs_detected_pipx_release_directly(
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         captured_commands.append(command)
-        assert command == ["pipx", "install", "--force", "hol-guard==2.0.585"]
+        assert command == [
+            "pipx",
+            "runpip",
+            "hol-guard",
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "hol-guard==2.0.585",
+        ]
         return subprocess.CompletedProcess(command, 0, "installed hol-guard 2.0.585", "")
 
     monkeypatch.setattr(update_commands.subprocess, "run", fake_run)
@@ -1837,7 +1969,9 @@ def test_update_installs_detected_pipx_release_directly(
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
     assert exit_code == 0
-    assert captured_commands == [["pipx", "install", "--force", "hol-guard==2.0.585"]]
+    assert captured_commands == [
+        ["pipx", "runpip", "hol-guard", "install", "--upgrade", "--force-reinstall", "hol-guard==2.0.585"]
+    ]
     assert payload["status"] == "updated"
     assert payload["resulting_version"] == "2.0.585"
 
@@ -1876,7 +2010,15 @@ def test_update_switches_git_install_to_pypi_when_release_is_newer(monkeypatch: 
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
     assert exit_code == 0
-    assert captured_commands[0] == ["pipx", "install", "--force", "hol-guard==2.0.489"]
+    assert captured_commands[0] == [
+        "pipx",
+        "runpip",
+        "hol-guard",
+        "install",
+        "--upgrade",
+        "--force-reinstall",
+        "hol-guard==2.0.489",
+    ]
     assert payload["upgrade_source"] == "pypi"
     assert payload["status"] == "updated"
     assert payload["message"] == "Updated HOL Guard from 2.0.345 to 2.0.489."
@@ -1916,7 +2058,15 @@ def test_update_marks_git_install_stale_when_pypi_upgrade_leaves_old_version(mon
     payload, exit_code = update_commands.run_guard_update(dry_run=False)
 
     assert exit_code == 0
-    assert captured_commands[0] == ["pipx", "install", "--force", "hol-guard==2.0.489"]
+    assert captured_commands[0] == [
+        "pipx",
+        "runpip",
+        "hol-guard",
+        "install",
+        "--upgrade",
+        "--force-reinstall",
+        "hol-guard==2.0.489",
+    ]
     assert payload["status"] == "stale"
     assert "behind PyPI 2.0.489" in str(payload["message"])
     assert "hol-guard update" in str(payload["message"])
