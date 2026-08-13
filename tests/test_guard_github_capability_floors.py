@@ -21,6 +21,7 @@ _EXPECTED_FLOORS = {
     "read_local": "allow",
     "read_remote": "allow",
     "propose_remote": "allow",
+    "routine_merge_remote": "allow",
     "routine_review_thread_remote": "allow",
     "write_local": "review",
     "maintain_remote": "review",
@@ -129,6 +130,18 @@ def test_admin_merge_action_class_is_preserved_with_branch_deletion() -> None:
 
 
 @pytest.mark.parametrize(
+    "command",
+    (
+        "gh pr merge 17 --squash",
+        "gh pr merge 4751 --repo example/project --squash",
+        "gh pr merge 4751 -R github.com/example/project --squash",
+    ),
+)
+def test_routine_squash_merge_is_prompt_free(command: str) -> None:
+    assert extract_sensitive_tool_action_request("Bash", {"command": command}) is None
+
+
+@pytest.mark.parametrize(
     ("command", "capabilities"),
     (
         ("gh pr view 1; gh pr lock 1", ("read_remote", "maintain_remote")),
@@ -190,7 +203,6 @@ def test_redirection_retains_the_underlying_remote_capability(
     "command",
     (
         "gh pr review 17 --approve",
-        "gh pr merge 17 --squash",
         "gh release create v1 --notes-file notes.md",
         "gh workflow run ci.yml",
         "gh repo sync --force",

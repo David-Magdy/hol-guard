@@ -93,7 +93,7 @@ UNRELATED_DYNAMIC_COMMAND_CASES = (
 @pytest.mark.parametrize(
     ("args", "expected_capabilities"),
     (
-        (("pr", "merge", "123", "--squash"), ("merge_remote",)),
+        (("pr", "merge", "123", "--squash"), ("routine_merge_remote",)),
         (("pr", "merge", "123", "--admin"), ("admin_merge_remote",)),
         (
             ("pr", "merge", "123", "--admin", "--delete-branch"),
@@ -113,6 +113,22 @@ def test_pr_merge_admin_capability_matches_github_boolean_option_semantics(
     expected_capabilities: tuple[GitHubCommandCapability, ...],
 ) -> None:
     assert classify_github_cli(args).capabilities == expected_capabilities
+
+
+@pytest.mark.parametrize(
+    "args",
+    (
+        ("pr", "merge", "0", "--squash"),
+        ("pr", "merge", "$PR", "--squash"),
+        ("pr", "merge", "123", "--squash", "--auto"),
+        ("pr", "merge", "123", "--squash", "--delete-branch"),
+        ("pr", "merge", "123", "--squash", "--admin"),
+        ("pr", "merge", "123", "--repo", "$REPOSITORY", "--squash"),
+        ("pr", "merge", "123", "--repo", "ghe.example/o/r", "--squash"),
+    ),
+)
+def test_routine_squash_merge_rejects_unbounded_variants(args: tuple[str, ...]) -> None:
+    assert classify_github_cli(args).capabilities != ("routine_merge_remote",)
 
 
 @pytest.mark.parametrize(
