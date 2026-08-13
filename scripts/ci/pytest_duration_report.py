@@ -16,6 +16,7 @@ from scripts.ci.pytest_duration_manifest import DURATION_REPORT_SCHEMA_VERSION
 from scripts.ci.pytest_duration_manifest import load_duration_report as _load_duration_report
 
 OUTPUT_ENV = "GUARD_PYTEST_DURATION_OUTPUT"
+PREBUILT_ENV = "GUARD_PYTEST_DURATION_PREBUILT"
 SCHEMA_VERSION = DURATION_REPORT_SCHEMA_VERSION
 
 
@@ -59,6 +60,8 @@ def pytest_sessionfinish(session: object, exitstatus: int) -> None:
     if not output_value:
         return
     output = Path(output_value)
+    if os.environ.get(PREBUILT_ENV) == "1" and output.is_file():
+        return
     payload = {
         "schema_version": SCHEMA_VERSION,
         "node_durations_seconds": dict(sorted(_DURATIONS.items())),
