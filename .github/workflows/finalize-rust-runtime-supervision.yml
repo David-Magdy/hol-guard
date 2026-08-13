@@ -32,20 +32,28 @@ jobs:
           uv sync --frozen --extra dev --python 3.12
           rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
           rustup default 1.88.0
-      - name: Repair resident request representation
+      - name: Repair resident supervision lint findings
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("rust/crates/guard-runtime/src/main.rs")
-          text = path.read_text(encoding="utf-8")
+          rust_path = Path("rust/crates/guard-runtime/src/main.rs")
+          rust_text = rust_path.read_text(encoding="utf-8")
           old = "    Hook(NativeHookRequestV1),\n"
           new = "    Hook(Box<NativeHookRequestV1>),\n"
-          if text.count(old) != 1:
+          if rust_text.count(old) != 1:
               raise RuntimeError("resident request enum anchor changed")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          rust_path.write_text(rust_text.replace(old, new, 1), encoding="utf-8")
+
+          py_path = Path("src/codex_plugin_scanner/guard/native_runtime_resident.py")
+          py_text = py_path.read_text(encoding="utf-8")
+          old_loop = "        for key, candidate in tuple(_SERVICES.items()):\n"
+          new_loop = "        for key in tuple(_SERVICES):\n"
+          if py_text.count(old_loop) != 1:
+              raise RuntimeError("resident stale-service loop anchor changed")
+          py_path.write_text(py_text.replace(old_loop, new_loop, 1), encoding="utf-8")
           PY
       - name: Validate supervision foundation
         shell: bash
