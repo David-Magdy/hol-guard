@@ -287,6 +287,9 @@ def test_update_defers_when_latest_release_is_still_propagating(monkeypatch: pyt
             command,
             1,
             "",
+            "ERROR: Ignored the following yanked versions: 2.2.6, 3.1.0a1\n"
+            "ERROR: Could not find a version that satisfies the requirement hol-guard==2.2.3 "
+            "(from versions: 1, 1.2.25, 2.0.3, 2.0.401, 2.0.403)\n"
             "ERROR: No matching distribution found for hol-guard==2.2.3",
         ),
     )
@@ -295,6 +298,7 @@ def test_update_defers_when_latest_release_is_still_propagating(monkeypatch: pyt
 
     assert exit_code == 0, json.dumps(payload, sort_keys=True)
     assert payload["status"] == "deferred"
+    assert payload["installer_recovery"] == "trusted_python_pip"
     assert payload["reason_code"] == "update_release_propagating"
     assert payload["changed"] is False
     assert "current installation remains active" in str(payload["message"])

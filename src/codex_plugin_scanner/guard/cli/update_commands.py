@@ -8,6 +8,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import sqlite3
@@ -74,8 +75,6 @@ _PYPI_PROPAGATION_FAILURE_HINTS = (
     "Could not find a version that satisfies the requirement hol-guard==",
 )
 _PYPI_PROPAGATION_EXCLUSION_HINTS = (
-    "401",
-    "403",
     "authentication",
     "certificate verify failed",
     "connection error",
@@ -92,6 +91,10 @@ _PYPI_PROPAGATION_EXCLUSION_HINTS = (
     "timeout",
     "tls",
     "unauthorized",
+)
+_PYPI_PROPAGATION_STATUS_FAILURE = re.compile(
+    r"(?:http(?:s)?\s+)?(?:error|status(?:\s*code)?)\s*[:\s]+(?:401|403)\b",
+    re.IGNORECASE,
 )
 _PYPI_JSON_URL = "https://pypi.org/pypi/hol-guard/json"
 _PYPI_TIMEOUT_SECONDS = 3.0
@@ -669,7 +672,10 @@ def run_guard_update(
             if (
                 installer == "pipx"
                 and not attempted_pipx_recovery
-                and _contains_any(installer_output, _PIPX_LAUNCHER_FAILURE_HINTS)
+                and _pipx_should_retry_with_trusted_pip(
+                    installer_output,
+                    requested_wheel_path=requested_wheel_path,
+                )
             ):
                 pip_display_command = _update_command(
                     "pip",
@@ -1580,7 +1586,19 @@ def _is_pypi_propagation_failure(installer_output: str) -> bool:
     if not _contains_any(installer_output, _PYPI_PROPAGATION_FAILURE_HINTS):
         return False
     lowered = installer_output.lower()
-    return not _contains_any(lowered, _PYPI_PROPAGATION_EXCLUSION_HINTS)
+    if _contains_any(lowered, _PYPI_PROPAGATION_EXCLUSION_HINTS):
+        return False
+    return _PYPI_PROPAGATION_STATUS_FAILURE.search(installer_output) is None
+
+
+def _pipx_should_retry_with_trusted_pip(
+    installer_output: str,
+    *,
+    requested_wheel_path: Path | None,
+) -> bool:
+    if _contains_any(installer_output, _PIPX_LAUNCHER_FAILURE_HINTS):
+        return True
+    return requested_wheel_path is None and _is_pypi_propagation_failure(installer_output)
 
 
 def _dependency_conflict_message(installer_output: str) -> str | None:
