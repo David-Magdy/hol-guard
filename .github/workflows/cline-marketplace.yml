@@ -33,14 +33,18 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Verify current Cline CLI exposes MCP installation
-        env:
-          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+      - name: Install pinned official Cline CLI
         run: |
           set -euo pipefail
-          npm exec --yes --package=cline@3.0.55 -- cline --version
-          npm exec --yes --package=cline@3.0.55 -- cline mcp install --help > /tmp/cline-mcp-help.txt
+          npm install --global --no-audit --no-fund cline@3.0.55
+          cline --version
+
+      - name: Verify current Cline CLI exposes MCP installation
+        run: |
+          set -euo pipefail
+          cline mcp install --help > /tmp/cline-mcp-help.txt
           grep -Fq 'install' /tmp/cline-mcp-help.txt
+          grep -Fq -- '--transport' /tmp/cline-mcp-help.txt
 
       - name: Verify install guide matches official Registry transport
         run: |
