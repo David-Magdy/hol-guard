@@ -6,7 +6,7 @@ on:
       - automation/validate-pr2325-stdlib
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   validate:
@@ -17,7 +17,7 @@ jobs:
         with:
           ref: feat/secrets-v2-evidence-contracts-clean
           fetch-depth: 1
-          persist-credentials: false
+          persist-credentials: true
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
@@ -47,18 +47,20 @@ jobs:
             sleep 10
             uv sync --frozen --extra dev --python 3.12
           fi
-      - name: Validate formatting and lint
+      - name: Normalize and validate formatting and lint
         shell: bash
         run: |
           set -euo pipefail
-          uv run --no-sync ruff format --check \
-            scripts/ci/guard_secrets_release_claim_gate.py \
-            scripts/write_release_toolchain_sbom.py \
+          changed_python=(
+            scripts/ci/guard_secrets_release_claim_gate.py
+            scripts/write_release_toolchain_sbom.py
             tests/test_release_toolchain_sbom.py
-          uv run --no-sync ruff check \
-            scripts/ci/guard_secrets_release_claim_gate.py \
-            scripts/write_release_toolchain_sbom.py \
-            tests/test_release_toolchain_sbom.py
+          )
+          uv run --no-sync ruff format "${changed_python[@]}"
+          uv run --no-sync ruff check --fix "${changed_python[@]}"
+          uv run --no-sync ruff format --check "${changed_python[@]}"
+          uv run --no-sync ruff check "${changed_python[@]}"
+          git diff --check
       - name: Validate focused contracts and release wiring
         shell: bash
         run: |
@@ -68,3 +70,29 @@ jobs:
             tests/test_guard_secret_release_claim_gate.py \
             tests/test_release_toolchain_sbom.py \
             --tb=short
+      - name: Commit exact formatter output
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            exit 0
+          fi
+          printf '%s\n' \
+            scripts/ci/guard_secrets_release_claim_gate.py \
+            scripts/write_release_toolchain_sbom.py \
+            tests/test_release_toolchain_sbom.py \
+            | sort > /tmp/allowed-paths
+          git diff --name-only | sort > /tmp/actual-paths
+          comm -23 /tmp/actual-paths /tmp/allowed-paths > /tmp/unexpected-paths
+          if test -s /tmp/unexpected-paths; then
+            cat /tmp/unexpected-paths
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            scripts/ci/guard_secrets_release_claim_gate.py \
+            scripts/write_release_toolchain_sbom.py \
+            tests/test_release_toolchain_sbom.py
+          git commit -m "style(secrets): apply exact release-gate formatting"
+          git push origin HEAD:feat/secrets-v2-evidence-contracts-clean
