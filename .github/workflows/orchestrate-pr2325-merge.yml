@@ -1,0 +1,78 @@
+name: Orchestrate PR 2325 merge
+
+on:
+  push:
+    branches:
+      - automation/finalize-pr2325-empty-refs-v3
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: hashgraph-online/hol-guard
+      PR_NUMBER: "2325"
+    steps:
+      - name: Wait for exact-head checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 180); do
+            pr_json="$(gh pr view "${PR_NUMBER}" --repo "${REPOSITORY}" --json state,headRefOid,mergeStateStatus,statusCheckRollup)"
+            state="$(jq -r '.state' <<<"${pr_json}")"
+            if [[ "${state}" == "MERGED" ]]; then
+              exit 0
+            fi
+            if [[ "${state}" != "OPEN" ]]; then
+              echo "PR is not open: ${state}" >&2
+              exit 1
+            fi
+            total="$(jq '.statusCheckRollup | length' <<<"${pr_json}")"
+            pending="$(jq '[.statusCheckRollup[] | select((.status // "") != "COMPLETED")] | length' <<<"${pr_json}")"
+            failed="$(jq '[.statusCheckRollup[] | select((.status // "") == "COMPLETED" and ((.conclusion // "") | IN("SUCCESS", "NEUTRAL", "SKIPPED") | not))] | length' <<<"${pr_json}")"
+            if (( failed > 0 )); then
+              jq '.statusCheckRollup[] | select((.status // "") == "COMPLETED" and ((.conclusion // "") | IN("SUCCESS", "NEUTRAL", "SKIPPED") | not))' <<<"${pr_json}" >&2
+              exit 1
+            fi
+            if (( total > 0 && pending == 0 )); then
+              break
+            fi
+            sleep 20
+          done
+
+      - name: Verify no unresolved review threads
+        shell: bash
+        run: |
+          set -euo pipefail
+          threads="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated comments(first:20){nodes{author{login} body path outdated}}}}}}}' \
+            -F owner=hashgraph-online \
+            -F name=hol-guard \
+            -F number=2325)"
+          unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false)] | length' <<<"${threads}")"
+          if (( unresolved > 0 )); then
+            jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false)' <<<"${threads}" >&2
+            exit 1
+          fi
+
+      - name: Squash merge into release/3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(gh pr view "${PR_NUMBER}" --repo "${REPOSITORY}" --json state --jq .state)"
+          if [[ "${state}" == "MERGED" ]]; then
+            exit 0
+          fi
+          gh pr merge "${PR_NUMBER}" \
+            --repo "${REPOSITORY}" \
+            --squash \
+            --delete-branch \
+            --subject "feat(secrets): finalize V2 evidence contracts and release claim gate"
