@@ -22,6 +22,7 @@ from scripts.ci.pytest_shard import discover_test_nodes
 PLAN_SCHEMA_VERSION = 1
 UNKNOWN_NODE_DURATION_SECONDS = 1.0
 MAX_UNSPLIT_FILE_TARGET_MULTIPLIER = 1.15
+MAX_UNSPLIT_FILE_NODE_COUNT = 96
 
 
 class _Arguments(Protocol):
@@ -67,9 +68,11 @@ def _split_file_nodes(
     target_seconds: float,
 ) -> list[tuple[str, int, list[str], float]]:
     total = sum(estimates[node_id] for node_id in node_ids)
-    split_count = 1
+    duration_split_count = 1
     if total > target_seconds * MAX_UNSPLIT_FILE_TARGET_MULTIPLIER:
-        split_count = min(len(node_ids), max(1, math.ceil(total / target_seconds)))
+        duration_split_count = max(1, math.ceil(total / target_seconds))
+    node_split_count = math.ceil(len(node_ids) / MAX_UNSPLIT_FILE_NODE_COUNT)
+    split_count = min(len(node_ids), max(duration_split_count, node_split_count))
 
     chunks: list[list[str]] = [[] for _ in range(split_count)]
     loads = [0.0] * split_count
