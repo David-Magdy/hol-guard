@@ -1,0 +1,37 @@
+name: Temporary Rust P0 latest release bundle B
+
+on:
+  push:
+    branches:
+      - tmp/rust-p0-latest-bundle-20260814b
+    paths:
+      - .github/workflows/tmp-export-rust-p0-latest-bundle-b.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: tmp/rust-p0-latest-bundle-20260814b
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export exact release history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin release/3.0:refs/remotes/origin/release/3.0
+          test "$(git rev-parse refs/remotes/origin/release/3.0)" = "78af8846a284d11901c8ad456a55ac93aa515626"
+          git bundle create "$RUNNER_TEMP/hol-guard-release-3.bundle" refs/remotes/origin/release/3.0
+          git bundle verify "$RUNNER_TEMP/hol-guard-release-3.bundle"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hol-guard-release-3-bundle-b-${{ github.sha }}
+          path: ${{ runner.temp }}/hol-guard-release-3.bundle
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
