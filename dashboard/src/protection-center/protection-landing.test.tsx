@@ -126,11 +126,13 @@ assert.doesNotMatch(decisionMarkup, /Users\/private|workspace\/secret|\.env\/pri
 
 const watching = renderToStaticMarkup(createElement(ProtectionWatchingMap, {
   modules: ranked,
+  effective: PROTECTION_AUTHORITY_FIXTURES.protected,
   onOpen: () => undefined,
 }));
-assert.match(watching, /Watching/);
+assert.match(watching, /Guard is watching the tools your agent uses/);
 assert.match(watching, /Git/);
-assert.match(watching, /guard-extensions-chip/);
+assert.match(watching, /guard-extensions-row/);
+assert.doesNotMatch(watching, /guard-extensions-chip/);
 assert.doesNotMatch(watching, /divide-y/);
 assert.doesNotMatch(watching, /Source control/);
 assert.doesNotMatch(watching, /What HOL Guard protects/);

@@ -78,7 +78,7 @@ def command_extension_values(
             spec.extension_id,
             "1.0.0",
             extension_rules,
-            configurable=not spec.required,
+            configurable="policy_bypass" not in spec.risk_classes,
         )
     return {
         "extension_id": spec.extension_id,

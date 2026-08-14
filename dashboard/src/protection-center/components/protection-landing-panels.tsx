@@ -21,8 +21,6 @@ import {
 } from "../model/protection-landing";
 import {
   EXTENSION_BODY_CLASS,
-  EXTENSION_CHIP_CLASS,
-  EXTENSION_KICKER_CLASS,
   EXTENSION_LIST_CLASS,
   EXTENSION_PANEL_CLASS,
   EXTENSION_PANEL_COMPACT_CLASS,
@@ -52,25 +50,23 @@ export function CloudContinuityIndicator(props: {
 
 export function ProtectionWatchingMap(props: {
   modules: readonly ProtectionModuleRank[];
+  effective: EffectiveExtensionControls;
   onOpen: (extension: ExtensionCatalogItem) => void;
 }) {
   const inUse = props.modules.filter((module) => module.section === "in-use");
-  return <section aria-labelledby="extensions-watching-heading" className="mt-10">
-    <p className={EXTENSION_KICKER_CLASS}>Watching</p>
+  return <section aria-labelledby="extensions-watching-heading" className="mt-8">
     <h2 id="extensions-watching-heading" className={EXTENSION_TITLE_CLASS}>
       Guard is watching the tools your agent uses.
     </h2>
-    {inUse.length ? <ul className="mt-6 flex flex-wrap gap-x-3 gap-y-2">
-      {inUse.map((module) => <li key={module.extension.extension_id}>
-        <button
-          type="button"
-          onClick={() => props.onOpen(module.extension)}
-          className={EXTENSION_CHIP_CLASS}
-        >
-          {module.extension.name}
-        </button>
-      </li>)}
-    </ul> : <p className={`mt-4 max-w-2xl ${EXTENSION_BODY_CLASS}`}>No recent tool activity yet. Recommended extensions are ready below.</p>}
+    {inUse.length ? <div className="mt-4">{inUse.map((module) => <ProtectionModuleRow
+      key={module.extension.extension_id}
+      name={module.extension.name}
+      description={module.extension.description}
+      behavior={isExtensionEnabled(props.effective, module.extension) ? "Guard defaults active" : "Blocked on this device"}
+      required={module.extension.required}
+      managed={managedByOrganization(props.effective, module.extension.extension_id)}
+      onOpen={() => props.onOpen(module.extension)}
+    />)}</div> : <p className={`mt-4 max-w-2xl ${EXTENSION_BODY_CLASS}`}>No recent tool activity yet. Recommended extensions are ready below.</p>}
   </section>;
 }
 
@@ -83,8 +79,8 @@ export function ProtectionModuleExplorer(props: {
 }) {
   const inUse = useMemo(() => props.modules.filter((module) => module.section === "in-use"), [props.modules]);
   const recommended = useMemo(() => props.modules.filter((module) => module.section === "recommended"), [props.modules]);
-  const primary = inUse.length ? inUse : recommended.slice(0, 6);
-  const heading = inUse.length ? "In use" : "Ready";
+  const primary = inUse.length ? recommended.slice(0, 8) : recommended.slice(0, 6);
+  const heading = "Ready";
   const [query, setQuery] = useState("");
   const [browseOpen, setBrowseOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -100,7 +96,7 @@ export function ProtectionModuleExplorer(props: {
 
   return <section aria-labelledby="protection-modules-heading" className="mt-10">
     <h2 id="protection-modules-heading" className="text-xl font-semibold tracking-tight text-brand-dark">{heading}</h2>
-    <p className={`mt-1 ${EXTENSION_BODY_CLASS}`}>Open an extension to see what Guard does, then try a command.</p>
+    <p className={`mt-1 ${EXTENSION_BODY_CLASS}`}>Open a tool to turn a command pattern on or off.</p>
     {primary.length ? <div className={EXTENSION_LIST_CLASS}>{primary.map((module) => <ProtectionModuleRow key={module.extension.extension_id} name={module.extension.name} description={module.extension.description} behavior={isExtensionEnabled(props.effective, module.extension) ? "Guard defaults active" : "Blocked on this device"} required={module.extension.required} managed={managedByOrganization(props.effective, module.extension.extension_id)} onOpen={() => props.onOpen(module.extension)} />)}</div> : <p className={`mt-4 ${EXTENSION_BODY_CLASS}`}>No extensions are registered yet.</p>}
     <details className="mt-5" open={browseOpen} onToggle={(event) => setBrowseOpen(event.currentTarget.open)}>
       <summary className="cursor-pointer text-sm font-semibold text-brand-dark">Browse all extensions</summary>

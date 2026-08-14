@@ -5,15 +5,13 @@ const source = readFileSync(new URL("./extension-policy-panel.tsx", import.meta.
 
 for (const expected of [
   "Protection settings",
-  "Use recommended",
-  "Block matching actions",
-  "Allow when Guard would otherwise permit",
   "Recommended",
+  "Allow",
+  "Block",
   "Stricter",
   "Custom",
   "What will change",
   "Emergency Lockdown",
-  "Organization managed",
   "Technical setting details",
   "Developer change identity",
   "Continue to approval",

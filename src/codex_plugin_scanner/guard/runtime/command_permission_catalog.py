@@ -22,15 +22,6 @@ _MODE_FLOOR: Final[dict[CommandRuleMode, GuardAction]] = {
     "enforce": "block",
     "required": "review",
 }
-_RISK_RANK: Final[dict[PermissionRiskTier, int]] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-_ACTION_RANK: Final[dict[GuardAction, int]] = {
-    "allow": 0,
-    "warn": 1,
-    "review": 2,
-    "require-reapproval": 3,
-    "sandbox-required": 4,
-    "block": 5,
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,11 +101,10 @@ class CommandPermissionCatalog:
                 raise ValueError(f"duplicate permission ID: {permission.permission_id}")
             by_id[permission.permission_id] = permission
             _index_unique(by_rule_id, permission.rule_ids, permission, "rule", normalize=True)
-            _index_unique(
+            _index_first(
                 by_action_class,
                 permission.action_classes,
                 permission,
-                "action class",
                 normalize=True,
             )
             _index_unique(
@@ -155,6 +145,12 @@ class CommandPermissionCatalog:
         return self._by_rule_id.get(rule_id.strip().lower())
 
     def for_action_class(self, action_class: str) -> CommandPermissionSpec | None:
+        """Return one permission for a shared action class.
+
+        Compatibility lookups remain action-class keyed. Independent floors use
+        ``for_rule_id`` because several rules may share one action class.
+        """
+
         return self._by_action_class.get(action_class.strip().lower())
 
     def for_typed_capability(self, capability: str) -> CommandPermissionSpec | None:
@@ -201,70 +197,20 @@ def permissions_for_rules(
     *,
     configurable: bool,
 ) -> tuple[CommandPermissionSpec, ...]:
-    remaining = set(rules)
-    groups: list[tuple[CommandSafetyRule, ...]] = []
-    while remaining:
-        group = {min(remaining, key=lambda rule: rule.rule_id)}
-        remaining -= group
-        action_classes = {action for rule in group for action in rule.action_classes}
-        changed = True
-        while changed:
-            connected = {rule for rule in remaining if action_classes.intersection(rule.action_classes)}
-            changed = bool(connected)
-            group.update(connected)
-            remaining -= connected
-            action_classes.update(action for rule in connected for action in rule.action_classes)
-        groups.append(tuple(sorted(group, key=lambda rule: rule.rule_id)))
-
-    permissions: list[CommandPermissionSpec] = []
-    for group in groups:
-        if len(group) == 1:
-            permissions.append(
+    return tuple(
+        sorted(
+            (
                 permission_for_rule(
                     extension_id,
                     implementation_version,
-                    group[0],
+                    rule,
                     configurable=configurable,
                 )
-            )
-            continue
-        first = group[0]
-        suffix = first.rule_id.removeprefix(f"{extension_id}.")
-        risk_tier: PermissionRiskTier = max(
-            (rule.severity for rule in group),
-            key=_RISK_RANK.__getitem__,
+                for rule in rules
+            ),
+            key=lambda permission: permission.permission_id,
         )
-        baseline_floor: GuardAction = max(
-            (_MODE_FLOOR[rule.default_mode] for rule in group),
-            key=_ACTION_RANK.__getitem__,
-        )
-        group_action_classes = tuple(sorted({action_class for rule in group for action_class in rule.action_classes}))
-        permissions.append(
-            CommandPermissionSpec(
-                permission_id=f"{extension_id}.permission.{suffix}",
-                schema_version=COMMAND_PERMISSION_SCHEMA_VERSION,
-                extension_id=extension_id,
-                implementation_version=implementation_version,
-                label=first.title,
-                description=" ".join(dict.fromkeys(rule.description for rule in group)),
-                risk_tier=risk_tier,
-                baseline_floor=baseline_floor,
-                default_enabled=True,
-                configurable=configurable,
-                fixed_reason=None if configurable else "This safety permission is immutable.",
-                typed_capabilities=(),
-                action_classes=group_action_classes,
-                rule_ids=tuple(rule.rule_id for rule in group),
-                dependencies=(),
-                conflicts=(),
-                implied_permissions=(),
-                introduced_version="2.2.0",
-                deprecated=False,
-                replacement_permission_id=None,
-                safer_guidance=tuple(dict.fromkeys(guidance for rule in group for guidance in rule.safer_alternatives)),
-            )
-        )
-    return tuple(sorted(permissions, key=lambda permission: permission.permission_id))
+    )
 
 
 def permissions_for_action_classes(
@@ -379,6 +325,18 @@ def _index_unique(
             message += f", {permission.permission_id}"
             raise ValueError(message)
         index[key] = permission
+
+
+def _index_first(
+    index: dict[str, CommandPermissionSpec],
+    values: tuple[str, ...],
+    permission: CommandPermissionSpec,
+    *,
+    normalize: bool = False,
+) -> None:
+    for value in values:
+        key = value.strip().lower() if normalize else value
+        index.setdefault(key, permission)
 
 
 def _validate_references(

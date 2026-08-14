@@ -65,7 +65,7 @@ export function ProtectionLandingExperience(props: {
   }
 
   return <>
-    <ProtectionWatchingMap modules={modules} onOpen={props.onOpen} />
+    <ProtectionWatchingMap modules={modules} effective={props.effective} onOpen={props.onOpen} />
     <ProtectionModuleExplorer
       modules={modules}
       effective={props.effective}

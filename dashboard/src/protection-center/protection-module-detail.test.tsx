@@ -15,15 +15,23 @@ const git = protectionModuleFixture({
   extension_id: "command.git",
   name: "Git",
   description: "Protects repository history and destructive source-control actions.",
+  required: true,
   ecosystem_ids: ["git"],
   executables: ["git"],
   safer_alternatives: ["Create a checkpoint before rewriting history."],
-  permission_count: 1,
+  permission_count: 2,
   permissions: [{
     ...FIXED_PROTECTION_PERMISSION,
-    permission_id: "command.git.permission.history-rewrite",
-    label: "Repository history changes",
-    description: "Controls destructive repository history changes.",
+    permission_id: "command.git.permission.force-push",
+    label: "Forced Git push",
+    description: "Identifies remote history replacement through a forced push.",
+    configurable: true,
+    fixed_reason: null,
+  }, {
+    ...FIXED_PROTECTION_PERMISSION,
+    permission_id: "command.git.permission.hard-reset",
+    label: "Destructive Git reset",
+    description: "Identifies hard resets that discard tracked working-tree and index changes.",
     configurable: true,
     fixed_reason: null,
   }],
@@ -37,13 +45,16 @@ const simple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   onRefresh: () => undefined,
 }));
 assert.match(simple, />Extension</);
-assert.match(simple, /What this protects/);
-assert.match(simple, /Common examples/);
 assert.match(simple, /Protection settings/);
-assert.match(simple, /Why this setting\?/);
-assert.match(simple, /Safer alternatives/);
-assert.match(simple, /Activity/);
-assert.match(simple, /Change settings/);
+assert.match(simple, /Forced Git push/);
+assert.match(simple, /git push --force/);
+assert.match(simple, /Recommended/);
+assert.match(simple, />Allow</);
+assert.match(simple, />Block</);
+assert.match(simple, /cannot be turned off/);
+assert.match(simple, /Test Lab/);
+assert.doesNotMatch(simple, /What this protects/);
+assert.doesNotMatch(simple, /Change settings/);
 assert.doesNotMatch(simple, /Catalog digest|Extension ID|Matcher|permission_id|rule_id/);
 
 const requiredExtension = { ...FIXED_PROTECTION_MODULE, required: true };
@@ -54,7 +65,7 @@ const required = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   onBack: () => undefined,
   onRefresh: () => undefined,
 }));
-assert.match(required, /Required protection|cannot be turned off/);
+assert.match(required, /cannot be turned off/);
 assert.doesNotMatch(required, />Change settings</);
 
 const fixedSettingSimple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
@@ -64,7 +75,8 @@ const fixedSettingSimple = renderToStaticMarkup(createElement(ProtectionModuleDe
   onBack: () => undefined,
   onRefresh: () => undefined,
 }));
-assert.match(fixedSettingSimple, /0 changeable settings/);
+assert.match(fixedSettingSimple, /Why this cannot be changed/);
+assert.doesNotMatch(fixedSettingSimple, /0 changeable settings/);
 
 const managed = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   extension: git,
@@ -73,8 +85,8 @@ const managed = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   onBack: () => undefined,
   onRefresh: () => undefined,
 }));
-assert.match(managed, /Managed by your organization/);
-assert.match(managed, /Change settings/);
+assert.match(managed, /Your organization controls part of this protection/);
+assert.match(managed, /Recommended/);
 
 const lockdown = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   extension: git,

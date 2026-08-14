@@ -141,6 +141,25 @@ def test_catalog_exposes_deterministic_full_extension_permission_and_rule_contra
     assert global_rule_owners
     assert set(global_rule_owners.values()) == {1}, "every canonical rule must have exactly one permission owner"
 
+    git = next(item for item in extensions if item["extension_id"] == "command.git")
+    git_permission_ids = {permission["permission_id"] for permission in git["permissions"]}
+    assert git["required"] is True
+    assert git_permission_ids == {
+        "command.git.permission.force-clean",
+        "command.git.permission.force-push",
+        "command.git.permission.hard-reset",
+        "command.git.permission.local-branch-delete",
+        "command.git.permission.remote-branch-delete",
+    }
+    assert all(permission["configurable"] is True for permission in git["permissions"])
+    assert all(len(permission["rule_ids"]) == 1 for permission in git["permissions"])
+
+    github = next(item for item in extensions if item["extension_id"] == "command.github")
+    assert "command.github.permission.merge-remote" in {permission["permission_id"] for permission in github["permissions"]}
+
+    self_protection = next(item for item in extensions if item["extension_id"] == "command.guard-self-protection")
+    assert all(permission["configurable"] is False for permission in self_protection["permissions"])
+
 
 def test_effective_and_preview_baseline_shapes_are_stable(tmp_path: Path) -> None:
     baseline = json.loads(_FIXTURE.read_text(encoding="utf-8"))
