@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 env:
@@ -105,13 +106,43 @@ jobs:
           enable-cache: true
           cache-dependency-glob: ${{ env.CI_UV_CACHE_DEPENDENCY_GLOB }}
       - run: uv sync --frozen --extra dev --python 3.12
+      - name: Restore latest trusted duration telemetry
+        id: latest-duration-telemetry
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          read -r artifact_id run_id < <(
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=pytest-duration-manifest-candidate&per_page=100" \
+              --jq '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "release/3.0")) | sort_by(.created_at) | reverse | .[0] | [.id, .workflow_run.id] | @tsv'
+          )
+          test -n "$artifact_id"
+          read -r event conclusion branch workflow_path < <(
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" \
+              --jq '[.event, .conclusion, .head_branch, .path] | @tsv'
+          )
+          test "$event" = "push"
+          test "$conclusion" = "success"
+          test "$branch" = "release/3.0"
+          test "$workflow_path" = ".github/workflows/ci.yml"
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" > /tmp/duration-manifest.zip
+          unzip -p /tmp/duration-manifest.zip pytest-duration-manifest-candidate.json.gz \
+            > /tmp/pytest-duration-manifest.json.gz
+          gzip -t /tmp/pytest-duration-manifest.json.gz
+          mv /tmp/pytest-duration-manifest.json.gz pytest-duration-manifest.latest.json.gz
       - name: Collect once and build 64 affinity-aware pytest shards
-        run: >-
-          uv run --no-sync python scripts/ci/build_pytest_shard_plan.py
-          --shard-count 64
-          --duration-manifest ci/pytest-duration-manifest.json.gz
-          --max-manifest-age-days 28
-          --output-directory pytest-shards
+        shell: bash
+        run: |
+          manifest=ci/pytest-duration-manifest.json.gz
+          if test -s pytest-duration-manifest.latest.json.gz; then
+            manifest=pytest-duration-manifest.latest.json.gz
+          fi
+          uv run --no-sync python scripts/ci/build_pytest_shard_plan.py \
+            --shard-count 64 \
+            --duration-manifest "$manifest" \
+            --max-manifest-age-days 28 \
+            --output-directory pytest-shards
       - name: Publish pytest shard plan
         run: cat pytest-shards/plan.json
       - name: Upload pytest shard plan
