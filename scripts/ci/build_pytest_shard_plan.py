@@ -22,7 +22,7 @@ from scripts.ci.pytest_shard import discover_test_nodes
 PLAN_SCHEMA_VERSION = 1
 UNKNOWN_NODE_DURATION_SECONDS = 1.0
 MAX_UNSPLIT_FILE_TARGET_MULTIPLIER = 1.15
-MAX_UNSPLIT_FILE_NODE_COUNT = 96
+MAX_UNSPLIT_FILE_NODE_COUNT = 48
 
 
 class _Arguments(Protocol):
