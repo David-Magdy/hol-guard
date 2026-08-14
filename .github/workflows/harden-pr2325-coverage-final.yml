@@ -1,0 +1,223 @@
+name: Harden PR 2325 coverage construction
+
+on:
+  push:
+    branches:
+      - automation/harden-pr2325-coverage-final-0814
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/secrets-v2-evidence-contracts-clean
+          fetch-depth: 1
+          persist-credentials: true
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Align direct and deserialized coverage validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "42db5d4aaa60fb55f277162c6d45e49408bd17c4"
+          python - <<'PY'
+          from pathlib import Path
+
+          contracts_path = Path("src/codex_plugin_scanner/guard/secrets/contracts_v2.py")
+          lines = contracts_path.read_text(encoding="utf-8").splitlines()
+          class_start = lines.index("class SecretScanCoverageV2:")
+          class_end = next(
+              index
+              for index in range(class_start + 1, len(lines))
+              if lines[index].startswith("class ") or lines[index].startswith("@dataclass")
+          )
+          post_init = lines.index("    def __post_init__(self) -> None:", class_start, class_end)
+          first_existing = post_init + 1
+          if lines[first_existing] != "        if not self.source_set:":
+              raise SystemExit("coverage validation anchor changed unexpectedly")
+          validation = [
+              "        tuple_fields = {",
+              '            "source_set": self.source_set,',
+              '            "requested_refs": self.requested_refs,',
+              '            "completed_refs": self.completed_refs,',
+              '            "skipped_codes": self.skipped_codes,',
+              '            "truncation_codes": self.truncation_codes,',
+              "        }",
+              "        for field_name, values in tuple_fields.items():",
+              "            if not isinstance(values, tuple) or any(not isinstance(item, str) for item in values):",
+              '                raise SecretContractError(f"{field_name}: expected a tuple of strings")',
+              "            if len(set(values)) != len(values):",
+              '                raise SecretContractError(f"{field_name}: values must be unique")',
+              "            for item in values:",
+              "                if not item.strip():",
+              '                    raise SecretContractError(f"{field_name}: values must not be blank")',
+              "                _assert_safe_public_text(item, field_name=field_name)",
+              "        for field_name, value in {",
+              '            "files_scanned": self.files_scanned,',
+              '            "bytes_scanned": self.bytes_scanned,',
+              '            "commits_visited": self.commits_visited,',
+              '            "blobs_scanned": self.blobs_scanned,',
+              '            "cache_hits": self.cache_hits,',
+              '            "cache_misses": self.cache_misses,',
+              "        }.items():",
+              "            _non_negative_int(value, field_name=field_name)",
+              '        _required_bool(self.partial, field_name="partial")',
+              '        _required_bool(self.degraded, field_name="degraded")',
+              '        detector_version = _required_text(self.detector_version, field_name="detector_version")',
+              "        if detector_version != self.detector_version:",
+              '            raise SecretContractError("detector_version: surrounding whitespace is prohibited")',
+              '        model_version = _optional_text(self.model_version, field_name="model_version")',
+              "        if model_version != self.model_version:",
+              '            raise SecretContractError("model_version: surrounding whitespace is prohibited")',
+              '        error_code = _optional_text(self.error_code, field_name="error_code")',
+              "        if error_code != self.error_code:",
+              '            raise SecretContractError("error_code: surrounding whitespace is prohibited")',
+          ]
+          lines[first_existing:first_existing] = validation
+          contracts_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+          tests_path = Path("tests/test_guard_secret_contracts_v2.py")
+          lines = tests_path.read_text(encoding="utf-8").splitlines()
+          anchor = lines.index("def test_direct_coverage_rejects_empty_source_set() -> None:")
+          additions = [
+              "@pytest.mark.parametrize(",
+              '    "field_name",',
+              "    [",
+              '        "files_scanned",',
+              '        "bytes_scanned",',
+              '        "commits_visited",',
+              '        "blobs_scanned",',
+              '        "cache_hits",',
+              '        "cache_misses",',
+              "    ],",
+              ")",
+              "def test_direct_coverage_rejects_negative_counters(field_name: str) -> None:",
+              '    with pytest.raises(SecretContractError, match="non-negative integer"):',
+              "        _direct_coverage(**{field_name: -1})",
+              "",
+              "",
+              "@pytest.mark.parametrize(",
+              '    "field_name",',
+              '    ["files_scanned", "bytes_scanned", "commits_visited", "blobs_scanned", "cache_hits", "cache_misses"],',
+              ")",
+              "def test_direct_coverage_rejects_boolean_counters(field_name: str) -> None:",
+              '    with pytest.raises(SecretContractError, match="non-negative integer"):',
+              "        _direct_coverage(**{field_name: True})",
+              "",
+              "",
+              '@pytest.mark.parametrize("field_name", ["partial", "degraded"])',
+              "def test_direct_coverage_rejects_non_boolean_flags(field_name: str) -> None:",
+              '    with pytest.raises(SecretContractError, match="expected a boolean"):',
+              "        _direct_coverage(**{field_name: 1})",
+              "",
+              "",
+              '@pytest.mark.parametrize("field_name", ["source_set", "requested_refs", "completed_refs", "skipped_codes", "truncation_codes"])',
+              "def test_direct_coverage_rejects_non_tuple_string_fields(field_name: str) -> None:",
+              '    with pytest.raises(SecretContractError, match="tuple of strings"):',
+              "        _direct_coverage(**{field_name: [\"value\"]})",
+              "",
+              "",
+              '@pytest.mark.parametrize("field_name", ["source_set", "requested_refs", "completed_refs"])',
+              "def test_coverage_rejects_duplicate_identity_fields(field_name: str) -> None:",
+              '    value = ["duplicate", "duplicate"]',
+              '    with pytest.raises(SecretContractError, match="values must be unique"):',
+              "        _coverage(**{field_name: value})",
+              "",
+              "",
+              '@pytest.mark.parametrize("field_name", ["source_set", "requested_refs", "completed_refs"])',
+              "def test_coverage_rejects_blank_identity_fields(field_name: str) -> None:",
+              '    with pytest.raises(SecretContractError, match="must not be blank"):',
+              "        _coverage(**{field_name: [\" \"]})",
+              "",
+              "",
+              "def test_direct_coverage_rejects_blank_detector_version() -> None:",
+              '    with pytest.raises(SecretContractError, match="invalid length"):',
+              '        _direct_coverage(detector_version=" ")',
+              "",
+              "",
+          ]
+          lines[anchor:anchor] = additions
+          tests_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Install locked development dependencies
+        shell: bash
+        env:
+          UV_HTTP_TIMEOUT: "120"
+          UV_HTTP_RETRIES: "5"
+        run: |
+          set -euo pipefail
+          if ! uv sync --frozen --extra dev --python 3.12; then
+            sleep 10
+            uv sync --frozen --extra dev --python 3.12
+          fi
+
+      - name: Format, lint, type-check, and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=(
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+            tests/test_guard_secret_contracts_v2.py
+          )
+          uv run --no-sync ruff format "${changed[@]}"
+          uv run --no-sync ruff check "${changed[@]}"
+          uv run --no-sync ruff format --check "${changed[@]}"
+          uv run --no-sync basedpyright --level error src/codex_plugin_scanner/guard/secrets/contracts_v2.py tests/test_guard_secret_contracts_v2.py
+          uv run --no-sync pytest \
+            tests/test_guard_secret_contracts_v2.py \
+            tests/test_guard_secret_release_claim_gate.py \
+            tests/test_release_toolchain_sbom.py \
+            --tb=short
+
+      - name: Reconcile exact test inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/ci/test_inventory.py --output /tmp/test-inventory.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory = json.loads(Path("/tmp/test-inventory.json").read_text(encoding="utf-8"))
+          baseline = {
+              "maximum_collected_cases": inventory["inventory"]["collected_cases"],
+              "maximum_test_source_lines": inventory["test_source_lines"],
+              "schema_version": 1,
+          }
+          Path("ci/test-suite-ratchet-baseline.json").write_text(
+              json.dumps(baseline, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(baseline, sort_keys=True))
+          PY
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory /tmp/test-inventory.json
+          git diff --check
+
+      - name: Commit validated hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            ci/test-suite-ratchet-baseline.json \
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py \
+            tests/test_guard_secret_contracts_v2.py
+          git commit -m "fix(secrets): align direct coverage validation"
+          git push origin HEAD:feat/secrets-v2-evidence-contracts-clean
