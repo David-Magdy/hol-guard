@@ -71,7 +71,6 @@ async function openPolicy(page: import("@playwright/test").Page) {
   await page.goto(`/extensions/${extensionId}?tab=policy`);
   await expectSecretSafeUrl(page);
   await expect(page.getByTestId("protection-module-detail")).toBeVisible();
-  await page.getByRole("button", { name: "Change settings" }).click();
   await expect(page.locator("#extension-policy-heading")).toHaveText("Protection settings");
   return page.locator(`[data-permission-id="${permissionId}"]`);
 }

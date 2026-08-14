@@ -101,13 +101,11 @@ export function ProtectionModuleRow(props: {
   onOpen: () => void;
 }) {
   return <button type="button" onClick={props.onOpen} className={`${EXTENSION_ROW_CLASS} motion-reduce:transition-none`}>
-    <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[rgba(85,153,254,0.1)] text-brand-blue" aria-hidden="true"><HiMiniShieldCheck className="size-5" /></span>
     <span className="min-w-0 flex-1">
-      <span className="flex flex-wrap items-center gap-2"><strong className="text-sm text-brand-dark">{props.name}</strong>{props.required ? <span className="rounded-full bg-[rgba(85,153,254,0.1)] px-2 py-0.5 text-[10px] font-semibold text-brand-blue">Required</span> : null}{props.managed ? <span className="rounded-full bg-[rgba(181,108,255,0.12)] px-2 py-0.5 text-[10px] font-semibold text-brand-purple">Managed</span> : null}</span>
-      <span className="mt-1 block line-clamp-2 text-sm leading-5 text-brand-dark/70">{props.description}</span>
+      <span className="flex flex-wrap items-center gap-2"><strong className="text-sm text-brand-dark">{props.name}</strong>{props.required ? <span className="text-[11px] font-semibold text-brand-dark/55">Required</span> : null}{props.managed ? <span className="text-[11px] font-semibold text-brand-dark/55">Managed</span> : null}</span>
+      <span className="mt-0.5 block truncate text-sm text-brand-dark/70">{props.behavior}</span>
     </span>
-    <span className="hidden shrink-0 text-xs font-semibold text-brand-dark/70 sm:inline">{props.behavior}</span>
-    <HiMiniChevronRight className="size-5 shrink-0 text-brand-dark/40" aria-hidden="true" />
+    <HiMiniChevronRight className="size-5 shrink-0 text-brand-dark/35" aria-hidden="true" />
   </button>;
 }
 
