@@ -55,9 +55,10 @@ jobs:
           assert package["identifier"] == "hol-guard"
           assert package["transport"] == {"type": "stdio"}
           args = [item["value"] for item in package["packageArguments"]]
-          assert args == ["guard", "mcp", "serve", "--stdio"]
+          assert args == ["mcp", "serve", "--stdio"]
           expected = "cline mcp install hol-guard -- uvx --from hol-guard hol-guard " + " ".join(args)
           assert expected in guide
           assert '"command": "uvx"' in guide
           assert '"--stdio"' in guide
+          assert "hol-guard guard mcp serve" not in guide
           PY
