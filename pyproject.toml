@@ -110,6 +110,8 @@ plugin-ecosystem-scanner = "codex_plugin_scanner.cli:main"
 
 [project.urls]
 Homepage = "https://hol.org/guard"
+Security = "https://hol.org/guard/security"
+"Security Policy" = "https://github.com/hashgraph-online/hol-guard/blob/main/SECURITY.md"
 Documentation = "https://github.com/hashgraph-online/hol-guard/tree/main/docs/guard"
 Repository = "https://github.com/hashgraph-online/hol-guard"
 Issues = "https://github.com/hashgraph-online/hol-guard/issues"
@@ -151,7 +153,7 @@ markers = [
   "daemon_bundle_refresh: enables the daemon supply-chain bundle refresh worker for focused tests",
   "daemon_headless_queue: enables request-triggered daemon cloud sync for focused tests",
   "daemon_headless_refresh: enables the daemon headless cloud sync worker for focused tests",
-  "daemon_service_workers: enables command queue and live request sync workers for focused tests",
+  "daemon_service_workers: enables command queue and live request sync for focused tests",
   "installed: requires verification through an installed package artifact",
   "integration: verifies multiple Guard subsystems together",
   "parser: verifies parsing or normalization security semantics",
