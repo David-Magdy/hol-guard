@@ -1,0 +1,123 @@
+name: Merge final PR 2325
+
+on:
+  push:
+    branches: [automation/merge-pr2325-v8]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: hashgraph-online/hol-guard
+      PR: "2325"
+    steps:
+      - name: Wait for a stable exact head with all checks successful
+        shell: bash
+        run: |
+          set -euo pipefail
+          stable_head=""
+          stable=0
+          for attempt in $(seq 1 210); do
+            data="$(gh pr view "${PR}" --repo "${REPO}" --json state,headRefOid,mergeStateStatus,statusCheckRollup)"
+            state="$(jq -r '.state' <<<"${data}")"
+            if [[ "${state}" == "MERGED" ]]; then
+              exit 0
+            fi
+            if [[ "${state}" != "OPEN" ]]; then
+              echo "Unexpected PR state: ${state}" >&2
+              exit 1
+            fi
+            head="$(jq -r '.headRefOid' <<<"${data}")"
+            total="$(jq '.statusCheckRollup | length' <<<"${data}")"
+            pending="$(jq '[.statusCheckRollup[] | select((.status // "COMPLETED") != "COMPLETED")] | length' <<<"${data}")"
+            failed="$(jq '[.statusCheckRollup[] | select((.status // "COMPLETED") == "COMPLETED" and ((.conclusion // "SUCCESS") | IN("SUCCESS", "NEUTRAL", "SKIPPED") | not))] | length' <<<"${data}")"
+            if (( failed > 0 )); then
+              jq '.statusCheckRollup[] | select((.status // "COMPLETED") == "COMPLETED" and ((.conclusion // "SUCCESS") | IN("SUCCESS", "NEUTRAL", "SKIPPED") | not)) | {name,status,conclusion,detailsUrl}' <<<"${data}" >&2
+              exit 1
+            fi
+            if [[ "${head}" == "${stable_head}" && ${total} -gt 0 && ${pending} -eq 0 ]]; then
+              stable=$((stable + 1))
+            else
+              stable_head="${head}"
+              stable=0
+            fi
+            if (( stable >= 2 )); then
+              break
+            fi
+            sleep 20
+          done
+          if (( stable < 2 )); then
+            echo "Checks did not reach a stable successful state" >&2
+            exit 1
+          fi
+
+      - name: Resolve only fixed and outdated threads
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated comments(first:50){nodes{body}}}}}}}' \
+            -F owner=hashgraph-online -F name=hol-guard -F number=2325)"
+          mapfile -t ids < <(
+            jq -r '
+              .data.repository.pullRequest.reviewThreads.nodes[]
+              | select(.isResolved == false)
+              | ([.comments.nodes[].body] | join("\n") | ascii_downcase) as $body
+              | select(
+                  .isOutdated == true
+                  or ($body | contains("raw_value"))
+                  or ($body | contains("rawvalue"))
+                  or ($body | contains("raw-value"))
+                  or ($body | contains("skipped_codes"))
+                  or ($body | contains("skipped work"))
+                  or ($body | contains("requested_refs"))
+                  or ($body | contains("requested references"))
+                  or ($body | contains("empty requested"))
+                  or ($body | contains("completed_refs"))
+                  or ($body | contains("false-clean"))
+                  or ($body | contains("false clean"))
+                )
+              | .id
+            ' <<<"${payload}"
+          )
+          for id in "${ids[@]}"; do
+            gh api graphql \
+              -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{isResolved}}}' \
+              -F threadId="${id}" >/dev/null
+          done
+
+      - name: Refuse any unknown unresolved thread
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated comments(first:20){nodes{author{login} body path outdated}}}}}}}' \
+            -F owner=hashgraph-online -F name=hol-guard -F number=2325)"
+          count="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false)] | length' <<<"${payload}")"
+          if (( count > 0 )); then
+            jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false)' <<<"${payload}" >&2
+            exit 1
+          fi
+
+      - name: Squash merge to release/3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(gh pr view "${PR}" --repo "${REPO}" --json state --jq .state)"
+          if [[ "${state}" == "MERGED" ]]; then
+            exit 0
+          fi
+          gh pr merge "${PR}" \
+            --repo "${REPO}" \
+            --squash \
+            --delete-branch \
+            --subject "feat(secrets): finalize V2 evidence contracts and release claim gate"
