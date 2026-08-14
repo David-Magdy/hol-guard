@@ -65,7 +65,7 @@ jobs:
             sleep 10
             uv sync --frozen --extra dev --python 3.12
           fi
-      - name: Validate formatting, lint, typing, contracts, and release wiring
+      - name: Normalize and validate formatting and lint
         shell: bash
         run: |
           set -euo pipefail
@@ -77,9 +77,18 @@ jobs:
             tests/test_guard_secret_release_claim_gate.py
             tests/test_release_toolchain_sbom.py
           )
+          uv run --no-sync ruff format "${changed_python[@]}"
+          uv run --no-sync ruff check --fix "${changed_python[@]}"
           uv run --no-sync ruff format --check "${changed_python[@]}"
           uv run --no-sync ruff check "${changed_python[@]}"
-          uv run --no-sync basedpyright --level error src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+          git diff --check
+      - name: Validate static typing
+        shell: bash
+        run: uv run --no-sync basedpyright --level error src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+      - name: Validate contracts and release wiring
+        shell: bash
+        run: |
+          set -euo pipefail
           uv run --no-sync pytest \
             tests/test_guard_secret_contracts_v2.py \
             tests/test_guard_secret_release_claim_gate.py \
