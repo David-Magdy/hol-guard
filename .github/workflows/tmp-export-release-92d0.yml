@@ -1,0 +1,33 @@
+name: Temporary export release source 92d0
+
+on:
+  push:
+    branches:
+      - tmp/rust-p0-export-release-92d0
+    paths:
+      - .github/workflows/tmp-export-release-92d0.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 92d0767cbea98e9fbce14f8eaacc3d32131b9864
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Archive exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git --exclude=.venv --exclude=.uv-cache -czf "$RUNNER_TEMP/source.tgz" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hol-guard-release-source-92d0767c
+          path: ${{ runner.temp }}/source.tgz
+          if-no-files-found: error
+          retention-days: 1
