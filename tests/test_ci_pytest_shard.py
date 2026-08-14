@@ -32,13 +32,13 @@ def test_ci_workflow_cancels_stale_runs_and_uses_precomputed_affinity_shards() -
     assert "CI_UV_CACHE_DEPENDENCY_GLOB" in workflow
     assert "actions: read" in workflow
     assert "**/pyproject.toml" not in workflow
-    assert "--shard-count 64" in plan_job
+    assert "--shard-count 96" in plan_job
     assert "build_pytest_shard_plan.py" in plan_job
     assert "Restore latest trusted duration telemetry" in plan_job
     assert "needs: test-plan" in tests_job
     assert "name: pytest-shard-plan" in tests_job
     assert "shard-%02d.txt" in tests_job
     assert "python scripts/ci/pytest_shard.py" not in tests_job
-    assert 'test "${#reports[@]}" -eq 64' in workflow
+    assert 'test "${#reports[@]}" -eq 96' in workflow
     assert "name: ci (3.12)" in workflow
     assert "needs: [quality, test-plan, tests, compatibility]" in workflow
