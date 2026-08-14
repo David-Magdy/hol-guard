@@ -106,7 +106,8 @@ jobs:
              .packages[0].identifier == "hol-guard" and
              .packages[0].version == $version and
              .version == $version and
-             .packages[0].transport.type == "stdio"' \
+             .packages[0].transport.type == "stdio" and
+             [.packages[0].packageArguments[].value] == ["mcp", "serve", "--stdio"]' \
             server.json >/dev/null
 
       - name: Install pinned MCP Registry publisher
