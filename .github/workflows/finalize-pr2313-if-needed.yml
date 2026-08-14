@@ -1,0 +1,77 @@
+name: Finalize related Secrets detector PR
+
+on:
+  push:
+    branches: [automation/finalize-pr2313-if-needed]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: hashgraph-online/hol-guard
+      PR: "2313"
+    steps:
+      - name: Validate scope and finish if still open
+        shell: bash
+        run: |
+          set -euo pipefail
+          data="$(gh pr view "${PR}" --repo "${REPO}" --json state,title,baseRefName,headRefOid,statusCheckRollup)"
+          state="$(jq -r '.state' <<<"${data}")"
+          if [[ "${state}" == "MERGED" || "${state}" == "CLOSED" ]]; then
+            exit 0
+          fi
+          title="$(jq -r '.title | ascii_downcase' <<<"${data}")"
+          base="$(jq -r '.baseRefName' <<<"${data}")"
+          if [[ "${base}" != "release/3.0" ]]; then
+            echo "PR 2313 has unexpected base ${base}" >&2
+            exit 1
+          fi
+          if [[ "${title}" != *secret* && "${title}" != *fixture* && "${title}" != *detector* ]]; then
+            echo "PR 2313 is outside the expected Secrets scope: ${title}" >&2
+            exit 1
+          fi
+
+          for attempt in $(seq 1 180); do
+            data="$(gh pr view "${PR}" --repo "${REPO}" --json state,headRefOid,statusCheckRollup)"
+            state="$(jq -r '.state' <<<"${data}")"
+            if [[ "${state}" == "MERGED" || "${state}" == "CLOSED" ]]; then
+              exit 0
+            fi
+            total="$(jq '.statusCheckRollup | length' <<<"${data}")"
+            pending="$(jq '[.statusCheckRollup[] | select((.status // "COMPLETED") != "COMPLETED")] | length' <<<"${data}")"
+            failed="$(jq '[.statusCheckRollup[] | select((.status // "COMPLETED") == "COMPLETED" and ((.conclusion // "SUCCESS") | IN("SUCCESS", "NEUTRAL", "SKIPPED") | not))] | length' <<<"${data}")"
+            if (( failed > 0 )); then
+              jq '.statusCheckRollup[] | select((.status // "COMPLETED") == "COMPLETED" and ((.conclusion // "SUCCESS") | IN("SUCCESS", "NEUTRAL", "SKIPPED") | not))' <<<"${data}" >&2
+              exit 1
+            fi
+            if (( total > 0 && pending == 0 )); then
+              break
+            fi
+            sleep 20
+          done
+
+          threads="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated}}}}}' \
+            -F owner=hashgraph-online -F name=hol-guard -F number=2313)"
+          mapfile -t outdated < <(jq -r '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == true) | .id' <<<"${threads}")
+          for id in "${outdated[@]}"; do
+            gh api graphql -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{isResolved}}}' -F threadId="${id}" >/dev/null
+          done
+          threads="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved isOutdated}}}}}' \
+            -F owner=hashgraph-online -F name=hol-guard -F number=2313)"
+          unresolved="$(jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false)] | length' <<<"${threads}")"
+          if (( unresolved > 0 )); then
+            echo "PR 2313 still has unresolved review threads" >&2
+            exit 1
+          fi
+          gh pr merge "${PR}" --repo "${REPO}" --squash --delete-branch
