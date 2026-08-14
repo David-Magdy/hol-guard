@@ -1,0 +1,286 @@
+name: Fix PR 2325 immutable sequence contracts
+
+on:
+  push:
+    branches:
+      - automation/fix-pr2325-sequences-final-0814
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/secrets-v2-evidence-contracts-clean
+          fetch-depth: 1
+          persist-credentials: true
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Enforce immutable direct sequence fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "d7ea4e43bcbaef319cfb377b461a2374723a2966"
+          python - <<'PY'
+          from pathlib import Path
+
+          contracts_path = Path("src/codex_plugin_scanner/guard/secrets/contracts_v2.py")
+          text = contracts_path.read_text(encoding="utf-8")
+
+          helper_anchor = '''def _require_enum_instance(value: object, enum_type: type[Enum], *, field_name: str) -> None:
+              """Reject raw strings and unrelated enums on direct construction."""
+
+              if not isinstance(value, enum_type):
+                  raise SecretContractError(f"{field_name}: expected {enum_type.__name__}")
+          '''
+          helper = helper_anchor + '''
+
+          def _require_string_tuple(
+              value: object,
+              *,
+              field_name: str,
+              allow_empty: bool = True,
+          ) -> tuple[str, ...]:
+              """Validate immutable, unique, non-blank privacy-safe direct sequences."""
+
+              if not isinstance(value, tuple) or any(not isinstance(item, str) for item in value):
+                  raise SecretContractError(f"{field_name}: expected a tuple of strings")
+              result = cast(tuple[str, ...], value)
+              if not allow_empty and not result:
+                  raise SecretContractError(f"{field_name}: must not be empty")
+              if len(set(result)) != len(result):
+                  raise SecretContractError(f"{field_name}: values must be unique")
+              for item in result:
+                  if not item.strip():
+                      raise SecretContractError(f"{field_name}: values must not be blank")
+                  if item != item.strip():
+                      raise SecretContractError(
+                          f"{field_name}: surrounding whitespace is prohibited"
+                      )
+                  _assert_safe_public_text(item, field_name=field_name)
+              return result
+          '''
+          if text.count(helper_anchor) != 1:
+              raise SystemExit("enum helper anchor was not unique")
+          text = text.replace(helper_anchor, helper, 1)
+
+          ignore_anchor = '''        _require_enum_instance(
+              self.requested_scope,
+              SecretIgnoreScope,
+              field_name="requested_scope",
+          )
+          '''
+          ignore_replacement = ignore_anchor + '''        _require_string_tuple(
+              self.propagation,
+              field_name="propagation",
+              allow_empty=False,
+          )
+          '''
+          if text.count(ignore_anchor) != 1:
+              raise SystemExit("ignore sequence anchor was not unique")
+          text = text.replace(ignore_anchor, ignore_replacement, 1)
+
+          custom_anchor = '''        _require_enum_instance(
+              self.rollout_state,
+              SecretRolloutState,
+              field_name="rollout_state",
+          )
+          '''
+          custom_replacement = custom_anchor + '''        _require_string_tuple(
+              self.surfaces,
+              field_name="surfaces",
+              allow_empty=False,
+          )
+          '''
+          if text.count(custom_anchor) != 1:
+              raise SystemExit("custom-rule sequence anchor was not unique")
+          text = text.replace(custom_anchor, custom_replacement, 1)
+
+          capability_anchor = '''    def __post_init__(self) -> None:
+              _require_enum_instance(self.state, ParityState, field_name="state")
+          '''
+          capability_replacement = capability_anchor + '''        for field_name, values, allow_empty in (
+              ("surfaces", self.surfaces, False),
+              ("plans", self.plans, False),
+              ("acceptance_tests", self.acceptance_tests, True),
+              ("evidence_artifacts", self.evidence_artifacts, True),
+          ):
+              _require_string_tuple(
+                  values,
+                  field_name=field_name,
+                  allow_empty=allow_empty,
+              )
+          '''
+          if text.count(capability_anchor) != 1:
+              raise SystemExit("capability sequence anchor was not unique")
+          contracts_path.write_text(
+              text.replace(capability_anchor, capability_replacement, 1),
+              encoding="utf-8",
+          )
+
+          tests_path = Path("tests/test_guard_secret_contracts_v2.py")
+          tests = tests_path.read_text(encoding="utf-8")
+          insertion_anchor = '''def test_complete_coverage_is_clean_eligible() -> None:
+          '''
+          additions = '''def test_direct_ignore_rejects_mutable_propagation() -> None:
+              mutable = ["cli"]
+              with pytest.raises(SecretContractError, match="tuple of strings"):
+                  _direct_ignore(propagation=mutable)
+              mutable.append("github")
+              assert mutable == ["cli", "github"]
+
+
+          def test_direct_custom_rule_rejects_mutable_surfaces() -> None:
+              mutable = ["cli"]
+              with pytest.raises(SecretContractError, match="tuple of strings"):
+                  _direct_custom_rule(surfaces=mutable)
+              mutable.append("pre_commit")
+              assert mutable == ["cli", "pre_commit"]
+
+
+          @pytest.mark.parametrize(
+              ("field_name", "value"),
+              [
+                  ("surfaces", ["cli"]),
+                  ("plans", ["free"]),
+                  ("acceptance_tests", ["test_cli"]),
+                  ("evidence_artifacts", ["sha256:evidence"]),
+              ],
+          )
+          def test_direct_capability_rejects_mutable_sequence_fields(
+              field_name: str,
+              value: list[str],
+          ) -> None:
+              with pytest.raises(SecretContractError, match="tuple of strings"):
+                  _capability(**{field_name: value})
+
+
+          @pytest.mark.parametrize(
+              ("factory", "field_name", "value"),
+              [
+                  (_direct_ignore, "propagation", ("cli", "cli")),
+                  (_direct_custom_rule, "surfaces", ("cli", "cli")),
+                  (_capability, "surfaces", ("cli", "cli")),
+                  (_capability, "plans", ("free", "free")),
+                  (_capability, "acceptance_tests", ("test_cli", "test_cli")),
+                  (_capability, "evidence_artifacts", ("sha256:evidence", "sha256:evidence")),
+              ],
+          )
+          def test_direct_contract_sequences_reject_duplicates(
+              factory: object,
+              field_name: str,
+              value: tuple[str, ...],
+          ) -> None:
+              with pytest.raises(SecretContractError, match="values must be unique"):
+                  factory(**{field_name: value})  # type: ignore[operator]
+
+
+          @pytest.mark.parametrize(
+              ("factory", "field_name"),
+              [
+                  (_direct_ignore, "propagation"),
+                  (_direct_custom_rule, "surfaces"),
+                  (_capability, "surfaces"),
+                  (_capability, "plans"),
+                  (_capability, "acceptance_tests"),
+                  (_capability, "evidence_artifacts"),
+              ],
+          )
+          def test_direct_contract_sequences_reject_blank_values(
+              factory: object,
+              field_name: str,
+          ) -> None:
+              with pytest.raises(SecretContractError, match="must not be blank"):
+                  factory(**{field_name: (" ",)})  # type: ignore[operator]
+
+
+          ''' + insertion_anchor
+          if tests.count(insertion_anchor) != 1:
+              raise SystemExit("test insertion anchor was not unique")
+          tests_path.write_text(
+              tests.replace(insertion_anchor, additions, 1),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Install locked development dependencies
+        shell: bash
+        env:
+          UV_HTTP_TIMEOUT: "120"
+          UV_HTTP_RETRIES: "5"
+        run: |
+          set -euo pipefail
+          if ! uv sync --frozen --extra dev --python 3.12; then
+            sleep 10
+            uv sync --frozen --extra dev --python 3.12
+          fi
+
+      - name: Format, lint, type-check, and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=(
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+            tests/test_guard_secret_contracts_v2.py
+          )
+          uv run --no-sync ruff format "${changed[@]}"
+          uv run --no-sync ruff check --fix "${changed[@]}"
+          uv run --no-sync ruff format --check "${changed[@]}"
+          uv run --no-sync ruff check "${changed[@]}"
+          uv run --no-sync basedpyright --level error
+          uv run --no-sync pytest \
+            tests/test_guard_secret_contracts_v2.py \
+            tests/test_guard_secret_release_claim_gate.py \
+            tests/test_release_toolchain_sbom.py \
+            --tb=short
+
+      - name: Reconcile exact test inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/ci/test_inventory.py --output /tmp/test-inventory.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory = json.loads(Path("/tmp/test-inventory.json").read_text(encoding="utf-8"))
+          baseline = {
+              "maximum_collected_cases": inventory["inventory"]["collected_cases"],
+              "maximum_test_source_lines": inventory["test_source_lines"],
+              "schema_version": 1,
+          }
+          Path("ci/test-suite-ratchet-baseline.json").write_text(
+              json.dumps(baseline, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(baseline, sort_keys=True))
+          PY
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory /tmp/test-inventory.json
+          git diff --check
+
+      - name: Commit validated fix to the PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            ci/test-suite-ratchet-baseline.json \
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py \
+            tests/test_guard_secret_contracts_v2.py
+          git commit -m "fix(secrets): enforce immutable direct sequences"
+          git push origin HEAD:feat/secrets-v2-evidence-contracts-clean
