@@ -65,11 +65,11 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
-          ref: ${{ needs.build.outputs.source_sha }}
+          ref: __OPEN__ needs.build.outputs.source_sha __CLOSE__
           persist-credentials: false
       - name: Stamp exact published package version into server.json
         env:
-          VERSION: ${{ needs.build.outputs.version }}
+          VERSION: __OPEN__ needs.build.outputs.version __CLOSE__
         run: |
           set -euo pipefail
           jq --arg version "$VERSION" \
@@ -98,6 +98,9 @@ jobs:
       - name: Publish immutable MCP server metadata
         run: ./mcp-publisher publish
 '''
+              open_expr = "$" + "{{"
+              close_expr = "}}"
+              job = job.replace("__OPEN__", open_expr).replace("__CLOSE__", close_expr)
               workflow = workflow.rstrip() + job + "\n"
               workflow_path.write_text(workflow, encoding="utf-8")
 
