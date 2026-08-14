@@ -1,5 +1,5 @@
 {
-  "maximum_collected_cases": 14773,
-  "maximum_test_source_lines": 319230,
-  "schema_version": 1
+    "maximum_collected_cases": 14773,
+    "maximum_test_source_lines": 319230,
+    "schema_version": 1
 }
