@@ -1,0 +1,114 @@
+name: Apply MCP Registry syndication patch
+
+on:
+  push:
+    branches:
+      - feat/mcp-registry-syndication
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch without third-party actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          git fetch --depth=1 origin "${BRANCH}"
+          git checkout -B "${BRANCH}" FETCH_HEAD
+
+      - name: Add ownership marker and release syndication job
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          server_name = "io.github.hashgraph-online/hol-guard"
+          marker = f"<!-- mcp-name: {server_name} -->"
+
+          readme_path = Path("README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          if marker not in readme:
+              first_newline = readme.find("\n")
+              if first_newline < 0:
+                  raise SystemExit("README heading boundary not found")
+              readme = readme[: first_newline + 1] + f"\n{marker}\n" + readme[first_newline + 1 :]
+              readme_path.write_text(readme, encoding="utf-8")
+
+          workflow_path = Path(".github/workflows/publish.yml")
+          workflow = workflow_path.read_text(encoding="utf-8")
+          if "\n  publish-mcp-registry:\n" not in workflow:
+              job = r'''
+
+  publish-mcp-registry:
+    name: Publish official MCP Registry metadata
+    if: >-
+      always() &&
+      vars.RELEASE_PUBLISHING_ENABLED == 'true' &&
+      needs.build.result == 'success' &&
+      (
+        (needs.build.outputs.channel == 'alpha' && needs.publish-alpha-pypi.result == 'success') ||
+        (needs.build.outputs.channel == 'stable' && needs.publish-main-pypi.result == 'success')
+      )
+    needs: [build, publish-alpha-pypi, publish-main-pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ needs.build.outputs.source_sha }}
+          persist-credentials: false
+      - name: Stamp exact published package version into server.json
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          jq --arg version "$VERSION" \
+            '.version = $version | .packages[0].version = $version' \
+            server.json > server.json.tmp
+          mv server.json.tmp server.json
+          jq -e --arg version "$VERSION" \
+            '.version == $version and .packages[0].version == $version' \
+            server.json >/dev/null
+      - name: Install pinned MCP Registry publisher
+        env:
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+          MCP_PUBLISHER_VERSION: v1.8.1
+        run: |
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}" \
+            --output "$archive"
+          printf '%s  %s\n' "$MCP_PUBLISHER_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" mcp-publisher
+          chmod 0755 mcp-publisher
+          ./mcp-publisher --help >/dev/null
+      - name: Authenticate to official MCP Registry with GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+      - name: Publish immutable MCP server metadata
+        run: ./mcp-publisher publish
+'''
+              workflow = workflow.rstrip() + job + "\n"
+              workflow_path.write_text(workflow, encoding="utf-8")
+
+          Path(".github/workflows/apply-mcp-registry-syndication.yml").unlink()
+          PY
+
+          git config user.name "kantorcodes"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git add README.md .github/workflows/publish.yml .github/workflows/apply-mcp-registry-syndication.yml
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "feat(mcp): syndicate releases to official registry"
+          git push origin HEAD:feat/mcp-registry-syndication
