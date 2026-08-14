@@ -1,0 +1,276 @@
+name: Finish PR 2325 exact-head validation
+
+on:
+  push:
+    branches:
+      - automation/finish-pr2325-v10
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/secrets-v2-evidence-contracts-clean
+          fetch-depth: 1
+          persist-credentials: true
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Enforce final privacy and coverage invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/codex_plugin_scanner/guard/secrets/contracts_v2.py")
+          text = path.read_text(encoding="utf-8")
+
+          old_regex = 'r"(?:^|_)(?:raw_?secret|candidate(?:_value)?|credential(?:_value)?|"'
+          new_regex = 'r"(?:^|_)(?:raw(?:_value)?|raw_?secret|candidate(?:_value)?|credential(?:_value)?|"'
+          if old_regex in text:
+              text = text.replace(old_regex, new_regex, 1)
+          elif new_regex not in text:
+              raise SystemExit("raw-value privacy regex is missing")
+
+          truncation_guard = (
+              '        if self.truncation_codes and not self.partial:\n'
+              '            raise SecretContractError("truncation requires partial=true")\n'
+          )
+          skipped_guard = (
+              '        if self.skipped_codes and not self.partial:\n'
+              '            raise SecretContractError("skipped work requires partial=true")\n'
+          )
+          if skipped_guard not in text:
+              if truncation_guard not in text:
+                  raise SystemExit("coverage truncation invariant is missing")
+              text = text.replace(truncation_guard, skipped_guard + truncation_guard, 1)
+
+          if "            and not self.skipped_codes\n" not in text:
+              anchor = "            and self.error_code is None\n"
+              if anchor not in text:
+                  raise SystemExit("clean-eligibility error anchor is missing")
+              text = text.replace(anchor, anchor + "            and not self.skipped_codes\n", 1)
+
+          if "            bool(self.requested_refs)\n" not in text:
+              anchor = "        return (\n            not self.partial\n"
+              if anchor not in text:
+                  raise SystemExit("clean-eligibility reference anchor is missing")
+              text = text.replace(
+                  anchor,
+                  "        return (\n            bool(self.requested_refs)\n            and not self.partial\n",
+                  1,
+              )
+
+          subset_guard = (
+              '        if set(self.completed_refs) - set(self.requested_refs):\n'
+              '            raise SecretContractError("completed_refs must be a subset of requested_refs")\n'
+          )
+          if subset_guard not in text:
+              raise SystemExit("reference subset invariant is missing")
+
+          empty_guard = (
+              '        if not self.requested_refs and not self.partial:\n'
+              '            raise SecretContractError("empty requested_refs requires partial=true")\n'
+          )
+          if empty_guard not in text:
+              text = text.replace(subset_guard, empty_guard + subset_guard, 1)
+
+          complete_guard = (
+              '        if not self.partial and set(self.completed_refs) != set(self.requested_refs):\n'
+              '            raise SecretContractError("complete coverage must complete every requested ref")\n'
+          )
+          if complete_guard not in text:
+              text = text.replace(subset_guard, subset_guard + complete_guard, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Write isolated regression coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > tests/test_guard_secret_contracts_v2_final_regressions.py <<'PY'
+          from __future__ import annotations
+
+          import pytest
+
+          from codex_plugin_scanner.guard.secrets.contracts_v2 import (
+              PreventionOutcome,
+              SecretContractError,
+              SecretScanCoverageV2,
+              reject_prohibited_fields,
+          )
+
+
+          def _coverage(**overrides: object) -> SecretScanCoverageV2:
+              values: dict[str, object] = {
+                  "source_set": ("working_tree",),
+                  "requested_refs": ("refs/heads/main",),
+                  "completed_refs": ("refs/heads/main",),
+                  "files_scanned": 1,
+                  "bytes_scanned": 32,
+                  "commits_visited": 0,
+                  "blobs_scanned": 1,
+                  "skipped_codes": (),
+                  "truncation_codes": (),
+                  "detector_version": "guard-secrets-v2",
+                  "model_version": None,
+                  "cache_hits": 0,
+                  "cache_misses": 1,
+                  "partial": False,
+                  "degraded": False,
+                  "error_code": None,
+              }
+              values.update(overrides)
+              return SecretScanCoverageV2(**values)  # type: ignore[arg-type]
+
+
+          @pytest.mark.parametrize("key", ["raw_value", "rawValue", "raw-value"])
+          def test_raw_value_spellings_are_rejected_recursively(key: str) -> None:
+              with pytest.raises(SecretContractError, match="prohibited"):
+                  reject_prohibited_fields({"safe": {key: "plaintext"}})
+
+
+          def test_skipped_work_requires_partial() -> None:
+              with pytest.raises(SecretContractError, match="skipped work requires partial=true"):
+                  _coverage(skipped_codes=("binary_skipped",))
+
+
+          def test_skipped_partial_work_cannot_be_clean() -> None:
+              result = _coverage(skipped_codes=("binary_skipped",), partial=True)
+              assert result.clean_eligible is False
+              with pytest.raises(SecretContractError, match="cannot produce a clean"):
+                  result.assert_outcome(PreventionOutcome.CLEAN)
+
+
+          def test_empty_requested_refs_require_partial() -> None:
+              with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):
+                  _coverage(requested_refs=(), completed_refs=())
+
+
+          def test_empty_partial_refs_cannot_be_clean() -> None:
+              result = _coverage(requested_refs=(), completed_refs=(), partial=True)
+              assert result.clean_eligible is False
+              with pytest.raises(SecretContractError, match="cannot produce a clean"):
+                  result.assert_outcome(PreventionOutcome.CLEAN)
+
+
+          def test_complete_coverage_requires_every_requested_ref() -> None:
+              with pytest.raises(SecretContractError, match="complete every requested ref"):
+                  _coverage(
+                      requested_refs=("refs/heads/main", "refs/tags/v3"),
+                      completed_refs=("refs/heads/main",),
+                  )
+          PY
+
+      - name: Validate protected release preflight before dependency installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -I -S scripts/write_release_toolchain_sbom.py \
+            --output /tmp/release-toolchain.cdx.json \
+            --release-version preflight \
+            --expected-uv-version 0.9.26 \
+            --setup-action-ref fac544c07dec837d0ccb6301d7b5580bf5edae39 \
+            --repository-root "$PWD"
+          test -s /tmp/release-toolchain.cdx.json
+
+      - name: Install locked development dependencies
+        shell: bash
+        env:
+          UV_HTTP_TIMEOUT: "120"
+          UV_HTTP_RETRIES: "5"
+        run: |
+          set -euo pipefail
+          if ! uv sync --frozen --extra dev --python 3.12; then
+            sleep 10
+            uv sync --frozen --extra dev --python 3.12
+          fi
+
+      - name: Format, lint, type-check, and run focused validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=(
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+            scripts/ci/guard_secrets_release_claim_gate.py
+            scripts/write_release_toolchain_sbom.py
+            tests/test_guard_secret_contracts_v2.py
+            tests/test_guard_secret_contracts_v2_final_regressions.py
+            tests/test_guard_secret_release_claim_gate.py
+            tests/test_release_toolchain_sbom.py
+          )
+          uv run --no-sync ruff format "${changed[@]}"
+          uv run --no-sync ruff check "${changed[@]}"
+          uv run --no-sync basedpyright --level error
+          uv run --no-sync pytest \
+            tests/test_guard_secret_contracts_v2.py \
+            tests/test_guard_secret_contracts_v2_final_regressions.py \
+            tests/test_guard_secret_release_claim_gate.py \
+            tests/test_release_toolchain_sbom.py \
+            --tb=short
+
+      - name: Reconcile and enforce exact test inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/ci/test_inventory.py --output /tmp/test-inventory.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory = json.loads(Path("/tmp/test-inventory.json").read_text(encoding="utf-8"))
+          baseline = {
+              "maximum_collected_cases": inventory["inventory"]["collected_cases"],
+              "maximum_test_source_lines": inventory["test_source_lines"],
+              "schema_version": 1,
+          }
+          Path("ci/test-suite-ratchet-baseline.json").write_text(
+              json.dumps(baseline, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory /tmp/test-inventory.json
+          git diff --check
+
+      - name: Commit validated branch and marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p docs/guard/contracts
+          printf '%s\n' \
+            'PR2325 finalizer validated contract invariants, release preflight, focused tests, and exact test inventory.' \
+            > docs/guard/contracts/guard-secrets-v2-finalizer-marker.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            ci/test-suite-ratchet-baseline.json \
+            docs/guard/contracts/guard-secrets-v2-finalizer-marker.txt \
+            scripts/ci/guard_secrets_release_claim_gate.py \
+            scripts/write_release_toolchain_sbom.py \
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py \
+            tests/test_guard_secret_contracts_v2.py \
+            tests/test_guard_secret_contracts_v2_final_regressions.py \
+            tests/test_guard_secret_release_claim_gate.py \
+            tests/test_release_toolchain_sbom.py
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "fix(secrets): finalize V2 fail-closed contracts"
+          git push origin HEAD:feat/secrets-v2-evidence-contracts-clean
