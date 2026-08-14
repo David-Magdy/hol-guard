@@ -46,7 +46,7 @@ def test_affinity_plan_covers_every_node_once_and_is_deterministic() -> None:
 
 @pytest.mark.parametrize(
     ("large_count", "large_seconds"),
-    [(24, 1.0), (97, 0.01)],
+    [(24, 1.0), (49, 0.01)],
 )
 def test_affinity_plan_splits_oversized_or_node_heavy_file(
     large_count: int,
