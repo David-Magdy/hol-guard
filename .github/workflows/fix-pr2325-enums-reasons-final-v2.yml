@@ -62,8 +62,9 @@ jobs:
             tests/test_release_toolchain_sbom.py
           )
           uv run --no-sync ruff format "${changed[@]}"
-          uv run --no-sync ruff check "${changed[@]}"
+          uv run --no-sync ruff check --fix "${changed[@]}"
           uv run --no-sync ruff format --check "${changed[@]}"
+          uv run --no-sync ruff check "${changed[@]}"
           uv run --no-sync basedpyright --level error
           uv run --no-sync pytest \
             tests/test_guard_secret_contracts_v2.py \
