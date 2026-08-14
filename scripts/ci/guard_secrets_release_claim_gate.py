@@ -77,6 +77,7 @@ def _contract_api() -> tuple[
     Callable[[Mapping[str, object]], _CapabilityManifest],
     Callable[[Mapping[str, object]], object],
     Callable[[Mapping[str, object]], object],
+    Callable[[Mapping[str, object]], object],
     _CapabilityValidator,
 ]:
     module = _load_contracts_module()
@@ -94,6 +95,10 @@ def _contract_api() -> tuple[
         cast(
             Callable[[Mapping[str, object]], object],
             _symbol(module, "parse_source_capabilities_manifest"),
+        ),
+        cast(
+            Callable[[Mapping[str, object]], object],
+            _symbol(module, "parse_reason_codes_manifest"),
         ),
         cast(
             _CapabilityValidator,
@@ -119,6 +124,7 @@ def validate_manifest(
     *,
     product_boundary_payload: Mapping[str, object],
     source_capability_payload: Mapping[str, object],
+    reason_code_payload: Mapping[str, object],
     exact_release_commit: str | None,
     require_parity: bool,
     required_capabilities: frozenset[str],
@@ -131,6 +137,7 @@ def validate_manifest(
         parse_capability_evidence_manifest,
         parse_product_boundaries_manifest,
         parse_source_capabilities_manifest,
+        parse_reason_codes_manifest,
         validate_capability_manifest,
     ) = _contract_api()
 
@@ -142,6 +149,7 @@ def validate_manifest(
     try:
         _ = parse_product_boundaries_manifest(product_boundary_payload)
         _ = parse_source_capabilities_manifest(source_capability_payload)
+        _ = parse_reason_codes_manifest(reason_code_payload)
         manifest = parse_capability_evidence_manifest(capability_payload)
     except secret_contract_error as error:
         raise ClaimGateError(str(error)) from error
@@ -181,6 +189,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--product-boundaries", type=Path, required=True)
     parser.add_argument("--source-capabilities", type=Path, required=True)
+    parser.add_argument("--reason-codes", type=Path, required=True)
     parser.add_argument("--release-commit", required=True)
     parser.add_argument("--require-parity", action="store_true")
     parser.add_argument("--required-capability", action="append", default=[])
@@ -196,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
             load_manifest(args.manifest),
             product_boundary_payload=load_manifest(args.product_boundaries),
             source_capability_payload=load_manifest(args.source_capabilities),
+            reason_code_payload=load_manifest(args.reason_codes),
             exact_release_commit=args.release_commit,
             require_parity=args.require_parity,
             required_capabilities=frozenset(args.required_capability),

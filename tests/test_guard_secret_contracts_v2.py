@@ -11,6 +11,8 @@ from codex_plugin_scanner.guard.secrets.contracts_v2 import (
     FIXTURE_JUSTIFICATION_CODES_V2,
     IGNORE_REASON_CODES_V2,
     OUTCOME_SURFACE_MAPPING,
+    REASON_CODE_CATEGORIES_V2,
+    REASON_CODE_RULES_V2,
     REASON_CODES_V2,
     SOURCE_CAPABILITY_STATUS_VALUES_V2,
     CapabilityEvidenceV2,
@@ -27,6 +29,7 @@ from codex_plugin_scanner.guard.secrets.contracts_v2 import (
     SecretScanCoverageV2,
     parse_capability_evidence_manifest,
     parse_product_boundaries_manifest,
+    parse_reason_codes_manifest,
     parse_source_capabilities_manifest,
     reject_prohibited_fields,
     validate_capability_manifest,
@@ -36,6 +39,7 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _CAPABILITY_PATH = _REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-capability-evidence.v2.json"
 _PRODUCT_BOUNDARY_PATH = _REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-product-boundaries.v2.json"
 _SOURCE_CAPABILITY_PATH = _REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-source-capabilities.v2.json"
+_REASON_CODE_PATH = _REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-reason-codes.v2.json"
 _FIXTURE_OPENAI_KEY = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 
@@ -147,6 +151,42 @@ def _ignore_payload(**overrides: object) -> dict[str, object]:
     }
     payload.update(overrides)
     return payload
+
+
+def _direct_ignore(**overrides: object) -> SecretIgnoreDecisionV2:
+    values: dict[str, object] = {
+        "decision_id": "ignore:direct",
+        "state": SecretIgnoreState.REQUESTED,
+        "requested_scope": SecretIgnoreScope.OCCURRENCE,
+        "durable_match_key": "a" * 64,
+        "reason": "pending_review",
+        "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
+        "detector_version": "guard-secrets-v2",
+        "model_version": None,
+        "requester_id": "user:1",
+        "approver_id": None,
+        "policy_source": "personal",
+        "propagation": ("cli",),
+    }
+    values.update(overrides)
+    return SecretIgnoreDecisionV2(**values)  # type: ignore[arg-type]
+
+
+def _direct_custom_rule(**overrides: object) -> SecretCustomRuleV2:
+    values: dict[str, object] = {
+        "rule_id": "rule:direct",
+        "version": "1.0.0",
+        "matcher_kind": SecretRuleMatcherKind.REGEX,
+        "matcher_digest": "a" * 64,
+        "safe_fixture_digest": "b" * 64,
+        "provenance_digest": "c" * 64,
+        "compile_state": SecretRuleCompileState.VALID,
+        "complexity_budget": 100,
+        "rollout_state": SecretRolloutState.DRAFT,
+        "surfaces": ("cli",),
+    }
+    values.update(overrides)
+    return SecretCustomRuleV2(**values)  # type: ignore[arg-type]
 
 
 def test_complete_coverage_is_clean_eligible() -> None:
@@ -333,6 +373,22 @@ def test_nested_secret_like_value_is_rejected() -> None:
         reject_prohibited_fields({"reason": _FIXTURE_OPENAI_KEY})
 
 
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_type"),
+    [
+        ("state", "requested", "SecretIgnoreState"),
+        ("requested_scope", "occurrence", "SecretIgnoreScope"),
+    ],
+)
+def test_direct_ignore_rejects_raw_enum_values(
+    field_name: str,
+    value: str,
+    expected_type: str,
+) -> None:
+    with pytest.raises(SecretContractError, match=f"expected {expected_type}"):
+        _direct_ignore(**{field_name: value})
+
+
 def test_approved_ignore_requires_approver() -> None:
     with pytest.raises(SecretContractError, match="approver"):
         SecretIgnoreDecisionV2(
@@ -449,6 +505,28 @@ def test_non_expiring_fixture_uses_registered_justification_code() -> None:
     assert decision.permanent_fixture_justification in FIXTURE_JUSTIFICATION_CODES_V2
 
 
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_type"),
+    [
+        ("matcher_kind", "regex", "SecretRuleMatcherKind"),
+        ("compile_state", "valid", "SecretRuleCompileState"),
+        ("rollout_state", "active", "SecretRolloutState"),
+    ],
+)
+def test_direct_custom_rule_rejects_raw_enum_values(
+    field_name: str,
+    value: str,
+    expected_type: str,
+) -> None:
+    with pytest.raises(SecretContractError, match=f"expected {expected_type}"):
+        _direct_custom_rule(**{field_name: value})
+
+
+def test_raw_active_invalid_custom_rule_cannot_bypass_compile_check() -> None:
+    with pytest.raises(SecretContractError, match="expected SecretRuleCompileState"):
+        _direct_custom_rule(compile_state="invalid", rollout_state="active")
+
+
 def test_active_custom_rule_must_compile_validly() -> None:
     with pytest.raises(SecretContractError, match="valid compiled"):
         SecretCustomRuleV2(
@@ -494,6 +572,16 @@ def test_custom_rule_rejects_unknown_surface() -> None:
             complexity_budget=100,
             rollout_state=SecretRolloutState.DRAFT,
             surfaces=("unknown",),
+        )
+
+
+def test_direct_capability_rejects_raw_parity_state() -> None:
+    with pytest.raises(SecretContractError, match="expected ParityState"):
+        _capability(
+            state="verified_on_release_candidate",
+            release_commit="d" * 40,
+            evidence_artifacts=("sha256:evidence",),
+            gap_label=None,
         )
 
 
@@ -578,12 +666,81 @@ def test_every_outcome_has_a_surface_mapping() -> None:
     assert set(OUTCOME_SURFACE_MAPPING) == set(PreventionOutcome)
 
 
-def test_repository_reason_code_registry_matches_runtime() -> None:
-    payload = _load(_REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-reason-codes.v2.json")
+def test_repository_reason_code_manifest_matches_runtime() -> None:
+    manifest = parse_reason_codes_manifest(_load(_REASON_CODE_PATH))
+    assert manifest.category_ids == tuple(REASON_CODE_CATEGORIES_V2)
+    assert manifest.codes == REASON_CODES_V2
+    assert manifest.rule_ids == tuple(REASON_CODE_RULES_V2)
+
+
+def test_reason_code_manifest_rejects_schema_drift() -> None:
+    payload = _load(_REASON_CODE_PATH)
+    payload["schema"] = "guard-secrets-reason-codes.v3"
+    with pytest.raises(SecretContractError, match="unsupported reason-code"):
+        parse_reason_codes_manifest(payload)
+
+
+def test_reason_code_manifest_rejects_category_registry_drift() -> None:
+    payload = _load(_REASON_CODE_PATH)
     categories = payload["categories"]
     assert isinstance(categories, dict)
-    declared = {code for codes in categories.values() for code in codes}
-    assert declared == REASON_CODES_V2
+    categories["unreviewed"] = ["unreviewed_reason"]
+    with pytest.raises(SecretContractError, match="category registry"):
+        parse_reason_codes_manifest(payload)
+
+
+def test_reason_code_manifest_rejects_code_drift() -> None:
+    payload = _load(_REASON_CODE_PATH)
+    categories = payload["categories"]
+    assert isinstance(categories, dict)
+    coverage = categories["coverage"]
+    assert isinstance(coverage, list)
+    coverage[0] = "unreviewed_reason"
+    with pytest.raises(SecretContractError, match="codes do not match"):
+        parse_reason_codes_manifest(payload)
+
+
+def test_reason_code_manifest_rejects_duplicate_code_in_category() -> None:
+    payload = _load(_REASON_CODE_PATH)
+    categories = payload["categories"]
+    assert isinstance(categories, dict)
+    coverage = categories["coverage"]
+    assert isinstance(coverage, list)
+    coverage.append(coverage[0])
+    with pytest.raises(SecretContractError, match="must be unique"):
+        parse_reason_codes_manifest(payload)
+
+
+def test_reason_code_manifest_rejects_code_in_multiple_categories() -> None:
+    payload = _load(_REASON_CODE_PATH)
+    categories = payload["categories"]
+    assert isinstance(categories, dict)
+    coverage = categories["coverage"]
+    detector = categories["detector"]
+    assert isinstance(coverage, list)
+    assert isinstance(detector, list)
+    detector.insert(0, coverage[0])
+    with pytest.raises(SecretContractError, match="exactly one category"):
+        parse_reason_codes_manifest(payload)
+
+
+@pytest.mark.parametrize("rule_id", tuple(REASON_CODE_RULES_V2))
+def test_reason_code_manifest_rejects_rule_weakening(rule_id: str) -> None:
+    payload = _load(_REASON_CODE_PATH)
+    rules = payload["rules"]
+    assert isinstance(rules, dict)
+    rules[rule_id] = False
+    with pytest.raises(SecretContractError, match="policy does not match"):
+        parse_reason_codes_manifest(payload)
+
+
+def test_reason_code_manifest_rejects_rule_registry_drift() -> None:
+    payload = _load(_REASON_CODE_PATH)
+    rules = payload["rules"]
+    assert isinstance(rules, dict)
+    rules["unreviewed"] = True
+    with pytest.raises(SecretContractError, match="rule registry"):
+        parse_reason_codes_manifest(payload)
 
 
 def test_repository_product_boundary_manifest_matches_runtime() -> None:

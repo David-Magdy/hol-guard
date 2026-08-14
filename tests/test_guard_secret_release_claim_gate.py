@@ -11,6 +11,7 @@ _GATE_PATH = _REPOSITORY_ROOT / "scripts/ci/guard_secrets_release_claim_gate.py"
 _CAPABILITY_PATH = _REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-capability-evidence.v2.json"
 _PRODUCT_BOUNDARY_PATH = _REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-product-boundaries.v2.json"
 _SOURCE_CAPABILITY_PATH = _REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-source-capabilities.v2.json"
+_REASON_CODE_PATH = _REPOSITORY_ROOT / "docs/guard/contracts/guard-secrets-reason-codes.v2.json"
 _SPEC = importlib.util.spec_from_file_location("guard_secrets_release_claim_gate", _GATE_PATH)
 assert _SPEC and _SPEC.loader
 _GATE = importlib.util.module_from_spec(_SPEC)
@@ -69,6 +70,7 @@ def _validate(
     required_capabilities: frozenset[str] = frozenset({"cli_precommit"}),
     product_boundary_payload: dict[str, object] | None = None,
     source_capability_payload: dict[str, object] | None = None,
+    reason_code_payload: dict[str, object] | None = None,
 ) -> tuple[str, ...]:
     return validate_manifest(
         capability_payload,
@@ -78,6 +80,7 @@ def _validate(
         source_capability_payload=(
             source_capability_payload if source_capability_payload is not None else _load(_SOURCE_CAPABILITY_PATH)
         ),
+        reason_code_payload=(reason_code_payload if reason_code_payload is not None else _load(_REASON_CODE_PATH)),
         exact_release_commit=release_commit,
         require_parity=require_parity,
         required_capabilities=required_capabilities,
@@ -97,6 +100,7 @@ def test_repository_manifests_are_structurally_valid() -> None:
         capability_payload,
         product_boundary_payload=load_manifest(_PRODUCT_BOUNDARY_PATH),
         source_capability_payload=load_manifest(_SOURCE_CAPABILITY_PATH),
+        reason_code_payload=load_manifest(_REASON_CODE_PATH),
         exact_release_commit="a" * 40,
         require_parity=False,
         required_capabilities=frozenset(required),
@@ -171,6 +175,7 @@ def test_release_commit_is_always_required() -> None:
             _manifest(),
             product_boundary_payload=_load(_PRODUCT_BOUNDARY_PATH),
             source_capability_payload=_load(_SOURCE_CAPABILITY_PATH),
+            reason_code_payload=_load(_REASON_CODE_PATH),
             exact_release_commit=None,
             require_parity=False,
             required_capabilities=frozenset({"cli_precommit"}),
@@ -223,6 +228,31 @@ def test_source_capability_drift_is_rejected_by_gate() -> None:
         _validate(_manifest(), source_capability_payload=payload)
 
 
+def test_reason_code_schema_drift_is_rejected_by_gate() -> None:
+    payload = _load(_REASON_CODE_PATH)
+    payload["schema"] = "guard-secrets-reason-codes.v3"
+    with pytest.raises(ClaimGateError, match="unsupported reason-code"):
+        _validate(_manifest(), reason_code_payload=payload)
+
+
+@pytest.mark.parametrize(
+    "rule_id",
+    (
+        "stable",
+        "non_sensitive",
+        "unknown_codes_fail_closed",
+        "raw_exception_text_forbidden",
+    ),
+)
+def test_reason_code_policy_weakening_is_rejected_by_gate(rule_id: str) -> None:
+    payload = _load(_REASON_CODE_PATH)
+    rules = payload["rules"]
+    assert isinstance(rules, dict)
+    rules[rule_id] = False
+    with pytest.raises(ClaimGateError, match="policy does not match"):
+        _validate(_manifest(), reason_code_payload=payload)
+
+
 def test_main_returns_zero_for_repository_policy(capsys: pytest.CaptureFixture[str]) -> None:
     capability_payload = _load(_CAPABILITY_PATH)
     policy = capability_payload["claim_policy"]
@@ -236,6 +266,8 @@ def test_main_returns_zero_for_repository_policy(capsys: pytest.CaptureFixture[s
         str(_PRODUCT_BOUNDARY_PATH),
         "--source-capabilities",
         str(_SOURCE_CAPABILITY_PATH),
+        "--reason-codes",
+        str(_REASON_CODE_PATH),
         "--release-commit",
         "a" * 40,
     ]
@@ -257,6 +289,8 @@ def test_main_returns_one_for_validation_errors(
         str(_PRODUCT_BOUNDARY_PATH),
         "--source-capabilities",
         str(_SOURCE_CAPABILITY_PATH),
+        "--reason-codes",
+        str(_REASON_CODE_PATH),
         "--release-commit",
         "a" * 40,
         "--required-capability",
@@ -279,6 +313,8 @@ def test_main_returns_two_for_input_errors(
         str(_PRODUCT_BOUNDARY_PATH),
         "--source-capabilities",
         str(_SOURCE_CAPABILITY_PATH),
+        "--reason-codes",
+        str(_REASON_CODE_PATH),
         "--release-commit",
         "a" * 40,
         "--required-capability",

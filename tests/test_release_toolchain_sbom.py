@@ -109,6 +109,7 @@ def test_claim_gate_command_contains_every_authoritative_input() -> None:
     assert command[command.index("--manifest") + 1].endswith("guard-secrets-capability-evidence.v2.json")
     assert command[command.index("--product-boundaries") + 1].endswith("guard-secrets-product-boundaries.v2.json")
     assert command[command.index("--source-capabilities") + 1].endswith("guard-secrets-source-capabilities.v2.json")
+    assert command[command.index("--reason-codes") + 1].endswith("guard-secrets-reason-codes.v2.json")
     declared = tuple(command[index + 1] for index, value in enumerate(command) if value == "--required-capability")
     assert declared == _required_capabilities()
     assert "--require-parity" not in command
@@ -185,6 +186,7 @@ def test_claim_gate_fails_closed_when_product_policy_drifts(tmp_path: Path) -> N
         "docs/guard/contracts/guard-secrets-capability-evidence.v2.json",
         "docs/guard/contracts/guard-secrets-product-boundaries.v2.json",
         "docs/guard/contracts/guard-secrets-source-capabilities.v2.json",
+        "docs/guard/contracts/guard-secrets-reason-codes.v2.json",
     ):
         source = ROOT / relative
         destination = repository / relative

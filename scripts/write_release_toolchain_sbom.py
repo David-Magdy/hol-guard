@@ -19,6 +19,7 @@ _GIT_COMMIT = re.compile(r"^[a-f0-9]{40}$")
 _CAPABILITY_MANIFEST = Path("docs/guard/contracts/guard-secrets-capability-evidence.v2.json")
 _PRODUCT_BOUNDARIES_MANIFEST = Path("docs/guard/contracts/guard-secrets-product-boundaries.v2.json")
 _SOURCE_CAPABILITIES_MANIFEST = Path("docs/guard/contracts/guard-secrets-source-capabilities.v2.json")
+_REASON_CODES_MANIFEST = Path("docs/guard/contracts/guard-secrets-reason-codes.v2.json")
 _CLAIM_GATE = Path("scripts/ci/guard_secrets_release_claim_gate.py")
 
 
@@ -117,6 +118,8 @@ def build_guard_secrets_claim_gate_command(
         str(repository_root / _PRODUCT_BOUNDARIES_MANIFEST),
         "--source-capabilities",
         str(repository_root / _SOURCE_CAPABILITIES_MANIFEST),
+        "--reason-codes",
+        str(repository_root / _REASON_CODES_MANIFEST),
         "--release-commit",
         release_commit,
     ]

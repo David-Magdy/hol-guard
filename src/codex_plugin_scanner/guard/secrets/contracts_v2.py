@@ -154,7 +154,7 @@ _ACTIVE_IGNORE_STATES: Final = frozenset(
     }
 )
 _PROHIBITED_KEY = re.compile(
-    r"(?:^|_)(?:raw(?:_value)?|raw_?secret|candidate(?:_value)?|credential(?:_value)?|"
+    r"(?:^|_)(?:raw_value|raw_?secret|candidate(?:_value)?|credential(?:_value)?|"
     r"secret_?value|token_?value|source_(?:line|content|excerpt)|prompt|"
     r"tool_(?:output|result)|environment_?value|auth(?:orization)?_?header|"
     r"provider_?response(?:_body)?|absolute_?path)(?:$|_)",
@@ -191,6 +191,7 @@ _SCHEMA_RULE: Final = "guard-secret-custom-rule.v2"
 _SCHEMA_CAPABILITY_EVIDENCE: Final = "guard-secrets-capability-evidence.v2"
 _SCHEMA_PRODUCT_BOUNDARIES: Final = "guard-secrets-product-boundaries.v2"
 _SCHEMA_SOURCE_CAPABILITIES: Final = "guard-secrets-source-capabilities.v2"
+_SCHEMA_REASON_CODES: Final = "guard-secrets-reason-codes.v2"
 
 PARITY_STATES_V2: Final[tuple[str, ...]] = tuple(state.value for state in ParityState)
 SOURCE_CAPABILITY_STATUS_VALUES_V2: Final[tuple[str, ...]] = tuple(state.value for state in SourceCapabilityStatus)
@@ -202,14 +203,10 @@ _RELEASE_STATES: Final = frozenset(
 )
 _PARITY_STATE_RANK: Final = {state: index for index, state in enumerate(ParityState)}
 
-REASON_CODES_V2: Final[frozenset[str]] = frozenset(
-    {
+_REASON_CODE_CATEGORIES_MUTABLE: dict[str, tuple[str, ...]] = {
+    "coverage": (
         "archive_budget_exceeded",
         "binary_skipped",
-        "cache_stale",
-        "cleanup_failed",
-        "detector_bundle_invalid",
-        "detector_unavailable",
         "encoding_unsupported",
         "file_changed_during_scan",
         "git_object_missing",
@@ -219,18 +216,37 @@ REASON_CODES_V2: Final[frozenset[str]] = frozenset(
         "max_commits",
         "max_files",
         "max_findings",
+        "source_unreadable",
+    ),
+    "detector": (
+        "detector_bundle_invalid",
+        "detector_unavailable",
         "model_bundle_invalid",
         "model_degraded",
-        "policy_block",
-        "policy_refresh_required",
-        "source_unreadable",
+    ),
+    "validation": (
         "validation_error",
         "validation_rate_limited",
         "validation_unknown",
         "validation_unsupported",
-        "worker_cancelled",
-        "worker_timeout",
+    ),
+    "policy": ("policy_block", "policy_refresh_required"),
+    "worker": ("cleanup_failed", "worker_cancelled", "worker_timeout"),
+    "cache": ("cache_stale",),
+}
+REASON_CODE_CATEGORIES_V2: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
+    dict(_REASON_CODE_CATEGORIES_MUTABLE)
+)
+REASON_CODE_RULES_V2: Final[Mapping[str, bool]] = MappingProxyType(
+    {
+        "stable": True,
+        "non_sensitive": True,
+        "unknown_codes_fail_closed": True,
+        "raw_exception_text_forbidden": True,
     }
+)
+REASON_CODES_V2: Final[frozenset[str]] = frozenset(
+    code for codes in _REASON_CODE_CATEGORIES_MUTABLE.values() for code in codes
 )
 IGNORE_REASON_CODES_V2: Final[frozenset[str]] = frozenset(
     {
@@ -565,6 +581,13 @@ def _enum_value(enum_type: type[Enum], value: object, *, field_name: str) -> Enu
         raise SecretContractError(f"{field_name}: invalid value") from error
 
 
+def _require_enum_instance(value: object, enum_type: type[Enum], *, field_name: str) -> None:
+    """Reject raw strings and unrelated enums on direct construction."""
+
+    if not isinstance(value, enum_type):
+        raise SecretContractError(f"{field_name}: expected {enum_type.__name__}")
+
+
 def _iso_datetime(value: object, *, field_name: str) -> datetime | None:
     if value is None:
         return None
@@ -776,6 +799,12 @@ class SecretIgnoreDecisionV2:
     permanent_fixture_justification: str | None = None
 
     def __post_init__(self) -> None:
+        _require_enum_instance(self.state, SecretIgnoreState, field_name="state")
+        _require_enum_instance(
+            self.requested_scope,
+            SecretIgnoreScope,
+            field_name="requested_scope",
+        )
         for field_name, value in {
             "decision_id": self.decision_id,
             "requester_id": self.requester_id,
@@ -901,6 +930,21 @@ class SecretCustomRuleV2:
     surfaces: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        _require_enum_instance(
+            self.matcher_kind,
+            SecretRuleMatcherKind,
+            field_name="matcher_kind",
+        )
+        _require_enum_instance(
+            self.compile_state,
+            SecretRuleCompileState,
+            field_name="compile_state",
+        )
+        _require_enum_instance(
+            self.rollout_state,
+            SecretRolloutState,
+            field_name="rollout_state",
+        )
         if not _IDENTIFIER.fullmatch(self.rule_id):
             raise SecretContractError("rule_id is invalid")
         if not _IDENTIFIER.fullmatch(self.version):
@@ -958,6 +1002,7 @@ class CapabilityEvidenceV2:
     gap_label: str | None = None
 
     def __post_init__(self) -> None:
+        _require_enum_instance(self.state, ParityState, field_name="state")
         if not _IDENTIFIER.fullmatch(self.capability_id):
             raise SecretContractError("capability_id is invalid")
         boundary = PRODUCT_BOUNDARIES_V2.get(self.product_boundary)
@@ -1106,6 +1151,15 @@ class SourceCapabilityManifestV2:
 
 
 @dataclass(frozen=True, slots=True)
+class ReasonCodeManifestV2:
+    """Runtime-validated reason-code categories and fail-closed rules."""
+
+    category_ids: tuple[str, ...]
+    codes: frozenset[str]
+    rule_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class OrganizationMetricDefinitionV2:
     """Unambiguous organization-level reporting metric definition."""
 
@@ -1244,6 +1298,57 @@ def parse_source_capabilities_manifest(payload: Mapping[str, object]) -> SourceC
     return SourceCapabilityManifestV2(
         status_values=statuses,
         sections=tuple(SOURCE_CAPABILITY_SECTIONS_V2),
+    )
+
+
+def parse_reason_codes_manifest(payload: Mapping[str, object]) -> ReasonCodeManifestV2:
+    """Parse and compare the reason-code manifest to runtime authority."""
+
+    allowed = {"schema", "categories", "rules"}
+    unknown = sorted(set(payload) - allowed)
+    if unknown:
+        raise SecretContractError(f"{_SCHEMA_REASON_CODES}: unknown fields: {', '.join(unknown)}")
+    if payload.get("schema") != _SCHEMA_REASON_CODES:
+        raise SecretContractError("unsupported reason-code manifest schema")
+
+    categories = _mapping(payload.get("categories"), field_name="categories")
+    expected_category_ids = tuple(REASON_CODE_CATEGORIES_V2)
+    if tuple(categories) != expected_category_ids:
+        raise SecretContractError("reason-code category registry does not match the runtime contract")
+
+    seen: set[str] = set()
+    for category_id, expected_codes in REASON_CODE_CATEGORIES_V2.items():
+        declared_codes = _str_tuple(
+            categories.get(category_id),
+            field_name=f"categories.{category_id}",
+            allow_empty=False,
+        )
+        if len(set(declared_codes)) != len(declared_codes):
+            raise SecretContractError(f"categories.{category_id}: reason codes must be unique")
+        duplicates = sorted(seen.intersection(declared_codes))
+        if duplicates:
+            raise SecretContractError("reason codes must belong to exactly one category: " + ", ".join(duplicates))
+        if declared_codes != expected_codes:
+            raise SecretContractError(f"categories.{category_id}: codes do not match the runtime contract")
+        seen.update(declared_codes)
+    if frozenset(seen) != REASON_CODES_V2:
+        raise SecretContractError("reason-code registry does not match the runtime contract")
+
+    rules = _mapping(payload.get("rules"), field_name="rules")
+    if tuple(rules) != tuple(REASON_CODE_RULES_V2):
+        raise SecretContractError("reason-code rule registry does not match the runtime contract")
+    for rule_id, expected_value in REASON_CODE_RULES_V2.items():
+        declared_value = _required_bool(
+            rules.get(rule_id),
+            field_name=f"rules.{rule_id}",
+        )
+        if declared_value is not expected_value:
+            raise SecretContractError(f"rules.{rule_id}: policy does not match the runtime contract")
+
+    return ReasonCodeManifestV2(
+        category_ids=expected_category_ids,
+        codes=frozenset(seen),
+        rule_ids=tuple(REASON_CODE_RULES_V2),
     )
 
 
@@ -1388,6 +1493,8 @@ __all__ = [
     "PRODUCT_INVARIANTS_V2",
     "PRODUCT_SURFACES_V2",
     "REASON_CODES_V2",
+    "REASON_CODE_CATEGORIES_V2",
+    "REASON_CODE_RULES_V2",
     "SOURCE_CAPABILITY_SECTIONS_V2",
     "SOURCE_CAPABILITY_STATUS_VALUES_V2",
     "CapabilityEvidenceV2",
@@ -1396,6 +1503,7 @@ __all__ = [
     "ParityState",
     "PreventionOutcome",
     "ProductBoundaryManifestV2",
+    "ReasonCodeManifestV2",
     "SecretClass",
     "SecretContractError",
     "SecretCustomRuleV2",
@@ -1414,6 +1522,7 @@ __all__ = [
     "is_exact_commit_sha",
     "parse_capability_evidence_manifest",
     "parse_product_boundaries_manifest",
+    "parse_reason_codes_manifest",
     "parse_source_capabilities_manifest",
     "reject_prohibited_fields",
     "validate_capability_manifest",
