@@ -1,0 +1,209 @@
+name: Fix PR 2325 empty-reference coverage
+
+on:
+  push:
+    branches:
+      - automation/fix-pr2325-empty-refs-final-0814
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/secrets-v2-evidence-contracts-clean
+          fetch-depth: 1
+          persist-credentials: true
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Apply fail-honest reference coverage invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "6b38fe897dba02b3da7f248d919f039a522f4431"
+          python - <<'PY'
+          from pathlib import Path
+
+          contracts_path = Path("src/codex_plugin_scanner/guard/secrets/contracts_v2.py")
+          contracts = contracts_path.read_text(encoding="utf-8")
+
+          old_post_init = '''        if self.skipped_codes and not self.partial:
+              raise SecretContractError("skipped work requires partial=true")
+          if self.truncation_codes and not self.partial:
+              raise SecretContractError("truncation requires partial=true")
+          if set(self.completed_refs) - set(self.requested_refs):
+              raise SecretContractError("completed_refs must be a subset of requested_refs")
+          '''
+          new_post_init = '''        if self.skipped_codes and not self.partial:
+              raise SecretContractError("skipped work requires partial=true")
+          if self.truncation_codes and not self.partial:
+              raise SecretContractError("truncation requires partial=true")
+          if not self.requested_refs and not self.partial:
+              raise SecretContractError("empty requested_refs requires partial=true")
+          if set(self.completed_refs) - set(self.requested_refs):
+              raise SecretContractError("completed_refs must be a subset of requested_refs")
+          if not self.partial and set(self.completed_refs) != set(self.requested_refs):
+              raise SecretContractError("complete coverage must complete every requested ref")
+          '''
+          if contracts.count(old_post_init) != 1:
+              raise SystemExit("coverage post-init anchor was not unique")
+          contracts = contracts.replace(old_post_init, new_post_init, 1)
+
+          old_clean = '''        return (
+              not self.partial
+              and not self.degraded
+          '''
+          new_clean = '''        return (
+              bool(self.requested_refs)
+              and not self.partial
+              and not self.degraded
+          '''
+          if contracts.count(old_clean) != 1:
+              raise SystemExit("clean eligibility anchor was not unique")
+          contracts_path.write_text(
+              contracts.replace(old_clean, new_clean, 1),
+              encoding="utf-8",
+          )
+
+          tests_path = Path("tests/test_guard_secret_contracts_v2.py")
+          tests = tests_path.read_text(encoding="utf-8")
+
+          old_missing = '''def test_missing_requested_ref_cannot_claim_clean() -> None:
+              coverage = _coverage(completed_refs=[])
+              assert coverage.clean_eligible is False
+              with pytest.raises(SecretContractError):
+                  coverage.assert_outcome(PreventionOutcome.CLEAN)
+          '''
+          new_missing = '''def test_missing_requested_ref_cannot_claim_clean() -> None:
+              coverage = _coverage(completed_refs=[], partial=True)
+              assert coverage.clean_eligible is False
+              with pytest.raises(SecretContractError, match="cannot produce a clean"):
+                  coverage.assert_outcome(PreventionOutcome.CLEAN)
+          '''
+          if tests.count(old_missing) != 1:
+              raise SystemExit("missing-ref test anchor was not unique")
+          tests = tests.replace(old_missing, new_missing, 1)
+
+          anchor = '''def test_direct_coverage_rejects_skipped_work_without_partial() -> None:
+          '''
+          additions = '''def test_direct_coverage_rejects_empty_refs_without_partial() -> None:
+              with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):
+                  _direct_coverage(requested_refs=(), completed_refs=())
+
+
+          def test_mapping_coverage_rejects_empty_refs_without_partial() -> None:
+              with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):
+                  _coverage(requested_refs=[], completed_refs=[])
+
+
+          def test_empty_ref_partial_coverage_cannot_claim_clean() -> None:
+              coverage = _coverage(requested_refs=[], completed_refs=[], partial=True)
+              assert coverage.clean_eligible is False
+              with pytest.raises(SecretContractError, match="cannot produce a clean"):
+                  coverage.assert_outcome(PreventionOutcome.CLEAN)
+
+
+          def test_direct_complete_coverage_requires_every_requested_ref() -> None:
+              with pytest.raises(SecretContractError, match="complete every requested ref"):
+                  _direct_coverage(
+                      requested_refs=("refs/heads/main", "refs/tags/v3"),
+                      completed_refs=("refs/heads/main",),
+                  )
+
+
+          def test_mapping_complete_coverage_requires_every_requested_ref() -> None:
+              with pytest.raises(SecretContractError, match="complete every requested ref"):
+                  _coverage(
+                      requested_refs=["refs/heads/main", "refs/tags/v3"],
+                      completed_refs=["refs/heads/main"],
+                  )
+
+
+          '''
+          if tests.count(anchor) != 1:
+              raise SystemExit("coverage test insertion anchor was not unique")
+          tests_path.write_text(
+              tests.replace(anchor, additions + anchor, 1),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Install locked development dependencies
+        shell: bash
+        env:
+          UV_HTTP_TIMEOUT: "120"
+          UV_HTTP_RETRIES: "5"
+        run: |
+          set -euo pipefail
+          if ! uv sync --frozen --extra dev --python 3.12; then
+            sleep 10
+            uv sync --frozen --extra dev --python 3.12
+          fi
+
+      - name: Format, lint, and test the exact changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=(
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+            tests/test_guard_secret_contracts_v2.py
+          )
+          uv run --no-sync ruff format "${changed[@]}"
+          uv run --no-sync ruff check "${changed[@]}"
+          uv run --no-sync ruff format --check "${changed[@]}"
+          uv run --no-sync pytest \
+            tests/test_guard_secret_contracts_v2.py \
+            tests/test_guard_secret_release_claim_gate.py \
+            tests/test_release_toolchain_sbom.py \
+            --tb=short
+
+      - name: Reconcile and verify the exact test inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/ci/test_inventory.py --output /tmp/test-inventory.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory = json.loads(Path("/tmp/test-inventory.json").read_text(encoding="utf-8"))
+          baseline = {
+              "maximum_collected_cases": inventory["inventory"]["collected_cases"],
+              "maximum_test_source_lines": inventory["test_source_lines"],
+              "schema_version": 1,
+          }
+          Path("ci/test-suite-ratchet-baseline.json").write_text(
+              json.dumps(baseline, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(baseline, sort_keys=True))
+          PY
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory /tmp/test-inventory.json
+          git diff --check
+
+      - name: Commit the validated fix to the PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            ci/test-suite-ratchet-baseline.json \
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py \
+            tests/test_guard_secret_contracts_v2.py
+          git commit -m "fix(secrets): reject empty complete reference coverage"
+          git push origin HEAD:feat/secrets-v2-evidence-contracts-clean
