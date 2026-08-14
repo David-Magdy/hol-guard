@@ -169,6 +169,16 @@ def test_missing_requested_ref_cannot_claim_clean() -> None:
         coverage.assert_outcome(PreventionOutcome.CLEAN)
 
 
+def test_direct_coverage_rejects_empty_source_set() -> None:
+    with pytest.raises(SecretContractError, match="source_set must not be empty"):
+        _direct_coverage(source_set=())
+
+
+def test_mapping_coverage_rejects_empty_source_set() -> None:
+    with pytest.raises(SecretContractError, match="source_set: must not be empty"):
+        _coverage(source_set=[])
+
+
 def test_direct_coverage_rejects_empty_refs_without_partial() -> None:
     with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):
         _direct_coverage(requested_refs=(), completed_refs=())

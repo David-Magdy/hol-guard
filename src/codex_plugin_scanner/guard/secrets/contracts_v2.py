@@ -600,6 +600,8 @@ class SecretScanCoverageV2:
     error_code: str | None = None
 
     def __post_init__(self) -> None:
+        if not self.source_set:
+            raise SecretContractError("source_set must not be empty")
         if self.skipped_codes and not self.partial:
             raise SecretContractError("skipped work requires partial=true")
         if self.truncation_codes and not self.partial:
@@ -629,7 +631,8 @@ class SecretScanCoverageV2:
     @property
     def clean_eligible(self) -> bool:
         return (
-            bool(self.requested_refs)
+            bool(self.source_set)
+            and bool(self.requested_refs)
             and not self.partial
             and not self.degraded
             and self.error_code is None
