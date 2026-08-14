@@ -1,0 +1,98 @@
+name: Apply PR 2325 fixes
+
+on:
+  push:
+    branches:
+      - automation/apply-2325-fixes
+    paths:
+      - .github/workflows/apply-pr2325-fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Decode reviewed payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/payloads/pr2325/part* | base64 --decode > /tmp/pr2325-fixes.tar.gz
+          echo "2fe3d52280825f48492452f497b3f3a45f908da8880208644463686ff2be55ab  /tmp/pr2325-fixes.tar.gz" | sha256sum --check --strict
+      - name: Switch to the pull request branch and apply fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin feat/secrets-v2-evidence-contracts-clean
+          git switch --force-create feat/secrets-v2-evidence-contracts-clean origin/feat/secrets-v2-evidence-contracts-clean
+          tar -xzf /tmp/pr2325-fixes.tar.gz -C "$GITHUB_WORKSPACE"
+          git diff --check
+          cat > /tmp/expected-paths <<'EOF'
+          ci/test-suite-ratchet-baseline.json
+          docs/guard/contracts/guard-secrets-capability-evidence.v2.json
+          docs/guard/contracts/guard-secrets-product-boundaries.v2.json
+          docs/guard/contracts/guard-secrets-source-capabilities.v2.json
+          scripts/ci/guard_secrets_release_claim_gate.py
+          scripts/write_release_toolchain_sbom.py
+          src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+          tests/test_guard_secret_contracts_v2.py
+          tests/test_guard_secret_release_claim_gate.py
+          tests/test_release_toolchain_sbom.py
+          EOF
+          git diff --name-only | sort > /tmp/actual-paths
+          diff --unified /tmp/expected-paths /tmp/actual-paths
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Install locked development dependencies
+        shell: bash
+        run: uv sync --frozen --extra dev --python 3.12
+      - name: Validate formatting, lint, typing, contracts, and release wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed_python=(
+            scripts/ci/guard_secrets_release_claim_gate.py
+            scripts/write_release_toolchain_sbom.py
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+            tests/test_guard_secret_contracts_v2.py
+            tests/test_guard_secret_release_claim_gate.py
+            tests/test_release_toolchain_sbom.py
+          )
+          uv run --no-sync ruff format --check "${changed_python[@]}"
+          uv run --no-sync ruff check "${changed_python[@]}"
+          uv run --no-sync basedpyright --level error src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+          uv run --no-sync pytest \
+            tests/test_guard_secret_contracts_v2.py \
+            tests/test_guard_secret_release_claim_gate.py \
+            tests/test_release_toolchain_sbom.py \
+            --tb=short
+      - name: Commit and push reviewed fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            ci/test-suite-ratchet-baseline.json \
+            docs/guard/contracts/guard-secrets-capability-evidence.v2.json \
+            docs/guard/contracts/guard-secrets-product-boundaries.v2.json \
+            docs/guard/contracts/guard-secrets-source-capabilities.v2.json \
+            scripts/ci/guard_secrets_release_claim_gate.py \
+            scripts/write_release_toolchain_sbom.py \
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py \
+            tests/test_guard_secret_contracts_v2.py \
+            tests/test_guard_secret_release_claim_gate.py \
+            tests/test_release_toolchain_sbom.py
+          git commit -m "fix(secrets): close V2 claim-gate review findings"
+          git push origin HEAD:feat/secrets-v2-evidence-contracts-clean
