@@ -154,7 +154,7 @@ _ACTIVE_IGNORE_STATES: Final = frozenset(
     }
 )
 _PROHIBITED_KEY = re.compile(
-    r"(?:^|_)(?:raw_?secret|candidate(?:_value)?|credential(?:_value)?|"
+    r"(?:^|_)(?:raw(?:_value)?|raw_?secret|candidate(?:_value)?|credential(?:_value)?|"
     r"secret_?value|token_?value|source_(?:line|content|excerpt)|prompt|"
     r"tool_(?:output|result)|environment_?value|auth(?:orization)?_?header|"
     r"provider_?response(?:_body)?|absolute_?path)(?:$|_)",
@@ -600,6 +600,8 @@ class SecretScanCoverageV2:
     error_code: str | None = None
 
     def __post_init__(self) -> None:
+        if self.skipped_codes and not self.partial:
+            raise SecretContractError("skipped work requires partial=true")
         if self.truncation_codes and not self.partial:
             raise SecretContractError("truncation requires partial=true")
         if set(self.completed_refs) - set(self.requested_refs):
@@ -626,6 +628,7 @@ class SecretScanCoverageV2:
             not self.partial
             and not self.degraded
             and self.error_code is None
+            and not self.skipped_codes
             and not self.truncation_codes
             and set(self.requested_refs).issubset(self.completed_refs)
         )

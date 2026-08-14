@@ -169,6 +169,23 @@ def test_missing_requested_ref_cannot_claim_clean() -> None:
         coverage.assert_outcome(PreventionOutcome.CLEAN)
 
 
+def test_direct_coverage_rejects_skipped_work_without_partial() -> None:
+    with pytest.raises(SecretContractError, match="skipped work requires partial=true"):
+        _direct_coverage(skipped_codes=("binary_skipped",))
+
+
+def test_mapping_coverage_rejects_skipped_work_without_partial() -> None:
+    with pytest.raises(SecretContractError, match="skipped work requires partial=true"):
+        _coverage(skipped_codes=["binary_skipped"])
+
+
+def test_skipped_partial_coverage_cannot_claim_clean() -> None:
+    coverage = _coverage(partial=True, skipped_codes=["binary_skipped"])
+    assert coverage.clean_eligible is False
+    with pytest.raises(SecretContractError, match="cannot produce a clean"):
+        coverage.assert_outcome(PreventionOutcome.CLEAN)
+
+
 def test_direct_coverage_rejects_truncation_without_partial() -> None:
     with pytest.raises(SecretContractError, match="partial=true"):
         _direct_coverage(truncation_codes=("max_bytes",))
@@ -181,7 +198,7 @@ def test_direct_coverage_rejects_completed_ref_outside_request() -> None:
 
 def test_unknown_reason_code_is_rejected() -> None:
     with pytest.raises(SecretContractError, match="unknown reason codes"):
-        _direct_coverage(skipped_codes=("future_unknown",))
+        _direct_coverage(skipped_codes=("future_unknown",), partial=True)
 
 
 def test_future_coverage_schema_is_rejected() -> None:
@@ -192,6 +209,18 @@ def test_future_coverage_schema_is_rejected() -> None:
 def test_unknown_coverage_field_is_rejected() -> None:
     with pytest.raises(SecretContractError, match="unknown fields"):
         _coverage(unreviewed="value")
+
+
+@pytest.mark.parametrize("key", ["raw_value", "rawValue", "raw-value"])
+def test_raw_value_key_spellings_are_rejected(key: str) -> None:
+    with pytest.raises(SecretContractError, match="prohibited"):
+        reject_prohibited_fields({key: "arbitrary plaintext"})
+
+
+@pytest.mark.parametrize("key", ["raw_value", "rawValue", "raw-value"])
+def test_nested_raw_value_key_spellings_are_rejected(key: str) -> None:
+    with pytest.raises(SecretContractError, match="prohibited"):
+        reject_prohibited_fields({"safe": {key: "arbitrary plaintext"}})
 
 
 def test_nested_raw_value_like_field_is_rejected() -> None:
