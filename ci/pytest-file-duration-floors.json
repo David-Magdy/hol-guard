@@ -1,0 +1,8 @@
+{
+  "file_duration_floor_seconds": {
+    "tests/test_guard_approval_gate.py": 256.780419457,
+    "tests/test_guard_phase06_workspace_audit.py": 96.874656673,
+    "tests/test_opencode_adapter.py": 93.870090974
+  },
+  "schema_version": 1
+}
