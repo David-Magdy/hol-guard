@@ -1,0 +1,33 @@
+name: Source snapshot 2325
+
+on:
+  push:
+    branches:
+      - automation/source-snapshot-2325-v2
+    paths:
+      - .github/workflows/source-snapshot-2325.yml
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Pack source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git --exclude=.venv -czf /tmp/hol-guard-source-2325.tar.gz .
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hol-guard-source-2325
+          path: /tmp/hol-guard-source-2325.tar.gz
+          if-no-files-found: error
+          retention-days: 1
