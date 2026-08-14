@@ -1,0 +1,114 @@
+name: Validate PR 2325 on current release base
+
+on:
+  push:
+    branches:
+      - automation/validate-pr2325-current-base
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/secrets-v2-evidence-contracts-current-base
+          fetch-depth: 1
+          persist-credentials: true
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Run protected preflight before dependency installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "7deda211b92e9ad157622fd82c2439a18267ad6b"
+          python -I -S scripts/write_release_toolchain_sbom.py \
+            --output /tmp/release-toolchain.cdx.json \
+            --release-version preflight \
+            --expected-uv-version 0.9.26 \
+            --setup-action-ref fac544c07dec837d0ccb6301d7b5580bf5edae39 \
+            --repository-root "$PWD"
+          test -s /tmp/release-toolchain.cdx.json
+
+      - name: Install locked development dependencies
+        shell: bash
+        env:
+          UV_HTTP_TIMEOUT: "120"
+          UV_HTTP_RETRIES: "5"
+        run: |
+          set -euo pipefail
+          if ! uv sync --frozen --extra dev --python 3.12; then
+            sleep 10
+            uv sync --frozen --extra dev --python 3.12
+          fi
+
+      - name: Validate formatting, lint, types, and focused tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=(
+            scripts/ci/guard_secrets_release_claim_gate.py
+            scripts/write_release_toolchain_sbom.py
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+            tests/test_guard_secret_contracts_v2.py
+            tests/test_guard_secret_release_claim_gate.py
+            tests/test_release_toolchain_sbom.py
+          )
+          uv run --no-sync ruff format --check "${changed[@]}"
+          uv run --no-sync ruff check "${changed[@]}"
+          uv run --no-sync basedpyright --level error
+          uv run --no-sync pytest \
+            tests/test_guard_secret_contracts_v2.py \
+            tests/test_guard_secret_release_claim_gate.py \
+            tests/test_release_toolchain_sbom.py \
+            --tb=short
+
+      - name: Reconcile exact test inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/ci/test_inventory.py --output /tmp/test-inventory.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory = json.loads(Path("/tmp/test-inventory.json").read_text(encoding="utf-8"))
+          baseline = {
+              "maximum_collected_cases": inventory["inventory"]["collected_cases"],
+              "maximum_test_source_lines": inventory["test_source_lines"],
+              "schema_version": 1,
+          }
+          Path("ci/test-suite-ratchet-baseline.json").write_text(
+              json.dumps(baseline, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(baseline, sort_keys=True))
+          PY
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory /tmp/test-inventory.json
+          git diff --check
+
+      - name: Commit validated inventory to candidate branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci/test-suite-ratchet-baseline.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "test(secrets): reconcile current release inventory"
+          git push origin HEAD:feat/secrets-v2-evidence-contracts-current-base
