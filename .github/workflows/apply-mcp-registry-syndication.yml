@@ -1,4 +1,4 @@
-name: Apply MCP Registry syndication patch
+name: Apply MCP Registry ownership marker
 
 on:
   push:
@@ -24,40 +24,27 @@ jobs:
           git fetch --depth=1 origin "${BRANCH}"
           git checkout -B "${BRANCH}" FETCH_HEAD
 
-      - name: Add ownership marker and release syndication job
+      - name: Add PyPI ownership marker
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import base64
           from pathlib import Path
 
-          server_name = "io.github.hashgraph-online/hol-guard"
-          marker = f"<!-- mcp-name: {server_name} -->"
-
-          readme_path = Path("README.md")
-          readme = readme_path.read_text(encoding="utf-8")
-          if marker not in readme:
-              first_newline = readme.find("\n")
+          marker = "<!-- mcp-name: io.github.hashgraph-online/hol-guard -->"
+          path = Path("README.md")
+          text = path.read_text(encoding="utf-8")
+          if marker not in text:
+              first_newline = text.find("\n")
               if first_newline < 0:
                   raise SystemExit("README heading boundary not found")
-              readme = readme[: first_newline + 1] + f"\n{marker}\n" + readme[first_newline + 1 :]
-              readme_path.write_text(readme, encoding="utf-8")
-
-          workflow_path = Path(".github/workflows/publish.yml")
-          workflow = workflow_path.read_text(encoding="utf-8")
-          if "\n  publish-mcp-registry:\n" not in workflow:
-              encoded_job = "CgogIHB1Ymxpc2gtbWNwLXJlZ2lzdHJ5OgogICAgbmFtZTogUHVibGlzaCBvZmZpY2lhbCBNQ1AgUmVnaXN0cnkgbWV0YWRhdGEKICAgIGlmOiA+LQogICAgICBhbHdheXMoKSAmJgogICAgICB2YXJzLlJFTEVBU0VfUFVCTElTSElOR19FTkFCTEVEID09ICd0cnVlJyAmJgogICAgICBuZWVkcy5idWlsZC5yZXN1bHQgPT0gJ3N1Y2Nlc3MnICYmCiAgICAgICgKICAgICAgICAobmVlZHMuYnVpbGQub3V0cHV0cy5jaGFubmVsID09ICdhbHBoYScgJiYgbmVlZHMucHVibGlzaC1hbHBoYS1weXBpLnJlc3VsdCA9PSAnc3VjY2VzcycpIHx8CiAgICAgICAgKG5lZWRzLmJ1aWxkLm91dHB1dHMuY2hhbm5lbCA9PSAnc3RhYmxlJyAmJiBuZWVkcy5wdWJsaXNoLW1haW4tcHlwaS5yZXN1bHQgPT0gJ3N1Y2Nlc3MnKQogICAgICApCiAgICBuZWVkczogW2J1aWxkLCBwdWJsaXNoLWFscGhhLXB5cGksIHB1Ymxpc2gtbWFpbi1weXBpXQogICAgcnVucy1vbjogdWJ1bnR1LWxhdGVzdAogICAgcGVybWlzc2lvbnM6CiAgICAgIGNvbnRlbnRzOiByZWFkCiAgICAgIGlkLXRva2VuOiB3cml0ZQogICAgc3RlcHM6CiAgICAgIC0gdXNlczogYWN0aW9ucy9jaGVja291dEBkZjRjYjFjMDY5ZTE4NzRlZGQzMWI0MzExZjE4ODQxNzJjZWMwZTEwCiAgICAgICAgd2l0aDoKICAgICAgICAgIHJlZjogJHt7IG5lZWRzLmJ1aWxkLm91dHB1dHMuc291cmNlX3NoYSB9fQogICAgICAgICAgcGVyc2lzdC1jcmVkZW50aWFsczogZmFsc2UKICAgICAgLSBuYW1lOiBTdGFtcCBleGFjdCBwdWJsaXNoZWQgcGFja2FnZSB2ZXJzaW9uIGludG8gc2VydmVyLmpzb24KICAgICAgICBlbnY6CiAgICAgICAgICBWRVJTSU9OOiAke3sgbmVlZHMuYnVpbGQub3V0cHV0cy52ZXJzaW9uIH19CiAgICAgICAgcnVuOiB8CiAgICAgICAgICBzZXQgLWV1byBwaXBlZmFpbAogICAgICAgICAganEgLS1hcmcgdmVyc2lvbiAiJFZFUlNJT04iIFwKICAgICAgICAgICAgJy52ZXJzaW9uID0gJHZlcnNpb24gfCAucGFja2FnZXNbMF0udmVyc2lvbiA9ICR2ZXJzaW9uJyBcCiAgICAgICAgICAgIHNlcnZlci5qc29uID4gc2VydmVyLmpzb24udG1wCiAgICAgICAgICBtdiBzZXJ2ZXIuanNvbi50bXAgc2VydmVyLmpzb24KICAgICAgICAgIGpxIC1lIC0tYXJnIHZlcnNpb24gIiRWRVJTSU9OIiBcCiAgICAgICAgICAgICcudmVyc2lvbiA9PSAkdmVyc2lvbiBhbmQgLnBhY2thZ2VzWzBdLnZlcnNpb24gPT0gJHZlcnNpb24nIFwKICAgICAgICAgICAgc2VydmVyLmpzb24gPi9kZXYvbnVsbAogICAgICAtIG5hbWU6IEluc3RhbGwgcGlubmVkIE1DUCBSZWdpc3RyeSBwdWJsaXNoZXIKICAgICAgICBlbnY6CiAgICAgICAgICBNQ1BfUFVCTElTSEVSX1NIQTI1NjogYTA2YzkwOTZkY2I5NzI3YzEzNTU1YjZiZTI2YzdlZmZhNzA3YjAxZjA2YTRjNTYxYmE3YTM2MzU0NDNjZjJjYwogICAgICAgICAgTUNQX1BVQkxJU0hFUl9WRVJTSU9OOiB2MS44LjEKICAgICAgICBydW46IHwKICAgICAgICAgIHNldCAtZXVvIHBpcGVmYWlsCiAgICAgICAgICBhcmNoaXZlPW1jcC1wdWJsaXNoZXJfbGludXhfYW1kNjQudGFyLmd6CiAgICAgICAgICBjdXJsIC0tZmFpbCAtLWxvY2F0aW9uIC0tcHJvdG8gJz1odHRwcycgLS10bHN2MS4yIFwKICAgICAgICAgICAgImh0dHBzOi8vZ2l0aHViLmNvbS9tb2RlbGNvbnRleHRwcm90b2NvbC9yZWdpc3RyeS9yZWxlYXNlcy9kb3dubG9hZC8ke01DUF9QVUJMSVNIRVJfVkVSU0lPTn0vJHthcmNoaXZlfSIgXAogICAgICAgICAgICAtLW91dHB1dCAiJGFyY2hpdmUiCiAgICAgICAgICBwcmludGYgJyVzICAlc1xuJyAiJE1DUF9QVUJMSVNIRVJfU0hBMjU2IiAiJGFyY2hpdmUiIHwgc2hhMjU2c3VtIC0tY2hlY2sgLS1zdHJpY3QKICAgICAgICAgIHRhciAteHpmICIkYXJjaGl2ZSIgbWNwLXB1Ymxpc2hlcgogICAgICAgICAgY2htb2QgMDc1NSBtY3AtcHVibGlzaGVyCiAgICAgICAgICAuL21jcC1wdWJsaXNoZXIgLS1oZWxwID4vZGV2L251bGwKICAgICAgLSBuYW1lOiBBdXRoZW50aWNhdGUgdG8gb2ZmaWNpYWwgTUNQIFJlZ2lzdHJ5IHdpdGggR2l0SHViIE9JREMKICAgICAgICBydW46IC4vbWNwLXB1Ymxpc2hlciBsb2dpbiBnaXRodWItb2lkYwogICAgICAtIG5hbWU6IFB1Ymxpc2ggaW1tdXRhYmxlIE1DUCBzZXJ2ZXIgbWV0YWRhdGEKICAgICAgICBydW46IC4vbWNwLXB1Ymxpc2hlciBwdWJsaXNoCg=="
-              workflow = workflow.rstrip() + base64.b64decode(encoded_job).decode("utf-8") + "\n"
-              workflow_path.write_text(workflow, encoding="utf-8")
-
-          Path(".github/workflows/apply-mcp-registry-syndication.yml").unlink()
+              text = text[: first_newline + 1] + f"\n{marker}\n" + text[first_newline + 1 :]
+              path.write_text(text, encoding="utf-8")
           PY
-
-          git config user.name "kantorcodes"
-          git config user.email "6068672+kantorcodes@users.noreply.github.com"
-          git add README.md .github/workflows/publish.yml .github/workflows/apply-mcp-registry-syndication.yml
-          if git diff --cached --quiet; then
+          if git diff --quiet -- README.md; then
             exit 0
           fi
-          git commit -m "feat(mcp): syndicate releases to official registry"
+          git config user.name "kantorcodes"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git add README.md
+          git commit -m "feat(mcp): add Registry ownership marker"
           git push origin HEAD:feat/mcp-registry-syndication
