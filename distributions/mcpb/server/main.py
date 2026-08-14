@@ -12,7 +12,7 @@ def main() -> int:
         return 127
 
     completed = subprocess.run(
-        [executable, "guard", "mcp", "serve", "--stdio"],
+        [executable, "mcp", "serve", "--stdio"],
         check=False,
     )
     return completed.returncode
