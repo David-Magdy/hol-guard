@@ -27,8 +27,7 @@ def test_official_mcp_registry_manifest_contract() -> None:
     assert package["identifier"] == "hol-guard"
     assert package["runtimeHint"] == "uvx"
     assert package["transport"] == {"type": "stdio"}
-    # `hol-guard` is already the Guard-mode executable. Adding a leading
-    # `guard` would be parsed as an invalid root command and break Registry launches.
+    # `hol-guard` is already Guard-mode; a leading `guard` would break Registry launches.
     assert [argument["value"] for argument in package["packageArguments"]] == [
         "mcp",
         "serve",
