@@ -34,14 +34,10 @@ class _Arguments(Protocol):
 def node_file(node_id: str) -> str:
     """Return and validate the repository-relative file that owns a pytest node."""
 
+    if "\n" in node_id or "\r" in node_id or "\x00" in node_id:
+        raise ValueError(f"invalid pytest node id: {node_id!r}")
     path = node_id.split("::", maxsplit=1)[0]
-    if (
-        not path.startswith("tests/")
-        or not path.endswith(".py")
-        or "\n" in path
-        or "\r" in path
-        or "\x00" in path
-    ):
+    if not path.startswith("tests/") or not path.endswith(".py"):
         raise ValueError(f"invalid pytest node id: {node_id!r}")
     return path
 
