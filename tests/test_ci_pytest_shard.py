@@ -30,9 +30,11 @@ def test_ci_workflow_cancels_stale_runs_and_uses_precomputed_affinity_shards() -
 
     assert "cancel-in-progress: true" in workflow
     assert "CI_UV_CACHE_DEPENDENCY_GLOB" in workflow
+    assert "actions: read" in workflow
     assert "**/pyproject.toml" not in workflow
     assert "--shard-count 64" in plan_job
     assert "build_pytest_shard_plan.py" in plan_job
+    assert "Restore latest trusted duration telemetry" in plan_job
     assert "needs: test-plan" in tests_job
     assert "name: pytest-shard-plan" in tests_job
     assert "shard-%02d.txt" in tests_job
