@@ -269,6 +269,7 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: ${{ env.CI_UV_CACHE_DEPENDENCY_GLOB }}
+          save-cache: false
       - run: uv sync --frozen --extra dev --python ${{ matrix.python-version }}
       - name: Run cross-version compatibility contracts
         run: >-
@@ -300,10 +301,8 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: ${{ env.CI_UV_CACHE_DEPENDENCY_GLOB }}
+          save-cache: false
       - run: uv sync --frozen --extra dev --python ${{ matrix.python-version }}
-      # Current GitHub toolcache images ship 3.10/3.11/3.13 interpreters with
-      # mode 777 (other-writable); the hook manifest integrity check rightly
-      # refuses them. Replace with a private 0755 copy, same as the tests job.
       - name: Secure the CI virtualenv interpreter
         shell: bash
         run: |
@@ -344,6 +343,7 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: ${{ env.CI_UV_CACHE_DEPENDENCY_GLOB }}
+          save-cache: false
       - run: uv sync --frozen --extra dev --python 3.12
       - name: Run command parser mutation baseline
         run: uv run --no-sync mutmut run --max-children 4
@@ -435,6 +435,7 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: ${{ env.CI_UV_CACHE_DEPENDENCY_GLOB }}
+          save-cache: false
       - name: Retry uv setup after transient download failure
         if: steps.setup-uv-primary.outcome == 'failure'
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
@@ -442,6 +443,7 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: ${{ env.CI_UV_CACHE_DEPENDENCY_GLOB }}
+          save-cache: false
       - run: uv sync --frozen --extra dev --python ${{ matrix.python-version }}
       - name: Run cross-platform Guard regressions
         run: >-
@@ -491,6 +493,7 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: ${{ env.CI_UV_CACHE_DEPENDENCY_GLOB }}
+          save-cache: false
       - name: Retry uv setup after transient download failure
         if: steps.setup-uv-primary.outcome == 'failure'
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
@@ -498,6 +501,7 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           cache-dependency-glob: ${{ env.CI_UV_CACHE_DEPENDENCY_GLOB }}
+          save-cache: false
       - run: uv sync --frozen --extra dev --python ${{ matrix.python-version }}
       - name: Run trusted updater and daemon regressions
         run: >-
