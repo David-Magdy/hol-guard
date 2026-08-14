@@ -56,7 +56,15 @@ jobs:
           enable-cache: true
       - name: Install locked development dependencies
         shell: bash
-        run: uv sync --frozen --extra dev --python 3.12
+        env:
+          UV_HTTP_TIMEOUT: "120"
+          UV_HTTP_RETRIES: "5"
+        run: |
+          set -euo pipefail
+          if ! uv sync --frozen --extra dev --python 3.12; then
+            sleep 10
+            uv sync --frozen --extra dev --python 3.12
+          fi
       - name: Validate formatting, lint, typing, contracts, and release wiring
         shell: bash
         run: |
