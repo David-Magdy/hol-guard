@@ -163,10 +163,43 @@ def test_partial_coverage_cannot_claim_clean() -> None:
 
 
 def test_missing_requested_ref_cannot_claim_clean() -> None:
-    coverage = _coverage(completed_refs=[])
+    coverage = _coverage(completed_refs=[], partial=True)
     assert coverage.clean_eligible is False
-    with pytest.raises(SecretContractError):
+    with pytest.raises(SecretContractError, match="cannot produce a clean"):
         coverage.assert_outcome(PreventionOutcome.CLEAN)
+
+
+def test_direct_coverage_rejects_empty_refs_without_partial() -> None:
+    with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):
+        _direct_coverage(requested_refs=(), completed_refs=())
+
+
+def test_mapping_coverage_rejects_empty_refs_without_partial() -> None:
+    with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):
+        _coverage(requested_refs=[], completed_refs=[])
+
+
+def test_empty_ref_partial_coverage_cannot_claim_clean() -> None:
+    coverage = _coverage(requested_refs=[], completed_refs=[], partial=True)
+    assert coverage.clean_eligible is False
+    with pytest.raises(SecretContractError, match="cannot produce a clean"):
+        coverage.assert_outcome(PreventionOutcome.CLEAN)
+
+
+def test_direct_complete_coverage_requires_every_requested_ref() -> None:
+    with pytest.raises(SecretContractError, match="complete every requested ref"):
+        _direct_coverage(
+            requested_refs=("refs/heads/main", "refs/tags/v3"),
+            completed_refs=("refs/heads/main",),
+        )
+
+
+def test_mapping_complete_coverage_requires_every_requested_ref() -> None:
+    with pytest.raises(SecretContractError, match="complete every requested ref"):
+        _coverage(
+            requested_refs=["refs/heads/main", "refs/tags/v3"],
+            completed_refs=["refs/heads/main"],
+        )
 
 
 def test_direct_coverage_rejects_skipped_work_without_partial() -> None:

@@ -604,8 +604,12 @@ class SecretScanCoverageV2:
             raise SecretContractError("skipped work requires partial=true")
         if self.truncation_codes and not self.partial:
             raise SecretContractError("truncation requires partial=true")
+        if not self.requested_refs and not self.partial:
+            raise SecretContractError("empty requested_refs requires partial=true")
         if set(self.completed_refs) - set(self.requested_refs):
             raise SecretContractError("completed_refs must be a subset of requested_refs")
+        if not self.partial and set(self.completed_refs) != set(self.requested_refs):
+            raise SecretContractError("complete coverage must complete every requested ref")
         reason_codes = {*self.skipped_codes, *self.truncation_codes}
         if self.error_code is not None:
             reason_codes.add(self.error_code)
@@ -625,7 +629,8 @@ class SecretScanCoverageV2:
     @property
     def clean_eligible(self) -> bool:
         return (
-            not self.partial
+            bool(self.requested_refs)
+            and not self.partial
             and not self.degraded
             and self.error_code is None
             and not self.skipped_codes
