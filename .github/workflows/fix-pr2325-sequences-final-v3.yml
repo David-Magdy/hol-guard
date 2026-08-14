@@ -1,0 +1,108 @@
+name: Fix PR 2325 immutable sequence contracts v3
+
+on:
+  push:
+    branches:
+      - automation/fix-pr2325-sequences-final-v2-0814
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/secrets-v2-evidence-contracts-clean
+          fetch-depth: 1
+          persist-credentials: true
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Apply reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "d7ea4e43bcbaef319cfb377b461a2374723a2966"
+          git fetch --depth=1 origin automation/fix-pr2325-sequences-final-v2-0814
+          git show FETCH_HEAD:scripts/ci/tmp_patch_pr2325_sequences.py > /tmp/patch.py
+          python /tmp/patch.py
+
+      - name: Install locked development dependencies
+        shell: bash
+        env:
+          UV_HTTP_TIMEOUT: "120"
+          UV_HTTP_RETRIES: "5"
+        run: |
+          set -euo pipefail
+          if ! uv sync --frozen --extra dev --python 3.12; then
+            sleep 10
+            uv sync --frozen --extra dev --python 3.12
+          fi
+
+      - name: Format, lint, type-check, and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=(
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py
+            tests/test_guard_secret_contracts_v2.py
+          )
+          uv run --no-sync ruff format "${changed[@]}"
+          uv run --no-sync ruff check --fix "${changed[@]}"
+          uv run --no-sync ruff format --check "${changed[@]}"
+          uv run --no-sync ruff check "${changed[@]}"
+          uv run --no-sync basedpyright --level error
+          uv run --no-sync pytest \
+            tests/test_guard_secret_contracts_v2.py \
+            tests/test_guard_secret_release_claim_gate.py \
+            tests/test_release_toolchain_sbom.py \
+            --tb=short
+
+      - name: Reconcile exact test inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/ci/test_inventory.py --output /tmp/test-inventory.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          inventory = json.loads(Path("/tmp/test-inventory.json").read_text(encoding="utf-8"))
+          baseline = {
+              "maximum_collected_cases": inventory["inventory"]["collected_cases"],
+              "maximum_test_source_lines": inventory["test_source_lines"],
+              "schema_version": 1,
+          }
+          Path("ci/test-suite-ratchet-baseline.json").write_text(
+              json.dumps(baseline, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(baseline, sort_keys=True))
+          PY
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory /tmp/test-inventory.json
+          git diff --check
+
+      - name: Commit validated fix to the PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            ci/test-suite-ratchet-baseline.json \
+            src/codex_plugin_scanner/guard/secrets/contracts_v2.py \
+            tests/test_guard_secret_contracts_v2.py
+          git commit -m "fix(secrets): enforce immutable direct sequences"
+          git push origin HEAD:feat/secrets-v2-evidence-contracts-clean
