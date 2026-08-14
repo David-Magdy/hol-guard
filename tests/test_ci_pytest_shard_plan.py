@@ -70,6 +70,8 @@ def test_affinity_plan_rejects_duplicate_or_invalid_nodes() -> None:
         )
     with pytest.raises(ValueError, match="invalid pytest node"):
         build_affinity_node_shards(["outside/test_a.py::test_a"], 1, {})
+    with pytest.raises(ValueError, match="invalid pytest node"):
+        build_affinity_node_shards(["tests/test_a.py::test_a\ninjected"], 1, {})
 
 
 def test_write_shard_plan_emits_response_files_and_metadata(tmp_path: Path) -> None:
@@ -89,6 +91,13 @@ def test_write_shard_plan_emits_response_files_and_metadata(tmp_path: Path) -> N
     assert (tmp_path / "shard-01.txt").read_text(encoding="utf-8") == (
         "tests/test_b.py::test_b\ntests/test_b.py::test_c\n"
     )
+    response_nodes = [
+        node_id
+        for response_file in sorted(tmp_path.glob("shard-*.txt"))
+        for node_id in response_file.read_text(encoding="utf-8").splitlines()
+    ]
+    assert response_nodes == [node_id for shard in shards for node_id in shard]
+    assert len(response_nodes) == len(set(response_nodes))
     assert json.loads((tmp_path / "plan.json").read_text(encoding="utf-8")) == {
         "schema_version": 1,
         "shard_count": 2,
