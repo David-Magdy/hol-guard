@@ -169,6 +169,63 @@ def test_missing_requested_ref_cannot_claim_clean() -> None:
         coverage.assert_outcome(PreventionOutcome.CLEAN)
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "files_scanned",
+        "bytes_scanned",
+        "commits_visited",
+        "blobs_scanned",
+        "cache_hits",
+        "cache_misses",
+    ],
+)
+def test_direct_coverage_rejects_negative_counters(field_name: str) -> None:
+    with pytest.raises(SecretContractError, match="non-negative integer"):
+        _direct_coverage(**{field_name: -1})
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["files_scanned", "bytes_scanned", "commits_visited", "blobs_scanned", "cache_hits", "cache_misses"],
+)
+def test_direct_coverage_rejects_boolean_counters(field_name: str) -> None:
+    with pytest.raises(SecretContractError, match="non-negative integer"):
+        _direct_coverage(**{field_name: True})
+
+
+@pytest.mark.parametrize("field_name", ["partial", "degraded"])
+def test_direct_coverage_rejects_non_boolean_flags(field_name: str) -> None:
+    with pytest.raises(SecretContractError, match="expected a boolean"):
+        _direct_coverage(**{field_name: 1})
+
+
+@pytest.mark.parametrize(
+    "field_name", ["source_set", "requested_refs", "completed_refs", "skipped_codes", "truncation_codes"]
+)
+def test_direct_coverage_rejects_non_tuple_string_fields(field_name: str) -> None:
+    with pytest.raises(SecretContractError, match="tuple of strings"):
+        _direct_coverage(**{field_name: ["value"]})
+
+
+@pytest.mark.parametrize("field_name", ["source_set", "requested_refs", "completed_refs"])
+def test_coverage_rejects_duplicate_identity_fields(field_name: str) -> None:
+    value = ["duplicate", "duplicate"]
+    with pytest.raises(SecretContractError, match="values must be unique"):
+        _coverage(**{field_name: value})
+
+
+@pytest.mark.parametrize("field_name", ["source_set", "requested_refs", "completed_refs"])
+def test_coverage_rejects_blank_identity_fields(field_name: str) -> None:
+    with pytest.raises(SecretContractError, match="must not be blank"):
+        _coverage(**{field_name: [" "]})
+
+
+def test_direct_coverage_rejects_blank_detector_version() -> None:
+    with pytest.raises(SecretContractError, match="invalid length"):
+        _direct_coverage(detector_version=" ")
+
+
 def test_direct_coverage_rejects_empty_source_set() -> None:
     with pytest.raises(SecretContractError, match="source_set must not be empty"):
         _direct_coverage(source_set=())

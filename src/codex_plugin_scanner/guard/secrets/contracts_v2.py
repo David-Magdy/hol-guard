@@ -600,6 +600,42 @@ class SecretScanCoverageV2:
     error_code: str | None = None
 
     def __post_init__(self) -> None:
+        tuple_fields = {
+            "source_set": self.source_set,
+            "requested_refs": self.requested_refs,
+            "completed_refs": self.completed_refs,
+            "skipped_codes": self.skipped_codes,
+            "truncation_codes": self.truncation_codes,
+        }
+        for field_name, values in tuple_fields.items():
+            if not isinstance(values, tuple) or any(not isinstance(item, str) for item in values):
+                raise SecretContractError(f"{field_name}: expected a tuple of strings")
+            if len(set(values)) != len(values):
+                raise SecretContractError(f"{field_name}: values must be unique")
+            for item in values:
+                if not item.strip():
+                    raise SecretContractError(f"{field_name}: values must not be blank")
+                _assert_safe_public_text(item, field_name=field_name)
+        for field_name, value in {
+            "files_scanned": self.files_scanned,
+            "bytes_scanned": self.bytes_scanned,
+            "commits_visited": self.commits_visited,
+            "blobs_scanned": self.blobs_scanned,
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+        }.items():
+            _non_negative_int(value, field_name=field_name)
+        _required_bool(self.partial, field_name="partial")
+        _required_bool(self.degraded, field_name="degraded")
+        detector_version = _required_text(self.detector_version, field_name="detector_version")
+        if detector_version != self.detector_version:
+            raise SecretContractError("detector_version: surrounding whitespace is prohibited")
+        model_version = _optional_text(self.model_version, field_name="model_version")
+        if model_version != self.model_version:
+            raise SecretContractError("model_version: surrounding whitespace is prohibited")
+        error_code = _optional_text(self.error_code, field_name="error_code")
+        if error_code != self.error_code:
+            raise SecretContractError("error_code: surrounding whitespace is prohibited")
         if not self.source_set:
             raise SecretContractError("source_set must not be empty")
         if self.skipped_codes and not self.partial:
