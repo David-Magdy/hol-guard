@@ -9,7 +9,7 @@ No Guard Cloud account, API key, or remote MCP endpoint is required for the loca
 Cline's current CLI can prefill a stdio MCP server with `cline mcp install`. Run:
 
 ```bash
-cline mcp install hol-guard -- uvx --from hol-guard hol-guard guard mcp serve --stdio
+cline mcp install hol-guard -- uvx --from hol-guard hol-guard mcp serve --stdio
 ```
 
 Cline opens its add-server wizard with the name and command prefilled. Review the local command, accept it, and let Cline save the MCP configuration.
@@ -17,7 +17,7 @@ Cline opens its add-server wizard with the name and command prefilled. Review th
 If `uvx` is not installed, install `uv` from Astral's official installer/package manager first, or install HOL Guard in an isolated CLI environment with `pipx install hol-guard` and use:
 
 ```bash
-cline mcp install hol-guard -- hol-guard guard mcp serve --stdio
+cline mcp install hol-guard -- hol-guard mcp serve --stdio
 ```
 
 ## Equivalent MCP configuration
@@ -33,7 +33,6 @@ For clients that accept raw MCP configuration, the server is:
         "--from",
         "hol-guard",
         "hol-guard",
-        "guard",
         "mcp",
         "serve",
         "--stdio"
