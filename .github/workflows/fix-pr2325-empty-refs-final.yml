@@ -37,107 +37,108 @@ jobs:
           from pathlib import Path
 
           contracts_path = Path("src/codex_plugin_scanner/guard/secrets/contracts_v2.py")
-          contracts = contracts_path.read_text(encoding="utf-8")
+          lines = contracts_path.read_text(encoding="utf-8").splitlines()
 
-          old_post_init = '''        if self.skipped_codes and not self.partial:
-              raise SecretContractError("skipped work requires partial=true")
-          if self.truncation_codes and not self.partial:
-              raise SecretContractError("truncation requires partial=true")
-          if set(self.completed_refs) - set(self.requested_refs):
-              raise SecretContractError("completed_refs must be a subset of requested_refs")
-          '''
-          new_post_init = '''        if self.skipped_codes and not self.partial:
-              raise SecretContractError("skipped work requires partial=true")
-          if self.truncation_codes and not self.partial:
-              raise SecretContractError("truncation requires partial=true")
-          if not self.requested_refs and not self.partial:
-              raise SecretContractError("empty requested_refs requires partial=true")
-          if set(self.completed_refs) - set(self.requested_refs):
-              raise SecretContractError("completed_refs must be a subset of requested_refs")
-          if not self.partial and set(self.completed_refs) != set(self.requested_refs):
-              raise SecretContractError("complete coverage must complete every requested ref")
-          '''
-          if contracts.count(old_post_init) != 1:
-              raise SystemExit("coverage post-init anchor was not unique")
-          contracts = contracts.replace(old_post_init, new_post_init, 1)
-
-          old_clean = '''        return (
-              not self.partial
-              and not self.degraded
-          '''
-          new_clean = '''        return (
-              bool(self.requested_refs)
-              and not self.partial
-              and not self.degraded
-          '''
-          if contracts.count(old_clean) != 1:
-              raise SystemExit("clean eligibility anchor was not unique")
-          contracts_path.write_text(
-              contracts.replace(old_clean, new_clean, 1),
-              encoding="utf-8",
+          class_start = lines.index("class SecretScanCoverageV2:")
+          class_end = next(
+              index
+              for index in range(class_start + 1, len(lines))
+              if lines[index].startswith("class ") or lines[index].startswith("@dataclass")
           )
+          subset_line = "        if set(self.completed_refs) - set(self.requested_refs):"
+          subset_index = next(
+              index
+              for index in range(class_start, class_end)
+              if lines[index] == subset_line
+          )
+          if lines[subset_index + 1] != (
+              '            raise SecretContractError("completed_refs must be a subset of requested_refs")'
+          ):
+              raise SystemExit("completed-ref invariant changed unexpectedly")
+          lines[subset_index:subset_index] = [
+              "        if not self.requested_refs and not self.partial:",
+              '            raise SecretContractError("empty requested_refs requires partial=true")',
+          ]
+          subset_index += 2
+          lines[subset_index + 2:subset_index + 2] = [
+              "        if not self.partial and set(self.completed_refs) != set(self.requested_refs):",
+              '            raise SecretContractError("complete coverage must complete every requested ref")',
+          ]
+
+          clean_def = next(
+              index
+              for index in range(class_start, class_end)
+              if lines[index] == "    def clean_eligible(self) -> bool:"
+          )
+          return_index = next(
+              index
+              for index in range(clean_def, class_end)
+              if lines[index] == "        return ("
+          )
+          if lines[return_index + 1] != "            not self.partial":
+              raise SystemExit("clean eligibility changed unexpectedly")
+          lines.insert(return_index + 1, "            bool(self.requested_refs)")
+          lines.insert(return_index + 2, "            and not self.partial")
+          del lines[return_index + 3]
+          contracts_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
           tests_path = Path("tests/test_guard_secret_contracts_v2.py")
-          tests = tests_path.read_text(encoding="utf-8")
-
-          old_missing = '''def test_missing_requested_ref_cannot_claim_clean() -> None:
-              coverage = _coverage(completed_refs=[])
-              assert coverage.clean_eligible is False
-              with pytest.raises(SecretContractError):
-                  coverage.assert_outcome(PreventionOutcome.CLEAN)
-          '''
-          new_missing = '''def test_missing_requested_ref_cannot_claim_clean() -> None:
-              coverage = _coverage(completed_refs=[], partial=True)
-              assert coverage.clean_eligible is False
-              with pytest.raises(SecretContractError, match="cannot produce a clean"):
-                  coverage.assert_outcome(PreventionOutcome.CLEAN)
-          '''
-          if tests.count(old_missing) != 1:
-              raise SystemExit("missing-ref test anchor was not unique")
-          tests = tests.replace(old_missing, new_missing, 1)
-
-          anchor = '''def test_direct_coverage_rejects_skipped_work_without_partial() -> None:
-          '''
-          additions = '''def test_direct_coverage_rejects_empty_refs_without_partial() -> None:
-              with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):
-                  _direct_coverage(requested_refs=(), completed_refs=())
-
-
-          def test_mapping_coverage_rejects_empty_refs_without_partial() -> None:
-              with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):
-                  _coverage(requested_refs=[], completed_refs=[])
-
-
-          def test_empty_ref_partial_coverage_cannot_claim_clean() -> None:
-              coverage = _coverage(requested_refs=[], completed_refs=[], partial=True)
-              assert coverage.clean_eligible is False
-              with pytest.raises(SecretContractError, match="cannot produce a clean"):
-                  coverage.assert_outcome(PreventionOutcome.CLEAN)
-
-
-          def test_direct_complete_coverage_requires_every_requested_ref() -> None:
-              with pytest.raises(SecretContractError, match="complete every requested ref"):
-                  _direct_coverage(
-                      requested_refs=("refs/heads/main", "refs/tags/v3"),
-                      completed_refs=("refs/heads/main",),
-                  )
-
-
-          def test_mapping_complete_coverage_requires_every_requested_ref() -> None:
-              with pytest.raises(SecretContractError, match="complete every requested ref"):
-                  _coverage(
-                      requested_refs=["refs/heads/main", "refs/tags/v3"],
-                      completed_refs=["refs/heads/main"],
-                  )
-
-
-          '''
-          if tests.count(anchor) != 1:
-              raise SystemExit("coverage test insertion anchor was not unique")
-          tests_path.write_text(
-              tests.replace(anchor, additions + anchor, 1),
-              encoding="utf-8",
+          lines = tests_path.read_text(encoding="utf-8").splitlines()
+          missing_start = lines.index("def test_missing_requested_ref_cannot_claim_clean() -> None:")
+          missing_end = next(
+              index
+              for index in range(missing_start + 1, len(lines))
+              if lines[index].startswith("def test_")
           )
+          replacement = [
+              "def test_missing_requested_ref_cannot_claim_clean() -> None:",
+              "    coverage = _coverage(completed_refs=[], partial=True)",
+              "    assert coverage.clean_eligible is False",
+              '    with pytest.raises(SecretContractError, match="cannot produce a clean"):',
+              "        coverage.assert_outcome(PreventionOutcome.CLEAN)",
+              "",
+              "",
+          ]
+          lines[missing_start:missing_end] = replacement
+
+          anchor = lines.index("def test_direct_coverage_rejects_skipped_work_without_partial() -> None:")
+          additions = [
+              "def test_direct_coverage_rejects_empty_refs_without_partial() -> None:",
+              '    with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):',
+              "        _direct_coverage(requested_refs=(), completed_refs=())",
+              "",
+              "",
+              "def test_mapping_coverage_rejects_empty_refs_without_partial() -> None:",
+              '    with pytest.raises(SecretContractError, match="empty requested_refs requires partial=true"):',
+              "        _coverage(requested_refs=[], completed_refs=[])",
+              "",
+              "",
+              "def test_empty_ref_partial_coverage_cannot_claim_clean() -> None:",
+              "    coverage = _coverage(requested_refs=[], completed_refs=[], partial=True)",
+              "    assert coverage.clean_eligible is False",
+              '    with pytest.raises(SecretContractError, match="cannot produce a clean"):',
+              "        coverage.assert_outcome(PreventionOutcome.CLEAN)",
+              "",
+              "",
+              "def test_direct_complete_coverage_requires_every_requested_ref() -> None:",
+              '    with pytest.raises(SecretContractError, match="complete every requested ref"):',
+              "        _direct_coverage(",
+              '            requested_refs=("refs/heads/main", "refs/tags/v3"),',
+              '            completed_refs=("refs/heads/main",),',
+              "        )",
+              "",
+              "",
+              "def test_mapping_complete_coverage_requires_every_requested_ref() -> None:",
+              '    with pytest.raises(SecretContractError, match="complete every requested ref"):',
+              "        _coverage(",
+              '            requested_refs=["refs/heads/main", "refs/tags/v3"],',
+              '            completed_refs=["refs/heads/main"],',
+              "        )",
+              "",
+              "",
+          ]
+          lines[anchor:anchor] = additions
+          tests_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
 
       - name: Install locked development dependencies
