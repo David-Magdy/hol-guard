@@ -19,10 +19,6 @@
       "packageArguments": [
         {
           "type": "positional",
-          "value": "guard"
-        },
-        {
-          "type": "positional",
           "value": "mcp"
         },
         {
