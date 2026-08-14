@@ -44,11 +44,21 @@ def test_affinity_plan_covers_every_node_once_and_is_deterministic() -> None:
     assert all(len(shard_indexes) == 1 for shard_indexes in owning_shards.values())
 
 
-def test_affinity_plan_splits_only_an_oversized_file() -> None:
-    large = [f"tests/test_large.py::test_{index}" for index in range(24)]
+@pytest.mark.parametrize(
+    ("large_count", "large_seconds"),
+    [(24, 1.0), (97, 0.01)],
+)
+def test_affinity_plan_splits_oversized_or_node_heavy_file(
+    large_count: int,
+    large_seconds: float,
+) -> None:
+    large = [f"tests/test_large.py::test_{index}" for index in range(large_count)]
     small = [f"tests/test_small_{index}.py::test_one" for index in range(6)]
     nodes = large + small
-    durations = _durations(nodes)
+    durations = {
+        **_durations(large, seconds=large_seconds),
+        **_durations(small),
+    }
 
     shards, loads = build_affinity_node_shards(nodes, 6, durations)
 
