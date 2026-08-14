@@ -6,6 +6,7 @@ on:
       - tmp/rust-p0-latest-release-source-20260814
     paths:
       - .github/workflows/tmp-export-rust-p0-latest-release.yml
+  workflow_dispatch:
 
 permissions:
   contents: read
