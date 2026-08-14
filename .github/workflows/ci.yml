@@ -131,7 +131,7 @@ jobs:
             > /tmp/pytest-duration-manifest.json.gz
           gzip -t /tmp/pytest-duration-manifest.json.gz
           mv /tmp/pytest-duration-manifest.json.gz pytest-duration-manifest.latest.json.gz
-      - name: Collect once and build 64 affinity-aware pytest shards
+      - name: Collect once and build 96 affinity-aware pytest shards
         shell: bash
         run: |
           manifest=ci/pytest-duration-manifest.json.gz
@@ -139,7 +139,7 @@ jobs:
             manifest=pytest-duration-manifest.latest.json.gz
           fi
           uv run --no-sync python scripts/ci/build_pytest_shard_plan.py \
-            --shard-count 64 \
+            --shard-count 96 \
             --duration-manifest "$manifest" \
             --max-manifest-age-days 28 \
             --output-directory pytest-shards
@@ -161,7 +161,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.12"]
-        shard-index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
+        shard-index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -239,7 +239,7 @@ jobs:
         run: |
           shopt -s globstar nullglob
           reports=(duration-reports/**/pytest-durations.json)
-          test "${#reports[@]}" -eq 64
+          test "${#reports[@]}" -eq 96
           python3 scripts/ci/build_pytest_duration_manifest.py \
             --output pytest-duration-manifest-candidate.json.gz \
             --observed-at "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
