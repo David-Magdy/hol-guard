@@ -1,0 +1,33 @@
+name: Temporary Rust P0 latest release source
+
+on:
+  push:
+    branches:
+      - tmp/rust-p0-latest-release-source-20260814
+    paths:
+      - .github/workflows/tmp-export-rust-p0-latest-release.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: 78af4fd2d7414ba4557ebe63682feaf7ea768c78
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Archive exact clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git --exclude=.venv --exclude=.uv-cache -czf "$RUNNER_TEMP/release-source.tgz" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hol-guard-release-source-78af4fd2d7414ba4557ebe63682feaf7ea768c78
+          path: ${{ runner.temp }}/release-source.tgz
+          if-no-files-found: error
+          retention-days: 1
