@@ -41,27 +41,14 @@ jobs:
               raise SystemExit("prohibited-key anchor not found")
           text = text.replace(old, new, 1)
 
-          old = '''    def __post_init__(self) -> None:
-              if self.truncation_codes and not self.partial:
-                  raise SecretContractError("truncation requires partial=true")
-          '''
-          new = '''    def __post_init__(self) -> None:
-              if self.skipped_codes and not self.partial:
-                  raise SecretContractError("skipped work requires partial=true")
-              if self.truncation_codes and not self.partial:
-                  raise SecretContractError("truncation requires partial=true")
-          '''
+          old = "        if self.truncation_codes and not self.partial:\n            raise SecretContractError(\"truncation requires partial=true\")"
+          new = "        if self.skipped_codes and not self.partial:\n            raise SecretContractError(\"skipped work requires partial=true\")\n        if self.truncation_codes and not self.partial:\n            raise SecretContractError(\"truncation requires partial=true\")"
           if old not in text:
               raise SystemExit("coverage post-init anchor not found")
           text = text.replace(old, new, 1)
 
-          old = '''            and self.error_code is None
-              and not self.truncation_codes
-          '''
-          new = '''            and self.error_code is None
-              and not self.skipped_codes
-              and not self.truncation_codes
-          '''
+          old = "            and self.error_code is None\n            and not self.truncation_codes"
+          new = "            and self.error_code is None\n            and not self.skipped_codes\n            and not self.truncation_codes"
           if old not in text:
               raise SystemExit("clean-eligible anchor not found")
           contracts.write_text(text.replace(old, new, 1), encoding="utf-8")
@@ -69,45 +56,49 @@ jobs:
           tests = Path("tests/test_guard_secret_contracts_v2.py")
           text = tests.read_text(encoding="utf-8")
 
-          anchor = '''def test_direct_coverage_rejects_truncation_without_partial() -> None:
-          '''
-          addition = '''def test_direct_coverage_rejects_skipped_work_without_partial() -> None:
-              with pytest.raises(SecretContractError, match="skipped work requires partial=true"):
-                  _direct_coverage(skipped_codes=("binary_skipped",))
-
-
-          def test_mapping_coverage_rejects_skipped_work_without_partial() -> None:
-              with pytest.raises(SecretContractError, match="skipped work requires partial=true"):
-                  _coverage(skipped_codes=["binary_skipped"])
-
-
-          def test_skipped_partial_coverage_cannot_claim_clean() -> None:
-              coverage = _coverage(partial=True, skipped_codes=["binary_skipped"])
-              assert coverage.clean_eligible is False
-              with pytest.raises(SecretContractError, match="cannot produce a clean"):
-                  coverage.assert_outcome(PreventionOutcome.CLEAN)
-
-
-          '''
+          anchor = "def test_direct_coverage_rejects_truncation_without_partial() -> None:\n"
+          addition = "\n".join(
+              [
+                  "def test_direct_coverage_rejects_skipped_work_without_partial() -> None:",
+                  "    with pytest.raises(SecretContractError, match=\"skipped work requires partial=true\"):",
+                  "        _direct_coverage(skipped_codes=(\"binary_skipped\",))",
+                  "",
+                  "",
+                  "def test_mapping_coverage_rejects_skipped_work_without_partial() -> None:",
+                  "    with pytest.raises(SecretContractError, match=\"skipped work requires partial=true\"):",
+                  "        _coverage(skipped_codes=[\"binary_skipped\"])",
+                  "",
+                  "",
+                  "def test_skipped_partial_coverage_cannot_claim_clean() -> None:",
+                  "    coverage = _coverage(partial=True, skipped_codes=[\"binary_skipped\"])",
+                  "    assert coverage.clean_eligible is False",
+                  "    with pytest.raises(SecretContractError, match=\"cannot produce a clean\"):",
+                  "        coverage.assert_outcome(PreventionOutcome.CLEAN)",
+                  "",
+                  "",
+              ]
+          )
           if anchor not in text:
               raise SystemExit("coverage-test anchor not found")
           text = text.replace(anchor, addition + anchor, 1)
 
-          anchor = '''def test_nested_raw_value_like_field_is_rejected() -> None:
-          '''
-          addition = '''@pytest.mark.parametrize("key", ["raw_value", "rawValue", "raw-value"])
-          def test_raw_value_key_spellings_are_rejected(key: str) -> None:
-              with pytest.raises(SecretContractError, match="prohibited"):
-                  reject_prohibited_fields({key: "arbitrary plaintext"})
-
-
-          @pytest.mark.parametrize("key", ["raw_value", "rawValue", "raw-value"])
-          def test_nested_raw_value_key_spellings_are_rejected(key: str) -> None:
-              with pytest.raises(SecretContractError, match="prohibited"):
-                  reject_prohibited_fields({"safe": {key: "arbitrary plaintext"}})
-
-
-          '''
+          anchor = "def test_nested_raw_value_like_field_is_rejected() -> None:\n"
+          addition = "\n".join(
+              [
+                  "@pytest.mark.parametrize(\"key\", [\"raw_value\", \"rawValue\", \"raw-value\"])",
+                  "def test_raw_value_key_spellings_are_rejected(key: str) -> None:",
+                  "    with pytest.raises(SecretContractError, match=\"prohibited\"):",
+                  "        reject_prohibited_fields({key: \"arbitrary plaintext\"})",
+                  "",
+                  "",
+                  "@pytest.mark.parametrize(\"key\", [\"raw_value\", \"rawValue\", \"raw-value\"])",
+                  "def test_nested_raw_value_key_spellings_are_rejected(key: str) -> None:",
+                  "    with pytest.raises(SecretContractError, match=\"prohibited\"):",
+                  "        reject_prohibited_fields({\"safe\": {key: \"arbitrary plaintext\"}})",
+                  "",
+                  "",
+              ]
+          )
           if anchor not in text:
               raise SystemExit("privacy-test anchor not found")
           tests.write_text(text.replace(anchor, addition + anchor, 1), encoding="utf-8")
