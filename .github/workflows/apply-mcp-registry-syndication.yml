@@ -28,6 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import base64
           from pathlib import Path
 
           server_name = "io.github.hashgraph-online/hol-guard"
@@ -45,63 +46,8 @@ jobs:
           workflow_path = Path(".github/workflows/publish.yml")
           workflow = workflow_path.read_text(encoding="utf-8")
           if "\n  publish-mcp-registry:\n" not in workflow:
-              job = r'''
-
-  publish-mcp-registry:
-    name: Publish official MCP Registry metadata
-    if: >-
-      always() &&
-      vars.RELEASE_PUBLISHING_ENABLED == 'true' &&
-      needs.build.result == 'success' &&
-      (
-        (needs.build.outputs.channel == 'alpha' && needs.publish-alpha-pypi.result == 'success') ||
-        (needs.build.outputs.channel == 'stable' && needs.publish-main-pypi.result == 'success')
-      )
-    needs: [build, publish-alpha-pypi, publish-main-pypi]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-        with:
-          ref: __OPEN__ needs.build.outputs.source_sha __CLOSE__
-          persist-credentials: false
-      - name: Stamp exact published package version into server.json
-        env:
-          VERSION: __OPEN__ needs.build.outputs.version __CLOSE__
-        run: |
-          set -euo pipefail
-          jq --arg version "$VERSION" \
-            '.version = $version | .packages[0].version = $version' \
-            server.json > server.json.tmp
-          mv server.json.tmp server.json
-          jq -e --arg version "$VERSION" \
-            '.version == $version and .packages[0].version == $version' \
-            server.json >/dev/null
-      - name: Install pinned MCP Registry publisher
-        env:
-          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
-          MCP_PUBLISHER_VERSION: v1.8.1
-        run: |
-          set -euo pipefail
-          archive=mcp-publisher_linux_amd64.tar.gz
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}" \
-            --output "$archive"
-          printf '%s  %s\n' "$MCP_PUBLISHER_SHA256" "$archive" | sha256sum --check --strict
-          tar -xzf "$archive" mcp-publisher
-          chmod 0755 mcp-publisher
-          ./mcp-publisher --help >/dev/null
-      - name: Authenticate to official MCP Registry with GitHub OIDC
-        run: ./mcp-publisher login github-oidc
-      - name: Publish immutable MCP server metadata
-        run: ./mcp-publisher publish
-'''
-              open_expr = "$" + "{{"
-              close_expr = "}}"
-              job = job.replace("__OPEN__", open_expr).replace("__CLOSE__", close_expr)
-              workflow = workflow.rstrip() + job + "\n"
+              encoded_job = "CgogIHB1Ymxpc2gtbWNwLXJlZ2lzdHJ5OgogICAgbmFtZTogUHVibGlzaCBvZmZpY2lhbCBNQ1AgUmVnaXN0cnkgbWV0YWRhdGEKICAgIGlmOiA+LQogICAgICBhbHdheXMoKSAmJgogICAgICB2YXJzLlJFTEVBU0VfUFVCTElTSElOR19FTkFCTEVEID09ICd0cnVlJyAmJgogICAgICBuZWVkcy5idWlsZC5yZXN1bHQgPT0gJ3N1Y2Nlc3MnICYmCiAgICAgICgKICAgICAgICAobmVlZHMuYnVpbGQub3V0cHV0cy5jaGFubmVsID09ICdhbHBoYScgJiYgbmVlZHMucHVibGlzaC1hbHBoYS1weXBpLnJlc3VsdCA9PSAnc3VjY2VzcycpIHx8CiAgICAgICAgKG5lZWRzLmJ1aWxkLm91dHB1dHMuY2hhbm5lbCA9PSAnc3RhYmxlJyAmJiBuZWVkcy5wdWJsaXNoLW1haW4tcHlwaS5yZXN1bHQgPT0gJ3N1Y2Nlc3MnKQogICAgICApCiAgICBuZWVkczogW2J1aWxkLCBwdWJsaXNoLWFscGhhLXB5cGksIHB1Ymxpc2gtbWFpbi1weXBpXQogICAgcnVucy1vbjogdWJ1bnR1LWxhdGVzdAogICAgcGVybWlzc2lvbnM6CiAgICAgIGNvbnRlbnRzOiByZWFkCiAgICAgIGlkLXRva2VuOiB3cml0ZQogICAgc3RlcHM6CiAgICAgIC0gdXNlczogYWN0aW9ucy9jaGVja291dEBkZjRjYjFjMDY5ZTE4NzRlZGQzMWI0MzExZjE4ODQxNzJjZWMwZTEwCiAgICAgICAgd2l0aDoKICAgICAgICAgIHJlZjogJHt7IG5lZWRzLmJ1aWxkLm91dHB1dHMuc291cmNlX3NoYSB9fQogICAgICAgICAgcGVyc2lzdC1jcmVkZW50aWFsczogZmFsc2UKICAgICAgLSBuYW1lOiBTdGFtcCBleGFjdCBwdWJsaXNoZWQgcGFja2FnZSB2ZXJzaW9uIGludG8gc2VydmVyLmpzb24KICAgICAgICBlbnY6CiAgICAgICAgICBWRVJTSU9OOiAke3sgbmVlZHMuYnVpbGQub3V0cHV0cy52ZXJzaW9uIH19CiAgICAgICAgcnVuOiB8CiAgICAgICAgICBzZXQgLWV1byBwaXBlZmFpbAogICAgICAgICAganEgLS1hcmcgdmVyc2lvbiAiJFZFUlNJT04iIFwKICAgICAgICAgICAgJy52ZXJzaW9uID0gJHZlcnNpb24gfCAucGFja2FnZXNbMF0udmVyc2lvbiA9ICR2ZXJzaW9uJyBcCiAgICAgICAgICAgIHNlcnZlci5qc29uID4gc2VydmVyLmpzb24udG1wCiAgICAgICAgICBtdiBzZXJ2ZXIuanNvbi50bXAgc2VydmVyLmpzb24KICAgICAgICAgIGpxIC1lIC0tYXJnIHZlcnNpb24gIiRWRVJTSU9OIiBcCiAgICAgICAgICAgICcudmVyc2lvbiA9PSAkdmVyc2lvbiBhbmQgLnBhY2thZ2VzWzBdLnZlcnNpb24gPT0gJHZlcnNpb24nIFwKICAgICAgICAgICAgc2VydmVyLmpzb24gPi9kZXYvbnVsbAogICAgICAtIG5hbWU6IEluc3RhbGwgcGlubmVkIE1DUCBSZWdpc3RyeSBwdWJsaXNoZXIKICAgICAgICBlbnY6CiAgICAgICAgICBNQ1BfUFVCTElTSEVSX1NIQTI1NjogYTA2YzkwOTZkY2I5NzI3YzEzNTU1YjZiZTI2YzdlZmZhNzA3YjAxZjA2YTRjNTYxYmE3YTM2MzU0NDNjZjJjYwogICAgICAgICAgTUNQX1BVQkxJU0hFUl9WRVJTSU9OOiB2MS44LjEKICAgICAgICBydW46IHwKICAgICAgICAgIHNldCAtZXVvIHBpcGVmYWlsCiAgICAgICAgICBhcmNoaXZlPW1jcC1wdWJsaXNoZXJfbGludXhfYW1kNjQudGFyLmd6CiAgICAgICAgICBjdXJsIC0tZmFpbCAtLWxvY2F0aW9uIC0tcHJvdG8gJz1odHRwcycgLS10bHN2MS4yIFwKICAgICAgICAgICAgImh0dHBzOi8vZ2l0aHViLmNvbS9tb2RlbGNvbnRleHRwcm90b2NvbC9yZWdpc3RyeS9yZWxlYXNlcy9kb3dubG9hZC8ke01DUF9QVUJMSVNIRVJfVkVSU0lPTn0vJHthcmNoaXZlfSIgXAogICAgICAgICAgICAtLW91dHB1dCAiJGFyY2hpdmUiCiAgICAgICAgICBwcmludGYgJyVzICAlc1xuJyAiJE1DUF9QVUJMSVNIRVJfU0hBMjU2IiAiJGFyY2hpdmUiIHwgc2hhMjU2c3VtIC0tY2hlY2sgLS1zdHJpY3QKICAgICAgICAgIHRhciAteHpmICIkYXJjaGl2ZSIgbWNwLXB1Ymxpc2hlcgogICAgICAgICAgY2htb2QgMDc1NSBtY3AtcHVibGlzaGVyCiAgICAgICAgICAuL21jcC1wdWJsaXNoZXIgLS1oZWxwID4vZGV2L251bGwKICAgICAgLSBuYW1lOiBBdXRoZW50aWNhdGUgdG8gb2ZmaWNpYWwgTUNQIFJlZ2lzdHJ5IHdpdGggR2l0SHViIE9JREMKICAgICAgICBydW46IC4vbWNwLXB1Ymxpc2hlciBsb2dpbiBnaXRodWItb2lkYwogICAgICAtIG5hbWU6IFB1Ymxpc2ggaW1tdXRhYmxlIE1DUCBzZXJ2ZXIgbWV0YWRhdGEKICAgICAgICBydW46IC4vbWNwLXB1Ymxpc2hlciBwdWJsaXNoCg=="
+              workflow = workflow.rstrip() + base64.b64decode(encoded_job).decode("utf-8") + "\n"
               workflow_path.write_text(workflow, encoding="utf-8")
 
           Path(".github/workflows/apply-mcp-registry-syndication.yml").unlink()
