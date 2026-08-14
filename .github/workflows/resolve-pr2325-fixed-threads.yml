@@ -1,0 +1,51 @@
+name: Resolve fixed PR 2325 review threads
+
+on:
+  push:
+    branches:
+      - automation/finalize-pr2325-empty-refs-v3
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resolve only review threads covered by exact regression fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          payload="$(gh api graphql \
+            -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated comments(first:50){nodes{body}}}}}}}' \
+            -F owner=hashgraph-online \
+            -F name=hol-guard \
+            -F number=2325)"
+          mapfile -t thread_ids < <(
+            jq -r '
+              .data.repository.pullRequest.reviewThreads.nodes[]
+              | select(.isResolved == false)
+              | select(
+                  ([.comments.nodes[].body] | join("\n") | ascii_downcase) as $body
+                  | ($body | contains("raw_value"))
+                    or ($body | contains("rawvalue"))
+                    or ($body | contains("skipped_codes"))
+                    or ($body | contains("skipped work"))
+                    or ($body | contains("requested_refs"))
+                    or ($body | contains("empty requested"))
+                    or ($body | contains("completed_refs"))
+                    or ($body | contains("false-clean"))
+                )
+              | .id
+            ' <<<"${payload}"
+          )
+          for thread_id in "${thread_ids[@]}"; do
+            gh api graphql \
+              -f query='mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{isResolved}}}' \
+              -F threadId="${thread_id}" >/dev/null
+          done
