@@ -189,6 +189,130 @@ def _direct_custom_rule(**overrides: object) -> SecretCustomRuleV2:
     return SecretCustomRuleV2(**values)  # type: ignore[arg-type]
 
 
+def test_direct_ignore_rejects_mutable_propagation() -> None:
+    mutable = ["cli"]
+    with pytest.raises(SecretContractError, match="tuple of strings"):
+        _direct_ignore(propagation=mutable)
+    mutable.append("github")
+    assert mutable == ["cli", "github"]
+
+
+def test_direct_ignore_rejects_string_propagation() -> None:
+    with pytest.raises(SecretContractError, match="tuple of strings"):
+        _direct_ignore(propagation="cli")
+
+
+def test_direct_ignore_rejects_duplicate_propagation() -> None:
+    with pytest.raises(SecretContractError, match="values must be unique"):
+        _direct_ignore(propagation=("cli", "cli"))
+
+
+def test_direct_ignore_rejects_blank_propagation() -> None:
+    with pytest.raises(SecretContractError, match="must not be blank"):
+        _direct_ignore(propagation=(" ",))
+
+
+def test_direct_ignore_rejects_empty_propagation() -> None:
+    with pytest.raises(SecretContractError, match="must not be empty"):
+        _direct_ignore(propagation=())
+
+
+def test_direct_custom_rule_rejects_mutable_surfaces() -> None:
+    mutable = ["cli"]
+    with pytest.raises(SecretContractError, match="tuple of strings"):
+        _direct_custom_rule(surfaces=mutable)
+    mutable.append("pre_commit")
+    assert mutable == ["cli", "pre_commit"]
+
+
+def test_direct_custom_rule_rejects_string_surfaces() -> None:
+    with pytest.raises(SecretContractError, match="tuple of strings"):
+        _direct_custom_rule(surfaces="cli")
+
+
+def test_direct_custom_rule_rejects_duplicate_surfaces() -> None:
+    with pytest.raises(SecretContractError, match="values must be unique"):
+        _direct_custom_rule(surfaces=("cli", "cli"))
+
+
+def test_direct_custom_rule_rejects_blank_surfaces() -> None:
+    with pytest.raises(SecretContractError, match="must not be blank"):
+        _direct_custom_rule(surfaces=(" ",))
+
+
+def test_direct_custom_rule_rejects_empty_surfaces() -> None:
+    with pytest.raises(SecretContractError, match="must not be empty"):
+        _direct_custom_rule(surfaces=())
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("surfaces", ["cli"]),
+        ("plans", ["free"]),
+        ("acceptance_tests", ["test_cli"]),
+        ("evidence_artifacts", ["sha256:evidence"]),
+    ],
+)
+def test_direct_capability_rejects_mutable_sequence_fields(
+    field_name: str,
+    value: list[str],
+) -> None:
+    with pytest.raises(SecretContractError, match="tuple of strings"):
+        _capability(**{field_name: value})
+    value.append("mutated")
+    assert value[-1] == "mutated"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("surfaces", "cli"),
+        ("plans", "free"),
+        ("acceptance_tests", "test_cli"),
+        ("evidence_artifacts", "sha256:evidence"),
+    ],
+)
+def test_direct_capability_rejects_string_sequence_fields(
+    field_name: str,
+    value: str,
+) -> None:
+    with pytest.raises(SecretContractError, match="tuple of strings"):
+        _capability(**{field_name: value})
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("surfaces", ("cli", "cli")),
+        ("plans", ("free", "free")),
+        ("acceptance_tests", ("test_cli", "test_cli")),
+        ("evidence_artifacts", ("sha256:evidence", "sha256:evidence")),
+    ],
+)
+def test_direct_capability_rejects_duplicate_sequence_fields(
+    field_name: str,
+    value: tuple[str, ...],
+) -> None:
+    with pytest.raises(SecretContractError, match="values must be unique"):
+        _capability(**{field_name: value})
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["surfaces", "plans", "acceptance_tests", "evidence_artifacts"],
+)
+def test_direct_capability_rejects_blank_sequence_fields(field_name: str) -> None:
+    with pytest.raises(SecretContractError, match="must not be blank"):
+        _capability(**{field_name: (" ",)})
+
+
+@pytest.mark.parametrize("field_name", ["surfaces", "plans"])
+def test_direct_capability_rejects_empty_required_sequence_fields(field_name: str) -> None:
+    with pytest.raises(SecretContractError, match="must not be empty"):
+        _capability(**{field_name: ()})
+
+
 def test_complete_coverage_is_clean_eligible() -> None:
     coverage = _coverage()
     coverage.assert_outcome(PreventionOutcome.CLEAN)

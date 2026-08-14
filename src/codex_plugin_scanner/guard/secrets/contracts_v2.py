@@ -588,6 +588,29 @@ def _require_enum_instance(value: object, enum_type: type[Enum], *, field_name: 
         raise SecretContractError(f"{field_name}: expected {enum_type.__name__}")
 
 
+def _require_string_tuple(
+    value: object,
+    *,
+    field_name: str,
+    allow_empty: bool = True,
+) -> None:
+    """Validate immutable, unique, non-blank privacy-safe direct sequences."""
+
+    if not isinstance(value, tuple) or any(not isinstance(item, str) for item in value):
+        raise SecretContractError(f"{field_name}: expected a tuple of strings")
+    values = cast(tuple[str, ...], value)
+    if not allow_empty and not values:
+        raise SecretContractError(f"{field_name}: must not be empty")
+    if len(set(values)) != len(values):
+        raise SecretContractError(f"{field_name}: values must be unique")
+    for item in values:
+        if not item.strip():
+            raise SecretContractError(f"{field_name}: values must not be blank")
+        if item != item.strip():
+            raise SecretContractError(f"{field_name}: surrounding whitespace is prohibited")
+        _assert_safe_public_text(item, field_name=field_name)
+
+
 def _iso_datetime(value: object, *, field_name: str) -> datetime | None:
     if value is None:
         return None
@@ -805,6 +828,11 @@ class SecretIgnoreDecisionV2:
             SecretIgnoreScope,
             field_name="requested_scope",
         )
+        _require_string_tuple(
+            self.propagation,
+            field_name="propagation",
+            allow_empty=False,
+        )
         for field_name, value in {
             "decision_id": self.decision_id,
             "requester_id": self.requester_id,
@@ -945,6 +973,11 @@ class SecretCustomRuleV2:
             SecretRolloutState,
             field_name="rollout_state",
         )
+        _require_string_tuple(
+            self.surfaces,
+            field_name="surfaces",
+            allow_empty=False,
+        )
         if not _IDENTIFIER.fullmatch(self.rule_id):
             raise SecretContractError("rule_id is invalid")
         if not _IDENTIFIER.fullmatch(self.version):
@@ -1003,6 +1036,17 @@ class CapabilityEvidenceV2:
 
     def __post_init__(self) -> None:
         _require_enum_instance(self.state, ParityState, field_name="state")
+        for field_name, values, allow_empty in (
+            ("surfaces", self.surfaces, False),
+            ("plans", self.plans, False),
+            ("acceptance_tests", self.acceptance_tests, True),
+            ("evidence_artifacts", self.evidence_artifacts, True),
+        ):
+            _require_string_tuple(
+                values,
+                field_name=field_name,
+                allow_empty=allow_empty,
+            )
         if not _IDENTIFIER.fullmatch(self.capability_id):
             raise SecretContractError("capability_id is invalid")
         boundary = PRODUCT_BOUNDARIES_V2.get(self.product_boundary)
