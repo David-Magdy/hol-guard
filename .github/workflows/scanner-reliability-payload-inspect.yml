@@ -26,9 +26,11 @@ jobs:
           set -euo pipefail
           mkdir -p decoded
 
-          cat .scanner-reliability-payload/xz-*.b64 \
-            | tr -d '\r\n\t ' \
-            | base64 --decode > decoded/scanner-reliability-payload.xz
+          : > decoded/scanner-reliability-payload.xz
+          for payload_part in .scanner-reliability-payload/xz-*.b64; do
+            tr -d '\r\n\t ' < "$payload_part" \
+              | base64 --decode >> decoded/scanner-reliability-payload.xz
+          done
           xz --decompress --stdout decoded/scanner-reliability-payload.xz \
             > decoded/scanner-reliability-payload.raw
 
