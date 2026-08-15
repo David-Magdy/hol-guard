@@ -1,0 +1,151 @@
+name: Rust P0-P2 remediation shepherd
+
+on:
+  push:
+    branches:
+      - fix/rust-p0-p2-regression-hardening
+    paths:
+      - .github/workflows/rust-remediation-shepherd.yml
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+  statuses: read
+
+concurrency:
+  group: rust-p0-p2-remediation-shepherd
+  cancel-in-progress: false
+
+jobs:
+  review-and-merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD_BRANCH: fix/rust-p0-p2-regression-hardening
+      BASE_BRANCH: release/3.0
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/rust-p0-p2-regression-hardening
+          fetch-depth: 0
+      - name: Locate the remediation pull request
+        id: pr
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr="$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --base "$BASE_BRANCH" --state open --json number --jq '.[0].number')"
+          test -n "$pr"
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+      - name: Wait for the validated finalizer commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 7200))
+          while (( SECONDS < deadline )); do
+            git fetch --force origin "$HEAD_BRANCH:refs/remotes/origin/$HEAD_BRANCH"
+            git checkout -B "$HEAD_BRANCH" "refs/remotes/origin/$HEAD_BRANCH"
+            if [[ ! -e .github/workflows/tmp-finalize-rust-p0-p2-remediation.yml \
+               && ! -e .github/workflows/tmp-finalize-rust-p0-p2-remediation-v2.yml ]]; then
+              python - <<'PY'
+          import json
+          from pathlib import Path
+          baseline = json.loads(Path('ci/rust-migration-regression-baseline.json').read_text(encoding='utf-8'))
+          counts = baseline.get('minimum_test_counts')
+          if not isinstance(counts, dict) or len(counts) < 6 or any(not isinstance(v, int) or v < 1 for v in counts.values()):
+              raise SystemExit(1)
+          PY
+              break
+            fi
+            sleep 30
+          done
+          test ! -e .github/workflows/tmp-finalize-rust-p0-p2-remediation.yml
+          test ! -e .github/workflows/tmp-finalize-rust-p0-p2-remediation-v2.yml
+      - name: Reconcile the current release head and remove the shepherd
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin "$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"
+          git merge --no-edit "refs/remotes/origin/$BASE_BRANCH"
+          rm .github/workflows/rust-remediation-shepherd.yml
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git add -A
+          git commit -s -m "chore(ci): remove Rust remediation shepherd"
+          git push origin HEAD:"$HEAD_BRANCH"
+          echo "candidate_sha=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Wait for every exact-head check
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr="${{ steps.pr.outputs.number }}"
+          deadline=$((SECONDS + 9000))
+          while (( SECONDS < deadline )); do
+            live_sha="$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)"
+            [[ "$live_sha" == "$candidate_sha" ]] || { sleep 20; continue; }
+            checks="$(gh api --paginate -H 'Accept: application/vnd.github+json' "/repos/$REPO/commits/$candidate_sha/check-runs?per_page=100" --jq '[.check_runs[] | {name,status,conclusion}]')"
+            count="$(jq 'length' <<<"$checks")"
+            incomplete="$(jq '[.[] | select(.status != "completed")] | length' <<<"$checks")"
+            failed="$(jq '[.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not))] | length' <<<"$checks")"
+            statuses="$(gh api "/repos/$REPO/commits/$candidate_sha/status" --jq '{state,statuses:[.statuses[]|{context,state}]}' )"
+            status_state="$(jq -r .state <<<"$statuses")"
+            if (( failed > 0 )); then
+              jq . <<<"$checks"
+              jq . <<<"$statuses"
+              exit 1
+            fi
+            if (( count >= 5 && incomplete == 0 )) && [[ "$status_state" != "failure" && "$status_state" != "error" && "$status_state" != "pending" ]]; then
+              break
+            fi
+            sleep 30
+          done
+          (( SECONDS < deadline ))
+      - name: Require no unresolved review threads or change requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr="${{ steps.pr.outputs.number }}"
+          decision="$(gh pr view "$pr" --repo "$REPO" --json reviewDecision --jq '.reviewDecision // ""')"
+          [[ "$decision" != "CHANGES_REQUESTED" ]]
+          unresolved="$(gh api graphql -f owner='${{ github.repository_owner }}' -f name='${{ github.event.repository.name }}' -F number="$pr" -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')"
+          [[ "$unresolved" == "0" ]]
+      - name: Merge the exact reviewed head
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr="${{ steps.pr.outputs.number }}"
+          live_sha="$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)"
+          [[ "$live_sha" == "$candidate_sha" ]]
+          gh pr merge "$pr" --repo "$REPO" --merge --delete-branch --match-head-commit "$candidate_sha"
+          merge_oid="$(gh pr view "$pr" --repo "$REPO" --json mergeCommit --jq .mergeCommit.oid)"
+          test -n "$merge_oid"
+          echo "merge_oid=$merge_oid" >> "$GITHUB_OUTPUT"
+      - name: Verify release-only ancestry and clean temporary branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          merge_oid="${{ steps.merge.outputs.merge_oid }}"
+          git fetch --force origin release/3.0:refs/remotes/origin/release/3.0 main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$merge_oid" refs/remotes/origin/release/3.0
+          if git merge-base --is-ancestor "$merge_oid" refs/remotes/origin/main; then
+            echo "Rust remediation unexpectedly reached main" >&2
+            exit 1
+          fi
+          for branch in tmp/rust-p1-p2-bundle-20260814 tmp/rust-p1-p2-compile-20260815; do
+            if gh api "/repos/$REPO/git/ref/heads/${branch//\//%2F}" >/dev/null 2>&1; then
+              gh api --method DELETE "/repos/$REPO/git/refs/heads/${branch//\//%2F}"
+            fi
+          done
+          {
+            echo "## Rust P0-P2 remediation merged"
+            echo ""
+            echo "- Pull request: #${{ steps.pr.outputs.number }}"
+            echo "- Exact reviewed head: \`$candidate_sha\`"
+            echo "- Merge commit: \`$merge_oid\`"
+            echo "- Target: \`release/3.0\`"
+            echo "- Present in \`main\`: no"
+          } >> "$GITHUB_STEP_SUMMARY"
