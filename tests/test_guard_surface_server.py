@@ -1002,7 +1002,9 @@ class TestGuardSurfaceServer:
             )
             with urllib.request.urlopen(hook_request, timeout=5) as response:
                 hook_payload = json.loads(response.read().decode("utf-8"))
-            if hook_payload.get("reason") == "HOL Guard could not complete isolated local hook review safely.":
+            if str(hook_payload.get("reason", "")).startswith(
+                "HOL Guard blocked this action because isolated local review could not complete safely."
+            ):
                 assert daemon._server.hook_process_runner.wait_for_capacity(  # pyright: ignore[reportPrivateUsage]
                     minimum_workers=1,
                     timeout_seconds=15,
