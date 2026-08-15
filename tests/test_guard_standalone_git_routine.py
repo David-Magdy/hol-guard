@@ -289,6 +289,34 @@ def test_remote_branch_listing_rejects_executable_pager(
     assert not _is_benign("git branch -r --list origin/main", home=home, repository=repository)
 
 
+@pytest.mark.parametrize("key", ("core.pager", "pager.status"))
+def test_status_chain_rejects_executable_pager_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+) -> None:
+    home, repository = _repository(tmp_path)
+    monkeypatch.delenv("GIT_PAGER", raising=False)
+    monkeypatch.delenv("PAGER", raising=False)
+    _ = subprocess.run(["git", "-C", str(repository), "config", key, "!payload"], check=True)
+
+    assert not _is_benign("git fetch origin && git status", home=home, repository=repository)
+
+
+@pytest.mark.parametrize("key", ("GIT_PAGER", "PAGER"))
+def test_status_chain_rejects_executable_pager_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+) -> None:
+    home, repository = _repository(tmp_path)
+    monkeypatch.delenv("GIT_PAGER", raising=False)
+    monkeypatch.delenv("PAGER", raising=False)
+    monkeypatch.setenv(key, "payload")
+
+    assert not _is_benign("git fetch origin && git status", home=home, repository=repository)
+
+
 def test_standalone_git_routine_requires_explicit_execution_directory(tmp_path: Path) -> None:
     home, _repository_path = _repository(tmp_path)
 

@@ -179,13 +179,39 @@ def git_status_has_execution_free_config(
     *,
     git_binary: Path | None = None,
 ) -> bool:
-    """Reject status when Git configuration could execute an fsmonitor helper."""
+    """Reject status when Git configuration could execute a pager or fsmonitor helper."""
 
     if not git_config_routing_environment_is_clean():
         return False
     resolved_git = git_binary or trusted_git_binary_for_cwd(cwd)
     if resolved_git is None:
         return False
+    git_pager = os.environ.get("GIT_PAGER")
+    if git_pager is not None:
+        if git_pager.strip() not in {"", "cat"}:
+            return False
+    else:
+        if os.environ.get("PAGER", "").strip() not in {"", "cat"}:
+            return False
+        for key in ("core.pager", "pager.status"):
+            try:
+                result = subprocess.run(
+                    [str(resolved_git), "config", "--null", "--get-all", key],
+                    cwd=cwd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=1,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return False
+            if result.returncode == 1 and not result.stdout:
+                continue
+            if result.returncode != 0:
+                return False
+            values = [value.strip() for value in result.stdout.split("\0") if value.strip()]
+            if any(value != "cat" for value in values):
+                return False
     try:
         result = subprocess.run(
             [str(resolved_git), "config", "--null", "--get-all", "core.fsmonitor"],
