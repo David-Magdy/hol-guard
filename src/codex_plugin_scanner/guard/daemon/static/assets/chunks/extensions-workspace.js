@@ -1,4 +1,4 @@
-import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, $ as HiMiniAdjustmentsHorizontal, ak as HiMiniMagnifyingGlass, w as HiMiniXMark, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as commandReasonLabel, ap as HiMiniArrowPath, aq as DEFAULT_COMMAND_ACTIVITY_FILTERS, a4 as fetchRuntimeSnapshot, d as createCommandActivityClient, f as fetchCommandActivityApi, Z as HiMiniLockClosed, ar as HiMiniInformationCircle, as as isApprovalProofSubmitDisabled, at as ApprovalProofFieldInputs, au as buildApprovalProofCredentials, N as HiMiniWrenchScrewdriver, av as HiMiniBeaker, aw as HiMiniArrowLeft, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, x as HiMiniChevronUp } from "../guard-dashboard.js";
+import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, Z as HiMiniLockClosed, J as HiMiniExclamationTriangle, ao as HiMiniArrowPath, o as HiMiniShieldCheck, ap as HiMiniInformationCircle, aq as isApprovalProofSubmitDisabled, w as HiMiniXMark, ar as ApprovalProofFieldInputs, as as buildApprovalProofCredentials, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ak as HiMiniMagnifyingGlass, N as HiMiniWrenchScrewdriver, at as HiMiniArrowLeft, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, au as WorkspacePageHeader } from "../guard-dashboard.js";
 import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./use-resolved-approval-gate.js";
 const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -795,423 +795,6 @@ async function applyExtensionMutation(payload) {
     throw new ExtensionControlApiError(error instanceof Error ? error.message : "Guard returned an invalid apply response", 502);
   }
 }
-const EMPTY_EXTENSION_FILTERS = {
-  query: "",
-  risk: "all",
-  domain: "all",
-  state: "all",
-  required: "all"
-};
-const RISK_CLASS_ORDER = [
-  "destructive_shell",
-  "network_egress",
-  "supply_chain",
-  "local_secret_read",
-  "encoded_execution",
-  "policy_bypass",
-  "data_flow_exfiltration",
-  "credential_exfiltration",
-  "execution"
-];
-const RISK_CLASS_LABELS = {
-  destructive_shell: "Destructive shell",
-  network_egress: "Network egress",
-  supply_chain: "Supply chain",
-  local_secret_read: "Local secrets",
-  encoded_execution: "Encoded execution",
-  policy_bypass: "Policy bypass",
-  data_flow_exfiltration: "Data exfiltration",
-  credential_exfiltration: "Credential exfiltration",
-  execution: "Remote execution"
-};
-const RISK_CLASS_TONE = {
-  destructive_shell: {
-    idle: "border-slate-200 bg-white text-slate-600 hover:border-amber-300 hover:bg-amber-50",
-    active: "border-amber-400 bg-amber-100 text-amber-900",
-    label: "bg-amber-50 text-amber-800 border-amber-200"
-  },
-  network_egress: {
-    idle: "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:bg-blue-50",
-    active: "border-blue-400 bg-blue-100 text-blue-900",
-    label: "bg-blue-50 text-blue-800 border-blue-200"
-  },
-  supply_chain: {
-    idle: "border-slate-200 bg-white text-slate-600 hover:border-violet-300 hover:bg-violet-50",
-    active: "border-violet-400 bg-violet-100 text-violet-900",
-    label: "bg-violet-50 text-violet-800 border-violet-200"
-  },
-  local_secret_read: {
-    idle: "border-slate-200 bg-white text-slate-600 hover:border-rose-300 hover:bg-rose-50",
-    active: "border-rose-400 bg-rose-100 text-rose-900",
-    label: "bg-rose-50 text-rose-800 border-rose-200"
-  },
-  encoded_execution: {
-    idle: "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-100",
-    active: "border-slate-500 bg-slate-200 text-slate-900",
-    label: "bg-slate-100 text-slate-700 border-slate-300"
-  },
-  policy_bypass: {
-    idle: "border-slate-200 bg-white text-slate-600 hover:border-red-300 hover:bg-red-50",
-    active: "border-red-400 bg-red-100 text-red-900",
-    label: "bg-red-50 text-red-800 border-red-200"
-  },
-  data_flow_exfiltration: {
-    idle: "border-slate-200 bg-white text-slate-600 hover:border-orange-300 hover:bg-orange-50",
-    active: "border-orange-400 bg-orange-100 text-orange-900",
-    label: "bg-orange-50 text-orange-800 border-orange-200"
-  },
-  credential_exfiltration: {
-    idle: "border-slate-200 bg-white text-slate-600 hover:border-orange-300 hover:bg-orange-50",
-    active: "border-orange-400 bg-orange-100 text-orange-900",
-    label: "bg-orange-50 text-orange-800 border-orange-200"
-  },
-  execution: {
-    idle: "border-slate-200 bg-white text-slate-600 hover:border-teal-300 hover:bg-teal-50",
-    active: "border-teal-400 bg-teal-100 text-teal-900",
-    label: "bg-teal-50 text-teal-800 border-teal-200"
-  }
-};
-const DOMAIN_LABELS = {
-  core: "Core protection",
-  package: "Package ecosystems",
-  cloud: "Cloud providers",
-  database: "Databases",
-  storage: "Storage",
-  backup: "Backup & sync",
-  remote: "Remote access",
-  cicd: "CI/CD pipelines",
-  platform: "Platform",
-  "managed-service": "Managed services",
-  "search-messaging": "Search & messaging",
-  "source-control": "Source control"
-};
-const DOMAIN_PREFIX_MAP = [
-  ["command.package.", "package"],
-  ["command.cloud.", "cloud"],
-  ["command.aws", "cloud"],
-  ["command.azure", "cloud"],
-  ["command.gcp", "cloud"],
-  ["command.database.", "database"],
-  ["command.storage.", "storage"],
-  ["command.backup.", "backup"],
-  ["command.remote.", "remote"],
-  ["command.cicd.", "cicd"],
-  ["command.platform.", "platform"],
-  ["command.managed-service.", "managed-service"],
-  ["command.search-messaging.", "search-messaging"],
-  ["command.github", "source-control"]
-];
-function classifyDomain(extensionId) {
-  const id2 = extensionId.toLowerCase();
-  for (const [prefix, domain] of DOMAIN_PREFIX_MAP) {
-    if (id2.startsWith(prefix)) return domain;
-  }
-  return "core";
-}
-function isExtensionEnabled(effective, extension2) {
-  return extensionEffectiveState(effective, extension2) === "enabled";
-}
-function hasActiveFilters(filters) {
-  return filters.query.trim() !== "" || filters.risk !== "all" || filters.domain !== "all" || filters.state !== "all" || filters.required !== "all";
-}
-function searchHaystack(extension2) {
-  const parts = [
-    extension2.name,
-    extension2.extension_id,
-    extension2.description,
-    extension2.source,
-    ...extension2.action_classes,
-    ...extension2.risk_classes,
-    classifyDomain(extension2.extension_id)
-  ];
-  return parts.join(" ").toLowerCase();
-}
-function matchExtensionQuery(extension2, query) {
-  const normalized = query.trim().toLowerCase();
-  if (normalized === "") return true;
-  const haystack = searchHaystack(extension2);
-  return normalized.split(/\s+/).every((token) => haystack.includes(token));
-}
-function filterExtensions(extensions, effective, filters) {
-  const items = extensions.filter((extension2) => {
-    if (!matchExtensionQuery(extension2, filters.query)) return false;
-    if (filters.risk !== "all" && !extension2.risk_classes.includes(filters.risk)) return false;
-    if (filters.domain !== "all" && classifyDomain(extension2.extension_id) !== filters.domain) return false;
-    if (filters.required !== "all") {
-      const isRequired = extension2.required;
-      if (filters.required === "required" && !isRequired) return false;
-      if (filters.required === "optional" && isRequired) return false;
-    }
-    if (filters.state !== "all") {
-      const enabled = isExtensionEnabled(effective, extension2);
-      if (filters.state === "enabled" && !enabled) return false;
-      if (filters.state === "disabled" && enabled) return false;
-    }
-    return true;
-  });
-  items.sort((left, right) => left.name.localeCompare(right.name));
-  return items;
-}
-const SELECT_CLASS = "min-h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20 disabled:cursor-not-allowed disabled:opacity-60";
-const DOMAIN_ORDER = [
-  "core",
-  "package",
-  "cloud",
-  "database",
-  "storage",
-  "backup",
-  "remote",
-  "cicd",
-  "platform",
-  "managed-service",
-  "search-messaging",
-  "source-control"
-];
-function SearchField(props) {
-  const handleChange = reactExports.useCallback(
-    (event) => props.onChange(event.target.value),
-    [props]
-  );
-  const handleClear = reactExports.useCallback(() => props.onChange(""), [props]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "relative flex flex-1 items-center", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sr-only", children: "Search extensions" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      HiMiniMagnifyingGlass,
-      {
-        className: "pointer-events-none absolute left-3 size-4 text-slate-400",
-        "aria-hidden": "true"
-      }
-    ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "input",
-      {
-        ref: props.inputRef,
-        type: "search",
-        value: props.value,
-        onChange: handleChange,
-        placeholder: "Search by name, command, or risk (press /)",
-        className: "min-h-9 w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-      }
-    ),
-    props.value ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "button",
-      {
-        type: "button",
-        onClick: handleClear,
-        "aria-label": "Clear search",
-        className: "absolute right-2 flex size-5 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600",
-        children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniXMark, { className: "size-4", "aria-hidden": "true" })
-      }
-    ) : null
-  ] });
-}
-function RiskChips(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-wrap items-center gap-1.5", role: "group", "aria-label": "Filter by risk class", children: RISK_CLASS_ORDER.map((risk) => {
-    const isActive = props.value === risk;
-    const tone = RISK_CLASS_TONE[risk];
-    const count = props.counts.get(risk) ?? 0;
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-      "button",
-      {
-        type: "button",
-        onClick: () => props.onChange(isActive ? "all" : risk),
-        "aria-pressed": isActive,
-        className: `inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue ${isActive ? tone.active : tone.idle}`,
-        children: [
-          RISK_CLASS_LABELS[risk],
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: isActive ? "opacity-70" : "text-slate-400", "aria-hidden": "true", children: count })
-        ]
-      },
-      risk
-    );
-  }) });
-}
-function ActiveChip(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-1 rounded-full bg-brand-blue/10 px-2.5 py-1 text-xs font-medium text-brand-blue", children: [
-    props.label,
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "button",
-      {
-        type: "button",
-        onClick: props.onRemove,
-        "aria-label": `Remove filter: ${props.label}`,
-        className: "flex size-4 items-center justify-center rounded-full transition-colors hover:bg-brand-blue/20",
-        children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniXMark, { className: "size-3", "aria-hidden": "true" })
-      }
-    )
-  ] });
-}
-function ExtensionsFilterBar(props) {
-  const [showFacets, setShowFacets] = reactExports.useState(false);
-  const searchRef = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    const handleKeyDown = (event) => {
-      const target2 = event.target;
-      const typing = target2?.tagName === "INPUT" || target2?.tagName === "TEXTAREA" || target2?.isContentEditable;
-      if (event.key === "/" && !typing) {
-        event.preventDefault();
-        searchRef.current?.focus();
-      } else if (event.key === "Escape" && document.activeElement === searchRef.current && props.filters.query) {
-        props.onChange({ query: "" });
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [props]);
-  const handleQuery = reactExports.useCallback((value) => props.onChange({ query: value }), [props]);
-  const handleRisk = reactExports.useCallback((risk) => props.onChange({ risk }), [props]);
-  const handleDomain = reactExports.useCallback(
-    (event) => props.onChange({ domain: event.target.value === "all" ? "all" : event.target.value }),
-    [props]
-  );
-  const handleState = reactExports.useCallback(
-    (event) => props.onChange({ state: event.target.value }),
-    [props]
-  );
-  const handleRequired = reactExports.useCallback(
-    (event) => props.onChange({ required: event.target.value }),
-    [props]
-  );
-  const toggleFacets = reactExports.useCallback(() => setShowFacets((prev) => !prev), []);
-  const riskCounts = reactExports.useMemo(
-    () => {
-      const counts = /* @__PURE__ */ new Map();
-      for (const risk of RISK_CLASS_ORDER) counts.set(risk, 0);
-      for (const extension2 of props.extensions) {
-        for (const risk of extension2.risk_classes) {
-          if (risk in RISK_CLASS_LABELS) {
-            const key = risk;
-            counts.set(key, (counts.get(key) ?? 0) + 1);
-          }
-        }
-      }
-      return counts;
-    },
-    [props.extensions]
-  );
-  const totalCount = props.extensions.length;
-  const filteredCount = reactExports.useMemo(
-    () => filterExtensions(props.extensions, props.effective, props.filters).length,
-    [props.extensions, props.effective, props.filters]
-  );
-  const active = hasActiveFilters(props.filters);
-  const facetsActive = props.filters.domain !== "all" || props.filters.state !== "all" || props.filters.required !== "all";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3", "aria-label": "Extension filters", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(SearchField, { value: props.filters.query, onChange: handleQuery, inputRef: searchRef }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "button",
-        {
-          type: "button",
-          onClick: toggleFacets,
-          "aria-expanded": showFacets,
-          "aria-label": "Toggle domain, state, and requirement filters",
-          className: `inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue ${showFacets || facetsActive ? "border-brand-blue bg-brand-blue/5 text-brand-blue" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`,
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniAdjustmentsHorizontal, { className: "size-4", "aria-hidden": "true" }),
-            "Filters",
-            facetsActive ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "flex size-4 items-center justify-center rounded-full bg-brand-blue text-[10px] font-bold text-white", children: [props.filters.domain !== "all", props.filters.state !== "all", props.filters.required !== "all"].filter(Boolean).length }) : null
-          ]
-        }
-      )
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(RiskChips, { value: props.filters.risk, onChange: handleRisk, counts: riskCounts }),
-    showFacets ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2 rounded-xl bg-slate-50/70 p-3", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "select",
-        {
-          value: props.filters.domain,
-          onChange: handleDomain,
-          "aria-label": "Filter by domain",
-          className: SELECT_CLASS,
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "all", children: "All domains" }),
-            DOMAIN_ORDER.map((domain) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: domain, children: DOMAIN_LABELS[domain] }, domain))
-          ]
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "select",
-        {
-          value: props.filters.state,
-          onChange: handleState,
-          "aria-label": "Filter by enabled state",
-          className: SELECT_CLASS,
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "all", children: "All states" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "enabled", children: "Enabled" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "disabled", children: "Disabled" })
-          ]
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "select",
-        {
-          value: props.filters.required,
-          onChange: handleRequired,
-          "aria-label": "Filter by required status",
-          className: SELECT_CLASS,
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "all", children: "Required & optional" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "required", children: "Required only" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "optional", children: "Optional only" })
-          ]
-        }
-      )
-    ] }) : null,
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-1.5", children: [
-      active ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-        props.filters.query ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActiveChip, { label: `“${props.filters.query}”`, onRemove: () => props.onChange({ query: "" }) }) : null,
-        props.filters.risk !== "all" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          ActiveChip,
-          {
-            label: RISK_CLASS_LABELS[props.filters.risk],
-            onRemove: () => props.onChange({ risk: "all" })
-          }
-        ) : null,
-        props.filters.domain !== "all" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          ActiveChip,
-          {
-            label: DOMAIN_LABELS[props.filters.domain],
-            onRemove: () => props.onChange({ domain: "all" })
-          }
-        ) : null,
-        props.filters.state !== "all" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          ActiveChip,
-          {
-            label: props.filters.state === "enabled" ? "Enabled" : "Disabled",
-            onRemove: () => props.onChange({ state: "all" })
-          }
-        ) : null,
-        props.filters.required !== "all" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          ActiveChip,
-          {
-            label: props.filters.required === "required" ? "Required only" : "Optional only",
-            onRemove: () => props.onChange({ required: "all" })
-          }
-        ) : null,
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            type: "button",
-            onClick: props.onClear,
-            className: "ml-1 text-xs font-medium text-brand-blue transition-colors hover:text-brand-dark",
-            children: "Clear all"
-          }
-        )
-      ] }) : null,
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ml-auto text-xs text-slate-500", "aria-live": "polite", children: active ? `${filteredCount} of ${totalCount} shown` : `${totalCount} total` })
-    ] })
-  ] });
-}
-function useDebounce(value, delay) {
-  const [debouncedValue, setDebouncedValue] = reactExports.useState(value);
-  reactExports.useEffect(() => {
-    const timer = setTimeout(() => setDebouncedValue(value), delay);
-    return () => clearTimeout(timer);
-  }, [value, delay]);
-  return debouncedValue;
-}
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
@@ -1287,746 +870,6 @@ function protectionCenterLoadError(message) {
     title: "Extensions unavailable",
     detail: message.trim() || "Guard could not load protection settings. Local protection continues. Try again."
   };
-}
-const PROTECTION_DENSITY_STORAGE_KEY = "guard-protection-center-density-v1";
-function parseProtectionDensity(value) {
-  return value === "advanced" || value === "developer" ? value : "simple";
-}
-function readProtectionDensity(storage = typeof window === "undefined" ? null : window.localStorage) {
-  try {
-    return parseProtectionDensity(storage?.getItem(PROTECTION_DENSITY_STORAGE_KEY));
-  } catch {
-    return "simple";
-  }
-}
-function writeProtectionDensity(density, storage = typeof window === "undefined" ? null : window.localStorage) {
-  try {
-    storage?.setItem(PROTECTION_DENSITY_STORAGE_KEY, density);
-  } catch {
-  }
-}
-function deriveProtectionStatus(effective) {
-  if (effective.global_lockdown) {
-    return {
-      status: "lockdown",
-      title: "Emergency Lockdown active",
-      summary: "Guard is blocking matching optional actions until you review and end lockdown.",
-      tone: "danger",
-      primaryAction: "review-lockdown",
-      primaryActionLabel: "Review lockdown"
-    };
-  }
-  switch (effective.health) {
-    case "protected":
-      return {
-        status: "protected",
-        title: "Protected",
-        summary: "Guard is actively applying the trusted protection settings on this device.",
-        tone: "safe",
-        primaryAction: "none",
-        primaryActionLabel: null
-      };
-    case "unenrolled":
-      return {
-        status: "finish-setup",
-        title: "Finish setup",
-        summary: "Complete local setup so Guard can protect and verify settings on this device.",
-        tone: "attention",
-        primaryAction: "finish-setup",
-        primaryActionLabel: "Show setup steps"
-      };
-    case "tampered":
-    case "recovery-required":
-      return {
-        status: "needs-repair",
-        title: "Needs repair",
-        summary: "Guard detected a problem with trusted protection settings and is staying fail-safe until they are repaired.",
-        tone: "danger",
-        primaryAction: "repair",
-        primaryActionLabel: "Repair protection"
-      };
-    case "degraded-unacknowledged":
-      return {
-        status: "limited",
-        title: "Protection limited",
-        summary: "Guard is staying fail-safe because it cannot fully verify protection settings. Repair is recommended.",
-        tone: "attention",
-        primaryAction: "repair",
-        primaryActionLabel: "Restore protection"
-      };
-    case "degraded-acknowledged":
-      return {
-        status: "limited",
-        title: "Protection limited",
-        summary: "Guard is still staying fail-safe. The earlier acknowledgement did not restore trusted protection.",
-        tone: "attention",
-        primaryAction: "retry-repair",
-        primaryActionLabel: "Try repair again"
-      };
-    default:
-      return {
-        status: "unavailable",
-        title: "Protection status unavailable",
-        summary: "Guard could not verify the current protection state. Refresh before making any protection changes.",
-        tone: "neutral",
-        primaryAction: "refresh",
-        primaryActionLabel: "Check again"
-      };
-  }
-}
-const EXTENSION_SURFACE_CLASS = "guard-extensions-surface";
-const EXTENSION_PANEL_CLASS = "guard-extensions-panel p-5 sm:p-6";
-const EXTENSION_PANEL_COMPACT_CLASS = "guard-extensions-panel px-5 py-4";
-const EXTENSION_KICKER_CLASS = "guard-extensions-kicker";
-const EXTENSION_CHIP_CLASS = "guard-extensions-chip";
-const EXTENSION_ROW_CLASS = "guard-extensions-row";
-const EXTENSION_LIST_CLASS = "mt-4 space-y-2";
-const EXTENSION_TITLE_CLASS = "mt-2 text-2xl font-semibold tracking-tight text-brand-dark";
-const EXTENSION_BODY_CLASS = "text-sm leading-6 text-brand-dark/80";
-function useProtectionDensity() {
-  const [density, setDensity] = reactExports.useState(() => readProtectionDensity());
-  const update = reactExports.useCallback((next) => {
-    writeProtectionDensity(next);
-    setDensity(next);
-  }, []);
-  return [density, update];
-}
-function ProtectionDensityControl(props) {
-  const choices = [
-    { value: "simple", label: "Simple" },
-    { value: "advanced", label: "Advanced" },
-    { value: "developer", label: "Developer" }
-  ];
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { role: "radiogroup", "aria-label": "Information detail", className: "flex w-full max-w-full flex-wrap rounded-2xl border border-[rgba(63,65,116,0.1)] bg-white/70 p-1 sm:inline-flex sm:w-auto sm:flex-nowrap", children: choices.map((choice) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-    "button",
-    {
-      type: "button",
-      role: "radio",
-      "aria-checked": props.value === choice.value,
-      onClick: () => props.onChange(choice.value),
-      className: `min-h-10 min-w-0 flex-1 rounded-lg px-2.5 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue sm:flex-none sm:px-3 ${props.value === choice.value ? "bg-white text-brand-blue shadow-sm" : "text-brand-dark/70 hover:bg-white"}`,
-      children: choice.label
-    },
-    choice.value
-  )) });
-}
-function ProtectionStatusHero(props) {
-  const safe = props.status.tone === "safe";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-status-heading", className: "guard-status-bar", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-status-bar-icon", "data-tone": props.status.tone, "aria-hidden": "true", children: safe ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "size-4" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "size-4" }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: EXTENSION_KICKER_CLASS, children: "Local protection" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-0.5 flex flex-wrap items-baseline gap-x-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-status-heading", className: "text-sm font-semibold text-brand-dark", children: props.status.title }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm leading-5 text-brand-dark/70", children: props.status.summary })
-      ] })
-    ] }),
-    props.status.primaryActionLabel && props.onPrimaryAction ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "button",
-      {
-        type: "button",
-        "aria-busy": props.busy,
-        disabled: props.busy,
-        onClick: props.onPrimaryAction,
-        className: "min-h-11 shrink-0 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:cursor-wait disabled:opacity-60",
-        children: props.busy ? "Working…" : props.status.primaryActionLabel
-      }
-    ) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex min-h-9 shrink-0 items-center gap-1.5 self-center rounded-full border border-emerald-200 bg-[#e8f7ee] px-3 text-xs font-semibold text-emerald-800", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "size-3.5" }),
-      "No action required"
-    ] }),
-    props.children ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full border-t border-[rgba(63,65,116,0.08)] pt-2", children: props.children }) : null
-  ] });
-}
-function ProtectionDecisionBadge({ result }) {
-  const label = result === "allowed" ? "Allowed" : result === "ask-first" ? "Ask first" : "Blocked";
-  const classes = result === "allowed" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : result === "ask-first" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800";
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${classes}`, children: label });
-}
-function ProtectionModuleRow(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onOpen, className: `${EXTENSION_ROW_CLASS} motion-reduce:transition-none`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "min-w-0 flex-1", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex flex-wrap items-center gap-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-brand-dark", children: props.name }),
-        props.required ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Required" }) : null,
-        props.managed ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Managed" }) : null
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block truncate text-sm text-brand-dark/70", children: props.behavior })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronRight, { className: "size-5 shrink-0 text-brand-dark/35", "aria-hidden": "true" })
-  ] });
-}
-function TechnicalDetails(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: `${EXTENSION_PANEL_CLASS}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer list-none text-sm font-semibold text-brand-dark", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-2", children: [
-      props.title ?? "Technical details",
-      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronDown, { className: "size-4", "aria-hidden": "true" })
-    ] }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 text-sm text-brand-dark/80", children: props.children })
-  ] });
-}
-function InlineError({ message }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800", children: message });
-}
-const PROTECTION_CATEGORIES = [
-  { id: "source-control", label: "Source control", description: "Protect repository history, branches, and source-control operations.", searchAliases: ["git", "github", "repository", "source"] },
-  { id: "packages", label: "Packages and dependencies", description: "Protect dependency installs, package managers, and supply-chain changes.", searchAliases: ["npm", "pnpm", "yarn", "pip", "package", "dependency"] },
-  { id: "files-secrets", label: "Files and secrets", description: "Protect sensitive files, credentials, and secret-bearing operations.", searchAliases: ["file", "secret", "credential", "environment"] },
-  { id: "cloud-infrastructure", label: "Cloud and infrastructure", description: "Protect infrastructure, cloud resources, and administrative actions.", searchAliases: ["aws", "gcp", "azure", "terraform", "cloud", "infrastructure"] },
-  { id: "network-downloads", label: "Network and downloads", description: "Protect downloads, remote access, and network-facing operations.", searchAliases: ["curl", "wget", "ssh", "network", "download", "remote"] },
-  { id: "data-databases", label: "Data and databases", description: "Protect databases, storage, backups, and destructive data operations.", searchAliases: ["database", "sql", "postgres", "mysql", "redis", "data", "backup"] },
-  { id: "deployments-ci", label: "Deployments and CI", description: "Protect deployment, build, release, and CI/CD operations.", searchAliases: ["deploy", "release", "ci", "cd", "workflow", "pipeline"] },
-  { id: "messaging-collaboration", label: "Messaging and collaboration", description: "Protect actions in messaging, search, and collaboration tools.", searchAliases: ["slack", "message", "collaboration", "search"] },
-  { id: "system-shell", label: "System and shell actions", description: "Protect high-impact local shell, process, and system operations.", searchAliases: ["shell", "system", "bash", "terminal", "process"] },
-  { id: "ai-workflows", label: "AI tools and agent workflows", description: "Protect AI-agent, tool, and automated workflow actions.", searchAliases: ["ai", "agent", "mcp", "tool", "workflow"] }
-];
-const CATEGORY_BY_ID = new Map(PROTECTION_CATEGORIES.map((category) => [category.id, category]));
-function searchableExtensionText(extension2) {
-  return [
-    extension2.extension_id,
-    extension2.name,
-    extension2.description,
-    ...extension2.ecosystem_ids,
-    ...extension2.executables,
-    ...extension2.action_classes,
-    ...extension2.risk_classes
-  ].join(" ").toLowerCase();
-}
-function protectionCategoryIdForExtension(extension2) {
-  const text2 = searchableExtensionText(extension2);
-  if (/\bgit\b|github|source.?control|repository|branch|commit/.test(text2)) return "source-control";
-  if (/package|dependency|npm|pnpm|yarn|pip|poetry|cargo|composer|gem|supply.?chain/.test(text2)) return "packages";
-  if (/secret|credential|\.env|filesystem|sensitive.?file|keychain/.test(text2)) return "files-secrets";
-  if (/aws|azure|gcp|cloud|terraform|kubectl|kubernetes|infrastructure|platform/.test(text2)) return "cloud-infrastructure";
-  if (/network|egress|download|curl|wget|ssh|remote|http|ftp/.test(text2)) return "network-downloads";
-  if (/database|sql|postgres|mysql|sqlite|redis|mongo|storage|backup|data/.test(text2)) return "data-databases";
-  if (/deploy|release|ci.?cd|pipeline|workflow|build|artifact/.test(text2)) return "deployments-ci";
-  if (/slack|discord|message|collaboration|search|email/.test(text2)) return "messaging-collaboration";
-  if (/agent|\bmcp\b|assistant|model|prompt|ai.?tool/.test(text2)) return "ai-workflows";
-  return "system-shell";
-}
-function protectionCategoryForExtension(extension2) {
-  const id2 = protectionCategoryIdForExtension(extension2);
-  return CATEGORY_BY_ID.get(id2) ?? PROTECTION_CATEGORIES[8];
-}
-const PROTECTION_CENTER_PERFORMANCE_BUDGETS = Object.freeze({
-  simpleRuleRenderCap: 500,
-  recentDecisionCap: 20,
-  humanSearchCharacterCap: 160,
-  humanSearchTermCap: 8,
-  developerRelationshipCap: 1024
-});
-function protectionDecisionForAction(action) {
-  if (action === "block") return "blocked";
-  if (action === "allow") return "allowed";
-  return "ask-first";
-}
-function recentProtectionDecisions(activity, catalog, limit = 5) {
-  const names = new Map(catalog.map((extension2) => [extension2.extension_id, extension2.name]));
-  return [...activity].filter((item) => item.policy_action !== null).sort((left, right) => Date.parse(right.occurred_at) - Date.parse(left.occurred_at)).slice(0, Math.max(0, Math.min(limit, PROTECTION_CENTER_PERFORMANCE_BUDGETS.recentDecisionCap))).map((item) => {
-    const extensionIds = [...new Set(item.matches.map((match) => match.extension_id))].slice(0, 8);
-    return {
-      activityId: item.activity_id,
-      occurredAt: item.occurred_at,
-      harness: item.harness,
-      result: protectionDecisionForAction(item.policy_action),
-      reasonCode: item.decision_reason_code,
-      extensionIds,
-      extensionNames: extensionIds.map((id2) => names.get(id2) ?? "Protection module"),
-      controllingRuleId: item.controlling_rule_id
-    };
-  });
-}
-function rankProtectionModules(catalog, activity) {
-  const involvement = /* @__PURE__ */ new Map();
-  for (const item of activity) {
-    for (const id2 of new Set(item.matches.map((match) => match.extension_id))) {
-      const previous = involvement.get(id2);
-      if (!previous) involvement.set(id2, { count: 1, lastAt: item.occurred_at });
-      else {
-        previous.count += 1;
-        if (Date.parse(item.occurred_at) > Date.parse(previous.lastAt)) previous.lastAt = item.occurred_at;
-      }
-    }
-  }
-  return catalog.map((extension2) => {
-    const used = involvement.get(extension2.extension_id);
-    const section = used ? "in-use" : extension2.required || extension2.enabled ? "recommended" : "all";
-    const recencyScore = used ? Math.max(0, Date.parse(used.lastAt)) : 0;
-    const score = (used ? 1e15 : 0) + (used?.count ?? 0) * 1e9 + (extension2.required ? 1e8 : 0) + (extension2.enabled ? 1e7 : 0) + recencyScore;
-    return {
-      extension: extension2,
-      section,
-      score,
-      lastInvolvedAt: used?.lastAt ?? null,
-      involvementCount: used?.count ?? 0
-    };
-  }).sort((left, right) => right.score - left.score || left.extension.name.localeCompare(right.extension.name));
-}
-function safeSearchText(extension2) {
-  const category = protectionCategoryForExtension(extension2);
-  return [
-    extension2.name,
-    extension2.description,
-    ...extension2.aliases,
-    ...extension2.ecosystem_ids,
-    ...extension2.executables,
-    category.label,
-    category.description,
-    ...category.searchAliases
-  ].join(" ").toLowerCase();
-}
-function filterProtectionModulesByHumanQuery(modules, query) {
-  const normalized = query.trim().toLowerCase().slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchCharacterCap);
-  if (!normalized) return [...modules];
-  const terms = normalized.split(/\s+/).filter(Boolean).slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchTermCap);
-  return modules.filter(({ extension: extension2 }) => {
-    const text2 = safeSearchText(extension2);
-    return terms.every((term) => text2.includes(term));
-  });
-}
-function evaluateProtectionHealth(catalogDigest, effective, runtime) {
-  const checks = [
-    { id: "authority", label: "Trusted protection settings are verified", passed: effective.health === "protected" },
-    { id: "catalog", label: "Protection catalog matches effective policy", passed: catalogDigest === effective.catalog_digest },
-    { id: "runtime", label: "Guard runtime is responding", passed: runtime !== null && runtime.runtime_state !== null }
-  ];
-  const healthy = checks.every((check) => check.passed);
-  return {
-    status: healthy ? "healthy" : "needs-attention",
-    summary: healthy ? "Protection health check passed. Guard's catalog, policy authority, and runtime agree." : "One or more local protection checks need attention. Guard remains conservative when it cannot verify state.",
-    checks
-  };
-}
-function patternSearchText(extension2, permission2) {
-  return [
-    permission2.label,
-    permission2.description,
-    permission2.example_command ?? "",
-    permission2.family ?? "",
-    permission2.permission_id,
-    extension2.name,
-    extension2.extension_id,
-    ...extension2.executables
-  ].join(" ").toLowerCase();
-}
-function searchCommandPatterns(extensions, rawQuery, limit = 24) {
-  const normalized = rawQuery.trim().toLowerCase().slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchCharacterCap);
-  if (!normalized) return [];
-  const terms = normalized.split(/\s+/).filter(Boolean).slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchTermCap);
-  const matches = [];
-  for (const extension2 of extensions) {
-    for (const permission2 of extension2.permissions) {
-      const text2 = patternSearchText(extension2, permission2);
-      if (terms.every((term) => text2.includes(term))) {
-        matches.push({ extension: extension2, permission: permission2, score: terms.length });
-      }
-    }
-  }
-  return matches.sort(
-    (left, right) => right.permission.risk_tier.localeCompare(left.permission.risk_tier) || left.permission.label.localeCompare(right.permission.label) || left.extension.name.localeCompare(right.extension.name)
-  ).slice(0, limit);
-}
-function managedByOrganization(effective, extensionId) {
-  return effective.layers.some(
-    (layer) => layer.kind === "signed-cloud" && layer.controls.some((control) => control.target_kind === "extension" && control.target_id === extensionId)
-  );
-}
-function ProtectionWatchingMap(props) {
-  const inUse = props.modules.filter((module) => module.section === "in-use");
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "extensions-watching-heading", className: "mt-8", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "extensions-watching-heading", className: EXTENSION_TITLE_CLASS, children: "Guard is watching the tools your agent uses." }),
-    inUse.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: inUse.map((module) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-      ProtectionModuleRow,
-      {
-        name: module.extension.name,
-        description: module.extension.description,
-        behavior: isExtensionEnabled(props.effective, module.extension) ? "Guard defaults active" : "Blocked on this device",
-        required: module.extension.required,
-        managed: managedByOrganization(props.effective, module.extension.extension_id),
-        onOpen: () => props.onOpen(module.extension)
-      },
-      module.extension.extension_id
-    )) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-4 max-w-2xl ${EXTENSION_BODY_CLASS}`, children: "No recent tool activity yet. Recommended extensions are ready below." })
-  ] });
-}
-function ProtectionModuleExplorer(props) {
-  const inUse = reactExports.useMemo(() => props.modules.filter((module) => module.section === "in-use"), [props.modules]);
-  const recommended = reactExports.useMemo(() => props.modules.filter((module) => module.section === "recommended"), [props.modules]);
-  const primary = inUse.length ? recommended.slice(0, 8) : recommended.slice(0, 6);
-  const heading = "Ready";
-  const [query, setQuery] = reactExports.useState("");
-  const [browseOpen, setBrowseOpen] = reactExports.useState(false);
-  const [advancedOpen, setAdvancedOpen] = reactExports.useState(false);
-  const searchRef = reactExports.useRef(null);
-  reactExports.useEffect(() => {
-    if (!props.focusQuery) return;
-    setQuery(props.focusQuery);
-    setBrowseOpen(true);
-    searchRef.current?.focus();
-  }, [props.focusQuery]);
-  const queried = reactExports.useMemo(() => filterProtectionModulesByHumanQuery(props.modules, query), [props.modules, query]);
-  const browseList = query.trim() ? queried : props.modules;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-modules-heading", className: "mt-10", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-modules-heading", className: "text-xl font-semibold tracking-tight text-brand-dark", children: heading }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-1 ${EXTENSION_BODY_CLASS}`, children: "Open a tool to turn a command pattern on or off." }),
-    primary.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: EXTENSION_LIST_CLASS, children: primary.map((module) => /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionModuleRow, { name: module.extension.name, description: module.extension.description, behavior: isExtensionEnabled(props.effective, module.extension) ? "Guard defaults active" : "Blocked on this device", required: module.extension.required, managed: managedByOrganization(props.effective, module.extension.extension_id), onOpen: () => props.onOpen(module.extension) }, module.extension.extension_id)) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-4 ${EXTENSION_BODY_CLASS}`, children: "No extensions are registered yet." }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "mt-5", open: browseOpen, onToggle: (event) => setBrowseOpen(event.currentTarget.open), children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-sm font-semibold text-brand-dark", children: "Browse all extensions" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "relative block", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sr-only", children: "Search extensions" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniMagnifyingGlass, { className: "pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-brand-dark/55", "aria-hidden": "true" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("input", { ref: searchRef, type: "search", value: query, onChange: (event) => setQuery(event.target.value.slice(0, 160)), placeholder: "Search Git, packages, secrets, downloads…", className: "min-h-11 w-full rounded-2xl border border-[rgba(63,65,116,0.12)] bg-white/80 py-2 pl-9 pr-3 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100" })
-        ] }),
-        props.advancedFilters ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", "aria-expanded": advancedOpen, onClick: () => setAdvancedOpen((value) => !value), className: "inline-flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs font-semibold text-brand-dark hover:bg-white/70", children: [
-            "Advanced filters ",
-            /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronDown, { className: `size-4 ${advancedOpen ? "rotate-180" : ""}`, "aria-hidden": "true" })
-          ] }),
-          advancedOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2", children: props.advancedFilters }) : null
-        ] }) : null,
-        browseList.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: EXTENSION_LIST_CLASS, children: browseList.map((module) => /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionModuleRow, { name: module.extension.name, description: module.extension.description, behavior: isExtensionEnabled(props.effective, module.extension) ? "Guard defaults active" : "Blocked on this device", required: module.extension.required, managed: managedByOrganization(props.effective, module.extension.extension_id), onOpen: () => props.onOpen(module.extension) }, `all-${module.extension.extension_id}`)) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-4 ${EXTENSION_BODY_CLASS}`, children: "No extensions match this search." })
-      ] })
-    ] })
-  ] });
-}
-function RecentProtectionDecisions(props) {
-  if (props.loading) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "recent-protection-decisions-heading", className: "mt-8", "aria-busy": "true", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "recent-protection-decisions-heading", className: "text-lg font-semibold text-brand-dark", children: "Recent decisions" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-skeleton mt-4 h-24 w-full" })
-    ] });
-  }
-  if (props.unavailable) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "recent-protection-decisions-heading", className: `mt-8 ${EXTENSION_PANEL_CLASS}`, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "recent-protection-decisions-heading", className: "text-lg font-semibold text-brand-dark", children: "Recent decisions" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-2 ${EXTENSION_BODY_CLASS}`, children: "Recent local decision evidence could not be loaded. Protection status above remains independent of this activity view." })
-    ] });
-  }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "recent-protection-decisions-heading", className: `mt-8 ${EXTENSION_PANEL_CLASS}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "recent-protection-decisions-heading", className: "text-lg font-semibold text-brand-dark", children: "Recent decisions" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-1 ${EXTENSION_BODY_CLASS}`, children: "Privacy-safe local evidence. Raw commands and paths are not shown." })
-    ] }),
-    props.decisions.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 space-y-1", children: props.decisions.map((decision) => /* @__PURE__ */ jsxRuntimeExports.jsxs("article", { className: "rounded-2xl bg-white/55 px-3 py-3", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionDecisionBadge, { result: decision.result }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-brand-dark", children: decision.extensionNames.length ? decision.extensionNames.join(", ") : "Guard protection" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("time", { className: "text-xs font-medium text-brand-dark/70", dateTime: decision.occurredAt, children: new Date(decision.occurredAt).toLocaleString() })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "mt-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-xs font-semibold text-brand-blue", children: "Why?" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-2 ${EXTENSION_BODY_CLASS}`, children: commandReasonLabel(decision.reasonCode) })
-      ] })
-    ] }, decision.activityId)) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-3 ${EXTENSION_BODY_CLASS}`, children: "No recent local command decisions are recorded yet." })
-  ] });
-}
-function ProtectionHealthCheckPanel(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-health-check-heading", className: `mt-8 ${EXTENSION_PANEL_CLASS}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-health-check-heading", className: "text-lg font-semibold text-brand-dark", children: "Protection health check" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-1 max-w-2xl ${EXTENSION_BODY_CLASS}`, children: "Safely re-read Guard's local catalog, trusted settings, and runtime. This check does not execute a command or change protection." })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onRun, disabled: props.busy, "aria-busy": props.busy, className: "inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-brand-blue/25 bg-white/80 px-4 text-sm font-semibold text-brand-blue hover:bg-[rgba(85,153,254,0.08)] disabled:opacity-60", children: [
-        props.busy ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "size-4 animate-spin motion-reduce:animate-none", "aria-hidden": "true" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "size-4", "aria-hidden": "true" }),
-        props.busy ? "Checking…" : "Run health check"
-      ] })
-    ] }),
-    props.error ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800", children: props.error }) : null,
-    props.result ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { role: "status", "aria-live": "polite", className: `mt-4 rounded-xl border p-4 ${props.result.status === "healthy" ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-2", children: [
-        props.result.status === "healthy" ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "mt-0.5 size-5 shrink-0 text-emerald-800" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "mt-0.5 size-5 shrink-0 text-amber-800" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-medium text-brand-dark", children: props.result.summary })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-3 space-y-1.5", children: props.result.checks.map((check) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: "flex items-center gap-2 text-xs text-brand-dark/80", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": "true", children: check.passed ? "✓" : "•" }),
-        check.label
-      ] }, check.id)) })
-    ] }) : null
-  ] });
-}
-const PROTECTION_TELEMETRY_EVENTS = [
-  "protection_center_viewed",
-  "protection_density_changed",
-  "protection_cloud_value_viewed",
-  "protection_test_lab_checked"
-];
-const PROTECTION_TELEMETRY_EVENT_NAME = "guard:protection-telemetry";
-const ALLOWED_FIELDS = /* @__PURE__ */ new Set([
-  "density",
-  "plan_id",
-  "cloud_state",
-  "result",
-  "category"
-]);
-const ALLOWED_PLAN_IDS = /* @__PURE__ */ new Set(["free", "solo", "pro", "team", "enterprise", "unknown"]);
-const ALLOWED_DENSITIES = /* @__PURE__ */ new Set(["simple", "advanced", "developer"]);
-const ALLOWED_CLOUD_STATES = /* @__PURE__ */ new Set(["local_only", "paired_waiting", "paired_active", "unavailable"]);
-const ALLOWED_RESULTS = /* @__PURE__ */ new Set(["allowed", "ask-first", "blocked", "unavailable"]);
-const ALLOWED_CATEGORIES = new Set(PROTECTION_CATEGORIES.map((category) => category.id));
-function boundedToken(value, max = 48) {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || normalized.length > max || !/^[a-z0-9_.-]+$/.test(normalized)) return null;
-  return normalized;
-}
-function sanitizeProtectionTelemetry(fields) {
-  const result = {};
-  for (const [key, raw] of Object.entries(fields)) {
-    if (!ALLOWED_FIELDS.has(key)) continue;
-    const value = boundedToken(raw);
-    if (value === null) continue;
-    if (key === "plan_id" && !ALLOWED_PLAN_IDS.has(value)) continue;
-    if (key === "density" && !ALLOWED_DENSITIES.has(value)) continue;
-    if (key === "cloud_state" && !ALLOWED_CLOUD_STATES.has(value)) continue;
-    if (key === "result" && !ALLOWED_RESULTS.has(value)) continue;
-    if (key === "category" && !ALLOWED_CATEGORIES.has(value)) continue;
-    result[key] = value;
-  }
-  return result;
-}
-function protectionTelemetryEnvelope(event, fields = {}) {
-  if (!PROTECTION_TELEMETRY_EVENTS.includes(event)) throw new Error("unsupported Protection Center telemetry event");
-  return {
-    schema_version: "guard.protection-center.telemetry.v1",
-    event,
-    fields: sanitizeProtectionTelemetry(fields)
-  };
-}
-function emitProtectionTelemetry(event, fields = {}, target2 = typeof window === "undefined" ? null : window) {
-  if (!target2) return false;
-  try {
-    return target2.dispatchEvent(new CustomEvent(PROTECTION_TELEMETRY_EVENT_NAME, {
-      detail: protectionTelemetryEnvelope(event, fields)
-    }));
-  } catch {
-    return false;
-  }
-}
-const PLAN_IDS = /* @__PURE__ */ new Set(["free", "solo", "pro", "team", "enterprise"]);
-function isProtectionCloudPlan(value) {
-  return PLAN_IDS.has(value);
-}
-function protectionCloudPlan(runtime) {
-  const raw = runtime?.cloud_pairing_state?.plan_id?.trim().toLowerCase();
-  return raw && isProtectionCloudPlan(raw) ? raw : null;
-}
-function connectedPlanDetail(plan) {
-  switch (plan) {
-    case "solo":
-      return "Solo adds personal cross-device continuity and Cloud history. Protection and blocking still run locally on this device.";
-    case "pro":
-      return "Pro adds extended Cloud history plus richer evidence and export workflows. Protection and blocking still run locally on this device.";
-    case "team":
-      return "Team adds organization coordination, policy continuity, and centralized audit. This device keeps enforcing locally if Cloud is unavailable.";
-    case "enterprise":
-      return "Enterprise adds organization policy, centralized oversight, and delegated workflows. This device keeps enforcing locally if Cloud is unavailable.";
-    case "free":
-      return "Cloud is connected for account continuity. Plan choices affect Cloud features only; protection and blocking still run locally on this device.";
-    default:
-      return "Cloud continuity is connected. Protection and blocking still run locally on this device.";
-  }
-}
-function protectionCloudValue(runtime, loadFailed = false) {
-  if (loadFailed) {
-    return {
-      state: "offline",
-      plan: null,
-      label: "Cloud status unavailable",
-      detail: "Local protection is active independently. Cloud status could not be refreshed."
-    };
-  }
-  if (!runtime || !runtime.sync_configured || runtime.cloud_state === "local_only") {
-    return {
-      state: "optional",
-      plan: protectionCloudPlan(runtime),
-      label: "This device is already protected",
-      detail: "Local protection is active on this device. Guard Cloud keeps the same protections with you: synced module settings, searchable history, and organization policy your laptop cannot weaken."
-    };
-  }
-  if (runtime.cloud_state === "paired_waiting") {
-    return {
-      state: "connecting",
-      plan: protectionCloudPlan(runtime),
-      label: "Cloud continuity is connecting",
-      detail: "Local protection remains active while Cloud pairing or synchronization finishes."
-    };
-  }
-  const plan = protectionCloudPlan(runtime);
-  return {
-    state: "connected",
-    plan,
-    label: plan ? `${plan[0].toUpperCase()}${plan.slice(1)} Cloud continuity` : "Cloud continuity connected",
-    detail: connectedPlanDetail(plan)
-  };
-}
-function safeHttpsDestination(candidate) {
-  if (!candidate) return null;
-  try {
-    const parsed = new URL(candidate);
-    return parsed.protocol === "https:" ? parsed.toString() : null;
-  } catch {
-    return null;
-  }
-}
-function protectionCloudDestination(runtime) {
-  const candidate = runtime?.sync_configured ? runtime.cloud_pairing_state?.dashboard_url || runtime.dashboard_url : runtime?.cloud_pairing_state?.connect_url || runtime?.connect_url;
-  return safeHttpsDestination(candidate);
-}
-function benefitForPlan(plan) {
-  switch (plan) {
-    case "solo":
-      return "Keep personal protection history available across your connected devices.";
-    case "pro":
-      return "Keep longer Cloud history and richer evidence workflows available when you need them.";
-    case "team":
-      return "Coordinate organization policy and audit context without moving local enforcement into the Cloud.";
-    case "enterprise":
-      return "Centralize oversight and delegated workflows while every device continues enforcing locally.";
-    default:
-      return "Keep module settings and decision history with you across devices without moving local blocking into the Cloud.";
-  }
-}
-function eligiblePlanCopy(plan, eligiblePlan) {
-  if (eligiblePlan) return `Available on ${eligiblePlan[0].toUpperCase()}${eligiblePlan.slice(1)} Cloud.`;
-  if (plan) return `Current Cloud plan: ${plan[0].toUpperCase()}${plan.slice(1)}.`;
-  return "Availability is determined by your connected Guard Cloud plan.";
-}
-function telemetryCloudState(value) {
-  if (value.state === "connected") return "paired_active";
-  if (value.state === "connecting") return "paired_waiting";
-  if (value.state === "offline") return "unavailable";
-  return "local_only";
-}
-function CloudValueGate(props) {
-  const [dismissed, setDismissed] = reactExports.useState(false);
-  const value = protectionCloudValue(props.runtime, props.loadFailed);
-  const destination = props.destination === void 0 ? protectionCloudDestination(props.runtime) : safeHttpsDestination(props.destination);
-  reactExports.useEffect(() => {
-    if (props.loading || dismissed) return;
-    emitProtectionTelemetry("protection_cloud_value_viewed", {
-      plan_id: value.plan ?? "unknown",
-      cloud_state: telemetryCloudState(value)
-    });
-  }, [props.loading, value.plan, value.state]);
-  if (dismissed) return null;
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(
-    "aside",
-    {
-      "aria-label": "Cloud continuity",
-      "data-local-protection-independent": "true",
-      "data-cloud-value-state": props.loading ? "loading" : value.state,
-      className: EXTENSION_PANEL_COMPACT_CLASS,
-      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-start justify-between gap-3", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-brand-dark", children: props.loading ? "Checking Cloud continuity…" : value.label }),
-            value.plan ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-[rgba(85,153,254,0.1)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-brand-blue", children: value.plan }) : null
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs leading-5 text-brand-dark/75", children: props.loading ? "Local protection continues while Cloud status is checked." : value.detail }),
-          !props.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs font-medium leading-5 text-brand-dark/80", children: props.benefit ?? benefitForPlan(value.plan) }) : null,
-          !props.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-[11px] leading-5 text-brand-dark/65", children: eligiblePlanCopy(value.plan, props.eligiblePlan) }) : null,
-          destination && !props.loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("a", { href: destination, target: "_blank", rel: "noreferrer", className: "mt-2 inline-flex min-h-9 items-center rounded-lg border border-[rgba(63,65,116,0.12)] bg-white/70 px-3 text-xs font-semibold text-brand-blue hover:bg-[rgba(85,153,254,0.08)]", children: value.state === "connected" ? "Open Guard Cloud" : "Connect Guard Cloud" }) : null
-        ] }),
-        props.dismissible !== false ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => setDismissed(true), "aria-label": "Hide Cloud continuity", className: "min-h-9 rounded-lg px-2 text-xs font-semibold text-brand-dark/55 hover:bg-white/70 hover:text-brand-dark", children: "Hide" }) : null
-      ] })
-    }
-  );
-}
-const client = createCommandActivityClient(fetchCommandActivityApi);
-const INITIAL_STATE = {
-  activity: [],
-  activityLoading: true,
-  activityError: false,
-  runtime: null,
-  runtimeLoading: true,
-  runtimeError: false
-};
-function useProtectionLandingData() {
-  const [state, setState] = reactExports.useState(INITIAL_STATE);
-  const [refreshKey, setRefreshKey] = reactExports.useState(0);
-  reactExports.useEffect(() => {
-    const controller = new AbortController();
-    setState((current) => ({
-      ...current,
-      activityLoading: true,
-      activityError: false,
-      runtimeLoading: true,
-      runtimeError: false
-    }));
-    void client.fetchPage({ ...DEFAULT_COMMAND_ACTIVITY_FILTERS, limit: 12 }, null, controller.signal).then(
-      (page) => setState((current) => ({ ...current, activity: page.items, activityLoading: false })),
-      () => {
-        if (!controller.signal.aborted) setState((current) => ({ ...current, activity: [], activityLoading: false, activityError: true }));
-      }
-    );
-    void fetchRuntimeSnapshot({ includeItems: false, includeReceipts: false }).then(
-      (runtime) => {
-        if (!controller.signal.aborted) setState((current) => ({ ...current, runtime, runtimeLoading: false }));
-      },
-      () => {
-        if (!controller.signal.aborted) setState((current) => ({ ...current, runtime: null, runtimeLoading: false, runtimeError: true }));
-      }
-    );
-    return () => controller.abort();
-  }, [refreshKey]);
-  const refresh = reactExports.useCallback(() => setRefreshKey((value) => value + 1), []);
-  return { ...state, refresh };
-}
-function ProtectionLandingExperience(props) {
-  const landing = useProtectionLandingData();
-  const [healthBusy, setHealthBusy] = reactExports.useState(false);
-  const [healthResult, setHealthResult] = reactExports.useState(null);
-  const [healthError, setHealthError] = reactExports.useState(null);
-  const modules = reactExports.useMemo(() => rankProtectionModules(props.catalog, landing.activity), [landing.activity, props.catalog]);
-  const decisions = reactExports.useMemo(() => recentProtectionDecisions(landing.activity, props.catalog, 3), [landing.activity, props.catalog]);
-  async function runHealthCheck() {
-    setHealthBusy(true);
-    setHealthError(null);
-    try {
-      const [catalog, effective, runtime] = await Promise.all([
-        fetchExtensionCatalog(),
-        fetchEffectiveExtensionControls(),
-        fetchRuntimeSnapshot({ includeItems: false, includeReceipts: false })
-      ]);
-      const result = evaluateProtectionHealth(catalog.catalog_digest, effective, runtime);
-      if (catalog.catalog_digest !== props.catalogDigest) {
-        result.status = "needs-attention";
-        result.summary = "Protection data changed since this page loaded. Refresh Extensions before making changes.";
-        result.checks.push({ id: "view-freshness", label: "This page matches the latest protection catalog", passed: false });
-      }
-      setHealthResult(result);
-    } catch (error) {
-      setHealthResult(null);
-      setHealthError(error instanceof Error ? error.message : "Guard could not complete the local protection health check.");
-    } finally {
-      setHealthBusy(false);
-    }
-  }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionWatchingMap, { modules, effective: props.effective, onOpen: props.onOpen }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      ProtectionModuleExplorer,
-      {
-        modules,
-        effective: props.effective,
-        onOpen: props.onOpen,
-        advancedFilters: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionsFilterBar, { filters: props.filters, onChange: props.onFilters, onClear: props.onClearFilters, extensions: props.catalog, effective: props.effective })
-      }
-    ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(RecentProtectionDecisions, { decisions, loading: landing.activityLoading, unavailable: landing.activityError }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-8", children: /* @__PURE__ */ jsxRuntimeExports.jsx(CloudValueGate, { runtime: landing.runtime, loading: landing.runtimeLoading, loadFailed: landing.runtimeError }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "mt-8", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-sm font-semibold text-brand-dark", children: "Check protection health" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionHealthCheckPanel, { result: healthResult, busy: healthBusy, error: healthError, onRun: () => {
-        void runHealthCheck();
-      } })
-    ] })
-  ] });
 }
 function cloneLayers$1(layers) {
   return layers.map((layer) => ({
@@ -2936,6 +1779,103 @@ function ExtensionPolicyPanel(props) {
     ) : null
   ] });
 }
+const PROTECTION_CENTER_PERFORMANCE_BUDGETS = Object.freeze({
+  simpleRuleRenderCap: 500,
+  recentDecisionCap: 20,
+  humanSearchCharacterCap: 160,
+  humanSearchTermCap: 8,
+  developerRelationshipCap: 1024
+});
+function patternSearchText(extension2, permission2) {
+  return [
+    permission2.label,
+    permission2.description,
+    permission2.example_command ?? "",
+    permission2.family ?? "",
+    permission2.permission_id,
+    extension2.name,
+    extension2.extension_id,
+    ...extension2.executables
+  ].join(" ").toLowerCase();
+}
+function searchCommandPatterns(extensions, rawQuery, limit = 24) {
+  const normalized = rawQuery.trim().toLowerCase().slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchCharacterCap);
+  if (!normalized) return [];
+  const terms = normalized.split(/\s+/).filter(Boolean).slice(0, PROTECTION_CENTER_PERFORMANCE_BUDGETS.humanSearchTermCap);
+  const matches = [];
+  for (const extension2 of extensions) {
+    for (const permission2 of extension2.permissions) {
+      const text2 = patternSearchText(extension2, permission2);
+      if (terms.every((term) => text2.includes(term))) {
+        matches.push({ extension: extension2, permission: permission2, score: terms.length });
+      }
+    }
+  }
+  return matches.sort(
+    (left, right) => right.permission.risk_tier.localeCompare(left.permission.risk_tier) || left.permission.label.localeCompare(right.permission.label) || left.extension.name.localeCompare(right.extension.name)
+  ).slice(0, limit);
+}
+const EXTENSION_PANEL_CLASS = "guard-extensions-panel p-5 sm:p-6";
+const EXTENSION_CHIP_CLASS = "guard-extensions-chip";
+const EXTENSION_ROW_CLASS = "guard-extensions-row";
+function ProtectionStatusHero(props) {
+  const safe = props.status.tone === "safe";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-status-heading", className: "guard-status-bar", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-status-bar-icon", "data-tone": props.status.tone, "aria-hidden": "true", children: safe ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "size-4" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "size-4" }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.18em] text-slate-400", children: "Local protection" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-0.5 flex flex-wrap items-baseline gap-x-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-status-heading", className: "text-sm font-semibold text-brand-dark", children: props.status.title }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm leading-5 text-brand-dark/70", children: props.status.summary })
+      ] })
+    ] }),
+    props.status.primaryActionLabel && props.onPrimaryAction ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        type: "button",
+        "aria-busy": props.busy,
+        disabled: props.busy,
+        onClick: props.onPrimaryAction,
+        className: "min-h-11 shrink-0 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:cursor-wait disabled:opacity-60",
+        children: props.busy ? "Working…" : props.status.primaryActionLabel
+      }
+    ) : safe ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex min-h-9 shrink-0 items-center gap-1.5 self-center rounded-full border border-emerald-200 bg-[#e8f7ee] px-3 text-xs font-semibold text-emerald-800", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "size-3.5" }),
+      "No action required"
+    ] }) : null,
+    props.children ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full border-t border-[rgba(63,65,116,0.08)] pt-2", children: props.children }) : null
+  ] });
+}
+function ProtectionDecisionBadge({ result }) {
+  const label = result === "allowed" ? "Allowed" : result === "ask-first" ? "Ask first" : "Blocked";
+  const classes = result === "allowed" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : result === "ask-first" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800";
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${classes}`, children: label });
+}
+function ProtectionModuleRow(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onOpen, className: `${EXTENSION_ROW_CLASS} motion-reduce:transition-none`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "min-w-0 flex-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex flex-wrap items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-brand-dark", children: props.name }),
+        props.required ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Required" }) : null,
+        props.managed ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Managed" }) : null
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block truncate text-sm text-brand-dark/70", children: props.behavior })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronRight, { className: "size-5 shrink-0 text-brand-dark/35", "aria-hidden": "true" })
+  ] });
+}
+function TechnicalDetails(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: `${EXTENSION_PANEL_CLASS}`, "data-testid": props.testId, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer list-none text-sm font-semibold text-brand-dark", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-2", children: [
+      props.title ?? "Technical details",
+      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronDown, { className: "size-4", "aria-hidden": "true" })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 text-sm text-brand-dark/80", children: props.children })
+  ] });
+}
+function InlineError({ message }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800", children: message });
+}
 function PatternSearchConsole(props) {
   const [query, setQuery] = reactExports.useState("");
   const [focused, setFocused] = reactExports.useState(false);
@@ -2974,6 +1914,14 @@ function PatternSearchConsole(props) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
   const matches = reactExports.useMemo(() => searchCommandPatterns(props.catalog, query), [props.catalog, query]);
+  const toolMatches = reactExports.useMemo(() => {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return [];
+    return props.catalog.filter((extension2) => {
+      const text2 = [extension2.name, extension2.extension_id, ...extension2.executables, ...extension2.aliases].join(" ").toLowerCase();
+      return terms.every((term) => text2.includes(term));
+    });
+  }, [props.catalog, query]);
   const grouped = reactExports.useMemo(() => {
     const groups = /* @__PURE__ */ new Map();
     for (const match of matches) {
@@ -3014,7 +1962,7 @@ function PatternSearchConsole(props) {
       )
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("p", { id: "pattern-search-hint", className: `mt-2 text-xs text-brand-dark/60 ${focused || showResults ? "" : "sr-only"}`, children: "Matches patterns across every tool. Press / to focus search from anywhere on this page." }),
-    showResults ? matches.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3", children: [
+    showResults ? matches.length || toolMatches.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3", children: [
       grouped.map((group) => /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-label": `${group.extension.name} patterns`, className: "guard-pattern-family", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("h3", { className: "guard-pattern-family-heading", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: group.extension.executables[0] ?? group.extension.extension_id }),
@@ -3037,6 +1985,20 @@ function PatternSearchConsole(props) {
           );
         })
       ] }, group.extension.extension_id)),
+      toolMatches.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-label": "Matching tools", className: "guard-pattern-family", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "guard-pattern-family-heading", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Tools" }) }),
+        toolMatches.map((extension2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+          ProtectionModuleRow,
+          {
+            name: extension2.name,
+            description: extension2.description,
+            behavior: extension2.executables.join(" · "),
+            required: extension2.required,
+            onOpen: () => props.onOpenExtension(extension2)
+          },
+          extension2.extension_id
+        ))
+      ] }) : null,
       managedCount ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-3 text-xs text-indigo-950", children: [
         managedCount,
         " matched setting",
@@ -3082,7 +2044,7 @@ function PatternSearchConsole(props) {
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniInformationCircle, { className: "mt-0.5 size-5 shrink-0" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Review is required before approval. Guard calculates the real outcome from current protections, dependencies, organization settings, and Emergency Lockdown before anything can change." })
       ] }) : null
-    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-sm text-brand-dark/75", children: "No command patterns match this search." }) : null,
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-sm text-brand-dark/75", children: "No command patterns or tools match this search." }) : null,
     reviewOpen && preview ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       PolicyReviewSheet,
       {
@@ -3252,51 +2214,52 @@ function ProtectionTestLab({ extension: extension2 }) {
       setBusy(false);
     }
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-test-lab-heading", className: EXTENSION_PANEL_CLASS, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grid size-10 shrink-0 place-items-center rounded-xl bg-[rgba(85,153,254,0.1)] text-brand-blue", "aria-hidden": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniBeaker, { className: "size-5" }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: EXTENSION_KICKER_CLASS, children: "Paste the command Guard stopped" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-test-lab-heading", className: "mt-2 text-lg font-semibold text-brand-dark", children: "Test Lab" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm leading-6 text-brand-dark/80", children: "See how Guard would handle a command without running it, then adjust the exact pattern it matched." })
-      ] })
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-test-lab-heading", className: "mt-10 rounded-2xl border border-slate-200 bg-white p-5 sm:p-6", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-baseline justify-between gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-test-lab-heading", className: "text-lg font-semibold tracking-tight text-brand-dark", children: "Test Lab" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-slate-500", children: "Nothing is executed. The check runs locally and is not saved." })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-5 max-w-2xl text-sm leading-6 text-brand-dark/80", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "font-semibold text-brand-dark", children: "Nothing is executed." }),
-      " The command is evaluated locally in memory and is not saved to Activity or sent to Guard Cloud."
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-sm text-slate-500", children: [
+      "See how Guard would handle a ",
+      extension2.name,
+      " command without running it."
     ] }),
-    examples.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: EXTENSION_KICKER_CLASS, children: "Try an example" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 flex flex-wrap gap-2", children: examples.map((example) => /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: busy, onClick: () => {
-        setCommand(example);
-        setResult(null);
-        setError(null);
-      }, className: `${EXTENSION_CHIP_CLASS} disabled:cursor-not-allowed disabled:opacity-50`, children: example }, example)) })
-    ] }) : null,
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "mt-6 block", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-brand-dark", children: "Command to check" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("textarea", { value: command, disabled: busy, onChange: (event) => {
-        setCommand(event.target.value.slice(0, 4096));
-        setResult(null);
-        setError(null);
-      }, maxLength: 4096, rows: 3, spellCheck: false, autoComplete: "off", placeholder: "Paste a command here. Guard will not run it.", className: "mt-2 w-full resize-y rounded-2xl border border-[rgba(63,65,116,0.14)] bg-white/80 px-4 py-3 font-mono text-sm text-brand-dark outline-none focus:border-brand-blue focus:ring-2 focus:ring-blue-100" })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-2", children: [
+    examples.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 flex flex-wrap gap-2", children: examples.map((example) => /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: busy, onClick: () => {
+      setCommand(example);
+      setResult(null);
+      setError(null);
+    }, className: `${EXTENSION_CHIP_CLASS} disabled:cursor-not-allowed disabled:opacity-50`, children: example }, example)) }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-col gap-2 sm:flex-row", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "input",
+        {
+          value: command,
+          disabled: busy,
+          onChange: (event) => {
+            setCommand(event.target.value.slice(0, 4096));
+            setResult(null);
+            setError(null);
+          },
+          onKeyDown: (event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void run();
+            }
+          },
+          maxLength: 4096,
+          spellCheck: false,
+          autoComplete: "off",
+          "aria-label": "Command to check",
+          placeholder: "Paste a command Guard stopped, like git reset --hard HEAD~1",
+          className: "min-h-11 w-full flex-1 rounded-xl border border-slate-200 bg-white px-3 font-mono text-sm text-brand-dark placeholder:font-sans placeholder:text-slate-400 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-blue-100"
+        }
+      ),
       /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => {
         void run();
-      }, disabled: busy || !command.trim(), className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50", children: busy ? "Checking…" : "Check safely" }),
-      command ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: busy, onClick: () => {
-        setCommand("");
-        setResult(null);
-        setError(null);
-      }, className: "min-h-11 rounded-xl border border-[rgba(63,65,116,0.16)] bg-white/80 px-4 text-sm font-semibold text-brand-dark disabled:cursor-not-allowed disabled:opacity-50", children: "Clear" }) : null,
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs text-brand-dark/55", children: [
-        command.length,
-        "/4096"
-      ] })
+      }, disabled: busy || !command.trim(), className: "min-h-11 shrink-0 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50", children: busy ? "Checking…" : "Check safely" })
     ] }),
     error ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800", children: error }) : null,
-    result ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { role: "status", className: "mt-5 rounded-2xl bg-white/55 p-4", children: [
+    result ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { role: "status", className: "mt-5 rounded-xl bg-slate-50 p-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-3", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionDecisionBadge, { result: result.decision }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-brand-dark", children: resultTitle(result) }),
@@ -3304,8 +2267,8 @@ function ProtectionTestLab({ extension: extension2 }) {
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-sm leading-6 text-brand-dark/80", children: result.explanation }),
       result.matches.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: EXTENSION_KICKER_CLASS, children: "Protection rules involved" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 space-y-2", children: result.matches.slice(0, 6).map((match) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl bg-white/70 p-3", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.14em] text-slate-400", children: "Protection rules involved" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 space-y-2", children: result.matches.slice(0, 6).map((match) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl bg-white p-3", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-2", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-brand-dark", children: match.rule_title }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs font-semibold capitalize text-brand-dark/55", children: [
@@ -3313,28 +2276,14 @@ function ProtectionTestLab({ extension: extension2 }) {
               " risk"
             ] })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs leading-5 text-brand-dark/70", children: match.description }),
-          match.permission_id ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "a",
-            {
-              href: `#pattern-${match.permission_id}`,
-              onClick: (event) => {
-                event.preventDefault();
-                document.getElementById(`pattern-${match.permission_id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-                window.history.replaceState(null, "", `#pattern-${match.permission_id}`);
-                window.dispatchEvent(new HashChangeEvent("hashchange"));
-              },
-              className: "mt-2 inline-flex min-h-9 items-center rounded-lg px-1 text-xs font-semibold text-brand-blue hover:underline",
-              children: "Adjust this pattern"
-            }
-          ) : null
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs leading-5 text-brand-dark/70", children: match.description })
         ] }, `${match.extension_id}:${match.rule_id}`)) })
       ] }) : null,
       result.safer_alternatives.length ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: EXTENSION_KICKER_CLASS, children: "Safer alternatives" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.14em] text-slate-400", children: "Safer alternatives" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 list-disc space-y-1 pl-5 text-sm text-brand-dark/80", children: result.safer_alternatives.map((alternative) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: alternative }, alternative)) })
       ] }) : null,
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 text-xs text-brand-dark/55", children: "This result uses the current local protection state. It is a read-only evaluation and does not create an approval or receipt." })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 text-xs text-slate-500", children: "This result uses the current local protection state. It is a read-only evaluation and does not create an approval or receipt." })
     ] }) : null
   ] });
 }
@@ -3350,7 +2299,7 @@ function requiredLine(extension2) {
   return "This tool stays on. Individual command patterns below can follow recommended settings or be blocked on this device.";
 }
 function DeveloperModuleDetails(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(TechnicalDetails, { title: "Developer details", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-5", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(TechnicalDetails, { title: "Developer details", testId: "protection-more-detail", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-5", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "font-semibold text-brand-dark", children: "Canonical module" }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("dl", { className: "mt-3 grid gap-3 sm:grid-cols-2", children: [
@@ -3403,7 +2352,6 @@ function DeveloperModuleDetails(props) {
   ] }) });
 }
 function ProtectionModuleDetail(props) {
-  const [density, setDensity] = useProtectionDensity();
   const [policyDirty, setPolicyDirty] = reactExports.useState(false);
   reactExports.useEffect(() => {
     let highlightTimer = 0;
@@ -3457,16 +2405,17 @@ function ProtectionModuleDetail(props) {
     if (policyDirty && !window.confirm("Discard your unreviewed protection setting changes?")) return;
     props.onBack();
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { "data-testid": "protection-module-detail", className: `${EXTENSION_SURFACE_CLASS} mx-auto w-full max-w-6xl px-4 pb-12 pt-6 sm:px-6 lg:px-8`, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { "data-testid": "protection-module-detail", className: "w-full", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: handleBack, className: "inline-flex min-h-11 items-center gap-2 rounded-lg px-1 text-sm font-semibold text-brand-dark/80 hover:text-brand-dark", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowLeft, { className: "size-4", "aria-hidden": "true" }),
       "Extensions"
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mt-4 border-b border-[rgba(63,65,116,0.12)] pb-5", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.14em] text-brand-dark/55", children: "Extension" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: EXTENSION_TITLE_CLASS, children: props.extension.name }),
-      requiredNote ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 max-w-2xl text-sm leading-6 text-brand-dark/80", children: requiredNote }) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 max-w-2xl text-sm leading-6 text-brand-dark/80", children: props.extension.description }),
-      props.extension.required ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm text-brand-dark/70", children: "This protection is required by Guard and cannot be turned off." }) : props.onRequestExtensionChange ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center gap-3", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mt-4 border-b border-slate-200 pb-6", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-mono text-xs font-semibold tracking-[0.14em] text-slate-400", children: props.extension.executables.join(" · ") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "mt-2 text-2xl font-semibold tracking-tight text-brand-dark", children: props.extension.name }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-2xl text-sm leading-6 text-slate-500", children: props.extension.description }),
+      requiredNote ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 max-w-2xl text-sm leading-6 text-brand-dark/80", children: requiredNote }) : null,
+      props.extension.required ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm text-brand-dark/70", children: "This protection is required by Guard and cannot be turned off." }) : props.onRequestExtensionChange ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 flex flex-wrap items-center gap-3", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "button",
           {
@@ -3485,7 +2434,7 @@ function ProtectionModuleDetail(props) {
           /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs leading-5 text-brand-dark/75", children: extensionEnabled ? "Matching commands follow the protection settings below. Turn off to block every command this tool owns on this device." : "Every command this tool owns is blocked on this device. Turn on to follow the protection settings below." })
         ] })
       ] }) : null,
-      orgManaged ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm text-brand-dark/80", children: "Your organization controls part of this protection. Local changes cannot weaken organization policy." }) : null,
+      orgManaged ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-sm text-brand-dark/80", children: "Your organization controls part of this protection. Local changes cannot weaken organization policy." }) : null,
       props.effective.global_lockdown ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { role: "status", className: "mt-4 flex gap-2 text-sm text-brand-dark", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniLockClosed, { className: "mt-0.5 size-4 shrink-0" }),
         "Emergency Lockdown currently controls this module. Matching optional actions remain blocked."
@@ -3503,12 +2452,77 @@ function ProtectionModuleDetail(props) {
       }
     ) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-10", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionTestLab, { extension: props.extension }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "mt-8", "data-testid": "protection-more-detail", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-sm font-semibold text-brand-dark", children: "More detail" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionDensityControl, { value: density, onChange: setDensity }) })
-    ] }),
-    density === "developer" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(DeveloperModuleDetails, { extension: props.extension, effective: props.effective, catalogDigest: props.catalogDigest }) }) : null
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-8", children: /* @__PURE__ */ jsxRuntimeExports.jsx(DeveloperModuleDetails, { extension: props.extension, effective: props.effective, catalogDigest: props.catalogDigest }) })
   ] });
+}
+function deriveProtectionStatus(effective) {
+  if (effective.global_lockdown) {
+    return {
+      status: "lockdown",
+      title: "Emergency Lockdown active",
+      summary: "Guard is blocking matching optional actions until you review and end lockdown.",
+      tone: "danger",
+      primaryAction: "review-lockdown",
+      primaryActionLabel: "Review lockdown"
+    };
+  }
+  switch (effective.health) {
+    case "protected":
+      return {
+        status: "protected",
+        title: "Protected",
+        summary: "Guard is actively applying the trusted protection settings on this device.",
+        tone: "safe",
+        primaryAction: "none",
+        primaryActionLabel: null
+      };
+    case "unenrolled":
+      return {
+        status: "finish-setup",
+        title: "Finish setup",
+        summary: "Complete local setup so Guard can protect and verify settings on this device.",
+        tone: "attention",
+        primaryAction: "finish-setup",
+        primaryActionLabel: "Show setup steps"
+      };
+    case "tampered":
+    case "recovery-required":
+      return {
+        status: "needs-repair",
+        title: "Needs repair",
+        summary: "Guard detected a problem with trusted protection settings and is staying fail-safe until they are repaired.",
+        tone: "danger",
+        primaryAction: "repair",
+        primaryActionLabel: "Repair protection"
+      };
+    case "degraded-unacknowledged":
+      return {
+        status: "limited",
+        title: "Protection limited",
+        summary: "Guard is staying fail-safe because it cannot fully verify protection settings. Repair is recommended.",
+        tone: "attention",
+        primaryAction: "repair",
+        primaryActionLabel: "Restore protection"
+      };
+    case "degraded-acknowledged":
+      return {
+        status: "limited",
+        title: "Protection limited",
+        summary: "Guard is still staying fail-safe. The earlier acknowledgement did not restore trusted protection.",
+        tone: "attention",
+        primaryAction: "retry-repair",
+        primaryActionLabel: "Try repair again"
+      };
+    default:
+      return {
+        status: "unavailable",
+        title: "Protection status unavailable",
+        summary: "Guard could not verify the current protection state. Refresh before making any protection changes.",
+        tone: "neutral",
+        primaryAction: "refresh",
+        primaryActionLabel: "Check again"
+      };
+  }
 }
 function currentExtensionRouteState() {
   return {
@@ -3699,11 +2713,6 @@ function ProtectionCenterWorkspace() {
   const [recoveryBusy, setRecoveryBusy] = reactExports.useState(false);
   const [recoveryError, setRecoveryError] = reactExports.useState(null);
   const [recoveryStatus, setRecoveryStatus] = reactExports.useState(null);
-  const [filters, setFilters] = reactExports.useState(EMPTY_EXTENSION_FILTERS);
-  const [density, setDensity] = useProtectionDensity();
-  const [moreDetailOpen, setMoreDetailOpen] = reactExports.useState(() => density !== "simple");
-  const [provenanceOpen, setProvenanceOpen] = reactExports.useState(false);
-  const [troubleshootingOpen, setTroubleshootingOpen] = reactExports.useState(false);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = reactExports.useRef(null);
   const load = reactExports.useCallback(async () => {
@@ -3720,9 +2729,6 @@ function ProtectionCenterWorkspace() {
     void load();
   }, [load]);
   reactExports.useEffect(() => {
-    if (density !== "simple") setMoreDetailOpen(true);
-  }, [density]);
-  reactExports.useEffect(() => {
     const onPopState = () => setRouteState(currentExtensionRouteState());
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -3731,9 +2737,6 @@ function ProtectionCenterWorkspace() {
   const requestedExtensionId = routeState.route.kind === "detail" ? routeState.route.extensionId : null;
   const canonicalSelected = reactExports.useMemo(() => canonicalExtensionId(catalogExtensions, requestedExtensionId), [catalogExtensions, requestedExtensionId]);
   const selectedExtension = reactExports.useMemo(() => catalogExtensions.find((item) => item.extension_id === canonicalSelected) ?? null, [catalogExtensions, canonicalSelected]);
-  const debouncedQuery = useDebounce(filters.query, 120);
-  const effectiveFilters = reactExports.useMemo(() => ({ ...filters, query: debouncedQuery }), [filters, debouncedQuery]);
-  const filtered = reactExports.useMemo(() => state.kind === "ready" ? filterExtensions(catalogExtensions, state.effective, effectiveFilters) : [], [catalogExtensions, state, effectiveFilters]);
   reactExports.useEffect(() => {
     if (state.kind !== "ready" || routeState.route.kind !== "detail" || !canonicalSelected) return;
     if (routeState.route.extensionId === canonicalSelected) return;
@@ -3820,10 +2823,10 @@ function ProtectionCenterWorkspace() {
       setRecoveryBusy(false);
     }
   }, [resolveApprovalGate, state]);
-  if (state.kind === "loading") return /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "grid min-h-[60vh] place-items-center", "aria-busy": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "size-7 animate-spin text-brand-blue motion-reduce:animate-none", "aria-label": "Loading Extensions" }) });
+  if (state.kind === "loading") return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid min-h-[60vh] place-items-center", "aria-busy": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "size-7 animate-spin text-brand-blue motion-reduce:animate-none", "aria-label": "Loading Extensions" }) });
   if (state.kind === "error") {
     const loadError = protectionCenterLoadError(state.message);
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: `${EXTENSION_SURFACE_CLASS} mx-auto max-w-4xl p-6`, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`, children: [
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mx-auto max-w-4xl", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-semibold text-red-950", children: loadError.title }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-2 text-sm text-red-800", children: loadError.detail }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs font-medium text-red-900", children: "Local protection continues on this device." }),
@@ -3858,7 +2861,7 @@ function ProtectionCenterWorkspace() {
   }
   if (routeState.route.kind === "detail" || routeState.route.kind === "invalid") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: `${EXTENSION_SURFACE_CLASS} mx-auto max-w-4xl p-6`, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mx-auto max-w-4xl", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "font-semibold text-amber-950", children: "Extension not found" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm text-amber-900", children: "This link does not match an extension in the current Guard catalog." }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: closeExtension, className: "mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", children: "Back to Extensions" })
@@ -3867,84 +2870,48 @@ function ProtectionCenterWorkspace() {
     ] });
   }
   const status = deriveProtectionStatus(state.effective);
-  const locked = state.effective.health !== "protected";
-  const visible = density === "simple" ? catalogExtensions : filtered;
+  const healthBroken = state.effective.health !== "protected";
   const handlePrimaryStatusAction = () => {
     if (status.primaryAction === "repair" || status.primaryAction === "retry-repair") {
       void recover();
     } else if (status.primaryAction === "review-lockdown") {
       requestChange({ globalLockdown: false });
-    } else if (status.primaryAction === "finish-setup") {
-      setDensity("advanced");
-      setTroubleshootingOpen(true);
-      requestAnimationFrame(() => document.getElementById("advanced-protection-controls")?.scrollIntoView({ block: "nearest" }));
-    } else {
-      void load();
     }
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: `${EXTENSION_SURFACE_CLASS} mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "flex flex-col gap-5 pb-2 lg:flex-row lg:items-end lg:justify-between", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: EXTENSION_KICKER_CLASS, children: "On this device" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: EXTENSION_TITLE_CLASS, children: PROTECTION_TERMS.pageTitle }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-2 max-w-2xl ${EXTENSION_BODY_CLASS}`, children: "See which tools Guard is watching, then open one to understand or change it." })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "details",
-        {
-          className: "w-full max-w-sm",
-          "data-testid": "protection-more-detail",
-          open: moreDetailOpen,
-          onToggle: (event) => setMoreDetailOpen(event.currentTarget.open),
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-sm font-semibold text-brand-dark", children: "More detail" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionDensityControl, { value: density, onChange: setDensity }) })
-          ]
-        }
-      )
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(PatternSearchConsole, { catalog: catalogExtensions, effective: state.effective, onRefresh: load }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ProtectionStatusHero, { status, busy: recoveryBusy, onPrimaryAction: status.primaryAction === "none" ? void 0 : handlePrimaryStatusAction, children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-brand-dark/70", children: "Cloud continuity is separate from local protection. Signing out or losing Cloud connectivity does not turn local protection off." }) }) }),
-    mutationError && !pending ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: mutationError }) }) : null,
-    recoveryError ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: recoveryError }) }) : null,
-    recoveryStatus ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "status", className: `mt-4 ${EXTENSION_PANEL_COMPACT_CLASS} text-sm text-brand-dark`, children: recoveryStatus }) : null,
-    density === "simple" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-      ProtectionLandingExperience,
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      WorkspacePageHeader,
       {
-        catalog: catalogExtensions,
-        catalogDigest: state.catalog.catalog_digest,
-        effective: state.effective,
-        filters,
-        onFilters: (patch) => setFilters((previous) => ({ ...previous, ...patch })),
-        onClearFilters: () => setFilters(EMPTY_EXTENSION_FILTERS),
-        onOpen: openExtension
+        eyebrow: "On this device",
+        title: PROTECTION_TERMS.pageTitle,
+        description: "Pick a tool to see the commands Guard watches and change how they're handled."
       }
-    ) : null,
-    density !== "simple" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { id: "advanced-protection-controls", className: "mt-6 space-y-3", "aria-label": "Advanced protection controls", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { open: troubleshootingOpen, onToggle: (event) => setTroubleshootingOpen(event.currentTarget.open), className: EXTENSION_PANEL_CLASS, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer text-sm font-semibold text-brand-dark", children: "Troubleshooting" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionStatusBanner, { busy: recoveryBusy, effective: state.effective, error: recoveryError, status: recoveryStatus, onRecover: () => {
-          void recover();
-        }, onRetry: load }) })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", disabled: locked, onClick: () => requestChange({ globalLockdown: !state.effective.global_lockdown }), className: "inline-flex min-h-11 items-center gap-2 rounded-xl border border-[rgba(63,65,116,0.14)] bg-white/80 px-4 text-sm font-semibold text-brand-dark disabled:opacity-50", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniLockClosed, { className: "size-4" }),
-        state.effective.global_lockdown ? "Review ending Emergency Lockdown" : "Review Emergency Lockdown"
-      ] })
-    ] }) : null,
-    density !== "simple" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-modules-heading", className: "mt-8", children: [
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      ProtectionStatusHero,
+      {
+        status,
+        busy: recoveryBusy,
+        onPrimaryAction: status.primaryAction === "none" || status.primaryAction === "finish-setup" ? () => document.getElementById("extension-recovery-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }) : handlePrimaryStatusAction
+      }
+    ) }),
+    healthBroken ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", id: "extension-recovery-panel", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionStatusBanner, { busy: recoveryBusy, effective: state.effective, error: recoveryError, status: recoveryStatus, onRecover: () => {
+      void recover();
+    }, onRetry: load }) }) : null,
+    mutationError && !pending ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: mutationError }) }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsx(PatternSearchConsole, { catalog: catalogExtensions, effective: state.effective, onRefresh: load, onOpenExtension: openExtension }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-10", "aria-labelledby": "all-tools-heading", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-modules-heading", className: "text-xl font-semibold text-brand-dark", children: "All extensions" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `mt-1 ${EXTENSION_BODY_CLASS}`, children: "Open an extension to understand its current behavior and available controls." })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "all-tools-heading", className: "text-xl font-semibold tracking-tight text-brand-dark", children: "All tools" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: "Every tool Guard can watch on this device. Open one to adjust its command patterns." })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-brand-dark/70", children: [
           catalogExtensions.length,
-          " available"
+          " tools"
         ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionsFilterBar, { filters, onChange: (patch) => setFilters((previous) => ({ ...previous, ...patch })), onClear: () => setFilters(EMPTY_EXTENSION_FILTERS), extensions: catalogExtensions, effective: state.effective }) }),
-      visible.length ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: EXTENSION_LIST_CLASS, children: visible.map((extension2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: catalogExtensions.map((extension2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
         ProtectionModuleRow,
         {
           name: extension2.name,
@@ -3955,41 +2922,8 @@ function ProtectionCenterWorkspace() {
           onOpen: () => openExtension(extension2)
         },
         extension2.extension_id
-      )) }) : hasActiveFilters(effectiveFilters) ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${EXTENSION_PANEL_CLASS} mt-4 text-center`, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: "No protections match these filters." }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: () => setFilters(EMPTY_EXTENSION_FILTERS), className: "mt-3 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", children: "Clear filters" })
-      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `${EXTENSION_PANEL_CLASS} mt-4 text-center text-sm text-brand-dark/70`, children: "No protection modules are registered." })
-    ] }) : null,
-    density === "developer" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-8", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(TechnicalDetails, { title: "Developer policy details", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: () => setProvenanceOpen((value) => !value), "aria-expanded": provenanceOpen, className: "flex min-h-11 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 text-left text-sm font-semibold text-slate-800", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Policy provenance and catalog identity" }),
-        provenanceOpen ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronUp, { className: "size-4" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronDown, { className: "size-4" })
-      ] }),
-      provenanceOpen ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 grid gap-3 sm:grid-cols-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl bg-white p-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-semibold uppercase text-slate-500", children: "Catalog digest" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "mt-1 block break-all text-xs text-slate-700", children: state.catalog.catalog_digest })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl bg-white p-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-semibold uppercase text-slate-500", children: "Authority layers" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-1 text-sm text-slate-700", children: [
-            state.effective.layers.length,
-            " active layer",
-            state.effective.layers.length === 1 ? "" : "s"
-          ] })
-        ] }),
-        state.effective.layers.map((layer) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl bg-white p-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "size-4 text-emerald-600" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm", children: layer.kind })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 text-xs text-slate-500", children: [
-            layer.controls.length,
-            " explicit controls"
-          ] })
-        ] }, `${layer.kind}:${layer.catalog_digest}`))
-      ] }) : null
-    ] }) }) : null,
+      )) })
+    ] }),
     pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewModal, { change: pending, busy, error: mutationError, approvalGate: resolvedApprovalGate, onCancel: () => {
       if (!busy) setPending(null);
     }, onConfirm: confirm }) : null,

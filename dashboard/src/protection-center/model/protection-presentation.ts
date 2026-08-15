@@ -1,6 +1,5 @@
 import type { EffectiveExtensionControls } from "../../extension-controls-api";
 
-export type ProtectionDensity = "simple" | "advanced" | "developer";
 export type ProtectionStatusTone = "safe" | "attention" | "danger" | "neutral";
 export type ProtectionPrimaryAction =
   | "none"
@@ -18,31 +17,6 @@ export type ProtectionStatusView = {
   primaryAction: ProtectionPrimaryAction;
   primaryActionLabel: string | null;
 };
-
-export const PROTECTION_DENSITY_STORAGE_KEY = "guard-protection-center-density-v1";
-
-export function parseProtectionDensity(value: unknown): ProtectionDensity {
-  return value === "advanced" || value === "developer" ? value : "simple";
-}
-
-export function readProtectionDensity(storage: Pick<Storage, "getItem"> | null = typeof window === "undefined" ? null : window.localStorage): ProtectionDensity {
-  try {
-    return parseProtectionDensity(storage?.getItem(PROTECTION_DENSITY_STORAGE_KEY));
-  } catch {
-    return "simple";
-  }
-}
-
-export function writeProtectionDensity(
-  density: ProtectionDensity,
-  storage: Pick<Storage, "setItem"> | null = typeof window === "undefined" ? null : window.localStorage,
-): void {
-  try {
-    storage?.setItem(PROTECTION_DENSITY_STORAGE_KEY, density);
-  } catch {
-    // Presentation preference is optional. Local protection never depends on storage.
-  }
-}
 
 export function deriveProtectionStatus(effective: EffectiveExtensionControls): ProtectionStatusView {
   if (effective.global_lockdown) {

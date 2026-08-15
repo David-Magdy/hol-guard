@@ -12,14 +12,13 @@ const markup = renderToStaticMarkup(createElement(ProtectionTestLab, {
 }));
 assert.match(markup, /Test Lab/);
 assert.match(markup, /Nothing is executed/);
-assert.match(markup, /evaluated locally in memory/);
-assert.match(markup, /not saved to Activity or sent to Guard Cloud/);
+assert.match(markup, /The check runs locally and is not saved/);
 assert.match(markup, /Check safely/);
 assert.match(markup, /4096/);
+assert.match(markup, /aria-label="Command to check"/);
 const source = readFileSync(new URL("./protection-test-lab.tsx", import.meta.url), "utf8");
 assert.match(source, /examples\.map[\s\S]*?<button[^>]*disabled=\{busy\}/);
-assert.match(source, /<textarea value=\{command\} disabled=\{busy\}/);
-assert.match(source, /Clear<\/button>[\s\S]*?disabled:cursor-not-allowed|disabled=\{busy\}[\s\S]*?>Clear<\/button>/);
+assert.match(source, /value=\{command\}[\s\S]*?aria-label="Command to check"/);
 assert.doesNotMatch(markup, /Run command|Execute command|Upload command/);
 
 const normalized = normalizeProtectionTestResult({

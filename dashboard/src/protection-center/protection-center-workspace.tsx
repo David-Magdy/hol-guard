@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   HiMiniArrowPath,
-  HiMiniCheckCircle,
-  HiMiniChevronDown,
-  HiMiniChevronUp,
   HiMiniClipboard,
   HiMiniClipboardDocumentCheck,
   HiMiniExclamationTriangle,
-  HiMiniLockClosed,
   HiMiniShieldCheck,
   HiMiniXMark,
 } from "react-icons/hi2";
@@ -41,40 +37,22 @@ import {
   type ExtensionCatalogResponse,
   type ExtensionMutationPayload,
 } from "../extension-controls-api";
-import { ExtensionsFilterBar } from "../extensions-filter-bar";
-import {
-  EMPTY_EXTENSION_FILTERS,
-  filterExtensions,
-  hasActiveFilters,
-  isExtensionEnabled,
-  type ExtensionFilterState,
-} from "../extensions-filters";
 import type { GuardApprovalGatePublicConfig } from "../guard-types";
-import { useDebounce } from "../use-debounce";
 import { useModalDialog } from "../use-modal-dialog";
 import { useResolvedApprovalGate } from "../use-resolved-approval-gate";
 import { PROTECTION_TERMS, protectionCenterLoadError } from "./copy/protection-copy";
-import { ProtectionLandingExperience } from "./protection-landing-experience";
 import { PatternSearchConsole } from "./components/pattern-search-console";
 import { ProtectionModuleDetail } from "./protection-module-detail";
 import {
-  EXTENSION_BODY_CLASS,
-  EXTENSION_KICKER_CLASS,
-  EXTENSION_LIST_CLASS,
   EXTENSION_PANEL_CLASS,
-  EXTENSION_PANEL_COMPACT_CLASS,
-  EXTENSION_SURFACE_CLASS,
-  EXTENSION_TITLE_CLASS,
 } from "./protection-surface";
 import {
   InlineError,
-  ProtectionDensityControl,
   ProtectionModuleRow,
   ProtectionStatusHero,
-  TechnicalDetails,
-  useProtectionDensity,
 } from "./components/protection-primitives";
 import { deriveProtectionStatus } from "./model/protection-presentation";
+import { WorkspacePageHeader } from "../workspace-page-header";
 
 type LoadState =
   | { kind: "loading" }
@@ -288,11 +266,6 @@ export function ProtectionCenterWorkspace() {
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [recoveryStatus, setRecoveryStatus] = useState<string | null>(null);
-  const [filters, setFilters] = useState<ExtensionFilterState>(EMPTY_EXTENSION_FILTERS);
-  const [density, setDensity] = useProtectionDensity();
-  const [moreDetailOpen, setMoreDetailOpen] = useState(() => density !== "simple");
-  const [provenanceOpen, setProvenanceOpen] = useState(false);
-  const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = useRef<string | null>(null);
 
@@ -311,11 +284,6 @@ export function ProtectionCenterWorkspace() {
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    // Open with Advanced/Developer. Stay open on Simple so density radios remain usable after the user reveals them.
-    if (density !== "simple") setMoreDetailOpen(true);
-  }, [density]);
-
-  useEffect(() => {
     const onPopState = () => setRouteState(currentExtensionRouteState());
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -325,9 +293,6 @@ export function ProtectionCenterWorkspace() {
   const requestedExtensionId = routeState.route.kind === "detail" ? routeState.route.extensionId : null;
   const canonicalSelected = useMemo(() => canonicalExtensionId(catalogExtensions, requestedExtensionId), [catalogExtensions, requestedExtensionId]);
   const selectedExtension = useMemo(() => catalogExtensions.find((item) => item.extension_id === canonicalSelected) ?? null, [catalogExtensions, canonicalSelected]);
-  const debouncedQuery = useDebounce(filters.query, 120);
-  const effectiveFilters = useMemo<ExtensionFilterState>(() => ({ ...filters, query: debouncedQuery }), [filters, debouncedQuery]);
-  const filtered = useMemo(() => state.kind === "ready" ? filterExtensions(catalogExtensions, state.effective, effectiveFilters) : [], [catalogExtensions, state, effectiveFilters]);
 
   useEffect(() => {
     if (state.kind !== "ready" || routeState.route.kind !== "detail" || !canonicalSelected) return;
@@ -426,10 +391,10 @@ export function ProtectionCenterWorkspace() {
     }
   }, [resolveApprovalGate, state]);
 
-  if (state.kind === "loading") return <main className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" aria-label="Loading Extensions" /></main>;
+  if (state.kind === "loading") return <div className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" aria-label="Loading Extensions" /></div>;
   if (state.kind === "error") {
     const loadError = protectionCenterLoadError(state.message);
-    return <main className={`${EXTENSION_SURFACE_CLASS} mx-auto max-w-4xl p-6`}><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`}><h1 className="text-xl font-semibold text-red-950">{loadError.title}</h1><p role="alert" className="mt-2 text-sm text-red-800">{loadError.detail}</p><p className="mt-3 text-xs font-medium text-red-900">Local protection continues on this device.</p><button type="button" onClick={load} className="mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white">Try again</button></div></main>;
+    return <div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`}><h1 className="text-xl font-semibold text-red-950">{loadError.title}</h1><p role="alert" className="mt-2 text-sm text-red-800">{loadError.detail}</p><p className="mt-3 text-xs font-medium text-red-900">Local protection continues on this device.</p><button type="button" onClick={load} className="mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white">Try again</button></div></div>;
   }
 
   const recoveryModal = recoveryApprovalOpen ? <ApprovalProofModal
@@ -448,73 +413,47 @@ export function ProtectionCenterWorkspace() {
   }
 
   if (routeState.route.kind === "detail" || routeState.route.kind === "invalid") {
-    return <><main className={`${EXTENSION_SURFACE_CLASS} mx-auto max-w-4xl p-6`}><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`}><h1 className="font-semibold text-amber-950">Extension not found</h1><p className="mt-2 text-sm text-amber-900">This link does not match an extension in the current Guard catalog.</p><button type="button" onClick={closeExtension} className="mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Back to Extensions</button></div></main>{recoveryModal}</>;
+    return <><div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`}><h1 className="font-semibold text-amber-950">Extension not found</h1><p className="mt-2 text-sm text-amber-900">This link does not match an extension in the current Guard catalog.</p><button type="button" onClick={closeExtension} className="mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Back to Extensions</button></div></div>{recoveryModal}</>;
   }
 
   const status = deriveProtectionStatus(state.effective);
-  const locked = state.effective.health !== "protected";
-  const visible = density === "simple" ? catalogExtensions : filtered;
+  const healthBroken = state.effective.health !== "protected";
 
   const handlePrimaryStatusAction = () => {
     if (status.primaryAction === "repair" || status.primaryAction === "retry-repair") {
       void recover();
     } else if (status.primaryAction === "review-lockdown") {
       requestChange({ globalLockdown: false });
-    } else if (status.primaryAction === "finish-setup") {
-      setDensity("advanced");
-      setTroubleshootingOpen(true);
-      requestAnimationFrame(() => document.getElementById("advanced-protection-controls")?.scrollIntoView({ block: "nearest" }));
-    } else {
-      void load();
     }
   };
 
-  return <main className={`${EXTENSION_SURFACE_CLASS} mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8`}>
-    <header className="flex flex-col gap-5 pb-2 lg:flex-row lg:items-end lg:justify-between">
-      <div><p className={EXTENSION_KICKER_CLASS}>On this device</p><h1 className={EXTENSION_TITLE_CLASS}>{PROTECTION_TERMS.pageTitle}</h1><p className={`mt-2 max-w-2xl ${EXTENSION_BODY_CLASS}`}>See which tools Guard is watching, then open one to understand or change it.</p></div>
-      <details
-        className="w-full max-w-sm"
-        data-testid="protection-more-detail"
-        open={moreDetailOpen}
-        onToggle={(event) => setMoreDetailOpen(event.currentTarget.open)}
-      >
-        <summary className="cursor-pointer text-sm font-semibold text-brand-dark">More detail</summary>
-        <div className="mt-3"><ProtectionDensityControl value={density} onChange={setDensity} /></div>
-      </details>
-    </header>
-
-    <PatternSearchConsole catalog={catalogExtensions} effective={state.effective} onRefresh={load} />
-
-    <div className="mt-6"><ProtectionStatusHero status={status} busy={recoveryBusy} onPrimaryAction={status.primaryAction === "none" ? undefined : handlePrimaryStatusAction}>
-      <p className="text-xs text-brand-dark/70">Cloud continuity is separate from local protection. Signing out or losing Cloud connectivity does not turn local protection off.</p>
-    </ProtectionStatusHero></div>
-
+  return <div className="w-full">
+    <WorkspacePageHeader
+      eyebrow="On this device"
+      title={PROTECTION_TERMS.pageTitle}
+      description="Pick a tool to see the commands Guard watches and change how they're handled."
+    />
+    <div className="mt-6">
+      <ProtectionStatusHero
+        status={status}
+        busy={recoveryBusy}
+        onPrimaryAction={status.primaryAction === "none" || status.primaryAction === "finish-setup" ? () => document.getElementById("extension-recovery-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }) : handlePrimaryStatusAction}
+      />
+    </div>
+    {healthBroken ? <div className="mt-4" id="extension-recovery-panel"><ExtensionStatusBanner busy={recoveryBusy} effective={state.effective} error={recoveryError} status={recoveryStatus} onRecover={() => { void recover(); }} onRetry={load} /></div> : null}
     {mutationError && !pending ? <div className="mt-4"><InlineError message={mutationError} /></div> : null}
-    {recoveryError ? <div className="mt-4"><InlineError message={recoveryError} /></div> : null}
-    {recoveryStatus ? <p role="status" className={`mt-4 ${EXTENSION_PANEL_COMPACT_CLASS} text-sm text-brand-dark`}>{recoveryStatus}</p> : null}
 
-    {density === "simple" ? <ProtectionLandingExperience
-      catalog={catalogExtensions}
-      catalogDigest={state.catalog.catalog_digest}
-      effective={state.effective}
-      filters={filters}
-      onFilters={(patch) => setFilters((previous) => ({ ...previous, ...patch }))}
-      onClearFilters={() => setFilters(EMPTY_EXTENSION_FILTERS)}
-      onOpen={openExtension}
-    /> : null}
+    <PatternSearchConsole catalog={catalogExtensions} effective={state.effective} onRefresh={load} onOpenExtension={openExtension} />
 
-    {density !== "simple" ? <section id="advanced-protection-controls" className="mt-6 space-y-3" aria-label="Advanced protection controls">
-      <details open={troubleshootingOpen} onToggle={(event) => setTroubleshootingOpen(event.currentTarget.open)} className={EXTENSION_PANEL_CLASS}>
-        <summary className="cursor-pointer text-sm font-semibold text-brand-dark">Troubleshooting</summary>
-        <div className="mt-3"><ExtensionStatusBanner busy={recoveryBusy} effective={state.effective} error={recoveryError} status={recoveryStatus} onRecover={() => { void recover(); }} onRetry={load} /></div>
-      </details>
-      <button type="button" disabled={locked} onClick={() => requestChange({ globalLockdown: !state.effective.global_lockdown })} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[rgba(63,65,116,0.14)] bg-white/80 px-4 text-sm font-semibold text-brand-dark disabled:opacity-50"><HiMiniLockClosed className="size-4" />{state.effective.global_lockdown ? "Review ending Emergency Lockdown" : "Review Emergency Lockdown"}</button>
-    </section> : null}
-
-    {density !== "simple" ? <section aria-labelledby="protection-modules-heading" className="mt-8">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between"><div><h2 id="protection-modules-heading" className="text-xl font-semibold text-brand-dark">All extensions</h2><p className={`mt-1 ${EXTENSION_BODY_CLASS}`}>Open an extension to understand its current behavior and available controls.</p></div><span className="text-sm text-brand-dark/70">{catalogExtensions.length} available</span></div>
-      <div className="mt-4"><ExtensionsFilterBar filters={filters} onChange={(patch) => setFilters((previous) => ({ ...previous, ...patch }))} onClear={() => setFilters(EMPTY_EXTENSION_FILTERS)} extensions={catalogExtensions} effective={state.effective} /></div>
-      {visible.length ? <div className={EXTENSION_LIST_CLASS}>{visible.map((extension) => <ProtectionModuleRow
+    <section className="mt-10" aria-labelledby="all-tools-heading">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 id="all-tools-heading" className="text-xl font-semibold tracking-tight text-brand-dark">All tools</h2>
+          <p className="mt-1 text-sm text-slate-500">Every tool Guard can watch on this device. Open one to adjust its command patterns.</p>
+        </div>
+        <span className="text-sm text-brand-dark/70">{catalogExtensions.length} tools</span>
+      </div>
+      <div className="mt-4">{catalogExtensions.map((extension) => <ProtectionModuleRow
         key={extension.extension_id}
         name={extension.name}
         description={extension.description}
@@ -522,12 +461,10 @@ export function ProtectionCenterWorkspace() {
         required={extension.required}
         managed={sourceIsManaged(state.effective, extension.extension_id)}
         onOpen={() => openExtension(extension)}
-      />)}</div> : hasActiveFilters(effectiveFilters) ? <div className={`${EXTENSION_PANEL_CLASS} mt-4 text-center`}><p className="text-sm font-semibold text-brand-dark">No protections match these filters.</p><button type="button" onClick={() => setFilters(EMPTY_EXTENSION_FILTERS)} className="mt-3 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Clear filters</button></div> : <div className={`${EXTENSION_PANEL_CLASS} mt-4 text-center text-sm text-brand-dark/70`}>No protection modules are registered.</div>}
-    </section> : null}
-
-    {density === "developer" ? <div className="mt-8"><TechnicalDetails title="Developer policy details"><button type="button" onClick={() => setProvenanceOpen((value) => !value)} aria-expanded={provenanceOpen} className="flex min-h-11 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 text-left text-sm font-semibold text-slate-800"><span>Policy provenance and catalog identity</span>{provenanceOpen ? <HiMiniChevronUp className="size-4" /> : <HiMiniChevronDown className="size-4" />}</button>{provenanceOpen ? <div className="mt-3 grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-white p-3"><div className="text-xs font-semibold uppercase text-slate-500">Catalog digest</div><code className="mt-1 block break-all text-xs text-slate-700">{state.catalog.catalog_digest}</code></div><div className="rounded-xl bg-white p-3"><div className="text-xs font-semibold uppercase text-slate-500">Authority layers</div><div className="mt-1 text-sm text-slate-700">{state.effective.layers.length} active layer{state.effective.layers.length === 1 ? "" : "s"}</div></div>{state.effective.layers.map((layer) => <div key={`${layer.kind}:${layer.catalog_digest}`} className="rounded-xl bg-white p-3"><div className="flex items-center gap-2"><HiMiniCheckCircle className="size-4 text-emerald-600" /><strong className="text-sm">{layer.kind}</strong></div><p className="mt-1 text-xs text-slate-500">{layer.controls.length} explicit controls</p></div>)}</div> : null}</TechnicalDetails></div> : null}
+      />)}</div>
+    </section>
 
     {pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}
     {recoveryModal}
-  </main>;
+  </div>;
 }

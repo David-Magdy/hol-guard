@@ -13,6 +13,7 @@ const approvalPassword = process.env.GUARD_INSTALLED_APPROVAL_PASSWORD ?? "";
 const extensionId = "command.api-gateway";
 const permissionId = "command.api-gateway.permission.delete";
 const governedRuleId = "command.api-gateway.delete";
+const expectedExtensionCount = 59;
 
 async function installSession(page: import("@playwright/test").Page) {
   await page.addInitScript(({ daemon, token }) => {
@@ -93,14 +94,9 @@ async function authenticateAndApply(page: import("@playwright/test").Page, count
   }>;
 }
 
-async function selectDensity(page: import("@playwright/test").Page, density: "Simple" | "Advanced" | "Developer") {
-  const radio = page.getByRole("radio", { name: density });
-  if (!(await radio.isVisible())) {
-    await page.getByTestId("protection-more-detail").locator("summary").click();
-    await expect(radio).toBeVisible();
-  }
-  await radio.click();
-  await expect(radio).toHaveAttribute("aria-checked", "true");
+async function openDeveloperDetails(page: import("@playwright/test").Page) {
+  await page.getByTestId("protection-more-detail").locator("summary").click();
+  await expect(page.getByRole("heading", { name: "Detections" })).toBeVisible();
 }
 
 test("installed Protection Center keeps canonical routes and real-daemon inspection", async ({ page }, testInfo) => {
@@ -120,43 +116,28 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   await page.goto("/extensions");
   await expectSecretSafeUrl(page);
   await expect(page.getByRole("heading", { name: "Extensions", level: 1 })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /^(In use|Ready)$/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Guard is watching the tools your agent uses." })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recent decisions" })).toBeVisible();
-  const cloudContinuity = page.getByRole("complementary", { name: "Cloud continuity" });
-  await expect(cloudContinuity).toBeVisible();
-  await expect(cloudContinuity).not.toContainText("while Cloud status is checked");
-  await expect(cloudContinuity).toContainText("Local protection is active");
+  await expect(page.getByRole("heading", { name: "All tools" })).toBeVisible();
+  await expect(page.getByText(`${expectedExtensionCount} tools`)).toBeVisible();
+  await expect(page.getByRole("button", { name: /Git/ }).first()).toBeVisible();
+  await expect(page.getByPlaceholder(/Search any command Guard watches/)).toBeVisible();
   await expect(page.getByRole("heading", { name: /^(Protected|Finish setup|Needs repair|Protection limited|Emergency Lockdown active)$/ })).toBeVisible();
+  // The landing is a catalog: no activity feed, no cloud status box, no health
+  // check, and no second search surface.
+  await expect(page.getByRole("heading", { name: "Recent decisions" })).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Cloud continuity" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Run health check" })).toHaveCount(0);
+  await expect(page.getByText("Browse all extensions")).toHaveCount(0);
+  await expect(page.getByText("Check protection health")).toHaveCount(0);
 
-  await page.getByText("Check protection health", { exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Protection health check" })).toBeVisible();
-  const healthCheck = page.getByRole("button", { name: "Run health check" });
-  await healthCheck.click();
-  await expect(page.getByRole("status").filter({ hasText: /Protection health check passed|need attention/ })).toBeVisible();
-
-  await page.getByText("Browse all extensions", { exact: true }).click();
-  const advancedFilters = page.getByRole("button", { name: /Advanced filters/ });
-  await expect(advancedFilters).toHaveAttribute("aria-expanded", "false");
-  await advancedFilters.click();
-  await expect(advancedFilters).toHaveAttribute("aria-expanded", "true");
-  await expect(page.getByPlaceholder(/Search by name, command, or risk/)).toBeVisible();
-
-  const setupSteps = page.getByRole("button", { name: "Show setup steps" });
-  if (await setupSteps.count()) {
-    await setupSteps.click();
-    await expect(page.getByText("Finish local enrollment", { exact: true })).toBeVisible();
-  }
-
-  await selectDensity(page, "Simple");
   await page.screenshot({ path: testInfo.outputPath("installed-extension-catalog.png"), fullPage: true });
   await page.screenshot({ path: testInfo.outputPath("installed-protection-center-simple.png"), fullPage: false });
-  await selectDensity(page, "Advanced");
-  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-advanced.png"), fullPage: false });
-  await selectDensity(page, "Developer");
-  await expect(page.getByText("Developer policy details")).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("installed-protection-center-developer.png"), fullPage: false });
-  await selectDensity(page, "Simple");
+
+  // One search box reaches patterns across tools and matches tool names.
+  await page.getByPlaceholder(/Search any command Guard watches/).fill("git");
+  await expect(page.getByLabel(/patterns/).first()).toBeVisible();
+  await expect(page.getByLabel("Matching tools")).toBeVisible();
+  await page.getByPlaceholder(/Search any command Guard watches/).fill("");
+  await expect(page.getByLabel("Matching tools")).toHaveCount(0);
 
   for (const width of [320, 390, 720, 800, 1024, 1440]) {
     await page.setViewportSize({ width, height: 900 });
@@ -177,8 +158,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
     await page.goto(`/extensions/${moduleId}`);
     await expectSecretSafeUrl(page);
     await expect(page.getByTestId("protection-module-detail")).toBeVisible();
-    await selectDensity(page, "Developer");
-    await page.getByText("Developer details", { exact: true }).click();
+    await openDeveloperDetails(page);
     await expect(
       page.locator("dt", { hasText: "Extension ID" }).locator("xpath=following-sibling::dd[1]").getByText(moduleId, { exact: true }),
     ).toBeVisible();
@@ -213,8 +193,7 @@ test("installed Protection Center keeps canonical routes and real-daemon inspect
   ).toContainText(expectedLabTitle);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("installed-protection-test-lab.png"), fullPage: true });
-  await selectDensity(page, "Developer");
-  await page.getByText("Developer details", { exact: true }).click();
+  await openDeveloperDetails(page);
   await expect(page.getByRole("table").getByText("Destructive Git reset", { exact: true })).toBeVisible();
   await expect(page.getByText("command.git.hard-reset", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("installed-extension-rule-detail.png"), fullPage: true });
