@@ -1,0 +1,54 @@
+name: Normalize autonomous Rust P1 and P2 history
+
+on:
+  push:
+    branches:
+      - automation/rust-p1-p2-end-to-end
+    paths:
+      - .github/workflows/tmp-rust-p1-p2-signoff-rescue.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  normalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE: release/3.0
+      BRANCH: feat/rust-p1-p2-autonomous
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: release/3.0
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Wait for autonomous implementation branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if git ls-remote --exit-code origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 0
+      - name: Squash implementation into one signed-off commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin "$BASE" "$BRANCH"
+          if ! git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+            exit 0
+          fi
+          ahead=$(git rev-list --count "origin/$BASE..origin/$BRANCH")
+          (( ahead > 0 )) || exit 0
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+          git reset --soft "origin/$BASE"
+          git config user.name 'Michael Kantor'
+          git config user.email '6068672+kantorcodes@users.noreply.github.com'
+          git commit --signoff -m 'feat(guard): complete Rust runtime P1 and P2 migration'
+          git push --force-with-lease="refs/heads/$BRANCH:$(git rev-parse "origin/$BRANCH")" origin HEAD:"refs/heads/$BRANCH"
