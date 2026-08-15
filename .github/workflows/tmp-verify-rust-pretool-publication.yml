@@ -1,0 +1,139 @@
+name: Verify published native PreToolUse alpha
+
+on:
+  push:
+    branches:
+      - verify/rust-pretool-publication-20260815
+    paths:
+      - .github/workflows/tmp-verify-rust-pretool-publication.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify-publication:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Wait for the corrected release head
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 10800))
+          while (( SECONDS < deadline )); do
+            git fetch --force origin release/3.0
+            candidate=$(git rev-parse origin/release/3.0)
+            old_reject=$(git show "$candidate":src/codex_plugin_scanner/guard/daemon/hook_worker.py | grep -c 'fast path only supports PostToolUse' || true)
+            native_hits=$(git grep -E 'review_pre_tool|pre_tool.*native|native.*pre_tool|PreToolUse.*native|native.*PreToolUse' "$candidate" -- rust src/codex_plugin_scanner/guard | wc -l | tr -d ' ')
+            if (( old_reject == 0 && native_hits > 0 )); then
+              git checkout --detach "$candidate"
+              echo "release_sha=$candidate" >> "$GITHUB_ENV"
+              break
+            fi
+            sleep 60
+          done
+          [[ -n "${release_sha:-}" ]] || { echo 'Corrected release head did not appear' >&2; exit 1; }
+
+      - name: Wait for a matching published native wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 10800))
+          while (( SECONDS < deadline )); do
+            curl --fail --silent --show-error https://pypi.org/pypi/hol-guard/json > "$RUNNER_TEMP/pypi.json"
+            mapfile -t versions < <(jq -r '.releases | keys[]' "$RUNNER_TEMP/pypi.json" | sort -V -r)
+            for version in "${versions[@]}"; do
+              [[ "$version" == 3.* ]] || continue
+              wheel=$(jq -r --arg v "$version" '.releases[$v][] | select(.filename | endswith("manylinux_2_17_x86_64.whl")) | .url' "$RUNNER_TEMP/pypi.json" | head -n1)
+              [[ -n "$wheel" ]] || continue
+              rm -rf "$RUNNER_TEMP/published-venv"
+              uv venv --python 3.12 "$RUNNER_TEMP/published-venv"
+              if ! uv pip install --python "$RUNNER_TEMP/published-venv/bin/python" --no-deps "hol-guard==$version" >/dev/null 2>&1; then
+                continue
+              fi
+              set +e
+              "$RUNNER_TEMP/published-venv/bin/hol-guard" runtime status --json > "$RUNNER_TEMP/runtime-status.json" 2>"$RUNNER_TEMP/runtime-status.err"
+              status_rc=$?
+              set -e
+              (( status_rc == 0 )) || continue
+              if ! grep -Eqi 'pre.?tool' "$RUNNER_TEMP/runtime-status.json"; then
+                continue
+              fi
+              if ! grep -Eqi 'native|rust' "$RUNNER_TEMP/runtime-status.json"; then
+                continue
+              fi
+              echo "published_version=$version" >> "$GITHUB_ENV"
+              echo "published_wheel=$wheel" >> "$GITHUB_ENV"
+              break 2
+            done
+            sleep 60
+          done
+          [[ -n "${published_version:-}" ]] || { echo 'No published native wheel exposed PreToolUse authority' >&2; exit 1; }
+
+      - name: Exercise installed PreToolUse authority and legacy security surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          py="$RUNNER_TEMP/published-venv/bin/python"
+          cli="$RUNNER_TEMP/published-venv/bin/hol-guard"
+          "$cli" doctor --native --json > "$RUNNER_TEMP/native-doctor.json" || "$cli" doctor --native > "$RUNNER_TEMP/native-doctor.txt"
+          if [[ -f ci/native_runtime/probe_native_pretool_authority.py ]]; then
+            "$py" ci/native_runtime/probe_native_pretool_authority.py
+          fi
+          if [[ -f ci/native_runtime/probe_native_required.py ]]; then
+            "$py" ci/native_runtime/probe_native_required.py
+          fi
+          if [[ -f ci/native_runtime/probe_native_p0_operations.py ]]; then
+            "$py" ci/native_runtime/probe_native_p0_operations.py
+          fi
+          env HOL_GUARD_NATIVE=off "$cli" runtime status --json > "$RUNNER_TEMP/runtime-status-off.json"
+          grep -Eqi 'pre.?tool' "$RUNNER_TEMP/runtime-status-off.json"
+          grep -Eqi 'native|rust' "$RUNNER_TEMP/runtime-status-off.json"
+
+      - name: Publish verification evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg release_sha "$release_sha" \
+            --arg version "$published_version" \
+            --arg wheel "$published_wheel" \
+            --slurpfile status "$RUNNER_TEMP/runtime-status.json" \
+            '{verified:true,release_sha:$release_sha,published_version:$version,wheel:$wheel,runtime_status:$status[0]}' \
+            > "$RUNNER_TEMP/rust-pretool-publication-verification.json"
+          title='Restore verified Rust authority for PreToolUse in 3.x'
+          issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 100 --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body "Published installed-artifact verification passed for hol-guard $published_version at release commit $release_sha. The platform wheel reports bundled Rust authority for both PreToolUse and PostToolUse, legacy HOL_GUARD_NATIVE=off does not activate a Python runtime evaluator, and the installed native/P0 probes passed." >/dev/null
+            gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --reason completed >/dev/null || true
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-pretool-publication-verification-${{ env.release_sha }}
+          path: |
+            ${{ runner.temp }}/rust-pretool-publication-verification.json
+            ${{ runner.temp }}/runtime-status.json
+            ${{ runner.temp }}/runtime-status-off.json
+            ${{ runner.temp }}/native-doctor.json
+            ${{ runner.temp }}/native-doctor.txt
+          if-no-files-found: warn
+          retention-days: 30
