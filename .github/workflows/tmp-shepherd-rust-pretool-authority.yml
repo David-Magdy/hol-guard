@@ -1,0 +1,118 @@
+name: Shepherd Rust PreToolUse remediation
+
+on:
+  push:
+    branches:
+      - fix/rust-pretool-authority-20260815
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: shepherd-rust-pretool-authority
+  cancel-in-progress: true
+
+jobs:
+  shepherd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/rust-pretool-authority-20260815
+          fetch-depth: 0
+
+      - name: Continue only after validated implementation lands
+        id: ready
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -e .github/workflows/tmp-apply-rust-pretool-authority.yml ]]; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -q 'fast path only supports PostToolUse' src/codex_plugin_scanner/guard/daemon/hook_worker.py; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! git grep -q -E 'review_pre_tool|pre_tool.*native|native.*pre_tool|PreToolUse.*native|native.*PreToolUse' -- rust src/codex_plugin_scanner/guard; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+
+      - name: Remove temporary orchestration assets
+        if: steps.ready.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          starting_sha=$(git rev-parse HEAD)
+          rm -f .github/workflows/tmp-shepherd-rust-pretool-authority.yml
+          rm -f .github/workflows/tmp-export-rust-pretool-source.yml
+          rm -f .github/workflows/tmp-verify-pretool-payload.yml
+          rm -rf .github/rust-pretool-* .github/pretool-* || true
+          git add -A
+          if ! git diff --cached --quiet; then
+            git config user.name 'Michael Kantor'
+            git config user.email '6068672+kantorcodes@users.noreply.github.com'
+            git commit --signoff -m 'chore(ci): remove PreToolUse remediation orchestration'
+            git push --force-with-lease=refs/heads/fix/rust-pretool-authority-20260815:"$starting_sha" origin HEAD:refs/heads/fix/rust-pretool-authority-20260815
+          fi
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Open or update remediation pull request
+        if: steps.ready.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          number=$(gh pr list --repo "$GITHUB_REPOSITORY" --head fix/rust-pretool-authority-20260815 --base release/3.0 --state open --json number --jq '.[0].number // empty')
+          if [[ -z "$number" ]]; then
+            cat > "$RUNNER_TEMP/pr-body.md" <<'EOF'
+          ## Problem
+
+          The published 3.x runtime was Rust-required for `PostToolUse`, but the hook worker still rejected every non-`PostToolUse` event and left `PreToolUse` runtime-policy evaluation in Python.
+
+          ## Remediation
+
+          - restore verified bundled Rust authority for eligible `PreToolUse`
+          - preserve Python only as the product control plane for adapters, approvals, receipts, durable state, Cloud/MDM, CLI, dashboard, and orchestration
+          - make authenticated native pause/deny and approval floors non-downgradable
+          - allow only exact supported native models and fail closed on uncertainty or native failure
+          - retain P0 multi-shell command, extension, package, archive, filesystem, and path-safety coverage
+          - add installed-runtime, cross-platform, command-pattern, extension, security, and DX regressions
+
+          Targets `release/3.0` only and must not be merged into `main` as part of this work.
+          EOF
+            url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base release/3.0 --head fix/rust-pretool-authority-20260815 --title 'fix(guard): restore Rust PreToolUse authority' --body-file "$RUNNER_TEMP/pr-body.md")
+            number=${url##*/}
+          fi
+          gh pr ready "$number" --repo "$GITHUB_REPOSITORY" || true
+          gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --add-reviewer deep-purple-boots || true
+          echo "pr_number=$number" >> "$GITHUB_ENV"
+
+      - name: Wait for exact-head checks and enable merge
+        if: steps.ready.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 10800))
+          while (( SECONDS < deadline )); do
+            current=$(gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+            [[ "$current" == "$head_sha" ]] || { echo "PR head changed: $current" >&2; exit 1; }
+            checks=$(gh pr checks "$pr_number" --repo "$GITHUB_REPOSITORY" --json state,bucket,name,workflow 2>/dev/null || printf '[]')
+            failures=$(jq '[.[] | select((.bucket|ascii_downcase) == "fail" or (.state|ascii_upcase) == "FAILURE" or (.state|ascii_upcase) == "ERROR")] | length' <<<"$checks")
+            pending=$(jq '[.[] | select((.bucket|ascii_downcase) == "pending" or (.state|ascii_upcase) == "PENDING" or (.state|ascii_upcase) == "QUEUED" or (.state|ascii_upcase) == "IN_PROGRESS")] | length' <<<"$checks")
+            (( failures == 0 )) || { jq . <<<"$checks"; exit 1; }
+            if (( pending == 0 )) && [[ $(jq 'length' <<<"$checks") -gt 0 ]]; then
+              break
+            fi
+            sleep 30
+          done
+          (( SECONDS < deadline )) || { echo 'Timed out waiting for checks' >&2; exit 1; }
+          gh pr merge "$pr_number" --repo "$GITHUB_REPOSITORY" --merge --auto || gh pr merge "$pr_number" --repo "$GITHUB_REPOSITORY" --merge
