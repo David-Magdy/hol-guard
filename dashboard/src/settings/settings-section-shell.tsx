@@ -125,7 +125,7 @@ export function SettingsSectionShell({
             className="guard-settings-panel guard-tab-enter flex min-h-[min(28rem,calc(100dvh-18rem))] flex-1 flex-col rounded-2xl border border-slate-100 bg-white p-4 sm:p-6"
           >
             {activeItem ? (
-              <header className="mb-5 shrink-0 border-b border-slate-100 pb-4 lg:hidden">
+              <header className="guard-settings-mobile-heading mb-5 shrink-0 border-b border-slate-100 pb-4 lg:hidden">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
                   {activeItem.label}
                 </p>
