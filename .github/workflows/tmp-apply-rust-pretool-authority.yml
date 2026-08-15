@@ -1,0 +1,209 @@
+name: Apply and validate native PreToolUse authority
+
+on:
+  push:
+    branches:
+      - fix/rust-pretool-authority-20260815
+    paths:
+      - .github/workflows/tmp-apply-rust-pretool-authority.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-rust-pretool-authority
+  cancel-in-progress: false
+
+jobs:
+  reconcile-validate-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/rust-pretool-authority-20260815
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Reconcile historical authority work onto current release
+        shell: bash
+        run: |
+          set -euo pipefail
+          starting_sha="$GITHUB_SHA"
+          git fetch --force origin release/3.0
+          git fetch --force origin fix/rust-pretool-native-authority
+          release_sha=$(git rev-parse origin/release/3.0)
+          printf '%s\n' "$starting_sha" > "$RUNNER_TEMP/starting-sha"
+          printf '%s\n' "$release_sha" > "$RUNNER_TEMP/release-sha"
+          git reset --hard "$release_sha"
+          set +e
+          git merge --squash --no-commit -X theirs origin/fix/rust-pretool-native-authority
+          merge_status=$?
+          set -e
+          if (( merge_status != 0 )); then
+            mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
+            for path in "${conflicts[@]}"; do
+              case "$path" in
+                rust/*|src/codex_plugin_scanner/guard/*|tests/*|ci/native_runtime/*|docs/guard/*|.github/workflows/*|pyproject.toml|uv.lock|deny.toml)
+                  git checkout --theirs -- "$path"
+                  ;;
+                *)
+                  git checkout --ours -- "$path"
+                  ;;
+              esac
+              git add "$path"
+            done
+          fi
+          python - <<'PY'
+          from __future__ import annotations
+          import subprocess
+          from pathlib import Path
+
+          def output(*args: str) -> str:
+              return subprocess.run(args, text=True, check=True, capture_output=True).stdout
+
+          changed = output("git", "diff", "--cached", "--name-only").splitlines()
+          def keep(path: str) -> bool:
+              lower = path.lower()
+              if path.startswith("rust/"):
+                  return True
+              if path.startswith("src/codex_plugin_scanner/guard/"):
+                  return any(token in lower for token in (
+                      "native", "hook_worker", "command_model", "commands_hook_runtime",
+                      "risk", "policy", "effect", "pretool", "pre_tool", "hook_runtime",
+                      "safe_decode", "package", "shims", "local_supply_chain",
+                  ))
+              if path.startswith(("tests/", "ci/native_runtime/")):
+                  return any(token in lower for token in (
+                      "rust", "native", "pretool", "pre_tool", "command", "hook",
+                      "effect", "risk", "policy", "package", "shim",
+                  ))
+              if path.startswith("docs/guard/"):
+                  return any(token in lower for token in (
+                      "rust", "native", "pretool", "pre_tool", "runtime", "hook",
+                      "command", "effect", "risk",
+                  ))
+              if path.startswith(".github/workflows/"):
+                  return any(token in lower for token in ("rust", "native", "pretool", "runtime", "security"))
+              return path in {"pyproject.toml", "uv.lock", "deny.toml"}
+
+          release = Path("/tmp/release-sha").read_text().strip() if Path("/tmp/release-sha").exists() else None
+          if release is None:
+              release = Path(__import__('os').environ['RUNNER_TEMP']).joinpath('release-sha').read_text().strip()
+          for path in changed:
+              if not keep(path):
+                  subprocess.run(["git", "restore", "--source", release, "--staged", "--worktree", "--", path], check=True)
+          PY
+          rm -f .github/workflows/tmp-export-rust-pretool-source.yml
+          rm -f .github/workflows/tmp-apply-rust-pretool-authority.yml
+          rm -f .github/workflows/tmp-verify-pretool-payload.yml
+          rm -rf .github/rust-pretool-* .github/pretool-* || true
+          git add -A
+          git diff --cached --check
+
+      - name: Assert real native PreToolUse authority is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$(git diff --cached --name-only)"
+          git grep -n -E 'PreToolUse|pre_tool|pretool' -- rust src/codex_plugin_scanner/guard tests ci/native_runtime >/tmp/pretool-authority-hits.txt
+          grep -Eq 'review_pre_tool|pre_tool.*native|native.*pre_tool|PreToolUse.*native|native.*PreToolUse' /tmp/pretool-authority-hits.txt
+          ! grep -q 'fast path only supports PostToolUse' src/codex_plugin_scanner/guard/daemon/hook_worker.py
+          git grep -n -E 'action_floor|approval_floor|native.*(pause|deny)|exact.*allow' -- rust src/codex_plugin_scanner/guard tests >/tmp/pretool-floor-hits.txt
+          test -s /tmp/pretool-floor-hits.txt
+          ! git grep -n 'python.*runtime.*fallback' -- src/codex_plugin_scanner/guard/runtime src/codex_plugin_scanner/guard/native_runtime.py
+
+      - name: Install locked toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --extra publish --python 3.12
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.88.0
+
+      - name: Format implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all
+          mapfile -t python_files < <(git diff --name-only --diff-filter=AM origin/release/3.0 -- '*.py' | sort)
+          if (( ${#python_files[@]} )); then
+            uv run --no-sync ruff format "${python_files[@]}"
+          fi
+          git add -A
+          git diff --cached --check
+
+      - name: Validate Rust workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all --check
+          cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+
+      - name: Build exact native runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(uv run --no-sync python - <<'PY'
+          from importlib.metadata import version
+          print(version('hol-guard'))
+          PY
+          )
+          export HOL_GUARD_PACKAGE_VERSION="$version"
+          export HOL_GUARD_BUILD_SHA="$(cat "$RUNNER_TEMP/release-sha")"
+          cargo build --manifest-path rust/Cargo.toml --locked --release -p hol-guard-runtime
+          rust/target/release/hol-guard-runtime self-test --json | tee "$RUNNER_TEMP/self-test.json"
+          grep -Eqi 'pre.?tool' "$RUNNER_TEMP/self-test.json"
+
+      - name: Validate Python and focused authority suites
+        shell: bash
+        env:
+          HOL_GUARD_NATIVE_DEVELOPMENT: "1"
+          HOL_GUARD_NATIVE_BINARY: ${{ github.workspace }}/rust/target/release/hol-guard-runtime
+        run: |
+          set -euo pipefail
+          mapfile -t python_files < <(git diff --name-only --diff-filter=AM origin/release/3.0 -- '*.py' | sort)
+          if (( ${#python_files[@]} )); then
+            uv run --no-sync ruff check "${python_files[@]}"
+            uv run --no-sync ruff format --check "${python_files[@]}"
+          fi
+          mapfile -t typed_files < <(printf '%s\n' "${python_files[@]}" | grep -E '^(src|ci|scripts)/' || true)
+          if (( ${#typed_files[@]} )); then
+            uv run --no-sync basedpyright --level error "${typed_files[@]}"
+          fi
+          mapfile -t tests < <(find tests ci/native_runtime -type f -name 'test_*.py' -print | grep -Ei '(pretool|pre_tool|native_runtime|command_model|hook_runtime|hook_worker|effect|risk|policy|command_patterns|extensions|shims|package)' | sort -u)
+          test "${#tests[@]}" -gt 0
+          uv run --no-sync pytest -q "${tests[@]}" --tb=short
+
+      - name: Run full repository validation
+        shell: bash
+        env:
+          HOL_GUARD_NATIVE_DEVELOPMENT: "1"
+          HOL_GUARD_NATIVE_BINARY: ${{ github.workspace }}/rust/target/release/hol-guard-runtime
+        run: |
+          set -euo pipefail
+          uv run --no-sync pytest -q --tb=short
+
+      - name: Commit validated authority migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          starting_sha=$(cat "$RUNNER_TEMP/starting-sha")
+          remote_sha=$(git ls-remote --exit-code origin refs/heads/fix/rust-pretool-authority-20260815 | awk '{print $1}')
+          test "$remote_sha" = "$starting_sha"
+          git add -A
+          git diff --cached --check
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git commit --signoff -m "fix(guard): restore Rust PreToolUse authority"
+          git push --force-with-lease=refs/heads/fix/rust-pretool-authority-20260815:"$starting_sha" origin HEAD:refs/heads/fix/rust-pretool-authority-20260815
