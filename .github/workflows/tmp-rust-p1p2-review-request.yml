@@ -1,0 +1,36 @@
+name: Request Rust P1 P2 review
+
+on:
+  push:
+    branches:
+      - tmp/rust-p1p2-shepherd-20260814
+    paths:
+      - .github/workflows/tmp-rust-p1p2-review-request.yml
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  request:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Locate candidate and request reviewers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 540); do
+            pr="$(gh pr list --repo "$REPO" --state open --base release/3.0 --search 'Rust P1 P2 OR Rust P1/P2 OR rust-p1-p2 in:title,body' --json number,isDraft --jq '[.[] | select(.isDraft == false)][0].number // empty')"
+            if [[ -n "$pr" ]]; then
+              gh pr edit "$pr" --repo "$REPO" --add-reviewer deep-purple-boots || true
+              gh pr comment "$pr" --repo "$REPO" --body $'Please review the exact current head against every canonical P0/P1/P2 requirement, with particular attention to PreToolUse parity, fail-closed behavior, bounded native operations, packaging, cross-platform wheels, telemetry privacy, ownership, rollout/rollback, mutation/performance/soak gates, and removal of duplicate Python evaluators.\n\n@coderabbitai review\n@greptileai review' || true
+              gh pr merge "$pr" --repo "$REPO" --squash --delete-branch --auto || true
+              exit 0
+            fi
+            sleep 20
+          done
+          exit 1
