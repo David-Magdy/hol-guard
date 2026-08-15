@@ -50,19 +50,5 @@ Performing three-way merge...
 Applied patch to 'tests/test_guard_secret_input_coverage_hardening.py' cleanly.
 Performing three-way merge...
 Applied patch to 'tests/test_guard_secret_platform_hardening.py' cleanly.
-Traceback (most recent call last):
-  File "/home/runner/work/hol-guard/hol-guard/scripts/ci/integrate_guard_secrets_final_v2.py", line 520, in <module>
-    main()
-  File "/home/runner/work/hol-guard/hol-guard/scripts/ci/integrate_guard_secrets_final_v2.py", line 474, in main
-    (ROOT / destination).write_text(show(revision, source), encoding="utf-8")
-                                    ^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/hol-guard/hol-guard/scripts/ci/integrate_guard_secrets_final_v2.py", line 25, in show
-    return run("git", "show", f"{revision}:{path}", capture=True)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/hol-guard/hol-guard/scripts/ci/integrate_guard_secrets_final_v2.py", line 14, in run
-    completed = subprocess.run(
-                ^^^^^^^^^^^^^^^
-  File "/opt/hostedtoolcache/Python/3.12.13/x64/lib/python3.12/subprocess.py", line 571, in run
-    raise CalledProcessError(retcode, process.args,
-subprocess.CalledProcessError: Command '('git', 'show', '3e2328a76c506c78df2f571af15d248aa3589ea0:src/codex_plugin_scanner/guard/secrets/coverage.py')' returned non-zero exit status 128.
+decode failure block changed unexpectedly
 ```
