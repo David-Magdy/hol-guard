@@ -1,0 +1,44 @@
+name: Guard Rust P1 and P2 umbrella issue lifecycle
+
+on:
+  push:
+    branches:
+      - automation/rust-p1-p2-end-to-end
+    paths:
+      - .github/workflows/tmp-rust-p1-p2-issue-guardian.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: rust-p1-p2-issue-guardian
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: Complete all Rust migration P1 and P2 work on release/3.0
+    steps:
+      - name: Keep the umbrella issue open until immutable completion evidence exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 330); do
+            if gh api "repos/$GITHUB_REPOSITORY/contents/.github/completion-evidence/rust-p1-p2-program.json?ref=automation%2Frust-p1-p2-end-to-end" >/dev/null 2>&1; then
+              exit 0
+            fi
+            issues=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 100 --json number,title,state)
+            issue=$(jq -r --arg title "$TITLE" '.[] | select(.title == $title) | .number' <<<"$issues" | head -n1)
+            state=$(jq -r --arg title "$TITLE" '.[] | select(.title == $title) | .state' <<<"$issues" | head -n1)
+            if [[ "$issue" =~ ^[0-9]+$ && "$state" == CLOSED ]]; then
+              gh issue reopen "$issue" --repo "$GITHUB_REPOSITORY" >/dev/null
+              gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body '@copilot The umbrella issue was reopened because final Rust P1/P2 completion evidence does not yet exist. Continue with every remaining canonical item and final gate. Do not close this issue until the complete program is merged, published where required, independently verified, and the completion evidence is recorded.' >/dev/null || true
+            fi
+            sleep 60
+          done
+          exit 1
