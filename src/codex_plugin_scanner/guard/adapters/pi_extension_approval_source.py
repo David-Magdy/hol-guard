@@ -41,7 +41,7 @@ function approvalBlockedReason(response: GuardResponse, fallbackReason: string):
   const approvalUrl = approvalUrlFromResponse(response);
   if (!approvalUrl) return reason;
   const urlLine = `HOL Guard approval page: ${approvalUrl}`;
-  const waitLine = 'HOL Guard is already waiting for this approval and will resume this Pi session automatically after the user approves.';
+  const waitLine = 'HOL Guard is waiting for this decision. This exact tool call remains blocked; after approval, Guard will ask Pi to retry it unchanged.';
   const noAskLine = 'Do not call ask for this HOL Guard approval as the approval mechanism; HOL Guard is already polling the request.';
   const askFallbackLine = `If you are already showing a broader recovery menu, include an option labeled "I've approved this request in HOL Guard" and include this exact URL: ${approvalUrl}`;
   const additions = [urlLine, waitLine, noAskLine, askFallbackLine].filter(line => !reason.includes(line));
@@ -111,8 +111,8 @@ function approvalResumeMessage(details: {
   const toolPart = details.toolName ? ` for ${details.toolName}` : '';
   return [
     `HOL Guard approved the blocked Pi tool call${toolPart}.`,
-    'Continue the original user task now. Retry that tool call once if it is still required; '
-      + 'the saved HOL Guard approval should allow it.',
+    'Continue the original user task now. Retry the exact same tool call once if it is still required; '
+      + 'changing the command, arguments, or working directory creates a new action that may need another decision.',
     'Do not ask the user to retry the same action manually.',
   ].join('\n\n');
 }

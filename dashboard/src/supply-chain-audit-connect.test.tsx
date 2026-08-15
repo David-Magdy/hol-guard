@@ -85,8 +85,8 @@ const workspaceError = new GuardHarnessActionError(400, {
   operation: "audit",
 });
 assert(
-  supplyChainAuditUserMessage(workspaceError)?.includes("project folder"),
-  "workspace audit errors should surface actionable copy instead of raw codes",
+  supplyChainAuditUserMessage(workspaceError)?.includes("hol-guard supply-chain audit --json"),
+  "workspace audit errors should provide the exact project-folder fallback command",
 );
 assert(
   !isSupplyChainAuditConnectError(workspaceError),
