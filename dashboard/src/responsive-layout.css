@@ -159,7 +159,8 @@
     display: none !important;
   }
 
-  .guard-settings-mobile-tabs {
+  .guard-settings-mobile-tabs,
+  .guard-settings-mobile-heading {
     display: block !important;
   }
 
@@ -179,7 +180,8 @@
     display: block !important;
   }
 
-  .guard-settings-mobile-tabs {
+  .guard-settings-mobile-tabs,
+  .guard-settings-mobile-heading {
     display: none !important;
   }
 }
@@ -190,10 +192,7 @@
  * once both dashboard and settings rails have consumed space.
  */
 #settings-panel-protection fieldset > div:has(> button[aria-pressed]) {
-  grid-template-columns: repeat(
-    auto-fit,
-    minmax(min(100%, 15.5rem), 1fr)
-  ) !important;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15.5rem), 1fr)) !important;
   align-items: stretch;
 }
 
