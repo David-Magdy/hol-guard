@@ -41,10 +41,13 @@ jobs:
           : > "$RUNNER_TEMP/rust-p1-p2-refs.txt"
           for ref in "${refs[@]}"; do
             safe=${ref//\//-}
-            git fetch --force origin "refs/heads/$ref:refs/bundle/$safe"
+            git fetch --no-tags --force origin "refs/heads/$ref:refs/bundle/$safe"
             printf '%s %s\n' "$ref" "$(git rev-parse refs/bundle/$safe)" | tee -a "$RUNNER_TEMP/rust-p1-p2-refs.txt"
           done
-          git bundle create "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle" 'refs/bundle/*'
+          mapfile -t bundle_refs < <(git for-each-ref --format='%(refname)' refs/bundle/ | sort)
+          test "${#bundle_refs[@]}" -gt 0
+          git bundle create "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle" "${bundle_refs[@]}"
+          git bundle verify "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle"
           git bundle list-heads "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle"
           sha256sum "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle" > "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle.sha256"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
