@@ -164,7 +164,7 @@ export function ProtectionModuleDetail(props: {
   };
 
   return (
-    <main data-testid="protection-module-detail" className={`${EXTENSION_SURFACE_CLASS} mx-auto w-full max-w-3xl px-4 pb-10 pt-5 sm:px-6`}>
+    <main data-testid="protection-module-detail" className={`${EXTENSION_SURFACE_CLASS} mx-auto w-full max-w-6xl px-4 pb-12 pt-6 sm:px-6 lg:px-8`}>
       <button type="button" onClick={handleBack} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-1 text-sm font-semibold text-brand-dark/80 hover:text-brand-dark">
         <HiMiniArrowLeft className="size-4" aria-hidden="true" />
         Extensions

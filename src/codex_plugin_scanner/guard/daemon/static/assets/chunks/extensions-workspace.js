@@ -1410,42 +1410,32 @@ function ProtectionDensityControl(props) {
     choice.value
   )) });
 }
-const HERO_TONE = {
-  safe: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-safe`,
-  attention: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`,
-  danger: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`,
-  neutral: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-neutral`
-};
 function ProtectionStatusHero(props) {
   const safe = props.status.tone === "safe";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-status-heading", className: HERO_TONE[props.status.tone], children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grid size-11 shrink-0 place-items-center rounded-2xl bg-white/80", "aria-hidden": "true", children: safe ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "size-6" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "size-6" }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: EXTENSION_KICKER_CLASS, children: "Local protection" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-status-heading", className: "mt-1 text-2xl font-semibold tracking-tight", children: props.status.title })
-          ] })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 max-w-2xl text-sm leading-6", children: props.status.summary })
-      ] }),
-      props.status.primaryActionLabel && props.onPrimaryAction ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          type: "button",
-          "aria-busy": props.busy,
-          disabled: props.busy,
-          onClick: props.onPrimaryAction,
-          className: "min-h-11 shrink-0 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:cursor-wait disabled:opacity-60",
-          children: props.busy ? "Working…" : props.status.primaryActionLabel
-        }
-      ) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex min-h-10 items-center gap-2 self-start rounded-full border border-current/15 bg-white/70 px-3 text-xs font-semibold", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "size-4" }),
-        "No action required"
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-status-heading", className: "guard-status-bar", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-status-bar-icon", "data-tone": props.status.tone, "aria-hidden": "true", children: safe ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "size-4" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "size-4" }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: EXTENSION_KICKER_CLASS, children: "Local protection" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-0.5 flex flex-wrap items-baseline gap-x-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-status-heading", className: "text-sm font-semibold text-brand-dark", children: props.status.title }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm leading-5 text-brand-dark/70", children: props.status.summary })
       ] })
     ] }),
-    props.children ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 border-t border-current/10 pt-4", children: props.children }) : null
+    props.status.primaryActionLabel && props.onPrimaryAction ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        type: "button",
+        "aria-busy": props.busy,
+        disabled: props.busy,
+        onClick: props.onPrimaryAction,
+        className: "min-h-11 shrink-0 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:cursor-wait disabled:opacity-60",
+        children: props.busy ? "Working…" : props.status.primaryActionLabel
+      }
+    ) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex min-h-9 shrink-0 items-center gap-1.5 self-center rounded-full border border-emerald-200 bg-[#e8f7ee] px-3 text-xs font-semibold text-emerald-800", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "size-3.5" }),
+      "No action required"
+    ] }),
+    props.children ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full border-t border-[rgba(63,65,116,0.08)] pt-2", children: props.children }) : null
   ] });
 }
 function ProtectionDecisionBadge({ result }) {
@@ -3467,7 +3457,7 @@ function ProtectionModuleDetail(props) {
     if (policyDirty && !window.confirm("Discard your unreviewed protection setting changes?")) return;
     props.onBack();
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { "data-testid": "protection-module-detail", className: `${EXTENSION_SURFACE_CLASS} mx-auto w-full max-w-3xl px-4 pb-10 pt-5 sm:px-6`, children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { "data-testid": "protection-module-detail", className: `${EXTENSION_SURFACE_CLASS} mx-auto w-full max-w-6xl px-4 pb-12 pt-6 sm:px-6 lg:px-8`, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: handleBack, className: "inline-flex min-h-11 items-center gap-2 rounded-lg px-1 text-sm font-semibold text-brand-dark/80 hover:text-brand-dark", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowLeft, { className: "size-4", "aria-hidden": "true" }),
       "Extensions"
