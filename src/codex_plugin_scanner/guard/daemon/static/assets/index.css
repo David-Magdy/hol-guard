@@ -7606,9 +7606,19 @@ input:focus-visible, button:focus-visible, a:focus-visible {
   background: #e8f7ee;
 }
 
-.guard-status-bar-icon[data-tone="alert"] {
+.guard-status-bar-icon[data-tone="attention"] {
   color: #b45309;
   background: #fef3c7;
+}
+
+.guard-status-bar-icon[data-tone="danger"] {
+  color: #b91c1c;
+  background: #fee2e2;
+}
+
+.guard-status-bar-icon[data-tone="neutral"] {
+  color: var(--brand-blue);
+  background: #5599fe1f;
 }
 
 .guard-extensions-row:focus-visible {

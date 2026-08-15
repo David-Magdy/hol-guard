@@ -54,7 +54,7 @@ export function ProtectionStatusHero(props: {
 }) {
   const safe = props.status.tone === "safe";
   return <section aria-labelledby="protection-status-heading" className="guard-status-bar">
-    <span className="guard-status-bar-icon" data-tone={safe ? "safe" : "alert"} aria-hidden="true">
+    <span className="guard-status-bar-icon" data-tone={props.status.tone} aria-hidden="true">
       {safe ? <HiMiniShieldCheck className="size-4" /> : <HiMiniExclamationTriangle className="size-4" />}
     </span>
     <div className="min-w-0 flex-1">
