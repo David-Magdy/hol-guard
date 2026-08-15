@@ -1,0 +1,13 @@
+name: Temporary Rust P1 P2 transfer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo transfer-placeholder
