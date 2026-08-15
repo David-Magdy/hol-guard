@@ -1,0 +1,82 @@
+name: Temporary finalize Rust P0-P2 remediation
+
+on:
+  push:
+    branches:
+      - fix/rust-p0-p2-regression-hardening
+    paths:
+      - .github/workflows/tmp-finalize-rust-p0-p2-remediation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/rust-p0-p2-regression-hardening
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+        with:
+          enable-cache: true
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: "1.88.0"
+          components: rustfmt, clippy
+      - name: Remove the temporary finalizer before auditing
+        shell: bash
+        run: rm .github/workflows/tmp-finalize-rust-p0-p2-remediation.yml
+      - name: Install locked development environment
+        run: uv sync --frozen --all-extras --dev
+      - name: Format and lint remediation code
+        shell: bash
+        run: |
+          uv run ruff format ci/rust_migration_regression_audit.py ci/run_rust_migration_regression.py tests/test_rust_migration_regression_audit.py
+          uv run ruff check ci/rust_migration_regression_audit.py ci/run_rust_migration_regression.py tests/test_rust_migration_regression_audit.py
+          uv run ruff format --check ci/rust_migration_regression_audit.py ci/run_rust_migration_regression.py tests/test_rust_migration_regression_audit.py
+      - name: Ratchet exact retained test counts
+        shell: bash
+        run: |
+          uv run python ci/rust_migration_regression_audit.py --json-output /tmp/rust-audit.json >/tmp/rust-audit.stdout
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('/tmp/rust-audit.json').read_text(encoding='utf-8'))
+          baseline = {
+              'schema_version': 1,
+              'minimum_test_counts': report['test_counts'],
+          }
+          Path('ci/rust-migration-regression-baseline.json').write_text(
+              json.dumps(baseline, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          uv run python ci/rust_migration_regression_audit.py --json-output /tmp/rust-audit-final.json
+      - name: Run audit adversarial tests
+        run: uv run pytest -q tests/test_rust_migration_regression_audit.py
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+      - name: Check Rust with warnings denied
+        run: cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+      - name: Run complete Rust workspace tests
+        run: cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+      - name: Run retained migration smoke corpus
+        run: uv run python ci/run_rust_migration_regression.py --mode smoke --manifest /tmp/rust-migration-smoke.json
+      - name: Commit the exact validated tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -s -m "test(guard): finalize Rust P0-P2 regression remediation"
+          git push origin HEAD:fix/rust-p0-p2-regression-hardening
