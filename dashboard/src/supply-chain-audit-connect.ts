@@ -109,10 +109,7 @@ export function supplyChainAuditConnectUserMessage(error: unknown): string | nul
 export function supplyChainAuditUserMessage(error: unknown): string | null {
   if (error instanceof GuardHarnessActionError) {
     if (error.payload?.error === "workspace_dir_required") {
-      return (
-        error.payload.message ??
-        "Guard needs a connected app project folder with package manifests before it can run the workspace audit."
-      );
+      return "Open Guard from the project you want to audit, or run `hol-guard supply-chain audit --json` from that project folder. The folder must contain a supported package manifest or lockfile.";
     }
     return supplyChainAuditConnectUserMessage(error);
   }
