@@ -1,0 +1,180 @@
+name: Final Rust P1 P2 verification
+
+on:
+  push:
+    branches:
+      - tmp/rust-p1p2-final-verification-20260814
+    paths:
+      - .github/workflows/tmp-rust-p1p2-final-verification.yml
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      BASE_BRANCH: release/3.0
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify live Git history and merged delivery
+        id: history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin release/3.0:refs/remotes/origin/release/3.0 main:refs/remotes/origin/main
+          release_sha="$(git rev-parse refs/remotes/origin/release/3.0)"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          pr="$(gh pr list --repo "$REPO" --state merged --base "$BASE_BRANCH" --search 'Rust P1 P2 OR Rust P1/P2 OR rust-p1-p2 in:title,body' --limit 100 --json number,mergedAt,mergeCommit,title --jq 'sort_by(.mergedAt) | reverse | .[0]')"
+          [[ "$pr" != null && -n "$pr" ]]
+          number="$(jq -r '.number' <<<"$pr")"
+          merge_sha="$(jq -r '.mergeCommit.oid' <<<"$pr")"
+          [[ -n "$merge_sha" && "$merge_sha" != null ]]
+          git merge-base --is-ancestor "$merge_sha" "$release_sha"
+          if git merge-base --is-ancestor "$merge_sha" "$main_sha"; then
+            echo 'Rust P1/P2 merge is unexpectedly present in main.' >&2
+            exit 1
+          fi
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "main_sha=$main_sha" >> "$GITHUB_OUTPUT"
+          echo "merge_sha=$merge_sha" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Verify canonical P1/P2 completion and staging cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach refs/remotes/origin/release/3.0
+          python - <<'PY'
+          from pathlib import Path
+          import re,sys,json
+          priority=re.compile(r'(?i)(?:\bP[12]\b|priority[ _-]*[12]|phase[ _-]*[12])')
+          unchecked=re.compile(r'^\s*[-*]\s*\[\s\]')
+          unresolved=[]
+          markers=[]
+          for base in (Path('docs'),Path('.github')):
+              if not base.exists(): continue
+              for p in base.rglob('*'):
+                  if not p.is_file(): continue
+                  try: lines=p.read_text(errors='replace').splitlines()
+                  except Exception: continue
+                  active=False
+                  for n,line in enumerate(lines,1):
+                      if line.lstrip().startswith('#'):
+                          active=bool(priority.search(line))
+                      if priority.search(line):
+                          active=True; markers.append((str(p),n,line))
+                      if active and unchecked.search(line):
+                          unresolved.append(f'{p}:{n}:{line}')
+          if unresolved:
+              print('\n'.join(unresolved)); sys.exit(1)
+          if not markers:
+              print('No canonical P1/P2 requirements found in the exact release tree.',file=sys.stderr); sys.exit(1)
+          required=[
+              Path('docs/guard'),
+          ]
+          for p in required:
+              if not p.exists(): print(f'missing {p}',file=sys.stderr); sys.exit(1)
+          forbidden=[]
+          for p in Path('.').rglob('*'):
+              if not p.is_file(): continue
+              s=str(p)
+              if any(x in s for x in ('rust-p0-final-b64','tmp-fetch-rust','tmp-apply-rust','rust-p1p2-transfer.patch','patch-staging')):
+                  forbidden.append(s)
+          if forbidden:
+              print('\n'.join(forbidden)); sys.exit(1)
+          Path('/tmp/priority-markers.json').write_text(json.dumps(markers,indent=2))
+          PY
+
+      - name: Verify Rust workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f Cargo.toml ]]; then
+            cargo fmt --all -- --check
+            cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+            cargo test --workspace --all-features --locked
+          fi
+
+      - name: Verify focused Python contracts and package build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+          python -m ruff format --check .
+          python -m ruff check .
+          if python -m basedpyright --version >/dev/null 2>&1; then python -m basedpyright; fi
+          mapfile -t focused < <(find tests -type f -name 'test_*.py' | grep -Ei '(rust|native|runtime|pre.?tool|hook|archive|decode|command|supply|package|path|filesystem|ownership|wheel|publish|performance|soak|mutation|chaos|telemetry|cache|parser|policy)' | sort -u)
+          ((${#focused[@]} > 0))
+          python -m pytest -q "${focused[@]}"
+          python -m build
+
+      - name: Verify exact release-head workflows and no stale migration PRs
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.history.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 180); do
+            runs="$(gh run list --repo "$REPO" --commit "$RELEASE_SHA" --limit 100 --json name,status,conclusion,url)"
+            total="$(jq 'length' <<<"$runs")"
+            pending="$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")"
+            failed="$(jq '[.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required" or .conclusion == "startup_failure"))] | length' <<<"$runs")"
+            (( failed == 0 )) || { jq . <<<"$runs"; exit 1; }
+            if (( total > 0 && pending == 0 )); then
+              printf '%s\n' "$runs" > /tmp/release-runs.json
+              break
+            fi
+            sleep 20
+          done
+          [[ -s /tmp/release-runs.json ]]
+          open="$(gh pr list --repo "$REPO" --state open --search 'Rust P0 OR Rust P1 OR Rust P2 OR rust-p0 OR rust-p1-p2 in:title,body' --json number,title,url)"
+          [[ "$(jq 'length' <<<"$open")" == 0 ]] || { jq . <<<"$open"; exit 1; }
+
+      - name: Persist independent verification evidence
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.history.outputs.release_sha }}
+          MAIN_SHA: ${{ steps.history.outputs.main_sha }}
+          MERGE_SHA: ${{ steps.history.outputs.merge_sha }}
+          PR_NUMBER: ${{ steps.history.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          git checkout tmp/rust-p1p2-final-verification-20260814
+          python - <<'PY'
+          from pathlib import Path
+          import json,os,datetime
+          data={
+            'verified': True,
+            'repository': os.environ['REPO'],
+            'target_branch': os.environ['BASE_BRANCH'],
+            'pull_request': int(os.environ['PR_NUMBER']),
+            'merge_commit': os.environ['MERGE_SHA'],
+            'release_head': os.environ['RELEASE_SHA'],
+            'main_head': os.environ['MAIN_SHA'],
+            'migration_present_in_main': False,
+            'p1_p2_todos_complete': True,
+            'staging_cleanup_complete': True,
+            'rust_validation': True,
+            'python_and_packaging_validation': True,
+            'post_merge_workflows_green': True,
+            'verified_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+          }
+          Path('rust-p1p2-final-verification.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add rust-p1p2-final-verification.json
+          git commit -m 'chore: record verified Rust P1/P2 completion'
+          git push origin HEAD:tmp/rust-p1p2-final-verification-20260814
