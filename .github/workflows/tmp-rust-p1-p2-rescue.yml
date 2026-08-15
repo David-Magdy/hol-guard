@@ -1,0 +1,36 @@
+name: Rescue Rust P1 and P2 automation
+
+on:
+  push:
+    branches:
+      - automation/rust-p1-p2-end-to-end
+    paths:
+      - .github/workflows/tmp-rust-p1-p2-rescue.yml
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rescue:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Re-run failed orchestration or model fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          runs=$(gh run list --repo "$GITHUB_REPOSITORY" --branch automation/rust-p1-p2-end-to-end --limit 100 --json databaseId,name,status,conclusion,createdAt)
+          for name in 'Complete Rust P1 and P2 program v4' 'Autonomous Rust P1 and P2 implementation fallback'; do
+            active=$(jq -r --arg name "$name" '[.[] | select(.name == $name and .status != "completed")] | length' <<<"$runs")
+            if (( active > 0 )); then
+              continue
+            fi
+            failed=$(jq -r --arg name "$name" '[.[] | select(.name == $name and .status == "completed" and (.conclusion | IN("success","neutral","skipped") | not))] | sort_by(.createdAt) | last | .databaseId // empty' <<<"$runs")
+            if [[ "$failed" =~ ^[0-9]+$ ]]; then
+              gh run rerun "$failed" --repo "$GITHUB_REPOSITORY" --failed || gh run rerun "$failed" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
