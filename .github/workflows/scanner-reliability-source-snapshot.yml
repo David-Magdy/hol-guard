@@ -1,0 +1,48 @@
+name: Scanner reliability source snapshot
+
+on:
+  push:
+    branches:
+      - feat/scanner-reliability-foundation-v1
+    paths:
+      - .github/workflows/scanner-reliability-source-snapshot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: release/3.0
+          persist-credentials: false
+      - name: Record exact release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > release-3.0-commit.txt
+          git status --short > release-3.0-status.txt
+      - name: Upload scanner source snapshot
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scanner-reliability-release-3.0-source
+          path: |
+            release-3.0-commit.txt
+            release-3.0-status.txt
+            pyproject.toml
+            uv.lock
+            schemas
+            src/codex_plugin_scanner
+            tests
+            scripts/ci
+            action
+            docs/rules
+            docs/ai-plugin-scanner
+            .github/workflows/ci.yml
+            .github/workflows/security-gates.yml
+          if-no-files-found: warn
+          retention-days: 7
