@@ -1,0 +1,53 @@
+name: Temporary PR 2372 permanent asset export
+
+on:
+  push:
+    branches:
+      - tmp/export-pr2372-permanent-assets-20260815
+    paths:
+      - .github/workflows/tmp-export-pr2372-permanent-assets.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: tmp/export-pr2372-permanent-assets-20260815
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Export only permanent review assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin fix/rust-p0-p2-regression-hardening:refs/remotes/origin/pr2372
+          paths=(
+            .github/workflows/rust-migration-regression.yml
+            ci/run_rust_migration_regression.py
+            ci/rust-migration-regression-baseline.json
+            ci/rust_migration_regression_audit.py
+            docs/guard/rust-p0-p2-regression-remediation-prd.md
+            docs/guard/rust-p0-p2-regression-remediation-takeaway-prompt.md
+            docs/guard/rust-p0-p2-regression-remediation-todo.md
+            tests/test_rust_migration_regression_audit.py
+          )
+          mkdir -p "$RUNNER_TEMP/export"
+          for path in "${paths[@]}"; do
+            mkdir -p "$RUNNER_TEMP/export/$(dirname "$path")"
+            git show "refs/remotes/origin/pr2372:$path" > "$RUNNER_TEMP/export/$path"
+          done
+          tar -C "$RUNNER_TEMP/export" -czf "$RUNNER_TEMP/pr2372-permanent-assets.tgz" .
+          sha256sum "$RUNNER_TEMP/pr2372-permanent-assets.tgz" > "$RUNNER_TEMP/pr2372-permanent-assets.tgz.sha256"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr2372-permanent-assets-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/pr2372-permanent-assets.tgz
+            ${{ runner.temp }}/pr2372-permanent-assets.tgz.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
