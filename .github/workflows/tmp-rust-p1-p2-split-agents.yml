@@ -1,0 +1,125 @@
+name: Fan out canonical Rust P1 and P2 implementation tasks
+
+on:
+  push:
+    branches:
+      - automation/rust-p1-p2-end-to-end
+    paths:
+      - .github/workflows/tmp-rust-p1-p2-split-agents.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: rust-p1-p2-split-agents
+  cancel-in-progress: true
+
+jobs:
+  fanout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: release/3.0
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Extract dependency-coherent P1/P2 sections
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from __future__ import annotations
+          import json
+          import re
+          from pathlib import Path
+
+          root = Path('.')
+          heading = re.compile(r'^(#{1,6})\s+(.+?)\s*$')
+          priority = re.compile(r'(?i)(?:^|[^a-z0-9_])(p1|p2)(?:[^a-z0-9_]|$)|priority\s*[:#-]?\s*[12]')
+          unchecked = re.compile(r'^\s*[-*]\s+\[\s\]\s+')
+          tasks=[]
+          for path in root.rglob('*.md'):
+              rel=path.as_posix()
+              if rel.startswith(('.git/','.venv/','node_modules/','target/','.github/workflows/tmp-','.github/completion-evidence/')):
+                  continue
+              try: lines=path.read_text(encoding='utf-8').splitlines()
+              except (OSError,UnicodeError): continue
+              if not priority.search(rel) and not any(priority.search(line) for line in lines):
+                  continue
+              starts=[]
+              for i,line in enumerate(lines):
+                  match=heading.match(line)
+                  if match and priority.search(match.group(2)):
+                      starts.append((i,len(match.group(1)),match.group(2)))
+              for index,(start,level,title) in enumerate(starts):
+                  end=len(lines)
+                  for j in range(start+1,len(lines)):
+                      match=heading.match(lines[j])
+                      if match and len(match.group(1))<=level:
+                          end=j; break
+                  section=lines[start:end]
+                  if not any(unchecked.match(line) for line in section):
+                      continue
+                  body='\n'.join(section).strip()
+                  tasks.append({'source':rel,'heading':title,'body':body[:50000]})
+          if not tasks:
+              for path in root.rglob('*.md'):
+                  rel=path.as_posix()
+                  if rel.startswith(('.git/','.venv/','node_modules/','target/','.github/workflows/tmp-')): continue
+                  try: text=path.read_text(encoding='utf-8')
+                  except (OSError,UnicodeError): continue
+                  if priority.search(text) and re.search(r'(?m)^\s*[-*]\s+\[\s\]\s+',text):
+                      tasks.append({'source':rel,'heading':f'Complete remaining P1/P2 items in {rel}','body':text[:50000]})
+          dedup=[]; seen=set()
+          for task in tasks:
+              key=(task['source'],task['heading'])
+              if key not in seen:
+                  seen.add(key); dedup.append(task)
+          Path('/tmp/tasks.json').write_text(json.dumps(dedup[:10],indent=2)+'\n',encoding='utf-8')
+          PY
+      - name: Create and assign coding-agent tasks
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=$(jq 'length' /tmp/tasks.json)
+          (( count > 0 )) || exit 0
+          for index in $(seq 0 $((count-1))); do
+            source=$(jq -r ".[$index].source" /tmp/tasks.json)
+            heading=$(jq -r ".[$index].heading" /tmp/tasks.json)
+            section=$(jq -r ".[$index].body" /tmp/tasks.json)
+            safe_heading=$(tr '\n\r' '  ' <<<"$heading" | cut -c1-150)
+            title="Rust P1/P2: $safe_heading"
+            existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,title | jq -r --arg title "$title" '.[] | select(.title == $title) | .number' | head -n1)
+            if [[ -z "$existing" ]]; then
+              {
+                cat <<EOF
+          Implement this canonical HOL Guard Rust/runtime P1/P2 section end to end against the latest \`release/3.0\`.
+
+          Source: \`$source\`
+
+          ## Canonical section
+
+          $section
+
+          ## Execution requirements
+
+          Read the complete source document and all linked PRDs, TODOs, inventories, ownership contracts, source, tests, and related issues before editing. Reconcile dependencies with other P1/P2 tasks. Implement code, contracts, fixtures, observability, diagnostics, packaging, documentation, performance, fuzz, mutation, chaos, soak, cross-platform installed-wheel, security, SBOM/provenance, review, release, and independent verification requirements applicable to this section. Preserve the Python product control plane and verified bundled Rust authority boundary. Keep resources bounded and local data private. Do not add a permissive fallback or claim completion from shadow-only wiring. Update checklist items only when implementation and automated evidence exist. Run and repair every relevant gate, resolve every review thread, and create a merge-ready PR targeting \`release/3.0\` only. Never target \`main\`. Keep iterating until this section is completely done.
+          EOF
+              } > /tmp/body.md
+              existing=$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file /tmp/body.md | sed -E 's#.*/##')
+            fi
+            for login in 'copilot-swe-agent[bot]' 'copilot-swe-agent' 'copilot'; do
+              if gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$existing/assignees" --input - >/dev/null 2>&1 <<JSON
+          {"assignees":["$login"]}
+          JSON
+              then
+                break
+              fi
+            done
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body '@copilot Start implementation now and continue autonomously through code, tests, review, CI, merge to release/3.0, required publication, and independent verification. Do not stop after planning or a partial patch.' >/dev/null || true
+          done
