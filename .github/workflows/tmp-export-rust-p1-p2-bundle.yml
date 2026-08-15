@@ -1,0 +1,59 @@
+name: Temporary Rust P1/P2 reconciliation bundle
+
+on:
+  push:
+    branches:
+      - tmp/rust-p1-p2-bundle-20260814
+    paths:
+      - .github/workflows/tmp-export-rust-p1-p2-bundle.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: tmp/rust-p1-p2-bundle-20260814
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Fetch exact reconciliation refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          refs=(
+            release/3.0
+            feat/rust-hardening-foundation
+            feat/rust-safety-kernel-pretool-completion
+            feat/rust-safety-kernel-pretool-completion-v2
+            feat/rust-runtime-supervision-final
+            feat/rust-runtime-supervision-reconciled-v2
+            feat/rust-runtime-supervision-release
+            feat/rust-runtime-resilience-v2
+            feat/rust-p0-native-core-final-v3
+            feat/rust-p0-native-core-final-v4
+            feat/rust-p0-native-core-final-v5
+            fix/rust-required-no-python-runtime-fallback
+          )
+          : > "$RUNNER_TEMP/rust-p1-p2-refs.txt"
+          for ref in "${refs[@]}"; do
+            safe=${ref//\//-}
+            git fetch --force origin "refs/heads/$ref:refs/bundle/$safe"
+            printf '%s %s\n' "$ref" "$(git rev-parse refs/bundle/$safe)" | tee -a "$RUNNER_TEMP/rust-p1-p2-refs.txt"
+          done
+          git bundle create "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle" 'refs/bundle/*'
+          git bundle list-heads "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle"
+          sha256sum "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle" > "$RUNNER_TEMP/hol-guard-rust-p1-p2.bundle.sha256"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hol-guard-rust-p1-p2-bundle-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/hol-guard-rust-p1-p2.bundle
+            ${{ runner.temp }}/hol-guard-rust-p1-p2.bundle.sha256
+            ${{ runner.temp }}/rust-p1-p2-refs.txt
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
