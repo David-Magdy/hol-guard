@@ -18,7 +18,6 @@ import {
   ReviewModal,
   requiresExtensionRecoveryApproval,
 } from "./extensions-workspace";
-import { isExtensionEnabled } from "./extensions-filters";
 import { fetchResolvedApprovalGate } from "./use-resolved-approval-gate";
 import {
   extensionPolicyRadioTabStop,
@@ -155,7 +154,6 @@ assert.equal(extensionDetailHref("command.git"), "/extensions/command.git");
 assert.equal(extensionDetailHref("command.git", { ...DEFAULT_EXTENSION_DETAIL_URL_STATE, tab: "commands", ruleId: "command.git.hard-reset" }), "/extensions/command.git?tab=commands&rule=command.git.hard-reset");
 assert.doesNotMatch(extensionDetailHref("command.git"), /#|guard-token/);
 assert.equal(extensionEffectiveState(effective, extension), "enabled");
-assert.equal(isExtensionEnabled(effective, extension), true);
 assert.equal(permissionEffectiveState(effective, extension, extension.permissions[0]!), "disabled");
 assert.equal(extensionEffectiveState({ ...effective, global_lockdown: true }, { ...extension, required: true }), "disabled");
 assert.equal(extensionEffectiveState({ ...effective, health: "tampered" }, extension), "disabled");

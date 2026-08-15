@@ -4,10 +4,9 @@ import { HiMiniArrowLeft, HiMiniLockClosed } from "react-icons/hi2";
 import { controlProvenance, permissionForRule, treatmentLabel } from "../extension-control-center-model";
 import type { EffectiveExtensionControls, ExtensionCatalogItem } from "../extension-controls-api";
 import { ExtensionPolicyPanel } from "../extension-policy-panel";
-import { ProtectionDensityControl, TechnicalDetails, useProtectionDensity } from "./components/protection-primitives";
+import { TechnicalDetails } from "./components/protection-primitives";
 import { ProtectionRepairCard } from "./protection-repair-card";
 import { ProtectionTestLab } from "./protection-test-lab";
-import { EXTENSION_SURFACE_CLASS, EXTENSION_TITLE_CLASS } from "./protection-surface";
 
 function sourceForTarget(
   effective: EffectiveExtensionControls,
@@ -32,7 +31,7 @@ function DeveloperModuleDetails(props: {
   catalogDigest: string;
 }) {
   return (
-    <TechnicalDetails title="Developer details">
+    <TechnicalDetails title="Developer details" testId="protection-more-detail">
       <div className="grid gap-5">
         <section>
           <h3 className="font-semibold text-brand-dark">Canonical module</h3>
@@ -108,7 +107,6 @@ export function ProtectionModuleDetail(props: {
   onRefresh: () => Promise<void> | void;
   onRequestExtensionChange?: (extension: ExtensionCatalogItem, enabled: boolean) => void;
 }) {
-  const [density, setDensity] = useProtectionDensity();
   const [policyDirty, setPolicyDirty] = useState(false);
   useEffect(() => {
     let highlightTimer = 0;
@@ -164,21 +162,20 @@ export function ProtectionModuleDetail(props: {
   };
 
   return (
-    <main data-testid="protection-module-detail" className={`${EXTENSION_SURFACE_CLASS} mx-auto w-full max-w-6xl px-4 pb-12 pt-6 sm:px-6 lg:px-8`}>
+    <div data-testid="protection-module-detail" className="w-full">
       <button type="button" onClick={handleBack} className="inline-flex min-h-11 items-center gap-2 rounded-lg px-1 text-sm font-semibold text-brand-dark/80 hover:text-brand-dark">
         <HiMiniArrowLeft className="size-4" aria-hidden="true" />
         Extensions
       </button>
-      <header className="mt-4 border-b border-[rgba(63,65,116,0.12)] pb-5">
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-dark/55">Extension</p>
-        <h1 className={EXTENSION_TITLE_CLASS}>{props.extension.name}</h1>
-        {requiredNote ? <p className="mt-3 max-w-2xl text-sm leading-6 text-brand-dark/80">{requiredNote}</p> : (
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-brand-dark/80">{props.extension.description}</p>
-        )}
+      <header className="mt-4 border-b border-slate-200 pb-6">
+        <p className="font-mono text-xs font-semibold tracking-[0.14em] text-slate-400">{props.extension.executables.join(" · ")}</p>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-brand-dark">{props.extension.name}</h1>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{props.extension.description}</p>
+        {requiredNote ? <p className="mt-3 max-w-2xl text-sm leading-6 text-brand-dark/80">{requiredNote}</p> : null}
         {props.extension.required ? (
           <p className="mt-2 text-sm text-brand-dark/70">This protection is required by Guard and cannot be turned off.</p>
         ) : props.onRequestExtensionChange ? (
-          <div className="mt-3 flex flex-wrap items-center gap-3">
+          <div className="mt-4 flex flex-wrap items-center gap-3">
             <button
               type="button"
               role="switch"
@@ -201,7 +198,7 @@ export function ProtectionModuleDetail(props: {
           </div>
         ) : null}
         {orgManaged ? (
-          <p className="mt-2 text-sm text-brand-dark/80">Your organization controls part of this protection. Local changes cannot weaken organization policy.</p>
+          <p className="mt-3 text-sm text-brand-dark/80">Your organization controls part of this protection. Local changes cannot weaken organization policy.</p>
         ) : null}
         {props.effective.global_lockdown ? (
           <p role="status" className="mt-4 flex gap-2 text-sm text-brand-dark">
@@ -223,17 +220,9 @@ export function ProtectionModuleDetail(props: {
       <div className="mt-10">
         <ProtectionTestLab extension={props.extension} />
       </div>
-      <details className="mt-8" data-testid="protection-more-detail">
-        <summary className="cursor-pointer text-sm font-semibold text-brand-dark">More detail</summary>
-        <div className="mt-3">
-          <ProtectionDensityControl value={density} onChange={setDensity} />
-        </div>
-      </details>
-      {density === "developer" ? (
-        <div className="mt-6">
-          <DeveloperModuleDetails extension={props.extension} effective={props.effective} catalogDigest={props.catalogDigest} />
-        </div>
-      ) : null}
-    </main>
+      <div className="mt-8">
+        <DeveloperModuleDetails extension={props.extension} effective={props.effective} catalogDigest={props.catalogDigest} />
+      </div>
+    </div>
   );
 }

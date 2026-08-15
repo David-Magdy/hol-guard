@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { assertSimpleCopySafe, localSettingChoiceLabel, PROTECTION_TERMS, protectionCenterLoadError, simpleCopyViolations } from "./copy/protection-copy";
-import { ProtectionDensityControl, ProtectionModuleRow, ProtectionStatusHero, TechnicalDetails } from "./components/protection-primitives";
+import { ProtectionModuleRow, ProtectionStatusHero, TechnicalDetails } from "./components/protection-primitives";
 import {
   CLOUD_CONNECTED_FIXTURE,
   CLOUD_OFFLINE_FIXTURE,
@@ -17,7 +17,7 @@ import {
   protectionModuleFixture,
 } from "./fixtures/protection-fixtures";
 import { groupProtectionModules, protectionCategoryIdForExtension } from "./model/protection-categories";
-import { deriveProtectionStatus, parseProtectionDensity, readProtectionDensity, writeProtectionDensity } from "./model/protection-presentation";
+import { deriveProtectionStatus } from "./model/protection-presentation";
 
 assert.equal(PROTECTION_TERMS.navigation, "Extensions");
 assert.equal(PROTECTION_TERMS.pageTitle, "Extensions");
@@ -53,17 +53,6 @@ const largeFixture = largeDeveloperModuleFixture();
 assert.equal(largeFixture.rules.length, 500);
 assert.equal(largeFixture.rule_count, 500);
 assert.throws(() => largeDeveloperModuleFixture(501), /Invalid fixture rule count/);
-
-assert.equal(parseProtectionDensity("developer"), "developer");
-assert.equal(parseProtectionDensity("unexpected"), "simple");
-let stored = "advanced";
-const fakeStorage = {
-  getItem: () => stored,
-  setItem: (_key: string, value: string) => { stored = value; },
-};
-assert.equal(readProtectionDensity(fakeStorage), "advanced");
-writeProtectionDensity("developer", fakeStorage);
-assert.equal(stored, "developer");
 
 const categoryFixtures = [
   ["command.git", "source-control"],
@@ -122,11 +111,6 @@ assert.match(moduleRow, /Git/);
 assert.match(moduleRow, /Ask first/);
 assert.match(moduleRow, /guard-extensions-row/);
 assert.doesNotMatch(moduleRow, />[^<]*(?:permission|rule|version)[^<]*</i);
-
-const density = renderToStaticMarkup(createElement(ProtectionDensityControl, { value: "simple", onChange: () => undefined }));
-assert.match(density, /role="radiogroup"/);
-assert.match(density, /aria-checked="true"/);
-assert.match(density, />Developer</);
 
 const technical = renderToStaticMarkup(createElement(TechnicalDetails, { children: createElement("code", null, "command.git") }));
 assert.match(technical, /<details/);

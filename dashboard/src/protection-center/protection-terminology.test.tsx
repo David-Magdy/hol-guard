@@ -22,8 +22,11 @@ for (const legacy of [
 ]) {
   assert.equal(simple.includes(legacy), false, `Simple Extensions must not surface legacy wording: ${legacy}`);
 }
-assert.match(simple, />Extension</);
+assert.match(simple, />Git</);
+assert.match(simple, /font-mono[^"]*">git</);
 assert.match(simple, /Protection settings/);
 assert.match(simple, /Extensions/);
+assert.match(simple, /Test Lab/);
+assert.match(simple, /Developer details/);
 
 console.log("protection-terminology.test.tsx: all assertions passed");

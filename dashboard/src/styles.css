@@ -414,21 +414,6 @@ a:focus-visible {
   animation: evidence-metric-enter 280ms var(--ease-out-quart) both;
 }
 
-.guard-extensions-surface {
-  position: relative;
-  isolation: isolate;
-  background: var(--surface-1);
-}
-
-.guard-extensions-kicker {
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--brand-blue);
-}
-
 .guard-extensions-panel {
   position: relative;
   background: transparent;

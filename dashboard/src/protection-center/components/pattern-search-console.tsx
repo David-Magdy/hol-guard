@@ -11,6 +11,7 @@ import {
 import { useResolvedApprovalGate } from "../../use-resolved-approval-gate";
 import { useExtensionPolicyDraft } from "../../use-extension-policy-draft";
 import { searchCommandPatterns } from "../model/protection-landing";
+import { ProtectionModuleRow } from "./protection-primitives";
 
 /**
  * Search-first command-pattern console for the Extensions landing page.
@@ -18,12 +19,14 @@ import { searchCommandPatterns } from "../model/protection-landing";
  * One query searches every tool's patterns by label, example command, flag,
  * or ID; matched rows render with the same inline Recommended / Allow / Block
  * control used on the tool page, and the same review + proof flow commits the
- * change without leaving the page.
+ * change without leaving the page. Tools whose names match the query render
+ * as a final group so a query like "kubernetes" finds both patterns and tools.
  */
 export function PatternSearchConsole(props: {
   catalog: readonly ExtensionCatalogItem[];
   effective: EffectiveExtensionControls;
   onRefresh: () => Promise<void> | void;
+  onOpenExtension: (extension: ExtensionCatalogItem) => void;
 }) {
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
@@ -49,6 +52,14 @@ export function PatternSearchConsole(props: {
   }, []);
 
   const matches = useMemo(() => searchCommandPatterns(props.catalog, query), [props.catalog, query]);
+  const toolMatches = useMemo(() => {
+    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return [];
+    return props.catalog.filter((extension) => {
+      const text = [extension.name, extension.extension_id, ...extension.executables, ...extension.aliases].join(" ").toLowerCase();
+      return terms.every((term) => text.includes(term));
+    });
+  }, [props.catalog, query]);
   const grouped = useMemo(() => {
     const groups = new Map<string, { extension: ExtensionCatalogItem; permissionIds: string[] }>();
     for (const match of matches) {
@@ -94,7 +105,7 @@ export function PatternSearchConsole(props: {
     </p>
 
     {showResults ? (
-      matches.length ? (
+      matches.length || toolMatches.length ? (
         <div className="mt-3">
           {grouped.map((group) => (
             <section key={group.extension.extension_id} aria-label={`${group.extension.name} patterns`} className="guard-pattern-family">
@@ -117,6 +128,19 @@ export function PatternSearchConsole(props: {
               })}
             </section>
           ))}
+          {toolMatches.length ? (
+            <section aria-label="Matching tools" className="guard-pattern-family">
+              <h3 className="guard-pattern-family-heading"><span>Tools</span></h3>
+              {toolMatches.map((extension) => <ProtectionModuleRow
+                key={extension.extension_id}
+                name={extension.name}
+                description={extension.description}
+                behavior={extension.executables.join(" · ")}
+                required={extension.required}
+                onOpen={() => props.onOpenExtension(extension)}
+              />)}
+            </section>
+          ) : null}
           {managedCount ? (
             <p className="mt-3 text-xs text-indigo-950">{managedCount} matched setting{managedCount === 1 ? "" : "s are"} managed by your organization and cannot be weakened on this device.</p>
           ) : null}
@@ -156,7 +180,7 @@ export function PatternSearchConsole(props: {
           ) : null}
         </div>
       ) : (
-        <p className="mt-3 text-sm text-brand-dark/75">No command patterns match this search.</p>
+        <p className="mt-3 text-sm text-brand-dark/75">No command patterns or tools match this search.</p>
       )
     ) : null}
 

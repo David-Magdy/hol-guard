@@ -46,7 +46,8 @@ const simple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
   onBack: () => undefined,
   onRefresh: () => undefined,
 }));
-assert.match(simple, />Extension</);
+assert.match(simple, />Git</);
+assert.match(simple, /font-mono[^"]*">git</);
 assert.match(simple, /Protection settings/);
 assert.match(simple, /Forced Git push/);
 assert.match(simple, /git push --force/);
@@ -55,9 +56,11 @@ assert.match(simple, />Allow</);
 assert.match(simple, />Block</);
 assert.match(simple, /cannot be turned off/);
 assert.match(simple, /Test Lab/);
+assert.match(simple, /Developer details/);
+assert.doesNotMatch(simple, /data-testid="protection-more-detail"[^>]* open/, "developer details stay collapsed by default");
 assert.doesNotMatch(simple, /What this protects/);
 assert.doesNotMatch(simple, /Change settings/);
-assert.doesNotMatch(simple, /Catalog digest|Extension ID|Matcher|permission_id|rule_id/);
+assert.doesNotMatch(simple, />Extension</);
 
 const requiredExtension = { ...FIXED_PROTECTION_MODULE, required: true };
 const required = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
