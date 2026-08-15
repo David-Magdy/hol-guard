@@ -149,10 +149,8 @@ class StoreApprovalsMixin:
             request_artifact_id = str(request.get("artifact_id") or "")
             if expected_artifact_id is not None and request_artifact_id != expected_artifact_id:
                 return False
-            if (
-                expected_artifact_hash is not None
-                and str(request.get("artifact_hash") or "") != expected_artifact_hash
-            ):
+            request_artifact_hash = str(request.get("artifact_hash") or "")
+            if expected_artifact_hash is not None and request_artifact_hash != expected_artifact_hash:
                 return False
             require_resolvable_approval_request(request)
             persist_approval_resolution(
