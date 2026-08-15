@@ -1,0 +1,99 @@
+name: Independently verify Rust PreToolUse authority
+
+on:
+  push:
+    branches:
+      - verify/rust-pretool-authority-20260815
+    paths:
+      - .github/workflows/tmp-verify-rust-pretool-authority.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: release/3.0
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Verify source authority contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -q 'fast path only supports PostToolUse' src/codex_plugin_scanner/guard/daemon/hook_worker.py
+          git grep -n -E 'review_pre_tool|pre_tool.*native|native.*pre_tool|PreToolUse.*native|native.*PreToolUse' -- rust src/codex_plugin_scanner/guard > "$RUNNER_TEMP/pretool-hits.txt"
+          grep -Eq 'action_floor|approval_floor|native.*(pause|deny)|exact.*allow' "$RUNNER_TEMP/pretool-hits.txt" || git grep -n -E 'action_floor|approval_floor|native.*(pause|deny)|exact.*allow' -- rust src/codex_plugin_scanner/guard
+          git grep -n -E 'PreToolUse' -- docs/guard tests ci/native_runtime >/dev/null
+          ! git grep -n -E 'PreToolUse.*Python-authoritative|PreToolUse stays Python-authoritative|fast path only supports PostToolUse' -- src docs/guard
+
+      - name: Build and test verified bundled runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev --extra publish --python 3.12
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.88.0
+          cargo fmt --manifest-path rust/Cargo.toml --all --check
+          cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+          version=$(uv run --no-sync python - <<'PY'
+          from importlib.metadata import version
+          print(version('hol-guard'))
+          PY
+          )
+          export HOL_GUARD_PACKAGE_VERSION="$version"
+          export HOL_GUARD_BUILD_SHA="$(git rev-parse HEAD)"
+          cargo build --manifest-path rust/Cargo.toml --locked --release -p hol-guard-runtime
+          rust/target/release/hol-guard-runtime self-test --json | tee "$RUNNER_TEMP/self-test.json"
+          grep -Eqi 'pre.?tool' "$RUNNER_TEMP/self-test.json"
+
+      - name: Run native PreToolUse and regression suites
+        shell: bash
+        env:
+          HOL_GUARD_NATIVE_DEVELOPMENT: "1"
+          HOL_GUARD_NATIVE_BINARY: ${{ github.workspace }}/rust/target/release/hol-guard-runtime
+        run: |
+          set -euo pipefail
+          mapfile -t tests < <(find tests ci/native_runtime -type f -name 'test_*.py' -print | grep -Ei '(pretool|pre_tool|native_runtime|command_model|hook_runtime|hook_worker|effect|risk|policy|command_patterns|extensions|shims|package)' | sort -u)
+          test "${#tests[@]}" -gt 0
+          uv run --no-sync pytest -q "${tests[@]}" --tb=short
+
+      - name: Record verification on the remediation issue
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          title='Restore verified Rust authority for PreToolUse in 3.x'
+          issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+          [[ -n "$issue" ]] || exit 0
+          gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body "Independent exact-release verification passed at $(git rev-parse HEAD): bundled Rust advertises and exercises native PreToolUse authority, Rust workspace and focused regression suites are green, and the old PostToolUse-only rejection is absent." >/dev/null
+          gh issue close "$issue" --repo "$GITHUB_REPOSITORY" --comment 'Verified complete on release/3.0.' >/dev/null
+
+      - name: Record bounded failure context
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          title='Restore verified Rust authority for PreToolUse in 3.x'
+          issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+          [[ -n "$issue" ]] || exit 0
+          gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body "Independent verification still fails at release/3.0 commit $(git rev-parse HEAD). Continue the implementation and do not close the issue until this workflow passes." >/dev/null
