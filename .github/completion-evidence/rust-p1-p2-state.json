@@ -1,0 +1,154 @@
+{
+  "captured_at": "2026-08-15T01:46:35Z",
+  "umbrella_issue": 2365,
+  "matching_issue": {
+    "assignees": [],
+    "number": 2365,
+    "state": "OPEN",
+    "title": "Complete all Rust migration P1 and P2 work on release/3.0",
+    "url": "https://github.com/hashgraph-online/hol-guard/issues/2365"
+  },
+  "release_pull_requests": [],
+  "automation_runs": [
+    {
+      "conclusion": "",
+      "createdAt": "2026-08-15T01:46:10Z",
+      "databaseId": 31857399261,
+      "headSha": "5a1e7e984436bccf8a7930326ce2e97493f55bb1",
+      "name": "Persist Rust P1 and P2 orchestration state",
+      "status": "in_progress",
+      "updatedAt": "2026-08-15T01:46:16Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857399261"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-08-15T01:46:09Z",
+      "databaseId": 31857398512,
+      "headSha": "5a1e7e984436bccf8a7930326ce2e97493f55bb1",
+      "name": ".github/workflows/tmp-apply-rust-required.yml",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:46:09Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857398512"
+    },
+    {
+      "conclusion": "",
+      "createdAt": "2026-08-15T01:45:03Z",
+      "databaseId": 31857347494,
+      "headSha": "05e7a780a12e7c9199cdfe9a68b0f85e85b30c2b",
+      "name": "Autonomous Rust P1 and P2 implementation fallback",
+      "status": "in_progress",
+      "updatedAt": "2026-08-15T01:45:08Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857347494"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-08-15T01:45:02Z",
+      "databaseId": 31857346801,
+      "headSha": "05e7a780a12e7c9199cdfe9a68b0f85e85b30c2b",
+      "name": ".github/workflows/tmp-apply-rust-required.yml",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:45:02Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857346801"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-08-15T01:42:09Z",
+      "databaseId": 31857217191,
+      "headSha": "4296c2916205a0b999ef63862396cc1878135faa",
+      "name": ".github/workflows/tmp-apply-rust-required.yml",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:42:09Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857217191"
+    },
+    {
+      "conclusion": "",
+      "createdAt": "2026-08-15T01:42:09Z",
+      "databaseId": 31857217772,
+      "headSha": "4296c2916205a0b999ef63862396cc1878135faa",
+      "name": "Complete Rust P1 and P2 program v4",
+      "status": "in_progress",
+      "updatedAt": "2026-08-15T01:42:29Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857217772"
+    },
+    {
+      "conclusion": "cancelled",
+      "createdAt": "2026-08-15T01:40:44Z",
+      "databaseId": 31857154523,
+      "headSha": "9629241ecb48d6043beec66d2747625e7da77246",
+      "name": "Complete Rust P1 and P2 program",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:42:26Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857154523"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-08-15T01:40:43Z",
+      "databaseId": 31857153856,
+      "headSha": "9629241ecb48d6043beec66d2747625e7da77246",
+      "name": ".github/workflows/tmp-apply-rust-required.yml",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:40:43Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857153856"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-08-15T01:39:12Z",
+      "databaseId": 31857087279,
+      "headSha": "0509bbb287e4ad304389a1bd40f2b986adda0abf",
+      "name": "Inventory canonical Rust P1 and P2 scope",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:39:26Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857087279"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-08-15T01:39:11Z",
+      "databaseId": 31857086824,
+      "headSha": "0509bbb287e4ad304389a1bd40f2b986adda0abf",
+      "name": ".github/workflows/tmp-apply-rust-required.yml",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:39:11Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857086824"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-08-15T01:38:37Z",
+      "databaseId": 31857063232,
+      "headSha": "6d7b139fad1f482ae71d60cca40ad9256af37517",
+      "name": "Rust P1 and P2 completion monitor",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:39:06Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857063232"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-08-15T01:38:36Z",
+      "databaseId": 31857062693,
+      "headSha": "6d7b139fad1f482ae71d60cca40ad9256af37517",
+      "name": ".github/workflows/tmp-apply-rust-required.yml",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:38:36Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857062693"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-08-15T01:37:30Z",
+      "databaseId": 31857016196,
+      "headSha": "ad6056ff78407ca8cb9cd8c0dd7cb8d0261a076f",
+      "name": ".github/workflows/tmp-apply-rust-required.yml",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:37:30Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857016196"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-08-15T01:37:30Z",
+      "databaseId": 31857016759,
+      "headSha": "ad6056ff78407ca8cb9cd8c0dd7cb8d0261a076f",
+      "name": "Shepherd Rust P1 and P2 migration end to end",
+      "status": "completed",
+      "updatedAt": "2026-08-15T01:37:55Z",
+      "url": "https://github.com/hashgraph-online/hol-guard/actions/runs/31857016759"
+    }
+  ]
+}
