@@ -1,0 +1,45 @@
+name: Persist Rust P1 and P2 orchestration state
+
+on:
+  push:
+    branches:
+      - automation/rust-p1-p2-end-to-end
+    paths:
+      - .github/workflows/tmp-rust-p1-p2-state.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+  issues: read
+  pull-requests: read
+
+jobs:
+  state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: Complete all Rust migration P1 and P2 work on release/3.0
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: automation/rust-p1-p2-end-to-end
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Snapshot issue, PR, and workflow state
+        shell: bash
+        run: |
+          set -euo pipefail
+          issues=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 100 --json number,title,state,assignees,url)
+          issue=$(jq -r --arg title "$TITLE" '.[] | select(.title == $title) | .number' <<<"$issues" | head -n1)
+          prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --state all --base release/3.0 --limit 100 --json number,title,state,isDraft,mergeStateStatus,headRefName,headRefOid,author,url,mergedAt)
+          runs=$(gh run list --repo "$GITHUB_REPOSITORY" --branch automation/rust-p1-p2-end-to-end --limit 50 --json databaseId,name,status,conclusion,url,headSha,createdAt,updatedAt)
+          jq -n --arg issue "$issue" --argjson issues "$issues" --argjson prs "$prs" --argjson runs "$runs" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{captured_at:$at,umbrella_issue:($issue|select(length>0)|tonumber),matching_issue:($issues|map(select(.number == ($issue|tonumber)))|first),release_pull_requests:($prs|map(select(((.title // "")|ascii_downcase|test("p1|p2|rust migration")) or ((.author.login // "")|ascii_downcase|contains("copilot"))))),automation_runs:$runs}' > /tmp/state.json
+          mkdir -p .github/completion-evidence
+          cp /tmp/state.json .github/completion-evidence/rust-p1-p2-state.json
+          git add .github/completion-evidence/rust-p1-p2-state.json
+          git config user.name 'Michael Kantor'
+          git config user.email '6068672+kantorcodes@users.noreply.github.com'
+          git commit --signoff -m 'chore: snapshot Rust P1/P2 orchestration state'
+          git push origin HEAD:automation/rust-p1-p2-end-to-end
