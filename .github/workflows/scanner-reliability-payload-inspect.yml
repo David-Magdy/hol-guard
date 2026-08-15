@@ -1,0 +1,76 @@
+name: Scanner reliability payload inspection
+
+on:
+  push:
+    branches:
+      - feat/scanner-reliability-foundation-v1
+    paths:
+      - .github/workflows/scanner-reliability-payload-inspect.yml
+      - .scanner-reliability-payload/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Decode payloads without executing them
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p decoded
+
+          cat .scanner-reliability-payload/xz-*.b64 \
+            | tr -d '\r\n\t ' \
+            | base64 --decode > decoded/scanner-reliability-payload.xz
+          xz --decompress --stdout decoded/scanner-reliability-payload.xz \
+            > decoded/scanner-reliability-payload.raw
+
+          tr -d '\r\n\t ' < .scanner-reliability-payload/part-00.b64 \
+            | base64 --decode > decoded/scanner-reliability-part-00.gz
+          gzip --decompress --stdout decoded/scanner-reliability-part-00.gz \
+            > decoded/scanner-reliability-part-00.raw
+
+          {
+            echo '## Files'
+            ls -lah decoded
+            echo
+            echo '## Types'
+            file decoded/*
+            echo
+            echo '## SHA-256'
+            sha256sum decoded/*
+            echo
+            echo '## First 128 bytes (hex)'
+            for path in decoded/*.raw; do
+              echo "### $path"
+              head -c 128 "$path" | od -An -tx1 -v
+            done
+            echo
+            echo '## First 80 text lines when printable'
+            for path in decoded/*.raw; do
+              echo "### $path"
+              LC_ALL=C sed -n '1,80p' "$path" || true
+            done
+            echo
+            echo '## Archive listings when recognized'
+            for path in decoded/*.raw; do
+              echo "### $path"
+              tar --list --file "$path" 2>&1 | sed -n '1,400p' || true
+            done
+          } > decoded/inspection.txt
+
+          cat decoded/inspection.txt
+      - name: Upload decoded payload inspection
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scanner-reliability-payload-inspection
+          path: decoded
+          if-no-files-found: error
+          retention-days: 7
