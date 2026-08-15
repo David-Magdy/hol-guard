@@ -290,31 +290,51 @@ def test_remote_branch_listing_rejects_executable_pager(
 
 
 @pytest.mark.parametrize("key", ("core.pager", "pager.status"))
+@pytest.mark.parametrize("value", ("!payload", " cat "))
 def test_status_chain_rejects_executable_pager_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     key: str,
+    value: str,
 ) -> None:
     home, repository = _repository(tmp_path)
     monkeypatch.delenv("GIT_PAGER", raising=False)
     monkeypatch.delenv("PAGER", raising=False)
-    _ = subprocess.run(["git", "-C", str(repository), "config", key, "!payload"], check=True)
+    _ = subprocess.run(["git", "-C", str(repository), "config", key, value], check=True)
 
     assert not _is_benign("git fetch origin && git status", home=home, repository=repository)
 
 
 @pytest.mark.parametrize("key", ("GIT_PAGER", "PAGER"))
+@pytest.mark.parametrize("value", ("payload", " cat "))
 def test_status_chain_rejects_executable_pager_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     key: str,
+    value: str,
 ) -> None:
     home, repository = _repository(tmp_path)
     monkeypatch.delenv("GIT_PAGER", raising=False)
     monkeypatch.delenv("PAGER", raising=False)
-    monkeypatch.setenv(key, "payload")
+    monkeypatch.setenv(key, value)
 
     assert not _is_benign("git fetch origin && git status", home=home, repository=repository)
+
+
+def test_fetch_inspection_chain_rejects_whitespace_wrapped_log_pager(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, repository = _repository(tmp_path)
+    monkeypatch.delenv("GIT_PAGER", raising=False)
+    monkeypatch.delenv("PAGER", raising=False)
+    _ = subprocess.run(["git", "-C", str(repository), "config", "pager.log", " cat "], check=True)
+
+    assert not _is_benign(
+        "git fetch origin && git status && git branch --show-current && git log -1 --oneline",
+        home=home,
+        repository=repository,
+    )
 
 
 def test_standalone_git_routine_requires_explicit_execution_directory(tmp_path: Path) -> None:

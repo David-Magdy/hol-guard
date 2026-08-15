@@ -411,8 +411,8 @@ def _git_log_has_execution_free_config(
 ) -> bool:
     git_pager = os.environ.get("GIT_PAGER")
     if git_pager is not None:
-        return git_pager.strip() in {"", "cat"} and git_config_routing_environment_is_clean()
-    if os.environ.get("PAGER", "").strip() not in {"", "cat"}:
+        return git_pager in {"", "cat"} and git_config_routing_environment_is_clean()
+    if os.environ.get("PAGER", "") not in {"", "cat"}:
         return False
     if not git_config_routing_environment_is_clean():
         return False
@@ -432,7 +432,7 @@ def _git_log_has_execution_free_config(
             continue
         if result.returncode != 0:
             return False
-        values = [value.strip() for value in result.stdout.split("\0") if value.strip()]
+        values = [value for value in result.stdout.split("\0") if value]
         if any(value != "cat" for value in values):
             return False
     return True

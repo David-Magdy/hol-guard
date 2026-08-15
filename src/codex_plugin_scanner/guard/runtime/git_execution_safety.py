@@ -188,10 +188,10 @@ def git_status_has_execution_free_config(
         return False
     git_pager = os.environ.get("GIT_PAGER")
     if git_pager is not None:
-        if git_pager.strip() not in {"", "cat"}:
+        if git_pager not in {"", "cat"}:
             return False
     else:
-        if os.environ.get("PAGER", "").strip() not in {"", "cat"}:
+        if os.environ.get("PAGER", "") not in {"", "cat"}:
             return False
         for key in ("core.pager", "pager.status"):
             try:
@@ -209,7 +209,7 @@ def git_status_has_execution_free_config(
                 continue
             if result.returncode != 0:
                 return False
-            values = [value.strip() for value in result.stdout.split("\0") if value.strip()]
+            values = [value for value in result.stdout.split("\0") if value]
             if any(value != "cat" for value in values):
                 return False
     try:
