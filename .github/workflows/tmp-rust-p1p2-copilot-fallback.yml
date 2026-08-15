@@ -1,0 +1,111 @@
+name: Rust P1 P2 Copilot fallback
+
+on:
+  push:
+    branches:
+      - tmp/rust-p1p2-shepherd-20260814
+    paths:
+      - .github/workflows/tmp-rust-p1p2-copilot-fallback.yml
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  fallback:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      ISSUE_TITLE: Complete Rust P1/P2 migration end to end
+      BASE_BRANCH: release/3.0
+    steps:
+      - name: Ensure autonomous implementation issue exists
+        id: issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          number="$(gh issue list --repo "$REPO" --state open --search "in:title \"$ISSUE_TITLE\"" --json number,title --jq '.[] | select(.title == env.ISSUE_TITLE) | .number' | head -1)"
+          if [[ -z "$number" ]]; then
+            cat > /tmp/body.md <<'EOF'
+          Complete every remaining P0 prerequisite and all P1/P2 items in the canonical HOL Guard Rust runtime migration on `release/3.0`, end to end. Reuse valid existing branches and PRs, but verify actual code rather than prior claims. Implement production Rust/Python bindings, PreToolUse/runtime hot paths, tests, benchmarks, mutation/chaos/corpus/soak gates, packaging, cross-platform native wheels, privacy-safe telemetry, ownership, rollout and rollback. Preserve fail-closed deterministic bounded behavior and do not touch `main`. Complete the PR review/CI/merge/publication/install/cleanup flow, not merely a plan.
+          EOF
+            url="$(gh issue create --repo "$REPO" --title "$ISSUE_TITLE" --body-file /tmp/body.md)"
+            number="${url##*/}"
+          fi
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          gh issue edit "$number" --repo "$REPO" --add-assignee 'copilot-swe-agent[bot]' || \
+            gh issue edit "$number" --repo "$REPO" --add-assignee 'copilot' || true
+
+      - name: Find and review the implementation pull request
+        id: pr
+        shell: bash
+        env:
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 900); do
+            number="$(gh pr list --repo "$REPO" --state open --base "$BASE_BRANCH" --search 'Rust P1 P2 OR Rust P1/P2 OR rust-p1-p2 in:title,body' --json number,title,isDraft --jq '[.[] | select(.isDraft == false)][0].number // empty')"
+            if [[ -n "$number" ]]; then
+              echo "number=$number" >> "$GITHUB_OUTPUT"
+              gh pr comment "$number" --repo "$REPO" --body $'Complete every canonical P0/P1/P2 implementation and validation item before merge.\n\n@coderabbitai review\n@greptileai review' || true
+              exit 0
+            fi
+            sleep 20
+          done
+          echo 'No implementation pull request appeared.' >&2
+          exit 1
+
+      - name: Wait for exact-head gates and merge
+        shell: bash
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          previous=''
+          stable=0
+          for attempt in $(seq 1 900); do
+            data="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,latestReviews)"
+            [[ "$(jq -r '.state' <<<"$data")" == OPEN ]] || exit 1
+            [[ "$(jq -r '.baseRefName' <<<"$data")" == "$BASE_BRANCH" ]] || exit 1
+            head="$(jq -r '.headRefOid' <<<"$data")"
+            if [[ "$head" != "$previous" ]]; then
+              previous="$head"
+              stable=0
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body $'New exact head detected.\n\n@coderabbitai review\n@greptileai review' || true
+            fi
+            unresolved="$(gh api graphql -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F number="$PR_NUMBER" -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')"
+            failed="$(jq '[.statusCheckRollup[]? | select((.__typename == "CheckRun" and .status == "COMPLETED" and (.conclusion == "FAILURE" or .conclusion == "TIMED_OUT" or .conclusion == "CANCELLED" or .conclusion == "ACTION_REQUIRED" or .conclusion == "STARTUP_FAILURE")) or (.__typename == "StatusContext" and .state == "FAILURE"))] | length' <<<"$data")"
+            pending="$(jq '[.statusCheckRollup[]? | select((.__typename == "CheckRun" and (.status != "COMPLETED" or .conclusion == null)) or (.__typename == "StatusContext" and .state != "SUCCESS"))] | length' <<<"$data")"
+            total="$(jq '.statusCheckRollup | length' <<<"$data")"
+            approvals="$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$data")"
+            if (( failed > 0 )); then
+              gh issue comment "${{ steps.issue.outputs.number }}" --repo "$REPO" --body "PR #$PR_NUMBER has failed checks on $head. Continue fixing it; do not stop at a report."
+              exit 1
+            fi
+            if [[ "$(jq -r '.reviewDecision // ""' <<<"$data")" == CHANGES_REQUESTED ]]; then
+              gh issue comment "${{ steps.issue.outputs.number }}" --repo "$REPO" --body "PR #$PR_NUMBER has requested changes. Address every review comment and push a corrected head."
+              exit 1
+            fi
+            if (( total > 0 && pending == 0 && unresolved == 0 && approvals > 0 )) \
+              && [[ "$(jq -r '.mergeable' <<<"$data")" == MERGEABLE ]] \
+              && [[ "$(jq -r '.mergeStateStatus' <<<"$data")" != BEHIND ]] \
+              && [[ "$(jq -r '.mergeStateStatus' <<<"$data")" != DIRTY ]] \
+              && [[ "$(jq -r '.mergeStateStatus' <<<"$data")" != BLOCKED ]]; then
+              stable=$((stable+1))
+            else
+              stable=0
+            fi
+            if (( stable >= 3 )); then
+              current="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')"
+              [[ "$current" == "$head" ]]
+              gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --delete-branch --match-head-commit "$head"
+              exit 0
+            fi
+            sleep 20
+          done
+          exit 1
