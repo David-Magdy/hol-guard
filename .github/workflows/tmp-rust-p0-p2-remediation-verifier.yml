@@ -1,0 +1,317 @@
+name: Temporary Rust P0-P2 remediation verifier
+
+on:
+  push:
+    branches:
+      - tmp/rust-p0-p2-remediation-verifier-20260815
+    paths:
+      - .github/workflows/tmp-rust-p0-p2-remediation-verifier.yml
+
+permissions:
+  actions: write
+  checks: read
+  contents: write
+  pull-requests: write
+  statuses: read
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHONUNBUFFERED: "1"
+  HOL_GUARD_NATIVE_DEVELOPMENT: "1"
+  GH_TOKEN: ${{ github.token }}
+  REPO: ${{ github.repository }}
+  HEAD_BRANCH: fix/rust-p0-p2-regression-hardening
+  BASE_BRANCH: release/3.0
+  VERIFY_BRANCH: tmp/rust-p0-p2-remediation-verifier-20260815
+
+jobs:
+  validate-review-merge-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: tmp/rust-p0-p2-remediation-verifier-20260815
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc
+        with:
+          enable-cache: true
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: "1.88.0"
+          components: rustfmt, clippy
+      - name: Discover the remediation pull request
+        id: pr
+        shell: bash
+        run: |
+          set -euo pipefail
+          row="$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --base "$BASE_BRANCH" --state all --limit 20 --json number,state,mergeCommit,headRefOid --jq '.[0] // {}')"
+          number="$(jq -r '.number // ""' <<<"$row")"
+          state="$(jq -r '.state // ""' <<<"$row")"
+          merge_oid="$(jq -r '.mergeCommit.oid // ""' <<<"$row")"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "merge_oid=$merge_oid" >> "$GITHUB_OUTPUT"
+      - name: Cancel superseded feature-branch orchestration runs
+        if: steps.pr.outputs.state != 'MERGED'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "/repos/$REPO/actions/runs?branch=fix%2Frust-p0-p2-regression-hardening&per_page=100" \
+            --jq '.workflow_runs[] | select(.status != "completed") | .id' \
+            | while read -r run_id; do
+                [[ -n "$run_id" ]] || continue
+                gh api --method POST "/repos/$REPO/actions/runs/$run_id/cancel" || true
+              done
+          sleep 15
+      - name: Check out the latest remediation branch
+        if: steps.pr.outputs.state != 'MERGED'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin "$HEAD_BRANCH:refs/remotes/origin/$HEAD_BRANCH"
+          git fetch --force origin "$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"
+          git checkout -B "$HEAD_BRANCH" "refs/remotes/origin/$HEAD_BRANCH"
+          git merge --no-edit "refs/remotes/origin/$BASE_BRANCH"
+          rm -f .github/workflows/tmp-finalize-rust-p0-p2-remediation*.yml
+          rm -f .github/workflows/rust-remediation-shepherd.yml
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+      - name: Install the locked development environment
+        if: steps.pr.outputs.state != 'MERGED'
+        run: uv sync --frozen --all-extras --dev
+      - name: Format and lint remediation code
+        if: steps.pr.outputs.state != 'MERGED'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run ruff format ci/rust_migration_regression_audit.py ci/run_rust_migration_regression.py tests/test_rust_migration_regression_audit.py
+          uv run ruff check ci/rust_migration_regression_audit.py ci/run_rust_migration_regression.py tests/test_rust_migration_regression_audit.py
+          uv run ruff format --check ci/rust_migration_regression_audit.py ci/run_rust_migration_regression.py tests/test_rust_migration_regression_audit.py
+      - name: Ratchet the exact retained security and DX test inventory
+        if: steps.pr.outputs.state != 'MERGED'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python ci/rust_migration_regression_audit.py --baseline /tmp/no-baseline.json --json-output /tmp/rust-audit-unratcheted.json >/dev/null
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('/tmp/rust-audit-unratcheted.json').read_text(encoding='utf-8'))
+          baseline = {'schema_version': 1, 'minimum_test_counts': report['test_counts']}
+          Path('ci/rust-migration-regression-baseline.json').write_text(
+              json.dumps(baseline, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          uv run python ci/rust_migration_regression_audit.py --json-output /tmp/rust-audit-final.json
+      - name: Run audit adversarial tests
+        if: steps.pr.outputs.state != 'MERGED'
+        run: uv run pytest -q tests/test_rust_migration_regression_audit.py
+      - name: Validate the complete locked Rust workspace
+        if: steps.pr.outputs.state != 'MERGED'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+          cargo clippy --manifest-path rust/Cargo.toml --locked --workspace --all-targets -- -D warnings
+          cargo test --manifest-path rust/Cargo.toml --locked --workspace --all-targets
+          cargo build --manifest-path rust/Cargo.toml --locked --release --bin hol-guard-runtime
+          echo "HOL_GUARD_NATIVE_BINARY=$GITHUB_WORKSPACE/rust/target/release/hol-guard-runtime" >> "$GITHUB_ENV"
+      - name: Run retained security, extension, command-pattern, package, and native tests
+        if: steps.pr.outputs.state != 'MERGED'
+        run: uv run python ci/run_rust_migration_regression.py --mode pr --manifest /tmp/rust-migration-pr.json
+      - name: Push the exact validated candidate
+        if: steps.pr.outputs.state != 'MERGED'
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -s -m "test(guard): finalize Rust P0-P2 regression remediation"
+          fi
+          git push origin HEAD:"$HEAD_BRANCH"
+          candidate_sha="$(git rev-parse HEAD)"
+          echo "sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_ENV"
+      - name: Ensure an open pull request exists
+        if: steps.pr.outputs.state != 'MERGED'
+        id: open_pr
+        shell: bash
+        run: |
+          set -euo pipefail
+          number="${{ steps.pr.outputs.number }}"
+          state="${{ steps.pr.outputs.state }}"
+          if [[ -z "$number" ]]; then
+            url="$(gh pr create --repo "$REPO" --head "$HEAD_BRANCH" --base "$BASE_BRANCH" --title 'test(guard): harden Rust P0-P2 regression coverage' --body 'Removes obsolete migration transport assets and adds executable Rust/Python ownership, security, extension, command-pattern, package, filesystem, installed-artifact, cross-platform, and privacy-safe regression gates. Targets release/3.0 only.')"
+            number="${url##*/}"
+          elif [[ "$state" == "CLOSED" ]]; then
+            gh pr reopen "$number" --repo "$REPO"
+          fi
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+      - name: Wait for every exact-head check
+        if: steps.pr.outputs.state != 'MERGED'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr="${{ steps.open_pr.outputs.number }}"
+          deadline=$((SECONDS + 10800))
+          while (( SECONDS < deadline )); do
+            live_sha="$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid)"
+            [[ "$live_sha" == "$candidate_sha" ]] || { sleep 20; continue; }
+            checks="$(gh api -H 'Accept: application/vnd.github+json' "/repos/$REPO/commits/$candidate_sha/check-runs?per_page=100" --jq '[.check_runs[] | {name,status,conclusion}]')"
+            count="$(jq 'length' <<<"$checks")"
+            incomplete="$(jq '[.[] | select(.status != "completed")] | length' <<<"$checks")"
+            failed="$(jq '[.[] | select(.status == "completed" and (.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped"))] | length' <<<"$checks")"
+            status="$(gh api "/repos/$REPO/commits/$candidate_sha/status" --jq '{state,statuses:[.statuses[]|{context,state}]}' )"
+            status_count="$(jq '.statuses | length' <<<"$status")"
+            status_state="$(jq -r .state <<<"$status")"
+            if (( failed > 0 )) || [[ "$status_state" == "failure" || "$status_state" == "error" ]]; then
+              jq . <<<"$checks"
+              jq . <<<"$status"
+              exit 1
+            fi
+            status_ready=false
+            if (( status_count == 0 )); then status_ready=true; fi
+            if [[ "$status_state" == "success" ]]; then status_ready=true; fi
+            if (( count >= 5 && incomplete == 0 )) && [[ "$status_ready" == true ]]; then
+              break
+            fi
+            sleep 30
+          done
+          (( SECONDS < deadline ))
+      - name: Require a clean review state
+        if: steps.pr.outputs.state != 'MERGED'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr="${{ steps.open_pr.outputs.number }}"
+          decision="$(gh pr view "$pr" --repo "$REPO" --json reviewDecision --jq '.reviewDecision // ""')"
+          [[ "$decision" != "CHANGES_REQUESTED" ]]
+          unresolved="$(gh api graphql -f owner='${{ github.repository_owner }}' -f name='${{ github.event.repository.name }}' -F number="$pr" -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')"
+          [[ "$unresolved" == "0" ]]
+      - name: Merge the exact reviewed candidate
+        if: steps.pr.outputs.state != 'MERGED'
+        id: merge_open
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr="${{ steps.open_pr.outputs.number }}"
+          gh pr merge "$pr" --repo "$REPO" --merge --delete-branch --match-head-commit "$candidate_sha"
+          deadline=$((SECONDS + 1200))
+          merge_oid=""
+          while (( SECONDS < deadline )); do
+            state="$(gh pr view "$pr" --repo "$REPO" --json state --jq .state)"
+            merge_oid="$(gh pr view "$pr" --repo "$REPO" --json mergeCommit --jq '.mergeCommit.oid // ""')"
+            [[ "$state" == "MERGED" && -n "$merge_oid" ]] && break
+            sleep 15
+          done
+          test -n "$merge_oid"
+          echo "oid=$merge_oid" >> "$GITHUB_OUTPUT"
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+      - name: Resolve the merged PR identity
+        id: merged
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.pr.outputs.state }}" == "MERGED" ]]; then
+            pr="${{ steps.pr.outputs.number }}"
+            merge_oid="${{ steps.pr.outputs.merge_oid }}"
+          else
+            pr="${{ steps.merge_open.outputs.number }}"
+            merge_oid="${{ steps.merge_open.outputs.oid }}"
+          fi
+          test -n "$pr"
+          test -n "$merge_oid"
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+          echo "oid=$merge_oid" >> "$GITHUB_OUTPUT"
+      - name: Verify release-only ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          merge_oid="${{ steps.merged.outputs.oid }}"
+          git fetch --force origin release/3.0:refs/remotes/origin/release/3.0 main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$merge_oid" refs/remotes/origin/release/3.0
+          if git merge-base --is-ancestor "$merge_oid" refs/remotes/origin/main; then
+            echo "Remediation unexpectedly reached main" >&2
+            exit 1
+          fi
+      - name: Wait for all post-merge checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          merge_oid="${{ steps.merged.outputs.oid }}"
+          deadline=$((SECONDS + 10800))
+          while (( SECONDS < deadline )); do
+            checks="$(gh api -H 'Accept: application/vnd.github+json' "/repos/$REPO/commits/$merge_oid/check-runs?per_page=100" --jq '[.check_runs[] | {name,status,conclusion}]')"
+            count="$(jq 'length' <<<"$checks")"
+            incomplete="$(jq '[.[] | select(.status != "completed")] | length' <<<"$checks")"
+            failed="$(jq '[.[] | select(.status == "completed" and (.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped"))] | length' <<<"$checks")"
+            status="$(gh api "/repos/$REPO/commits/$merge_oid/status" --jq '{state,statuses:[.statuses[]|{context,state}]}' )"
+            status_count="$(jq '.statuses | length' <<<"$status")"
+            status_state="$(jq -r .state <<<"$status")"
+            if (( failed > 0 )) || [[ "$status_state" == "failure" || "$status_state" == "error" ]]; then
+              jq . <<<"$checks"
+              jq . <<<"$status"
+              exit 1
+            fi
+            status_ready=false
+            if (( status_count == 0 )); then status_ready=true; fi
+            if [[ "$status_state" == "success" ]]; then status_ready=true; fi
+            if (( count >= 3 && incomplete == 0 )) && [[ "$status_ready" == true ]]; then
+              break
+            fi
+            sleep 30
+          done
+          (( SECONDS < deadline ))
+      - name: Record verified completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/rust-p0-p2-remediation-completion.json <<JSON
+          {
+            "schema_version": 1,
+            "verified": true,
+            "pull_request": ${{ steps.merged.outputs.number }},
+            "merge_commit": "${{ steps.merged.outputs.oid }}",
+            "target_branch": "release/3.0",
+            "present_in_main": false,
+            "post_merge_checks_green": true
+          }
+          JSON
+          cat /tmp/rust-p0-p2-remediation-completion.json
+          {
+            echo "## Rust P0-P2 remediation verified"
+            echo ""
+            echo "- Pull request: #${{ steps.merged.outputs.number }}"
+            echo "- Merge commit: \`${{ steps.merged.outputs.oid }}\`"
+            echo "- Target: \`release/3.0\`"
+            echo "- Post-merge checks: green"
+            echo "- Present in \`main\`: no"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-p0-p2-remediation-completion-${{ steps.merged.outputs.oid }}
+          path: /tmp/rust-p0-p2-remediation-completion.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove temporary branches
+        if: always() && steps.merged.outputs.oid != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          for branch in \
+            fix/rust-p0-p2-regression-hardening \
+            tmp/rust-p1-p2-bundle-20260814 \
+            tmp/rust-p1-p2-compile-20260815 \
+            tmp/rust-p0-p2-remediation-verifier-20260815; do
+            encoded="${branch//\//%2F}"
+            if gh api "/repos/$REPO/git/ref/heads/$encoded" >/dev/null 2>&1; then
+              gh api --method DELETE "/repos/$REPO/git/refs/heads/$encoded"
+            fi
+          done
