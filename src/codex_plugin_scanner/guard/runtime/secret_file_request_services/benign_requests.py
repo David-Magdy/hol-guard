@@ -33,6 +33,7 @@ from .git_routines import (
     _looks_like_safe_git_status_command,
     _looks_like_safe_standalone_git_routine,
 )
+from .github_pr_ephemeral_body import gh_pr_create_uses_safe_ephemeral_body
 from .github_shell_capabilities import (
     _ShellTokenWithQuoteContext,
     classify_github_shell_capabilities,
@@ -98,6 +99,9 @@ def is_explicitly_benign_tool_action_request(
         if not stripped_command:
             continue
         if is_nonexecuting_github_actions_read_workflow(stripped_command, cwd=cwd):
+            found_benign_candidate = True
+            continue
+        if gh_pr_create_uses_safe_ephemeral_body(stripped_command):
             found_benign_candidate = True
             continue
         github_assessment = classify_github_shell_capabilities(stripped_command, home_dir=home_dir)
