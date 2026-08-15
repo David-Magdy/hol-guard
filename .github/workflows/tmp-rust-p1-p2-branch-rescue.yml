@@ -1,0 +1,39 @@
+name: Rescue unsubmitted Rust P1 and P2 branches
+
+on:
+  push:
+    branches:
+      - automation/rust-p1-p2-end-to-end
+    paths:
+      - .github/workflows/tmp-rust-p1-p2-branch-rescue.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+jobs:
+  rescue:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE: release/3.0
+    steps:
+      - name: Recover implementation branches without pull requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 300
+          for branch in feat/rust-p1-p2-autonomous feat/rust-p1-p2-codex feat/rust-p1-p2 feat/rust-runtime-p1-p2; do
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/${branch//\//%2F}" --jq '.object.sha' 2>/dev/null || true)
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || continue
+            comparison=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BASE...$branch")
+            ahead=$(jq -r '.ahead_by' <<<"$comparison")
+            (( ahead > 0 )) || continue
+            existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --head "$branch" --json number --jq '.[0].number // empty')
+            [[ -z "$existing" ]] || continue
+            issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,title | jq -r '.[] | select(.title == "Complete all Rust migration P1 and P2 work on release/3.0") | .number' | head -n1)
+            gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE" --head "$branch" --title 'feat(guard): complete Rust runtime P1 and P2 migration' --body "Completes the canonical Rust/runtime P1 and P2 program against release/3.0. Closes #${issue}. This PR must never target main. All implementation, review, CI, cross-platform, installed-wheel, security, performance, fuzz, chaos, soak, packaging, publication, and independent verification gates must pass before merge."
+          done
