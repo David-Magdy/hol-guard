@@ -20,26 +20,76 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           persist-credentials: false
-      - name: Decode payloads without executing them
+      - name: Decode and salvage payloads without executing them
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
           mkdir -p decoded
 
-          : > decoded/scanner-reliability-payload.xz
-          for payload_part in .scanner-reliability-payload/xz-*.b64; do
-            tr -d '\r\n\t ' < "$payload_part" \
-              | base64 --decode >> decoded/scanner-reliability-payload.xz
-          done
-          xz --decompress --stdout decoded/scanner-reliability-payload.xz \
-            > decoded/scanner-reliability-payload.raw
+          python3 - <<'PY'
+          import base64
+          from pathlib import Path
 
-          tr -d '\r\n\t ' < .scanner-reliability-payload/part-00.b64 \
-            | base64 --decode > decoded/scanner-reliability-part-00.gz
-          gzip --decompress --stdout decoded/scanner-reliability-part-00.gz \
-            > decoded/scanner-reliability-part-00.raw
+          root = Path('.scanner-reliability-payload')
+          parts = sorted(root.glob('xz-*.b64'))
+          encoded = [''.join(path.read_text(encoding='ascii').split()) for path in parts]
+
+          diagnostics = []
+          diagnostics.append(f'xz_parts={len(parts)}')
+          diagnostics.append('xz_part_sizes=' + ','.join(str(path.stat().st_size) for path in parts))
+          diagnostics.append('xz_encoded_lengths=' + ','.join(str(len(item)) for item in encoded))
+
+          try:
+              joined = base64.b64decode(''.join(encoded), validate=True)
+              Path('decoded/xz-joined-encoding.bin').write_bytes(joined)
+              diagnostics.append(f'xz_joined_encoding_bytes={len(joined)}')
+          except Exception as exc:
+              diagnostics.append(f'xz_joined_encoding_error={exc!r}')
+
+          individually = bytearray()
+          for index, item in enumerate(encoded):
+              try:
+                  chunk = base64.b64decode(item, validate=True)
+              except Exception as exc:
+                  diagnostics.append(f'xz_part_{index}_error={exc!r}')
+                  continue
+              diagnostics.append(f'xz_part_{index}_decoded_bytes={len(chunk)}')
+              individually.extend(chunk)
+          Path('decoded/xz-individual-encoding.bin').write_bytes(individually)
+          diagnostics.append(f'xz_individual_encoding_bytes={len(individually)}')
+
+          part_text = ''.join((root / 'part-00.b64').read_text(encoding='ascii').split())
+          try:
+              gzip_bytes = base64.b64decode(part_text, validate=True)
+              Path('decoded/part-00.bin').write_bytes(gzip_bytes)
+              diagnostics.append(f'part_00_decoded_bytes={len(gzip_bytes)}')
+          except Exception as exc:
+              diagnostics.append(f'part_00_error={exc!r}')
+
+          Path('decoded/decode-diagnostics.txt').write_text('\n'.join(diagnostics) + '\n', encoding='utf-8')
+          PY
+
+          for candidate in decoded/xz-*-encoding.bin; do
+            output="${candidate%.bin}.partial.raw"
+            set +e
+            xz --decompress --stdout "$candidate" > "$output" 2> "${output}.stderr"
+            status=$?
+            set -e
+            printf '%s\n' "$status" > "${output}.exit-code"
+          done
+
+          set +e
+          gzip --decompress --stdout decoded/part-00.bin \
+            > decoded/part-00.partial.raw \
+            2> decoded/part-00.partial.raw.stderr
+          gzip_status=$?
+          set -e
+          printf '%s\n' "$gzip_status" > decoded/part-00.partial.raw.exit-code
 
           {
+            echo '## Decode diagnostics'
+            cat decoded/decode-diagnostics.txt
+            echo
             echo '## Files'
             ls -lah decoded
             echo
@@ -55,16 +105,16 @@ jobs:
               head -c 128 "$path" | od -An -tx1 -v
             done
             echo
-            echo '## First 80 text lines when printable'
+            echo '## First 240 text lines when printable'
             for path in decoded/*.raw; do
               echo "### $path"
-              LC_ALL=C sed -n '1,80p' "$path" || true
+              LC_ALL=C sed -n '1,240p' "$path" || true
             done
             echo
             echo '## Archive listings when recognized'
             for path in decoded/*.raw; do
               echo "### $path"
-              tar --list --file "$path" 2>&1 | sed -n '1,400p' || true
+              tar --list --file "$path" 2>&1 | sed -n '1,800p' || true
             done
           } > decoded/inspection.txt
 
