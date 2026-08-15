@@ -46,13 +46,6 @@ export function ProtectionDensityControl(props: {
   </div>;
 }
 
-const HERO_TONE: Record<ProtectionStatusView["tone"], string> = {
-  safe: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-safe`,
-  attention: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`,
-  danger: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`,
-  neutral: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-neutral`,
-};
-
 export function ProtectionStatusHero(props: {
   status: ProtectionStatusView;
   busy?: boolean;
@@ -60,29 +53,25 @@ export function ProtectionStatusHero(props: {
   children?: React.ReactNode;
 }) {
   const safe = props.status.tone === "safe";
-  return <section aria-labelledby="protection-status-heading" className={HERO_TONE[props.status.tone]}>
-    <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-      <div className="min-w-0">
-        <div className="flex items-center gap-3">
-          <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-white/80" aria-hidden="true">
-            {safe ? <HiMiniShieldCheck className="size-6" /> : <HiMiniExclamationTriangle className="size-6" />}
-          </span>
-          <div>
-            <p className={EXTENSION_KICKER_CLASS}>Local protection</p>
-            <h2 id="protection-status-heading" className="mt-1 text-2xl font-semibold tracking-tight">{props.status.title}</h2>
-          </div>
-        </div>
-        <p className="mt-4 max-w-2xl text-sm leading-6">{props.status.summary}</p>
+  return <section aria-labelledby="protection-status-heading" className="guard-status-bar">
+    <span className="guard-status-bar-icon" data-tone={safe ? "safe" : "alert"} aria-hidden="true">
+      {safe ? <HiMiniShieldCheck className="size-4" /> : <HiMiniExclamationTriangle className="size-4" />}
+    </span>
+    <div className="min-w-0 flex-1">
+      <p className={EXTENSION_KICKER_CLASS}>Local protection</p>
+      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2">
+        <h2 id="protection-status-heading" className="text-sm font-semibold text-brand-dark">{props.status.title}</h2>
+        <p className="text-sm leading-5 text-brand-dark/70">{props.status.summary}</p>
       </div>
-      {props.status.primaryActionLabel && props.onPrimaryAction ? <button
-        type="button"
-        aria-busy={props.busy}
-        disabled={props.busy}
-        onClick={props.onPrimaryAction}
-        className="min-h-11 shrink-0 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:cursor-wait disabled:opacity-60"
-      >{props.busy ? "Working…" : props.status.primaryActionLabel}</button> : <span className="inline-flex min-h-10 items-center gap-2 self-start rounded-full border border-current/15 bg-white/70 px-3 text-xs font-semibold"><HiMiniCheckCircle className="size-4" />No action required</span>}
     </div>
-    {props.children ? <div className="mt-5 border-t border-current/10 pt-4">{props.children}</div> : null}
+    {props.status.primaryActionLabel && props.onPrimaryAction ? <button
+      type="button"
+      aria-busy={props.busy}
+      disabled={props.busy}
+      onClick={props.onPrimaryAction}
+      className="min-h-11 shrink-0 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:cursor-wait disabled:opacity-60"
+    >{props.busy ? "Working…" : props.status.primaryActionLabel}</button> : <span className="inline-flex min-h-9 shrink-0 items-center gap-1.5 self-center rounded-full border border-emerald-200 bg-[#e8f7ee] px-3 text-xs font-semibold text-emerald-800"><HiMiniCheckCircle className="size-3.5" />No action required</span>}
+    {props.children ? <div className="w-full border-t border-[rgba(63,65,116,0.08)] pt-2">{props.children}</div> : null}
   </section>;
 }
 
