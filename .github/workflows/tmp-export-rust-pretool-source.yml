@@ -1,0 +1,39 @@
+name: Temporary PreToolUse remediation source export
+
+on:
+  push:
+    branches:
+      - fix/rust-pretool-authority-20260815
+    paths:
+      - .github/workflows/tmp-export-rust-pretool-source.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/rust-pretool-authority-20260815
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Archive exact source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git --exclude=.venv --exclude=.uv-cache --exclude=source.tar.gz -czf "$RUNNER_TEMP/source.tar.gz" .
+          sha256sum "$RUNNER_TEMP/source.tar.gz" > "$RUNNER_TEMP/source.tar.gz.sha256"
+          git rev-parse HEAD > "$RUNNER_TEMP/source-head.txt"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: rust-pretool-source-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/source.tar.gz
+            ${{ runner.temp }}/source.tar.gz.sha256
+            ${{ runner.temp }}/source-head.txt
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
