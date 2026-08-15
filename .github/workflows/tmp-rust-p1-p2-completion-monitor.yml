@@ -1,0 +1,191 @@
+name: Rust P1 and P2 completion monitor
+
+on:
+  push:
+    branches:
+      - automation/rust-p1-p2-end-to-end
+    paths:
+      - .github/workflows/tmp-rust-p1-p2-completion-monitor.yml
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: rust-p1-p2-completion-monitor
+  cancel-in-progress: true
+
+jobs:
+  complete:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: Complete all Rust migration P1 and P2 work on release/3.0
+      BASE: release/3.0
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: automation/rust-p1-p2-end-to-end
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Recover issue and keep the coding agent engaged
+        id: issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --json number,title --jq '.[] | select(.title == env.TITLE) | .number' | head -n1)
+          if [[ -z "$issue" ]]; then
+            cat > "$RUNNER_TEMP/body.md" <<'EOF'
+          Complete every P1 and P2 item in the canonical Rust/runtime migration PRD, TODO, inventory, and ownership documents end to end against the latest `release/3.0`. Inspect the repository first and use those documents as the source of truth. Implement code, contracts, fixtures, observability, packaging, documentation, performance, fuzz, mutation, chaos, soak, cross-platform installed-wheel, supply-chain, SBOM, provenance, security, review, merge, publication, and independent installation gates. Preserve the Python product control plane and the verified bundled Rust authority boundary. Keep resources bounded and local data private. Do not add permissive fallbacks. Update every P1/P2 checkbox truthfully, resolve every review thread and CI failure without weakening gates, merge only into `release/3.0`, never merge to `main`, and continue until the complete final gate passes.
+          EOF
+            issue=$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md" | sed -E 's#.*/##')
+          fi
+          echo "number=$issue" >> "$GITHUB_OUTPUT"
+          for login in 'copilot-swe-agent[bot]' 'copilot-swe-agent' 'copilot'; do
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$issue/assignees" \
+              --input - >/dev/null 2>&1 <<JSON && break || true
+          {"assignees":["$login"]}
+          JSON
+          done
+          gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body '@copilot Work continuously until this entire issue is implemented, validated, reviewed, merged to release/3.0, published where required, and independently verified. Do not stop at analysis, planning, shadow wiring, a draft, or a partial PR.' >/dev/null || true
+
+      - name: Discover and shepherd the implementation PR
+        id: result
+        shell: bash
+        env:
+          ISSUE: ${{ steps.issue.outputs.number }}
+        run: |
+          set -euo pipefail
+          pr=''
+          for attempt in $(seq 1 210); do
+            pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --base "$BASE" --limit 100 \
+              --json number,title,body,author \
+              --jq --arg issue "$ISSUE" 'map(select(
+                ((.body // "") | contains("#" + $issue)) or
+                ((.body // "") | contains("issues/" + $issue)) or
+                ((.title // "") | ascii_downcase | test("p1.*p2|p1 and p2|p1/p2|rust migration")) or
+                ((.author.login // "") | ascii_downcase | contains("copilot"))
+              )) | first | .number // empty')
+            [[ "$pr" =~ ^[0-9]+$ ]] && break
+            if (( attempt % 30 == 0 )); then
+              gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body '@copilot Continue now and create the implementation PR targeting release/3.0. Complete every canonical P1/P2 item and all final gates.' >/dev/null || true
+            fi
+            sleep 60
+          done
+          [[ "$pr" =~ ^[0-9]+$ ]]
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body '@coderabbitai review' >/dev/null || true
+          gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body '@greptileai review' >/dev/null || true
+
+          last_sha=''
+          clean_rounds=0
+          for attempt in $(seq 1 240); do
+            state=$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefOid,baseRefName,statusCheckRollup)
+            [[ $(jq -r .state <<<"$state") == OPEN ]]
+            [[ $(jq -r .baseRefName <<<"$state") == "$BASE" ]]
+            sha=$(jq -r .headRefOid <<<"$state")
+            merge_state=$(jq -r .mergeStateStatus <<<"$state")
+            draft=$(jq -r .isDraft <<<"$state")
+            review=$(jq -r '.reviewDecision // ""' <<<"$state")
+            unresolved=$(gh api graphql -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}' \
+              -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -F number="$pr" \
+              --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' 2>/dev/null || echo 0)
+            failed=$(jq '[.statusCheckRollup[]? | select((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))] | length' <<<"$state")
+            active=$(jq '[.statusCheckRollup[]? | select((.status // "") != "COMPLETED")] | length' <<<"$state")
+            checks=$(jq '[.statusCheckRollup[]?] | length' <<<"$state")
+
+            if [[ "$merge_state" == BEHIND ]]; then
+              gh pr update-branch "$pr" --repo "$GITHUB_REPOSITORY" >/dev/null || true
+              sleep 45
+              continue
+            fi
+            if (( failed > 0 || unresolved > 0 )) || [[ "$review" == CHANGES_REQUESTED ]]; then
+              clean_rounds=0
+              if [[ "$sha" != "$last_sha" ]]; then
+                names=$(jq -r '[.statusCheckRollup[]? | select((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE")) | (.name // .context // "unknown")] | join(", ")' <<<"$state")
+                gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body "@copilot Continue. Fix all failed checks (${names:-none}), all review findings, and every unresolved thread without weakening gates. Synchronize with release/3.0, run the complete required validation, push fixes, and keep iterating until fully merge-ready." >/dev/null || true
+                last_sha="$sha"
+              fi
+              sleep 75
+              continue
+            fi
+            if [[ "$draft" == true ]]; then
+              gh pr ready "$pr" --repo "$GITHUB_REPOSITORY" >/dev/null || true
+              sleep 30
+              continue
+            fi
+            if (( checks > 0 && active == 0 && failed == 0 && unresolved == 0 )) && [[ "$merge_state" =~ ^(CLEAN|HAS_HOOKS|UNSTABLE)$ ]] && [[ "$review" != CHANGES_REQUESTED ]]; then
+              clean_rounds=$((clean_rounds + 1))
+              if (( clean_rounds >= 2 )); then
+                validated_sha="$sha"
+                break
+              fi
+            else
+              clean_rounds=0
+            fi
+            sleep 60
+          done
+          [[ "${validated_sha:-}" =~ ^[0-9a-f]{40}$ ]]
+          actual=$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+          test "$actual" = "$validated_sha"
+          gh pr merge "$pr" --repo "$GITHUB_REPOSITORY" --merge --delete-branch
+          merge_sha=$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid // empty')
+          [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "merge_sha=$merge_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Verify exact post-merge workflows
+        id: post
+        shell: bash
+        env:
+          MERGE_SHA: ${{ steps.result.outputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 180); do
+            git fetch origin "$BASE"
+            test "$(git rev-parse "origin/$BASE")" = "$MERGE_SHA"
+            runs=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$MERGE_SHA" --limit 100 --json databaseId,name,status,conclusion,url)
+            failed=$(jq '[.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not))] | length' <<<"$runs")
+            active=$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")
+            count=$(jq 'length' <<<"$runs")
+            (( failed == 0 )) || { jq -r '.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not)) | "\(.name): \(.url)"' <<<"$runs" >&2; exit 1; }
+            if (( count > 0 && active == 0 )); then
+              echo "run_count=$count" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 60
+          done
+          exit 1
+
+      - name: Persist immutable completion evidence
+        shell: bash
+        env:
+          ISSUE: ${{ steps.issue.outputs.number }}
+          PR: ${{ steps.result.outputs.pr }}
+          MERGE_SHA: ${{ steps.result.outputs.merge_sha }}
+          RUN_COUNT: ${{ steps.post.outputs.run_count }}
+        run: |
+          set -euo pipefail
+          git checkout automation/rust-p1-p2-end-to-end
+          mkdir -p .github/completion-evidence
+          jq -n \
+            --arg schema 'hol-guard-rust-p1-p2-completion.v1' \
+            --arg issue "$ISSUE" \
+            --arg pr "$PR" \
+            --arg merge_sha "$MERGE_SHA" \
+            --arg base "$BASE" \
+            --arg run_count "$RUN_COUNT" \
+            --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{schema:$schema,issue:($issue|tonumber),pull_request:($pr|tonumber),merge_sha:$merge_sha,base_branch:$base,post_merge_workflow_count:($run_count|tonumber),completed_at:$completed_at}' \
+            > .github/completion-evidence/rust-p1-p2.json
+          git add .github/completion-evidence/rust-p1-p2.json
+          git config user.name 'Michael Kantor'
+          git config user.email '6068672+kantorcodes@users.noreply.github.com'
+          git commit --signoff -m 'chore: record Rust P1/P2 completion evidence'
+          git push origin HEAD:automation/rust-p1-p2-end-to-end
