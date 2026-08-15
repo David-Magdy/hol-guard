@@ -313,7 +313,7 @@ def _resolve_cursor_pending_approval_requests(
                 continue
             request_ids.append(item_id)
     for request_id in request_ids:
-        with suppress(OSError, sqlite3.Error):
+        with suppress(OSError, sqlite3.Error, ValueError):
             store.resolve_harness_native_approval_request(
                 request_id,
                 reason=reason,
