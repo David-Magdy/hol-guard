@@ -1,4 +1,4 @@
-name: Temporary PreToolUse remediation source export
+name: Temporary PreToolUse remediation payload verification
 
 on:
   push:
@@ -11,58 +11,21 @@ permissions:
   contents: read
 
 jobs:
-  export:
+  verify-payload:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-        with:
-          ref: fix/rust-pretool-authority-20260815
-          fetch-depth: 1
-          persist-credentials: false
-      - name: Archive exact source tree and migration refs
+      - name: Download exact remediation payload
         shell: bash
+        env:
+          FILE_ID: 1aFcfDSbUuqUae2Ud13RS16IbcskijVVE
+          EXPECTED_SHA256: bbba66d85d3f48e6d978f66e5c6e2fa9e520cdbd7c5ebe26464d89ee8adda2da
         run: |
           set -euo pipefail
-          tar --exclude=.git --exclude=.venv --exclude=.uv-cache --exclude=source.tar.gz -czf "$RUNNER_TEMP/source.tar.gz" .
-          sha256sum "$RUNNER_TEMP/source.tar.gz" > "$RUNNER_TEMP/source.tar.gz.sha256"
-          git rev-parse HEAD > "$RUNNER_TEMP/source-head.txt"
-
-          refs=(
-            release/3.0
-            feat/rust-p0-native-core-final-v5
-            feat/rust-safety-kernel-pretool-completion
-            feat/rust-safety-kernel-pretool-completion-v2
-            feat/rust-runtime-supervision-final
-            feat/rust-runtime-supervision-reconciled-v2
-            feat/rust-runtime-supervision-release
-            feat/rust-p1-p2-native-core
-            feat/rust-p1-p2-autonomous
-            automation/rust-p1-p2-end-to-end
-            fix/rust-pretool-native-authority
-          )
-          : > "$RUNNER_TEMP/refs.txt"
-          bundle_args=()
-          for ref in "${refs[@]}"; do
-            safe=${ref//\//-}
-            git fetch --no-tags --force origin "refs/heads/$ref:refs/migration/$safe"
-            sha=$(git rev-parse "refs/migration/$safe")
-            printf '%s %s\n' "$ref" "$sha" | tee -a "$RUNNER_TEMP/refs.txt"
-            bundle_args+=("refs/migration/$safe")
-          done
-          git bundle create "$RUNNER_TEMP/migrations.bundle" "${bundle_args[@]}"
-          git bundle verify "$RUNNER_TEMP/migrations.bundle"
-          sha256sum "$RUNNER_TEMP/migrations.bundle" > "$RUNNER_TEMP/migrations.bundle.sha256"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: rust-pretool-source-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/source.tar.gz
-            ${{ runner.temp }}/source.tar.gz.sha256
-            ${{ runner.temp }}/source-head.txt
-            ${{ runner.temp }}/migrations.bundle
-            ${{ runner.temp }}/migrations.bundle.sha256
-            ${{ runner.temp }}/refs.txt
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
+          payload="$RUNNER_TEMP/rust-pretool-authority.patch.gz"
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download&confirm=t" \
+            --output "$payload"
+          test "$(sha256sum "$payload" | awk '{print $1}')" = "$EXPECTED_SHA256"
+          gzip -t "$payload"
+          wc -c "$payload"
