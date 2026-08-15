@@ -1,0 +1,91 @@
+name: Shepherd valid Rust PreToolUse remediation PR
+
+on:
+  push:
+    branches:
+      - automation/shepherd-rust-pretool-authority-20260815
+    paths:
+      - .github/workflows/tmp-general-shepherd-rust-pretool-authority.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  shepherd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+
+      - name: Find, validate, and merge a complete remediation PR
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 13200))
+          merged=''
+          while (( SECONDS < deadline )); do
+            mapfile -t candidates < <(gh pr list --repo "$GITHUB_REPOSITORY" --base release/3.0 --state open --limit 100 --json number,title,isDraft,headRefName,headRefOid --jq '.[] | select((.title|ascii_downcase|contains("pretool")) or (.title|ascii_downcase|contains("pre tool"))) | select(.title != "chore(rust): inspect historical PreToolUse authority branch") | .number' | sort -nr)
+            for number in "${candidates[@]}"; do
+              meta=$(gh pr view "$number" --repo "$GITHUB_REPOSITORY" --json number,title,isDraft,headRefName,headRefOid,mergeStateStatus,reviewDecision)
+              head=$(jq -r .headRefOid <<<"$meta")
+              branch=$(jq -r .headRefName <<<"$meta")
+              git fetch --force origin "$branch:refs/remotes/origin/candidate-$number" || continue
+              tree="refs/remotes/origin/candidate-$number"
+              if git show "$tree":src/codex_plugin_scanner/guard/daemon/hook_worker.py | grep -q 'fast path only supports PostToolUse'; then
+                continue
+              fi
+              if ! git grep -q -E 'review_pre_tool|pre_tool.*native|native.*pre_tool|PreToolUse.*native|native.*PreToolUse' "$tree" -- rust src/codex_plugin_scanner/guard; then
+                continue
+              fi
+              if ! git diff --name-only origin/release/3.0..."$tree" | grep -q '^rust/'; then
+                continue
+              fi
+              if ! git diff --name-only origin/release/3.0..."$tree" | grep -Eq '^(tests/|ci/native_runtime/)'; then
+                continue
+              fi
+              if git diff --name-only origin/release/3.0..."$tree" | grep -Eq '^\.github/(rust-.*-b64|.*patch|workflows/tmp-)'; then
+                continue
+              fi
+              checks=$(gh pr checks "$number" --repo "$GITHUB_REPOSITORY" --json state,bucket,name,workflow 2>/dev/null || printf '[]')
+              failures=$(jq '[.[] | select((.bucket|ascii_downcase) == "fail" or (.state|ascii_upcase) == "FAILURE" or (.state|ascii_upcase) == "ERROR")] | length' <<<"$checks")
+              pending=$(jq '[.[] | select((.bucket|ascii_downcase) == "pending" or (.state|ascii_upcase) == "PENDING" or (.state|ascii_upcase) == "QUEUED" or (.state|ascii_upcase) == "IN_PROGRESS")] | length' <<<"$checks")
+              count=$(jq 'length' <<<"$checks")
+              (( failures == 0 && pending == 0 && count > 0 )) || continue
+              decision=$(jq -r '.reviewDecision // ""' <<<"$meta")
+              [[ "$decision" != CHANGES_REQUESTED ]] || continue
+              gh pr ready "$number" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || true
+              gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --add-reviewer deep-purple-boots >/dev/null 2>&1 || true
+              gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --merge --auto >/dev/null 2>&1 || gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --merge >/dev/null 2>&1 || continue
+              merged="$number"
+              break 2
+            done
+            sleep 60
+          done
+          [[ -n "$merged" ]] || { echo 'No complete green PreToolUse remediation PR became mergeable' >&2; exit 1; }
+          echo "merged_pr=$merged" >> "$GITHUB_ENV"
+
+      - name: Verify release branch received the correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 1800))
+          while (( SECONDS < deadline )); do
+            git fetch --force origin release/3.0
+            release=$(git rev-parse origin/release/3.0)
+            old=$(git show "$release":src/codex_plugin_scanner/guard/daemon/hook_worker.py | grep -c 'fast path only supports PostToolUse' || true)
+            hits=$(git grep -E 'review_pre_tool|pre_tool.*native|native.*pre_tool|PreToolUse.*native|native.*PreToolUse' "$release" -- rust src/codex_plugin_scanner/guard | wc -l | tr -d ' ')
+            if (( old == 0 && hits > 0 )); then
+              echo "release_sha=$release" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 30
+          done
+          exit 1
