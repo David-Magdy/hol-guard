@@ -5955,7 +5955,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     default_harness=default_harness,
                     reason=(
                         "HOL Guard blocked this action because isolated local review could not complete safely. "
-                        "The agent may continue with a different, lower-risk action. Retry this exact action after local review recovers."
+                        "The agent may continue with a different, lower-risk action. "
+                        "Retry this exact action after local review recovers."
                     ),
                     reason_code=admission.reason_code or "daemon_hook_process_not_ready",
                 )
@@ -5991,7 +5992,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 default_harness=default_harness,
                 reason=(
                     "HOL Guard blocked this action because isolated local review could not complete safely. "
-                    "The agent may continue with a different, lower-risk action. Retry this exact action after local review recovers."
+                    "The agent may continue with a different, lower-risk action. "
+                    "Retry this exact action after local review recovers."
                 ),
                 reason_code=reason_code,
             )
