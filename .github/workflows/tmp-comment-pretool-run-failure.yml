@@ -1,0 +1,55 @@
+name: Relay Rust PreToolUse remediation failures
+
+on:
+  push:
+    branches:
+      - fix/rust-pretool-authority-20260815
+    paths:
+      - .github/workflows/tmp-comment-pretool-run-failure.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  relay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Wait for the current apply run and relay a bounded failure summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          title='Restore verified Rust authority for PreToolUse in 3.x'
+          issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+          [[ -n "$issue" ]] || exit 0
+          deadline=$((SECONDS + 1500))
+          run_id=''
+          while (( SECONDS < deadline )); do
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --branch fix/rust-pretool-authority-20260815 --workflow 'Apply and validate native PreToolUse authority' --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)
+            [[ -n "$run_id" ]] && break
+            sleep 20
+          done
+          [[ -n "$run_id" ]] || exit 0
+          while (( SECONDS < deadline )); do
+            state=$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json status,conclusion)
+            status=$(jq -r .status <<<"$state")
+            conclusion=$(jq -r '.conclusion // ""' <<<"$state")
+            [[ "$status" == completed ]] && break
+            sleep 20
+          done
+          [[ "${conclusion:-}" == failure ]] || exit 0
+          gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --log-failed > "$RUNNER_TEMP/failed.log" 2>&1 || true
+          tail -c 45000 "$RUNNER_TEMP/failed.log" > "$RUNNER_TEMP/failed-tail.log"
+          {
+            echo 'The in-progress reconciliation workflow failed. Use this bounded failed-step output as debugging context, then implement and test the correct fix rather than weakening any gate:'
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/failed-tail.log"
+            echo '```'
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md" >/dev/null
