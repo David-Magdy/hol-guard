@@ -292,19 +292,37 @@ def _resolve_cursor_pending_approval_requests(
     reason: str,
     now: str,
 ) -> None:
-    request_ids = pending.get("approval_request_ids")
-    if not isinstance(request_ids, list):
-        return
+    request_ids: list[str] = []
+    raw_ids = pending.get("approval_request_ids")
+    if isinstance(raw_ids, list):
+        for request_id in raw_ids:
+            if isinstance(request_id, str) and request_id.strip():
+                request_ids.append(request_id.strip())
+    artifact_id = _optional_string(pending.get("artifact_id"))
+    artifact_hash = _optional_string(pending.get("artifact_hash"))
+    if artifact_id is not None:
+        with suppress(OSError, sqlite3.Error):
+            for item in store.list_approval_requests(status="pending", harness="cursor", limit=50):
+                if not isinstance(item, Mapping):
+                    continue
+                item_id = _optional_string(item.get("request_id"))
+                if item_id is None or item_id in request_ids:
+                    continue
+                if _optional_string(item.get("artifact_id")) != artifact_id:
+                    continue
+                stored_hash = _optional_string(item.get("artifact_hash"))
+                if artifact_hash is not None and stored_hash is not None and stored_hash != artifact_hash:
+                    continue
+                request_ids.append(item_id)
     for request_id in request_ids:
-        if not isinstance(request_id, str) or not request_id.strip():
-            continue
-        with suppress(ApprovalGateError, OSError, sqlite3.Error):
-            store.resolve_approval_request(
-                request_id.strip(),
-                resolution_action="allow",
-                resolution_scope="artifact",
+        with suppress(OSError, sqlite3.Error):
+            store.resolve_harness_native_approval_request(
+                request_id,
                 reason=reason,
                 resolved_at=now,
+                expected_harness="cursor",
+                expected_artifact_id=artifact_id,
+                expected_artifact_hash=artifact_hash,
             )
 
 
