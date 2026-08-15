@@ -1,0 +1,45 @@
+name: Delegate unresolved Rust PreToolUse remediation
+
+on:
+  push:
+    branches:
+      - fix/rust-pretool-authority-20260815
+    paths:
+      - .github/workflows/tmp-delegate-rust-pretool-remediation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  delegate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: release/3.0
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Assign coding agent only while the regression remains
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -q 'fast path only supports PostToolUse' src/codex_plugin_scanner/guard/daemon/hook_worker.py; then
+            exit 0
+          fi
+          title='Restore verified Rust authority for PreToolUse in 3.x'
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n1)
+          [[ -n "$number" ]] || exit 1
+          for login in 'copilot-swe-agent[bot]' 'copilot-swe-agent' 'copilot'; do
+            if gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$number/assignees" --input - >/dev/null 2>&1 <<JSON
+          {"assignees":["$login"]}
+          JSON
+            then
+              break
+            fi
+          done
+          gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body '@copilot Start implementation now. Re-read the latest release/3.0, reuse or supersede the in-progress remediation branch based on live source, implement the complete native PreToolUse authority contract, preserve all existing command extensions/patterns/security/DX, run all required tests and review loops, and merge only into release/3.0 after every gate passes. Do not stop after planning or a partial patch.' >/dev/null || true
