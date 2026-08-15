@@ -1,0 +1,134 @@
+name: Repair Rust P1 and P2 review and CI failures
+
+on:
+  push:
+    branches:
+      - automation/rust-p1-p2-end-to-end
+    paths:
+      - .github/workflows/tmp-rust-p1-p2-review-repair.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  models: read
+  pull-requests: write
+
+concurrency:
+  group: rust-p1-p2-review-repair
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OPENAI_API_KEY: ${{ github.token }}
+      OPENAI_API_BASE: https://models.github.ai/inference
+      BASE: release/3.0
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: release/3.0
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Wait for the active P1/P2 implementation PR
+        id: pr
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 120); do
+            prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --base "$BASE" --limit 100 --json number,title,body,author,headRefName,headRefOid)
+            pr=$(jq -r 'map(select(
+              ((.title // "") | ascii_downcase | test("p1|p2|rust migration")) or
+              ((.body // "") | ascii_downcase | test("rust.*(p1|p2)|(p1|p2).*rust")) or
+              ((.author.login // "") | ascii_downcase | contains("copilot"))
+            )) | first | .number // empty' <<<"$prs")
+            if [[ "$pr" =~ ^[0-9]+$ ]]; then
+              echo "number=$pr" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 60
+          done
+          exit 0
+
+      - name: Install autonomous repair client
+        if: steps.pr.outputs.number != ''
+        shell: bash
+        run: python -m pip install --disable-pip-version-check --no-input 'aider-chat>=0.86,<1'
+
+      - name: Repair every failed check and review finding
+        if: steps.pr.outputs.number != ''
+        shell: bash
+        env:
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          owner=${GITHUB_REPOSITORY%/*}
+          repo_name=${GITHUB_REPOSITORY#*/}
+          for wave in 1 2 3 4 5; do
+            info=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state,headRefName,headRefOid,baseRefName,isDraft,reviewDecision,statusCheckRollup)
+            [[ $(jq -r .state <<<"$info") == OPEN ]] || exit 0
+            [[ $(jq -r .baseRefName <<<"$info") == "$BASE" ]]
+            branch=$(jq -r .headRefName <<<"$info")
+            remote_sha=$(jq -r .headRefOid <<<"$info")
+            git fetch --force origin "$BASE:refs/remotes/origin/$BASE" "$branch:refs/remotes/origin/$branch"
+            git checkout -B "$branch" "refs/remotes/origin/$branch"
+
+            for settle in $(seq 1 60); do
+              info=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state,headRefOid,reviewDecision,statusCheckRollup)
+              active=$(jq '[.statusCheckRollup[]? | select((.status // "") != "COMPLETED")] | length' <<<"$info")
+              (( active == 0 )) && break
+              sleep 30
+            done
+
+            info=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json state,headRefOid,reviewDecision,statusCheckRollup)
+            failures=$(jq -r '[.statusCheckRollup[]? | select((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE")) | {name:(.name // .context // "unknown"),url:(.detailsUrl // "")}]' <<<"$info")
+            unresolved=$(gh api graphql -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved,comments(first:20){nodes{author{login}body path line originalLine url}}}}}}}' -F owner="$owner" -F name="$repo_name" -F number="$PR" 2>/dev/null || echo '{}')
+            review_comments=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/comments?per_page=100" 2>/dev/null || echo '[]')
+            issue_comments=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" 2>/dev/null || echo '[]')
+            failed_count=$(jq 'length' <<<"$failures")
+            unresolved_count=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[]? | select(.isResolved == false)] | length' <<<"$unresolved")
+            review_decision=$(jq -r '.reviewDecision // ""' <<<"$info")
+            if (( failed_count == 0 && unresolved_count == 0 )) && [[ "$review_decision" != CHANGES_REQUESTED ]]; then
+              exit 0
+            fi
+
+            : > /tmp/failed-logs.txt
+            while IFS= read -r url; do
+              [[ -n "$url" ]] || continue
+              run_id=$(sed -nE 's#.*actions/runs/([0-9]+).*#\1#p' <<<"$url")
+              if [[ "$run_id" =~ ^[0-9]+$ ]]; then
+                {
+                  echo "===== workflow run $run_id ====="
+                  gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --log-failed 2>&1 | tail -c 80000 || true
+                } >> /tmp/failed-logs.txt
+              fi
+            done < <(jq -r '.[].url' <<<"$failures")
+            jq -n --argjson failures "$failures" --argjson unresolved "$unresolved" --argjson review_comments "$review_comments" --argjson issue_comments "$issue_comments" '{failed_checks:$failures,review_threads:$unresolved,review_comments:$review_comments,issue_comments:$issue_comments}' > /tmp/review-state.json
+            {
+              cat <<'EOF'
+          Repair the active HOL Guard Rust/runtime P1/P2 implementation PR end to end. Inspect the complete repository and canonical P1/P2 documents before editing. Fix the root cause of every failed check, requested change, inline review finding, and unresolved thread shown below. Preserve the verified bundled Rust authority boundary, Python product-control-plane ownership, fail-closed behavior, privacy, explicit resource bounds, cross-platform compatibility, performance SLOs, fuzz/chaos/soak gates, installed-wheel contracts, packaging, SBOM/provenance, and release/3.0-only boundary. Do not delete, skip, xfail, loosen, bypass, or rename away tests or requirements. Do not target main. Run the relevant tests after editing and leave the branch materially closer to a clean exact-head review.
+
+          Review/check state:
+          EOF
+              cat /tmp/review-state.json
+              echo
+              echo 'Failed workflow logs:'
+              cat /tmp/failed-logs.txt
+            } > /tmp/repair-prompt.md
+            aider --model openai/gpt-4.1 --yes-always --auto-commits --dirty-commits --map-tokens 8192 --message "$(cat /tmp/repair-prompt.md)"
+            git reset --soft "refs/remotes/origin/$BASE"
+            git config user.name 'Michael Kantor'
+            git config user.email '6068672+kantorcodes@users.noreply.github.com'
+            git commit --signoff -m 'feat(guard): complete Rust runtime P1 and P2 migration'
+            current_remote=$(git ls-remote --exit-code origin "refs/heads/$branch" | awk '{print $1}')
+            git push --force-with-lease="refs/heads/$branch:$current_remote" origin HEAD:"refs/heads/$branch"
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body '@coderabbitai review' >/dev/null || true
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body '@greptileai review' >/dev/null || true
+            sleep 90
+          done
+          exit 1
