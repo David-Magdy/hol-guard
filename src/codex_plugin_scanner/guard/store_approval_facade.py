@@ -146,7 +146,8 @@ class StoreApprovalsMixin:
                 return False
             if str(request.get("harness") or "") != expected_harness:
                 return False
-            if expected_artifact_id is not None and str(request.get("artifact_id") or "") != expected_artifact_id:
+            request_artifact_id = str(request.get("artifact_id") or "")
+            if expected_artifact_id is not None and request_artifact_id != expected_artifact_id:
                 return False
             if (
                 expected_artifact_hash is not None
