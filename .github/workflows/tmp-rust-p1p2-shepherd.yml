@@ -1,0 +1,145 @@
+name: Shepherd Rust P1 P2 migration
+
+on:
+  push:
+    branches:
+      - tmp/rust-p1p2-shepherd-20260814
+    paths:
+      - .github/workflows/tmp-rust-p1p2-shepherd.yml
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  shepherd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD_BRANCH: feat/rust-p1-p2-native-core
+      BASE_BRANCH: release/3.0
+    steps:
+      - name: Locate pull request and request reviews
+        id: pr
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            number="$(gh pr list --repo "$REPO" --state open --head "$HEAD_BRANCH" --base "$BASE_BRANCH" --json number --jq '.[0].number // empty')"
+            if [[ -n "$number" ]]; then
+              echo "number=$number" >> "$GITHUB_OUTPUT"
+              gh pr comment "$number" --repo "$REPO" --body $'@coderabbitai review\n@greptileai review' || true
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'No open Rust P1/P2 pull request found.' >&2
+          exit 1
+
+      - name: Wait for exact-head reviews and checks
+        shell: bash
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          previous_head=''
+          stable_green=0
+          for attempt in $(seq 1 600); do
+            data="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,latestReviews)"
+            state="$(jq -r '.state' <<<"$data")"
+            head="$(jq -r '.headRefOid' <<<"$data")"
+            base="$(jq -r '.baseRefName' <<<"$data")"
+            mergeable="$(jq -r '.mergeable' <<<"$data")"
+            merge_state="$(jq -r '.mergeStateStatus' <<<"$data")"
+            review_decision="$(jq -r '.reviewDecision // ""' <<<"$data")"
+
+            [[ "$state" == 'OPEN' ]] || { echo "PR is no longer open: $state" >&2; exit 1; }
+            [[ "$base" == "$BASE_BRANCH" ]] || { echo "Unexpected base: $base" >&2; exit 1; }
+
+            if [[ "$head" != "$previous_head" ]]; then
+              previous_head="$head"
+              stable_green=0
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body $'New exact head detected. Re-running full review.\n\n@coderabbitai review\n@greptileai review' || true
+            fi
+
+            unresolved="$(gh api graphql -f owner="${REPO%%/*}" -f name="${REPO##*/}" -F number="$PR_NUMBER" -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length')"
+            failures="$(jq '[.statusCheckRollup[]? | select((.__typename == "CheckRun" and (.conclusion == "FAILURE" or .conclusion == "TIMED_OUT" or .conclusion == "CANCELLED" or .conclusion == "ACTION_REQUIRED" or .conclusion == "STARTUP_FAILURE")) or (.__typename == "StatusContext" and .state == "FAILURE"))] | length' <<<"$data")"
+            pending="$(jq '[.statusCheckRollup[]? | select((.__typename == "CheckRun" and (.status != "COMPLETED" or .conclusion == null)) or (.__typename == "StatusContext" and (.state == "PENDING" or .state == "EXPECTED")))] | length' <<<"$data")"
+            total="$(jq '.statusCheckRollup | length' <<<"$data")"
+            approvals="$(jq '[.latestReviews[]? | select(.state == "APPROVED")] | length' <<<"$data")"
+
+            if (( failures > 0 )); then
+              echo "Exact head $head has $failures failed checks; leaving PR open for remediation." >&2
+              exit 1
+            fi
+            if [[ "$review_decision" == 'CHANGES_REQUESTED' ]]; then
+              echo 'Changes are requested; leaving PR open for remediation.' >&2
+              exit 1
+            fi
+
+            if (( total > 0 && pending == 0 && unresolved == 0 && approvals > 0 )) \
+              && [[ "$mergeable" == 'MERGEABLE' ]] \
+              && [[ "$merge_state" != 'BEHIND' && "$merge_state" != 'DIRTY' && "$merge_state" != 'BLOCKED' ]]; then
+              stable_green=$((stable_green + 1))
+            else
+              stable_green=0
+            fi
+
+            if (( stable_green >= 3 )); then
+              printf '%s\n' "$head" > /tmp/approved-head.txt
+              exit 0
+            fi
+            sleep 15
+          done
+          echo 'Timed out waiting for exact-head checks and review resolution.' >&2
+          exit 1
+
+      - name: Merge only the approved exact head into release/3.0
+        shell: bash
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          approved_head="$(cat /tmp/approved-head.txt)"
+          current_head="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')"
+          [[ "$current_head" == "$approved_head" ]] || { echo 'PR head changed after approval.' >&2; exit 1; }
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --delete-branch --match-head-commit "$approved_head"
+
+      - name: Verify merge and post-merge workflows
+        shell: bash
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          pr="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,mergedAt,mergeCommit)"
+          [[ "$(jq -r '.state' <<<"$pr")" == 'MERGED' ]]
+          merge_sha="$(jq -r '.mergeCommit.oid' <<<"$pr")"
+          [[ -n "$merge_sha" && "$merge_sha" != null ]]
+
+          for attempt in $(seq 1 360); do
+            branch_sha="$(gh api "repos/$REPO/branches/$BASE_BRANCH" --jq '.commit.sha')"
+            if [[ "$branch_sha" != "$merge_sha" ]]; then
+              sleep 10
+              continue
+            fi
+            runs="$(gh run list --repo "$REPO" --commit "$merge_sha" --limit 100 --json databaseId,status,conclusion,name)"
+            failures="$(jq '[.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required" or .conclusion == "startup_failure"))] | length' <<<"$runs")"
+            pending="$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")"
+            total="$(jq 'length' <<<"$runs")"
+            if (( failures > 0 )); then
+              echo "Post-merge commit has $failures failed workflows." >&2
+              gh run list --repo "$REPO" --commit "$merge_sha" --limit 100
+              exit 1
+            fi
+            if (( total > 0 && pending == 0 )); then
+              printf 'Merged and verified %s\n' "$merge_sha"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo 'Timed out waiting for post-merge workflows.' >&2
+          exit 1
