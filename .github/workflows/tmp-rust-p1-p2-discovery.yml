@@ -1,0 +1,49 @@
+name: Inventory canonical Rust P1 and P2 scope
+
+on:
+  push:
+    branches:
+      - automation/rust-p1-p2-end-to-end
+    paths:
+      - .github/workflows/tmp-rust-p1-p2-discovery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: Complete all Rust migration P1 and P2 work on release/3.0
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: release/3.0
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Discover authoritative planning material
+        shell: bash
+        run: |
+          set -euo pipefail
+          issue=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,title \
+            --jq '.[] | select(.title == env.TITLE) | .number' | head -n1)
+          [[ "$issue" =~ ^[0-9]+$ ]]
+          {
+            echo '## Repository-derived P1/P2 scope inventory'
+            echo
+            echo 'The following matches were generated from the current `release/3.0` tree. Inspect the complete files and reconcile duplicates before implementation.'
+            echo
+            echo '```text'
+            git grep -n -I -E '(^|[^[:alnum:]_])(P1|P2)([^[:alnum:]_]|$)|Priority[[:space:]]+[12]|priority:[[:space:]]*[12]' -- \
+              '*.md' '*.json' '*.toml' '*.yml' '*.yaml' '*.py' '*.rs' 2>/dev/null \
+              | grep -vE '^\.github/(rust-|workflows/tmp-)' \
+              | head -n 350 || true
+            echo '```'
+            echo
+            echo 'Also inspect open Rust/runtime migration issues and pull requests, plus every unchecked item in planning documents, before declaring the scope complete.'
+          } > "$RUNNER_TEMP/inventory.md"
+          gh issue comment "$issue" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/inventory.md" >/dev/null
