@@ -44,5 +44,6 @@ jobs:
             docs/ai-plugin-scanner
             .github/workflows/ci.yml
             .github/workflows/security-gates.yml
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
