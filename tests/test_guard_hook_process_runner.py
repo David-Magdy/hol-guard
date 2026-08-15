@@ -464,6 +464,35 @@ def test_non_idempotent_review_does_not_retry_transient_evaluator_not_ready(tmp_
     assert connection.send.call_count == 1
 
 
+def test_failed_send_does_not_mark_request_as_exposed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1, timeout_seconds=1)
+    runner._started = True  # pyright: ignore[reportPrivateUsage]
+    process = MagicMock()
+    process.pid = 4243
+    process.is_alive.return_value = False
+    connection = MagicMock()
+    connection.send.side_effect = BrokenPipeError
+    slot = HookWorkerSlot(process=process, connection=connection)
+    runner._slots.put_nowait(slot)  # pyright: ignore[reportPrivateUsage]
+    runner._ready_slot_ids.add(process.pid)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(runner, "_replace_slot_async", lambda _slot: None)
+
+    result = runner.review(
+        payload={"hook_event_name": "SessionStart"},
+        harness="pi",
+        home_dir=tmp_path,
+        guard_home=tmp_path,
+        workspace=tmp_path,
+        hook_env={},
+    )
+
+    assert result == HookProcessReview(None, "daemon_hook_process_failed")
+    assert not slot.request_exposed
+
+
 def test_idempotent_review_bounds_transient_not_ready_retries(tmp_path: Path) -> None:
     runner, connection = _transient_not_ready_test_runner(
         tmp_path,
@@ -867,6 +896,49 @@ def test_transient_initial_worker_failure_replenishes_capacity(
     assert attempts >= 2
     assert ready_workers == 1
     assert review_payload is not None
+    assert runner.stats()["workers"] == 0
+
+
+def test_pre_isolation_worker_death_replenishes_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1)
+    original_start = runner._start_slot  # pyright: ignore[reportPrivateUsage]
+    attempts = 0
+    recovered_stats: dict[str, object] = {}
+
+    def transient_start(*, generation: int) -> HookWorkerSlot:
+        nonlocal attempts
+        attempts += 1
+        slot = original_start(generation=generation)
+        if attempts == 1:
+            slot.process.kill()
+            slot.process.join(timeout=1)
+        return slot
+
+    monkeypatch.setattr(runner, "_start_slot", transient_start)
+    try:
+        runner.start()
+        assert runner.wait_for_capacity(minimum_workers=1, timeout_seconds=10)
+        result = runner.review(
+            payload={"hook_event_name": "SessionStart"},
+            harness="pi",
+            home_dir=tmp_path,
+            guard_home=tmp_path,
+            workspace=tmp_path,
+            hook_env={},
+        )
+        recovered_stats = dict(runner.stats())
+    finally:
+        runner.close()
+
+    assert attempts >= 2
+    assert result.payload is not None
+    assert recovered_stats["workers"] == 1
+    assert recovered_stats["ready"] == 1
+    assert recovered_stats["failures"] == 1
+    assert recovered_stats["restarts"] == 0
     assert runner.stats()["workers"] == 0
 
 
