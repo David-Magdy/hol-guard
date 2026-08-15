@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .secret_repository_scanner import _run_git
+from .git_subprocess import run_git
 
 _MANAGED_MARKER = "# HOL_GUARD_SECRETS_PRE_COMMIT_V1"
 _BACKUP_NAME = "pre-commit.hol-guard-user"
@@ -23,6 +23,10 @@ if [ -x "$legacy" ]; then
   if [ "$status" -ne 0 ]; then
     exit "$status"
   fi
+fi
+if ! command -v hol-guard >/dev/null 2>&1; then
+  echo "HOL Guard Secrets could not find the hol-guard executable. Reopen the terminal after pipx ensurepath or repair the isolated installation." >&2
+  exit 2
 fi
 exec hol-guard secrets scan --staged --fail-on-findings
 """
@@ -48,7 +52,7 @@ def _git_common_dir(root: Path) -> Path:
     if not resolved.exists() or not resolved.is_dir():
         raise ValueError("hook target must be an existing Git worktree directory")
     try:
-        custom_hooks = _run_git(resolved, ["config", "--get", "core.hooksPath"])
+        custom_hooks = run_git(resolved, ["config", "--get", "core.hooksPath"])
     except (OSError, subprocess.SubprocessError) as error:
         raise ValueError("hook target is not a usable Git worktree") from error
     if custom_hooks.returncode == 0 and custom_hooks.stdout.strip():
@@ -57,25 +61,30 @@ def _git_common_dir(root: Path) -> Path:
             "custom hook directory automatically"
         )
     try:
-        result = _run_git(resolved, ["rev-parse", "--git-common-dir"])
+        result = run_git(resolved, ["rev-parse", "--git-common-dir"])
     except (OSError, subprocess.SubprocessError) as error:
         raise ValueError("hook target is not a usable Git worktree") from error
     if result.returncode != 0:
         raise ValueError("hook target is not a usable Git worktree")
-    raw = result.stdout.decode("utf-8", errors="strict").strip()
+    raw = os.fsdecode(result.stdout).strip()
     if not raw:
         raise ValueError("Git hook directory could not be resolved")
     path = Path(raw)
-    return (path if path.is_absolute() else resolved / path).resolve()
+    common_dir = (path if path.is_absolute() else resolved / path).resolve()
+    if not common_dir.exists() or not common_dir.is_dir():
+        raise ValueError("Git common directory could not be verified")
+    return common_dir
 
 
 def _hook_paths(root: Path) -> tuple[Path, Path, str]:
     hooks_dir = _git_common_dir(root) / "hooks"
+    if hooks_dir.is_symlink():
+        raise ValueError("refusing to modify a symlinked Git hooks directory")
     return hooks_dir / "pre-commit", hooks_dir / _BACKUP_NAME, "git-hooks/pre-commit"
 
 
 def _is_managed_hook(path: Path) -> bool:
-    if not path.is_file():
+    if not path.is_file() or path.is_symlink():
         return False
     try:
         prefix = path.read_text(encoding="utf-8", errors="replace")[:512]
@@ -88,7 +97,6 @@ def install_precommit_hook(root: Path) -> SecretsHookResult:
     """Install the managed hook while preserving any existing user hook."""
 
     hook, backup, display = _hook_paths(root)
-    hook.parent.mkdir(parents=True, exist_ok=True)
     if _is_managed_hook(hook):
         return SecretsHookResult(
             status="already_installed",
@@ -98,10 +106,11 @@ def install_precommit_hook(root: Path) -> SecretsHookResult:
     if hook.exists() and backup.exists():
         raise ValueError("refusing to replace pre-commit hook because the HOL Guard backup path already exists")
 
+    hook.parent.mkdir(parents=True, exist_ok=True)
     moved_existing = False
     temp = hook.with_name(f".{hook.name}.hol-guard-{os.getpid()}.tmp")
     try:
-        if hook.exists():
+        if hook.exists() or hook.is_symlink():
             os.replace(hook, backup)
             moved_existing = True
         temp.write_text(_MANAGED_HOOK, encoding="utf-8", newline="\n")
@@ -141,18 +150,26 @@ def uninstall_precommit_hook(root: Path) -> SecretsHookResult:
             raise ValueError("refusing to overwrite a non-HOL-Guard pre-commit hook while a preserved backup exists")
         return SecretsHookResult(status="not_installed", hook=display, chained_existing=False)
 
+    if not backup.exists():
+        try:
+            hook.unlink()
+        except OSError as error:
+            raise ValueError("could not uninstall HOL Guard Secrets pre-commit hook") from error
+        return SecretsHookResult(status="uninstalled", hook=display, chained_existing=False)
+
+    retired = hook.with_name(f".{hook.name}.hol-guard-retired-{os.getpid()}.tmp")
     try:
-        hook.unlink()
-        restored = backup.exists()
-        if restored:
-            os.replace(backup, hook)
+        os.replace(hook, retired)
+        os.replace(backup, hook)
+        retired.unlink(missing_ok=True)
     except OSError as error:
-        raise ValueError("could not uninstall HOL Guard Secrets pre-commit hook") from error
-    return SecretsHookResult(
-        status="restored" if restored else "uninstalled",
-        hook=display,
-        chained_existing=restored,
-    )
+        try:
+            if retired.exists() and not hook.exists():
+                os.replace(retired, hook)
+        except OSError:
+            pass
+        raise ValueError("could not restore the preserved pre-commit hook") from error
+    return SecretsHookResult(status="restored", hook=display, chained_existing=True)
 
 
 __all__ = [

@@ -20,6 +20,7 @@ from .secret_repository_scanner import (
     scan_repository_secrets,
 )
 from .secret_staged_scanner import scan_staged_secrets
+from .setup_diagnostics import inspect_secrets_setup
 
 
 def _positive_int(value: str) -> int:
@@ -37,7 +38,7 @@ def build_parser(*, program_name: str = "hol-guard-secrets") -> argparse.Argumen
     subparsers = parser.add_subparsers(
         dest="command",
         required=True,
-        metavar="{scan,rules,install-hook,uninstall-hook}",
+        metavar="{scan,rules,doctor,install-hook,uninstall-hook}",
     )
     scan = subparsers.add_parser("scan", help="Scan the working tree, staged index, or bounded Git history")
     scan.add_argument("target", nargs="?", default=".")
@@ -55,6 +56,13 @@ def build_parser(*, program_name: str = "hol-guard-secrets") -> argparse.Argumen
 
     rules = subparsers.add_parser("rules", help="List built-in detector families")
     rules.add_argument("--json", action="store_true")
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Check local dependencies, Git setup, and pre-commit compatibility without changing files",
+    )
+    doctor.add_argument("target", nargs="?", default=".")
+    doctor.add_argument("--json", action="store_true")
 
     install_hook = subparsers.add_parser(
         "install-hook",
@@ -147,6 +155,26 @@ def _run_rules(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_doctor(args: argparse.Namespace) -> int:
+    report = inspect_secrets_setup(Path(args.target))
+    payload = report.to_public_dict()
+    if args.json:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        label = "ready" if report.ready else "needs attention"
+        print(f"HOL Guard Secrets setup: {label}")
+        print(
+            f"Platform: {report.platform} {report.architecture}; "
+            f"Python {report.python_version}"
+        )
+        for check in report.checks:
+            print(f"- {check.status.upper()} {check.summary}")
+            if check.action:
+                print(f"  Next: {check.action}")
+        print("No environment values, absolute paths, repository identity, or secret values were included.")
+    return 0 if report.ready else 2
+
+
 def _run_hook(args: argparse.Namespace, *, install: bool) -> int:
     try:
         result = install_precommit_hook(Path(args.target)) if install else uninstall_precommit_hook(Path(args.target))
@@ -174,6 +202,8 @@ def main(
         return _run_scan(args)
     if args.command == "rules":
         return _run_rules(args)
+    if args.command == "doctor":
+        return _run_doctor(args)
     if args.command == "install-hook":
         return _run_hook(args, install=True)
     if args.command == "uninstall-hook":

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
+from .git_subprocess import run_git
 from .secret_detection import SecretFinding, SecretScanSource
 from .secret_repository_scanner import (
     DEFAULT_MAX_FILE_BYTES,
@@ -13,27 +15,27 @@ from .secret_repository_scanner import (
     DEFAULT_MAX_TOTAL_BYTES,
     RepositorySecretScanResult,
     _bounded_positive,
-    _run_git,
     _scan_blob,
 )
 
 
 def _git_repository_root(root: Path) -> Path | None:
     try:
-        result = _run_git(root, ["rev-parse", "--show-toplevel"])
+        result = run_git(root, ["rev-parse", "--show-toplevel"])
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
         return None
-    raw = result.stdout.decode("utf-8", errors="strict").strip()
+    raw = os.fsdecode(result.stdout).strip()
     if not raw:
         return None
-    return Path(raw).resolve()
+    resolved = Path(raw).resolve()
+    return resolved if resolved.exists() and resolved.is_dir() else None
 
 
 def _git_staged_paths(root: Path) -> list[str] | None:
     try:
-        result = _run_git(
+        result = run_git(
             root,
             ["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z", "--"],
         )
@@ -41,30 +43,34 @@ def _git_staged_paths(root: Path) -> list[str] | None:
         return None
     if result.returncode != 0:
         return None
-    return [item.decode("utf-8", errors="surrogateescape") for item in result.stdout.split(b"\0") if item]
+    return [os.fsdecode(item) for item in result.stdout.split(b"\0") if item]
 
 
-def _git_staged_blob(root: Path, path: str, max_file_bytes: int) -> tuple[bytes | None, bool]:
+def _git_staged_blob(root: Path, path: str, max_file_bytes: int) -> tuple[bytes | None, str | None]:
     spec = f":{path}"
     try:
-        size_result = _run_git(root, ["cat-file", "-s", spec])
+        size_result = run_git(root, ["cat-file", "-s", spec])
     except (OSError, subprocess.SubprocessError):
-        return None, True
+        return None, "git_staged_blob_unavailable"
     if size_result.returncode != 0:
-        return None, True
+        return None, "git_staged_blob_unavailable"
     try:
         size = int(size_result.stdout.strip())
     except ValueError:
-        return None, True
-    if size < 0 or size > max_file_bytes:
-        return None, True
+        return None, "git_staged_blob_unavailable"
+    if size < 0:
+        return None, "git_staged_blob_unavailable"
+    if size > max_file_bytes:
+        return None, "max_file_bytes"
     try:
-        blob_result = _run_git(root, ["cat-file", "blob", spec])
+        blob_result = run_git(root, ["cat-file", "blob", spec])
     except (OSError, subprocess.SubprocessError):
-        return None, True
-    if blob_result.returncode != 0 or len(blob_result.stdout) > max_file_bytes:
-        return None, True
-    return blob_result.stdout, False
+        return None, "git_staged_blob_unavailable"
+    if blob_result.returncode != 0:
+        return None, "git_staged_blob_unavailable"
+    if len(blob_result.stdout) > max_file_bytes:
+        return None, "max_file_bytes"
+    return blob_result.stdout, None
 
 
 def scan_staged_secrets(
@@ -95,6 +101,7 @@ def scan_staged_secrets(
             history_enabled=False,
             truncated=True,
             errors=("git_staged_enumeration_failed",),
+            truncation_reasons=(),
         )
 
     max_files = _bounded_positive(max_files, default=DEFAULT_MAX_FILES, maximum=100_000)
@@ -120,26 +127,41 @@ def scan_staged_secrets(
             history_enabled=False,
             truncated=True,
             errors=("git_staged_enumeration_failed",),
+            truncation_reasons=(),
         )
 
     findings: list[SecretFinding] = []
     errors: set[str] = set()
+    truncation_reasons: set[str] = set()
     files_scanned = 0
     bytes_scanned = 0
     truncated = False
     staged_source: SecretScanSource = "staged"
     for relative_path in paths:
-        if files_scanned >= max_files or bytes_scanned >= max_total_bytes or len(findings) >= max_findings:
+        if files_scanned >= max_files:
+            truncation_reasons.add("max_files")
             truncated = True
             break
-        data, incomplete_blob = _git_staged_blob(root, relative_path, max_file_bytes)
-        if incomplete_blob:
+        if bytes_scanned >= max_total_bytes:
+            truncation_reasons.add("max_total_bytes")
             truncated = True
-            errors.add("git_staged_blob_unavailable_or_oversized")
+            break
+        if len(findings) >= max_findings:
+            truncation_reasons.add("max_findings")
+            truncated = True
+            break
+        data, unavailable_reason = _git_staged_blob(root, relative_path, max_file_bytes)
+        if unavailable_reason is not None:
+            truncated = True
+            if unavailable_reason.startswith("max_"):
+                truncation_reasons.add(unavailable_reason)
+            else:
+                errors.add(unavailable_reason)
             continue
         if data is None:
             continue
         if bytes_scanned + len(data) > max_total_bytes:
+            truncation_reasons.add("max_total_bytes")
             truncated = True
             break
         found, scanned_bytes = _scan_blob(
@@ -153,6 +175,7 @@ def scan_staged_secrets(
         bytes_scanned += scanned_bytes
         findings.extend(found)
         if len(findings) >= max_findings:
+            truncation_reasons.add("max_findings")
             truncated = True
             break
 
@@ -164,8 +187,10 @@ def scan_staged_secrets(
             deduped[key] = finding
     ordered = tuple(sorted(deduped.values(), key=lambda item: (item.path, item.line, item.rule_id))[:max_findings])
     if len(deduped) > len(ordered):
+        truncation_reasons.add("max_findings")
         truncated = True
 
+    order = ("max_files", "max_file_bytes", "max_total_bytes", "max_findings")
     return RepositorySecretScanResult(
         findings=ordered,
         files_scanned=files_scanned,
@@ -174,6 +199,7 @@ def scan_staged_secrets(
         history_enabled=False,
         truncated=truncated,
         errors=tuple(sorted(errors)),
+        truncation_reasons=tuple(reason for reason in order if reason in truncation_reasons),
     )
 
 
