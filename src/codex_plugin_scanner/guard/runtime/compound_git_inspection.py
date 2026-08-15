@@ -119,10 +119,8 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
             )
         )
     if operation == "status":
-        return (
-            bool(args)
-            and all(_safe_status_arg(arg) for arg in args)
-            and git_status_has_execution_free_config(repository_cwd, git_binary=resolved_git)
+        return all(_safe_status_arg(arg) for arg in args) and git_status_has_execution_free_config(
+            repository_cwd, git_binary=resolved_git
         )
     if operation == "branch":
         return _safe_branch_args(args) and _git_log_has_execution_free_config(
@@ -244,7 +242,7 @@ def _safe_bounded_log_args(args: tuple[str, ...]) -> bool:
 
 
 def _safe_fetch_args(args: tuple[str, ...]) -> bool:
-    if args in {("origin", "--quiet"), ("--quiet", "origin")}:
+    if args in {("origin",), ("origin", "--quiet"), ("--quiet", "origin")}:
         return True
     return len(args) == 2 and args[0] == "origin" and _safe_ref(args[1])
 

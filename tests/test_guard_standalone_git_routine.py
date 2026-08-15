@@ -94,6 +94,33 @@ def test_standalone_origin_ref_refresh_and_resolution_are_explicitly_benign(tmp_
         )
 
 
+def test_verified_origin_refresh_with_routine_inspection_chain_is_explicitly_benign(
+    tmp_path: Path,
+) -> None:
+    home, repository = _repository(tmp_path)
+    command = "git fetch origin && git status && git branch --show-current && git log -1 --oneline"
+
+    assert _is_benign(command, home=home, repository=repository)
+    assert (
+        _hook_runtime_artifact(
+            harness="cursor",
+            payload={
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Shell",
+                "tool_input": {
+                    "command": command,
+                    "working_directory": str(repository),
+                },
+            },
+            action_envelope=None,
+            home_dir=home,
+            guard_home=home / ".guard",
+            workspace=repository,
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "command",
     (
@@ -320,6 +347,7 @@ def test_standalone_fetch_rejects_execution_routing_or_widening_config(
     home, repository = _repository(tmp_path)
     _ = subprocess.run(["git", "-C", str(repository), "config", key, value], check=True)
 
+    assert not _is_benign("git fetch origin", home=home, repository=repository)
     assert not _is_benign("git fetch origin release/2.2", home=home, repository=repository)
     assert _is_benign("git rev-parse origin/release/2.2", home=home, repository=repository)
 
@@ -446,6 +474,7 @@ def test_standalone_fetch_rejects_executable_maintenance_hook(tmp_path: Path, ho
     _ = hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
 
     assert not git_fetch_origin_has_execution_free_config(repository)
+    assert not _is_benign("git fetch origin", home=home, repository=repository)
     assert not _is_benign("git fetch origin release/2.2", home=home, repository=repository)
 
 
