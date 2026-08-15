@@ -24540,8 +24540,8 @@ function WorkspacePageHeaderToolbar(props) {
   if (!props.tabConfig && !props.actions) {
     return null;
   }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-start sm:justify-end sm:gap-4", children: [
-    props.tabConfig ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full min-w-0 sm:w-auto", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-page-header__toolbar", children: [
+    props.tabConfig ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-page-header__tabs", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       TabBar,
       {
         tabs: props.tabConfig.tabs,
@@ -24549,7 +24549,7 @@ function WorkspacePageHeaderToolbar(props) {
         onChange: props.tabConfig.onTabChange
       }
     ) }) : null,
-    props.actions ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex shrink-0 flex-wrap items-center justify-end gap-2", children: props.actions }) : null
+    props.actions ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-page-header__actions", children: props.actions }) : null
   ] });
 }
 function WorkspacePageHeader(props) {
@@ -24559,14 +24559,14 @@ function WorkspacePageHeader(props) {
     activeTab: props.activeTab,
     onTabChange: props.onTabChange
   } : null;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-1", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-page-header", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-page-header__layout", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-page-header__copy space-y-1", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.18em] text-slate-400", children: eyebrow }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-2xl font-semibold tracking-tight text-brand-dark", children: title }),
       description ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-slate-500", children: description }) : null
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(WorkspacePageHeaderToolbar, { tabConfig, actions })
-  ] });
+  ] }) });
 }
 const DECISION_LABELS = {
   allow: "Allowed",
