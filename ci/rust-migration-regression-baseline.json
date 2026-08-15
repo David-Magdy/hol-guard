@@ -1,0 +1,11 @@
+{
+  "minimum_test_counts": {
+    "command_extensions": 20,
+    "filesystem_integrity": 10,
+    "installed_artifacts": 10,
+    "native_runtime": 20,
+    "package_supply_chain": 15,
+    "security_regressions": 25
+  },
+  "schema_version": 1
+}
