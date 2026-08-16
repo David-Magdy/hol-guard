@@ -36,13 +36,15 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           save-cache: false
-      - name: Reconcile, validate, and publish a clean branch history
+      - name: Reconcile, validate, and publish the validated merge tree
         shell: bash
         run: |
           set -euo pipefail
           branch="refactor/release-3-code-quality-hardening"
-          workflow_path=".github/workflows/tmp-ruff-code-quality-fix.yml"
-          original_head="$(git rev-parse HEAD)"
+          finalizer=".github/workflows/tmp-ruff-code-quality-fix.yml"
+          trigger=".github/workflows/tmp-trigger-code-quality-finalizer.yml"
+          temp_finalizer="${RUNNER_TEMP}/tmp-ruff-code-quality-fix.yml"
+          temp_trigger="${RUNNER_TEMP}/tmp-trigger-code-quality-finalizer.yml"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -104,6 +106,7 @@ jobs:
             scripts/ci/code_quality_ast.py
             scripts/ci/code_quality_audit.py
             scripts/ci/code_quality_report.py
+            src/codex_plugin_scanner/guard/adapters/workspace_overrides.py
             src/codex_plugin_scanner/guard/private_file_io.py
             src/codex_plugin_scanner/guard/runtime/kubernetes_command_support.py
             tests/test_code_quality_audit.py
@@ -115,7 +118,10 @@ jobs:
           uv run --no-sync python tests/guard_command_decision_diff.py --write
           uv run --no-sync python tests/guard_command_decision_diff.py --check
 
-          rm "$workflow_path"
+          mv "$finalizer" "$temp_finalizer"
+          if [ -f "$trigger" ]; then
+            mv "$trigger" "$temp_trigger"
+          fi
 
           uv run --no-sync python scripts/ci/test_inventory.py \
             --output "${RUNNER_TEMP}/test-inventory.json"
@@ -152,7 +158,6 @@ jobs:
             tests/test_guard_private_file_io.py \
             tests/test_guard_kubernetes_command_support.py \
             --tb=short
-
           uv run --no-sync python -m ruff check \
             src/ \
             scripts/ci/code_quality_*.py \
@@ -245,20 +250,12 @@ jobs:
           PY
 
           git diff --check
+          mv "$temp_finalizer" "$finalizer"
+          if [ -f "$temp_trigger" ]; then
+            mv "$temp_trigger" "$trigger"
+          fi
           git add -A
           git diff --cached --check
-          tree="$(git write-tree)"
-          commit_message="${RUNNER_TEMP}/commit-message.txt"
-          cat > "$commit_message" <<'EOF'
-          refactor: harden release 3 code quality
-
-          Consolidate repeated implementations, harden identified edge cases, add
-          deterministic structural-quality ratchets, and preserve existing public
-          behavior and security boundaries.
-
-          Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          EOF
-          new_commit="$(git commit-tree "$tree" -p origin/release/3.0 < "$commit_message")"
-          git push \
-            --force-with-lease="refs/heads/${branch}:${original_head}" \
-            origin "${new_commit}:refs/heads/${branch}"
+          git commit -m "ci: validate release 3 code quality hardening" \
+            -m "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+          git push origin "HEAD:${branch}"
