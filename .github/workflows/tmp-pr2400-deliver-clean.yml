@@ -46,9 +46,61 @@ jobs:
           git reset --hard c7086ba0bfb10d6f1a5f98a3306c8560af4c0518
           git clean -fdx
           git apply --index --whitespace=error-all "$RUNNER_TEMP/pr2400.patch"
+
+          rm -f .github/workflows/tmp-rust-required-latest-source.yml
+          rm -rf .github/rust-required-gzip-b64 .github/rust-required-patch
+          python - <<'PY'
+          from pathlib import Path
+
+          contracts = Path("tests/test_rust_daemon_edge_hardening_contracts.py")
+          text = contracts.read_text(encoding="utf-8")
+          old = '''def test_no_one_shot_delivery_or_auto_merge_workflows_remain() -> None:
+              workflows = ROOT / ".github/workflows"
+              assert not list(workflows.glob("tmp-*daemon-edge-hardening*.yml"))
+              assert not (ROOT / "scripts/ci/apply_daemon_edge_hardening.py").exists()
+              permanent = _source(".github/workflows/rust-daemon-edge-hardening.yml")
+              assert "gh pr merge" not in permanent
+              assert "/cancel" not in permanent
+              assert "git push" not in permanent
+          '''
+          new = '''def test_no_one_shot_delivery_or_auto_merge_assets_remain() -> None:
+              workflows = ROOT / ".github/workflows"
+              assert not list(workflows.glob("tmp-*.yml"))
+              assert not (ROOT / "scripts/ci/apply_daemon_edge_hardening.py").exists()
+              assert not (ROOT / ".github/rust-required-gzip-b64").exists()
+              assert not (ROOT / ".github/rust-required-patch").exists()
+              permanent = _source(".github/workflows/rust-daemon-edge-hardening.yml")
+              assert "gh pr merge" not in permanent
+              assert "/cancel" not in permanent
+              assert "git push" not in permanent
+          '''
+          if old not in text:
+              raise RuntimeError("daemon hardening cleanup contract anchor changed")
+          contracts.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          todo = Path("docs/guard/rust-daemon-edge-hardening-todo.md")
+          text = todo.read_text(encoding="utf-8")
+          anchor = "- [x] Add a permanent read-only cross-platform workflow with no merge, cancellation, branch-deletion, or source-mutation powers.\n"
+          addition = anchor + "- [x] Remove all one-shot workflows, embedded patch payloads, and temporary migration assets from the protected release tree.\n"
+          if anchor not in text:
+              raise RuntimeError("daemon hardening TODO cleanup anchor changed")
+          todo.write_text(text.replace(anchor, addition, 1), encoding="utf-8")
+
+          prd = Path("docs/guard/rust-daemon-edge-hardening-prd.md")
+          text = prd.read_text(encoding="utf-8")
+          old = "Completion requires a clean exact head with no temporary delivery workflows or patch applicators, no unresolved review threads, green required checks, merge into `release/3.0` only, successful post-merge workflows, and verification that the merge is absent from `main`."
+          new = "Completion requires a clean exact head with no temporary delivery workflows, embedded patch payloads, or patch applicators, no unresolved review threads, green required checks, merge into `release/3.0` only, successful post-merge workflows, and verification that the merge is absent from `main`."
+          if old not in text:
+              raise RuntimeError("daemon hardening PRD cleanup anchor changed")
+          prd.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
+          git add -A
           git diff --cached --check
           test -z "$(find .github/workflows -maxdepth 1 -type f -name 'tmp-*' -print)"
           test ! -e scripts/ci/apply_daemon_edge_hardening.py
+          test ! -e .github/rust-required-gzip-b64
+          test ! -e .github/rust-required-patch
       - name: Prepare exact toolchains
         shell: bash
         run: |
