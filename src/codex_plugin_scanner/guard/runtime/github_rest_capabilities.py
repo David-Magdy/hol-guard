@@ -328,8 +328,21 @@ def _routine_review_thread_arguments_are_static(args: Sequence[str]) -> bool:
         return False
     index = 1
     field_names: list[str] = []
+    jq_count = 0
     while index < len(args):
         token = args[index]
+        if token == "--jq":
+            jq_count += 1
+            if jq_count > 1 or index + 1 >= len(args) or args[index + 1] != ".data":
+                return False
+            index += 2
+            continue
+        if token.startswith("--jq="):
+            jq_count += 1
+            if jq_count > 1 or token.removeprefix("--jq=") != ".data":
+                return False
+            index += 1
+            continue
         option_name, separator, attached_value = token.partition("=")
         if not separator and len(token) > 2 and token[:2] == "-f":
             option_name = "-f"
