@@ -1,0 +1,795 @@
+head=adcd6f9ae05865755094b12a92ede31abed49963
+status=1
+generated_at=2026-08-16T07:51:27Z
+
+
+===== idempotent source finalization =====
+command: python scripts/ci/finalize_scanner_assurance_v2.py
+PASSED: idempotent source finalization
+
+===== locked environment =====
+command: uv sync --frozen --extra dev --python 3.12
+Using CPython 3.12.13 interpreter at: /opt/hostedtoolcache/Python/3.12.13/x64/bin/python3.12
+Creating virtual environment at: .venv
+   Building hol-guard @ file:///home/runner/work/hol-guard/hol-guard
+Downloading libcst (2.2MiB)
+Downloading aiohttp (1.7MiB)
+Downloading uvloop (4.2MiB)
+Downloading tiktoken=[redacted]
+Downloading cryptography (4.5MiB)
+Downloading pygments (1.2MiB)
+Downloading magika (15.5MiB)
+Downloading litellm (19.2MiB)
+Downloading numpy (15.9MiB)
+Downloading pydantic-core (2.0MiB)
+Downloading ruff (11.0MiB)
+Downloading hf-xet (4.0MiB)
+Downloading sympy (6.0MiB)
+Downloading openai (1.3MiB)
+Downloading basedpyright (12.6MiB)
+Downloading tokenizers (3.2MiB)
+Downloading nodejs-wheel-binaries (57.9MiB)
+Downloading yara-x (9.2MiB)
+Downloading onnxruntime (12.7MiB)
+ Downloaded tiktoken
+ Downloaded aiohttp
+ Downloaded pydantic-core
+ Downloaded pygments
+ Downloaded libcst
+ Downloaded tokenizers
+ Downloaded hf-xet
+ Downloaded uvloop
+ Downloaded cryptography
+ Downloaded openai
+      Built hol-guard @ file:///home/runner/work/hol-guard/hol-guard
+ Downloaded yara-x
+ Downloaded sympy
+ Downloaded ruff
+ Downloaded onnxruntime
+ Downloaded magika
+ Downloaded numpy
+ Downloaded litellm
+ Downloaded basedpyright
+ Downloaded nodejs-wheel-binaries
+Prepared 122 packages in 3.58s
+Installed 122 packages in 267ms
+ + aiohappyeyeballs==2.6.1
+ + aiohttp==3.14.3
+ + aiosignal==1.4.0
+ + annotated-doc==0.0.4
+ + annotated-types==0.7.0
+ + anthropic==0.76.0
+ + anyio==4.13.0
+ + attrs==26.1.0
+ + basedpyright==1.39.8
+ + build==1.5.0
+ + certifi==2026.2.25
+ + cffi==2.0.0
+ + charset-normalizer==3.4.7
+ + cisco-ai-skill-scanner==2.0.12
+ + click==8.4.1
+ + colorclass==2.2.2
+ + coloredlogs==15.0.1
+ + confusable-homoglyphs==3.3.1
+ + coverage==7.13.5
+ + cryptography==50.0.0
+ + distro==1.9.0
+ + docstring-parser==0.17.0
+ + easygui==0.98.3
+ + fastapi==0.137.1
+ + fastuuid==0.14.0
+ + filelock==3.25.2
+ + flatbuffers==25.12.19
+ + frozenlist==1.8.0
+ + fsspec==2026.3.0
+ + h11==0.16.0
+ + hf-xet==1.4.3
+ + hol-guard==2.2.0 (from file:///home/runner/work/hol-guard/hol-guard)
+ + httpcore==1.0.9
+ + httptools==0.7.1
+ + httpx==0.28.1
+ + httpx-sse==0.4.3
+ + huggingface-hub==1.9.0
+ + humanfriendly==10.0
+ + idna==3.15
+ + importlib-metadata==8.9.0
+ + iniconfig==2.3.0
+ + jaraco-classes==3.4.0
+ + jaraco-context==6.1.2
+ + jaraco-functools==4.4.0
+ + jeepney==0.9.0
+ + jinja2==3.1.6
+ + jiter==0.13.0
+ + jsonschema==4.26.0
+ + jsonschema-specifications==2025.9.1
+ + keyring==25.7.0
+ + libcst==1.9.0
+ + linkify-it-py==2.1.0
+ + litellm==1.93.0
+ + magika==1.0.3
+ + markdown-it-py==4.0.0
+ + markupsafe==3.0.3
+ + mcp==1.28.1
+ + mdit-py-plugins==0.5.0
+ + mdurl==0.1.2
+ + more-itertools==11.0.1
+ + mpmath==1.3.0
+ + msoffcrypto-tool==6.0.0
+ + multidict==6.7.1
+ + mutmut==3.7.0
+ + nodejs-wheel-binaries==24.16.0
+ + numpy==2.4.4
+ + olefile==0.47
+ + oletools==0.60.2
+ + onnxruntime==1.20.1
+ + openai==2.41.1
+ + packaging==26.0
+ + pcodedmp==1.2.6
+ + pdfid==1.1.3
+ + platformdirs==4.9.4
+ + pluggy==1.6.0
+ + propcache==0.4.1
+ + protobuf==7.34.1
+ + publicsuffixlist==1.0.2.20260726
+ + pycparser==3.0
+ + pydantic==2.12.5
+ + pydantic-core==2.41.5
+ + pydantic-settings==2.14.1
+ + pygments==2.20.0
+ + pyjwt==2.13.0
+ + pyparsing==3.3.2
+ + pyproject-hooks==1.2.0
+ + pytest==9.0.3
+ + pytest-cov==7.1.0
+ + python-dotenv==1.2.2
+ + python-frontmatter==1.1.0
+ + python-multipart==0.0.32
+ + pyyaml==6.0.3
+ + referencing==0.37.0
+ + regex==2026.4.4
+ + requests==2.33.1
+ + rich==14.2.0
+ + rpds-py==0.30.0
+ + ruff==0.15.17
+ + secretstorage==3.5.0
+ + setproctitle==1.3.7
+ + shellingham==1.5.4
+ + sniffio==1.3.1
+ + sse-starlette==3.4.4
+ + starlette==1.3.1
+ + sympy==1.14.0
+ + tabulate==0.9.0
+ + textual==7.5.0
+ + tiktoken=[redacted]
+ + tokenizers==0.23.1
+ + tqdm==4.67.3
+ + typer==0.24.1
+ + typing-extensions==4.15.0
+ + typing-inspection==0.4.2
+ + uc-micro-py==2.0.0
+ + urllib3==2.7.0
+ + uvicorn==0.40.0
+ + uvloop==0.22.1
+ + watchfiles==1.1.1
+ + websockets==16.0
+ + yara-x==1.13.0
+ + yarl==1.23.0
+ + zipp==3.23.0
+PASSED: locked environment
+
+===== lockfile contract =====
+command: uv lock --check
+Resolved 178 packages in 0.99ms
+PASSED: lockfile contract
+
+===== Python lint =====
+command: uv run --no-sync ruff check src/codex_plugin_scanner/assurance.py src/codex_plugin_scanner/assurance_cli.py src/codex_plugin_scanner/evidence_envelope.py src/codex_plugin_scanner/runtime_assurance.py src/codex_plugin_scanner/rust_kernel.py src/codex_plugin_scanner/scanner.py src/codex_plugin_scanner/policy.py tests/assurance_corpus.py tests/test_assurance_scanner.py tests/test_evidence_envelope.py tests/test_runtime_assurance.py tests/test_rust_scanner_kernel_contract.py scripts/ci/scanner_assurance_benchmark.py
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/codex_plugin_scanner/assurance.py:9:1
+   |
+ 7 |   """
+ 8 |
+ 9 | / from __future__ import annotations
+10 | |
+11 | | import base64
+12 | | import binascii
+13 | | import hashlib
+14 | | import io
+15 | | import json
+16 | | import re
+17 | | import tarfile
+18 | | import unicodedata
+19 | | import zipfile
+20 | | from collections import defaultdict
+21 | | from dataclasses import dataclass
+22 | | from pathlib import Path, PurePosixPath
+23 | | from typing import Any, Iterable
+24 | |
+25 | | from .evidence_envelope import verify_attestation
+26 | | from .models import CheckResult, Finding, IntegrationResult, SEVERITY_ORDER, Severity
+27 | | from .runtime_assurance import validate_runtime_evidence
+28 | | from .rust_kernel import InventoryRecord, inventory_digest, scan_inventory
+   | |__________________________________________________________________________^
+29 |
+30 |   ASSURANCE_VERSION = "2.0"
+   |
+help: Organize imports
+
+UP035 [*] Import from `collections.abc` instead: `Iterable`
+  --> src/codex_plugin_scanner/assurance.py:23:1
+   |
+21 | from dataclasses import dataclass
+22 | from pathlib import Path, PurePosixPath
+23 | from typing import Any, Iterable
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+24 |
+25 | from .evidence_envelope import verify_attestation
+   |
+help: Import from `collections.abc`
+
+E501 Line too long (124 > 120)
+  --> src/codex_plugin_scanner/assurance.py:89:121
+   |
+87 | )
+88 | _NATIVE_FORMATS = frozenset({"elf", "pe", "mach-o", "wasm"})
+89 | _BIDI_CONTROLS = frozenset(chr(value) for value in (0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)))
+   |                                                                                                                         ^^^^
+90 | _ZERO_WIDTH = frozenset({"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"})
+91 | _BASE64_RE = re.compile(r"(?<![A-Za-z0-9+/=])(?:[A-Za-z0-9+/]{4}){10,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?")
+   |
+
+E501 Line too long (126 > 120)
+   --> src/codex_plugin_scanner/assurance.py:216:121
+    |
+214 |         "Server-side request forgery surface",
+215 |         "A caller-controlled URL or host appears to be fetched without an explicit destination policy.",
+216 |         "Parse once, resolve safely, block private and metadata ranges, pin the validated destination, and reject redirects.",
+    |                                                                                                                         ^^^^^^
+217 |         re.compile(
+218 |             r"(?:requests\.(?:get|post|request)|urllib\.request\.urlopen|fetch\s*\(|axios\.|http\.(?:get|request)|"
+    |
+
+E501 Line too long (124 > 120)
+   --> src/codex_plugin_scanner/assurance.py:230:121
+    |
+228 |         "The extension references a cloud metadata endpoint commonly used to obtain workload credentials.",
+229 |         "Remove metadata access or isolate it behind an explicit, least-privilege workload identity broker.",
+230 |         re.compile(r"169\.254\.169\.254|metadata\.google\.internal|/latest/meta-data|metadata/identity/oauth2/token", re.I),
+    |                                                                                                                         ^^^^
+231 |     ),
+232 |     RulePattern(
+    |
+
+E501 Line too long (133 > 120)
+   --> src/codex_plugin_scanner/assurance.py:251:121
+    |
+249 |         "Path traversal or unsafe archive extraction",
+250 |         "Externally controlled path components may escape the intended root directory.",
+251 |         "Resolve against a fixed root, reject absolute and parent components, and verify the final resolved path remains inside it.",
+    |                                                                                                                         ^^^^^^^^^^^^^
+252 |         re.compile(
+253 |             r"extractall\s*\(|(?:join|resolve|Path)\s*\(.{0,120}(?:request|params|args|input|filename)|"
+    |
+
+E501 Line too long (124 > 120)
+   --> src/codex_plugin_scanner/assurance.py:291:121
+    |
+289 |         "Credential or environment exfiltration",
+290 |         "Sensitive environment or credential material appears to be sent to a remote destination.",
+291 |         "Never transmit ambient credentials. Send only explicitly selected, redacted fields to an allowlisted destination.",
+    |                                                                                                                         ^^^^
+292 |         re.compile(
+293 |             r"(?:process\.env|os\.environ|env::vars|GetEnvironmentVariables|credentials?|tokens?|secrets?).{0,220}"
+    |
+
+E501 Line too long (126 > 120)
+   --> src/codex_plugin_scanner/assurance.py:305:121
+    |
+303 |         "Download-and-execute chain",
+304 |         "Remote content is piped or passed directly to an interpreter or executable loader.",
+305 |         "Download to a quarantined location, verify an immutable digest and signature, then require review before execution.",
+    |                                                                                                                         ^^^^^^
+306 |         re.compile(
+307 |             r"(?:curl|wget|Invoke-WebRequest|iwr).{0,180}(?:\|\s*(?:sh|bash|zsh|python|node|powershell)|"
+    |
+
+E501 Line too long (132 > 120)
+   --> src/codex_plugin_scanner/assurance.py:333:121
+    |
+331 |         "Container engine socket access",
+332 |         "Access to a Docker or container runtime socket can provide host-equivalent control.",
+333 |         "Do not mount container-engine sockets into extensions; use a least-privilege broker if container operations are required.",
+    |                                                                                                                         ^^^^^^^^^^^^
+334 |         re.compile(r"/var/run/docker\.sock|docker_engine|containerd\.sock|podman\.sock", re.I),
+335 |     ),
+    |
+
+E501 Line too long (124 > 120)
+   --> src/codex_plugin_scanner/assurance.py:391:121
+    |
+389 |         "Keyboard, clipboard, or screen capture",
+390 |         "The extension captures sensitive user input or screen content outside a clear, narrow product purpose.",
+391 |         "Remove ambient capture or require explicit, visible, time-bounded user consent for the minimum necessary surface.",
+    |                                                                                                                         ^^^^
+392 |         re.compile(
+393 |             r"GetAsyncKeyState|SetWindowsHookEx|CGEventTapCreate|pynput\.keyboard|keylog|"
+    |
+
+E501 Line too long (123 > 120)
+   --> src/codex_plugin_scanner/assurance.py:465:121
+    |
+463 |         "OAuth token=[redacted] or confused-deputy risk",
+464 |         "A bearer=[redacted] access token=[redacted] to be forwarded to a caller-controlled or unrelated destination.",
+465 |         "Bind tokens to issuer, audience, resource, tenant, and destination; exchange rather than forward ambient tokens.",
+    |                                                                                                                         ^^^
+466 |         re.compile(
+467 |             r"(?:Authorization|Bearer|access[_-]?token).{0,220}(?:url|endpoint|host|request|params|args)|"
+    |
+
+E501 Line too long (128 > 120)
+   --> src/codex_plugin_scanner/assurance.py:492:121
+    |
+490 |         "Untrusted object keys may modify JavaScript object prototypes.",
+491 |         "Reject prototype keys and use schema validation with null-prototype objects for untrusted maps.",
+492 |         re.compile(r"(?:__proto__|constructor\.prototype|prototype\[).{0,120}(?:request|input|body|params|merge|assign)", re.I),
+    |                                                                                                                         ^^^^^^^^
+493 |     ),
+494 | )
+    |
+
+E501 Line too long (125 > 120)
+   --> src/codex_plugin_scanner/assurance.py:615:121
+    |
+613 |                 "evasion",
+614 |                 "Bidirectional text control characters",
+615 |                 "The file contains bidirectional control characters that can make reviewed code differ from displayed code.",
+    |                                                                                                                         ^^^^^
+616 |                 "Remove bidirectional controls or escape and document the exact code points where linguistically required.",
+617 |                 path=path,
+    |
+
+E501 Line too long (124 > 120)
+   --> src/codex_plugin_scanner/assurance.py:616:121
+    |
+614 |                 "Bidirectional text control characters",
+615 |                 "The file contains bidirectional control characters that can make reviewed code differ from displayed code.",
+616 |                 "Remove bidirectional controls or escape and document the exact code points where linguistically required.",
+    |                                                                                                                         ^^^^
+617 |                 path=path,
+618 |             ),
+    |
+
+E501 Line too long (149 > 120)
+   --> src/codex_plugin_scanner/assurance.py:737:121
+    |
+735 | …
+736 | …
+737 | …ell|node\s+-e|python\s+-c|base64|chmod|sudo", script, re.I) else Severity.MEDIUM
+    |                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+738 | …
+739 | …
+    |
+
+E501 Line too long (129 > 120)
+   --> src/codex_plugin_scanner/assurance.py:746:121
+    |
+744 |                     "Package lifecycle script",
+745 |                     "The package executes code automatically during installation, preparation, or publication.",
+746 |                     "Remove automatic lifecycle execution or make the exact, offline-safe behavior reviewable and reproducible.",
+    |                                                                                                                         ^^^^^^^^^
+747 |                     path=path,
+748 |                 ),
+    |
+
+B007 Loop control variable `name` not used within loop body
+   --> src/codex_plugin_scanner/assurance.py:755:13
+    |
+753 |         if not isinstance(dependencies, dict):
+754 |             continue
+755 |         for name, version in dependencies.items():
+    |             ^^^^
+756 |             if not isinstance(version, str):
+757 |                 continue
+    |
+help: Rename unused `name` to `_name`
+
+E501 Line too long (134 > 120)
+   --> src/codex_plugin_scanner/assurance.py:761:121
+    |
+759 |                 ("git+", "git://", "github:", "http://")
+760 |             )
+761 |             unpinned_vcs = ("github.com" in version or version.startswith("git+")) and not re.search(r"#[0-9a-f]{40}$", version, re.I)
+    |                                                                                                                         ^^^^^^^^^^^^^^
+762 |             if mutable or unpinned_vcs:
+763 |                 collector.add(
+    |
+
+E501 Line too long (130 > 120)
+   --> src/codex_plugin_scanner/assurance.py:771:121
+    |
+769 |                         "Mutable dependency source",
+770 |                         "A dependency can resolve to different code without a manifest change.",
+771 |                         "Pin dependencies to immutable versions and lockfile integrity values; pin VCS sources to a full commit.",
+    |                                                                                                                         ^^^^^^^^^^
+772 |                         path=path,
+773 |                     ),
+    |
+
+E501 Line too long (123 > 120)
+   --> src/codex_plugin_scanner/assurance.py:778:121
+    |
+776 |         if key in payload:
+777 |             value = payload[key]
+778 |             if isinstance(value, str) and (value.startswith("/") or ".." in PurePosixPath(value.replace("\\", "/")).parts):
+    |                                                                                                                         ^^^
+779 |                 collector.add(
+780 |                     "static",
+    |
+
+B007 Loop control variable `pointer` not used within loop body
+   --> src/codex_plugin_scanner/assurance.py:795:9
+    |
+793 | def _scan_mcp_json(payload: dict[str, Any], path: str, collector: _Collector) -> None:
+794 |     names: dict[str, str] = {}
+795 |     for pointer, node in _iter_json_nodes(payload):
+    |         ^^^^^^^
+796 |         if not isinstance(node, dict):
+797 |             continue
+    |
+help: Rename unused `pointer` to `_pointer`
+
+E501 Line too long (124 > 120)
+   --> src/codex_plugin_scanner/assurance.py:837:121
+    |
+835 |                         "mcp-security",
+836 |                         "MCP server launches through a shell",
+837 |                         "The MCP server command uses a general-purpose shell, increasing injection and policy-bypass risk.",
+    |                                                                                                                         ^^^^
+838 |                         "Launch a fixed executable with an argument vector and validate every configured argument.",
+839 |                         path=path,
+    |
+
+E501 Line too long (123 > 120)
+   --> src/codex_plugin_scanner/assurance.py:853:121
+    |
+851 |                         "MCP package runner is not immutably pinned",
+852 |                         "The MCP server may download and execute mutable package content at startup.",
+853 |                         "Install from a verified lockfile or pin the runner target to an immutable digest or full commit.",
+    |                                                                                                                         ^^^
+854 |                         path=path,
+855 |                     ),
+    |
+
+E501 Line too long (124 > 120)
+   --> src/codex_plugin_scanner/assurance.py:882:121
+    |
+880 |                     "MCP server receives ambient credentials",
+881 |                     "Credential-like environment variables are injected directly into an MCP server process.",
+882 |                     "Use a narrowly scoped credential broker and grant each server only the minimum token=[redacted] request time.",
+    |                                                                                                                         ^^^^
+883 |                     path=path,
+884 |                 ),
+    |
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+   --> src/codex_plugin_scanner/assurance.py:887:9
+    |
+885 |               )
+886 |           auth = node.get("auth") or node.get("authentication")
+887 | /         if isinstance(auth, dict) and str(auth.get("type", "")).lower() in {"oauth", "oauth2"}:
+888 | |             if not any(key in auth for key in ("audience", "resource", "resourceIndicator")):
+    | |_____________________________________________________________________________________________^
+889 |                   collector.add(
+890 |                       "static",
+    |
+help: Combine `if` statements using `and`
+
+E501 Line too long (125 > 120)
+   --> src/codex_plugin_scanner/assurance.py:897:121
+    |
+895 |                         "MCP OAuth resource binding is missing",
+896 |                         "OAuth configuration does not declare an audience or resource binding for the MCP server.",
+897 |                         "Bind authorization=[redacted] and access tokens to the exact MCP resource and validate the audience.",
+    |                                                                                                                         ^^^^^
+898 |                         path=path,
+899 |                     ),
+    |
+
+E501 Line too long (138 > 120)
+   --> src/codex_plugin_scanner/assurance.py:945:121
+    |
+943 | …     "authorization",
+944 | …     "API schema does not declare authentication",
+945 | …     "The API schema does not document a security scheme, so consumers cannot verify the intended authorization=[redacted]
+    |                                                                                                           ^^^^^^^^^^^^^^^^^^
+946 | …     "Declare the required authentication and authorization=[redacted] in the schema.",
+947 | …     path=path,
+    |
+
+E501 Line too long (140 > 120)
+   --> src/codex_plugin_scanner/assurance.py:955:121
+    |
+953 | …
+954 | …
+955 | … and ".." not in candidate.parts and not re.match(r"^[A-Za-z]:", normalized)
+    |                                                          ^^^^^^^^^^^^^^^^^^^^
+    |
+
+E501 Line too long (138 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1010:121
+     |
+1008 | …         "Archive path traversal",
+1009 | …         "An archive entry is absolute or escapes its extraction root.",
+1010 | …         "Reject absolute and parent paths before extraction and verify the resolved destination remains inside the root.",
+     |                                                                                                           ^^^^^^^^^^^^^^^^^^
+1011 | …         label,
+1012 | …     )
+     |
+
+E501 Line too long (136 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1021:121
+     |
+1019 | …         "Archive contains a symbolic link",
+1020 | …         "A symbolic-link entry can redirect later writes outside the intended extraction root.",
+1021 | …         "Reject links in extension archives or validate each final target after extraction into an isolated directory.",
+     |                                                                                                           ^^^^^^^^^^^^^^^^
+1022 | …         label,
+1023 | …     )
+     |
+
+E501 Line too long (138 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1093:121
+     |
+1091 | …         "Archive path traversal",
+1092 | …         "An archive entry is absolute or escapes its extraction root.",
+1093 | …         "Reject absolute and parent paths before extraction and verify the resolved destination remains inside the root.",
+     |                                                                                                           ^^^^^^^^^^^^^^^^^^
+1094 | …         label,
+1095 | …     )
+     |
+
+E501 Line too long (134 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1107:121
+     |
+1105 | …         )
+1106 | …     suffix = PurePosixPath(member.name).suffix.lower()
+1107 | …     if depth < MAX_ARCHIVE_DEPTH and member.isfile() and suffix in _ARCHIVE_SUFFIXES and member.size <= MAX_ARCHIVE_BYTES:
+     |                                                                                                               ^^^^^^^^^^^^^^
+1108 | …         extracted = archive.extractfile(member)
+1109 | …         if extracted is not None:
+     |
+
+E501 Line too long (124 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1205:121
+     |
+1203 |             "native-security",
+1204 |             "Native or WebAssembly executable content",
+1205 |             "The extension contains executable content that requires structural and runtime review beyond source scanning.",
+     |                                                                                                                         ^^^^
+1206 |             "Publish reproducible build provenance, immutable hashes, hardening metadata, and isolated runtime evidence.",
+1207 |             path=record.path,
+     |
+
+E501 Line too long (122 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1206:121
+     |
+1204 |             "Native or WebAssembly executable content",
+1205 |             "The extension contains executable content that requires structural and runtime review beyond source scanning.",
+1206 |             "Publish reproducible build provenance, immutable hashes, hardening metadata, and isolated runtime evidence.",
+     |                                                                                                                         ^^
+1207 |             path=record.path,
+1208 |             source=f"assurance-{engine}-kernel",
+     |
+
+E501 Line too long (122 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1265:121
+     |
+1265 | def _layer_status(findings: tuple[Finding, ...], *, complete: bool, absent_ok: bool = False, present: bool = True) -> str:
+     |                                                                                                                         ^^
+1266 |     if absent_ok and not present:
+1267 |         return "complete"
+     |
+
+E501 Line too long (124 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1343:121
+     |
+1341 |                     "correlation",
+1342 |                     "Credential access combined with outbound networking",
+1343 |                     "The same file contains credential-access and outbound-request behavior, increasing exfiltration risk.",
+     |                                                                                                                         ^^^^
+1344 |                     "Separate credential access from networking and enforce a destination-bound, least-privilege broker.",
+1345 |                     path=path,
+     |
+
+E501 Line too long (122 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1344:121
+     |
+1342 |                     "Credential access combined with outbound networking",
+1343 |                     "The same file contains credential-access and outbound-request behavior, increasing exfiltration risk.",
+1344 |                     "Separate credential access from networking and enforce a destination-bound, least-privilege broker.",
+     |                                                                                                                         ^^
+1345 |                     path=path,
+1346 |                 ),
+     |
+
+E501 Line too long (122 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1514:121
+     |
+1512 |                 "coverage",
+1513 |                 "Static assurance coverage is incomplete",
+1514 |                 "Resource limits, unreadable files, or oversized content prevented complete supported-format inspection.",
+     |                                                                                                                         ^^
+1515 |                 "Reduce artifact size, repair access, or raise a documented bounded scan policy in an isolated environment.",
+1516 |             ),
+     |
+
+E501 Line too long (125 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1515:121
+     |
+1513 |                 "Static assurance coverage is incomplete",
+1514 |                 "Resource limits, unreadable files, or oversized content prevented complete supported-format inspection.",
+1515 |                 "Reduce artifact size, repair access, or raise a documented bounded scan policy in an isolated environment.",
+     |                                                                                                                         ^^^^^
+1516 |             ),
+1517 |         )
+     |
+
+E501 Line too long (123 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1525:121
+     |
+1523 |     inventory_denominator = max(1, len(kernel.records))
+1524 |     gaps = coverage.unreadable_files + coverage.oversized_files + coverage.opaque_files
+1525 |     coverage_percent = max(0.0, 100.0 * (inventory_denominator - min(inventory_denominator, gaps)) / inventory_denominator)
+     |                                                                                                                         ^^^
+1526 |     static_complete = not coverage.truncated and coverage.unreadable_files == 0 and coverage.oversized_files == 0
+1527 |     archive_complete = not coverage.archive_partial
+     |
+
+E501 Line too long (193 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1534:121
+     |
+1532 | …
+1533 | …
+1534 | …testation.status == "self-attested" else "unavailable" if attestation.status == "absent" else "failed"
+     |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1535 | …
+1536 | …
+     |
+
+E501 Line too long (124 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1544:121
+     |
+1542 |                 "Artifact attestation failed verification",
+1543 |                 attestation.reason,
+1544 |                 "Regenerate the attestation for the exact artifact digest and sign it with a caller-trusted publisher key.",
+     |                                                                                                                         ^^^^
+1545 |                 path=".hol-guard/attestation.json",
+1546 |                 source="assurance-provenance",
+     |
+
+E501 Line too long (128 > 120)
+    --> src/codex_plugin_scanner/assurance.py:1581:121
+     |
+1579 |         },
+1580 |         "archive": {
+1581 |             "status": _layer_status(archive_findings, complete=archive_complete, absent_ok=True, present=coverage.archives > 0),
+     |                                                                                                                         ^^^^^^^^
+1582 |             "findings": [finding.rule_id for finding in archive_findings],
+1583 |             "archives": coverage.archives,
+     |
+
+E501 Line too long (135 > 120)
+  --> src/codex_plugin_scanner/evidence_envelope.py:70:121
+   |
+68 |         return value[:4096]
+69 |     if isinstance(value, dict):
+70 |         return {str(item_key)[:128]: _redact(item_value, key=str(item_key), depth=depth + 1) for item_key, item_value in value.items()}
+   |                                                                                                                         ^^^^^^^^^^^^^^^
+71 |     if isinstance(value, list):
+72 |         return [_redact(item, depth=depth + 1) for item in value[:10_000]]
+   |
+
+E501 Line too long (126 > 120)
+   --> src/codex_plugin_scanner/evidence_envelope.py:194:121
+    |
+193 |     type_bytes = payload_type.encode("utf-8")
+194 |     return b"DSSEv1 " + str(len(type_bytes)).encode() + b" " + type_bytes + b" " + str(len(payload)).encode() + b" " + payload
+    |                                                                                                                         ^^^^^^
+    |
+
+RUF100 [*] Unused `noqa` directive (non-enabled: `ANN001`, `ANN201`)
+   --> src/codex_plugin_scanner/evidence_envelope.py:314:71
+    |
+313 | class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+314 |     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201
+    |                                                                       ^^^^^^^^^^^^^^^^^^^^^^
+315 |         raise urllib.error.HTTPError(req.full_url, code, "Redirects are not allowed for evidence uploads", headers, fp)
+    |
+help: Remove unused `noqa` directive
+
+E501 Line too long (144 > 120)
+   --> src/codex_plugin_scanner/evidence_envelope.py:357:121
+    |
+355 | …
+356 | …
+357 | …lib.request.HTTPSHandler(context=ssl_context or ssl.create_default_context()))
+    |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^
+358 | …
+359 | ….0))) as response:
+    |
+
+RUF005 Consider iterable unpacking instead of concatenation
+   --> src/codex_plugin_scanner/scanner.py:322:18
+    |
+320 |       )
+321 |       assurance_checks, assurance_integrations = run_assurance_checks(repo_root)
+322 |       categories = _build_repository_categories(repo_root, plugin_results) + (
+    |  __________________^
+323 | |         CategoryResult(name="Repository Layered Assurance", checks=assurance_checks),
+324 | |     )
+    | |_____^
+325 |       findings = tuple(finding for category in categories for check in category.checks for finding in check.findings)
+326 |       repo_scores = [plugin.score for plugin in plugin_results]
+    |
+help: Replace with iterable unpacking
+
+E501 Line too long (143 > 120)
+   --> tests/assurance_corpus.py:194:121
+    |
+192 | …
+193 | …
+194 | …tr); CreateRemoteThread(process, nullptr, 0, address, nullptr, 0, nullptr);",
+    |                                                        ^^^^^^^^^^^^^^^^^^^^^^^
+195 | …
+196 | …
+    |
+
+E501 Line too long (121 > 120)
+   --> tests/test_assurance_scanner.py:161:121
+    |
+159 |     hidden = b"eval(request.body.code); WriteProcessMemory(process, address, payload, size, null);"
+160 |     encoded = __import__("base64").b64encode(hidden).decode("ascii")
+161 |     (tmp_path / "plugin.js").write_text(f"const payload = '{encoded}'; eval(Buffer.from(payload, 'base64').toString());")
+    |                                                                                                                         ^
+162 |
+163 |     checks, _integrations = run_assurance_checks(tmp_path)
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> tests/test_rust_scanner_kernel_contract.py:3:1
+   |
+ 1 |   """Contract tests for the optional Rust scanner hot-path kernel."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | import json
+ 6 | | import os
+ 7 | | import shutil
+ 8 | | import subprocess
+ 9 | | from pathlib import Path
+10 | |
+11 | | import pytest
+12 | |
+13 | | from codex_plugin_scanner.rust_kernel import KERNEL_PROTOCOL, scan_inventory
+   | |____________________________________________________________________________^
+   |
+help: Organize imports
+
+SIM105 Use `contextlib.suppress(OSError)` instead of `try`-`except`-`pass`
+  --> tests/test_rust_scanner_kernel_contract.py:91:9
+   |
+89 |       outside.write_text("outside", encoding="utf-8")
+90 |       if hasattr(os, "symlink"):
+91 | /         try:
+92 | |             (tmp_path / "escape").symlink_to(outside)
+93 | |         except OSError:
+94 | |             pass
+   | |________________^
+95 |
+96 |       first = scan_inventory(tmp_path)
+   |
+help: Replace `try`-`except`-`pass` with `with contextlib.suppress(OSError): ...`
+
+Found 52 errors.
+[*] 4 fixable with the `--fix` option (3 hidden fixes can be enabled with the `--unsafe-fixes` option).
+FAILED: Python lint (exit 1)
