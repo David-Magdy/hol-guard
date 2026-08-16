@@ -10,6 +10,7 @@ from pathlib import Path
 import codex_plugin_scanner
 from codex_plugin_scanner.guard.native_runtime import (
     native_mode,
+    native_runtime_health,
     native_runtime_status,
     review_post_tool_native,
 )
@@ -67,6 +68,7 @@ def main() -> int:
                 _request(root, "const value = 1;\n", "default-auto-clean"),
                 observe_mode=False,
             )
+            print(f"native health after clean: {native_runtime_health(root / 'guard-home')!r}", flush=True)
             assert clean is not None
             assert clean.decision == "allow"
             assert clean.reason_code == "output_scan_allow"
@@ -75,6 +77,7 @@ def main() -> int:
                 _request(root, _synthetic_github_token(), "default-auto-secret"),
                 observe_mode=False,
             )
+            print(f"native health after secret: {native_runtime_health(root / 'guard-home')!r}", flush=True)
             assert secret is not None
             assert secret.decision == "deny"
             assert secret.reason_code == "output_secret_match"
