@@ -24,24 +24,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rev-parse HEAD > scanner-hardening-commit.txt
-          git status --short > scanner-hardening-status.txt
-          tar \
-            --exclude=.git \
-            --exclude=.venv \
-            --exclude='**/__pycache__' \
-            --exclude='*.pyc' \
-            -czf scanner-hardening-source.tar.gz .
-          tar -tzf scanner-hardening-source.tar.gz | sed -n '1,500p' > scanner-hardening-inventory.txt
+          mkdir -p /tmp/scanner-hardening-snapshot
+          git rev-parse HEAD > /tmp/scanner-hardening-snapshot/scanner-hardening-commit.txt
+          git status --short > /tmp/scanner-hardening-snapshot/scanner-hardening-status.txt
+          git ls-files -z \
+            | tar --null -czf /tmp/scanner-hardening-snapshot/scanner-hardening-source.tar.gz -T -
+          tar -tzf /tmp/scanner-hardening-snapshot/scanner-hardening-source.tar.gz \
+            | sed -n '1,2000p' \
+            > /tmp/scanner-hardening-snapshot/scanner-hardening-inventory.txt
       - name: Upload source snapshot
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: scanner-hardening-source
-          path: |
-            scanner-hardening-source.tar.gz
-            scanner-hardening-commit.txt
-            scanner-hardening-status.txt
-            scanner-hardening-inventory.txt
+          path: /tmp/scanner-hardening-snapshot
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 3
