@@ -26,7 +26,7 @@ from scripts.installed_canary_proof import InstalledCanaryError, load_subject, v
 if TYPE_CHECKING:
     from tests.guard_command_corpus_oracle_types import OracleRecord
 
-_FROZEN_MANIFEST_SHA256 = "6f072a56a3ec736b155d084d5990806158f79de31e3a5da1df0d426600ddf7dc"
+_FROZEN_MANIFEST_SHA256 = "dd3af4786fe255fcbe339a36265c0d1182b18466c9b63890b52739480d3d23c8"
 
 
 def _sha256(path: Path) -> str:

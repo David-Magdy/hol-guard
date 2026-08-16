@@ -66,6 +66,7 @@ _EXPECTED_FLOORS = {
         ),
         (("pr", "review", "17", "--approve"), ("content_remote",), False),
         (("pr", "merge", "17", "--squash"), ("routine_merge_remote",), False),
+        (("pr", "merge", "17", "--squash", "--delete-branch"), ("routine_merge_remote",), False),
         (("pr", "merge", "17"), ("merge_remote",), False),
         (("pr", "merge", "17", "--delete-branch"), ("merge_remote", "delete_remote"), False),
         (("api", "repos/o/r/pulls/17/merge", "-X", "PUT"), ("merge_remote",), False),
@@ -160,6 +161,20 @@ def test_routine_squash_merge_with_static_repository_is_prompt_free() -> None:
     match = extract_sensitive_tool_action_request(
         "Bash",
         {"command": ("gh pr merge 4751 --repo example/project --squash")},
+    )
+
+    assert match is None
+
+
+def test_routine_squash_merge_cleanup_followed_by_read_is_prompt_free() -> None:
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {
+            "command": (
+                "gh pr merge 5134 --repo example/project --squash --delete-branch && "
+                "gh pr view 5134 --repo example/project --json state,mergedAt,mergeCommit,url"
+            )
+        },
     )
 
     assert match is None
@@ -275,7 +290,6 @@ def test_redirection_retains_the_underlying_remote_capability(
     (
         "gh pr review 17 --approve",
         "gh pr merge 17",
-        "gh pr merge 17 --squash --delete-branch",
         "gh pr merge 17 --squash --auto",
         "gh release create v1 --notes-file notes.md",
         "gh workflow run ci.yml",

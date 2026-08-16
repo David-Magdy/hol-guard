@@ -114,7 +114,7 @@ def _contract(
         description = "Creates a pull-request proposal without merging it or changing repository controls."
     elif capability == "routine_merge_remote":
         description = (
-            "Completes a statically bounded squash pull-request merge without privileged or destructive options."
+            "Completes a statically bounded squash pull-request merge, optionally cleaning up its merged head branch."
         )
     elif capability == "routine_workflow_remote":
         description = "Retries only failed jobs from one existing GitHub Actions run."
