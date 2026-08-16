@@ -1,0 +1,220 @@
+name: Apply scanner assurance v3
+
+on:
+  push:
+    branches: [feat/scanner-assurance-rust-hardening]
+    paths:
+      - ".github/workflows/tmp-apply-scanner-assurance-v3.yml"
+      - "scripts/ci/harden_scanner_assurance_v3.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: apply-scanner-assurance-v3
+  cancel-in-progress: true
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/scanner-assurance-rust-hardening
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+          save-cache: false
+      - name: Apply hardening, validate, and publish exact head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: feat/scanner-assurance-rust-hardening
+        run: |
+          set -u
+          log="$RUNNER_TEMP/scanner-assurance-v3.log"
+          : > "$log"
+          status=0
+
+          run_step() {
+            local label="$1"
+            shift
+            if [ "$status" -ne 0 ]; then
+              return 0
+            fi
+            {
+              echo
+              echo "===== $label ====="
+              printf 'command:'
+              printf ' %q' "$@"
+              echo
+            } | tee -a "$log"
+            set +e
+            "$@" 2>&1 | tee -a "$log"
+            local rc=${PIPESTATUS[0]}
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              status="$rc"
+              echo "FAILED: $label (exit $rc)" | tee -a "$log"
+            else
+              echo "PASSED: $label" | tee -a "$log"
+            fi
+          }
+
+          if [ -f scripts/ci/finalize_scanner_assurance_v2.py ]; then
+            run_step "finalize prior integration" python scripts/ci/finalize_scanner_assurance_v2.py
+          fi
+          run_step "apply complete-binding hardening" python scripts/ci/harden_scanner_assurance_v3.py
+          run_step "install locked environment" uv sync --frozen --extra dev --python 3.12
+          run_step "lockfile validation" uv lock --check
+
+          files=(
+            src/codex_plugin_scanner/assurance.py
+            src/codex_plugin_scanner/assurance_cli.py
+            src/codex_plugin_scanner/evidence_envelope.py
+            src/codex_plugin_scanner/runtime_assurance.py
+            src/codex_plugin_scanner/rust_kernel.py
+            src/codex_plugin_scanner/scanner.py
+            src/codex_plugin_scanner/policy.py
+            tests/assurance_corpus.py
+            tests/test_assurance_scanner.py
+            tests/test_evidence_envelope.py
+            tests/test_runtime_assurance.py
+            tests/test_rust_scanner_kernel_contract.py
+            scripts/ci/scanner_assurance_benchmark.py
+          )
+          run_step "Python autofix" uv run --no-sync ruff check --fix "${files[@]}"
+          run_step "Python formatting" uv run --no-sync ruff format "${files[@]}"
+          run_step "Python lint" uv run --no-sync ruff check "${files[@]}"
+          run_step "Python compile" uv run --no-sync python -m compileall -q src/codex_plugin_scanner tests scripts/ci
+          run_step "Python types" uv run --no-sync basedpyright --level error \
+            src/codex_plugin_scanner/assurance.py \
+            src/codex_plugin_scanner/assurance_cli.py \
+            src/codex_plugin_scanner/evidence_envelope.py \
+            src/codex_plugin_scanner/runtime_assurance.py \
+            src/codex_plugin_scanner/rust_kernel.py \
+            src/codex_plugin_scanner/scanner.py \
+            src/codex_plugin_scanner/policy.py
+
+          run_step "Rust format" cargo fmt --manifest-path rust/scanner-kernel/Cargo.toml
+          run_step "Rust clippy autofix" cargo clippy --locked --manifest-path rust/scanner-kernel/Cargo.toml --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+          run_step "Rust clippy" cargo clippy --locked --manifest-path rust/scanner-kernel/Cargo.toml --all-targets -- -D warnings
+          run_step "Rust tests" cargo test --locked --manifest-path rust/scanner-kernel/Cargo.toml
+          run_step "Rust optimized build" cargo build --locked --release --manifest-path rust/scanner-kernel/Cargo.toml
+
+          export HOL_GUARD_SCANNER_KERNEL="$GITHUB_WORKSPACE/rust/scanner-kernel/target/release/hol-guard-scanner-kernel"
+          run_step "assurance regression suite" uv run --no-sync pytest \
+            tests/test_assurance_scanner.py \
+            tests/test_evidence_envelope.py \
+            tests/test_runtime_assurance.py \
+            tests/test_rust_scanner_kernel_contract.py \
+            --tb=short
+          run_step "existing scanner contracts" uv run --no-sync pytest \
+            tests/test_cli.py \
+            tests/test_integration.py \
+            tests/test_policy.py \
+            tests/test_reporting.py \
+            tests/test_schema_contracts.py \
+            tests/test_security_ops.py \
+            tests/test_verification.py \
+            --tb=short
+          run_step "assurance benchmark" env PYTHONPATH=. uv run --no-sync python \
+            scripts/ci/scanner_assurance_benchmark.py \
+            --output scanner-assurance-benchmark.json
+          run_step "inventory ratchet" uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          run_step "suite-size ratchet" uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
+          run_step "diff whitespace" git diff --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ "$status" -ne 0 ]; then
+            mkdir -p .scanner-assurance-debug
+            {
+              echo "head=$(git rev-parse HEAD)"
+              echo "status=$status"
+              echo "generated_at=$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
+              echo
+              tail -c 300000 "$log"
+            } \
+              | sed -E 's/(Bearer|token|authorization)[=: ]+[^[:space:]]+/\1=[redacted]/Ig' \
+              > .scanner-assurance-debug/v3-validation.log
+            git add .scanner-assurance-debug/v3-validation.log
+            git commit -m "test(scanner): preserve v3 assurance failure" || true
+            git push origin "HEAD:$BRANCH"
+            exit "$status"
+          fi
+
+          rm -rf .scanner-assurance-debug
+          rm -f \
+            scripts/ci/harden_scanner_assurance_v3.py \
+            scripts/ci/finalize_scanner_assurance_v2.py \
+            scripts/ci/finalize_scanner_assurance.py \
+            scripts/ci/repair_scanner_assurance.py \
+            scripts/ci/apply_scanner_assurance_integration.py \
+            .github/workflows/tmp-apply-scanner-assurance-v3.yml \
+            .github/workflows/tmp-finalize-scanner-assurance-v2.yml \
+            .github/workflows/tmp-validate-and-open-scanner-assurance-pr.yml \
+            .github/workflows/tmp-apply-scanner-assurance.yml \
+            .github/workflows/scanner-assurance-source-snapshot.yml \
+            .github/workflows/scanner-reliability-payload-inspect.yml \
+            .github/workflows/scanner-reliability-source-snapshot.yml
+          git add -A
+          if ! git diff --cached --quiet; then
+            git diff --cached --check
+            git commit -m "feat(scanner): require complete artifact binding"
+            git push origin "HEAD:$BRANCH"
+          fi
+
+          body="$RUNNER_TEMP/scanner-assurance-pr.md"
+          cat > "$body" <<'EOF'
+          ## Purpose
+
+          Replace static-only and producing-side-only scanner limitations with independently testable assurance layers for plugins, MCP servers, and skills.
+
+          ## Security coverage
+
+          - Static adversarial analysis across injection, prompt/tool poisoning, authorization, credential access, exfiltration, persistence, destructive behavior, surveillance, resource abuse, SSRF, deserialization, MCP, skill, dependency, and supply-chain vectors.
+          - In-memory ZIP/TAR traversal, link, encryption, nesting, entry-count, expansion, collision, and archive-bomb controls.
+          - Dependency-free Rust hot paths for deterministic traversal, streaming hashes, native/Wasm recognition, hardening metadata, and bounded capability strings, with a protocol-validated Python fallback.
+          - DSSE/in-toto Ed25519 verification that separates self-attested integrity from caller-trusted publisher identity.
+          - Explicit OCI detonation with immutable images, pulls disabled, no network, read-only root and target, dropped capabilities, no-new-privileges, non-root execution, strict resources, exact digest binding, and trace-completeness validation.
+          - Canonical privacy-reduced evidence envelopes and redirect-free, idempotent HTTPS upload.
+          - Packaged runtime code in `dist/`, `build/`, and vendored `node_modules` is inspected rather than silently excluded.
+          - Provenance and runtime evidence cannot be verified if traversal, hashing, or artifact coverage is incomplete.
+
+          ## Quality gates
+
+          The exact head passed Rust formatting, Clippy with warnings denied, Rust unit tests, optimized build, Python lint/format/type checks, hostile assurance fixtures, existing scanner compatibility tests, test inventory/ratchet, deterministic output checks, secret non-disclosure checks, and precision/recall/F1/latency thresholds.
+
+          ## Claims
+
+          `complete` means the supported procedure completed under reported budgets. It does not mean universally safe. Native structure and strings remain separate from complete disassembly. Runtime is `verified` only with complete artifact binding, mandatory containment controls, and complete traces. Publisher identity is `verified` only against a consumer-controlled trust root.
+
+          This PR intentionally targets `release/3.0`, not `main`.
+          EOF
+
+          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --head "$BRANCH" --base release/3.0 --json number --jq '.[0].number // empty')
+          if [ -z "$existing" ]; then
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base release/3.0 \
+              --head "$BRANCH" \
+              --title "feat(scanner): layered assurance and Rust hot paths" \
+              --body-file "$body"
+          else
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body"
+          fi
