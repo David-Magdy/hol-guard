@@ -36,7 +36,8 @@ else:
         TestPyPIResult,
     )
 
-PROJECT_NAME: Final = "hol-guard"
+DEFAULT_PROJECT_NAME: Final = "hol-guard"
+SUPPORTED_PROJECT_NAMES: Final = ("hol-guard", "plugin-scanner")
 MAX_RESPONSE_BYTES: Final = 256 * 1024 * 1024
 _SHA256: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{64}")
 
@@ -70,13 +71,19 @@ def stdlib_fetch(url: str) -> bytes:
     return b"".join(chunks)
 
 
-def _project_url(registry: Registry) -> str:
-    return f"https://{registry.api_host}/pypi/{PROJECT_NAME}/json"
+def _validated_project_name(project_name: str) -> str:
+    if project_name not in SUPPORTED_PROJECT_NAMES:
+        raise RegistryVerificationError(f"Unsupported release project: {project_name}")
+    return project_name
 
 
-def _release_url(registry: Registry, version: str) -> str:
+def _project_url(registry: Registry, project_name: str) -> str:
+    return f"https://{registry.api_host}/pypi/{_validated_project_name(project_name)}/json"
+
+
+def _release_url(registry: Registry, project_name: str, version: str) -> str:
     quoted_version = urllib.parse.quote(version, safe="")
-    return f"https://{registry.api_host}/pypi/{PROJECT_NAME}/{quoted_version}/json"
+    return f"https://{registry.api_host}/pypi/{_validated_project_name(project_name)}/{quoted_version}/json"
 
 
 def _fetch_payload(
@@ -122,9 +129,10 @@ def _canonical_public_version(version_text: object, *, label: str) -> Version:
 def list_registry_versions(
     registry: Registry,
     *,
+    project_name: str = DEFAULT_PROJECT_NAME,
     fetcher: Fetcher = stdlib_fetch,
 ) -> tuple[str, ...]:
-    payload = _fetch_payload(_project_url(registry), fetcher=fetcher)
+    payload = _fetch_payload(_project_url(registry, project_name), fetcher=fetcher)
     if payload is None:
         raise RegistryVerificationError("Registry project response was unexpectedly absent")
     document = _decode_object(payload, label="Registry project response")
@@ -149,22 +157,22 @@ def _distribution_identity(filename: str) -> tuple[str, Version]:
         raise RegistryVerificationError(f"Invalid distribution filename: {filename}") from exc
 
 
-def _validate_distribution_filename(filename: object, version: Version) -> str:
+def _validate_distribution_filename(filename: object, version: Version, project_name: str) -> str:
     if not isinstance(filename, str) or not filename or Path(filename).name != filename:
         raise RegistryVerificationError("Registry distribution filename is invalid")
     name, file_version = _distribution_identity(filename)
-    if name != PROJECT_NAME or file_version != version:
+    if name != _validated_project_name(project_name) or file_version != version:
         raise RegistryVerificationError("Registry returned a distribution for the wrong project or version")
     return filename
 
 
-def _is_publish_attestation(filename: object, version: Version) -> bool:
+def _is_publish_attestation(filename: object, version: Version, project_name: str) -> bool:
     if not isinstance(filename, str) or not filename.endswith(".publish.attestation"):
         return False
     distribution_filename = filename
     while distribution_filename.endswith(".publish.attestation"):
         distribution_filename = distribution_filename.removesuffix(".publish.attestation")
-    _validate_distribution_filename(distribution_filename, version)
+    _validate_distribution_filename(distribution_filename, version, project_name)
     return True
 
 
@@ -195,11 +203,12 @@ def inspect_release(
     registry: Registry,
     version_text: str,
     *,
+    project_name: str = DEFAULT_PROJECT_NAME,
     fetcher: Fetcher = stdlib_fetch,
 ) -> ReleaseInspection:
     version = _canonical_public_version(version_text, label="Requested version")
     payload = _fetch_payload(
-        _release_url(registry, str(version)),
+        _release_url(registry, project_name, str(version)),
         fetcher=fetcher,
         allow_not_found=True,
     )
@@ -222,9 +231,9 @@ def inspect_release(
     for item in urls:
         if not isinstance(item, dict):
             raise RegistryVerificationError("Registry release file entry must be an object")
-        if _is_publish_attestation(item.get("filename"), version):
+        if _is_publish_attestation(item.get("filename"), version, project_name):
             continue
-        filename = _validate_distribution_filename(item.get("filename"), version)
+        filename = _validate_distribution_filename(item.get("filename"), version, project_name)
         if filename in seen:
             raise RegistryVerificationError(f"Registry release repeats distribution filename: {filename}")
         seen.add(filename)
@@ -257,8 +266,11 @@ def _sha256_file(path: Path) -> str:
 def compute_local_distribution_hashes(
     dist_dir: Path,
     version_text: str,
+    project_name: str = DEFAULT_PROJECT_NAME,
 ) -> dict[str, str]:
     version = _canonical_public_version(version_text, label="Requested version")
+    normalized_project_name = _validated_project_name(project_name)
+    project_prefixes = (normalized_project_name, normalized_project_name.replace("-", "_"))
     if not dist_dir.is_dir():
         raise RegistryVerificationError("Distribution directory does not exist")
 
@@ -267,29 +279,29 @@ def compute_local_distribution_hashes(
     found_sdist = False
     for path in sorted(dist_dir.iterdir()):
         if path.is_symlink():
-            if path.name.startswith(("hol_guard-", "hol-guard-")):
-                raise RegistryVerificationError("Local Guard distributions cannot be symbolic links")
+            if path.name.startswith(tuple(f"{prefix}-" for prefix in project_prefixes)):
+                raise RegistryVerificationError("Local project distributions cannot be symbolic links")
             continue
-        if not path.is_file() or _is_publish_attestation(path.name, version):
+        if not path.is_file() or _is_publish_attestation(path.name, version, project_name):
             continue
         try:
             name, file_version = _distribution_identity(path.name)
         except RegistryVerificationError:
-            if path.name.startswith(("hol_guard-", "hol-guard-")):
+            if path.name.startswith(tuple(f"{prefix}-" for prefix in project_prefixes)):
                 raise
             continue
-        if name != PROJECT_NAME:
+        if name != normalized_project_name:
             continue
         if file_version != version:
-            raise RegistryVerificationError("Local Guard distribution has the wrong version")
+            raise RegistryVerificationError("Local project distribution has the wrong version")
         if path.name in hashes:
-            raise RegistryVerificationError("Local Guard distribution filename is duplicated")
+            raise RegistryVerificationError("Local project distribution filename is duplicated")
         hashes[path.name] = _sha256_file(path)
         found_wheel = found_wheel or path.name.endswith(".whl")
         found_sdist = found_sdist or not path.name.endswith(".whl")
 
     if not hashes or not found_wheel or not found_sdist:
-        raise RegistryVerificationError("Local release requires both a Guard wheel and sdist")
+        raise RegistryVerificationError("Local release requires both a project wheel and sdist")
     return hashes
 
 
@@ -351,11 +363,12 @@ def verify_registry_release(
     version_text: str,
     dist_dir: Path,
     *,
+    project_name: str = DEFAULT_PROJECT_NAME,
     download_dir: Path | None = None,
     fetcher: Fetcher = stdlib_fetch,
 ) -> RegistryResult:
-    local_hashes = compute_local_distribution_hashes(dist_dir, version_text)
-    inspection = inspect_release(registry, version_text, fetcher=fetcher)
+    local_hashes = compute_local_distribution_hashes(dist_dir, version_text, project_name)
+    inspection = inspect_release(registry, version_text, project_name=project_name, fetcher=fetcher)
     if not inspection.exists:
         return RegistryResult(
             registry=registry,
@@ -380,6 +393,7 @@ def verify_testpypi_release(
     version_text: str,
     dist_dir: Path,
     *,
+    project_name: str = DEFAULT_PROJECT_NAME,
     download_dir: Path | None = None,
     fetcher: Fetcher = stdlib_fetch,
 ) -> TestPyPIResult:
@@ -389,6 +403,7 @@ def verify_testpypi_release(
         Registry.TESTPYPI,
         version_text,
         dist_dir,
+        project_name=project_name,
         download_dir=download_dir,
         fetcher=fetcher,
     )
@@ -397,9 +412,10 @@ def verify_testpypi_release(
 def assert_pypi_release_absent(
     version_text: str,
     *,
+    project_name: str = DEFAULT_PROJECT_NAME,
     fetcher: Fetcher = stdlib_fetch,
 ) -> None:
-    inspection = inspect_release(Registry.PYPI, version_text, fetcher=fetcher)
+    inspection = inspect_release(Registry.PYPI, version_text, project_name=project_name, fetcher=fetcher)
     if inspection.exists:
         raise RegistryVerificationError(f"PyPI release {inspection.version} already exists")
 
@@ -429,23 +445,28 @@ def _parser() -> argparse.ArgumentParser:
 
     list_parser = subparsers.add_parser("list-versions")
     _ = list_parser.add_argument("--registry", choices=[item.value for item in Registry], required=True)
+    _ = list_parser.add_argument("--project", choices=SUPPORTED_PROJECT_NAMES, default=DEFAULT_PROJECT_NAME)
 
     inspect_parser = subparsers.add_parser("inspect-release")
     _ = inspect_parser.add_argument("--registry", choices=[item.value for item in Registry], required=True)
+    _ = inspect_parser.add_argument("--project", choices=SUPPORTED_PROJECT_NAMES, default=DEFAULT_PROJECT_NAME)
     _ = inspect_parser.add_argument("--version", required=True)
 
     verify_parser = subparsers.add_parser("verify-testpypi")
+    _ = verify_parser.add_argument("--project", choices=SUPPORTED_PROJECT_NAMES, default=DEFAULT_PROJECT_NAME)
     _ = verify_parser.add_argument("--version", required=True)
     _ = verify_parser.add_argument("--dist-dir", type=Path, required=True)
     _ = verify_parser.add_argument("--download-dir", type=Path)
 
     generic_verify_parser = subparsers.add_parser("verify-release")
     _ = generic_verify_parser.add_argument("--registry", choices=[item.value for item in Registry], required=True)
+    _ = generic_verify_parser.add_argument("--project", choices=SUPPORTED_PROJECT_NAMES, default=DEFAULT_PROJECT_NAME)
     _ = generic_verify_parser.add_argument("--version", required=True)
     _ = generic_verify_parser.add_argument("--dist-dir", type=Path, required=True)
     _ = generic_verify_parser.add_argument("--download-dir", type=Path)
 
     absent_parser = subparsers.add_parser("assert-pypi-absent")
+    _ = absent_parser.add_argument("--project", choices=SUPPORTED_PROJECT_NAMES, default=DEFAULT_PROJECT_NAME)
     _ = absent_parser.add_argument("--version", required=True)
     return parser
 
@@ -456,12 +477,13 @@ def main(argv: Sequence[str] | None = None, *, fetcher: Fetcher = stdlib_fetch) 
     try:
         if command == "list-versions":
             registry = Registry(args.registry)
-            output: object = list_registry_versions(registry, fetcher=fetcher)
+            output: object = list_registry_versions(registry, project_name=args.project, fetcher=fetcher)
         elif command == "inspect-release":
             registry = Registry(args.registry)
             inspection = inspect_release(
                 registry,
                 args.version,
+                project_name=args.project,
                 fetcher=fetcher,
             )
             output = _inspection_output(inspection)
@@ -469,6 +491,7 @@ def main(argv: Sequence[str] | None = None, *, fetcher: Fetcher = stdlib_fetch) 
             result = verify_testpypi_release(
                 args.version,
                 args.dist_dir,
+                project_name=args.project,
                 download_dir=args.download_dir,
                 fetcher=fetcher,
             )
@@ -478,13 +501,14 @@ def main(argv: Sequence[str] | None = None, *, fetcher: Fetcher = stdlib_fetch) 
                 Registry(args.registry),
                 args.version,
                 args.dist_dir,
+                project_name=args.project,
                 download_dir=args.download_dir,
                 fetcher=fetcher,
             )
             output = _result_output(result)
         elif command == "assert-pypi-absent":
             version = args.version
-            assert_pypi_release_absent(version, fetcher=fetcher)
+            assert_pypi_release_absent(version, project_name=args.project, fetcher=fetcher)
             output = {"registry": Registry.PYPI.value, "version": version, "status": "absent"}
         else:
             raise RegistryVerificationError("Unsupported registry verification command")

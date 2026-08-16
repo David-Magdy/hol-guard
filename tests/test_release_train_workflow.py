@@ -122,6 +122,27 @@ def test_publication_reuses_one_build_artifact() -> None:
         assert any(step.get("with", {}).get("name") == "distributions" for step in jobs[name]["steps"])
 
 
+def test_public_pypi_publishes_and_verifies_both_projects() -> None:
+    steps = workflow()["jobs"]["publish-alpha-pypi"]["steps"]
+    prepare = next(step for step in steps if step.get("name") == "Prepare project-specific distributions")
+    inspect = next(step for step in steps if step.get("name") == "Inspect PyPI state")
+    publishers = [step for step in steps if str(step.get("uses", "")).startswith("pypa/")]
+    verify = next(step for step in steps if step.get("name") == "Verify published PyPI bytes and CLI")
+
+    assert "dist-hol-guard" in prepare["run"]
+    assert "dist-plugin-scanner" in prepare["run"]
+    assert "--project hol-guard" in inspect["run"]
+    assert "--project plugin-scanner" in inspect["run"]
+    assert {step["with"]["packages-dir"] for step in publishers} == {
+        "dist-hol-guard/",
+        "dist-plugin-scanner/",
+    }
+    assert "--project hol-guard" in verify["run"]
+    assert "--project plugin-scanner" in verify["run"]
+    assert '== "hol-guard $VERSION"' in verify["run"]
+    assert '== "plugin-scanner $VERSION"' in verify["run"]
+
+
 def test_alpha_tag_is_bound_to_source_sha() -> None:
     run = next(
         step["run"]
@@ -148,11 +169,16 @@ def test_pypi_uses_protected_trusted_publishing() -> None:
 
 def test_testpypi_and_pypi_are_idempotent() -> None:
     jobs = workflow()["jobs"]
-    for name in ("publish-alpha-testpypi", "publish-alpha-pypi"):
-        run = next(step["run"] for step in jobs[name]["steps"] if step.get("name", "").startswith("Inspect "))
-        assert '"$status" == "absent" || "$status" == "exact"' in run
-        publisher = next(step for step in jobs[name]["steps"] if str(step.get("uses", "")).startswith("pypa/"))
-        assert publisher["if"] == "steps.state.outputs.upload == 'true'"
+    testpypi_run = next(
+        step["run"] for step in jobs["publish-alpha-testpypi"]["steps"] if step.get("name") == "Inspect TestPyPI state"
+    )
+    assert '"$status" == "absent" || "$status" == "exact"' in testpypi_run
+
+    pypi_run = next(
+        step["run"] for step in jobs["publish-alpha-pypi"]["steps"] if step.get("name") == "Inspect PyPI state"
+    )
+    assert '"$guard_status" == "absent" || "$guard_status" == "exact"' in pypi_run
+    assert '"$scanner_status" == "absent" || "$scanner_status" == "exact"' in pypi_run
 
 
 def test_pypi_revalidates_source_history_and_tag() -> None:
@@ -162,7 +188,7 @@ def test_pypi_revalidates_source_history_and_tag() -> None:
         if step.get("name") == "Revalidate source and alpha reservation"
     )
     assert 'merge-base --is-ancestor "$SOURCE_SHA"' in run
-    assert 'refs/tags/alpha/v${VERSION}' in run
+    assert "refs/tags/alpha/v${VERSION}" in run
 
 
 def test_registry_bytes_are_verified_after_testpypi_publish() -> None:
@@ -213,7 +239,8 @@ def test_no_stable_main_publish_path_exists_on_release_branch() -> None:
     assert "release-main" not in text
 
 
-def test_no_plugin_scanner_distribution_is_published_from_release_3_1() -> None:
+def test_plugin_scanner_distribution_is_built_from_release_3_1() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
-    assert "Build scanner package" not in text
-    assert "plugin_scanner-*" not in text
+    assert "Build scanner distribution" in text
+    assert 'name = "plugin-scanner"' in text
+    assert "plugin_scanner-*" in text
