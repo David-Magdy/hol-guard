@@ -68,8 +68,11 @@ def test_push_resolves_to_alpha() -> None:
     assert "CHANNEL=alpha" in run
     assert 'EVENT_REF" != "refs/heads/release/3.1' in run
     assert "compute_alpha_release_version.py --release-train 3.1" in run
-    assert '$pypi + $testpypi + $tags | unique | map(select(contains(".dev") | not))' in run
-    assert 'compute_alpha_release_version.py --release-train 3.1 <<< "$EXISTING_VERSIONS"' in run
+    assert "ALL_VERSIONS=" in run
+    assert "$pypi + $testpypi + $tags | unique" in run
+    assert "PUBLIC_VERSIONS=$(jq 'map(select(contains(\".dev\") | not))'" in run
+    assert 'compute_alpha_release_version.py --release-train 3.1 <<< "$PUBLIC_VERSIONS"' in run
+    assert '<<< "$ALL_VERSIONS"' in run
 
 
 def test_source_must_remain_in_release_history() -> None:
