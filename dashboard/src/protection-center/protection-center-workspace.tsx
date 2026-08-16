@@ -18,11 +18,17 @@ import {
   DEFAULT_EXTENSION_DETAIL_URL_STATE,
   extensionDetailHref,
   extensionStateLabel,
-  parseExtensionRoute,
   readExtensionDetailUrlState,
   type ExtensionDetailUrlState,
-  type ExtensionRoute,
 } from "../extension-control-center-model";
+import { parseProtectionRoute, localCliHref, type ProtectionRoute } from "../local-cli-links";
+import {
+  AddCustomExtensionButton,
+  AddCustomExtensionDialog,
+  CustomExtensionsSection,
+  LocalCliDetail,
+  useLocalCliCatalog,
+} from "./local-clis-panel";
 import {
   acknowledgeDegradedExtensionControlAuthority,
   applyExtensionMutation,
@@ -62,11 +68,11 @@ type LoadState =
 type ExtensionMutationTarget = Pick<ExtensionCatalogItem, "extension_id" | "name">;
 export type ProtectionPendingChange = { extension: ExtensionMutationTarget; enabled: boolean } | { globalLockdown: boolean };
 
-type RouteState = { route: ExtensionRoute; detail: ExtensionDetailUrlState };
+type RouteState = { route: ProtectionRoute; detail: ExtensionDetailUrlState };
 
 export function currentExtensionRouteState(): RouteState {
   return {
-    route: parseExtensionRoute(window.location.pathname),
+    route: parseProtectionRoute(window.location.pathname),
     detail: readExtensionDetailUrlState(window.location.search),
   };
 }
@@ -219,6 +225,8 @@ export function ProtectionCenterWorkspace() {
   const [recoveryStatus, setRecoveryStatus] = useState<string | null>(null);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = useRef<string | null>(null);
+  const localClis = useLocalCliCatalog();
+  const [addingCustom, setAddingCustom] = useState(false);
 
   const load = useCallback(async (): Promise<EffectiveExtensionControls | null> => {
     // Keep the already-rendered protection data mounted while a refresh is in
@@ -273,6 +281,18 @@ export function ProtectionCenterWorkspace() {
     setRouteState({ route: { kind: "overview" }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
+
+  const openLocalCliDetail = useCallback((cliId: string) => {
+    setAddingCustom(false);
+    window.history.pushState({}, "", localCliHref(cliId));
+    setRouteState({ route: { kind: "local-cli", cliId }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
+  const openAddCustom = useCallback(() => setAddingCustom(true), []);
+  const closeAddCustom = useCallback(() => setAddingCustom(false), []);
+  const retryLocalClis = useCallback(() => {
+    void localClis.load();
+  }, [localClis.load]);
 
   const updateDetailState = useCallback((next: ExtensionDetailUrlState) => {
     if (!canonicalSelected) return;
@@ -387,6 +407,27 @@ export function ProtectionCenterWorkspace() {
     }}
   /> : null;
 
+  if (routeState.route.kind === "local-cli") {
+    if (!localClis.data) {
+      if (localClis.error) {
+        return <div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`}><h1 className="text-xl font-semibold text-red-950">Custom extension unavailable</h1><p role="alert" className="mt-2 text-sm text-red-800">{localClis.error}</p><button type="button" onClick={retryLocalClis} className="mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white">Try again</button></div></div>;
+      }
+      return <div className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" aria-label="Loading custom extension" /></div>;
+    }
+    const selectedLocalCli = localClis.data.items.find((item) => item.cli_id === routeState.route.cliId) ?? null;
+    if (!selectedLocalCli) {
+      return <><div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`}><h1 className="font-semibold text-amber-950">Custom extension not found</h1><p className="mt-2 text-sm text-amber-900">This link does not match a CLI Guard has seen on this device.</p><button type="button" onClick={closeExtension} className="mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Back to Extensions</button></div></div>{authorityNotice}</>;
+    }
+    return (
+      <LocalCliDetail
+        item={selectedLocalCli}
+        revision={localClis.data.revision}
+        onBack={closeExtension}
+        onRefresh={localClis.load}
+      />
+    );
+  }
+
   if (routeState.route.kind === "detail" && selectedExtension) {
     return <>{authorityNotice}{recoveryStatus && state.effective.health === "protected" ? <p role="status" className="mb-3 text-sm font-medium text-emerald-800">{recoveryStatus}</p> : null}<ProtectionModuleDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} onBack={closeExtension} onRefresh={load} onRequestExtensionChange={(extension, enabled) => requestChange({ extension: { extension_id: extension.extension_id, name: extension.name }, enabled })} />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}</>;
   }
@@ -419,13 +460,22 @@ export function ProtectionCenterWorkspace() {
 
     <PatternSearchConsole catalog={catalogExtensions} effective={state.effective} onRefresh={load} onOpenExtension={openExtension} />
 
+    <CustomExtensionsSection
+      items={localClis.data?.items ?? []}
+      onOpen={openLocalCliDetail}
+      onAdd={openAddCustom}
+    />
+
     <section className="mt-10" aria-labelledby="all-tools-heading">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 id="all-tools-heading" className="text-xl font-semibold tracking-tight text-brand-dark">All tools</h2>
-          <p className="mt-1 text-sm text-slate-500">Every tool Guard can watch on this device. Open one to adjust its command patterns.</p>
+          <p className="mt-1 text-sm text-slate-500">Every built-in tool Guard can watch on this device. Open one to adjust its command patterns.</p>
         </div>
-        <span className="text-sm text-brand-dark/70">{catalogExtensions.length} tools</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <AddCustomExtensionButton onClick={openAddCustom} />
+          <span className="text-sm text-brand-dark/70">{catalogExtensions.length} tools</span>
+        </div>
       </div>
       <div className="mt-4">{catalogExtensions.map((extension) => <ProtectionModuleRow
         key={extension.extension_id}
@@ -438,6 +488,13 @@ export function ProtectionCenterWorkspace() {
       />)}</div>
     </section>
 
+    {addingCustom ? (
+      <AddCustomExtensionDialog
+        items={localClis.data?.items ?? []}
+        onClose={closeAddCustom}
+        onOpen={openLocalCliDetail}
+      />
+    ) : null}
     {pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}
   </div>;
 }

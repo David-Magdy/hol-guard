@@ -1,4 +1,4 @@
-import { an as fetchExtensionControlApi, r as reactExports, j as jsxRuntimeExports, Z as HiMiniLockClosed, J as HiMiniExclamationTriangle, ao as HiMiniArrowPath, o as HiMiniShieldCheck, ap as HiMiniInformationCircle, aq as isApprovalProofSubmitDisabled, w as HiMiniXMark, ar as ApprovalProofFieldInputs, as as buildApprovalProofCredentials, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ak as HiMiniMagnifyingGlass, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, at as HiMiniArrowLeft, au as WorkspacePageHeader } from "../guard-dashboard.js";
+import { an as fetchLocalCliApi, r as reactExports, j as jsxRuntimeExports, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as HiMiniArrowLeft, ap as HiMiniPlus, aq as buildApprovalProofCredentials, ar as isApprovalProofSubmitDisabled, as as ApprovalProofFieldInputs, at as fetchExtensionControlApi, Z as HiMiniLockClosed, au as HiMiniArrowPath, av as HiMiniInformationCircle, w as HiMiniXMark, ak as HiMiniMagnifyingGlass, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, aw as WorkspacePageHeader } from "../guard-dashboard.js";
 import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./approval-proof-modal.js";
 const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -171,6 +171,444 @@ function groupPermissionsByFamily(permissions) {
   }
   const families = [...byFamily.entries()].map(([family, members]) => ({ family, heading: familyHeading(members), permissions: members })).sort((left, right) => left.family.localeCompare(right.family));
   return { ungrouped, families };
+}
+const LOCAL_CLI_ID_PATTERN = /^local-cli\.[a-z0-9]+(?:-[a-z0-9]+){0,8}$/;
+function parseProtectionRoute(pathname) {
+  if (pathname.startsWith("/extensions/local-cli/")) {
+    try {
+      const cliId = decodeURIComponent(pathname.slice("/extensions/local-cli/".length)).trim().toLowerCase();
+      if (cliId && !cliId.includes("/") && LOCAL_CLI_ID_PATTERN.test(cliId)) {
+        return { kind: "local-cli", cliId };
+      }
+    } catch {
+      return { kind: "invalid" };
+    }
+    return { kind: "invalid" };
+  }
+  return parseExtensionRoute(pathname);
+}
+function localCliHref(cliId) {
+  return `/extensions/local-cli/${encodeURIComponent(cliId)}`;
+}
+class LocalCliApiError extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+}
+const CLI_ID_PATTERN = /^local-cli\.[a-z0-9]+(?:-[a-z0-9]+){0,8}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function requiredString(value, field) {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`Invalid local CLI ${field}`);
+  return value.trim();
+}
+function requiredInt(value, field) {
+  if (typeof value !== "number" || !Number.isInteger(value)) throw new Error(`Invalid local CLI ${field}`);
+  return value;
+}
+function optionalString$1(value) {
+  if (value === null || value === void 0) return null;
+  if (typeof value !== "string") throw new Error("Invalid local CLI string");
+  return value;
+}
+function isLocalCliId(value) {
+  return CLI_ID_PATTERN.test(value);
+}
+function addedCustomExtensions(items) {
+  return items.filter((item) => item.state !== "unset");
+}
+function suggestedCustomExtensions(items) {
+  return items.filter((item) => item.state === "unset");
+}
+function normalizeLocalCliItem(value) {
+  if (!isRecord(value)) throw new Error("Invalid local CLI item");
+  const cliId = requiredString(value.cli_id, "id");
+  if (!isLocalCliId(cliId)) throw new Error("Invalid local CLI id");
+  const identityHash = requiredString(value.identity_hash, "identity");
+  if (!SHA256_PATTERN.test(identityHash)) throw new Error("Invalid local CLI identity");
+  const kind = value.kind;
+  if (kind !== "executable" && kind !== "script") throw new Error("Invalid local CLI kind");
+  const state = value.state;
+  if (state !== "unset" && state !== "allowed" && state !== "blocked") throw new Error("Invalid local CLI state");
+  return {
+    cli_id: cliId,
+    name: requiredString(value.name, "name").slice(0, 120),
+    kind,
+    identity_hash: identityHash,
+    example_label: requiredString(value.example_label, "example").slice(0, 160),
+    interpreter_name: optionalString$1(value.interpreter_name),
+    observed_count: requiredInt(value.observed_count, "count"),
+    last_seen_at: optionalString$1(value.last_seen_at),
+    state,
+    stale: value.stale === true,
+    grant_revision: value.grant_revision === null || value.grant_revision === void 0 ? null : requiredInt(value.grant_revision, "grant revision"),
+    authority_revision: requiredInt(value.authority_revision, "revision")
+  };
+}
+function normalizeLocalCliList(value) {
+  if (!isRecord(value)) throw new Error("Invalid local CLI list");
+  const cloud = isRecord(value.cloud) ? value.cloud : {};
+  const items = Array.isArray(value.items) ? value.items.map(normalizeLocalCliItem) : [];
+  return {
+    schema_version: requiredString(value.schema_version, "schema"),
+    revision: requiredInt(value.revision, "revision"),
+    items,
+    cloud: {
+      sync_local_only: cloud.sync_local_only !== false,
+      summary: typeof cloud.summary === "string" ? cloud.summary : "Custom extensions stay on this device. Guard Cloud can keep the same extension on your other machines."
+    }
+  };
+}
+async function readJson(response) {
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const record2 = isRecord(payload) ? payload : {};
+    const code = typeof record2.error === "string" ? record2.error : "local_cli_request_failed";
+    const message = typeof record2.message === "string" ? record2.message : "Guard could not update this custom extension.";
+    throw new LocalCliApiError(code, message);
+  }
+  if (payload === null) {
+    throw new LocalCliApiError("local_cli_request_failed", "Guard could not update this custom extension.");
+  }
+  return payload;
+}
+async function fetchLocalCliList() {
+  return normalizeLocalCliList(await readJson(await fetchLocalCliApi("/v1/local-clis")));
+}
+async function previewLocalCliMutation(payload) {
+  const body = await readJson(await fetchLocalCliApi("/v1/local-clis/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  }));
+  if (!isRecord(body)) throw new Error("Invalid local CLI preview");
+  return { summary: requiredString(body.summary, "summary") };
+}
+async function applyLocalCliMutation(payload) {
+  await readJson(await fetchLocalCliApi("/v1/local-clis/apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  }));
+}
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])"
+].join(",");
+function focusableElements(root) {
+  return Array.from(root.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
+    (element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true"
+  );
+}
+function useModalDialog(onClose, canClose = true) {
+  const dialogRef = reactExports.useRef(null);
+  const closeRef = reactExports.useRef(onClose);
+  const canCloseRef = reactExports.useRef(canClose);
+  closeRef.current = onClose;
+  canCloseRef.current = canClose;
+  reactExports.useEffect(() => {
+    const root = dialogRef.current;
+    if (!root) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const initial = focusableElements(root)[0] ?? root;
+    initial.focus();
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape" && canCloseRef.current) {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = focusableElements(root);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        root.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
+  return dialogRef;
+}
+const EXTENSION_PANEL_CLASS = "guard-extensions-panel p-5 sm:p-6";
+const EXTENSION_CHIP_CLASS = "guard-extensions-chip";
+const EXTENSION_ROW_CLASS = "guard-extensions-row";
+function ProtectionStatusHero(props) {
+  const safe = props.status.tone === "safe";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-status-heading", className: "guard-status-bar", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-status-bar-icon", "data-tone": props.status.tone, "aria-hidden": "true", children: safe ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "size-4" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "size-4" }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.18em] text-slate-400", children: "Local protection" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-0.5 flex flex-wrap items-baseline gap-x-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-status-heading", className: "text-sm font-semibold text-brand-dark", children: props.status.title }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm leading-5 text-brand-dark/70", children: props.status.summary })
+      ] })
+    ] }),
+    props.status.primaryActionLabel && props.onPrimaryAction ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        type: "button",
+        "aria-busy": props.busy,
+        disabled: props.busy,
+        onClick: props.onPrimaryAction,
+        className: "min-h-11 shrink-0 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:cursor-wait disabled:opacity-60",
+        children: props.busy ? "Working…" : props.status.primaryActionLabel
+      }
+    ) : safe ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex min-h-9 shrink-0 items-center gap-1.5 self-center rounded-full border border-emerald-200 bg-[#e8f7ee] px-3 text-xs font-semibold text-emerald-800", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "size-3.5" }),
+      "No action required"
+    ] }) : null,
+    props.children ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full border-t border-[rgba(63,65,116,0.08)] pt-2", children: props.children }) : null
+  ] });
+}
+function ProtectionDecisionBadge({ result }) {
+  const label = result === "allowed" ? "Allowed" : result === "ask-first" ? "Ask first" : "Blocked";
+  const classes = result === "allowed" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : result === "ask-first" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800";
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${classes}`, children: label });
+}
+function ProtectionModuleRow(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onOpen, className: `${EXTENSION_ROW_CLASS} motion-reduce:transition-none`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "min-w-0 flex-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex flex-wrap items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-brand-dark", children: props.name }),
+        props.required ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Required" }) : null,
+        props.managed ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Managed" }) : null,
+        props.custom ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Custom" }) : null
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block truncate text-sm text-brand-dark/70", children: props.behavior })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronRight, { className: "size-5 shrink-0 text-brand-dark/35", "aria-hidden": "true" })
+  ] });
+}
+function TechnicalDetails(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: `${EXTENSION_PANEL_CLASS}`, "data-testid": props.testId, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer list-none text-sm font-semibold text-brand-dark", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-2", children: [
+      props.title ?? "Technical details",
+      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronDown, { className: "size-4", "aria-hidden": "true" })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 text-sm text-brand-dark/80", children: props.children })
+  ] });
+}
+function InlineError({ message }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800", children: message });
+}
+function randomToken$1() {
+  return crypto.randomUUID().replaceAll("-", "");
+}
+function reviewTitle(name, state) {
+  if (state === "allowed") return `Add ${name} as a custom extension`;
+  if (state === "blocked") return `Block ${name}`;
+  return `Remove ${name}`;
+}
+function customExtensionStateLabel(item) {
+  if (item.stale) return "This extension's files changed. Review it again.";
+  if (item.state === "allowed") return "Custom extension. Matching commands are allowed on this device.";
+  if (item.state === "blocked") return "Custom extension. Matching commands are blocked on this device.";
+  return "Seen on this device. Add it as a custom extension to allow its commands.";
+}
+function CustomExtensionsSection(props) {
+  const added = addedCustomExtensions(props.items);
+  if (added.length === 0) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-10", "aria-labelledby": "custom-extensions-heading", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "custom-extensions-heading", className: "text-xl font-semibold tracking-tight text-brand-dark", children: "Custom extensions" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: "CLIs you added that are not in Guard's built-in catalog." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onAdd, className: "inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm font-semibold text-brand-blue", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniPlus, { className: "size-4", "aria-hidden": "true" }),
+        "Add custom extension"
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: added.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(CustomExtensionRow, { item, onOpen: props.onOpen }, item.cli_id)) })
+  ] });
+}
+function AddCustomExtensionButton(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onClick, className: "inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniPlus, { className: "size-4", "aria-hidden": "true" }),
+    "Add custom extension"
+  ] });
+}
+function CustomExtensionRow(props) {
+  const handleOpen = reactExports.useCallback(() => {
+    props.onOpen(props.item.cli_id);
+  }, [props]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    ProtectionModuleRow,
+    {
+      name: props.item.name,
+      description: props.item.example_label,
+      behavior: customExtensionStateLabel(props.item),
+      custom: true,
+      onOpen: handleOpen
+    }
+  );
+}
+function AddCustomExtensionDialog(props) {
+  const suggestions = suggestedCustomExtensions(props.items);
+  const dialogRef = useModalDialog(props.onClose);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: dialogRef, tabIndex: -1, role: "dialog", "aria-modal": "true", "aria-labelledby": "add-custom-extension-title", className: "w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "add-custom-extension-title", className: "text-xl font-semibold text-brand-dark", children: "Add a custom extension" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-brand-dark/80", children: "Guard can turn a CLI it has already seen on this device into an extension. After you add it, you can allow every matching command from that tool." }),
+    suggestions.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 text-sm leading-6 text-brand-dark/75", children: "No unused CLIs yet. Run the tool once in a protected app, then come back here to add it." }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 max-h-80 overflow-auto", children: suggestions.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(CustomExtensionRow, { item, onOpen: props.onOpen }, item.cli_id)) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6 flex justify-end", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: props.onClose, className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark", children: "Close" }) })
+  ] }) });
+}
+function LocalCliDetail(props) {
+  const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
+  const [pending, setPending] = reactExports.useState(null);
+  const [busy, setBusy] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  const added = props.item.state !== "unset";
+  const requestAdd = reactExports.useCallback(() => setPending("allowed"), []);
+  const requestAllow = reactExports.useCallback(() => setPending("allowed"), []);
+  const requestBlock = reactExports.useCallback(() => setPending("blocked"), []);
+  const requestRemove = reactExports.useCallback(() => setPending("unset"), []);
+  const clearPending = reactExports.useCallback(() => {
+    if (!busy) setPending(null);
+  }, [busy]);
+  const confirmChange = reactExports.useCallback(async (credentials) => {
+    if (pending === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = {
+        cli_id: props.item.cli_id,
+        identity_hash: props.item.identity_hash,
+        name: props.item.name,
+        kind: props.item.kind,
+        example_label: props.item.example_label,
+        interpreter_name: props.item.interpreter_name,
+        state: pending,
+        previous_revision: props.revision,
+        session_nonce: randomToken$1(),
+        ...credentials
+      };
+      await previewLocalCliMutation(payload);
+      await applyLocalCliMutation(payload);
+      await props.onRefresh();
+      setPending(null);
+    } catch (caught) {
+      setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not update this custom extension.");
+    } finally {
+      setBusy(false);
+    }
+  }, [pending, props]);
+  reactExports.useEffect(() => {
+    void resolveApprovalGate({ failClosed: true }).catch(() => {
+      setError("Guard could not load the local approval settings yet.");
+    });
+  }, [resolveApprovalGate]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { "data-testid": "local-cli-detail", className: "w-full", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onBack, className: "inline-flex min-h-11 items-center gap-2 rounded-lg px-1 text-sm font-semibold text-brand-dark/80 hover:text-brand-dark", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowLeft, { className: "size-4", "aria-hidden": "true" }),
+      "Extensions"
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mt-4 border-b border-slate-200 pb-6", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-mono text-xs font-semibold tracking-[0.14em] text-slate-400", children: props.item.example_label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "mt-2 text-2xl font-semibold tracking-tight text-brand-dark", children: props.item.name }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-2xl text-sm leading-6 text-slate-500", children: customExtensionStateLabel(props.item) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 max-w-2xl text-sm leading-6 text-brand-dark/75", children: "Adding this custom extension lets Guard treat this exact CLI like the built-in tools. You can allow every matching command on this device. Guard still blocks wrapped or destructive commands that are not just this tool." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 flex flex-wrap gap-3", children: added ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", onClick: requestAllow, children: "Allow this extension's commands" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark", onClick: requestBlock, children: "Block this extension" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark/80", onClick: requestRemove, children: "Remove custom extension" })
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", onClick: requestAdd, children: "Add custom extension" }) })
+    ] }),
+    error && !pending ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: error }) }) : null,
+    pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      CustomExtensionReviewModal,
+      {
+        item: props.item,
+        nextState: pending,
+        busy,
+        error,
+        approvalGate: resolvedApprovalGate,
+        onCancel: clearPending,
+        onConfirm: confirmChange
+      }
+    ) : null
+  ] });
+}
+function CustomExtensionReviewModal(props) {
+  const [password, setPassword] = reactExports.useState("");
+  const [totp, setTotp] = reactExports.useState("");
+  const dialogRef = useModalDialog(props.onCancel, !props.busy);
+  const title = reviewTitle(props.item.name, props.nextState);
+  const handlePassword = reactExports.useCallback((event) => {
+    setPassword(event.target.value);
+  }, []);
+  const handleTotp = reactExports.useCallback((event) => {
+    setTotp(event.target.value);
+  }, []);
+  const handleSubmit = reactExports.useCallback((event) => {
+    event.preventDefault();
+    props.onConfirm(buildApprovalProofCredentials(props.approvalGate, {
+      approvalPassword: password,
+      approvalTotpCode: totp
+    }));
+  }, [password, props, totp]);
+  const submitDisabled = isApprovalProofSubmitDisabled(
+    props.approvalGate,
+    { approvalPassword: password, approvalTotpCode: totp },
+    props.busy
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { ref: dialogRef, tabIndex: -1, role: "dialog", "aria-modal": "true", "aria-labelledby": "custom-extension-review-title", onSubmit: handleSubmit, className: "w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "custom-extension-review-title", className: "text-xl font-semibold text-brand-dark", children: title }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-brand-dark/80", children: "This stays on this device. Guard Cloud can keep the same custom extension on your other machines." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      ApprovalProofFieldInputs,
+      {
+        approvalGate: props.approvalGate,
+        approvalPassword: password,
+        approvalTotpCode: totp,
+        onApprovalPasswordChange: handlePassword,
+        onApprovalTotpCodeChange: handleTotp
+      }
+    ) }),
+    props.error ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: props.error }) }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 flex justify-end gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", disabled: props.busy, onClick: props.onCancel, className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark", children: "Cancel" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "submit", disabled: submitDisabled, className: "min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white disabled:opacity-60", children: props.busy ? "Saving…" : "Confirm" })
+    ] })
+  ] }) });
+}
+function useLocalCliCatalog() {
+  const [data, setData] = reactExports.useState(null);
+  const [error, setError] = reactExports.useState(null);
+  const load = reactExports.useCallback(async () => {
+    try {
+      setData(await fetchLocalCliList());
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Guard could not load custom extensions.");
+    }
+  }, []);
+  reactExports.useEffect(() => {
+    void load();
+  }, [load]);
+  return { data, error, load };
 }
 const DIGEST$2 = /^[a-f0-9]{64}$/;
 const EXTENSION_ID$1 = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -794,62 +1232,6 @@ async function applyExtensionMutation(payload) {
     if (error instanceof ExtensionControlApiError) throw error;
     throw new ExtensionControlApiError(error instanceof Error ? error.message : "Guard returned an invalid apply response", 502);
   }
-}
-const FOCUSABLE_SELECTOR = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])"
-].join(",");
-function focusableElements(root) {
-  return Array.from(root.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
-    (element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true"
-  );
-}
-function useModalDialog(onClose, canClose = true) {
-  const dialogRef = reactExports.useRef(null);
-  const closeRef = reactExports.useRef(onClose);
-  const canCloseRef = reactExports.useRef(canClose);
-  closeRef.current = onClose;
-  canCloseRef.current = canClose;
-  reactExports.useEffect(() => {
-    const root = dialogRef.current;
-    if (!root) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const initial = focusableElements(root)[0] ?? root;
-    initial.focus();
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape" && canCloseRef.current) {
-        event.preventDefault();
-        closeRef.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = focusableElements(root);
-      if (focusable.length === 0) {
-        event.preventDefault();
-        root.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      if (previous?.isConnected) previous.focus();
-    };
-  }, []);
-  return dialogRef;
 }
 const PROTECTION_TERMS = {
   pageTitle: "Extensions"
@@ -1815,67 +2197,6 @@ function searchCommandPatterns(extensions, rawQuery, limit = 24) {
     (left, right) => right.permission.risk_tier.localeCompare(left.permission.risk_tier) || left.permission.label.localeCompare(right.permission.label) || left.extension.name.localeCompare(right.extension.name)
   ).slice(0, limit);
 }
-const EXTENSION_PANEL_CLASS = "guard-extensions-panel p-5 sm:p-6";
-const EXTENSION_CHIP_CLASS = "guard-extensions-chip";
-const EXTENSION_ROW_CLASS = "guard-extensions-row";
-function ProtectionStatusHero(props) {
-  const safe = props.status.tone === "safe";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "protection-status-heading", className: "guard-status-bar", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-status-bar-icon", "data-tone": props.status.tone, "aria-hidden": "true", children: safe ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "size-4" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "size-4" }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.18em] text-slate-400", children: "Local protection" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-0.5 flex flex-wrap items-baseline gap-x-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "protection-status-heading", className: "text-sm font-semibold text-brand-dark", children: props.status.title }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm leading-5 text-brand-dark/70", children: props.status.summary })
-      ] })
-    ] }),
-    props.status.primaryActionLabel && props.onPrimaryAction ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "button",
-      {
-        type: "button",
-        "aria-busy": props.busy,
-        disabled: props.busy,
-        onClick: props.onPrimaryAction,
-        className: "min-h-11 shrink-0 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark disabled:cursor-wait disabled:opacity-60",
-        children: props.busy ? "Working…" : props.status.primaryActionLabel
-      }
-    ) : safe ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex min-h-9 shrink-0 items-center gap-1.5 self-center rounded-full border border-emerald-200 bg-[#e8f7ee] px-3 text-xs font-semibold text-emerald-800", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheckCircle, { className: "size-3.5" }),
-      "No action required"
-    ] }) : null,
-    props.children ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full border-t border-[rgba(63,65,116,0.08)] pt-2", children: props.children }) : null
-  ] });
-}
-function ProtectionDecisionBadge({ result }) {
-  const label = result === "allowed" ? "Allowed" : result === "ask-first" ? "Ask first" : "Blocked";
-  const classes = result === "allowed" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : result === "ask-first" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800";
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${classes}`, children: label });
-}
-function ProtectionModuleRow(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onOpen, className: `${EXTENSION_ROW_CLASS} motion-reduce:transition-none`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "min-w-0 flex-1", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex flex-wrap items-center gap-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-brand-dark", children: props.name }),
-        props.required ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Required" }) : null,
-        props.managed ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Managed" }) : null
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block truncate text-sm text-brand-dark/70", children: props.behavior })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronRight, { className: "size-5 shrink-0 text-brand-dark/35", "aria-hidden": "true" })
-  ] });
-}
-function TechnicalDetails(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: `${EXTENSION_PANEL_CLASS}`, "data-testid": props.testId, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer list-none text-sm font-semibold text-brand-dark", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-2", children: [
-      props.title ?? "Technical details",
-      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronDown, { className: "size-4", "aria-hidden": "true" })
-    ] }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 text-sm text-brand-dark/80", children: props.children })
-  ] });
-}
-function InlineError({ message }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800", children: message });
-}
 function PatternSearchConsole(props) {
   const [query, setQuery] = reactExports.useState("");
   const [focused, setFocused] = reactExports.useState(false);
@@ -2646,7 +2967,7 @@ function deriveProtectionStatus(effective) {
 }
 function currentExtensionRouteState() {
   return {
-    route: parseExtensionRoute(window.location.pathname),
+    route: parseProtectionRoute(window.location.pathname),
     detail: readExtensionDetailUrlState(window.location.search)
   };
 }
@@ -2761,6 +3082,8 @@ function ProtectionCenterWorkspace() {
   const [recoveryStatus, setRecoveryStatus] = reactExports.useState(null);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = reactExports.useRef(null);
+  const localClis = useLocalCliCatalog();
+  const [addingCustom, setAddingCustom] = reactExports.useState(false);
   const load = reactExports.useCallback(async () => {
     setState((current) => current.kind === "ready" ? current : { kind: "loading" });
     try {
@@ -2806,6 +3129,17 @@ function ProtectionCenterWorkspace() {
     setRouteState({ route: { kind: "overview" }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
+  const openLocalCliDetail = reactExports.useCallback((cliId) => {
+    setAddingCustom(false);
+    window.history.pushState({}, "", localCliHref(cliId));
+    setRouteState({ route: { kind: "local-cli", cliId }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
+  const openAddCustom = reactExports.useCallback(() => setAddingCustom(true), []);
+  const closeAddCustom = reactExports.useCallback(() => setAddingCustom(false), []);
+  const retryLocalClis = reactExports.useCallback(() => {
+    void localClis.load();
+  }, [localClis.load]);
   reactExports.useCallback((next) => {
     if (!canonicalSelected) return;
     const href = extensionDetailHref(canonicalSelected, next);
@@ -2906,6 +3240,38 @@ function ProtectionCenterWorkspace() {
       }
     }
   ) : null;
+  if (routeState.route.kind === "local-cli") {
+    if (!localClis.data) {
+      if (localClis.error) {
+        return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mx-auto max-w-4xl", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-semibold text-red-950", children: "Custom extension unavailable" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-2 text-sm text-red-800", children: localClis.error }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: retryLocalClis, className: "mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white", children: "Try again" })
+        ] }) });
+      }
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid min-h-[60vh] place-items-center", "aria-busy": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "size-7 animate-spin text-brand-blue motion-reduce:animate-none", "aria-label": "Loading custom extension" }) });
+    }
+    const selectedLocalCli = localClis.data.items.find((item) => item.cli_id === routeState.route.cliId) ?? null;
+    if (!selectedLocalCli) {
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mx-auto max-w-4xl", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "font-semibold text-amber-950", children: "Custom extension not found" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm text-amber-900", children: "This link does not match a CLI Guard has seen on this device." }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: closeExtension, className: "mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", children: "Back to Extensions" })
+        ] }) }),
+        authorityNotice
+      ] });
+    }
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      LocalCliDetail,
+      {
+        item: selectedLocalCli,
+        revision: localClis.data.revision,
+        onBack: closeExtension,
+        onRefresh: localClis.load
+      }
+    );
+  }
   if (routeState.route.kind === "detail" && selectedExtension) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
       authorityNotice,
@@ -2947,15 +3313,26 @@ function ProtectionCenterWorkspace() {
     healthBroken ? authorityNotice : null,
     mutationError && !pending ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: mutationError }) }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsx(PatternSearchConsole, { catalog: catalogExtensions, effective: state.effective, onRefresh: load, onOpenExtension: openExtension }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      CustomExtensionsSection,
+      {
+        items: localClis.data?.items ?? [],
+        onOpen: openLocalCliDetail,
+        onAdd: openAddCustom
+      }
+    ),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-10", "aria-labelledby": "all-tools-heading", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "all-tools-heading", className: "text-xl font-semibold tracking-tight text-brand-dark", children: "All tools" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: "Every tool Guard can watch on this device. Open one to adjust its command patterns." })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: "Every built-in tool Guard can watch on this device. Open one to adjust its command patterns." })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-brand-dark/70", children: [
-          catalogExtensions.length,
-          " tools"
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-3", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(AddCustomExtensionButton, { onClick: openAddCustom }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-brand-dark/70", children: [
+            catalogExtensions.length,
+            " tools"
+          ] })
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: catalogExtensions.map((extension2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -2971,6 +3348,14 @@ function ProtectionCenterWorkspace() {
         extension2.extension_id
       )) })
     ] }),
+    addingCustom ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AddCustomExtensionDialog,
+      {
+        items: localClis.data?.items ?? [],
+        onClose: closeAddCustom,
+        onOpen: openLocalCliDetail
+      }
+    ) : null,
     pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewModal, { change: pending, busy, error: mutationError, approvalGate: resolvedApprovalGate, onCancel: () => {
       if (!busy) setPending(null);
     }, onConfirm: confirm }) : null

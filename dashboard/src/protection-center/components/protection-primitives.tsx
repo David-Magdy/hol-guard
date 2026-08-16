@@ -54,11 +54,12 @@ export function ProtectionModuleRow(props: {
   behavior: string;
   required?: boolean;
   managed?: boolean;
+  custom?: boolean;
   onOpen: () => void;
 }) {
   return <button type="button" onClick={props.onOpen} className={`${EXTENSION_ROW_CLASS} motion-reduce:transition-none`}>
     <span className="min-w-0 flex-1">
-      <span className="flex flex-wrap items-center gap-2"><strong className="text-sm text-brand-dark">{props.name}</strong>{props.required ? <span className="text-[11px] font-semibold text-brand-dark/55">Required</span> : null}{props.managed ? <span className="text-[11px] font-semibold text-brand-dark/55">Managed</span> : null}</span>
+      <span className="flex flex-wrap items-center gap-2"><strong className="text-sm text-brand-dark">{props.name}</strong>{props.required ? <span className="text-[11px] font-semibold text-brand-dark/55">Required</span> : null}{props.managed ? <span className="text-[11px] font-semibold text-brand-dark/55">Managed</span> : null}{props.custom ? <span className="text-[11px] font-semibold text-brand-dark/55">Custom</span> : null}</span>
       <span className="mt-0.5 block truncate text-sm text-brand-dark/70">{props.behavior}</span>
     </span>
     <HiMiniChevronRight className="size-5 shrink-0 text-brand-dark/35" aria-hidden="true" />
