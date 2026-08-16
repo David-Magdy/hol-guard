@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hol.org/schemas/detonation-plan.v1.json",
+  "title": "HOL Guard exact-artifact detonation plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "runtime",
+    "image",
+    "artifact_root",
+    "artifact_digest",
+    "command",
+    "container_arguments",
+    "limits",
+    "network",
+    "root_filesystem",
+    "user",
+    "security_options",
+    "plan_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "hol-guard.detonation-plan.v1"},
+    "runtime": {"enum": ["docker", "podman"]},
+    "image": {"type": "string", "pattern": "^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$"},
+    "artifact_root": {"type": "string", "minLength": 1, "maxLength": 32768},
+    "artifact_digest": {"$ref": "#/$defs/sha256"},
+    "command": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"type": "string", "minLength": 1, "maxLength": 16384}},
+    "container_arguments": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"type": "string", "minLength": 1, "maxLength": 32768}},
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeout_seconds", "memory", "cpus", "pids", "file_descriptors", "output_bytes", "tmpfs_size"],
+      "properties": {
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 600},
+        "memory": {"type": "string", "pattern": "^\\d+(?:[kKmMgG])?$"},
+        "cpus": {"type": "string", "pattern": "^\\d+(?:\\.\\d+)?$"},
+        "pids": {"type": "integer", "minimum": 1, "maximum": 4096},
+        "file_descriptors": {"type": "integer", "minimum": 1, "maximum": 65536},
+        "output_bytes": {"type": "integer", "minimum": 1, "maximum": 67108864},
+        "tmpfs_size": {"type": "string", "pattern": "^\\d+(?:[kKmMgG])?$"}
+      }
+    },
+    "network": {"const": "none"},
+    "root_filesystem": {"const": "read-only"},
+    "user": {"const": "65534:65534"},
+    "security_options": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 32768}},
+    "plan_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
