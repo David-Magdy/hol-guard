@@ -1127,12 +1127,12 @@ def _pretool_payload(*, context: HarnessContext) -> dict[str, object]:
         str(context.guard_home),
         "--harness",
         "hermes",
-        "--json",
     ]
     if context.home_dir.resolve() != Path.home().resolve():
         cli_args.extend(["--home", str(context.home_dir)])
     if context.workspace_dir is not None:
         cli_args.extend(["--workspace", str(context.workspace_dir)])
+    cli_args.append("--json")
     return {
         "command": list(
             bounded_cli_hook_command(
