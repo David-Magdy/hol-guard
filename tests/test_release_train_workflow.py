@@ -166,10 +166,14 @@ def test_testpypi_uses_protected_trusted_publishing() -> None:
     assert job["permissions"]["id-token"] == "write"
     publish = next(step for step in job["steps"] if step.get("id") == "publish")
     assert str(publish["uses"]).startswith("pypa/gh-action-pypi-publish@")
-    assert publish["continue-on-error"] is True
+    assert "continue-on-error" not in publish
 
     verify = next(step for step in job["steps"] if step.get("name") == "Verify published TestPyPI bytes and CLI")
-    assert verify["if"] == "steps.state.outputs.upload != 'true' || steps.publish.outcome == 'success'"
+    assert verify["if"] == "steps.state.outputs.capacity_limited != 'true'"
+
+    warning = next(step for step in job["steps"] if step.get("name") == "Report unavailable TestPyPI canary")
+    assert warning["if"] == "steps.state.outputs.capacity_limited == 'true'"
+    assert "project capacity reached" in warning["run"]
 
 
 def test_pypi_uses_protected_trusted_publishing() -> None:

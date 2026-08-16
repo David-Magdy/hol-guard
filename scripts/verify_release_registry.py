@@ -146,6 +146,34 @@ def list_registry_versions(
     return tuple(str(version) for version in sorted(versions))
 
 
+def registry_project_size_bytes(
+    registry: Registry,
+    *,
+    project_name: str = DEFAULT_PROJECT_NAME,
+    fetcher: Fetcher = stdlib_fetch,
+) -> int:
+    payload = _fetch_payload(_project_url(registry, project_name), fetcher=fetcher)
+    if payload is None:
+        raise RegistryVerificationError("Registry project response was unexpectedly absent")
+    document = _decode_object(payload, label="Registry project response")
+    releases = document.get("releases")
+    if not isinstance(releases, dict):
+        raise RegistryVerificationError("Registry project response is missing the releases object")
+
+    total = 0
+    for files in releases.values():
+        if not isinstance(files, list):
+            raise RegistryVerificationError("Registry release file list is invalid")
+        for item in files:
+            if not isinstance(item, dict):
+                raise RegistryVerificationError("Registry release file entry must be an object")
+            size = item.get("size")
+            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                raise RegistryVerificationError("Registry release file size is invalid")
+            total += size
+    return total
+
+
 def _distribution_identity(filename: str) -> tuple[str, Version]:
     try:
         if filename.endswith(".whl"):
@@ -447,6 +475,10 @@ def _parser() -> argparse.ArgumentParser:
     _ = list_parser.add_argument("--registry", choices=[item.value for item in Registry], required=True)
     _ = list_parser.add_argument("--project", choices=SUPPORTED_PROJECT_NAMES, default=DEFAULT_PROJECT_NAME)
 
+    size_parser = subparsers.add_parser("project-size")
+    _ = size_parser.add_argument("--registry", choices=[item.value for item in Registry], required=True)
+    _ = size_parser.add_argument("--project", choices=SUPPORTED_PROJECT_NAMES, default=DEFAULT_PROJECT_NAME)
+
     inspect_parser = subparsers.add_parser("inspect-release")
     _ = inspect_parser.add_argument("--registry", choices=[item.value for item in Registry], required=True)
     _ = inspect_parser.add_argument("--project", choices=SUPPORTED_PROJECT_NAMES, default=DEFAULT_PROJECT_NAME)
@@ -478,6 +510,13 @@ def main(argv: Sequence[str] | None = None, *, fetcher: Fetcher = stdlib_fetch) 
         if command == "list-versions":
             registry = Registry(args.registry)
             output: object = list_registry_versions(registry, project_name=args.project, fetcher=fetcher)
+        elif command == "project-size":
+            registry = Registry(args.registry)
+            output = {
+                "project": args.project,
+                "registry": registry.value,
+                "size_bytes": registry_project_size_bytes(registry, project_name=args.project, fetcher=fetcher),
+            }
         elif command == "inspect-release":
             registry = Registry(args.registry)
             inspection = inspect_release(

@@ -310,18 +310,30 @@ jobs:
           result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py verify-release --registry testpypi --version "$VERSION" --dist-dir dist)
           status=$(jq -r '.status' <<< "$result")
           [[ "$status" == "absent" || "$status" == "exact" ]]
-          [[ "$status" == "absent" ]] && echo "upload=true" >> "$GITHUB_OUTPUT" || echo "upload=false" >> "$GITHUB_OUTPUT"
+          capacity_limited=false
+          upload=false
+          if [[ "$status" == "absent" ]]; then
+            size_result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py project-size --registry testpypi)
+            current_bytes=$(jq -r '.size_bytes' <<< "$size_result")
+            artifact_bytes=$(python -c 'from pathlib import Path; print(sum(path.stat().st_size for path in Path("dist").iterdir() if path.is_file()))')
+            if (( current_bytes + artifact_bytes > 10000000000 )); then
+              capacity_limited=true
+            else
+              upload=true
+            fi
+          fi
+          echo "capacity_limited=$capacity_limited" >> "$GITHUB_OUTPUT"
+          echo "upload=$upload" >> "$GITHUB_OUTPUT"
       - id: publish
-        continue-on-error: true
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         if: steps.state.outputs.upload == 'true'
         with:
           repository-url: https://test.pypi.org/legacy/
       - name: Report unavailable TestPyPI canary
-        if: steps.state.outputs.upload == 'true' && steps.publish.outcome == 'failure'
-        run: echo "::warning::TestPyPI upload unavailable; continuing with immutable build hashes and independent PyPI verification"
+        if: steps.state.outputs.capacity_limited == 'true'
+        run: echo "::warning::TestPyPI project capacity reached; continuing with immutable build hashes and independent PyPI verification"
       - name: Verify published TestPyPI bytes and CLI
-        if: steps.state.outputs.upload != 'true' || steps.publish.outcome == 'success'
+        if: steps.state.outputs.capacity_limited != 'true'
         env:
           VERSION: ${{ needs.build.outputs.version }}
         run: |

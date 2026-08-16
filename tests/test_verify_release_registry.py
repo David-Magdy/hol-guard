@@ -18,6 +18,7 @@ from scripts.verify_release_registry import (
     inspect_release,
     list_registry_versions,
     main,
+    registry_project_size_bytes,
     verify_registry_release,
     verify_testpypi_release,
 )
@@ -138,6 +139,29 @@ def test_lists_plugin_scanner_registry_versions() -> None:
         "3.0.0a1",
         "3.0.0a2",
     )
+
+
+def test_sums_registry_project_file_sizes() -> None:
+    payload = json.dumps(
+        {
+            "releases": {
+                "3.1.0a1": [{"size": 11}, {"size": 17}],
+                "3.1.0a2": [{"size": 23}],
+            }
+        }
+    ).encode()
+    fetcher = FakeFetcher({_project_url(Registry.TESTPYPI): payload})
+
+    assert registry_project_size_bytes(Registry.TESTPYPI, fetcher=fetcher) == 51
+
+
+@pytest.mark.parametrize("size", [-1, True, "10", None])
+def test_rejects_invalid_registry_project_file_size(size: object) -> None:
+    payload = json.dumps({"releases": {"3.1.0a1": [{"size": size}]}}).encode()
+    fetcher = FakeFetcher({_project_url(Registry.TESTPYPI): payload})
+
+    with pytest.raises(RegistryVerificationError, match="file size is invalid"):
+        _ = registry_project_size_bytes(Registry.TESTPYPI, fetcher=fetcher)
 
 
 def test_verifies_plugin_scanner_release_independently(tmp_path: Path) -> None:
