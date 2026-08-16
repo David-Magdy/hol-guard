@@ -18,11 +18,11 @@ import {
   DEFAULT_EXTENSION_DETAIL_URL_STATE,
   extensionDetailHref,
   extensionStateLabel,
-  parseExtensionRoute,
   readExtensionDetailUrlState,
   type ExtensionDetailUrlState,
-  type ExtensionRoute,
 } from "../extension-control-center-model";
+import { parseProtectionRoute, localCliHref, type ProtectionRoute } from "../local-cli-links";
+import { LocalCliDetail, LocalClisSection, useLocalCliCatalog } from "./local-clis-panel";
 import {
   acknowledgeDegradedExtensionControlAuthority,
   applyExtensionMutation,
@@ -62,11 +62,11 @@ type LoadState =
 type ExtensionMutationTarget = Pick<ExtensionCatalogItem, "extension_id" | "name">;
 export type ProtectionPendingChange = { extension: ExtensionMutationTarget; enabled: boolean } | { globalLockdown: boolean };
 
-type RouteState = { route: ExtensionRoute; detail: ExtensionDetailUrlState };
+type RouteState = { route: ProtectionRoute; detail: ExtensionDetailUrlState };
 
 export function currentExtensionRouteState(): RouteState {
   return {
-    route: parseExtensionRoute(window.location.pathname),
+    route: parseProtectionRoute(window.location.pathname),
     detail: readExtensionDetailUrlState(window.location.search),
   };
 }
@@ -219,6 +219,7 @@ export function ProtectionCenterWorkspace() {
   const [recoveryStatus, setRecoveryStatus] = useState<string | null>(null);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = useRef<string | null>(null);
+  const localClis = useLocalCliCatalog();
 
   const load = useCallback(async (): Promise<EffectiveExtensionControls | null> => {
     // Keep the already-rendered protection data mounted while a refresh is in
@@ -271,6 +272,12 @@ export function ProtectionCenterWorkspace() {
   const closeExtension = useCallback(() => {
     window.history.pushState({}, "", "/extensions");
     setRouteState({ route: { kind: "overview" }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
+
+  const openLocalCliDetail = useCallback((cliId: string) => {
+    window.history.pushState({}, "", localCliHref(cliId));
+    setRouteState({ route: { kind: "local-cli", cliId }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
 
@@ -387,6 +394,20 @@ export function ProtectionCenterWorkspace() {
     }}
   /> : null;
 
+  const selectedLocalCli = routeState.route.kind === "local-cli"
+    ? localClis.data?.items.find((item) => item.cli_id === routeState.route.cliId) ?? null
+    : null;
+  if (routeState.route.kind === "local-cli" && selectedLocalCli && localClis.data) {
+    return (
+      <LocalCliDetail
+        item={selectedLocalCli}
+        revision={localClis.data.revision}
+        onBack={closeExtension}
+        onRefresh={localClis.load}
+      />
+    );
+  }
+
   if (routeState.route.kind === "detail" && selectedExtension) {
     return <>{authorityNotice}{recoveryStatus && state.effective.health === "protected" ? <p role="status" className="mb-3 text-sm font-medium text-emerald-800">{recoveryStatus}</p> : null}<ProtectionModuleDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} onBack={closeExtension} onRefresh={load} onRequestExtensionChange={(extension, enabled) => requestChange({ extension: { extension_id: extension.extension_id, name: extension.name }, enabled })} />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}</>;
   }
@@ -418,6 +439,12 @@ export function ProtectionCenterWorkspace() {
     {mutationError && !pending ? <div className="mt-4"><InlineError message={mutationError} /></div> : null}
 
     <PatternSearchConsole catalog={catalogExtensions} effective={state.effective} onRefresh={load} onOpenExtension={openExtension} />
+
+    <LocalClisSection
+      items={localClis.data?.items ?? []}
+      cloudSummary={localClis.data?.cloud.summary ?? "These allows stay on this device. Guard Cloud can keep the same CLI trusted on your other devices."}
+      onOpen={openLocalCliDetail}
+    />
 
     <section className="mt-10" aria-labelledby="all-tools-heading">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">

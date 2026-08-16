@@ -494,7 +494,7 @@ function requireReact_production() {
   react_production.useTransition = function() {
     return ReactSharedInternals.H.useTransition();
   };
-  react_production.version = "19.2.7";
+  react_production.version = "19.2.5";
   return react_production;
 }
 var hasRequiredReact;
@@ -516,7 +516,7 @@ var hasRequiredScheduler_production;
 function requireScheduler_production() {
   if (hasRequiredScheduler_production) return scheduler_production;
   hasRequiredScheduler_production = 1;
-  (function(exports) {
+  (function(exports$1) {
     function push(heap, node) {
       var index = heap.length;
       heap.push(node);
@@ -550,15 +550,15 @@ function requireScheduler_production() {
       var diff = a.sortIndex - b.sortIndex;
       return 0 !== diff ? diff : a.id - b.id;
     }
-    exports.unstable_now = void 0;
+    exports$1.unstable_now = void 0;
     if ("object" === typeof performance && "function" === typeof performance.now) {
       var localPerformance = performance;
-      exports.unstable_now = function() {
+      exports$1.unstable_now = function() {
         return localPerformance.now();
       };
     } else {
       var localDate = Date, initialTime = localDate.now();
-      exports.unstable_now = function() {
+      exports$1.unstable_now = function() {
         return localDate.now() - initialTime;
       };
     }
@@ -585,12 +585,12 @@ function requireScheduler_production() {
     }
     var isMessageLoopRunning = false, taskTimeoutID = -1, frameInterval = 5, startTime = -1;
     function shouldYieldToHost() {
-      return needsPaint ? true : exports.unstable_now() - startTime < frameInterval ? false : true;
+      return needsPaint ? true : exports$1.unstable_now() - startTime < frameInterval ? false : true;
     }
     function performWorkUntilDeadline() {
       needsPaint = false;
       if (isMessageLoopRunning) {
-        var currentTime = exports.unstable_now();
+        var currentTime = exports$1.unstable_now();
         startTime = currentTime;
         var hasMoreWork = true;
         try {
@@ -610,7 +610,7 @@ function requireScheduler_production() {
                     var continuationCallback = callback(
                       currentTask.expirationTime <= currentTime
                     );
-                    currentTime = exports.unstable_now();
+                    currentTime = exports$1.unstable_now();
                     if ("function" === typeof continuationCallback) {
                       currentTask.callback = continuationCallback;
                       advanceTimers(currentTime);
@@ -660,27 +660,27 @@ function requireScheduler_production() {
       };
     function requestHostTimeout(callback, ms) {
       taskTimeoutID = localSetTimeout(function() {
-        callback(exports.unstable_now());
+        callback(exports$1.unstable_now());
       }, ms);
     }
-    exports.unstable_IdlePriority = 5;
-    exports.unstable_ImmediatePriority = 1;
-    exports.unstable_LowPriority = 4;
-    exports.unstable_NormalPriority = 3;
-    exports.unstable_Profiling = null;
-    exports.unstable_UserBlockingPriority = 2;
-    exports.unstable_cancelCallback = function(task) {
+    exports$1.unstable_IdlePriority = 5;
+    exports$1.unstable_ImmediatePriority = 1;
+    exports$1.unstable_LowPriority = 4;
+    exports$1.unstable_NormalPriority = 3;
+    exports$1.unstable_Profiling = null;
+    exports$1.unstable_UserBlockingPriority = 2;
+    exports$1.unstable_cancelCallback = function(task) {
       task.callback = null;
     };
-    exports.unstable_forceFrameRate = function(fps) {
+    exports$1.unstable_forceFrameRate = function(fps) {
       0 > fps || 125 < fps ? console.error(
         "forceFrameRate takes a positive int between 0 and 125, forcing frame rates higher than 125 fps is not supported"
       ) : frameInterval = 0 < fps ? Math.floor(1e3 / fps) : 5;
     };
-    exports.unstable_getCurrentPriorityLevel = function() {
+    exports$1.unstable_getCurrentPriorityLevel = function() {
       return currentPriorityLevel;
     };
-    exports.unstable_next = function(eventHandler) {
+    exports$1.unstable_next = function(eventHandler) {
       switch (currentPriorityLevel) {
         case 1:
         case 2:
@@ -698,10 +698,10 @@ function requireScheduler_production() {
         currentPriorityLevel = previousPriorityLevel;
       }
     };
-    exports.unstable_requestPaint = function() {
+    exports$1.unstable_requestPaint = function() {
       needsPaint = true;
     };
-    exports.unstable_runWithPriority = function(priorityLevel, eventHandler) {
+    exports$1.unstable_runWithPriority = function(priorityLevel, eventHandler) {
       switch (priorityLevel) {
         case 1:
         case 2:
@@ -720,8 +720,8 @@ function requireScheduler_production() {
         currentPriorityLevel = previousPriorityLevel;
       }
     };
-    exports.unstable_scheduleCallback = function(priorityLevel, callback, options) {
-      var currentTime = exports.unstable_now();
+    exports$1.unstable_scheduleCallback = function(priorityLevel, callback, options) {
+      var currentTime = exports$1.unstable_now();
       "object" === typeof options && null !== options ? (options = options.delay, options = "number" === typeof options && 0 < options ? currentTime + options : currentTime) : options = currentTime;
       switch (priorityLevel) {
         case 1:
@@ -751,8 +751,8 @@ function requireScheduler_production() {
       options > currentTime ? (priorityLevel.sortIndex = options, push(timerQueue, priorityLevel), null === peek(taskQueue) && priorityLevel === peek(timerQueue) && (isHostTimeoutScheduled ? (localClearTimeout(taskTimeoutID), taskTimeoutID = -1) : isHostTimeoutScheduled = true, requestHostTimeout(handleTimeout, options - currentTime))) : (priorityLevel.sortIndex = timeout, push(taskQueue, priorityLevel), isHostCallbackScheduled || isPerformingWork || (isHostCallbackScheduled = true, isMessageLoopRunning || (isMessageLoopRunning = true, schedulePerformWorkUntilDeadline())));
       return priorityLevel;
     };
-    exports.unstable_shouldYield = shouldYieldToHost;
-    exports.unstable_wrapCallback = function(callback) {
+    exports$1.unstable_shouldYield = shouldYieldToHost;
+    exports$1.unstable_wrapCallback = function(callback) {
       var parentPriorityLevel = currentPriorityLevel;
       return function() {
         var previousPriorityLevel = currentPriorityLevel;
@@ -922,7 +922,7 @@ function requireReactDom_production() {
   reactDom_production.useFormStatus = function() {
     return ReactSharedInternals.H.useHostTransitionStatus();
   };
-  reactDom_production.version = "19.2.7";
+  reactDom_production.version = "19.2.5";
   return reactDom_production;
 }
 var hasRequiredReactDom;
@@ -12366,12 +12366,12 @@ function requireReactDomClient_production() {
     }
   };
   var isomorphicReactPackageVersion$jscomp$inline_1840 = React2.version;
-  if ("19.2.7" !== isomorphicReactPackageVersion$jscomp$inline_1840)
+  if ("19.2.5" !== isomorphicReactPackageVersion$jscomp$inline_1840)
     throw Error(
       formatProdErrorMessage(
         527,
         isomorphicReactPackageVersion$jscomp$inline_1840,
-        "19.2.7"
+        "19.2.5"
       )
     );
   ReactDOMSharedInternals.findDOMNode = function(componentOrElement) {
@@ -12389,10 +12389,10 @@ function requireReactDomClient_production() {
   };
   var internals$jscomp$inline_2347 = {
     bundleType: 0,
-    version: "19.2.7",
+    version: "19.2.5",
     rendererPackageName: "react-dom",
     currentDispatcherRef: ReactSharedInternals,
-    reconcilerVersion: "19.2.7"
+    reconcilerVersion: "19.2.5"
   };
   if ("undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__) {
     var hook$jscomp$inline_2348 = __REACT_DEVTOOLS_GLOBAL_HOOK__;
@@ -12459,7 +12459,7 @@ function requireReactDomClient_production() {
     listenToAllSupportedEvents(container2);
     return new ReactDOMHydrationRoot(initialChildren);
   };
-  reactDomClient_production.version = "19.2.7";
+  reactDomClient_production.version = "19.2.5";
   return reactDomClient_production;
 }
 var hasRequiredClient;
@@ -16269,6 +16269,13 @@ async function fetchExtensionControlApi(input, init) {
   const approvedPath = typeof input === "string" && /^\/v1\/extension-controls\/(?:catalog|effective|history|preview|test|apply|refresh|recover-authority|acknowledge-degraded)$/.test(input);
   if (!approvedPath) {
     throw new Error("Invalid extension-control API path");
+  }
+  return fetchWithGuardAuth(input, init);
+}
+async function fetchLocalCliApi(input, init) {
+  const approvedPath = typeof input === "string" && /^\/v1\/local-clis(?:\/(?:preview|apply))?$/.test(input);
+  if (!approvedPath) {
+    throw new Error("Invalid local CLI API path");
   }
   return fetchWithGuardAuth(input, init);
 }
@@ -31002,13 +31009,13 @@ export {
   HiMiniXCircle as T,
   HiMiniClipboardDocumentCheck as U,
   HiMiniClipboard as V,
-  getDefaultExportFromCjs as W,
-  React as X,
+  requireReact as W,
+  getDefaultExportFromCjs as X,
   HiMiniKey as Y,
   HiMiniLockClosed as Z,
   HiMiniBellAlert as _,
   EvidenceActivityHeatmapMini as a,
-  ConnectFlowCard as a$,
+  GuardModalLayer as a$,
   HiMiniCircleStack as a0,
   TabBar as a1,
   resolveProtectionLevelCopy as a2,
@@ -31019,33 +31026,33 @@ export {
   clearReviewQueue as a7,
   revokeApprovalGateCooldown as a8,
   disableApprovalGateTotp as a9,
-  filterEvidence as aA,
-  sortEvidence as aB,
-  computeMetrics as aC,
-  CommandActivityWorkspace as aD,
-  EvidenceFilterBar as aE,
-  EvidenceInsightStrip as aF,
-  EvidenceActionList as aG,
-  EvidenceActionDetail as aH,
-  policyIdentityKey as aI,
-  HiMiniChartBar as aJ,
-  runHarnessAction as aK,
-  GuardHarnessActionError as aL,
-  HiMiniRocketLaunch as aM,
-  HiMiniTrash as aN,
-  clearLabelForScope as aO,
-  formatHarnessCommand as aP,
-  isSupplyChainAuditIncomplete as aQ,
-  isSupplyChainAuditEvidence as aR,
-  readString$1 as aS,
-  isRecord$2 as aT,
-  HiMiniClock as aU,
-  IconActionButton as aV,
-  HiMiniBeaker as aW,
-  ActivationSummary as aX,
-  ActionResultPanel as aY,
-  HiMiniBugAnt as aZ,
-  GuardModalLayer as a_,
+  DEFAULT_FILTER_STATE as aA,
+  filterEvidence as aB,
+  sortEvidence as aC,
+  computeMetrics as aD,
+  CommandActivityWorkspace as aE,
+  EvidenceFilterBar as aF,
+  EvidenceInsightStrip as aG,
+  EvidenceActionList as aH,
+  EvidenceActionDetail as aI,
+  policyIdentityKey as aJ,
+  HiMiniChartBar as aK,
+  runHarnessAction as aL,
+  GuardHarnessActionError as aM,
+  HiMiniRocketLaunch as aN,
+  HiMiniTrash as aO,
+  clearLabelForScope as aP,
+  formatHarnessCommand as aQ,
+  isSupplyChainAuditIncomplete as aR,
+  isSupplyChainAuditEvidence as aS,
+  readString$1 as aT,
+  isRecord$2 as aU,
+  HiMiniClock as aV,
+  IconActionButton as aW,
+  HiMiniBeaker as aX,
+  ActivationSummary as aY,
+  ActionResultPanel as aZ,
+  HiMiniBugAnt as a_,
   importSettings as aa,
   resetSettings as ab,
   enrollApprovalGateTotp as ac,
@@ -31059,78 +31066,79 @@ export {
   HiMiniMagnifyingGlass as ak,
   HiMiniCog6Tooth as al,
   approvalGateCooldownLabel as am,
-  fetchExtensionControlApi as an,
-  HiMiniArrowPath as ao,
-  HiMiniInformationCircle as ap,
+  fetchLocalCliApi as an,
+  HiMiniArrowLeft as ao,
+  buildApprovalProofCredentials as ap,
   isApprovalProofSubmitDisabled as aq,
   ApprovalProofFieldInputs as ar,
-  buildApprovalProofCredentials as as,
-  HiMiniArrowLeft as at,
-  WorkspacePageHeader as au,
-  fetchApprovalPage as av,
-  fetchPolicy as aw,
-  HiMiniHome as ax,
-  guardActionPresentation as ay,
-  DEFAULT_FILTER_STATE as az,
+  fetchExtensionControlApi as as,
+  HiMiniArrowPath as at,
+  HiMiniInformationCircle as au,
+  WorkspacePageHeader as av,
+  fetchApprovalPage as aw,
+  fetchPolicy as ax,
+  HiMiniHome as ay,
+  guardActionPresentation as az,
   HiMiniCommandLine as b,
-  ApprovalProofInline as b0,
-  HiMiniArrowTopRightOnSquare as b1,
-  HiMiniCloudArrowDown as b2,
-  fetchPackageFirewallStatus as b3,
-  runPackageAudit as b4,
-  resolveSupplyChainAuditFailure as b5,
-  runPackageSync as b6,
-  startPackageFirewallConnect as b7,
-  openPackageFirewallAuthorizeFallback as b8,
-  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b9,
-  PaginationControls as bA,
-  HiMiniNoSymbol as bB,
-  HiMiniCube as bC,
-  HiMiniArrowDownTray as bD,
-  HiMiniQueueList as bE,
-  fetchMcpPolicyRequest as bF,
-  resolveMcpPolicyRequest as bG,
-  HiMiniDocumentPlus as bH,
-  HiMiniDocumentMagnifyingGlass as bI,
-  Surface as bJ,
-  HiMiniCheckBadge as bK,
-  fetchSupplyChainBundle as bL,
-  isSupplyChainScannerEvidence as bM,
-  isBlockedGuardAction as bN,
-  HiMiniShieldExclamation as bO,
-  HiMiniComputerDesktop as bP,
-  HiMiniChevronLeft as bQ,
-  HiMiniFunnel as bR,
-  HiMiniArrowDown as bS,
-  HiMiniArrowUp as bT,
-  runAuditRemediation as bU,
-  HiMiniSignal as bV,
-  repairSupplyChainProtection as ba,
-  runPackageFirewallAction as bb,
-  parseInterceptProofSnapshot as bc,
-  activatePackageFirewallRuntime as bd,
-  EntitlementNotice as be,
-  fetchReceipts as bf,
-  __vitePreload as bg,
-  scopeLabel as bh,
-  guardAwareHref as bi,
-  HiMiniDocumentText as bj,
-  HiMiniCloudArrowUp as bk,
-  HiMiniCheck as bl,
-  HiMiniCodeBracket as bm,
-  HiMiniClipboardDocument as bn,
-  HiMiniUsers as bo,
-  HiMiniFolder as bp,
-  HiMiniIdentification as bq,
-  policyActionLabel as br,
-  createCloudExceptionRequest as bs,
-  HiMiniArrowRight as bt,
-  HiMiniPuzzlePiece as bu,
-  HiMiniGlobeAlt as bv,
-  fetchCloudExceptions as bw,
-  fetchCloudExceptionRequests as bx,
-  downloadBlob as by,
-  PolicyStatField as bz,
+  ConnectFlowCard as b0,
+  ApprovalProofInline as b1,
+  HiMiniArrowTopRightOnSquare as b2,
+  HiMiniCloudArrowDown as b3,
+  fetchPackageFirewallStatus as b4,
+  runPackageAudit as b5,
+  resolveSupplyChainAuditFailure as b6,
+  runPackageSync as b7,
+  startPackageFirewallConnect as b8,
+  openPackageFirewallAuthorizeFallback as b9,
+  PolicyStatField as bA,
+  PaginationControls as bB,
+  HiMiniNoSymbol as bC,
+  HiMiniCube as bD,
+  HiMiniArrowDownTray as bE,
+  HiMiniQueueList as bF,
+  fetchMcpPolicyRequest as bG,
+  resolveMcpPolicyRequest as bH,
+  HiMiniDocumentPlus as bI,
+  HiMiniDocumentMagnifyingGlass as bJ,
+  Surface as bK,
+  HiMiniCheckBadge as bL,
+  fetchSupplyChainBundle as bM,
+  isSupplyChainScannerEvidence as bN,
+  isBlockedGuardAction as bO,
+  HiMiniShieldExclamation as bP,
+  HiMiniComputerDesktop as bQ,
+  HiMiniChevronLeft as bR,
+  HiMiniFunnel as bS,
+  HiMiniArrowDown as bT,
+  HiMiniArrowUp as bU,
+  runAuditRemediation as bV,
+  HiMiniSignal as bW,
+  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as ba,
+  repairSupplyChainProtection as bb,
+  runPackageFirewallAction as bc,
+  parseInterceptProofSnapshot as bd,
+  activatePackageFirewallRuntime as be,
+  EntitlementNotice as bf,
+  fetchReceipts as bg,
+  __vitePreload as bh,
+  scopeLabel as bi,
+  guardAwareHref as bj,
+  HiMiniDocumentText as bk,
+  HiMiniCloudArrowUp as bl,
+  HiMiniCheck as bm,
+  HiMiniCodeBracket as bn,
+  HiMiniClipboardDocument as bo,
+  HiMiniUsers as bp,
+  HiMiniFolder as bq,
+  HiMiniIdentification as br,
+  policyActionLabel as bs,
+  createCloudExceptionRequest as bt,
+  HiMiniArrowRight as bu,
+  HiMiniPuzzlePiece as bv,
+  HiMiniGlobeAlt as bw,
+  fetchCloudExceptions as bx,
+  fetchCloudExceptionRequests as by,
+  downloadBlob as bz,
   HiMiniChevronRight as c,
   createCommandActivityClient as d,
   harnessDisplayName as e,

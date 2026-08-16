@@ -86,6 +86,7 @@ ApprovalGatePurpose = Literal[
     "headless_policy_sync",
     "supply_chain_firewall",
     "extension_control_mutation",
+    "local_cli_trust_mutation",
     "protection_lifecycle",
 ]
 
@@ -739,6 +740,62 @@ def consume_extension_control_grant(
             strict=True,
             action=action,
             scope="extension-control-authority",
+            subject=subject,
+            session_nonce=session_nonce,
+            now=now,
+        )
+        _ACTIVE_GRANTS.pop(approval_gate_grant.grant_id, None)
+
+
+def require_local_cli_trust(
+    guard_home: Path,
+    *,
+    approval_gate_input: ApprovalGateInput | None,
+    action: str,
+    subject: str,
+    session_nonce: str,
+    now: str | None = None,
+) -> ApprovalGateGrant:
+    """Issue a strict proof for one unlisted-CLI allow-list mutation."""
+
+    if not _enabled(_load_state(guard_home)):
+        raise ApprovalGateError(
+            "approval_gate_configuration_required",
+            "Configure the approval gate before changing CLI allow-list settings.",
+            status=423,
+        )
+    return _verify_or_raise(
+        guard_home,
+        purpose="local_cli_trust_mutation",
+        approval_gate_input=approval_gate_input,
+        strict=True,
+        action=action,
+        scope="local-cli-allowlist",
+        subject=subject,
+        session_nonce=session_nonce,
+        now=now,
+    )
+
+
+def consume_local_cli_trust_grant(
+    guard_home: Path,
+    approval_gate_grant: ApprovalGateGrant,
+    *,
+    action: str,
+    subject: str,
+    session_nonce: str,
+    now: str | None = None,
+) -> None:
+    """Atomically validate and consume one unlisted-CLI allow-list grant."""
+
+    with _APPROVAL_GATE_LOCK:
+        _validate_grant_locked(
+            guard_home,
+            approval_gate_grant,
+            purpose="local_cli_trust_mutation",
+            strict=True,
+            action=action,
+            scope="local-cli-allowlist",
             subject=subject,
             session_nonce=session_nonce,
             now=now,

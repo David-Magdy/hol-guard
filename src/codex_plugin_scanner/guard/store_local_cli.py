@@ -1,0 +1,225 @@
+"""Persistence for observed unlisted CLIs and this-device grants."""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Mapping
+from typing import cast
+
+from .runtime.local_cli_identity import UnlistedCliIdentity, is_local_cli_id
+from .store_local_cli_schema import ensure_local_cli_schema
+
+
+class StoreLocalCliMixin:
+    def record_local_cli_observation(self, identity: UnlistedCliIdentity, *, seen_at: str) -> None:
+        if not is_local_cli_id(identity.cli_id):
+            raise ValueError("invalid local CLI id")
+        with self._connect() as connection:
+            ensure_local_cli_schema(connection)
+            current = connection.execute(
+                "select observed_count from local_cli_observation where cli_id = ?",
+                (identity.cli_id,),
+            ).fetchone()
+            if current is None:
+                _ = connection.execute(
+                    """
+                    insert into local_cli_observation (
+                        cli_id, identity_hash, kind, name, interpreter_name, example_label,
+                        observed_count, last_seen_at
+                    ) values (?, ?, ?, ?, ?, ?, 1, ?)
+                    """,
+                    (
+                        identity.cli_id,
+                        identity.identity_hash,
+                        identity.kind,
+                        identity.name,
+                        identity.interpreter_name,
+                        identity.example_label,
+                        seen_at,
+                    ),
+                )
+                return
+            _ = connection.execute(
+                """
+                update local_cli_observation
+                set identity_hash = ?, kind = ?, name = ?, interpreter_name = ?,
+                    example_label = ?, observed_count = observed_count + 1, last_seen_at = ?
+                where cli_id = ?
+                """,
+                (
+                    identity.identity_hash,
+                    identity.kind,
+                    identity.name,
+                    identity.interpreter_name,
+                    identity.example_label,
+                    seen_at,
+                    identity.cli_id,
+                ),
+            )
+
+    def list_local_cli_items(self) -> list[dict[str, object]]:
+        with self._connect() as connection:
+            ensure_local_cli_schema(connection)
+            observation_rows = connection.execute(
+                """
+                select cli_id, identity_hash, kind, name, interpreter_name, example_label,
+                       observed_count, last_seen_at
+                from local_cli_observation
+                order by last_seen_at desc, cli_id asc
+                """
+            ).fetchall()
+            grant_rows = connection.execute(
+                "select cli_id, identity_hash, state, revision, updated_at from local_cli_grant"
+            ).fetchall()
+            revision_row = connection.execute("select revision from local_cli_authority where singleton = 1").fetchone()
+        grants = {_row_text(row, 0): _grant_from_row(row) for row in grant_rows}
+        items: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for row in observation_rows:
+            item = _observation_from_row(row)
+            cli_id = str(item["cli_id"])
+            seen.add(cli_id)
+            grant = grants.get(cli_id)
+            items.append(_merge_item(item, grant))
+        for cli_id, grant in sorted(grants.items()):
+            if cli_id in seen:
+                continue
+            items.append(
+                {
+                    "cli_id": cli_id,
+                    "name": cli_id.removeprefix("local-cli."),
+                    "kind": "executable",
+                    "identity_hash": grant["identity_hash"],
+                    "example_label": cli_id.removeprefix("local-cli."),
+                    "interpreter_name": None,
+                    "observed_count": 0,
+                    "last_seen_at": None,
+                    "state": grant["state"],
+                    "stale": False,
+                    "grant_revision": grant["revision"],
+                }
+            )
+        authority_revision = 0 if revision_row is None else int(cast(object, revision_row[0]))
+        for item in items:
+            item["authority_revision"] = authority_revision
+        return items
+
+    def read_local_cli_grant(self, cli_id: str) -> dict[str, object] | None:
+        if not is_local_cli_id(cli_id):
+            return None
+        with self._connect() as connection:
+            ensure_local_cli_schema(connection)
+            row = connection.execute(
+                "select cli_id, identity_hash, state, revision, updated_at from local_cli_grant where cli_id = ?",
+                (cli_id,),
+            ).fetchone()
+        return None if row is None else _grant_from_row(row)
+
+    def read_local_cli_revision(self) -> int:
+        with self._connect() as connection:
+            ensure_local_cli_schema(connection)
+            row = connection.execute("select revision from local_cli_authority where singleton = 1").fetchone()
+        return 0 if row is None else int(cast(object, row[0]))
+
+    def upsert_local_cli_grant(
+        self,
+        *,
+        identity: UnlistedCliIdentity,
+        state: str,
+        expected_revision: int,
+        updated_at: str,
+    ) -> int:
+        if state not in {"allowed", "blocked", "unset"}:
+            raise ValueError("invalid local CLI grant state")
+        if not is_local_cli_id(identity.cli_id):
+            raise ValueError("invalid local CLI id")
+        with self._connect() as connection:
+            ensure_local_cli_schema(connection)
+            current = connection.execute("select revision from local_cli_authority where singleton = 1").fetchone()
+            current_revision = 0 if current is None else int(cast(object, current[0]))
+            if current_revision != expected_revision:
+                raise ValueError("local_cli_revision_conflict")
+            next_revision = current_revision + 1
+            if state == "unset":
+                _ = connection.execute("delete from local_cli_grant where cli_id = ?", (identity.cli_id,))
+            else:
+                _ = connection.execute(
+                    """
+                    insert into local_cli_grant (cli_id, identity_hash, state, revision, updated_at)
+                    values (?, ?, ?, ?, ?)
+                    on conflict(cli_id) do update set
+                        identity_hash = excluded.identity_hash,
+                        state = excluded.state,
+                        revision = excluded.revision,
+                        updated_at = excluded.updated_at
+                    """,
+                    (identity.cli_id, identity.identity_hash, state, next_revision, updated_at),
+                )
+            _ = connection.execute(
+                "update local_cli_authority set revision = ? where singleton = 1",
+                (next_revision,),
+            )
+        return next_revision
+
+
+def _observation_from_row(row: object) -> dict[str, object]:
+    values = _row_values(row, 8)
+    return {
+        "cli_id": values[0],
+        "identity_hash": values[1],
+        "kind": values[2],
+        "name": values[3],
+        "interpreter_name": values[4],
+        "example_label": values[5],
+        "observed_count": values[6],
+        "last_seen_at": values[7],
+    }
+
+
+def _grant_from_row(row: object) -> dict[str, object]:
+    values = _row_values(row, 5)
+    return {
+        "cli_id": values[0],
+        "identity_hash": values[1],
+        "state": values[2],
+        "revision": values[3],
+        "updated_at": values[4],
+    }
+
+
+def _merge_item(observation: dict[str, object], grant: Mapping[str, object] | None) -> dict[str, object]:
+    state = "unset"
+    stale = False
+    grant_revision = None
+    if grant is not None:
+        state = str(grant["state"])
+        stale = str(grant["identity_hash"]) != str(observation["identity_hash"])
+        grant_revision = grant["revision"]
+    return {
+        **observation,
+        "state": state,
+        "stale": stale,
+        "grant_revision": grant_revision,
+    }
+
+
+def _row_values(row: object, count: int) -> tuple[object, ...]:
+    if isinstance(row, sqlite3.Row):
+        values = tuple(cast(object, row[index]) for index in range(count))
+        if len(values) != count:
+            raise ValueError("invalid local CLI row")
+        return values
+    if isinstance(row, tuple):
+        values = cast(tuple[object, ...], row)
+        if len(values) != count:
+            raise ValueError("invalid local CLI row")
+        return values
+    raise ValueError("invalid local CLI row")
+
+
+def _row_text(row: object, index: int) -> str:
+    values = _row_values(row, 5)
+    value = values[index]
+    if not isinstance(value, str):
+        raise ValueError("invalid local CLI row")
+    return value
