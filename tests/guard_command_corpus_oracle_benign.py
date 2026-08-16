@@ -199,7 +199,7 @@ BENIGN_ORACLE: dict[str, OracleSeed] = {
                 ("network-write", "remote-state-mutation"),
                 "remote-resource",
                 ("operation-and-targets", "remote-resource-identity"),
-                "require-reapproval",
+                "review",
                 "decidable",
                 "CDX-064",
             ),

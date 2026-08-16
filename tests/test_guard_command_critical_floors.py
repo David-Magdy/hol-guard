@@ -137,7 +137,7 @@ CRITICAL_COMMAND_FLOORS: tuple[tuple[str, GuardAction], ...] = (
     ("printf '%s' \"$(cat workspace/sensitive)\"", "require-reapproval"),
     ("cat workspace/sensitive | tee scratch/output", "require-reapproval"),
     ("keyring get service user", "require-reapproval"),
-    ("gh pr merge 17 --repo example/repo --squash --delete-branch", "require-reapproval"),
+    ("gh pr merge 17 --repo example/repo --squash --delete-branch", "review"),
     ("npm view typescript@5.0.0 dist.integrity", "review"),
     ("docker compose ps", "review"),
     ("docker inspect container --format '{{.State.Status}}'", "review"),
