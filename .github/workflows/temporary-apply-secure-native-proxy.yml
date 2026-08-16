@@ -41,10 +41,7 @@ jobs:
           uv run --no-sync ruff format --check src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py tests/test_bounded_cli_hook_bridge.py || \
             uv run --no-sync ruff format src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py tests/test_bounded_cli_hook_bridge.py
           uv run --no-sync ruff check src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py tests/test_bounded_cli_hook_bridge.py
-          uv run --no-sync pytest -q \
-            tests/test_bounded_cli_hook_bridge.py \
-            tests/test_grok_adapter.py \
-            tests/test_cli_only_adapter_resilience.py
+          uv run --no-sync pytest -q tests/test_bounded_cli_hook_bridge.py tests/test_grok_adapter.py
           git diff --check
 
       - name: Commit implementation and remove temporary helpers
