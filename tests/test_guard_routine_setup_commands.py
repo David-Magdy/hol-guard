@@ -50,6 +50,7 @@ def test_safe_git_worktree_add_requires_new_bounded_destination(
         "_safe_worktree_parent",
         lambda _destination, *, home_dir: home_dir == tmp_path,
     )
+
     monkeypatch.setattr(
         routine_setup_commands,
         "trusted_git_binary_for_cwd",
@@ -144,12 +145,48 @@ def test_worktree_add_rejects_widened_output_consumers(
     )
 
 
+@pytest.mark.parametrize("directory", ("-", "--", "~other/repository", "repo*"))
+def test_worktree_add_rejects_shell_expanding_cd_operands(
+    tmp_path: Path,
+    directory: str,
+) -> None:
+    destination = tmp_path / "new-worktree"
+
+    assert not routine_setup_commands.is_safe_git_worktree_add(
+        f"cd {directory} && git worktree add {destination} -b fix/routine origin/release/2.2",
+        cwd=tmp_path,
+        home_dir=tmp_path,
+    )
+
+
+def test_worktree_add_rejects_path_shadowed_tail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    destination = tmp_path / "new-worktree"
+    shadow_bin = repository / "bin"
+    shadow_bin.mkdir()
+    shadow_tail = shadow_bin / "tail"
+    shadow_tail.write_text("#!/bin/sh\nexit 0\n")
+    shadow_tail.chmod(0o755)
+    monkeypatch.setenv("PATH", str(shadow_bin))
+
+    assert not routine_setup_commands.is_safe_git_worktree_add(
+        f"git worktree add {destination} -b fix/routine origin/release/2.2 2>&1 | tail -3",
+        cwd=repository,
+        home_dir=tmp_path,
+    )
+
+
 @pytest.mark.parametrize(
     "command_template",
     (
         "git worktree add {destination} --force -b fix/routine origin/release/2.2",
         "git worktree add {destination} -b fix/routine --force origin/release/2.2",
         "git worktree add $DESTINATION -b fix/routine origin/release/2.2",
+        "git worktree add ~other/new-worktree -b fix/routine origin/release/2.2",
+        "git worktree add {destination}* -b fix/routine origin/release/2.2",
         "git worktree add {destination} -b fix/routine origin/release/2.2 && sh payload.sh",
     ),
 )
