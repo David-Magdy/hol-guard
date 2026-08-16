@@ -1,0 +1,2 @@
+Code-quality ratchet failed:
+- Duplicate function group introduced (2 instances): scripts/mdm/generate-release-manifest.py:41, src/codex_plugin_scanner/guard/mdm/manifest.py:108
