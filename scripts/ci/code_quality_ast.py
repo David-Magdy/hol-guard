@@ -114,27 +114,29 @@ class _FunctionCollector(ast.NodeVisitor):
         self.stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._visit_function(node)
+        self._visit_named_function(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._visit_function(node)
+        self._visit_named_function(node)
 
-    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self.stack.append(f"<lambda>@{node.lineno}:{node.col_offset}")
+        self._record_function(node, ".".join(self.stack))
+        self.generic_visit(node)
+        self.stack.pop()
+
+    def _visit_named_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         self.stack.append(node.name)
-        qualname = ".".join(self.stack)
+        self._record_function(node, ".".join(self.stack))
+        self.generic_visit(node)
+        self.stack.pop()
+
+    def _record_function(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda,
+        qualname: str,
+    ) -> None:
         end_line = int(node.end_lineno or node.lineno)
-        normalized = copy.deepcopy(node)
-        normalized.name = "_"
-        normalized.decorator_list = []
-        if (
-            normalized.body
-            and isinstance(normalized.body[0], ast.Expr)
-            and isinstance(normalized.body[0].value, ast.Constant)
-            and isinstance(normalized.body[0].value.value, str)
-        ):
-            normalized.body = normalized.body[1:]
-        normalized_ast = repr(_canonical_ast(normalized)).encode("utf-8")
-        digest = hashlib.sha256(normalized_ast).hexdigest()
         self.functions.append(
             FunctionMetric(
                 path=self.path,
@@ -144,24 +146,42 @@ class _FunctionCollector(ast.NodeVisitor):
                 lines=end_line - node.lineno + 1,
                 complexity=_ComplexityVisitor().calculate(node),
                 category=self.category,
-                digest=digest,
+                digest=_function_digest(node),
             )
         )
         handler_visitor = _SilentHandlerVisitor(node)
         handler_visitor.visit(node)
         for handler in handler_visitor.handlers:
             exception = _exception_name(handler.type)
-            if exception in {"bare", "BaseException", "Exception"}:
-                self.handlers.append(SilentHandler(self.path, qualname, handler.lineno, exception))
-        self.generic_visit(node)
-        self.stack.pop()
+            if exception == "bare" or _contains_broad_exception(exception):
+                self.handlers.append(
+                    SilentHandler(self.path, qualname, handler.lineno, exception)
+                )
+
+
+def _function_digest(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda,
+) -> str:
+    normalized = copy.deepcopy(node)
+    if isinstance(normalized, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        normalized.name = "_"
+        normalized.decorator_list = []
+        if (
+            normalized.body
+            and isinstance(normalized.body[0], ast.Expr)
+            and isinstance(normalized.body[0].value, ast.Constant)
+            and isinstance(normalized.body[0].value.value, str)
+        ):
+            normalized.body = normalized.body[1:]
+    normalized_ast = repr(_canonical_ast(normalized)).encode("utf-8")
+    return hashlib.sha256(normalized_ast).hexdigest()
 
 
 def _canonical_ast(value: object) -> object:
-    """Return a stable, version-independent representation of an AST value."""
+    """Return a representation stable across AST field-order differences."""
     if isinstance(value, ast.AST):
         fields: list[tuple[str, object]] = []
-        for name, child in ast.iter_fields(value):
+        for name, child in sorted(ast.iter_fields(value), key=lambda item: item[0]):
             if child is None or child == []:
                 continue
             fields.append((name, _canonical_ast(child)))
@@ -204,10 +224,18 @@ def _exception_name(node: ast.expr | None) -> str:
     if isinstance(node, ast.Name):
         return node.id
     if isinstance(node, ast.Attribute):
-        return node.attr
+        prefix = _exception_name(node.value)
+        return f"{prefix}.{node.attr}"
     if isinstance(node, ast.Tuple):
         return ",".join(sorted(_exception_name(item) for item in node.elts))
     return type(node).__name__
+
+
+def _contains_broad_exception(exception: str) -> bool:
+    return any(
+        item.rsplit(".", 1)[-1] in {"BaseException", "Exception"}
+        for item in exception.split(",")
+    )
 
 
 __all__ = ["FunctionMetric", "SilentHandler", "collect_python_metrics"]
