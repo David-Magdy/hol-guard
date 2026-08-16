@@ -26,7 +26,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm .github/workflows/tmp-trigger-code-quality-finalizer.yml
-          printf '\n' >> .github/workflows/tmp-ruff-code-quality-fix.yml
+          printf '# validation retrigger\n' >> .github/workflows/tmp-ruff-code-quality-fix.yml
           git add .github/workflows/tmp-trigger-code-quality-finalizer.yml \
             .github/workflows/tmp-ruff-code-quality-fix.yml
           git diff --cached --check
