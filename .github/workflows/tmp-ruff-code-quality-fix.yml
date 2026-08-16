@@ -25,13 +25,16 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           ref: refactor/release-3-code-quality-hardening
-          fetch-depth: 0
+          fetch-depth: 10000
           persist-credentials: false
+          show-progress: false
       - name: Diagnose merge with current release/3.0
         shell: bash
         run: |
           set -uo pipefail
-          git fetch --no-tags origin release/3.0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --quiet --no-tags --depth=10000 origin release/3.0:refs/remotes/origin/release/3.0
           git config merge.conflictstyle diff3
           set +e
           git merge --no-commit --no-ff origin/release/3.0
@@ -40,6 +43,7 @@ jobs:
           echo "merge_status=${status}"
           echo "base=$(git rev-parse origin/release/3.0)"
           echo "head=$(git rev-parse HEAD)"
+          echo "merge_base=$(git merge-base HEAD origin/release/3.0 || true)"
           echo "unmerged_files_begin"
           git diff --name-only --diff-filter=U || true
           echo "unmerged_files_end"
