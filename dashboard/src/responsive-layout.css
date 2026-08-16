@@ -1,10 +1,9 @@
 /*
- * Responsive layout corrections for the local Guard dashboard.
+ * Responsive corrections inside Guard workspaces.
  *
- * The desktop shell removes usable width before individual workspaces render,
- * so viewport-only breakpoints can make a nominally wide window behave like a
- * narrow one. These rules are imported after styles.css and respond to the
- * actual workspace width where possible.
+ * Top-level navigation and shell width are owned by shell-navigation.css.
+ * These rules respond to the content width available inside each workspace so
+ * page controls remain usable while the window is resized or zoomed.
  */
 
 #guard-dashboard-root {
@@ -17,31 +16,7 @@
   min-width: 0;
 }
 
-/*
- * Keep the compact header through intermediate desktop widths. At this size a
- * 16rem sidebar plus page padding leaves too little room for settings, tables,
- * and multi-action page headers, especially at browser zoom above 100%.
- */
-@media (min-width: 64rem) and (max-width: 79.999rem) {
-  #guard-dashboard-root > div > header {
-    display: flex !important;
-  }
-
-  #guard-dashboard-root > div > aside {
-    display: none !important;
-  }
-
-  #guard-dashboard-root > div > aside + div {
-    min-height: calc(100dvh - 4rem);
-    padding-left: 0 !important;
-  }
-
-  #guard-dashboard-root main {
-    padding: clamp(1.25rem, 3vw, 2rem) !important;
-  }
-}
-
-/* Workspace title, tabs, and actions respond to their content width. */
+/* Workspace title, tabs, and actions respond to their actual content width. */
 .guard-page-header {
   min-width: 0;
   container: guard-page-header / inline-size;
@@ -186,11 +161,7 @@
   }
 }
 
-/*
- * Protection cards must preserve a readable minimum width. The source utility
- * uses four columns at the viewport lg breakpoint, which is too aggressive
- * once both dashboard and settings rails have consumed space.
- */
+/* Protection cards preserve a readable minimum width beside either shell rail. */
 #settings-panel-protection fieldset > div:has(> button[aria-pressed]) {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 15.5rem), 1fr)) !important;
   align-items: stretch;
@@ -202,7 +173,7 @@
   overflow-wrap: anywhere;
 }
 
-/* Avoid covering the form in the laptop-height desktop window. */
+/* Avoid covering a form in laptop-height windows. */
 @media (max-height: 68.75rem) {
   #guard-dashboard-root [aria-label="Save settings"] {
     position: static !important;

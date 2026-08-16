@@ -30,7 +30,13 @@ def main() -> int:
     report = artifacts / REPORT_NAME
     report.unlink(missing_ok=True)
     env = dict(os.environ)
-    env["HOL_MDM_LAB_PROJECT"] = args.project
+    env.update(
+        {
+            "HOL_MDM_LAB_PROJECT": args.project,
+            "HOL_MDM_LAB_UID": str(os.getuid()),
+            "HOL_MDM_LAB_GID": str(os.getgid()),
+        }
+    )
     base = ["docker", "compose", "--project-name", args.project, "--file", str(COMPOSE_FILE)]
     up = [*base, "up", "--abort-on-container-exit", "--exit-code-from", "orchestrator"]
     if not args.no_build:

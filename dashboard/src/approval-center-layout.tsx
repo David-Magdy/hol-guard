@@ -1,8 +1,9 @@
 import { lazy, Suspense, useCallback, useState } from "react";
 import type { ReactNode } from "react";
-import { ShellFooter } from "./shell-footer";
-import { ShellHeader, ShellSidebar } from "./approval-center-primitives";
+
 import type { AppView } from "./approval-center-primitives";
+import { ShellFooter } from "./shell-footer";
+import { ShellNavigation } from "./shell-navigation";
 import { ReceiptsWorkspace } from "./receipts-workspace";
 import { ReviewWorkspace } from "./review-workspace";
 import { QueueConnectionError } from "./queue-connection-error";
@@ -228,12 +229,12 @@ export function ApprovalCenterLayout(props: LayoutProps) {
   }
 
   const handleToggleSidebar = useCallback(() => {
-    setSidebarCollapsed((prev) => {
-      const next = !prev;
+    setSidebarCollapsed((previous) => {
+      const next = !previous;
       try {
         localStorage.setItem("guard-sidebar-collapsed", String(next));
       } catch {
-        // ignore
+        // Local storage is optional in hardened browser contexts.
       }
       return next;
     });
@@ -249,26 +250,18 @@ export function ApprovalCenterLayout(props: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-white text-brand-dark">
-      <ShellHeader
+      <ShellNavigation
         queuedCount={queuedCount}
         view={props.view}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={handleToggleSidebar}
         onNavigate={props.onNavigate}
         guardVersion={guardVersion}
         updateStatus={updateStatus}
         updatePhase={updatePhase}
         onUpdateGuard={onUpdateGuard}
         onReinstallGuard={onReinstallGuard}
-      />
-      <ShellSidebar
-        queuedCount={queuedCount}
-        view={props.view}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={handleToggleSidebar}
-        guardVersion={guardVersion}
-        updateStatus={updateStatus}
-        updatePhase={updatePhase}
-        onUpdateGuard={onUpdateGuard}
-        onReinstallGuard={onReinstallGuard}
+        approvalGate={props.approvalGate ?? null}
         cloudUserProfile={
           props.runtime.kind === "ready"
             ? props.runtime.snapshot.cloud_user_profile
@@ -286,10 +279,11 @@ export function ApprovalCenterLayout(props: LayoutProps) {
         }
       />
       <div
-        className={`flex flex-col transition-all duration-200 lg:min-h-screen ${sidebarCollapsed ? "lg:pl-20" : "lg:pl-64"}`}
+        className="guard-shell-content flex flex-col"
+        data-sidebar-collapsed={sidebarCollapsed ? "true" : "false"}
       >
-        <main id="main-content" className="flex-1 p-4 sm:p-6 lg:p-8" tabIndex={-1}>
-          <div className={props.view === "inbox" ? "mx-auto max-w-none" : "mx-auto max-w-6xl"}>
+        <main id="main-content" className="guard-shell-main flex-1" tabIndex={-1}>
+          <div className="guard-shell-workspace" data-view={props.view}>
             {renderViewContent(props)}
           </div>
         </main>
