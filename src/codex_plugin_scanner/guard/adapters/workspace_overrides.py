@@ -2,26 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Protocol
-
-
-class _HarnessContextLike(Protocol):
-    @property
-    def workspace_dir(self) -> object | None: ...
-
-
-class _ManagedServerLike(Protocol):
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def source_scope(self) -> str: ...
+from .base import HarnessContext
+from .mcp_servers import ManagedMcpServer
 
 
 def should_skip_workspace_override(
     *,
-    context: _HarnessContextLike,
-    server: _ManagedServerLike,
+    context: HarnessContext,
+    server: ManagedMcpServer,
     existing_workspace_server_names: set[str],
     for_companion: bool = False,
 ) -> bool:
