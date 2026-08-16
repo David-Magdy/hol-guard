@@ -1,0 +1,277 @@
+name: Temporary order frozen validation
+
+on:
+  push:
+    branches:
+      - fix/main-frozen-hook-bridge-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  fix-test-ratchet-clean:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/main-frozen-hook-bridge-hardening
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: 0.9.26
+          enable-cache: true
+
+      - name: Install frozen development environment
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Apply review fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py')
+          text = source.read_text(encoding='utf-8')
+          old_except = '''    except OSError:
+              return None
+          '''
+          new_except = '''    except (OSError, RuntimeError):
+              return None
+          '''
+          if text.count(old_except) != 1:
+              raise SystemExit('frozen guard-home exception anchor changed')
+          text = text.replace(old_except, new_except, 1)
+
+          old_dispatch = '''    package_root = Path(package_root_value)
+          guard_home = Path(guard_home_value)
+          # Fast path: serve the hook from the already-running daemon (~50ms)
+          # instead of paying a fresh interpreter + full CLI import (~1s).
+          daemon_result = _try_daemon_hook(
+              guard_home=guard_home,
+              harness=harness,
+              input_text=input_text,
+              timeout_seconds=float(timeout_seconds),
+          )
+          if daemon_result is not None:
+              daemon_stdout, daemon_stderr, daemon_exit = daemon_result
+              if daemon_stdout:
+                  _ = sys.stdout.write(daemon_stdout)
+              if daemon_stderr:
+                  print(daemon_stderr, file=sys.stderr)
+              return daemon_exit
+          runtime_frozen = bool(getattr(sys, "frozen", False))
+          if runtime_frozen:
+              direct_cli_args = _validated_frozen_cli_args(
+                  cli_args,
+                  guard_home=guard_home,
+                  harness=harness,
+              )
+              if direct_cli_args is None:
+                  return _emit_failure(harness=harness, input_text=input_text)
+              command = (sys.executable, *direct_cli_args)
+          elif frozen_launcher:
+              return _emit_failure(harness=harness, input_text=input_text)
+          else:
+              command = isolated_guard_cli_command(
+                  python_executable,
+                  package_root,
+                  cli_args,
+              )
+          '''
+          new_dispatch = '''    package_root = Path(package_root_value)
+          guard_home = Path(guard_home_value)
+          runtime_frozen = bool(getattr(sys, "frozen", False))
+          if runtime_frozen:
+              direct_cli_args = _validated_frozen_cli_args(
+                  cli_args,
+                  guard_home=guard_home,
+                  harness=harness,
+              )
+              if direct_cli_args is None:
+                  return _emit_failure(harness=harness, input_text=input_text)
+              command = (sys.executable, *direct_cli_args)
+          elif frozen_launcher:
+              return _emit_failure(harness=harness, input_text=input_text)
+          else:
+              command = isolated_guard_cli_command(
+                  python_executable,
+                  package_root,
+                  cli_args,
+              )
+          # Fast path: serve an already-validated hook through the running daemon (~50ms)
+          # instead of paying a fresh interpreter + full CLI import (~1s).
+          daemon_result = _try_daemon_hook(
+              guard_home=guard_home,
+              harness=harness,
+              input_text=input_text,
+              timeout_seconds=float(timeout_seconds),
+          )
+          if daemon_result is not None:
+              daemon_stdout, daemon_stderr, daemon_exit = daemon_result
+              if daemon_stdout:
+                  _ = sys.stdout.write(daemon_stdout)
+              if daemon_stderr:
+                  print(daemon_stderr, file=sys.stderr)
+              return daemon_exit
+          '''
+          if text.count(old_dispatch) != 1:
+              raise SystemExit('frozen dispatch ordering anchor changed')
+          source.write_text(text.replace(old_dispatch, new_dispatch, 1), encoding='utf-8')
+
+          tests = Path('tests/test_bounded_cli_hook_bridge.py')
+          test_text = tests.read_text(encoding='utf-8')
+          addition = '''
+
+          def test_invalid_frozen_args_deny_before_daemon_dispatch(
+              monkeypatch: pytest.MonkeyPatch,
+              tmp_path: Path,
+          ) -> None:
+              config = _config(tmp_path, harness="grok")
+              config["cli_args"] = ["-c", "echo bypassed"]
+              config["frozen_launcher"] = True
+              monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+
+              def forbidden_daemon(**kwargs: object) -> object:
+                  del kwargs
+                  raise AssertionError("invalid frozen arguments must not reach the daemon")
+
+              monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", forbidden_daemon)
+              output = io.StringIO()
+              with redirect_stdout(output):
+                  returncode = bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}")
+
+              assert returncode == 0
+              assert _json_object(output.getvalue())["decision"] == "deny"
+
+
+          def test_frozen_path_resolution_failure_denies_before_daemon_dispatch(
+              monkeypatch: pytest.MonkeyPatch,
+              tmp_path: Path,
+          ) -> None:
+              config = _config(tmp_path, harness="grok")
+              config["frozen_launcher"] = True
+              monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+
+              def fail_resolve(self: Path, *, strict: bool = False) -> Path:
+                  del self, strict
+                  raise RuntimeError("symlink loop")
+
+              def forbidden_daemon(**kwargs: object) -> object:
+                  del kwargs
+                  raise AssertionError("unresolved frozen paths must not reach the daemon")
+
+              monkeypatch.setattr(bounded_cli_hook_bridge.Path, "resolve", fail_resolve)
+              monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", forbidden_daemon)
+              output = io.StringIO()
+              with redirect_stdout(output):
+                  returncode = bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}")
+
+              assert returncode == 0
+              assert _json_object(output.getvalue())["decision"] == "deny"
+
+
+          def test_valid_frozen_args_retain_daemon_fast_path(
+              monkeypatch: pytest.MonkeyPatch,
+              tmp_path: Path,
+          ) -> None:
+              config = _config(tmp_path, harness="grok")
+              config["frozen_launcher"] = True
+              monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+              monkeypatch.setattr(bounded_cli_hook_bridge.sys, "executable", "/app/hol-guard")
+              monkeypatch.setattr(
+                  bounded_cli_hook_bridge,
+                  "_try_daemon_hook",
+                  lambda **kwargs: ('{"decision":"allow"}\\n', "", 0),
+              )
+
+              def forbidden_runner(*args: object, **kwargs: object) -> BoundedHookProcessResult:
+                  del args, kwargs
+                  raise AssertionError("valid daemon result must avoid fallback startup")
+
+              monkeypatch.setattr(bounded_cli_hook_bridge, "run_isolated_hook_process", forbidden_runner)
+              output = io.StringIO()
+              with redirect_stdout(output):
+                  returncode = bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}")
+
+              assert returncode == 0
+              assert _json_object(output.getvalue())["decision"] == "allow"
+          '''
+          if 'def test_invalid_frozen_args_deny_before_daemon_dispatch(' in test_text:
+              raise SystemExit('review tests already present')
+          tests.write_text(test_text + addition, encoding='utf-8')
+          PY
+
+      - name: Format and validate focused security contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync ruff format \
+            src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py \
+            tests/test_bounded_cli_hook_bridge.py
+          uv run --no-sync ruff check \
+            src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py \
+            tests/test_bounded_cli_hook_bridge.py
+          uv run --no-sync pytest -q \
+            tests/test_bounded_cli_hook_bridge.py \
+            tests/test_cli.py \
+            tests/test_cli_only_hook_resilience.py \
+            tests/test_guard_copilot_adapter.py \
+            tests/test_hermes_adapter.py \
+            tests/test_openclaw_adapter.py \
+            --tb=short
+          uv run --no-sync basedpyright --level error \
+            src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py \
+            tests/test_bounded_cli_hook_bridge.py
+
+      - name: Advance exact test-suite ratchet
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          full = json.loads(Path('test-inventory.json').read_text(encoding='utf-8'))
+          inventory = full['inventory']
+          Path('ci/test-suite-ratchet-baseline.json').write_text(
+              json.dumps(
+                  {
+                      'maximum_collected_cases': inventory['collected_cases'],
+                      'maximum_test_source_lines': full['test_source_lines'],
+                      'schema_version': 1,
+                  },
+                  indent=2,
+              ) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
+
+      - name: Commit review fixes and remove helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git rm .github/workflows/temporary-order-frozen-validation.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add \
+            src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py \
+            tests/test_bounded_cli_hook_bridge.py \
+            ci/test-suite-ratchet-baseline.json
+          git commit -m "fix(hooks): validate frozen bridge before daemon dispatch"
+          git push origin HEAD:fix/main-frozen-hook-bridge-hardening
