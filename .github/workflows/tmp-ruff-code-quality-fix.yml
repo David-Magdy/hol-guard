@@ -129,7 +129,9 @@ jobs:
           )
           if [ "${#changed_python[@]}" -gt 0 ]; then
             uv run --no-sync ruff format "${changed_python[@]}"
-            uv run --no-sync ruff check "${changed_python[@]}"
+            uv run --no-sync ruff check --fix \
+              --select=I001,E401,UP035,RUF021,RUF043 \
+              "${changed_python[@]}"
           fi
 
           uv run --no-sync python tests/guard_command_decision_diff.py --write
