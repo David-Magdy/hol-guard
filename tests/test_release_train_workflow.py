@@ -239,6 +239,10 @@ def test_release_is_created_only_after_pypi() -> None:
     job = workflow()["jobs"]["release-alpha"]
     assert job["needs"] == ["build", "publish-alpha-pypi"]
     assert job["permissions"]["attestations"] == "write"
+    checkout = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("actions/checkout@"))
+    assert checkout["with"]["ref"] == "release/3.1"
+    assert checkout["with"]["fetch-depth"] == 0
+    assert checkout["with"]["persist-credentials"] is False
 
 
 def test_release_notes_show_exact_alpha_install() -> None:
