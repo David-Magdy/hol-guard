@@ -356,8 +356,7 @@ def _grok_protection_checks(context: HarnessContext) -> dict[str, object]:
         warnings.append("Grok Guard hook files are missing from ~/.grok/hooks/. Re-run `hol-guard apps connect grok`.")
     elif not _grok_pretool_is_catchall(pretool_hook):
         warnings.append(
-            "Grok Guard pre-tool hook still uses a stale per-tool matcher list. "
-            "Re-run `hol-guard apps repair grok`."
+            "Grok Guard pre-tool hook still uses a stale per-tool matcher list. Re-run `hol-guard apps repair grok`."
         )
     managed_text = managed_config.read_text(encoding="utf-8") if managed_config.is_file() else ""
     if not managed_config.is_file() or "BEGIN HOL GUARD MANAGED GROK" not in managed_text:
@@ -365,7 +364,7 @@ def _grok_protection_checks(context: HarnessContext) -> dict[str, object]:
             "Grok managed permission rules are missing from ~/.grok/managed_config.toml. "
             "Re-run `hol-guard apps connect grok`."
         )
-    elif 'Read(~/' in managed_text or "Read(~/" in managed_text:
+    elif "Read(~/" in managed_text or "Read(~/" in managed_text:
         warnings.append(
             "Grok managed deny rules still use literal home prefixes that Grok does not expand. "
             "Re-run `hol-guard apps repair grok`."

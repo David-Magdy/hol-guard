@@ -104,14 +104,12 @@ def build_observe_hook_json(hook_command: str) -> dict[str, object]:
     """
 
     return {
-        "hooks": {
-            event_name: [_command_hook_entry(hook_command, timeout=15)] for event_name in OBSERVE_HOOK_EVENTS
-        }
+        "hooks": {event_name: [_command_hook_entry(hook_command, timeout=15)] for event_name in OBSERVE_HOOK_EVENTS}
     }
 
 
 def _toml_inline_command_hook(hook_command: str, *, timeout: int) -> str:
-    return "{ type = \"command\", command = " + json.dumps(hook_command) + f", timeout = {timeout} }}"
+    return '{ type = "command", command = ' + json.dumps(hook_command) + f", timeout = {timeout} }}"
 
 
 def build_managed_config_block(hook_command: str = "") -> str:
