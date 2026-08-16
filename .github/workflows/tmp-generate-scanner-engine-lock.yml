@@ -1,0 +1,71 @@
+name: Generate scanner engine lock artifact
+
+on:
+  push:
+    branches:
+      - feat/scanner-assurance-rust-hardening-20260816
+    paths:
+      - .github/workflows/tmp-generate-scanner-engine-lock.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.88
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.88.0 --profile minimal --no-self-update
+          rustup default 1.88.0
+      - name: Materialize final standalone scanner manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > rust/scanner-engine/Cargo.toml <<'TOML'
+          [package]
+          name = "hol-guard-scanner-engine"
+          version = "0.1.0"
+          edition = "2021"
+          rust-version = "1.88"
+          license = "Apache-2.0"
+          description = "Bounded native and WebAssembly structural analysis for HOL Guard"
+          publish = false
+
+          [[bin]]
+          name = "hol-guard-scanner-engine"
+          path = "src/main.rs"
+
+          [dependencies]
+          anyhow = "1.0"
+          clap = { version = "4.5", features = ["derive"] }
+          serde = { version = "1.0", features = ["derive"] }
+          serde_json = "1.0"
+          sha2 = "0.10"
+
+          [profile.release]
+          codegen-units = 1
+          lto = "thin"
+          panic = "abort"
+          strip = "symbols"
+
+          [workspace]
+          TOML
+          cargo generate-lockfile --manifest-path rust/scanner-engine/Cargo.toml
+          cargo metadata --locked --no-deps --format-version 1 --manifest-path rust/scanner-engine/Cargo.toml > /tmp/scanner-engine-metadata.json
+      - name: Upload lock artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scanner-engine-lock
+          path: |
+            rust/scanner-engine/Cargo.lock
+            /tmp/scanner-engine-metadata.json
+          if-no-files-found: error
+          retention-days: 3
