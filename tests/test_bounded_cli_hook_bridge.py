@@ -180,8 +180,22 @@ def test_frozen_hook_command_prefers_runtime_verified_signed_macos_proxy(
     )
     assert command[4:7] == (str(proxy), "TEAMID", str(bundle))
     config = json.loads(command[7])
-    assert config["python_executable"] == str(core)
-    assert config["frozen_launcher"] is True
+    assert config == {
+        "python_executable": str(core),
+        "package_root": str(tmp_path.resolve()),
+        "guard_home": str((tmp_path / "guard-home").resolve()),
+        "cli_args": [
+            "guard",
+            "hook",
+            "--guard-home",
+            str(tmp_path / "guard-home"),
+            "--harness",
+            "grok",
+        ],
+        "harness": "grok",
+        "timeout_seconds": 25,
+        "frozen_launcher": True,
+    }
     assert command[8] == str(core)
 
 
@@ -281,6 +295,8 @@ def test_macos_launcher_reverifies_normal_paths_and_falls_back_by_status() -> No
     assert 'verify_team "$fallback"' in launcher
     assert '"$proxy" __guard-hook-proxy "$config"' in launcher
     assert 'if [ "$status" -eq 125 ]' in launcher
+    assert '|| [ "$status" -eq 126 ]' in launcher
+    assert '|| [ "$status" -eq 127 ]' in launcher
     assert 'exec "$fallback" __guard-bounded-hook "$config"' in launcher
 
 
