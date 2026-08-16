@@ -1,4 +1,4 @@
-name: Apply deterministic Ruff fixes
+name: Diagnose release 3 merge conflicts
 
 on:
   push:
@@ -8,50 +8,45 @@ on:
       - .github/workflows/tmp-ruff-code-quality-fix.yml
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: apply-code-quality-ruff-fixes
+  group: diagnose-code-quality-release-merge
   cancel-in-progress: false
 
 jobs:
-  fix:
+  diagnose:
     if: >-
       github.repository == 'hashgraph-online/hol-guard' &&
       github.ref == 'refs/heads/refactor/release-3-code-quality-hardening'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           ref: refactor/release-3-code-quality-hardening
           fetch-depth: 0
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
-        with:
-          version: "0.9.26"
-          enable-cache: true
-          save-cache: false
-      - name: Apply deterministic Ruff fixes
+          persist-credentials: false
+      - name: Diagnose merge with current release/3.0
         shell: bash
         run: |
-          set -euo pipefail
-          uv sync --frozen --extra dev --python 3.12
-          uv run --no-sync ruff check --fix src tests || true
-          uv run --no-sync ruff format src tests
-          python -m compileall -q src tests
-          git diff --check
-          uv run --no-sync ruff check src tests || true
-      - name: Commit source and test fixes
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src tests
-          git diff --cached --check
-          git diff --cached --quiet && exit 0
-          git commit -m "style: apply reviewed Ruff fixes"
-          git push origin HEAD:refactor/release-3-code-quality-hardening
+          set -uo pipefail
+          git fetch --no-tags origin release/3.0
+          git config merge.conflictstyle diff3
+          set +e
+          git merge --no-commit --no-ff origin/release/3.0
+          status=$?
+          set -e
+          echo "merge_status=${status}"
+          echo "base=$(git rev-parse origin/release/3.0)"
+          echo "head=$(git rev-parse HEAD)"
+          echo "unmerged_files_begin"
+          git diff --name-only --diff-filter=U || true
+          echo "unmerged_files_end"
+          while IFS= read -r path; do
+            test -n "$path" || continue
+            echo "===== CONFLICT: $path ====="
+            git diff -- "$path" || true
+          done < <(git diff --name-only --diff-filter=U)
+          git merge --abort >/dev/null 2>&1 || true
+          exit 0
