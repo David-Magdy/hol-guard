@@ -43,9 +43,7 @@ def test_doctor_reports_aggregate_admission_without_payloads() -> None:
     source = (ROOT / "src/codex_plugin_scanner/guard/cli/commands_dispatch_admin.py").read_text(encoding="utf-8")
     assert "native_resident_admission_snapshot" in source
     assert "daemon_admission_snapshot" in source
-    combined = (
-        ROOT / "src/codex_plugin_scanner/guard/native_runtime_admission.py"
-    ).read_text(encoding="utf-8") + (
+    combined = (ROOT / "src/codex_plugin_scanner/guard/native_runtime_admission.py").read_text(encoding="utf-8") + (
         ROOT / "src/codex_plugin_scanner/guard/daemon/bounded_http.py"
     ).read_text(encoding="utf-8")
     for prohibited in ("raw_command", "prompt_text", "request_payload", "environment_values", "credential"):
