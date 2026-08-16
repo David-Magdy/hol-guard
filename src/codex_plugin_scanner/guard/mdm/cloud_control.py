@@ -132,11 +132,7 @@ def reject_authority(value: object, depth: int = 0) -> None:
         if len(value) > 128:
             raise ContractError("contract_collection_exceeded")
         for key, item in value.items():
-            if (
-                not isinstance(key, str)
-                or key in FORBIDDEN
-                or key.lower().endswith(_FORBIDDEN_SUFFIXES)
-            ):
+            if not isinstance(key, str) or key in FORBIDDEN or key.lower().endswith(_FORBIDDEN_SUFFIXES):
                 raise ContractError("forbidden_authority_field")
             reject_authority(item, depth + 1)
     elif isinstance(value, list):
@@ -256,12 +252,7 @@ def verify_config(
     clock = now or utcnow()
     if issued > clock and (issued - clock).total_seconds() > 300:
         raise ContractError("configuration_not_yet_valid")
-    if (
-        clock < not_before
-        or clock >= expires
-        or expires <= issued
-        or (expires - issued).total_seconds() > 86_400
-    ):
+    if clock < not_before or clock >= expires or expires <= issued or (expires - issued).total_seconds() > 86_400:
         raise ContractError("configuration_expired")
 
     policy = validate_policy(root["policy"])
@@ -347,9 +338,7 @@ def validate_ack(value: object, workspace: str, device: str, generation: str) ->
     if status not in {"applied", "rejected", "deferred", "superseded"}:
         raise ContractError("ack_status_invalid")
     reason_code = root["reasonCode"]
-    if (status == "applied" and reason_code is not None) or (
-        status != "applied" and not isinstance(reason_code, str)
-    ):
+    if (status == "applied" and reason_code is not None) or (status != "applied" and not isinstance(reason_code, str)):
         raise ContractError("ack_reason_invalid")
     return root
 
@@ -431,11 +420,7 @@ def validate_remediation(value: object, workspace: str, device: str, generation:
 
     action = cast(str, root["action"])
     parameters = root["parameters"]
-    if (
-        action not in ACTIONS
-        or not isinstance(parameters, dict)
-        or set(parameters) != ACTIONS[action]
-    ):
+    if action not in ACTIONS or not isinstance(parameters, dict) or set(parameters) != ACTIONS[action]:
         raise ContractError("remediation_action_invalid")
     params = cast(dict[str, object], parameters)
     if action == "repair" and params.get("scope") not in {"machine", "users"}:
