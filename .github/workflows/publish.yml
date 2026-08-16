@@ -152,7 +152,10 @@ jobs:
               fi
             fi
 
-            mapfile -t OTHER_VERSIONS < <(jq -r --arg version "$VERSION" '.[] | select(. != $version)' <<< "$EXISTING_VERSIONS")
+            mapfile -t OTHER_VERSIONS < <(
+              jq -r --arg version "$VERSION" \
+                '.[] | select(. != $version and (contains(".dev") | not))' <<< "$EXISTING_VERSIONS"
+            )
             VALIDATOR=(--channel alpha --version "$VERSION" --git-ref refs/heads/release/3.1 --actual-ref "$EVENT_REF" --github-sha "$SOURCE_SHA" --expected-sha "$SOURCE_SHA")
             for existing in "${OTHER_VERSIONS[@]}"; do
               VALIDATOR+=(--existing-version "$existing")
