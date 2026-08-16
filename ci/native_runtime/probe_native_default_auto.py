@@ -50,7 +50,9 @@ def _short_temp_parent() -> str | None:
     if os.name == "nt":
         return None
     candidate = Path("/tmp")
-    return str(candidate) if candidate.is_dir() else None
+    if not candidate.is_dir() or not os.access(candidate, os.W_OK | os.X_OK):
+        return None
+    return str(candidate)
 
 
 def _require(condition: bool, detail: object) -> None:
