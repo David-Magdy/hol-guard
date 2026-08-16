@@ -972,24 +972,26 @@ jobs:
           shopt -s nullglob
           guard_files=(dist/hol_guard-* dist/hol-guard-*)
           scanner_files=(dist/plugin_scanner-* dist/plugin-scanner-*)
-          [[ "${#guard_files[@]}" == "2" && "${#scanner_files[@]}" == "2" ]]
+          [[ "${#guard_files[@]}" -ge "2" && "${#scanner_files[@]}" == "2" ]]
           mkdir dist-hol-guard dist-plugin-scanner
           cp "${guard_files[@]}" dist-hol-guard/
           cp "${scanner_files[@]}" dist-plugin-scanner/
       - name: Inspect PyPI release state
         id: pypi
         env:
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
-          guard_result=$(uv run --with packaging==25.0 python scripts/verify_release_registry.py \
-            verify-release --registry pypi --project hol-guard --version "$VERSION" --dist-dir dist-hol-guard)
+          rm -rf upload-dist-hol-guard
+          guard_result=$(uv run --with packaging==25.0 python scripts/verify_native_runtime_release.py \
+            plan-upload --registry pypi --version "$VERSION" --source-sha "$SOURCE_SHA" \
+            --dist-dir dist-hol-guard --output-dir upload-dist-hol-guard)
           scanner_result=$(uv run --with packaging==25.0 python scripts/verify_release_registry.py \
             verify-release --registry pypi --project plugin-scanner --version "$VERSION" --dist-dir dist-plugin-scanner)
-          guard_status=$(jq -r '.status' <<< "$guard_result")
+          guard_file_count=$(jq '.files | length' <<< "$guard_result")
           scanner_status=$(jq -r '.status' <<< "$scanner_result")
-          [[ "$guard_status" == "absent" || "$guard_status" == "exact" ]]
           [[ "$scanner_status" == "absent" || "$scanner_status" == "exact" ]]
-          [[ "$guard_status" == "absent" ]] && echo "hol_guard_upload=true" >> "$GITHUB_OUTPUT" || echo "hol_guard_upload=false" >> "$GITHUB_OUTPUT"
+          [[ "$guard_file_count" -gt 0 ]] && echo "hol_guard_upload=true" >> "$GITHUB_OUTPUT" || echo "hol_guard_upload=false" >> "$GITHUB_OUTPUT"
           [[ "$scanner_status" == "absent" ]] && echo "plugin_scanner_upload=true" >> "$GITHUB_OUTPUT" || echo "plugin_scanner_upload=false" >> "$GITHUB_OUTPUT"
       - name: Revalidate alpha publication authorization
         env:
@@ -1032,14 +1034,14 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         if: steps.pypi.outputs.hol_guard_upload == 'true'
         with:
-          packages-dir: dist-hol-guard/
+          packages-dir: upload-dist-hol-guard/
       - name: Publish plugin-scanner to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         if: steps.pypi.outputs.plugin_scanner_upload == 'true'
         with:
           packages-dir: dist-plugin-scanner/
       - name: Remove generated upload attestations
-        run: rm -f dist-hol-guard/*.publish.attestation dist-plugin-scanner/*.publish.attestation
+        run: rm -f upload-dist-hol-guard/*.publish.attestation dist-plugin-scanner/*.publish.attestation
       - name: Download and verify exact PyPI artifacts
         env:
           SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
@@ -1069,7 +1071,7 @@ jobs:
             fi
             sleep 5
           done
-          guard_wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$guard_result")
+          guard_wheel=$(jq -r '.install_paths[] | select(endswith("-py3-none-any.whl"))' <<< "$guard_result")
           scanner_wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$scanner_result")
           [[ -n "$guard_wheel" && -n "$scanner_wheel" ]]
           [[ "$(uv tool run --from "$guard_wheel" hol-guard --version)" == "hol-guard $VERSION" ]]

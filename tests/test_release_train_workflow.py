@@ -255,6 +255,13 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
         assert "dist-plugin-scanner" in prepare_step["run"]
         assert not any(step.get("name") == "Keep only the Guard release distribution" for step in steps)
 
+    alpha_prepare = next(
+        step
+        for step in jobs["publish-alpha-pypi"]["steps"]
+        if step.get("name") == "Prepare project-specific distributions"
+    )
+    assert '"${#guard_files[@]}" -ge "2"' in alpha_prepare["run"]
+
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "skip-existing" not in workflow_text and "pytest" not in workflow_text
 
@@ -388,7 +395,7 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert 'for registry in ("pypi.org", "test.pypi.org")' not in workflow_text
 
-    for job_name in ("publish-alpha-pypi", "publish-main-pypi"):
+    for job_name in ("publish-main-pypi",):
         steps = jobs[job_name]["steps"]
         inspect_step = next(step for step in steps if step.get("name") == "Inspect PyPI release state")
         publish_steps = [step for step in steps if str(step.get("uses", "")).startswith("pypa/")]
@@ -419,6 +426,18 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
         assert '== "hol-guard $VERSION"' in verify_step["run"]
         assert '== "plugin-scanner $VERSION"' in verify_step["run"]
 
+    alpha_steps = jobs["publish-alpha-pypi"]["steps"]
+    alpha_inspect = next(step for step in alpha_steps if step.get("name") == "Inspect PyPI release state")
+    alpha_publishers = [step for step in alpha_steps if str(step.get("uses", "")).startswith("pypa/")]
+    alpha_cleanup = next(step for step in alpha_steps if step.get("name") == "Remove generated upload attestations")
+    assert "plan-upload --registry pypi" in alpha_inspect["run"]
+    assert "--project plugin-scanner" in alpha_inspect["run"]
+    assert {step["with"]["packages-dir"] for step in alpha_publishers} == {
+        "upload-dist-hol-guard/",
+        "dist-plugin-scanner/",
+    }
+    assert "upload-dist-hol-guard/*.publish.attestation" in alpha_cleanup["run"]
+
     alpha_verify = next(
         step
         for step in jobs["publish-alpha-pypi"]["steps"]
@@ -426,6 +445,7 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
     )
     assert "verify-published --registry pypi" in alpha_verify["run"]
     assert '--source-sha "$SOURCE_SHA"' in alpha_verify["run"]
+    assert 'select(endswith("-py3-none-any.whl"))' in alpha_verify["run"]
 
 
 def test_release_tags_are_bound_to_the_exact_published_source() -> None:
