@@ -6,12 +6,16 @@ from typing import Protocol
 
 
 class _HarnessContextLike(Protocol):
-    workspace_dir: object | None
+    @property
+    def workspace_dir(self) -> object | None: ...
 
 
 class _ManagedServerLike(Protocol):
-    name: str
-    source_scope: str
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def source_scope(self) -> str: ...
 
 
 def should_skip_workspace_override(
