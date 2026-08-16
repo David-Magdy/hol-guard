@@ -36,17 +36,18 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           save-cache: false
-      - name: Reconcile, validate, and commit
+      - name: Reconcile, validate, and publish a clean branch history
         shell: bash
         run: |
           set -euo pipefail
           branch="refactor/release-3-code-quality-hardening"
           workflow_path=".github/workflows/tmp-ruff-code-quality-fix.yml"
-          workflow_backup="${RUNNER_TEMP}/tmp-ruff-code-quality-fix.yml"
+          original_head="$(git rev-parse HEAD)"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --quiet --no-tags --depth=10000 origin release/3.0:refs/remotes/origin/release/3.0
+          git fetch --quiet --no-tags --depth=10000 \
+            origin release/3.0:refs/remotes/origin/release/3.0
 
           set +e
           git merge --no-commit --no-ff origin/release/3.0
@@ -56,6 +57,7 @@ jobs:
             mapfile -t conflicts < <(git diff --name-only --diff-filter=U | sort)
             expected=(
               "ci/test-suite-ratchet-baseline.json"
+              "tests/fixtures/guard-command-corpus/decision-diff-report.json"
               "tests/test_release_train_workflow.py"
             )
             if [ "${conflicts[*]}" != "${expected[*]}" ]; then
@@ -64,8 +66,13 @@ jobs:
               exit 1
             fi
             git checkout --ours ci/test-suite-ratchet-baseline.json
+            git checkout --ours \
+              tests/fixtures/guard-command-corpus/decision-diff-report.json
             git checkout --theirs tests/test_release_train_workflow.py
-            git add ci/test-suite-ratchet-baseline.json tests/test_release_train_workflow.py
+            git add \
+              ci/test-suite-ratchet-baseline.json \
+              tests/fixtures/guard-command-corpus/decision-diff-report.json \
+              tests/test_release_train_workflow.py
             test -z "$(git diff --name-only --diff-filter=U)"
           fi
 
@@ -75,12 +82,20 @@ jobs:
           path = Path(".github/workflows/ci.yml")
           content = path.read_text(encoding="utf-8")
           marker = "            tests/test_guard_private_file_io.py"
-          addition = marker + "\n            tests/test_guard_kubernetes_command_support.py"
-          if content.count(marker) != 2:
+          test_line = "            tests/test_guard_kubernetes_command_support.py"
+          existing = content.count(test_line)
+          if existing == 0:
+              marker_count = content.count(marker)
+              if marker_count != 2:
+                  raise SystemExit(
+                      f"expected two CI lint-list markers, found {marker_count}"
+                  )
+              content = content.replace(marker, marker + "\n" + test_line)
+          elif existing != 2:
               raise SystemExit(
-                  f"expected two CI lint-list markers, found {content.count(marker)}"
+                  f"expected zero or two Kubernetes test entries, found {existing}"
               )
-          path.write_text(content.replace(marker, addition), encoding="utf-8")
+          path.write_text(content, encoding="utf-8")
           PY
 
           uv sync --frozen --extra dev --python 3.12
@@ -96,7 +111,9 @@ jobs:
           uv run --no-sync ruff check --fix "${quality_files[@]}"
           uv run --no-sync ruff format "${quality_files[@]}"
 
-          cp "$workflow_path" "$workflow_backup"
+          uv run --no-sync python tests/guard_command_decision_diff.py --write
+          uv run --no-sync python tests/guard_command_decision_diff.py --check
+
           rm "$workflow_path"
 
           uv run --no-sync python scripts/ci/test_inventory.py \
@@ -140,19 +157,19 @@ jobs:
             scripts/ci/code_quality_*.py \
             tests/test_code_quality_audit.py \
             tests/test_guard_durable_io.py \
+            tests/test_guard_kubernetes_command_support.py \
             tests/test_guard_managed_install_context.py \
             tests/test_guard_node_semver.py \
-            tests/test_guard_private_file_io.py \
-            tests/test_guard_kubernetes_command_support.py
+            tests/test_guard_private_file_io.py
           uv run --no-sync python -m ruff format --check \
             src/ \
             scripts/ci/code_quality_*.py \
             tests/test_code_quality_audit.py \
             tests/test_guard_durable_io.py \
+            tests/test_guard_kubernetes_command_support.py \
             tests/test_guard_managed_install_context.py \
             tests/test_guard_node_semver.py \
-            tests/test_guard_private_file_io.py \
-            tests/test_guard_kubernetes_command_support.py
+            tests/test_guard_private_file_io.py
           uv run --no-sync basedpyright --level error
           uv run --no-sync python -m compileall -q src scripts/ci tests
           uv run --no-sync python -m ruff check \
@@ -227,8 +244,20 @@ jobs:
           PY
 
           git diff --check
-          mv "$workflow_backup" "$workflow_path"
           git add -A
           git diff --cached --check
-          git commit -m "refactor: finalize release 3 code quality hardening"
-          git push origin "HEAD:${branch}"
+          tree="$(git write-tree)"
+          commit_message="${RUNNER_TEMP}/commit-message.txt"
+          cat > "$commit_message" <<'EOF'
+          refactor: harden release 3 code quality
+
+          Consolidate repeated implementations, harden identified edge cases, add
+          deterministic structural-quality ratchets, and preserve existing public
+          behavior and security boundaries.
+
+          Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          EOF
+          new_commit="$(git commit-tree "$tree" -p origin/release/3.0 < "$commit_message")"
+          git push \
+            --force-with-lease="refs/heads/${branch}:${original_head}" \
+            origin "${new_commit}:refs/heads/${branch}"
