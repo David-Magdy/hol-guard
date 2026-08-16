@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..protect import _collect_package_specs
-from ._shell_execution_context_support import ShellPathIdentity
+from ._shell_execution_context_support import shell_path_identity_payload
 from .command_model import CanonicalCommand
 from .env_wrapper import parse_env_wrapper
 from .homebrew_intent import parse_brew_intent
@@ -1290,16 +1290,7 @@ def _opaque_unresolved_context_binding(
     return hmac.new(_EXECUTION_CONTEXT_HMAC_KEY, sensitive_context, hashlib.sha256).hexdigest()
 
 
-def _shell_path_identity_payload(identity: ShellPathIdentity | None) -> dict[str, int] | None:
-    if identity is None:
-        return None
-    return {
-        "change_time_ns": identity.change_time_ns,
-        "creation_time_ns": identity.creation_time_ns,
-        "device": identity.device,
-        "inode": identity.inode,
-        "mode": identity.mode,
-    }
+_shell_path_identity_payload = shell_path_identity_payload
 
 
 def _execution_context_hash(

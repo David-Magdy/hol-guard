@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .stable_json import stable_json_serialize
+
 import base64
 import binascii
 import hashlib
@@ -183,19 +185,7 @@ def _policy_bundle_resource_limit_error(value: object) -> str | None:
     return "limit_bytes" if len(encoded) > POLICY_BUNDLE_MAX_BYTES else None
 
 
-def _stable_serialize(value: object) -> str:
-    if isinstance(value, list):
-        return f"[{','.join(_stable_serialize(item) for item in value)}]"
-    if isinstance(value, dict):
-        return (
-            "{"
-            + ",".join(
-                f"{json.dumps(key, separators=(',', ':'), ensure_ascii=False)}:{_stable_serialize(value[key])}"
-                for key in sorted(value)
-            )
-            + "}"
-        )
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+_stable_serialize = stable_json_serialize
 
 
 def computed_policy_bundle_hash(policy_bundle: dict[str, object]) -> str:

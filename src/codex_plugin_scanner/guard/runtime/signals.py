@@ -318,7 +318,7 @@ def _parse_severity(value: object) -> RiskSeverityLabel:
             raise ValueError("severity must be a known severity label")
 
 
-def _parse_confidence(value: object) -> RiskConfidenceLabel:
+def parse_risk_confidence(value: object) -> RiskConfidenceLabel:
     match value:
         case "weak":
             return "weak"
@@ -328,6 +328,8 @@ def _parse_confidence(value: object) -> RiskConfidenceLabel:
             return "strong"
         case _:
             raise ValueError("confidence must be a known confidence label")
+
+_parse_confidence = parse_risk_confidence
 
 
 def _parse_redaction_level(value: object) -> RiskRedactionLevel:

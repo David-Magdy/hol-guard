@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .path_security import path_has_symlink_component
+
 import hashlib
 import importlib
 import ipaddress
@@ -1467,19 +1469,7 @@ def _primary_artifact_content_hash(
     return f"sha256:{digest.hexdigest()}"
 
 
-def _path_has_symlink_component(path: Path, *, allowed_root: Path) -> bool:
-    try:
-        relative = path.relative_to(allowed_root)
-    except ValueError:
-        return True
-    current = allowed_root
-    if current.is_symlink():
-        return True
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            return True
-    return False
+_path_has_symlink_component = path_has_symlink_component
 
 
 def _canonical_inventory_content_hash(value: str) -> str:

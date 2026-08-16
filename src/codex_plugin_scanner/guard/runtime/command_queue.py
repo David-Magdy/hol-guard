@@ -14,6 +14,7 @@ from urllib.parse import urlparse, urlunparse
 from ...version import __version__
 from ..adapters.base import HarnessContext
 from ..store import GuardStore
+from .time_support import parse_utc_timestamp
 from .auto_update import maybe_auto_update
 from .command_capability import (
     CommandCapabilityError,
@@ -192,19 +193,7 @@ def _retry_wait_seconds(
     return min(retry_cap, retry_base * (2**retry_exponent))
 
 
-def _parse_iso8601_timestamp(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    normalized = value.strip()
-    if normalized.endswith(("Z", "z")):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+_parse_iso8601_timestamp = parse_utc_timestamp
 
 
 def _pending_result_is_stale(job: dict[str, object]) -> bool:

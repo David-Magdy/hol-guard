@@ -35,6 +35,7 @@ from ._shell_execution_context_support import (
     ordered_segments,
     parent_shell_cwd_construct_reason,
     resolve_directory_operand,
+    shell_path_identity_payload,
     split_shell_tokens,
 )
 
@@ -417,16 +418,7 @@ def _apply_directory_operation(
     return next_state, None
 
 
-def _identity_payload(identity: ShellPathIdentity | None) -> dict[str, int] | None:
-    if identity is None:
-        return None
-    return {
-        "change_time_ns": identity.change_time_ns,
-        "creation_time_ns": identity.creation_time_ns,
-        "device": identity.device,
-        "inode": identity.inode,
-        "mode": identity.mode,
-    }
+_identity_payload = shell_path_identity_payload
 
 
 def _segment_payload(segment: ShellExecutionSegment) -> dict[str, object]:

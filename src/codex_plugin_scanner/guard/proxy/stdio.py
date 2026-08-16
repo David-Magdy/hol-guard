@@ -31,6 +31,7 @@ from ..models import GuardAction, GuardArtifact, HarnessDetection
 from ..receipts import build_receipt
 from ..runtime.approval_context import (
     approval_context_tokens_validation_reason,
+    saved_allow_context_validation_reason as _sensitive_read_saved_allow_validation_reason,
     build_approval_context_token,
     build_configured_environment_hash,
     build_runtime_launch_identity,
@@ -142,16 +143,6 @@ def _approval_reuse_evidence(reuse: ApprovalReuseDecision) -> tuple[dict[str, ob
     if reuse.reason_code == APPROVAL_REUSE_NO_SAVED_DECISION:
         return ()
     return ({"source": "approval_reuse", **reuse.to_evidence()},)
-
-
-def _sensitive_read_saved_allow_validation_reason(
-    decision: dict[str, object],
-    *,
-    artifact_hash: str,
-) -> str | None:
-    if decision.get("action") != "allow":
-        return None
-    return approval_context_tokens_validation_reason(decision.get("artifact_hash"), artifact_hash)
 
 
 def _approval_surface_policy_for_browser(configured_policy: object, approval_flow: dict[str, object]) -> str:

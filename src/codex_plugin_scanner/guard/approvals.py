@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .value_coercion import coerce_non_negative_int
+
 import hashlib
 import importlib.metadata
 import threading
@@ -2641,17 +2643,7 @@ def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _non_negative_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return max(0, value)
-    if isinstance(value, str) and value.strip():
-        try:
-            return max(0, int(value.strip()))
-        except ValueError:
-            return 0
-    return 0
+_non_negative_int = coerce_non_negative_int
 
 
 def _queue_risk_summary(queued: list[dict[str, object]]) -> str:

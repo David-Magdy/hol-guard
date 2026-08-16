@@ -11,10 +11,14 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ...path_support import resolves_within_root
 from ..models import GuardArtifact, HarnessDetection
 from .contracts import HarnessCoverageSummary, HarnessSetupContract, HarnessSetupStep, setup_contract_for
+
+if TYPE_CHECKING:
+    from ..inventory_contract import GuardAgentInventorySnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +128,37 @@ class HarnessAdapter:
 
     def detect(self, context: HarnessContext) -> HarnessDetection:
         raise NotImplementedError
+
+
+    def inventory_snapshot(
+        self,
+        context: HarnessContext,
+        *,
+        generated_at: str,
+        cisco_mcp_scan: str = "off",
+        cisco_skill_scan: str = "off",
+        cisco_timeout_seconds: float | None = None,
+    ) -> GuardAgentInventorySnapshot:
+        """Build a normalized inventory snapshot from this adapter's detection."""
+
+        from ..inventory_cisco import run_cisco_inventory_scans
+        from ..inventory_contract import inventory_snapshot_from_detection
+
+        detection = self.detect(context)
+        return inventory_snapshot_from_detection(
+            detection,
+            generated_at=generated_at,
+            home_dir=context.home_dir,
+            workspace_dir=context.workspace_dir,
+            cisco_runs=run_cisco_inventory_scans(
+                harness=self.harness,
+                context=context,
+                detection=detection,
+                mcp_mode=cisco_mcp_scan,
+                skill_mode=cisco_skill_scan,
+                timeout_seconds=cisco_timeout_seconds,
+            ),
+        )
 
     def install(self, context: HarnessContext) -> dict[str, object]:
         from ..shims import install_guard_shim

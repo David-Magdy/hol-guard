@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .file_identity import full_stat_identity
+
 import errno
 import hashlib
 import os
@@ -426,17 +428,7 @@ def _safe_lstat(path: Path) -> os.stat_result:
         raise _IncompleteIdentityError("unreadable_entry") from exc
 
 
-def _stat_key(metadata: os.stat_result) -> tuple[int, ...]:
-    return (
-        int(metadata.st_dev),
-        int(metadata.st_ino),
-        int(metadata.st_mode),
-        int(metadata.st_nlink),
-        int(metadata.st_size),
-        int(getattr(metadata, "st_mtime_ns", int(metadata.st_mtime * 1_000_000_000))),
-        int(getattr(metadata, "st_ctime_ns", int(metadata.st_ctime * 1_000_000_000))),
-        int(getattr(metadata, "st_file_attributes", 0)),
-    )
+_stat_key = full_stat_identity
 
 
 def _security_mode(mode: int) -> str | None:

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from ..runtime.data_flow_sink import data_flow_sink_type
+
 import importlib
 import re
 from collections.abc import Sequence
@@ -926,17 +928,7 @@ def _runtime_data_flow_summary(signals: tuple[RiskSignalV2, ...]) -> str:
         return f"This command sends local secret to {sink_type}. Guard kept raw secret contents out of the evidence."
     return f"This command sends local secret to {sink_type}."
 
-def _runtime_data_flow_sink_type(signals: tuple[RiskSignalV2, ...]) -> str:
-    signal_ids = {signal.signal_id for signal in signals}
-    if any(signal.category == "network" for signal in signals):
-        return "network host"
-    if "data-flow:clipboard-secret" in signal_ids:
-        return "clipboard"
-    if "data-flow:world-readable-temp-secret" in signal_ids:
-        return "world-readable temp file"
-    if "data-flow:git-remote-token" in signal_ids:
-        return "git remote configuration"
-    return "external sink"
+_runtime_data_flow_sink_type = data_flow_sink_type
 
 def _runtime_artifact_risk_classes(artifact: GuardArtifact) -> list[str]:
     risk_classes: list[str] = []

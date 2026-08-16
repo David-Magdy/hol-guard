@@ -9,6 +9,8 @@ approval evidence through the policy store.
 
 from __future__ import annotations
 
+from ..file_identity import content_stat_identity
+
 import base64
 import hashlib
 import hmac
@@ -204,6 +206,18 @@ def approval_context_tokens_validation_reason(
         if not hmac.compare_digest(saved_hash, current_hash):
             return reason
     return None
+
+
+def saved_allow_context_validation_reason(
+    decision: Mapping[str, object],
+    *,
+    artifact_hash: str,
+) -> str | None:
+    """Validate only stored allows and fail closed on stale context tokens."""
+
+    if decision.get("action") != "allow":
+        return None
+    return approval_context_tokens_validation_reason(decision.get("artifact_hash"), artifact_hash)
 
 
 def _runtime_path_with_trusted_home(command: str, *, home_dir: Path | None) -> Path | None:
@@ -1669,15 +1683,7 @@ def _parse_executable_shebang(prefix: bytes) -> tuple[str | None, str]:
     return (decoded, "verified") if decoded else (None, "interpreter_missing")
 
 
-def _executable_stat_key(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
-        metadata.st_mode,
-    )
+_executable_stat_key = content_stat_identity
 
 
 def _unreusable_executable_identity(

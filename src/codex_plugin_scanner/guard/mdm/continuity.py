@@ -16,9 +16,13 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Literal
 
 from .contracts import MachinePaths, default_machine_paths
+from .file_lock import (
+    acquire_file_lock as _acquire_lock,
+    release_file_lock as _release_lock,
+)
 from .device_key import require_machine_device_context, verified_machine_device_key_ids
 
 _SCHEMA = "hol-guard-installation-continuity.v1"
@@ -217,34 +221,6 @@ def _atomic_write(paths: MachinePaths, record: InstallationContinuityRecord) -> 
     finally:
         with suppress(FileNotFoundError):
             temporary.unlink()
-
-
-def _acquire_lock(handle: BinaryIO) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        handle.seek(0)
-        if not handle.read(1):
-            handle.write(b"0")
-            handle.flush()
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        return
-    import fcntl
-
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def _release_lock(handle: BinaryIO) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        return
-    import fcntl
-
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 @contextmanager

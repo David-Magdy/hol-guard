@@ -13,6 +13,7 @@ from ..runtime.direct_vitest import (
 from ..runtime.github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
 from ..runtime.jsonc import loads_jsonc
 from ..runtime.kubernetes_commands import kubernetes_secret_read_source
+from ..runtime.node_semver import node_semver_spec_matches as _routine_semver_spec_matches
 from ..runtime.package_intent_common import PackageExecutionFileEvidence, PackageIntent
 from ..runtime.secret_file_request_services.github_pr_ephemeral_body import (
     gh_pr_create_uses_safe_ephemeral_body,
@@ -304,26 +305,6 @@ def _routine_local_runner_versions_match(
                 locked_versions.add(bun_entry[0][len(prefix) :])
     return locked_versions == {installed_version} and _routine_semver_spec_matches(declared_version, installed_version)
 
-
-def _routine_semver_spec_matches(specifier: str, version: str) -> bool:
-    match = re.fullmatch(r"([~^]?)(\d+)\.(\d+)\.(\d+)", specifier)
-    installed = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
-    if match is None or installed is None:
-        return False
-    operator, major, minor, patch = match.groups()
-    requested = (int(major), int(minor), int(patch))
-    actual = tuple(int(value) for value in installed.groups())
-    if actual < requested:
-        return False
-    if operator == "^":
-        if requested[0] > 0:
-            return actual[0] == requested[0]
-        if requested[1] > 0:
-            return actual[:2] == requested[:2]
-        return actual == requested
-    if operator == "~":
-        return actual[:2] == requested[:2]
-    return actual == requested
 
 
 def _unmodeled_shell_runtime_artifact(

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Final
 
+from .contained_execution_common import containment_binding_digest as _binding_digest
 from .containment_contract import ContainmentInput
 from .containment_executor import file_sha256
 
@@ -208,11 +207,6 @@ def _canonical_directory(path: Path) -> Path:
 
 def _file_digest(path: Path) -> str:
     return file_sha256(str(path))
-
-
-def _binding_digest(payload: dict[str, object]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-    return hashlib.sha256(len(encoded).to_bytes(8, "big") + encoded).hexdigest()
 
 
 __all__ = ("typescript_snapshot_inputs",)

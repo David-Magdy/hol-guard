@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import sys
 import textwrap
@@ -11,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO, TypeAlias
 
+from ..value_coercion import coerce_int as _coerce_int
 from ..redaction import redact_text
 from .render_uninstall import render_self_uninstall
 
@@ -2807,26 +2807,6 @@ def _coerce_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if isinstance(item, str) and item]
-
-
-def _coerce_int(value: object) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            return 0
-        return int(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return 0
-        try:
-            return int(stripped)
-        except ValueError:
-            return 0
-    return 0
 
 
 def _short_path(value: object) -> str:

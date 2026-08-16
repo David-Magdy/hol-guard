@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .stable_json import stable_json_serialize
+
 import base64
 import hashlib
 import json
@@ -64,19 +66,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _stable_serialize(value: object) -> str:
-    if isinstance(value, list):
-        return f"[{','.join(_stable_serialize(item) for item in value)}]"
-    if isinstance(value, dict):
-        return (
-            "{"
-            + ",".join(
-                f"{json.dumps(key, separators=(',', ':'), ensure_ascii=False)}:{_stable_serialize(value[key])}"
-                for key in sorted(value)
-            )
-            + "}"
-        )
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+_stable_serialize = stable_json_serialize
 
 
 def _sha256_hex(value: str) -> str:

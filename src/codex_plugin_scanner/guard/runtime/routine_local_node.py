@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .package_evidence_common import read_package_json
+
 import json
 import os
 import re
@@ -11,6 +13,7 @@ from pathlib import Path
 from typing import cast
 
 from .jsonc import loads_jsonc
+from .node_semver import node_semver_spec_matches as _semver_spec_matches
 from .routine_node_identity import (
     routine_configuration_identity,
     routine_dependency_closure_digest,
@@ -298,17 +301,7 @@ def _package_bin_target(package: dict[str, object], runner: str) -> str | None:
     return None
 
 
-def _read_package_json(path: Path) -> dict[str, object] | None:
-    try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
-            return None
-        payload = cast(object, json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    typed = cast(dict[object, object], payload)
-    return {key: value for key, value in typed.items() if isinstance(key, str)}
+_read_package_json = read_package_json
 
 
 def _declared_dependency_version(workspace: Path, package_name: str) -> str | None:
@@ -376,24 +369,6 @@ def _package_tree_has_trusted_identity(
     except (OSError, RuntimeError, ValueError):
         return False
 
-
-def _semver_spec_matches(specifier: str, version: str) -> bool:
-    if specifier == version and re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", version):
-        return True
-    requested = re.fullmatch(r"([~^]?)(\d+)\.(\d+)\.(\d+)", specifier)
-    installed = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
-    if requested is None or installed is None:
-        return False
-    operator, major, minor, patch = requested.groups()
-    minimum = (int(major), int(minor), int(patch))
-    actual = tuple(int(value) for value in installed.groups())
-    if actual < minimum:
-        return False
-    if operator == "^":
-        return actual[0] == minimum[0] if minimum[0] else actual[:2] == minimum[:2]
-    if operator == "~":
-        return actual[:2] == minimum[:2]
-    return actual == minimum
 
 
 __all__ = (

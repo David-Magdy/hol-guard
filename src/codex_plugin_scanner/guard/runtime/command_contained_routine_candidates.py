@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Final
 
 from .command_model import CanonicalCommand, CommandSegment
+from .command_candidate_common import command_has_exact_plain_shell_shape as _plain_command
 from .effect_contract import DecisionBasis
 from .effect_decision import DecisionFactor, DecisionFactorSource
 
@@ -61,27 +62,6 @@ def contained_routine_candidate_operation(command: CanonicalCommand) -> str | No
     }:
         return "workspace-check"
     return None
-
-
-def _plain_command(command: CanonicalCommand) -> bool:
-    return bool(command.segments) and all(
-        (
-            command.confidence == "exact",
-            command.uncertainty_reason is None,
-            command.dialect == "posix",
-            command.transport == "shell_string",
-            not command.wrapper_chain,
-            not command.redirects,
-            not command.embedded_commands,
-            all(
-                segment.execution_context.startswith("top:")
-                and not segment.wrapper_chain
-                and not segment.environment_names
-                and not segment.path_overridden
-                for segment in command.segments
-            ),
-        )
-    )
 
 
 def _name(segment: CommandSegment) -> str:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .path_security import path_has_symlink_component
+
 import hashlib
 import ipaddress
 import os
@@ -196,19 +198,7 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     return True
 
 
-def _has_symlink_component(path: Path, *, allowed_root: Path) -> bool:
-    try:
-        relative = path.relative_to(allowed_root)
-    except ValueError:
-        return True
-    current = allowed_root
-    if current.is_symlink():
-        return True
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            return True
-    return False
+_has_symlink_component = path_has_symlink_component
 
 
 def _has_frontmatter(lines: list[str]) -> bool:

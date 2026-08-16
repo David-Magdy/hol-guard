@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..file_identity import content_stat_identity
+
 import ctypes
 import hashlib
 import hmac
@@ -1240,15 +1242,7 @@ def _is_metadata_entry(filename: str) -> bool:
     )
 
 
-def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
-        metadata.st_mode,
-    )
+_stat_identity = content_stat_identity
 
 
 def _metadata_is_reparse(metadata: os.stat_result) -> bool:

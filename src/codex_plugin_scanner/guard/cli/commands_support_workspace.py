@@ -21,31 +21,13 @@ if TYPE_CHECKING:
 
 from ._commands_shared import *
 from .commands_parser_helpers import *
+from .commands_parser_helpers import (
+    _add_aibom_cli_args as _add_aibom_cli_args,
+    _add_guard_common_args as _add_guard_common_args,
+)
 from ..browser_opener import open_browser_url
 
-def _add_guard_common_args(
-    parser: argparse.ArgumentParser,
-    *,
-    suppress_defaults: bool = False,
-) -> None:
-    default = argparse.SUPPRESS if suppress_defaults else None
-    parser.add_argument("--home", default=default)
-    parser.add_argument("--guard-home", default=default)
-    parser.add_argument("--workspace", default=default)
 
-def _add_aibom_cli_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--include-symlinks",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Include symlink source-of-truth metadata in AIBOM output (default: enabled).",
-    )
-    parser.add_argument(
-        "--follow-unsafe-symlinks",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Follow symlink targets outside safe roots (default: disabled).",
-    )
 
 def _aibom_cli_options_from_args(args: argparse.Namespace) -> AibomCliOptions:
     return AibomCliOptions(

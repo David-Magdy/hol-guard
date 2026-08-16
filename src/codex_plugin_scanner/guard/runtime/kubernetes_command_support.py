@@ -82,6 +82,47 @@ def kubernetes_option_tokens_consumed(
     return None
 
 
+
+def shell_command_script(tokens: tuple[str, ...]) -> str | None:
+    """Return the script passed to a shell's ``-c`` option, if present."""
+
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "-c" and index + 1 < len(tokens):
+            return tokens[index + 1]
+        if token.startswith("-") and "c" in token[1:] and index + 1 < len(tokens):
+            return tokens[index + 1]
+        index += 1
+    return None
+
+
+def skip_kubectl_options(
+    tokens: tuple[str, ...],
+    index: int,
+    *,
+    value_flags: frozenset[str],
+    boolean_flags: frozenset[str],
+    boolean_short_cluster: frozenset[str],
+) -> int:
+    """Advance over kubectl global options without consuming the verb."""
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return index + 1
+        if not token.startswith("-"):
+            return index
+        option_consumed = kubernetes_option_tokens_consumed(
+            tokens,
+            index,
+            base_value_flags=value_flags,
+            base_boolean_flags=boolean_flags,
+            base_boolean_short_cluster=boolean_short_cluster,
+        )
+        index += option_consumed if option_consumed is not None else 1
+    return index
+
 def is_output_redirect_target(token: str, *, previous_token: str | None) -> bool:
     return token.startswith((">", "1>", "2>", ">>", "1>>", "2>>")) or previous_token in _OUTPUT_REDIRECT_TOKENS
 
@@ -219,6 +260,8 @@ __all__ = [
     "remote_cp_path",
     "resource_token_includes_secret",
     "script_reads_sensitive_env",
+    "shell_command_script",
+    "skip_kubectl_options",
     "secret_volume_argument_value",
     "strip_redirect_prefix",
 ]

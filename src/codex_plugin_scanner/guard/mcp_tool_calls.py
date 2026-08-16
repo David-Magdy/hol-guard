@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .collections_support import dedupe_preserving_order
+
 import json
 import re
 from collections.abc import Callable, Mapping
@@ -16,7 +18,11 @@ from .approval_gate import ApprovalGateGrant
 from .config import DEFAULT_SECURITY_LEVEL, GuardConfig, resolve_risk_action
 from .models import GuardAction, GuardArtifact, GuardReceipt, PolicyDecision
 from .receipts import build_receipt
-from .runtime.approval_context import approval_context_tokens_validation_reason, build_approval_context_token
+from .runtime.approval_context import (
+    approval_context_tokens_validation_reason,
+    build_approval_context_token,
+    saved_allow_context_validation_reason as _tool_call_saved_allow_validation_reason,
+)
 from .runtime.approval_reuse import (
     APPROVAL_REUSE_ACCEPTED,
     APPROVAL_REUSE_CLAIM_FAILED,
@@ -427,19 +433,6 @@ def _browser_runtime_exact_match_context(artifact: GuardArtifact, arguments: obj
         mcp_schema_hash=browser_intent.mcp_schema_hash,
         sensitive_surface_flags=browser_intent.sensitive_surface_flags,
     )
-
-
-def _tool_call_saved_allow_validation_reason(
-    decision: Mapping[str, object],
-    *,
-    artifact_hash: str,
-) -> str | None:
-    if decision.get("action") != "allow":
-        return None
-    # Equality of a legacy digest cannot prove that workspace, executable,
-    # capabilities, policy, and sandbox are unchanged. Only a valid v1 token
-    # can authorize reuse; malformed and legacy values fail closed.
-    return approval_context_tokens_validation_reason(decision.get("artifact_hash"), artifact_hash)
 
 
 def evaluate_tool_call(
@@ -1555,15 +1548,7 @@ def block_tool_call(
     return receipt
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
+_dedupe = dedupe_preserving_order
 
 
 def _tool_name_tokens(tool_name: str) -> tuple[str, ...]:

@@ -11,6 +11,8 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from ..durable_io import fsync_directory as _fsync_directory
 from typing import cast
 
 from .acl import verify_protected_ownership_and_acl
@@ -52,16 +54,6 @@ class RemovalAuthorizationEvidence:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def _active_binding(paths: MachinePaths) -> tuple[str, str]:

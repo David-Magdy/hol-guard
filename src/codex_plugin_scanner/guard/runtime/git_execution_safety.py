@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .executable_resolution import which_for_execution_cwd
+
 import os
 import re
 import shlex
@@ -815,14 +817,7 @@ def _trusted_credential_helper(value: str, *, git_exec_path: Path, cwd: Path) ->
     return helper.is_file() and git_binary_path_is_trusted(helper, cwd=cwd)
 
 
-def _path_command_for_cwd(command: str, *, cwd: Path) -> str | None:
-    path_entries: list[str] = []
-    for entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
-        candidate = Path(entry or ".").expanduser()
-        if not candidate.is_absolute():
-            candidate = cwd / candidate
-        path_entries.append(str(candidate))
-    return shutil.which(command, path=os.pathsep.join(path_entries))
+_path_command_for_cwd = which_for_execution_cwd
 
 
 __all__ = (

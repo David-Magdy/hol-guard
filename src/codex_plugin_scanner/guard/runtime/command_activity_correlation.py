@@ -13,6 +13,8 @@ import tempfile
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
+
+from ..durable_io import fsync_directory as _fsync_directory
 from typing import Final, cast
 
 from .command_activity_contract import CorrelationHandle, CorrelationKind
@@ -199,16 +201,6 @@ def _write_private_temporary(path: Path, payload: bytes) -> Path:
 def _set_private_mode(path: Path) -> None:
     if os.name != "nt":
         os.chmod(path, _PRIVATE_FILE_MODE, follow_symlinks=False)
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    descriptor = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 __all__ = [

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from ..store import GuardStore
+from .time_support import parse_utc_timestamp
 
 COMMAND_CAPABILITY_STATE_KEY = "guard_command_capability_v1"
 COMMAND_PENDING_APPROVALS_STATE_KEY = "guard_command_pending_approvals_v1"
@@ -99,19 +100,7 @@ def command_environment_allows_queue(environ: Mapping[str, str] | None = None) -
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _parse_timestamp(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    normalized = value.strip()
-    if normalized.endswith(("Z", "z")):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+_parse_timestamp = parse_utc_timestamp
 
 
 def _canonical_bytes(payload: Mapping[str, object]) -> bytes:

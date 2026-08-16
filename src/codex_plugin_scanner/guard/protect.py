@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .collections_support import dedupe_preserving_order
+
 import hashlib
 import json
 import os
@@ -1125,12 +1127,4 @@ def _command_fingerprint(command: list[str]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
+_dedupe = dedupe_preserving_order

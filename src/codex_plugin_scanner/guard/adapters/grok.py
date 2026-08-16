@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 import os
 import shutil
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from ..aibom_detection import extend_detection_with_workspace_aibom
+from ..codex_config import read_toml_payload
 from ..models import GuardArtifact, HarnessDetection
 from ..shims import install_guard_shim, remove_guard_shim
 from .base import (
@@ -49,12 +48,6 @@ from .grok_executable import (
     resolve_trusted_grok_executable,
     sanitized_grok_launch_environment,
 )
-
-tomllib: Any
-try:
-    import tomllib as tomllib  # pyright: ignore[reportMissingImports]
-except ModuleNotFoundError:
-    tomllib = importlib.import_module("tomli")
 
 _GROK_HOME_ENV_VAR = "GROK_HOME"
 _GUARD_HOOK_INTERNAL_TIMEOUT_SECONDS = 25
@@ -116,16 +109,7 @@ class GrokHarnessAdapter(HarnessAdapter):
             return project_root / GROK_CONFIG_FILE
         return self._config_path(context)
 
-    @staticmethod
-    def _read_toml(path: Path) -> dict[str, object]:
-        if not path.is_file():
-            return {}
-        try:
-            with path.open("rb") as handle:
-                payload = tomllib.load(handle)
-        except (OSError, tomllib.TOMLDecodeError):
-            return {}
-        return payload if isinstance(payload, dict) else {}
+    _read_toml = staticmethod(read_toml_payload)
 
     @staticmethod
     def _version_probe(

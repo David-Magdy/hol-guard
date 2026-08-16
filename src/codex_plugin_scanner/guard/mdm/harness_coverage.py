@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import errno
 import json
 import os
 import platform
@@ -10,6 +9,8 @@ import secrets
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+
+from ..durable_io import fsync_directory as _fsync_directory
 from typing import Protocol, cast
 
 from .contracts import HarnessCoverage, MachinePaths, ManagedPolicyState
@@ -117,25 +118,6 @@ def _validate_registry_users(users: list[object]) -> None:
                     or (kind in {"missing", "mutable-file"} and digest is not None)
                 ):
                     raise ValueError("harness_coverage_registry_invalid")
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    except OSError as exc:
-        if exc.errno in {errno.EINVAL, errno.ENOTSUP}:
-            return
-        raise
-    try:
-        try:
-            os.fsync(descriptor)
-        except OSError as exc:
-            if exc.errno not in {errno.EINVAL, errno.ENOTSUP}:
-                raise
-    finally:
-        os.close(descriptor)
 
 
 def _read_registry(paths: MachinePaths) -> dict[str, object] | None:

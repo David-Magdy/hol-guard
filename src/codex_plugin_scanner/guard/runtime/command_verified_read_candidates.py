@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Final
 
 from .command_model import CanonicalCommand, CommandSegment
+from .command_candidate_common import command_has_exact_plain_shell_shape as _plain_exact_command
 from .effect_contract import DecisionBasis
 from .effect_decision import DecisionFactor, DecisionFactorSource
 from .github_command_capabilities import classify_github_cli
@@ -56,27 +57,6 @@ def verified_read_candidate_operation(command: CanonicalCommand) -> str | None:
     if len(segments[offset:]) > 1 and not _bounded_pipeline(segments[offset:]):
         return None
     return "workspace-read"
-
-
-def _plain_exact_command(command: CanonicalCommand) -> bool:
-    return bool(command.segments) and all(
-        (
-            command.confidence == "exact",
-            command.uncertainty_reason is None,
-            command.dialect == "posix",
-            command.transport == "shell_string",
-            not command.wrapper_chain,
-            not command.redirects,
-            not command.embedded_commands,
-            all(
-                segment.execution_context.startswith("top:")
-                and not segment.wrapper_chain
-                and not segment.environment_names
-                and not segment.path_overridden
-                for segment in command.segments
-            ),
-        )
-    )
 
 
 def _local_segment_is_candidate(segment: CommandSegment) -> bool:

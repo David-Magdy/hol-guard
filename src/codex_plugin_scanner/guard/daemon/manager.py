@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import BinaryIO, Literal, TypedDict
 
 from ...version import __version__
+from ..mdm.file_lock import release_file_lock
+from ..private_file_io import private_regular_file_is_valid, read_private_regular_text
 from ..windows_paths import (
     trusted_windows_system_executable,
     windows_command_line_to_argv,
@@ -772,14 +774,16 @@ def _guard_daemon_wake_reservation_path(guard_home: Path) -> Path:
 
 
 def _load_guard_daemon_wake_reservation(guard_home: Path) -> dict[str, object] | None:
-    path = _guard_daemon_wake_reservation_path(guard_home)
-    if not _private_daemon_file_is_valid(path):
+    raw_payload = read_private_regular_text(
+        _guard_daemon_wake_reservation_path(guard_home),
+        max_bytes=_GUARD_DAEMON_WAKE_RESERVATION_MAX_BYTES,
+        require_private_parent=True,
+    )
+    if raw_payload is None:
         return None
     try:
-        if path.stat(follow_symlinks=False).st_size > _GUARD_DAEMON_WAKE_RESERVATION_MAX_BYTES:
-            return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -820,14 +824,16 @@ def _guard_daemon_recovery_reservation_path(guard_home: Path) -> Path:
 
 
 def _load_guard_daemon_recovery_reservation(guard_home: Path) -> dict[str, object] | None:
-    path = _guard_daemon_recovery_reservation_path(guard_home)
-    if not _private_daemon_file_is_valid(path):
+    raw_payload = read_private_regular_text(
+        _guard_daemon_recovery_reservation_path(guard_home),
+        max_bytes=_GUARD_DAEMON_RECOVERY_RESERVATION_MAX_BYTES,
+        require_private_parent=True,
+    )
+    if raw_payload is None:
         return None
     try:
-        if path.stat(follow_symlinks=False).st_size > _GUARD_DAEMON_RECOVERY_RESERVATION_MAX_BYTES:
-            return None
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError:
         return None
     return payload if isinstance(payload, dict) else None
 
@@ -976,13 +982,11 @@ def _load_authenticated_daemon_identity(guard_home: Path) -> tuple[dict[str, obj
 
 
 def load_guard_daemon_auth_token(guard_home: Path) -> str | None:
-    token_path = _auth_token_path(guard_home)
-    if not _private_daemon_file_is_valid(token_path):
-        return None
-    try:
-        token = token_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
+    token = read_private_regular_text(
+        _auth_token_path(guard_home),
+        max_bytes=4096,
+        require_private_parent=True,
+    )
     return token or None
 
 
@@ -1612,16 +1616,16 @@ def load_authenticated_guard_daemon_pending_launch(guard_home: Path) -> dict[str
 
     if os.name != "nt":
         return None
-    path = _pending_launch_path(guard_home)
-    if not _private_daemon_file_is_valid(path):
+    raw_payload = read_private_regular_text(
+        _pending_launch_path(guard_home),
+        max_bytes=_GUARD_DAEMON_PENDING_LAUNCH_MAX_BYTES,
+        require_private_parent=True,
+    )
+    if raw_payload is None:
         return None
     try:
-        metadata = path.stat(follow_symlinks=False)
-        if metadata.st_size <= 0 or metadata.st_size > _GUARD_DAEMON_PENDING_LAUNCH_MAX_BYTES:
-            return None
-        raw_payload = path.read_text(encoding="utf-8")
         payload = json.loads(raw_payload)
-    except (OSError, ValueError, json.JSONDecodeError):
+    except json.JSONDecodeError:
         return None
     discovery_key = load_daemon_discovery_key(guard_home)
     if (
@@ -1725,23 +1729,7 @@ def _auth_token_path(guard_home: Path) -> Path:
 
 
 def _private_daemon_file_is_valid(path: Path) -> bool:
-    try:
-        parent_metadata = path.parent.lstat()
-        metadata = path.lstat()
-    except OSError:
-        return False
-    if not stat.S_ISDIR(parent_metadata.st_mode):
-        return False
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        return False
-    if os.name == "nt":
-        return True
-    return (
-        parent_metadata.st_uid == os.getuid()
-        and metadata.st_uid == os.getuid()
-        and not stat.S_IMODE(parent_metadata.st_mode) & 0o077
-        and not stat.S_IMODE(metadata.st_mode) & 0o077
-    )
+    return private_regular_file_is_valid(path, require_private_parent=True)
 
 
 def _remove_invalid_daemon_discovery_key(guard_home: Path) -> bool:
@@ -2862,16 +2850,7 @@ def _try_lock_daemon_file(handle: BinaryIO) -> bool:
     return True
 
 
-def _unlock_daemon_start_file(handle: BinaryIO) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        return
-    import fcntl
-
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+_unlock_daemon_start_file = release_file_lock
 
 
 def _configured_port(guard_home: Path) -> int | None:

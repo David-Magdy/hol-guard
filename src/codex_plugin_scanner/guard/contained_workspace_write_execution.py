@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import secrets
 import shutil
@@ -14,6 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, cast
 
+from .containment_execution_support import load_current_containment_health as _load_current_containment_health
+from .runtime.contained_execution_common import (
+    canonical_existing_directory as _canonical_directory,
+    clean_containment_environment as _clean_environment,
+    containment_binding_digest as _binding_digest,
+)
 from .runtime.containment_contract import ContainmentAttestation, ContainmentPolicy, ContainmentRequest
 from .runtime.containment_executor import execute_contained, file_sha256
 from .runtime.containment_health import ContainmentHealthEvidence, contained_positive_proof
@@ -386,38 +391,6 @@ def _resolve_executable(name: str, environment: dict[str, str]) -> str:
     if not canonical.is_file() or not os.access(canonical, os.X_OK):
         raise ValueError(f"{name} executable is not path-pinned")
     return str(canonical)
-
-
-def _load_current_containment_health(guard_home: Path) -> tuple[ContainmentHealthEvidence, str]:
-    from .daemon.client import load_guard_surface_daemon_client
-    from .daemon.manager import current_guard_daemon_runtime_fingerprint
-
-    client = load_guard_surface_daemon_client(guard_home.resolve(strict=True))
-    evidence = ContainmentHealthEvidence.from_mapping(client.containment_health())
-    runtime_fingerprint = current_guard_daemon_runtime_fingerprint()
-    errors = evidence.compatibility_errors(now=datetime.now(timezone.utc), runtime_fingerprint=runtime_fingerprint)
-    if errors:
-        raise RuntimeError(f"containment health incompatible: {errors[0]}")
-    return evidence, runtime_fingerprint
-
-
-def _canonical_directory(path: Path) -> Path:
-    if path.is_symlink() or not path.is_dir():
-        raise ValueError("workspace must be an existing canonical directory")
-    canonical = path.resolve(strict=True)
-    if canonical != Path(os.path.normpath(str(path))):
-        raise ValueError("workspace cannot contain aliases")
-    return canonical
-
-
-def _clean_environment(environment: dict[str, str]) -> tuple[tuple[str, str], ...]:
-    keys = ("LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR", "TERM")
-    return tuple(sorted((key, value) for key in keys if (value := environment.get(key))))
-
-
-def _binding_digest(payload: dict[str, object]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-    return hashlib.sha256(len(encoded).to_bytes(8, "big") + encoded).hexdigest()
 
 
 __all__ = ("ContainedWorkspaceWriteResult", "try_execute_contained_workspace_write")

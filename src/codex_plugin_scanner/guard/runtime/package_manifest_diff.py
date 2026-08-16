@@ -435,7 +435,7 @@ def _collect_poetry_dependency_table(
             dependencies[normalized_name] = str(value["version"])
 
 
-def _poetry_lock_dependency_map(text: str, deadline: float) -> dict[str, str]:
+def _toml_lock_dependency_map(text: str, deadline: float) -> dict[str, str]:
     _ensure_within_deadline(deadline)
     payload = tomllib.loads(text or "")
     packages = payload.get("package")
@@ -453,22 +453,9 @@ def _poetry_lock_dependency_map(text: str, deadline: float) -> dict[str, str]:
     return dependencies
 
 
-def _uv_lock_dependency_map(text: str, deadline: float) -> dict[str, str]:
-    _ensure_within_deadline(deadline)
-    payload = tomllib.loads(text or "")
-    packages = payload.get("package")
-    dependencies: dict[str, str] = {}
-    if not isinstance(packages, list):
-        return dependencies
-    for package in packages:
-        _ensure_within_deadline(deadline)
-        if not isinstance(package, dict):
-            continue
-        name = package.get("name")
-        version = package.get("version")
-        if isinstance(name, str) and isinstance(version, str):
-            dependencies[name] = version
-    return dependencies
+_poetry_lock_dependency_map = _toml_lock_dependency_map
+_uv_lock_dependency_map = _toml_lock_dependency_map
+_cargo_lock_dependency_map = _toml_lock_dependency_map
 
 
 def _pipfile_lock_dependency_map(text: str, deadline: float) -> dict[str, str]:
@@ -540,24 +527,6 @@ def _collect_toml_dependency_table(
             continue
         if isinstance(value, dict) and isinstance(value.get("version"), str):
             dependencies[str(package_name)] = str(value["version"])
-
-
-def _cargo_lock_dependency_map(text: str, deadline: float) -> dict[str, str]:
-    _ensure_within_deadline(deadline)
-    payload = tomllib.loads(text or "")
-    packages = payload.get("package")
-    dependencies: dict[str, str] = {}
-    if not isinstance(packages, list):
-        return dependencies
-    for package in packages:
-        _ensure_within_deadline(deadline)
-        if not isinstance(package, dict):
-            continue
-        name = package.get("name")
-        version = package.get("version")
-        if isinstance(name, str) and isinstance(version, str):
-            dependencies[name] = version
-    return dependencies
 
 
 def _go_mod_dependency_map(text: str, deadline: float) -> dict[str, str]:

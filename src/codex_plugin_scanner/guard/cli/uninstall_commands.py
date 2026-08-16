@@ -5,7 +5,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 from ..adapters.base import HarnessContext
 from ..daemon.manager import retire_all_guard_daemons_for_home
@@ -14,6 +13,8 @@ from ..shims import package_shim_status, remove_guard_profile_blocks, uninstall_
 from ..store import GuardStore
 from .install_commands import apply_managed_install
 from .update_commands import _current_version, _installer_kind
+
+from .managed_install_context import managed_install_context as _managed_install_context
 
 
 def run_guard_self_uninstall(
@@ -230,32 +231,6 @@ def _active_managed_installs(store: GuardStore) -> tuple[list[dict[str, object]]
         return [], f"Could not read managed install state before uninstall: {error}"
     return installs, None
 
-
-def _managed_install_context(
-    context: HarnessContext,
-    managed_install: dict[str, object],
-) -> tuple[HarnessContext, str | None]:
-    managed_workspace = managed_install.get("workspace")
-    if isinstance(managed_workspace, str) and managed_workspace.strip():
-        workspace_path = Path(managed_workspace).expanduser().resolve()
-        return (
-            HarnessContext(
-                home_dir=context.home_dir,
-                workspace_dir=workspace_path,
-                guard_home=context.guard_home,
-                home_override_explicit=context.home_override_explicit,
-            ),
-            str(workspace_path),
-        )
-    return (
-        HarnessContext(
-            home_dir=context.home_dir,
-            workspace_dir=None,
-            guard_home=context.guard_home,
-            home_override_explicit=context.home_override_explicit,
-        ),
-        None,
-    )
 
 
 def _planned_uninstall_message(*, managed_count: int, package_shim_count: int) -> str:

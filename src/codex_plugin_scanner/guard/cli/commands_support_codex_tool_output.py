@@ -5,6 +5,13 @@
 
 from __future__ import annotations
 
+from functools import partial
+
+from .codex_output_safety import (
+    output_uses_placeholder_private_key_fixture,
+    source_name_stem_has_compound_secret_segment,
+)
+
 from ..runtime.env_wrapper import parse_env_wrapper
 from ..runtime.shell_execution_context import model_shell_execution_context, validate_shell_execution_segment
 from ._commands_shared import *
@@ -127,30 +134,17 @@ def _codex_shell_split(command_text: str) -> list[str]:
     return list(lexer)
 
 
-def _codex_output_uses_placeholder_private_key_fixture(response_text: str) -> bool:
-    matches = list(_CODEX_PRIVATE_KEY_FIXTURE_PATTERN.finditer(response_text))
-    if not matches:
-        return False
-    return all(
-        _CODEX_PRIVATE_KEY_FIXTURE_BODY_PATTERN.search(
-            " ".join(line.strip() for line in match.group("body").splitlines() if line.strip())
-            .replace("\\n", " ")
-            .replace("\\r", " ")
-        )
-        is not None
-        for match in matches
-    )
+_codex_output_uses_placeholder_private_key_fixture = partial(
+    output_uses_placeholder_private_key_fixture,
+    fixture_pattern=_CODEX_PRIVATE_KEY_FIXTURE_PATTERN,
+    fixture_body_pattern=_CODEX_PRIVATE_KEY_FIXTURE_BODY_PATTERN,
+)
 
 
-def _codex_source_name_stem_has_compound_secret_segment(stem: str, *, split_compound: bool) -> bool:
-    lowered = stem.lower()
-    if not split_compound:
-        return False
-    return any(
-        segment in _CODEX_SECRET_LIKE_SOURCE_NAME_STEMS
-        for segment in re.split(r"[-_]+", lowered)
-        if segment and segment != lowered
-    )
+_codex_source_name_stem_has_compound_secret_segment = partial(
+    source_name_stem_has_compound_secret_segment,
+    secret_like_stems=_CODEX_SECRET_LIKE_SOURCE_NAME_STEMS,
+)
 
 
 def _codex_command_targets_secret_like_source_name(

@@ -15,12 +15,16 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, Literal, cast
+from typing import Literal, cast
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from .contracts import KeyProtectionLevel, KeyProtectionStatus, MachinePaths, default_machine_paths
+from .file_lock import (
+    acquire_file_lock as _acquire_lock,
+    release_file_lock as _release_lock,
+)
 from .device_key_native import NativeKeyEvidence
 from .device_key_native import require_machine_context as require_machine_device_context
 from .device_key_native import run_helper as _run_helper
@@ -131,34 +135,6 @@ def _atomic_metadata_write(paths: MachinePaths, metadata: DeviceKeyMetadata) -> 
     finally:
         with suppress(FileNotFoundError):
             temporary.unlink()
-
-
-def _acquire_lock(handle: BinaryIO) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        handle.seek(0)
-        if not handle.read(1):
-            handle.write(b"0")
-            handle.flush()
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        return
-    import fcntl
-
-    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def _release_lock(handle: BinaryIO) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        return
-    import fcntl
-
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 @contextmanager

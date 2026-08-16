@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .package_evidence_common import read_package_json
+
 import hashlib
 import json
 import os
@@ -382,17 +384,7 @@ def _dependency_names(package: dict[str, object]) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
-def _read_package_json(path: Path) -> dict[str, object] | None:
-    try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
-            return None
-        payload = cast(object, json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    typed = cast(dict[object, object], payload)
-    return {key: value for key, value in typed.items() if isinstance(key, str)}
+_read_package_json = read_package_json
 
 
 __all__ = (

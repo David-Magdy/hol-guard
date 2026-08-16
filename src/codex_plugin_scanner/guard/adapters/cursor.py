@@ -13,6 +13,7 @@ from ..models import GuardArtifact, HarnessDetection
 from ..runtime.mcp_skill_firewall import enrich_artifact_with_mcp_skill_firewall
 from ..shims import ensure_guard_shim_path_in_shell_profile, install_guard_shim, remove_guard_shim
 from .base import HarnessAdapter, HarnessContext, _json_payload, _run_command_probe
+from .state_files import load_backup_payload
 from .cursor_cli import (
     CURSOR_CLI_SHIM_COMMANDS,
     cursor_cli_command_available,
@@ -477,14 +478,4 @@ class CursorHarnessAdapter(HarnessAdapter):
         digest = sha256(target.encode("utf-8")).hexdigest()[:12]
         return context.guard_home / "managed" / "cursor" / f"{digest}.state.json"
 
-    @staticmethod
-    def _backup_payload(backup_path: Path) -> dict[str, str | bool | None]:
-        try:
-            payload = json.loads(backup_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {"readable": False, "existed": False, "content": None}
-        if not isinstance(payload, dict):
-            return {"readable": False, "existed": False, "content": None}
-        existed = payload.get("existed") is True
-        content = payload.get("content")
-        return {"readable": True, "existed": existed, "content": content if isinstance(content, str) else None}
+    _backup_payload = staticmethod(load_backup_payload)

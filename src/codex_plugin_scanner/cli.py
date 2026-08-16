@@ -12,32 +12,13 @@ from .cli_ui import build_cli_epilog, build_plain_text, build_scan_help_epilog
 from .ecosystems.registry import list_supported_ecosystems
 from .guard.cli import add_guard_parser, add_guard_root_parser, run_guard_command
 from .guard.product_model import SUPPORTED_HARNESS_VALUES
-from .reporting import format_json as render_json
+from .reporting import format_json as format_json
 from .rules import get_rule_spec
 from .version import __version__
 
 
 def format_text(result) -> str:
     return build_plain_text(result)
-
-
-def format_json(
-    result,
-    *,
-    profile: str = "default",
-    policy_pass: bool = True,
-    verify_pass: bool = True,
-    raw_score: int | None = None,
-    effective_score: int | None = None,
-) -> str:
-    return render_json(
-        result,
-        profile=profile,
-        policy_pass=policy_pass,
-        verify_pass=verify_pass,
-        raw_score=raw_score,
-        effective_score=effective_score,
-    )
 
 
 def _add_common_policy_args(parser: argparse.ArgumentParser) -> None:

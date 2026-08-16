@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 import re
 import shlex
 from pathlib import Path
@@ -20,6 +22,8 @@ from .kubernetes_command_support import (
     kubernetes_option_tokens_consumed,
     script_reads_sensitive_env,
     secret_volume_argument_value,
+    shell_command_script as _shell_c_script,
+    skip_kubectl_options,
 )
 
 _ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*")
@@ -315,18 +319,6 @@ def _segment_reads_secret_volume(tokens: tuple[str, ...]) -> bool:
     return False
 
 
-def _shell_c_script(tokens: tuple[str, ...]) -> str | None:
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "-c" and index + 1 < len(tokens):
-            return tokens[index + 1]
-        if token.startswith("-") and "c" in token[1:] and index + 1 < len(tokens):
-            return tokens[index + 1]
-        index += 1
-    return None
-
-
 def _shell_reads_stdin(args: tuple[str, ...]) -> bool:
     for token in args:
         if token == "--":
@@ -452,22 +444,12 @@ def _parse_heredoc(command: str, index: int) -> tuple[str, int, int, int] | None
     return tag, cursor, newline_index + 1, line_end
 
 
-def _skip_kubectl_options(tokens: tuple[str, ...], index: int) -> int:
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "--":
-            return index + 1
-        if not token.startswith("-"):
-            return index
-        option_consumed = kubernetes_option_tokens_consumed(
-            tokens,
-            index,
-            base_value_flags=_KUBECTL_OPTIONS_WITH_VALUES,
-            base_boolean_flags=_KUBECTL_BOOLEAN_OPTIONS,
-            base_boolean_short_cluster=_EXEC_BOOLEAN_SHORT_CLUSTER,
-        )
-        index += option_consumed if option_consumed is not None else 1
-    return index
+_skip_kubectl_options = partial(
+    skip_kubectl_options,
+    value_flags=_KUBECTL_OPTIONS_WITH_VALUES,
+    boolean_flags=_KUBECTL_BOOLEAN_OPTIONS,
+    boolean_short_cluster=_EXEC_BOOLEAN_SHORT_CLUSTER,
+)
 
 
 def _skip_command_whitespace(command: str, index: int) -> int:
