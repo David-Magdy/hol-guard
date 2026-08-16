@@ -188,3 +188,4 @@ pytest_add_cli_args_test_selection = [
 include = ["src"]
 pythonVersion = "3.10"
 failOnWarnings = false
+reportImportCycles = false
