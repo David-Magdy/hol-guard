@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .base import HarnessContext
 from .cline_paths import cline_plugin_root as _resolve_cline_plugin_root
-from .guard_cli_attestation import resolve_attested_guard_cli
+from .guard_cli_attestation import guard_hook_command, resolve_attested_guard_cli
 
 _MANAGED_MARKER = "HOL_GUARD_MANAGED_CLINE_PLUGIN_V1"
 _SCHEMA_VERSION = 1
@@ -400,7 +400,7 @@ def install_cline_plugin(context: HarnessContext) -> dict[str, object]:
         with suppress(OSError):
             _proof_path(context, proof_name).unlink()
     attested = resolve_attested_guard_cli(context)
-    source = _plugin_source(context, [*attested.command, "guard", "hook"])
+    source = _plugin_source(context, guard_hook_command(attested, harness="cline")[:-3])
     root.mkdir(parents=True, exist_ok=True)
     _atomic_write(index_path, source)
     _atomic_write(package_path, _package_json())

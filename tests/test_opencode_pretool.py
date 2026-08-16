@@ -224,7 +224,7 @@ def test_pretool_hook_env_blocks_workspace_import_shadowing(tmp_path: Path) -> N
     assert env["PYTHONNOUSERSITE"] == "1"
     assert "PYTHONPATH" not in env
     source = pretool_plugin_source(ctx)
-    assert 'args: ["-I", "-S", "-s", "-c", GUARD_HOOK_LAUNCHER]' in source
+    assert 'args: GUARD_FROZEN ? guardArgv : ["-I", "-S", "-s", "-c", GUARD_HOOK_LAUNCHER]' in source
     assert "verifyGuardPythonIdentity();" in source
     assert "nodeSpawn(GUARD_PYTHON.targetPath, options.args" in source
 

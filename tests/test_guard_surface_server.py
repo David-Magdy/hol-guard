@@ -99,6 +99,43 @@ def _decode_dashboard_session_claims(token: str) -> dict[str, object]:
 
 
 class TestGuardSurfaceServer:
+    def test_harness_repair_runtime_failure_returns_actionable_response(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
+        monkeypatch.setattr(
+            daemon_server_module,
+            "apply_managed_install",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("private adapter detail")),
+        )
+        daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+        daemon.start()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{daemon.port}/v1/harnesses/opencode/repair",
+            data=json.dumps({"dry_run": False}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "X-Guard-Token": daemon._server.auth_token},
+            method="POST",
+        )
+
+        try:
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request, timeout=5)
+            payload = json.loads(error.value.read().decode("utf-8"))
+        finally:
+            daemon.stop()
+
+        assert error.value.code == 409
+        assert payload == {
+            "error": "harness_repair_failed",
+            "harness": "opencode",
+            "message": (
+                "Guard could not repair opencode protection. Update Guard, then retry from this page. "
+                "Your existing protection settings were preserved."
+            ),
+        }
+
     def test_daemon_trust_snapshot_tracks_only_committed_integrity_transitions(self, tmp_path: Path) -> None:
         store = GuardStore(tmp_path / "guard-home", prime_policy_integrity=False)
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)

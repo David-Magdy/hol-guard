@@ -211,9 +211,10 @@ def _is_codex_hook_state_metadata(
         and all(
             isinstance(coordinate, str)
             and isinstance(state_entry, Mapping)
-            and len(state_entry) == 1
+            and set(state_entry).issubset({"trusted_hash", "enabled"})
             and "trusted_hash" in state_entry
             and _is_trusted_hook_hash(state_entry.get("trusted_hash"))
+            and ("enabled" not in state_entry or isinstance(state_entry.get("enabled"), bool))
             for coordinate, state_entry in value.items()
         )
     )

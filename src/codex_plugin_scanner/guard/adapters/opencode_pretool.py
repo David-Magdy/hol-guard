@@ -8,10 +8,10 @@ from pathlib import Path
 
 from ..codex_hook_windows_job import windows_system_executable_path
 from .base import HarnessContext
+from .guard_cli_attestation import resolve_attested_guard_cli
 from .hook_python import (
     HookPythonExecutableIdentity,
     HookPythonFileMetadata,
-    attest_guard_hook_python,
 )
 
 PLUGIN_FILENAME = "hol-guard-pretool.ts"
@@ -26,6 +26,7 @@ import { lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 
 const GUARD_HOME = __GUARD_HOME__;
 const GUARD_PYTHON = __GUARD_PYTHON__;
+const GUARD_FROZEN = __GUARD_FROZEN__;
 const GUARD_HOOK_LAUNCHER = __GUARD_HOOK_LAUNCHER__;
 const GUARD_HOOK_ENV = __GUARD_HOOK_ENV__;
 const GUARD_INHERIT_ENV_KEYS = __GUARD_INHERIT_ENV_KEYS__;
@@ -372,7 +373,7 @@ async function runGuardHook(
 ) {
   const workspace = directory?.trim() || process.cwd();
   const guardArgv = [
-    "guard",
+    ...(GUARD_FROZEN ? [] : ["guard"]),
     "hook",
     "--guard-home",
     GUARD_HOME,
@@ -383,7 +384,7 @@ async function runGuardHook(
     "--json",
   ];
   return spawnGuardProcess({
-    args: ["-I", "-S", "-s", "-c", GUARD_HOOK_LAUNCHER],
+    args: GUARD_FROZEN ? guardArgv : ["-I", "-S", "-s", "-c", GUARD_HOOK_LAUNCHER],
     cwd: GUARD_HOME,
     deadlineMs,
     env: hookProcessEnv(guardArgv),
@@ -611,8 +612,11 @@ def _python_identity_payload(identity: HookPythonExecutableIdentity) -> dict[str
 
 
 def pretool_plugin_source(context: HarnessContext) -> str:
-    attestation = attest_guard_hook_python(context)
-    import_roots = tuple(str(root) for root in attestation.import_roots)
+    guard_cli = resolve_attested_guard_cli(context)
+    identity = guard_cli.frozen_identity or (guard_cli.python.identity if guard_cli.python is not None else None)
+    if identity is None:
+        raise RuntimeError("Guard could not attest the OpenCode hook runtime.")
+    import_roots = tuple(str(root) for root in guard_cli.python.import_roots) if guard_cli.python is not None else ()
     try:
         taskkill_path = windows_system_executable_path("taskkill.exe") if os.name == "nt" else None
     except (OSError, ValueError):
@@ -620,7 +624,8 @@ def pretool_plugin_source(context: HarnessContext) -> str:
     template = _PLUGIN_TEMPLATE.replace("__HOOK_ARGV_ENV__", _HOOK_ARGV_ENV)
     return (
         template.replace("__GUARD_HOME__", json.dumps(str(context.guard_home.resolve())))
-        .replace("__GUARD_PYTHON__", json.dumps(_python_identity_payload(attestation.identity)))
+        .replace("__GUARD_PYTHON__", json.dumps(_python_identity_payload(identity)))
+        .replace("__GUARD_FROZEN__", json.dumps(guard_cli.frozen))
         .replace("__GUARD_HOOK_LAUNCHER__", json.dumps(_pretool_hook_launcher_code(import_roots=import_roots)))
         .replace("__GUARD_HOOK_ENV__", json.dumps(_pretool_hook_env()))
         .replace("__GUARD_INHERIT_ENV_KEYS__", json.dumps(list(_INHERIT_ENV_KEYS)))

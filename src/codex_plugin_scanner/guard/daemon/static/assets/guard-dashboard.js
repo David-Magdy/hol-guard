@@ -30789,8 +30789,10 @@ function App() {
     for (const harness of harnesses) {
       try {
         await runHarnessAction({ harness, action: "repair", dryRun: false });
-      } catch {
-        failures.push(`${harnessDisplayName(harness)} hooks`);
+      } catch (error) {
+        failures.push(
+          error instanceof Error && error.message.trim() ? error.message : `${harnessDisplayName(harness)} hooks`
+        );
       }
     }
     try {
