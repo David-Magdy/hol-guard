@@ -53,21 +53,35 @@ def _short_temp_parent() -> str | None:
     return str(candidate) if candidate.is_dir() else None
 
 
+def _require(condition: bool, detail: object) -> None:
+    """Fail the CI probe even when Python assertions are optimized out."""
+    if not condition:
+        raise RuntimeError(f"native_default_auto_probe_failed: {detail}")
+
+
 def main() -> int:
-    assert "HOL_GUARD_NATIVE" not in os.environ
-    assert "HOL_GUARD_NATIVE_BINARY" not in os.environ
-    assert native_mode() == "auto"
+    _require("HOL_GUARD_NATIVE" not in os.environ, "HOL_GUARD_NATIVE must be unset")
+    _require(
+        "HOL_GUARD_NATIVE_BINARY" not in os.environ,
+        "HOL_GUARD_NATIVE_BINARY must be unset",
+    )
+    _require(native_mode() == "auto", f"unexpected native mode: {native_mode()}")
 
     package_path = Path(codex_plugin_scanner.__file__).resolve()
     source_package = (Path.cwd() / "src" / "codex_plugin_scanner").resolve()
-    assert not package_path.is_relative_to(source_package), package_path
+    _require(
+        not package_path.is_relative_to(source_package),
+        f"probe imported source tree package: {package_path}",
+    )
 
     status = native_runtime_status()
-    assert status.mode == "auto"
-    assert status.available and status.compatible, status
-    assert status.reason == "native_ready"
-    assert status.identity is not None
-    assert status.capabilities is not None
+    _require(status.mode == "auto", status)
+    _require(status.available and status.compatible, status)
+    _require(status.reason == "native_ready", status)
+    _require(status.identity is not None, status)
+    capabilities = status.capabilities
+    if capabilities is None:
+        raise RuntimeError(f"native_default_auto_probe_failed: {status}")
 
     with tempfile.TemporaryDirectory(prefix="hg-auto-", dir=_short_temp_parent()) as temporary:
         root = Path(temporary)
@@ -76,33 +90,35 @@ def main() -> int:
                 _request(root, "const value = 1;\n", "default-auto-clean"),
                 observe_mode=False,
             )
-            assert clean is not None
-            assert clean.decision == "allow"
-            assert clean.reason_code == "output_scan_allow"
+            if clean is None:
+                raise RuntimeError("native_default_auto_probe_failed: clean response missing")
+            _require(clean.decision == "allow", clean)
+            _require(clean.reason_code == "output_scan_allow", clean)
 
             secret = review_post_tool_native(
                 _request(root, _synthetic_github_token(), "default-auto-secret"),
                 observe_mode=False,
             )
-            assert secret is not None
-            assert secret.decision == "deny"
-            assert secret.reason_code == "output_secret_match"
+            if secret is None:
+                raise RuntimeError("native_default_auto_probe_failed: secret response missing")
+            _require(secret.decision == "deny", secret)
+            _require(secret.reason_code == "output_secret_match", secret)
 
             health = native_runtime_health(root / "guard-home")
-            assert health.state == "healthy", health
-            assert health.reason == "native_ready", health
-            assert health.resident_failures == 0, health
-            assert health.oneshot_failures == 0, health
-            assert health.starts == 1, health
+            _require(health.state == "healthy", health)
+            _require(health.reason == "native_ready", health)
+            _require(health.resident_failures == 0, health)
+            _require(health.oneshot_failures == 0, health)
+            _require(health.starts == 1, health)
         finally:
             close_resident_native_runtimes()
 
     os.environ["HOL_GUARD_NATIVE"] = "off"
     try:
-        assert native_mode() == "off"
+        _require(native_mode() == "off", f"unexpected native mode: {native_mode()}")
         disabled = native_runtime_status()
-        assert disabled.mode == "off"
-        assert disabled.reason == "native_disabled"
+        _require(disabled.mode == "off", disabled)
+        _require(disabled.reason == "native_disabled", disabled)
     finally:
         del os.environ["HOL_GUARD_NATIVE"]
 
@@ -111,7 +127,7 @@ def main() -> int:
             {
                 "default_mode": "auto",
                 "runtime_reason": status.reason,
-                "target": status.capabilities.target,
+                "target": capabilities.target,
                 "rollback": "off",
             },
             sort_keys=True,
