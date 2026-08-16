@@ -12,6 +12,8 @@ def read(path: str) -> str:
 
 def test_multi_device_lab_is_registered_and_isolated() -> None:
     compose = read("scripts/mdm/cloud-lab/docker-compose.yml")
+    dockerfile = read("scripts/mdm/cloud-lab/Dockerfile")
+    runner = read("scripts/mdm/run-cloud-integration-lab.py")
     for service in ("cloud:", "proxy:", "device-a:", "device-b:", "device-c:", "orchestrator:"):
         assert service in compose
     assert "internal: true" in compose
@@ -20,6 +22,12 @@ def test_multi_device_lab_is_registered_and_isolated() -> None:
     assert "no-new-privileges:true" in compose
     assert "docker.sock" not in compose
     assert "ports:" not in compose
+    assert "USER 10001:10001" in dockerfile
+    assert "chmod 1777 /state /artifacts" in dockerfile
+    assert "user: ${HOL_MDM_LAB_UID:-10001}:${HOL_MDM_LAB_GID:-10001}" in compose
+    assert "uid=${HOL_MDM_LAB_UID:-10001}" in compose
+    assert '"HOL_MDM_LAB_UID": str(os.getuid())' in runner
+    assert '"HOL_MDM_LAB_GID": str(os.getgid())' in runner
 
 
 def test_workflow_runs_focused_and_docker_gates_with_pinned_actions() -> None:
