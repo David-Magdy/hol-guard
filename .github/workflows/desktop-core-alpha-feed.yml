@@ -148,7 +148,8 @@ jobs:
             "$SOURCE_SHA" "refs/remotes/origin/${RELEASE_BRANCH}"
 
           gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern "hol_guard-${CORE_VERSION}-*.whl" --dir "$TRUST_ASSETS"
+            --pattern "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" \
+            --dir "$TRUST_ASSETS"
           gh release download "$CORE_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern "hol-guard-v${CORE_VERSION}.intoto.jsonl" --dir "$TRUST_ASSETS"
           WHEEL=""
@@ -156,7 +157,8 @@ jobs:
           while IFS= read -r candidate; do
             WHEEL="$candidate"
             WHEEL_COUNT=$((WHEEL_COUNT + 1))
-          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f -name "hol_guard-${CORE_VERSION}-*.whl" -print)
+          done < <(find "$TRUST_ASSETS" -maxdepth 1 -type f \
+            -name "hol_guard-${CORE_VERSION}-*-macosx_*_arm64.whl" -print)
           test "$WHEEL_COUNT" -eq 1
           test -f "$WHEEL"
           BUNDLE="$TRUST_ASSETS/hol-guard-v${CORE_VERSION}.intoto.jsonl"

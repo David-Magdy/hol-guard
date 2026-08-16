@@ -22,6 +22,7 @@ _EXPECTED_FLOORS = {
     "read_remote": "allow",
     "propose_remote": "allow",
     "routine_merge_remote": "allow",
+    "routine_workflow_remote": "require-reapproval",
     "routine_review_thread_remote": "allow",
     "write_local": "review",
     "maintain_remote": "review",

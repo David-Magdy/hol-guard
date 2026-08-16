@@ -17,6 +17,7 @@ GitHubCommandCapability = Literal[
     "read_remote",
     "propose_remote",
     "routine_merge_remote",
+    "routine_workflow_remote",
     "routine_review_thread_remote",
     "routine_workflow_remote",
     "write_local",
@@ -60,6 +61,7 @@ _CAPABILITY_ORDER: Final[tuple[GitHubCommandCapability, ...]] = (
     "read_remote",
     "propose_remote",
     "routine_merge_remote",
+    "routine_workflow_remote",
     "routine_review_thread_remote",
     "routine_workflow_remote",
     "write_local",
@@ -83,6 +85,7 @@ _CAPABILITY_FLOOR: Final[MappingProxyType[GitHubCommandCapability, GuardAction]]
         "read_remote": "allow",
         "propose_remote": "allow",
         "routine_merge_remote": "allow",
+        "routine_workflow_remote": "require-reapproval",
         "routine_review_thread_remote": "allow",
         "routine_workflow_remote": "allow",
         "write_local": "review",
@@ -120,6 +123,8 @@ def _contract(
         description = (
             "Completes a statically bounded squash pull-request merge without privileged or destructive options."
         )
+    elif capability == "routine_workflow_remote":
+        description = "Retries only failed jobs from one existing GitHub Actions run."
     elif capability == "routine_review_thread_remote":
         description = "Resolves one statically bounded pull-request review thread."
     elif capability == "routine_workflow_remote":
@@ -184,6 +189,13 @@ _CONTRACTS: Final = MappingProxyType(
                 "routine squash pull-request merge",
                 example_command="gh pr merge 123 --squash",
                 family="gh-pr-merge",
+            ),
+            _contract(
+                "routine_workflow_remote",
+                "routine-workflow-remote",
+                "GitHub workflow rerun",
+                "workflow-mutation",
+                "routine failed-job rerun",
             ),
             _contract(
                 "routine_review_thread_remote",
