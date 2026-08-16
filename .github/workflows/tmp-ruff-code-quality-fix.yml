@@ -36,7 +36,7 @@ jobs:
           version: "0.9.26"
           enable-cache: true
           save-cache: false
-      - name: Reconcile, validate, and publish the validated merge tree
+      - name: Reconcile, validate, and publish validated source changes
         shell: bash
         run: |
           set -euo pipefail
@@ -77,28 +77,6 @@ jobs:
               tests/test_release_train_workflow.py
             test -z "$(git diff --name-only --diff-filter=U)"
           fi
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path(".github/workflows/ci.yml")
-          content = path.read_text(encoding="utf-8")
-          marker = "            tests/test_guard_private_file_io.py"
-          test_line = "            tests/test_guard_kubernetes_command_support.py"
-          existing = content.count(test_line)
-          if existing == 0:
-              marker_count = content.count(marker)
-              if marker_count != 2:
-                  raise SystemExit(
-                      f"expected two CI lint-list markers, found {marker_count}"
-                  )
-              content = content.replace(marker, marker + "\n" + test_line)
-          elif existing != 2:
-              raise SystemExit(
-                  f"expected zero or two Kubernetes test entries, found {existing}"
-              )
-          path.write_text(content, encoding="utf-8")
-          PY
 
           uv sync --frozen --extra dev --python 3.12
 
