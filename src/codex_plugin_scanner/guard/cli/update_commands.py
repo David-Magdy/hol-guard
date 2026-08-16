@@ -1584,6 +1584,20 @@ def _is_desktop_managed_runtime() -> bool:
     return _is_frozen_runtime() and os.environ.get("HOL_GUARD_DESKTOP") == "1"
 
 
+def _runtime_package_path() -> Path:
+    return Path(__file__).resolve()
+
+
+def _runtime_installer_kind() -> str | None:
+    for parent in _runtime_package_path().parents:
+        normalized_parent = parent.as_posix().lower()
+        if "/pipx/venvs/" in normalized_parent and (parent / "pipx_metadata.json").is_file():
+            return "pipx"
+        if "/uv/tools/" in normalized_parent and (parent / "pyvenv.cfg").is_file():
+            return "uv"
+    return None
+
+
 def _installer_kind() -> str:
     prefix_path = Path(sys.prefix).resolve()
     normalized_prefix = prefix_path.as_posix().lower()
@@ -1593,7 +1607,7 @@ def _installer_kind() -> str:
         return "pipx"
     if "/pipx/venvs/" in normalized_prefix:
         return "pipx"
-    return "pip"
+    return _runtime_installer_kind() or "pip"
 
 
 def _should_upgrade_from_pypi(
