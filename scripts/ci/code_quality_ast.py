@@ -51,17 +51,32 @@ class _ComplexityVisitor(ast.NodeVisitor):
         if node is self._root:
             self.generic_visit(node)
 
-    visit_AsyncFunctionDef = visit_FunctionDef
-    visit_Lambda = visit_FunctionDef
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        if node is self._root:
+            self.generic_visit(node)
 
-    def visit_If(self, node: ast.If) -> None:
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        if node is self._root:
+            self.generic_visit(node)
+
+    def _visit_decision(self, node: ast.AST) -> None:
         self.value += 1
         self.generic_visit(node)
 
-    visit_For = visit_If
-    visit_AsyncFor = visit_If
-    visit_While = visit_If
-    visit_IfExp = visit_If
+    def visit_If(self, node: ast.If) -> None:
+        self._visit_decision(node)
+
+    def visit_For(self, node: ast.For) -> None:
+        self._visit_decision(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        self._visit_decision(node)
+
+    def visit_While(self, node: ast.While) -> None:
+        self._visit_decision(node)
+
+    def visit_IfExp(self, node: ast.IfExp) -> None:
+        self._visit_decision(node)
 
     def visit_BoolOp(self, node: ast.BoolOp) -> None:
         self.value += max(0, len(node.values) - 1)
@@ -71,7 +86,9 @@ class _ComplexityVisitor(ast.NodeVisitor):
         self.value += len(node.handlers) + bool(node.orelse) + bool(node.finalbody)
         self.generic_visit(node)
 
-    visit_TryStar = visit_Try
+    def visit_TryStar(self, node: ast.TryStar) -> None:
+        self.value += len(node.handlers) + bool(node.orelse) + bool(node.finalbody)
+        self.generic_visit(node)
 
     def visit_Match(self, node: ast.Match) -> None:
         self.value += len(node.cases)
@@ -91,8 +108,13 @@ class _SilentHandlerVisitor(ast.NodeVisitor):
         if node is self.root:
             self.generic_visit(node)
 
-    visit_AsyncFunctionDef = visit_FunctionDef
-    visit_Lambda = visit_FunctionDef
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        if node is self.root:
+            self.generic_visit(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        if node is self.root:
+            self.generic_visit(node)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         if _silent_handler(node):
