@@ -133,28 +133,31 @@ def test_success_preserves_child_stdout_and_returncode(
     assert output.getvalue() == '{"decision":"deny"}\n'
 
 
-def test_frozen_hook_command_prefers_fd_bound_signed_macos_proxy(
+def _signed_bundle_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+    bundle = tmp_path / "HOL Guard.app"
+    macos = bundle / "Contents" / "MacOS"
+    macos.mkdir(parents=True)
+    proxy = macos / "HOL Guard"
+    core = macos / "hol-guard"
+    for path in (proxy, core):
+        path.write_text("binary", encoding="utf-8")
+        path.chmod(0o755)
+    return bundle, proxy, core
+
+
+def test_frozen_hook_command_prefers_runtime_verified_signed_macos_proxy(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    bundle, proxy, core = _signed_bundle_fixture(tmp_path)
     monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
-    expected = (
-        "/bin/sh",
-        "-c",
-        "verified-launcher",
-        "hol-guard-desktop-proxy",
-        "/Applications/HOL Guard.app/Contents/MacOS/HOL Guard",
-        "TEAMID",
-        "config",
-        "/Applications/HOL Guard.app/Contents/MacOS/hol-guard",
-    )
-    monkeypatch.setattr(
-        bounded_cli_hook_bridge,
-        "_trusted_desktop_hook_proxy_command",
-        lambda executable, config: (*expected[:-2], config, executable),
-    )
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "platform", "darwin")
+    monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
+    monkeypatch.setenv("HOL_GUARD_DESKTOP_HOOK_PROXY", str(proxy))
+    monkeypatch.setattr(bounded_cli_hook_bridge, "_codesign_team", lambda path: "TEAMID")
+
     command = bounded_cli_hook_bridge.bounded_cli_hook_command(
-        python_executable="/Applications/HOL Guard.app/Contents/MacOS/hol-guard",
+        python_executable=str(core),
         package_root=tmp_path,
         guard_home=tmp_path / "guard-home",
         cli_args=(
@@ -169,11 +172,17 @@ def test_frozen_hook_command_prefers_fd_bound_signed_macos_proxy(
         timeout_seconds=25,
     )
 
-    assert command[:6] == expected[:6]
-    config = json.loads(command[6])
-    assert config["python_executable"].endswith("/hol-guard")
+    assert command[:4] == (
+        "/bin/sh",
+        "-c",
+        bounded_cli_hook_bridge._DESKTOP_PROXY_LAUNCH_SCRIPT,
+        "hol-guard-desktop-proxy",
+    )
+    assert command[4:7] == (str(proxy), "TEAMID", str(bundle))
+    config = json.loads(command[7])
+    assert config["python_executable"] == str(core)
     assert config["frozen_launcher"] is True
-    assert command[7].endswith("/hol-guard")
+    assert command[8] == str(core)
 
 
 def test_untrusted_native_proxy_falls_back_to_internal_frozen_bridge(
@@ -205,6 +214,45 @@ def test_untrusted_native_proxy_falls_back_to_internal_frozen_bridge(
     assert command[:2] == ("/app/hol-guard", "__guard-bounded-hook")
 
 
+def test_desktop_proxy_requires_one_real_team_and_same_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _bundle, proxy, core = _signed_bundle_fixture(tmp_path)
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "platform", "darwin")
+    monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
+    monkeypatch.setenv("HOL_GUARD_DESKTOP_HOOK_PROXY", str(proxy))
+
+    for teams in (
+        {proxy: None, core: None, proxy.parents[2]: None},
+        {proxy: "not set", core: "not set", proxy.parents[2]: "not set"},
+        {proxy: "TEAM-A", core: "TEAM-B", proxy.parents[2]: "TEAM-A"},
+    ):
+        monkeypatch.setattr(bounded_cli_hook_bridge, "_codesign_team", teams.get)
+        assert bounded_cli_hook_bridge._trusted_desktop_hook_proxy_command(str(core), "{}") is None
+
+
+def test_desktop_proxy_rejects_writable_or_cross_bundle_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _bundle, proxy, core = _signed_bundle_fixture(tmp_path)
+    other_bundle, other_proxy, _other_core = _signed_bundle_fixture(tmp_path / "other")
+    del other_bundle
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "platform", "darwin")
+    monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
+    monkeypatch.setattr(bounded_cli_hook_bridge, "_codesign_team", lambda path: "TEAMID")
+
+    monkeypatch.setenv("HOL_GUARD_DESKTOP_HOOK_PROXY", str(other_proxy))
+    assert bounded_cli_hook_bridge._trusted_desktop_hook_proxy_command(str(core), "{}") is None
+
+    monkeypatch.setenv("HOL_GUARD_DESKTOP_HOOK_PROXY", str(proxy))
+    proxy.chmod(0o777)
+    assert bounded_cli_hook_bridge._trusted_desktop_hook_proxy_command(str(core), "{}") is None
+
+
 def test_linux_never_uses_caller_controlled_appimage_as_proxy_provenance(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -224,13 +272,15 @@ def test_linux_never_uses_caller_controlled_appimage_as_proxy_provenance(
     assert bounded_cli_hook_bridge._trusted_desktop_hook_proxy_command(str(core), "{}") is None
 
 
-def test_macos_launcher_binds_codesign_validation_to_the_executed_descriptor() -> None:
+def test_macos_launcher_reverifies_normal_paths_and_falls_back_by_status() -> None:
     launcher = bounded_cli_hook_bridge._DESKTOP_PROXY_LAUNCH_SCRIPT
-    assert 'exec 3<"$proxy"' in launcher
-    assert "/usr/bin/stat -f '%d:%i' /dev/fd/3" in launcher
-    assert "/usr/bin/codesign --verify --strict" in launcher
-    assert "path_after=$(/usr/bin/stat -f" in launcher
-    assert 'exec /dev/fd/3 __guard-hook-proxy "$config"' in launcher
+    assert "/dev/fd" not in launcher
+    assert "HOL_GUARD_DESKTOP_E2E_ALLOW_ADHOC_SIGNATURE" not in launcher
+    assert 'verify_team "$bundle"' in launcher
+    assert 'verify_team "$proxy"' in launcher
+    assert 'verify_team "$fallback"' in launcher
+    assert '"$proxy" __guard-hook-proxy "$config"' in launcher
+    assert 'if [ "$status" -eq 125 ]' in launcher
     assert 'exec "$fallback" __guard-bounded-hook "$config"' in launcher
 
 
