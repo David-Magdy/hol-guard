@@ -25,6 +25,7 @@ from urllib.parse import ParseResult, urlparse
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
+from ... import version as package_version
 from ..adapters.base import HarnessContext
 from ..adapters.codex import CodexHarnessAdapter, codex_native_hook_state
 from ..adapters.cursor_hooks import cursor_native_hook_state
@@ -161,6 +162,7 @@ from codex_plugin_scanner.guard.daemon.manager import (
     clear_guard_daemon_state,
     ensure_guard_daemon_after_update,
     guard_daemon_retirement_is_complete,
+    load_guard_daemon_url,
     repair_approval_center_locator,
     retire_all_guard_daemons_for_home,
 )
@@ -182,30 +184,58 @@ try:
 except (OSError, json.JSONDecodeError):
     state = {}
 preferred_port = state.get("port") if isinstance(state.get("port"), int) else None
-retired = []
-retirement_deadline = time.monotonic() + 5.0
-while True:
-    for pid in retire_all_guard_daemons_for_home(guard_home):
-        if pid not in retired:
-            retired.append(pid)
-    if guard_daemon_retirement_is_complete(guard_home):
-        break
-    if time.monotonic() >= retirement_deadline:
-        break
-    time.sleep(0.1)
-if not guard_daemon_retirement_is_complete(guard_home):
-    print(json.dumps({"status": "retirement_failed", "retired": retired}))
-    raise SystemExit(1)
-clear_guard_daemon_state(guard_home)
-repair_approval_center_locator(guard_home)
 refresh_parameters = inspect.signature(ensure_guard_daemon_after_update).parameters
 refresh_kwargs = {"preferred_port": preferred_port}
 if "home_dir" in refresh_parameters:
     refresh_kwargs["home_dir"] = home_dir
 if "allow_windows_job_breakaway" in refresh_parameters:
     refresh_kwargs["allow_windows_job_breakaway"] = True
-daemon_url = ensure_guard_daemon_after_update(guard_home, **refresh_kwargs)
-print(json.dumps({"status": "restarted", "retired": retired, "daemon_url": daemon_url}))
+retired = []
+last_failure_status = "runtime_replaced"
+for attempt in range(1, 4):
+    retirement_complete = False
+    retirement_deadline = time.monotonic() + 5.0
+    while True:
+        for pid in retire_all_guard_daemons_for_home(guard_home):
+            if pid not in retired:
+                retired.append(pid)
+        if guard_daemon_retirement_is_complete(guard_home):
+            retirement_complete = True
+            break
+        if time.monotonic() >= retirement_deadline:
+            last_failure_status = "retirement_failed"
+            break
+        time.sleep(0.1)
+    if not retirement_complete:
+        continue
+    clear_guard_daemon_state(guard_home)
+    repair_approval_center_locator(guard_home)
+    daemon_url = ensure_guard_daemon_after_update(guard_home, **refresh_kwargs)
+    # A separately installed desktop app can race the refresh and replace the
+    # just-started daemon with older bytes. Require the updated fingerprint to
+    # remain bound across a short stability window before reporting success.
+    verified_url = None
+    for _stability_check in range(3):
+        time.sleep(1.0)
+        verified_url = load_guard_daemon_url(guard_home)
+        if verified_url is None:
+            break
+    if verified_url is not None:
+        print(
+            json.dumps(
+                {
+                    "status": "restarted",
+                    "retired": retired,
+                    "daemon_url": verified_url,
+                    "attempts": attempt,
+                    "runtime_verified": True,
+                }
+            )
+        )
+        raise SystemExit(0)
+    last_failure_status = "runtime_replaced"
+print(json.dumps({"status": last_failure_status, "retired": retired, "attempts": 3}))
+raise SystemExit(1)
 """.strip()
 _DAEMON_REFRESH_CLEANUP_SCRIPT = """
 from __future__ import annotations
@@ -1038,6 +1068,16 @@ def _expected_script_dir(installer_binary: str, installer: str) -> Path | None:
 
 
 def build_guard_install_surface_payload() -> dict[str, object]:
+    if _is_desktop_managed_runtime():
+        return {
+            "installer": "desktop",
+            "binary_diagnostics": {
+                "resolved_hol_guard": str(Path(sys.executable).resolve()),
+                "installer_binary": None,
+                "expected_script_dir": None,
+                "path_status": "bundled",
+            },
+        }
     installer = _installer_kind()
     return {
         "installer": installer,
@@ -1533,7 +1573,15 @@ def _current_version() -> str:
     try:
         return importlib.metadata.version("hol-guard")
     except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+        return package_version.__version__ if _is_frozen_runtime() else "unknown"
+
+
+def _is_frozen_runtime() -> bool:
+    return getattr(sys, "frozen", False) is True
+
+
+def _is_desktop_managed_runtime() -> bool:
+    return _is_frozen_runtime() and os.environ.get("HOL_GUARD_DESKTOP") == "1"
 
 
 def _installer_kind() -> str:
@@ -2107,10 +2155,10 @@ def refresh_guard_daemon_after_update(
             cleanup_verified=cleanup_verified,
         )
     status = payload.get("status")
-    if status != "restarted":
+    if status != "restarted" or payload.get("runtime_verified") is not True:
         cleanup_verified = _cleanup_failed_guard_daemon_refresh(active_context, context)
         return payload, _daemon_refresh_failure_note(
-            "Could not restart the Guard daemon after update: restart was not confirmed",
+            "Could not restart the Guard daemon after update: updated runtime was not confirmed",
             cleanup_verified=cleanup_verified,
         )
     return payload, "Restarted the Guard daemon to load the updated package."
@@ -2619,7 +2667,15 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
     blocked_reason: str | None = None
     trusted_failure_reason: str | None = None
     recovery_reinstall_available = False
-    installed_distribution: InstalledDistribution | None = None
+    installed_distribution = (
+        InstalledDistribution(
+            name="hol-guard",
+            version=_current_version(),
+            root=Path(sys.executable).resolve().parent,
+        )
+        if installer == "desktop"
+        else None
+    )
 
     if managed_state.status != "absent" and managed_policy is None:
         auto_updatable = False
@@ -2634,6 +2690,9 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
     ):
         auto_updatable = False
         blocked_reason = "An organization-configured package source is required."
+    elif installer == "desktop":
+        auto_updatable = False
+        blocked_reason = "Updates are managed by HOL Guard Desktop."
     else:
         try:
             installed_distribution = _status_installed_distribution(
@@ -2662,11 +2721,11 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
             network_policy=(managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()),
             include_alpha=include_alpha,
         )
-        if installed_distribution is not None
+        if installed_distribution is not None and installer != "desktop"
         else {
             "source": source_kind,
-            "status": "unavailable",
-            "current_version": None,
+            "status": "managed" if installer == "desktop" else "unavailable",
+            "current_version": current_version if installer == "desktop" else None,
             "latest_version": None,
             "update_available": None,
         }

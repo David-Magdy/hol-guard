@@ -215,6 +215,7 @@ class _ResidentService:
             timeout_seconds=_SERVICE_LIFETIME_SECONDS,
             output_limit=_SERVICE_OUTPUT_LIMIT,
             stop_event=stop_event,
+            parent_liveness=True,
         )
         with self._lock:
             current_generation = generation == self._generation

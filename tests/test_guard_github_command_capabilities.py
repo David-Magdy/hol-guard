@@ -53,6 +53,11 @@ GITHUB_CAPABILITY_CASES = (
     (("ssh-key", "delete", "123"), "access_remote", "github.command.access-mutation"),
     (("run", "cancel", "--help"), "workflow_remote", "github.command.workflow-mutation"),
     (
+        ("run", "rerun", "31707639186", "--repo", "hashgraph-online/hol-guard", "--failed"),
+        "routine_workflow_remote",
+        "github.command.routine-failed-run-rerun",
+    ),
+    (
         ("--repo", "example/project", "workflow", "view", "release.yml"),
         "read_remote",
         "github.command.proven-read",
@@ -767,6 +772,57 @@ def test_guard_keeps_routine_review_thread_resolution_prompt_free(selection: str
     match = extract_sensitive_tool_action_request("Bash", {"command": command})
 
     assert match is None
+
+
+@pytest.mark.parametrize("jq_arguments", (("--jq", ".data"), ("--jq=.data",)))
+def test_guard_keeps_routine_review_thread_resolution_with_data_projection_prompt_free(
+    jq_arguments: tuple[str, ...],
+) -> None:
+    args = (
+        "api",
+        "graphql",
+        "-f",
+        'query=mutation { resolveReviewThread(input: { threadId: "PRRT_kwDOQGomAs6ZjyNl" }) '
+        "{ thread { isResolved } } }",
+        *jq_arguments,
+    )
+
+    assessment = classify_github_cli(args)
+
+    assert assessment.capability == "routine_review_thread_remote"
+    assert (
+        extract_sensitive_tool_action_request(
+            "Bash",
+            {
+                "command": (
+                    "gh api graphql -f query='mutation { resolveReviewThread(input: { threadId: "
+                    '"PRRT_kwDOQGomAs6ZjyNl" }) { thread { isResolved } } }\' --jq ".data"'
+                )
+            },
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "jq_arguments",
+    (("--jq", ".data.viewer"), ("--jq=@filter.jq",), ("--jq", ".data", "--jq", ".data")),
+)
+def test_guard_reviews_routine_review_thread_resolution_with_other_jq_projections(
+    jq_arguments: tuple[str, ...],
+) -> None:
+    assessment = classify_github_cli(
+        (
+            "api",
+            "graphql",
+            "-f",
+            'query=mutation { resolveReviewThread(input: { threadId: "PRRT_kwDOQGomAs6ZjyNl" }) '
+            "{ thread { isResolved } } }",
+            *jq_arguments,
+        )
+    )
+
+    assert assessment.capability == "maintain_remote"
 
 
 @pytest.mark.parametrize(

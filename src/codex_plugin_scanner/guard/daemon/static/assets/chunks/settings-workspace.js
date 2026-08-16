@@ -2276,15 +2276,15 @@ function SettingsSectionShell({
     id: `settings-tab-${item.key}`
   }));
   const activeItem = localSettingsNavItems.find((item) => item.key === activeTab);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 flex-1 flex-col gap-6", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-settings-shell flex min-h-0 flex-1 flex-col gap-6", children: [
     intro,
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:items-stretch", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-settings-layout flex min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:items-stretch", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "nav",
         {
           "aria-label": "Settings section navigation",
           "data-testid": "settings-section-nav",
-          className: "hidden w-full shrink-0 lg:block lg:w-60",
+          className: "guard-settings-side-nav hidden w-full shrink-0 lg:block lg:w-60",
           children: /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "flex flex-col gap-0.5 p-0", children: localSettingsNavGroups.map((group) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: "flex flex-col", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400", children: group.label }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "flex flex-col gap-0.5", children: localSettingsNavItems.filter((item) => item.group === group.key).map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -2300,16 +2300,16 @@ function SettingsSectionShell({
         }
       ),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 min-w-0 flex-1 flex-col gap-4", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "-mx-1 overflow-x-auto px-1 lg:hidden", children: /* @__PURE__ */ jsxRuntimeExports.jsx(TabBar, { tabs: mobileTabs, active: activeTab, onChange: onTabChange }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-settings-mobile-tabs -mx-1 overflow-x-auto px-1 lg:hidden", children: /* @__PURE__ */ jsxRuntimeExports.jsx(TabBar, { tabs: mobileTabs, active: activeTab, onChange: onTabChange }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "div",
           {
             role: "tabpanel",
             id: `settings-panel-${activeTab}`,
             "aria-label": activeItem ? `${activeItem.label} settings` : void 0,
-            className: "guard-tab-enter flex min-h-[min(28rem,calc(100dvh-18rem))] flex-1 flex-col rounded-2xl border border-slate-100 bg-white p-4 sm:p-6",
+            className: "guard-settings-panel guard-tab-enter flex min-h-[min(28rem,calc(100dvh-18rem))] flex-1 flex-col rounded-2xl border border-slate-100 bg-white p-4 sm:p-6",
             children: [
-              activeItem ? /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mb-5 shrink-0 border-b border-slate-100 pb-4 lg:hidden", children: [
+              activeItem ? /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "guard-settings-mobile-heading mb-5 shrink-0 border-b border-slate-100 pb-4 lg:hidden", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold uppercase tracking-[0.18em] text-slate-400", children: activeItem.label }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: activeItem.summary })
               ] }) : null,

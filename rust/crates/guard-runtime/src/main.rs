@@ -16,6 +16,7 @@ use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -52,6 +53,7 @@ const MAX_JSON_COLLECTION_ITEMS: usize = 4_096;
 const MAX_JSON_STRING_BYTES: usize = 1024 * 1024;
 const SERVER_PROOF_LABEL: &[u8] = b"hol-guard-resident-server-v1\0";
 const CLIENT_PROOF_LABEL: &[u8] = b"hol-guard-resident-client-v1\0";
+const PARENT_LIVENESS_FD_ENV: &str = "HOL_GUARD_PARENT_LIVENESS_FD";
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "operation", content = "request", rename_all = "snake_case")]
@@ -327,7 +329,7 @@ fn encode_response<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
     let encoded =
         serde_json::to_vec(value).map_err(|_| "native_response_encode_failed".to_owned())?;
     if encoded.len() > MAX_NATIVE_RESPONSE_BYTES {
-        return Err("native_response_too_large".into());
+        return Err("native_response_too_large".to_owned());
     }
     Ok(encoded)
 }
@@ -576,6 +578,29 @@ fn admit_connection(
 }
 
 #[cfg(unix)]
+fn resident_parent_liveness() -> Result<Arc<AtomicBool>, String> {
+    let alive = Arc::new(AtomicBool::new(true));
+    let Ok(raw_descriptor) = env::var(PARENT_LIVENESS_FD_ENV) else {
+        return Ok(alive);
+    };
+    let descriptor = raw_descriptor
+        .parse::<u32>()
+        .map_err(|_| "native_parent_liveness_fd_invalid".to_owned())?;
+    let dev_path = format!("/dev/fd/{descriptor}");
+    let proc_path = format!("/proc/self/fd/{descriptor}");
+    let mut pipe = std::fs::File::open(dev_path)
+        .or_else(|_| std::fs::File::open(proc_path))
+        .map_err(|_| "native_parent_liveness_fd_unavailable".to_owned())?;
+    let watcher_state = Arc::clone(&alive);
+    thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        let _ = pipe.read(&mut byte);
+        watcher_state.store(false, Ordering::Release);
+    });
+    Ok(alive)
+}
+
+#[cfg(unix)]
 fn serve(socket_path: &str) -> Result<(), String> {
     use std::fs;
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -607,12 +632,21 @@ fn serve(socket_path: &str) -> Result<(), String> {
     let listener = UnixListener::bind(path).map_err(|_| "native_socket_bind_failed".to_owned())?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
         .map_err(|_| "native_socket_permissions_failed".to_owned())?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|_| "native_socket_nonblocking_failed".to_owned())?;
 
     let token = Arc::new(read_resident_auth_token()?);
     let sender = start_resident_workers(token);
-    loop {
+    let parent_alive = resident_parent_liveness()?;
+    while parent_alive.load(Ordering::Acquire) {
         match listener.accept() {
-            Ok((stream, _address)) => admit_connection(&sender, Box::new(stream))?,
+            Ok((stream, _address)) => {
+                if stream.set_nonblocking(false).is_err() {
+                    continue;
+                }
+                admit_connection(&sender, Box::new(stream))?
+            }
             Err(error)
                 if matches!(
                     error.kind(),
@@ -626,6 +660,7 @@ fn serve(socket_path: &str) -> Result<(), String> {
             Err(_) => return Err("native_socket_accept_failed".to_owned()),
         }
     }
+    Ok(())
 }
 
 #[cfg(not(unix))]
