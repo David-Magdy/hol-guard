@@ -38,8 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .github/pr2400-delivery/part-* > "$RUNNER_TEMP/pr2400.patch.gz.b64"
-          test "$(wc -c < "$RUNNER_TEMP/pr2400.patch.gz.b64")" = "41544"
+          cat .github/pr2400-delivery/part-* | tr -d '\r\n\t ' > "$RUNNER_TEMP/pr2400.patch.gz.b64"
           base64 --decode "$RUNNER_TEMP/pr2400.patch.gz.b64" > "$RUNNER_TEMP/pr2400.patch.gz"
           test "$(sha256sum "$RUNNER_TEMP/pr2400.patch.gz" | awk '{print $1}')" = "f7d75f2c71dcfc1ae25ffd6bce48484b848d5ad48725b9894560394dd14109dd"
           gzip --decompress --stdout "$RUNNER_TEMP/pr2400.patch.gz" > "$RUNNER_TEMP/pr2400.patch"
