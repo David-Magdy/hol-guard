@@ -47,7 +47,7 @@ def is_safe_git_worktree_add(command_text: str, *, cwd: Path | None, home_dir: P
             return False
     else:
         return False
-    if destination_text.startswith("-") or not _safe_git_name(ref, _REF):
+    if not _safe_path_operand(destination_text) or not _safe_git_name(ref, _REF):
         return False
     try:
         destination = _absolute_destination(destination_text, cwd=execution_cwd, home_dir=home_dir)
@@ -84,12 +84,31 @@ def _resolved_worktree_command(
     execution_cwd = cwd
     directory_match = re.fullmatch(r"cd\s+(?P<directory>[^\s;&|<>]+)\s+&&\s+(?P<command>.+)", stripped)
     if directory_match is not None:
-        execution_cwd = _expand_path(directory_match.group("directory"), cwd=cwd, home_dir=home_dir)
+        directory = directory_match.group("directory")
+        if not _safe_cd_operand(directory):
+            return None
+        execution_cwd = _expand_path(directory, cwd=cwd, home_dir=home_dir)
         stripped = directory_match.group("command")
     try:
-        return stripped, execution_cwd.resolve(strict=True)
+        execution_cwd = execution_cwd.resolve(strict=True)
     except (OSError, RuntimeError):
         return None
+    if output_match is not None and _trusted_path_command("tail", cwd=execution_cwd) is None:
+        return None
+    return stripped, execution_cwd
+
+
+def _safe_cd_operand(value: str) -> bool:
+    return _safe_path_operand(value)
+
+
+def _safe_path_operand(value: str) -> bool:
+    return bool(
+        value
+        and not value.startswith("-")
+        and (not value.startswith("~") or value.startswith("~/"))
+        and re.fullmatch(r"[A-Za-z0-9._/~+-]+", value)
+    )
 
 
 def is_safe_codex_memory_registry_search(command_text: str, *, cwd: Path | None, home_dir: Path) -> bool:
