@@ -145,7 +145,7 @@ def test_worktree_add_rejects_widened_output_consumers(
     )
 
 
-@pytest.mark.parametrize("directory", ("-", "--", "~other/repository", "repo*"))
+@pytest.mark.parametrize("directory", ("-", "--", "~other/repository", "~//tmp/repository", "repo*"))
 def test_worktree_add_rejects_shell_expanding_cd_operands(
     tmp_path: Path,
     directory: str,
@@ -186,6 +186,7 @@ def test_worktree_add_rejects_path_shadowed_tail(
         "git worktree add {destination} -b fix/routine --force origin/release/2.2",
         "git worktree add $DESTINATION -b fix/routine origin/release/2.2",
         "git worktree add ~other/new-worktree -b fix/routine origin/release/2.2",
+        "git worktree add ~//tmp/new-worktree -b fix/routine origin/release/2.2",
         "git worktree add {destination}* -b fix/routine origin/release/2.2",
         "git worktree add {destination} -b fix/routine origin/release/2.2 && sh payload.sh",
     ),
