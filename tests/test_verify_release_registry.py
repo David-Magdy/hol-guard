@@ -41,6 +41,9 @@ class ChunkedResponse:
 VERSION = "2.2.0a1"
 WHEEL = f"hol_guard-{VERSION}-py3-none-any.whl"
 SDIST = f"hol_guard-{VERSION}.tar.gz"
+PLUGIN_PROJECT = "plugin-scanner"
+PLUGIN_WHEEL = f"plugin_scanner-{VERSION}-py3-none-any.whl"
+PLUGIN_SDIST = f"plugin_scanner-{VERSION}.tar.gz"
 WHEEL_BYTES = b"wheel-content"
 SDIST_BYTES = b"sdist-content"
 
@@ -60,12 +63,12 @@ class FakeFetcher:
         return response
 
 
-def _project_url(registry: Registry) -> str:
-    return f"https://{registry.api_host}/pypi/hol-guard/json"
+def _project_url(registry: Registry, project_name: str = "hol-guard") -> str:
+    return f"https://{registry.api_host}/pypi/{project_name}/json"
 
 
-def _release_url(registry: Registry, version: str = VERSION) -> str:
-    return f"https://{registry.api_host}/pypi/hol-guard/{version}/json"
+def _release_url(registry: Registry, version: str = VERSION, project_name: str = "hol-guard") -> str:
+    return f"https://{registry.api_host}/pypi/{project_name}/{version}/json"
 
 
 def _file_url(registry: Registry, filename: str) -> str:
@@ -106,6 +109,14 @@ def _local_dist(tmp_path: Path) -> Path:
     return dist
 
 
+def _local_plugin_dist(tmp_path: Path) -> Path:
+    dist = tmp_path / "plugin-dist"
+    dist.mkdir()
+    (dist / PLUGIN_WHEEL).write_bytes(WHEEL_BYTES)
+    (dist / PLUGIN_SDIST).write_bytes(SDIST_BYTES)
+    return dist
+
+
 def test_lists_sorted_canonical_registry_versions() -> None:
     fetcher = FakeFetcher(
         {_project_url(Registry.PYPI): json.dumps({"releases": {"2.2.0a2": [], "2.1.0": [], "2.2.0a1": []}}).encode()}
@@ -116,6 +127,65 @@ def test_lists_sorted_canonical_registry_versions() -> None:
         "2.2.0a1",
         "2.2.0a2",
     )
+
+
+def test_lists_plugin_scanner_registry_versions() -> None:
+    fetcher = FakeFetcher(
+        {_project_url(Registry.PYPI, PLUGIN_PROJECT): json.dumps({"releases": {"3.0.0a2": [], "3.0.0a1": []}}).encode()}
+    )
+
+    assert list_registry_versions(Registry.PYPI, project_name=PLUGIN_PROJECT, fetcher=fetcher) == (
+        "3.0.0a1",
+        "3.0.0a2",
+    )
+
+
+def test_verifies_plugin_scanner_release_independently(tmp_path: Path) -> None:
+    dist = _local_plugin_dist(tmp_path)
+    payload = _release_payload(
+        Registry.PYPI,
+        {PLUGIN_WHEEL: (WHEEL_BYTES, None), PLUGIN_SDIST: (SDIST_BYTES, None)},
+    )
+    fetcher = FakeFetcher({_release_url(Registry.PYPI, project_name=PLUGIN_PROJECT): payload})
+
+    result = verify_registry_release(
+        Registry.PYPI,
+        VERSION,
+        dist,
+        project_name=PLUGIN_PROJECT,
+        fetcher=fetcher,
+    )
+
+    assert result.status == "exact"
+    assert result.files == (PLUGIN_WHEEL, PLUGIN_SDIST)
+
+
+def test_verify_release_cli_accepts_plugin_scanner_project(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    dist = _local_plugin_dist(tmp_path)
+    payload = _release_payload(
+        Registry.PYPI,
+        {PLUGIN_WHEEL: (WHEEL_BYTES, None), PLUGIN_SDIST: (SDIST_BYTES, None)},
+    )
+    fetcher = FakeFetcher({_release_url(Registry.PYPI, project_name=PLUGIN_PROJECT): payload})
+
+    assert (
+        main(
+            [
+                "verify-release",
+                "--registry",
+                "pypi",
+                "--project",
+                PLUGIN_PROJECT,
+                "--version",
+                VERSION,
+                "--dist-dir",
+                str(dist),
+            ],
+            fetcher=fetcher,
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["status"] == "exact"
 
 
 @pytest.mark.parametrize(
