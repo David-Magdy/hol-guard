@@ -101,6 +101,19 @@ jobs:
               content = content.replace("# ruff: noqa: E501\n", "", 1)
               path.write_text(content)
 
+          upload = Path("src/codex_plugin_scanner/assurance/upload.py")
+          upload_content = upload.read_text()
+          connect_signature = "    def connect(self) -> None:\n"
+          if connect_signature not in upload_content:
+              raise SystemExit("missing pinned HTTPS connect override")
+          upload.write_text(
+              upload_content.replace(
+                  connect_signature,
+                  "    def connect(self) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]\n",
+                  1,
+              )
+          )
+
           for block_index, label in (
               (3, "Validate Rust"),
               (4, "Validate Python"),
