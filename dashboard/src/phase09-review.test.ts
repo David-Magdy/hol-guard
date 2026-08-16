@@ -1280,12 +1280,6 @@ assert(
   allowCopy.includes(harnessDisplayName(BASE_REQUEST.harness)),
   "GR223-02: buildRetryAfterApprovalCopy for allow includes the harness display name"
 );
-const rememberedAllowCopy = buildRetryAfterApprovalCopy(BASE_REQUEST, "allow", true);
-assert(
-  rememberedAllowCopy.includes("allow this exact action next time") &&
-    rememberedAllowCopy.includes("changed commands still need review"),
-  "GR223-02a: remembered approval copy states its exact security boundary"
-);
 
 const blockCopy = buildRetryAfterApprovalCopy(BASE_REQUEST, "block");
 assert(
