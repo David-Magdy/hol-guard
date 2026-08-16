@@ -1,0 +1,48 @@
+name: Scanner assurance source snapshot
+
+on:
+  push:
+    branches:
+      - feat/scanner-assurance-rust-hardening
+    paths:
+      - .github/workflows/scanner-assurance-source-snapshot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Record exact source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > scanner-assurance-commit.txt
+          git status --short > scanner-assurance-status.txt
+      - name: Upload exact scanner source and tests
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scanner-assurance-source
+          include-hidden-files: true
+          path: |
+            scanner-assurance-commit.txt
+            scanner-assurance-status.txt
+            pyproject.toml
+            uv.lock
+            schemas
+            src/codex_plugin_scanner
+            tests
+            scripts/ci
+            action
+            docs/ai-plugin-scanner
+            docs/rules
+            .github/workflows/ci.yml
+            .github/workflows/security-gates.yml
+          if-no-files-found: warn
+          retention-days: 7
