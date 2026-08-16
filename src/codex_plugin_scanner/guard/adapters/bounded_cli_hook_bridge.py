@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -30,6 +31,178 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _DAEMON_TIMEOUT_BUDGET_SECONDS = 5.0
 _FROZEN_BRIDGE_COMMAND = "__guard-bounded-hook"
 _FROZEN_OPTIONAL_PATH_FLAGS = frozenset({"--home", "--workspace"})
+_DESKTOP_PROXY_ENV = "HOL_GUARD_DESKTOP_HOOK_PROXY"
+
+
+def _codesign_team(path: Path) -> str | None:
+    """Return a verified Apple TeamIdentifier without importing the Desktop runtime."""
+
+    verify = subprocess.run(
+        ["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if verify.returncode != 0:
+        return None
+    display = subprocess.run(
+        ["/usr/bin/codesign", "--display", "--verbose=4", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if display.returncode != 0:
+        return None
+    for line in display.stderr.splitlines():
+        team = line.strip().removeprefix("TeamIdentifier=")
+        if team != line.strip() and team and team != "not set":
+            return team
+    return None
+
+
+_DESKTOP_PROXY_FALLBACK_EXIT = 125
+
+
+_DESKTOP_PROXY_LAUNCH_SCRIPT = r"""
+set -u
+proxy=$1
+expected_team=$2
+bundle=$3
+config=$4
+fallback=$5
+fallback_bridge() {
+  exec "$fallback" __guard-bounded-hook "$config"
+}
+verify_team() {
+  candidate=$1
+  /usr/bin/codesign --verify --strict --verbose=2 "$candidate" >/dev/null 2>&1 || return 1
+  actual_team=$(
+    /usr/bin/codesign --display --verbose=4 "$candidate" 2>&1 \
+      | /usr/bin/sed -n 's/^TeamIdentifier=//p' \
+      | /usr/bin/head -n 1
+  ) || return 1
+  [ -n "$actual_team" ] || return 1
+  [ "$actual_team" != "not set" ] || return 1
+  [ "$actual_team" = "$expected_team" ]
+}
+[ -x "$proxy" ] && [ ! -L "$proxy" ] || fallback_bridge
+[ -x "$fallback" ] && [ ! -L "$fallback" ] || fallback_bridge
+[ -d "$bundle" ] && [ ! -L "$bundle" ] || fallback_bridge
+proxy_before=$(/usr/bin/stat -f '%d:%i:%u:%p' "$proxy" 2>/dev/null) || fallback_bridge
+fallback_before=$(/usr/bin/stat -f '%d:%i:%u:%p' "$fallback" 2>/dev/null) || fallback_bridge
+verify_team "$bundle" || fallback_bridge
+verify_team "$proxy" || fallback_bridge
+verify_team "$fallback" || fallback_bridge
+proxy_after=$(/usr/bin/stat -f '%d:%i:%u:%p' "$proxy" 2>/dev/null) || fallback_bridge
+fallback_after=$(/usr/bin/stat -f '%d:%i:%u:%p' "$fallback" 2>/dev/null) || fallback_bridge
+[ "$proxy_before" = "$proxy_after" ] || fallback_bridge
+[ "$fallback_before" = "$fallback_after" ] || fallback_bridge
+"$proxy" __guard-hook-proxy "$config"
+status=$?
+if [ "$status" -eq 125 ] || [ "$status" -eq 126 ] || [ "$status" -eq 127 ]; then
+  fallback_bridge
+fi
+exit "$status"
+""".strip()
+
+
+def _bundle_for_executable(path: Path) -> Path | None:
+    for ancestor in path.parents:
+        if ancestor.suffix == ".app":
+            return ancestor
+    return None
+
+
+def _trusted_desktop_path(path: Path) -> bool:
+    """Require a regular private executable under a non-symlinked app bundle."""
+
+    try:
+        raw_metadata = path.lstat()
+        resolved = path.resolve(strict=True)
+        metadata = resolved.stat()
+    except OSError:
+        return False
+    if stat.S_ISLNK(raw_metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        return False
+    if not os.access(resolved, os.X_OK):
+        return False
+    if metadata.st_uid not in {os.getuid(), 0} or stat.S_IMODE(metadata.st_mode) & 0o022:
+        return False
+    bundle = _bundle_for_executable(resolved)
+    if bundle is None:
+        return False
+    for directory in (bundle, bundle / "Contents", bundle / "Contents" / "MacOS"):
+        try:
+            raw = directory.lstat()
+            current = directory.stat()
+        except OSError:
+            return False
+        if stat.S_ISLNK(raw.st_mode) or not stat.S_ISDIR(current.st_mode):
+            return False
+        if current.st_uid not in {os.getuid(), 0} or stat.S_IMODE(current.st_mode) & 0o022:
+            return False
+    return True
+
+
+def _trusted_desktop_hook_proxy_command(
+    python_executable: str,
+    config_json: str,
+) -> tuple[str, ...] | None:
+    """Return a runtime-verified signed macOS proxy command or retain Core.
+
+    The generated command is installed only by a genuine frozen Desktop launch.
+    Both executables must be regular, private files in the same signed app
+    bundle and share one non-empty Apple TeamIdentifier with that bundle. The
+    runtime launcher re-verifies the bundle, proxy, and Core immediately before
+    a normal path-based macOS launch. If any validation, launch, or daemon-fast-
+    path step fails, status 125/126/127 executes the exact frozen Core bridge.
+
+    Linux intentionally stays on the internal frozen bridge. AppImage path
+    variables are caller-controlled and are never executable provenance.
+    """
+
+    if (
+        sys.platform != "darwin"
+        or not bool(getattr(sys, "frozen", False))
+        or os.environ.get("HOL_GUARD_DESKTOP") != "1"
+    ):
+        return None
+    raw = os.environ.get(_DESKTOP_PROXY_ENV)
+    if not raw:
+        return None
+    candidate = Path(raw)
+    core_candidate = Path(python_executable)
+    if not candidate.is_absolute() or not core_candidate.is_absolute():
+        return None
+    if not _trusted_desktop_path(candidate) or not _trusted_desktop_path(core_candidate):
+        return None
+    try:
+        proxy = candidate.resolve(strict=True)
+        core = core_candidate.resolve(strict=True)
+    except OSError:
+        return None
+    proxy_bundle = _bundle_for_executable(proxy)
+    core_bundle = _bundle_for_executable(core)
+    if proxy_bundle is None or proxy_bundle != core_bundle or proxy.parent != core.parent:
+        return None
+
+    proxy_team = _codesign_team(proxy)
+    core_team = _codesign_team(core)
+    bundle_team = _codesign_team(proxy_bundle)
+    if proxy_team is None or proxy_team == "not set" or proxy_team != core_team or proxy_team != bundle_team:
+        return None
+
+    return (
+        "/bin/sh",
+        "-c",
+        _DESKTOP_PROXY_LAUNCH_SCRIPT,
+        "hol-guard-desktop-proxy",
+        str(proxy),
+        proxy_team,
+        str(proxy_bundle),
+        config_json,
+        str(core),
+    )
 
 
 def _assert_loopback_http_url(url: str) -> None:
@@ -89,11 +262,11 @@ def bounded_cli_hook_command(
         "raise SystemExit(main_from_argv(sys.argv[1:]))"
     )
     if frozen_launcher:
-        return (
-            python_executable,
-            _FROZEN_BRIDGE_COMMAND,
-            json.dumps(config, ensure_ascii=True, separators=(",", ":")),
-        )
+        config_json = json.dumps(config, ensure_ascii=True, separators=(",", ":"))
+        desktop_proxy = _trusted_desktop_hook_proxy_command(python_executable, config_json)
+        if desktop_proxy is not None:
+            return desktop_proxy
+        return python_executable, _FROZEN_BRIDGE_COMMAND, config_json
     return (
         python_executable,
         "-I",
@@ -116,21 +289,17 @@ def _validated_frozen_cli_args(
     guard_home: Path,
     harness: str,
 ) -> tuple[str, ...] | None:
-    if len(cli_args) < 6 or tuple(cli_args[:3]) != ("guard", "hook", "--guard-home"):
+    expected_prefix = (
+        "guard",
+        "hook",
+        "--guard-home",
+        str(guard_home),
+        "--harness",
+        harness,
+    )
+    if tuple(cli_args[: len(expected_prefix)]) != expected_prefix:
         return None
-    supplied_guard_home_value = Path(cli_args[3])
-    if not supplied_guard_home_value.is_absolute() or not guard_home.is_absolute():
-        return None
-    try:
-        supplied_guard_home = supplied_guard_home_value.resolve(strict=False)
-        expected_guard_home = guard_home.resolve(strict=False)
-    except (OSError, RuntimeError):
-        return None
-    if supplied_guard_home != expected_guard_home:
-        return None
-    if tuple(cli_args[4:6]) != ("--harness", harness):
-        return None
-    tail = cli_args[6:]
+    tail = cli_args[len(expected_prefix) :]
     json_output = bool(tail and tail[-1] == "--json")
     if json_output:
         tail = tail[:-1]
@@ -144,14 +313,7 @@ def _validated_frozen_cli_args(
         if not Path(value).is_absolute():
             return None
         seen_flags.add(flag)
-    command: tuple[str, ...] = (
-        "hook",
-        "--guard-home",
-        str(expected_guard_home),
-        "--harness",
-        harness,
-        *tail,
-    )
+    command = ("hook", *cli_args[2 : len(cli_args) - int(json_output)])
     if json_output:
         command = (*command, "--json")
     return command
@@ -507,25 +669,7 @@ def run_bounded_cli_hook(config: Mapping[str, object], *, input_text: str) -> in
         return _emit_failure(harness=harness, input_text=input_text)
     package_root = Path(package_root_value)
     guard_home = Path(guard_home_value)
-    runtime_frozen = bool(getattr(sys, "frozen", False))
-    if runtime_frozen:
-        direct_cli_args = _validated_frozen_cli_args(
-            cli_args,
-            guard_home=guard_home,
-            harness=harness,
-        )
-        if direct_cli_args is None:
-            return _emit_failure(harness=harness, input_text=input_text)
-        command = (sys.executable, *direct_cli_args)
-    elif frozen_launcher:
-        return _emit_failure(harness=harness, input_text=input_text)
-    else:
-        command = isolated_guard_cli_command(
-            python_executable,
-            package_root,
-            cli_args,
-        )
-    # Fast path: serve an already-validated hook through the running daemon (~50ms)
+    # Fast path: serve the hook from the already-running daemon (~50ms)
     # instead of paying a fresh interpreter + full CLI import (~1s).
     daemon_result = _try_daemon_hook(
         guard_home=guard_home,
@@ -540,6 +684,21 @@ def run_bounded_cli_hook(config: Mapping[str, object], *, input_text: str) -> in
         if daemon_stderr:
             print(daemon_stderr, file=sys.stderr)
         return daemon_exit
+    if frozen_launcher:
+        direct_cli_args = _validated_frozen_cli_args(
+            cli_args,
+            guard_home=guard_home,
+            harness=harness,
+        )
+        if direct_cli_args is None:
+            return _emit_failure(harness=harness, input_text=input_text)
+        command = (sys.executable, *direct_cli_args)
+    else:
+        command = isolated_guard_cli_command(
+            python_executable,
+            package_root,
+            cli_args,
+        )
     result = run_isolated_hook_process(
         command,
         input_text=input_text,
