@@ -1,0 +1,152 @@
+name: Scanner assurance
+
+on:
+  push:
+    branches: [release/3.0]
+    paths:
+      - "src/codex_plugin_scanner/assurance/**"
+      - "src/codex_plugin_scanner/assurance_cli.py"
+      - "rust/scanner-engine/**"
+      - "tests/test_assurance_*.py"
+      - "schemas/assurance-*.json"
+      - "schemas/extension-*.json"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/scanner-assurance.yml"
+  pull_request:
+    branches: [release/3.0]
+    paths:
+      - "src/codex_plugin_scanner/assurance/**"
+      - "src/codex_plugin_scanner/assurance_cli.py"
+      - "rust/scanner-engine/**"
+      - "tests/test_assurance_*.py"
+      - "schemas/assurance-*.json"
+      - "schemas/extension-*.json"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/scanner-assurance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scanner-assurance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  assurance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+            rust/scanner-engine/Cargo.lock
+      - name: Install Python environment
+        run: uv sync --frozen --extra dev --python 3.12
+      - name: Validate Rust formatting
+        run: cargo fmt --manifest-path rust/scanner-engine/Cargo.toml -- --check
+      - name: Lint Rust hot path
+        run: cargo clippy --manifest-path rust/scanner-engine/Cargo.toml --all-targets -- -D warnings
+      - name: Test Rust hot path
+        run: cargo test --manifest-path rust/scanner-engine/Cargo.toml
+      - name: Build Rust hot path
+        run: cargo build --release --locked --manifest-path rust/scanner-engine/Cargo.toml
+      - name: Lint assurance Python
+        run: >-
+          uv run --no-sync python -m ruff check
+          src/codex_plugin_scanner/assurance
+          src/codex_plugin_scanner/assurance_cli.py
+          tests/test_assurance_archive.py
+          tests/test_assurance_dependencies.py
+          tests/test_assurance_drift_detonation.py
+          tests/test_assurance_integration.py
+          tests/test_assurance_native.py
+          tests/test_assurance_policy_ingestion.py
+          tests/test_assurance_security_vectors.py
+      - name: Check assurance formatting
+        run: >-
+          uv run --no-sync python -m ruff format --check
+          src/codex_plugin_scanner/assurance
+          src/codex_plugin_scanner/assurance_cli.py
+          tests/test_assurance_archive.py
+          tests/test_assurance_dependencies.py
+          tests/test_assurance_drift_detonation.py
+          tests/test_assurance_integration.py
+          tests/test_assurance_native.py
+          tests/test_assurance_policy_ingestion.py
+          tests/test_assurance_security_vectors.py
+      - name: Type-check assurance paths
+        run: >-
+          uv run --no-sync basedpyright --level error
+          src/codex_plugin_scanner/assurance
+          src/codex_plugin_scanner/assurance_cli.py
+      - name: Run hostile assurance corpus and integration regressions
+        env:
+          HOL_GUARD_SCANNER_ENGINE: ${{ github.workspace }}/rust/scanner-engine/target/release/hol-guard-scanner-engine
+        run: >-
+          uv run --no-sync pytest
+          tests/test_assurance_archive.py
+          tests/test_assurance_dependencies.py
+          tests/test_assurance_drift_detonation.py
+          tests/test_assurance_integration.py
+          tests/test_assurance_native.py
+          tests/test_assurance_policy_ingestion.py
+          tests/test_assurance_security_vectors.py
+          tests/test_policy.py
+          tests/test_reporting.py
+          tests/test_schema_contracts.py
+          tests/test_security_ops.py
+          --tb=short
+      - name: Build and smoke-test installed wheel
+        env:
+          HOL_GUARD_SCANNER_ENGINE: ${{ github.workspace }}/rust/scanner-engine/target/release/hol-guard-scanner-engine
+        run: |
+          set -euo pipefail
+          uv build --wheel
+          python -m venv /tmp/assurance-wheel
+          /tmp/assurance-wheel/bin/pip install --disable-pip-version-check dist/*.whl
+          /tmp/assurance-wheel/bin/hol-guard-extension-security --help
+          mkdir -p /tmp/benign-extension
+          printf '# benign extension\n' > /tmp/benign-extension/README.md
+          /tmp/assurance-wheel/bin/hol-guard-extension-security scan /tmp/benign-extension --output /tmp/installed-wheel-report.json
+          test -s /tmp/installed-wheel-report.json
+      - name: Self-inspect repository and validate schema
+        env:
+          HOL_GUARD_SCANNER_ENGINE: ${{ github.workspace }}/rust/scanner-engine/target/release/hol-guard-scanner-engine
+        run: |
+          set -euo pipefail
+          set +e
+          uv run --no-sync hol-guard-extension-security scan . --profile audit --output assurance-self-scan.json
+          status=$?
+          set -e
+          test "$status" -le 3
+          uv run --no-sync python - <<'PY'
+          import json
+          from pathlib import Path
+          import jsonschema
+          payload = json.loads(Path('assurance-self-scan.json').read_text())
+          schema = json.loads(Path('schemas/assurance-report.v1.json').read_text())
+          jsonschema.Draft202012Validator(schema).validate(payload)
+          assert payload['coverage']['state'] != 'error'
+          assert payload['layers']
+          PY
+      - name: Upload scanner self-inspection
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scanner-assurance-self-inspection
+          path: assurance-self-scan.json
+          if-no-files-found: warn
+          retention-days: 14
