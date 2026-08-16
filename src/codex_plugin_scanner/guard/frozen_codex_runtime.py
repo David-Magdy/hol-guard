@@ -45,6 +45,23 @@ def _decode_private_payload(raw: str, *, label: str) -> dict[str, object]:
     return {str(key): value for key, value in payload.items() if isinstance(key, str)}
 
 
+def frozen_daemon_recovery_command(
+    guard_home: Path,
+    home_dir: Path,
+    *,
+    executable: str | None = None,
+) -> tuple[str, ...]:
+    """Build the authenticated frozen-Core daemon recovery command."""
+
+    payload = _compact_json(
+        {
+            "guard_home": str(guard_home.resolve(strict=False)),
+            "home_dir": str(home_dir.resolve(strict=False)),
+        }
+    )
+    return (executable or sys.executable, _FROZEN_DAEMON_RECOVER_ARG, payload)
+
+
 def install_frozen_codex_runtime(*, force: bool = False) -> bool:
     """Install the frozen Codex launch contract into the current process.
 
@@ -87,13 +104,7 @@ def install_frozen_codex_runtime(*, force: bool = False) -> bool:
         *,
         python_executable: str = sys.executable,
     ) -> tuple[str, ...]:
-        payload = _compact_json(
-            {
-                "guard_home": str(guard_home.resolve(strict=False)),
-                "home_dir": str(home_dir.resolve(strict=False)),
-            }
-        )
-        return (python_executable, _FROZEN_DAEMON_RECOVER_ARG, payload)
+        return frozen_daemon_recovery_command(guard_home, home_dir, executable=python_executable)
 
     def frozen_hook_command(
         context,
@@ -344,6 +355,7 @@ def _verify_frozen_bridge_contract(
 
 
 __all__ = [
+    "frozen_daemon_recovery_command",
     "install_frozen_codex_runtime",
     "is_frozen_guard_runtime",
     "run_frozen_internal_command",

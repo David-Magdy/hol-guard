@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from codex_plugin_scanner.guard.adapters import cline as cline_module
 from codex_plugin_scanner.guard.adapters.base import HarnessAdapter, HarnessContext
 from codex_plugin_scanner.guard.adapters.cline import ClineHarnessAdapter
+from codex_plugin_scanner.guard.adapters.cline_detection import ClineHostDetection
 from codex_plugin_scanner.guard.adapters.cursor import CursorHarnessAdapter
 from codex_plugin_scanner.guard.cli.install_commands import _apply_adapter_management
 
@@ -65,6 +67,13 @@ def test_cline_explicit_plugin_surface_reaches_adapter(tmp_path: Path) -> None:
     result = _apply_adapter_management(adapter, _context(tmp_path), active=True, surface="plugin")
     assert adapter.seen == ("install", "plugin")
     assert result["surface"] == "plugin"
+
+
+def test_frozen_cline_auto_transport_uses_durable_plugin(monkeypatch) -> None:
+    monkeypatch.setattr(cline_module, "is_frozen_guard_runtime", lambda: True)
+    hosts = ClineHostDetection(cli_executable=None, cli_version=None, vscode_versions=(), jetbrains_paths=())
+
+    assert ClineHarnessAdapter()._auto_transport(hosts) == "plugin"
 
 
 def test_cline_uninstall_surface_reaches_adapter(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from codex_plugin_scanner.guard.adapters import guard_cli_attestation
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.adapters.cline_hooks import (
     _hook_source,
@@ -17,7 +18,7 @@ from codex_plugin_scanner.guard.adapters.cline_hooks import (
     _slot_for_event,
     cline_hook_roots,
 )
-from codex_plugin_scanner.guard.adapters.cline_plugin import _plugin_source
+from codex_plugin_scanner.guard.adapters.cline_plugin import _plugin_source, install_cline_plugin
 
 
 def _context(tmp_path: Path) -> HarnessContext:
@@ -89,6 +90,24 @@ def test_native_hook_root_matches_vscode_and_core_global_directory(tmp_path: Pat
     roots = cline_hook_roots(context)
     assert roots[0] == context.home_dir / "Documents" / "Cline" / "Hooks"
     assert roots[1] == context.home_dir / ".cline" / "hooks"
+
+
+def test_frozen_cline_plugin_persists_signed_executable_command(tmp_path: Path, monkeypatch) -> None:
+    context = _context(tmp_path)
+    executable = tmp_path / "HOL Guard"
+    executable.write_bytes(b"signed-frozen-core")
+    executable.chmod(0o755)
+    monkeypatch.setattr(guard_cli_attestation.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(guard_cli_attestation.sys, "executable", str(executable))
+
+    manifest = install_cline_plugin(context)
+    source = Path(str(manifest["managed_plugin_path"])).read_text(encoding="utf-8")
+
+    assert f'const GUARD_CLI = ["{executable}", "hook"];' in source
+    identity = manifest["guard_cli_identity"]
+    assert isinstance(identity, dict)
+    assert identity["runtime"] == "frozen-core"
+    assert identity["command"] == [str(executable)]
 
 
 def test_native_hook_slots_are_platform_canonical_and_non_destructive(tmp_path: Path) -> None:

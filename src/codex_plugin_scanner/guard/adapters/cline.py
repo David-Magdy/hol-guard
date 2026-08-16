@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 
+from ..frozen_codex_runtime import is_frozen_guard_runtime
 from ..models import GuardArtifact, HarnessDetection
 from ..shims import ensure_guard_shim_path_in_shell_profile, install_guard_shim, remove_guard_shim
 from .base import HarnessAdapter, HarnessContext
@@ -158,6 +159,8 @@ class ClineHarnessAdapter(HarnessAdapter):
         return (self.launch_command(context, passthrough_args),)
 
     def _auto_transport(self, hosts: ClineHostDetection) -> str:
+        if is_frozen_guard_runtime():
+            return "plugin"
         if hosts.cli_executable and not hosts.vscode_versions and not hosts.jetbrains_paths:
             return "plugin"
         return "hooks"
@@ -172,6 +175,8 @@ class ClineHarnessAdapter(HarnessAdapter):
             manifest["syntax_probe"] = syntax
             return manifest
         if transport == "hooks":
+            if is_frozen_guard_runtime():
+                raise RuntimeError("Cline native-hook repair requires the managed plugin in HOL Guard Desktop.")
             manifest = install_cline_hooks(context)
             canary = manifest.get("synthetic_canary")
             if not isinstance(canary, dict) or canary.get("ok") is not True:

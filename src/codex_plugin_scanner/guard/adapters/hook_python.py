@@ -457,6 +457,8 @@ def attest_guard_hook_python(context: HarnessContext) -> HookPythonAttestation:
 def resolve_guard_hook_python(context: HarnessContext) -> Path:
     """Return the invocation path for the attested running Guard Python."""
 
+    if bool(getattr(sys, "frozen", False)):
+        return _executable_identity(Path(sys.executable).absolute()).invocation_path
     try:
         return attest_guard_hook_python(context).executable
     except RuntimeError as error:
@@ -465,6 +467,18 @@ def resolve_guard_hook_python(context: HarnessContext) -> Path:
             "then re-run `hol-guard install opencode`."
         )
         raise RuntimeError(message) from error
+
+
+def guard_cli_command(context: HarnessContext, args: list[str]) -> list[str]:
+    """Bind Guard CLI arguments to the durable active runtime."""
+
+    executable = str(resolve_guard_hook_python(context))
+    if not bool(getattr(sys, "frozen", False)):
+        return [executable, *args]
+    python_prefix = ["-m", "codex_plugin_scanner.cli", "guard"]
+    if args[:3] != python_prefix:
+        raise RuntimeError("Frozen Guard CLI arguments do not match the managed launch contract.")
+    return [executable, *args[3:]]
 
 
 def package_root_from_python(python: Path, context: HarnessContext) -> str:
@@ -485,6 +499,7 @@ __all__ = [
     "HookPythonFileMetadata",
     "attest_guard_hook_python",
     "filter_worktree_path_entries",
+    "guard_cli_command",
     "package_root_from_python",
     "resolve_guard_hook_python",
 ]

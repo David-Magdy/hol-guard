@@ -431,6 +431,8 @@ def install_cline_hooks(context: HarnessContext) -> dict[str, object]:
     """Install global Cline hooks, then run a synthetic wire-contract canary."""
 
     attested = resolve_attested_guard_cli(context)
+    if attested.python is None:
+        raise RuntimeError("Cline native hooks require a standalone Python Guard runtime.")
     guard = [*attested.command, "guard", "hook"]
     interpreter = str(attested.python.executable)
     root = cline_hook_roots(context)[0]

@@ -4683,6 +4683,20 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         except ValueError as error:
             self._write_json({"error": str(error)}, status=400)
             return
+        except RuntimeError:
+            _LOGGER.exception("Guard could not complete %s repair for %s", action, adapter.harness)
+            self._write_json(
+                {
+                    "error": "harness_repair_failed",
+                    "harness": adapter.harness,
+                    "message": (
+                        f"Guard could not repair {adapter.harness} protection. "
+                        "Update Guard, then retry from this page. Your existing protection settings were preserved."
+                    ),
+                },
+                status=409,
+            )
+            return
         self._write_json({"harness": adapter.harness, "action": action, "dry_run": False, **result})
 
     def _handle_notification_setup(self, payload: dict[str, object]) -> None:
