@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hol.org/schemas/detonation-observation.v1.json",
+  "title": "HOL Guard exact-artifact detonation observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plan_digest",
+    "artifact_digest",
+    "observed_at",
+    "runtime",
+    "return_code",
+    "timed_out",
+    "stdout_sha256",
+    "stderr_sha256",
+    "stdout_truncated",
+    "stderr_truncated",
+    "duration_ms",
+    "observation_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "hol-guard.detonation-observation.v1"},
+    "plan_digest": {"$ref": "#/$defs/sha256"},
+    "artifact_digest": {"$ref": "#/$defs/sha256"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "runtime": {"enum": ["docker", "podman"]},
+    "return_code": {"type": ["integer", "null"]},
+    "timed_out": {"type": "boolean"},
+    "stdout_sha256": {"$ref": "#/$defs/sha256"},
+    "stderr_sha256": {"$ref": "#/$defs/sha256"},
+    "stdout_truncated": {"type": "boolean"},
+    "stderr_truncated": {"type": "boolean"},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "observation_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
