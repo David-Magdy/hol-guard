@@ -1,0 +1,225 @@
+name: Validate scanner assurance and open PR
+
+on:
+  push:
+    branches: [feat/scanner-assurance-rust-hardening]
+    paths:
+      - ".github/workflows/tmp-validate-and-open-scanner-assurance-pr.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: validate-and-open-scanner-assurance-pr
+  cancel-in-progress: true
+
+jobs:
+  validate-and-open:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/scanner-assurance-rust-hardening
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+          save-cache: false
+      - name: Validate exact branch and open release PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: feat/scanner-assurance-rust-hardening
+        run: |
+          set -u
+          log="$RUNNER_TEMP/scanner-assurance-pr-validation.log"
+          : > "$log"
+          status=0
+
+          run_step() {
+            local label="$1"
+            shift
+            if [ "$status" -ne 0 ]; then
+              return 0
+            fi
+            {
+              echo
+              echo "===== $label ====="
+              printf 'command:'
+              printf ' %q' "$@"
+              echo
+            } | tee -a "$log"
+            set +e
+            "$@" 2>&1 | tee -a "$log"
+            local rc=${PIPESTATUS[0]}
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              status="$rc"
+              echo "FAILED: $label (exit $rc)" | tee -a "$log"
+            else
+              echo "PASSED: $label" | tee -a "$log"
+            fi
+          }
+
+          if [ -f scripts/ci/finalize_scanner_assurance_v2.py ]; then
+            run_step "idempotent source finalization" python scripts/ci/finalize_scanner_assurance_v2.py
+          fi
+          run_step "locked environment" uv sync --frozen --extra dev --python 3.12
+          run_step "lockfile contract" uv lock --check
+          run_step "Python lint" uv run --no-sync ruff check \
+            src/codex_plugin_scanner/assurance.py \
+            src/codex_plugin_scanner/assurance_cli.py \
+            src/codex_plugin_scanner/evidence_envelope.py \
+            src/codex_plugin_scanner/runtime_assurance.py \
+            src/codex_plugin_scanner/rust_kernel.py \
+            src/codex_plugin_scanner/scanner.py \
+            src/codex_plugin_scanner/policy.py \
+            tests/assurance_corpus.py \
+            tests/test_assurance_scanner.py \
+            tests/test_evidence_envelope.py \
+            tests/test_runtime_assurance.py \
+            tests/test_rust_scanner_kernel_contract.py \
+            scripts/ci/scanner_assurance_benchmark.py
+          run_step "Python formatting" uv run --no-sync ruff format --check \
+            src/codex_plugin_scanner/assurance.py \
+            src/codex_plugin_scanner/assurance_cli.py \
+            src/codex_plugin_scanner/evidence_envelope.py \
+            src/codex_plugin_scanner/runtime_assurance.py \
+            src/codex_plugin_scanner/rust_kernel.py \
+            src/codex_plugin_scanner/scanner.py \
+            src/codex_plugin_scanner/policy.py \
+            tests/assurance_corpus.py \
+            tests/test_assurance_scanner.py \
+            tests/test_evidence_envelope.py \
+            tests/test_runtime_assurance.py \
+            tests/test_rust_scanner_kernel_contract.py \
+            scripts/ci/scanner_assurance_benchmark.py
+          run_step "Python type checking" uv run --no-sync basedpyright --level error \
+            src/codex_plugin_scanner/assurance.py \
+            src/codex_plugin_scanner/assurance_cli.py \
+            src/codex_plugin_scanner/evidence_envelope.py \
+            src/codex_plugin_scanner/runtime_assurance.py \
+            src/codex_plugin_scanner/rust_kernel.py \
+            src/codex_plugin_scanner/scanner.py \
+            src/codex_plugin_scanner/policy.py
+          run_step "Rust format check" cargo fmt --manifest-path rust/scanner-kernel/Cargo.toml --check
+          run_step "Rust clippy" cargo clippy --locked --manifest-path rust/scanner-kernel/Cargo.toml --all-targets -- -D warnings
+          run_step "Rust tests" cargo test --locked --manifest-path rust/scanner-kernel/Cargo.toml
+          run_step "Rust optimized build" cargo build --locked --release --manifest-path rust/scanner-kernel/Cargo.toml
+
+          export HOL_GUARD_SCANNER_KERNEL="$GITHUB_WORKSPACE/rust/scanner-kernel/target/release/hol-guard-scanner-kernel"
+          run_step "assurance regression suite" uv run --no-sync pytest \
+            tests/test_assurance_scanner.py \
+            tests/test_evidence_envelope.py \
+            tests/test_runtime_assurance.py \
+            tests/test_rust_scanner_kernel_contract.py \
+            --tb=short
+          run_step "existing scanner contracts" uv run --no-sync pytest \
+            tests/test_cli.py \
+            tests/test_integration.py \
+            tests/test_policy.py \
+            tests/test_reporting.py \
+            tests/test_schema_contracts.py \
+            tests/test_security_ops.py \
+            tests/test_verification.py \
+            --tb=short
+          run_step "precision recall benchmark" env PYTHONPATH=. uv run --no-sync python \
+            scripts/ci/scanner_assurance_benchmark.py \
+            --output scanner-assurance-benchmark.json
+          run_step "test inventory" uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          run_step "test-suite ratchet" uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
+          run_step "diff whitespace" git diff --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ "$status" -ne 0 ]; then
+            mkdir -p .scanner-assurance-debug
+            {
+              echo "head=$(git rev-parse HEAD)"
+              echo "status=$status"
+              echo "generated_at=$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
+              echo
+              tail -c 260000 "$log"
+            } \
+              | sed -E 's/(Bearer|token|authorization)[=: ]+[^[:space:]]+/\1=[redacted]/Ig' \
+              > .scanner-assurance-debug/pr-validation.log
+            git add .scanner-assurance-debug/pr-validation.log
+            git commit -m "test(scanner): preserve PR validation failure" || true
+            git push origin "HEAD:$BRANCH"
+            exit "$status"
+          fi
+
+          rm -rf .scanner-assurance-debug
+          rm -f \
+            .github/workflows/tmp-validate-and-open-scanner-assurance-pr.yml \
+            .github/workflows/tmp-finalize-scanner-assurance-v2.yml \
+            .github/workflows/tmp-apply-scanner-assurance.yml \
+            scripts/ci/finalize_scanner_assurance_v2.py \
+            scripts/ci/finalize_scanner_assurance.py \
+            scripts/ci/repair_scanner_assurance.py \
+            scripts/ci/apply_scanner_assurance_integration.py \
+            .github/workflows/scanner-assurance-source-snapshot.yml \
+            .github/workflows/scanner-reliability-payload-inspect.yml \
+            .github/workflows/scanner-reliability-source-snapshot.yml
+          git add -A
+          if ! git diff --cached --quiet; then
+            git diff --cached --check
+            git commit -m "chore(scanner): finalize assurance validation"
+            git push origin "HEAD:$BRANCH"
+          fi
+
+          head_sha=$(git rev-parse HEAD)
+          body_file="$RUNNER_TEMP/scanner-assurance-pr.md"
+          cat > "$body_file" <<'EOF'
+          ## Purpose
+
+          Replace the scanner's previous producing-side-only and static-only limitations with independently testable evidence layers for plugins, MCP servers, and skills.
+
+          ## What changed
+
+          - Added deterministic static adversarial analysis for common injection, exfiltration, credential, authorization, persistence, destructive, surveillance, resource-abuse, MCP, skill, dependency, and supply-chain vectors.
+          - Added bounded in-memory ZIP/TAR analysis for traversal, links, encryption, nested archives, entry limits, expansion limits, and archive bombs.
+          - Added a dependency-free Rust hot-path kernel for deterministic traversal, streaming SHA-256, native/Wasm magic and hardening metadata, and bounded sensitive-capability string classification, with a validated Python fallback.
+          - Added DSSE/in-toto Ed25519 provenance verification that distinguishes self-attested integrity from caller-trusted publisher identity.
+          - Added explicit opt-in OCI detonation with immutable images, image pulls disabled, no network, read-only root and target, dropped capabilities, no-new-privileges, non-root execution, resource bounds, exact artifact binding, and trace-completeness validation.
+          - Added canonical privacy-reduced `extension-security-evidence.v2` envelopes and secure, redirect-free, idempotent HTTPS upload.
+          - Added a 39-vector adversarial corpus, hard negatives, archive/native/provenance/runtime tests, deterministic output tests, fuzz target, and precision/recall/F1/latency gates.
+          - Preserved the legacy 0–100 score weighting. Assurance layers are separate gates and evidence, not a silent score redefinition.
+
+          ## Honest claims
+
+          `complete` means the supported procedure finished under its reported budgets. It does not mean universally safe. Native header/string analysis remains distinct from full disassembly. Runtime is `verified` only when containment, exact artifact binding, and complete traces are proven. Publisher identity is `verified` only against a consumer-controlled trust root.
+
+          ## Validation
+
+          The exact branch commit passed Rust formatting, Clippy with warnings denied, Rust tests, optimized build, Python lint/format/type checks, the layered assurance regression suite, existing scanner compatibility contracts, test inventory/ratchet, and the precision/recall benchmark before this PR was opened.
+
+          Base is intentionally `release/3.0`, not `main`.
+          EOF
+
+          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --head "$BRANCH" --base release/3.0 --json number --jq '.[0].number // empty')
+          if [ -z "$existing" ]; then
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base release/3.0 \
+              --head "$BRANCH" \
+              --title "feat(scanner): layered assurance and Rust hot paths" \
+              --body-file "$body_file"
+          else
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
+          fi
+          echo "validated_head=$head_sha"
