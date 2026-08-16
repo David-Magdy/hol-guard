@@ -89,19 +89,6 @@ jobs:
                   print("::endgroup::", flush=True)
 
           run(blocks[0], "Install pinned Rust toolchain")
-
-          finalize = Path("scripts/tmp_finalize_scanner_assurance.py")
-          finalize_content = finalize.read_text()
-          replacements = {
-              'base64.b64decode(manifest_b64).decode("utf-8")': 'base64.b64decode(manifest_b64 + "=" * (-len(manifest_b64) % 4)).decode("utf-8")',
-              'base64.b64decode(lockfile_b64).decode("utf-8")': 'base64.b64decode(lockfile_b64 + "=" * (-len(lockfile_b64) % 4)).decode("utf-8")',
-          }
-          for old, new in replacements.items():
-              if old not in finalize_content:
-                  raise SystemExit(f"missing expected finalize expression: {old}")
-              finalize_content = finalize_content.replace(old, new, 1)
-          finalize.write_text(finalize_content)
-
           run(blocks[1], "Materialize implementation")
           run(blocks[2], "Format and autofix")
 
