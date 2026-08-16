@@ -212,6 +212,89 @@ def test_frozen_runtime_without_desktop_marker_keeps_installer_detection(
     assert cast(dict[str, object], payload["binary_diagnostics"])["path_status"] != "bundled"
 
 
+@pytest.mark.parametrize(
+    ("installer_root", "marker_name", "expected_installer"),
+    [
+        ("pipx/venvs/hol-guard", "pipx_metadata.json", "pipx"),
+        ("uv/tools/hol-guard", "pyvenv.cfg", "uv"),
+    ],
+)
+def test_installer_kind_uses_authenticated_runtime_path_when_prefix_isolated(
+    installer_root: str,
+    marker_name: str,
+    expected_installer: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_prefix = tmp_path / "python-runtime"
+    base_prefix.mkdir()
+    runtime_root = tmp_path / installer_root
+    runtime_path = runtime_root / "lib/python3/site-packages/guard/update_commands.py"
+    runtime_path.parent.mkdir(parents=True)
+    (runtime_root / marker_name).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(update_commands.sys, "prefix", str(base_prefix))
+    monkeypatch.setattr(update_commands, "_runtime_package_path", lambda: runtime_path)
+
+    assert update_commands._installer_kind() == expected_installer
+
+
+def test_installer_kind_rejects_unmarked_runtime_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_prefix = tmp_path / "python-runtime"
+    base_prefix.mkdir()
+    runtime_path = tmp_path / "pipx/venvs/hol-guard/lib/python3/site-packages/guard/update_commands.py"
+    runtime_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(update_commands.sys, "prefix", str(base_prefix))
+    monkeypatch.setattr(update_commands, "_runtime_package_path", lambda: runtime_path)
+
+    assert update_commands._installer_kind() == "pip"
+
+
+def test_update_status_recovers_pipx_authority_from_isolated_daemon_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_prefix = tmp_path / "python-runtime"
+    base_prefix.mkdir()
+    runtime_root = tmp_path / "pipx/venvs/hol-guard"
+    runtime_path = runtime_root / "lib/python3/site-packages/guard/update_commands.py"
+    runtime_path.parent.mkdir(parents=True)
+    (runtime_root / "pipx_metadata.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(update_commands.sys, "prefix", str(base_prefix))
+    monkeypatch.setattr(update_commands, "_runtime_package_path", lambda: runtime_path)
+
+    def status_distribution(**kwargs: object) -> update_commands.InstalledDistribution:
+        assert kwargs["installer"] == "pipx"
+        return update_commands.InstalledDistribution(
+            name="hol-guard",
+            version="3.0.0a160",
+            root=runtime_root,
+        )
+
+    monkeypatch.setattr(update_commands, "_status_installed_distribution", status_distribution)
+    monkeypatch.setattr(
+        update_commands,
+        "_version_check_payload",
+        lambda current_version, **_kwargs: {
+            "source": "pypi",
+            "status": "current",
+            "current_version": current_version,
+            "latest_version": current_version,
+            "update_available": False,
+        },
+    )
+
+    payload = build_guard_update_status_payload(guard_home=tmp_path / "guard-home")
+
+    assert payload["installer"] == "pipx"
+    assert payload["current_version"] == "3.0.0a160"
+    assert payload["auto_updatable"] is True
+    assert payload["blocked_reason"] is None
+    assert "reason_code" not in payload
+
+
 def test_update_status_uses_persisted_alpha_channel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     guard_home = tmp_path / "guard-home"
     guard_home.mkdir()
