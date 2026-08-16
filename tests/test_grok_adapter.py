@@ -564,6 +564,42 @@ class TestGrokInventoryAndResponses:
         )
         assert payload == {"decision": "allow"}
 
+    def test_subagent_start_with_tool_name_is_not_prompt(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        envelope = normalize_grok_hook_payload(
+            {
+                "hookEventName": "subagent_start",
+                "sessionId": "session-redacted-015",
+                "cwd": str(workspace),
+                "workspaceRoot": str(workspace),
+                "subagentType": "explore",
+                "toolName": "spawn_subagent",
+            },
+            workspace=workspace,
+            home_dir=tmp_path,
+        )
+        assert envelope.event_name == "SubagentStart"
+        assert envelope.action_type == "config_change"
+
+    def test_session_start_with_read_tool_is_not_file_read(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        envelope = normalize_grok_hook_payload(
+            {
+                "hookEventName": "session_start",
+                "sessionId": "session-redacted-016",
+                "cwd": str(workspace),
+                "workspaceRoot": str(workspace),
+                "toolName": "read_file",
+                "toolInput": {"target_file": str(tmp_path / ".env")},
+            },
+            workspace=workspace,
+            home_dir=tmp_path,
+        )
+        assert envelope.event_name == "SessionStart"
+        assert envelope.action_type == "config_change"
+
     def test_spawn_subagent_envelope_is_prompt(self, tmp_path: Path) -> None:
         envelope = normalize_grok_hook_payload(
             _fixture("pretooluse_spawn_subagent.json"),

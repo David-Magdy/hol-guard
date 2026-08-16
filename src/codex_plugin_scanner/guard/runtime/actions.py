@@ -50,6 +50,7 @@ _FILE_READ_TOOL_NAMES = frozenset({"read", "read_file", "open_file", "view", "vi
 _FILE_WRITE_TOOL_NAMES = frozenset({"write", "edit", "multiedit", "write_file", "edit_file", "apply_patch"})
 _GROK_FILE_READ_TOOL_NAMES = frozenset({"grep", "glob", "list_dir", "listdir", "list_directory", "read"})
 _GROK_SUBAGENT_TOOL_NAMES = frozenset({"task", "spawn_subagent"})
+_GROK_LIFECYCLE_ENVELOPE_EVENTS = frozenset({"SessionStart", "SubagentStart"})
 _PATH_KEYS = (
     "path",
     "paths",
@@ -463,6 +464,10 @@ def normalize_grok_hook_payload(
         workspace=workspace,
         home_dir=home_dir,
     )
+    if envelope.event_name in _GROK_LIFECYCLE_ENVELOPE_EVENTS:
+        return replace(envelope, action_type="config_change")
+    if envelope.event_name != "PreToolUse":
+        return envelope
     tool_name = (envelope.tool_name or "").lower()
     if tool_name in _GROK_SUBAGENT_TOOL_NAMES:
         return replace(envelope, action_type="prompt")
