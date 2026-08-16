@@ -247,6 +247,7 @@ from .discovery import (
 from .extension_control_api import ExtensionControlApiError, ExtensionControlApiService
 from .hook_process_runner import HookProcessRunner
 from .lifecycle_journal import record_daemon_lifecycle_event
+from .local_cli_api import LocalCliApiError, LocalCliApiService
 from .manager import (
     GUARD_DAEMON_COMPATIBILITY_VERSION,
     acquire_guard_daemon_owner_lock,
@@ -663,6 +664,7 @@ class _GuardDaemonHTTPServer(BoundedThreadingHTTPServer):
             registry=BUILT_IN_COMMAND_EXTENSION_REGISTRY,
             runtime=self.extension_control_runtime,
         )
+        self.local_cli_api = LocalCliApiService(store=store)
         self.approval_attention = ApprovalAttentionCoordinator(
             store=store,
             runtime=self.runtime,
@@ -2084,6 +2086,12 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(history, extra_headers={"Cache-Control": "no-store"})
             return
+        if parsed.path == "/v1/local-clis":
+            self._write_json(
+                self._daemon_server().local_cli_api.list_items(),
+                extra_headers={"Cache-Control": "no-store"},
+            )
+            return
         if parsed.path == "/v1/capabilities":
             self._handle_capabilities()
             return
@@ -2491,10 +2499,14 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "/v1/extension-controls/recover-authority",
             "/v1/extension-controls/acknowledge-degraded",
         }
-        if parsed.path in extension_control_paths and not self._header_token_is_valid():
+        local_cli_paths = {
+            "/v1/local-clis/preview",
+            "/v1/local-clis/apply",
+        }
+        if parsed.path in extension_control_paths | local_cli_paths and not self._header_token_is_valid():
             self._write_unauthorized(extra_headers=self._cors_headers_for_request())
             return
-        if parsed.path in extension_control_paths:
+        if parsed.path in extension_control_paths | local_cli_paths:
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
@@ -2584,6 +2596,17 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 else:
                     response = self._daemon_server().extension_control_api.refresh()
             except ExtensionControlApiError as error:
+                self._write_json(error.to_payload(), status=error.status)
+                return
+            self._write_json(response, extra_headers={"Cache-Control": "no-store"})
+            return
+        if parsed.path in local_cli_paths:
+            try:
+                if parsed.path.endswith("/preview"):
+                    response = self._daemon_server().local_cli_api.preview(payload)
+                else:
+                    response = self._daemon_server().local_cli_api.apply(payload)
+            except LocalCliApiError as error:
                 self._write_json(error.to_payload(), status=error.status)
                 return
             self._write_json(response, extra_headers={"Cache-Control": "no-store"})
@@ -7162,6 +7185,9 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "/v1/extension-controls/refresh",
             "/v1/extension-controls/recover-authority",
             "/v1/extension-controls/acknowledge-degraded",
+            "/v1/local-clis",
+            "/v1/local-clis/preview",
+            "/v1/local-clis/apply",
             "/v1/harnesses",
             "/v1/notifications/setup",
             "/v1/policy",

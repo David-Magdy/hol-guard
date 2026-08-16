@@ -135,6 +135,18 @@ const cloudCluster = renderToStaticMarkup(createElement(ProtectionModuleRow, {
 }));
 assert.match(cloudCluster, /data-extension-brand="aws gcp azure"/);
 
+const customRow = renderToStaticMarkup(createElement(ProtectionModuleRow, {
+  extensionId: "local-cli.kubectl-abcdef12",
+  name: "kubectl",
+  description: "kubectl",
+  behavior: "Custom extension. Matching commands are allowed on this device.",
+  custom: true,
+  executables: ["kubectl"],
+  onOpen: () => undefined,
+}));
+assert.match(customRow, />Custom</);
+assert.match(customRow, /data-extension-brand="kubernetes"/);
+
 const technical = renderToStaticMarkup(createElement(TechnicalDetails, { children: createElement("code", null, "command.git") }));
 assert.match(technical, /<details/);
 assert.doesNotMatch(technical, / open/);

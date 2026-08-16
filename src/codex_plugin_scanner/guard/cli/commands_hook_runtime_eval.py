@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import shlex
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ from ..action_lattice import (
     normalize_guard_action_result,
 )
 from ..approval_scope_support import package_request_runtime_workspace_scope
+from ..local_cli_hook import apply_local_cli_grant, observe_unlisted_cli
 from ..local_supply_chain import (
     _package_evaluation_requires_external_archive_binding,
     _package_policy_override_evaluation,
@@ -623,6 +625,32 @@ def _evaluate_runtime_artifact_hook(
         current_policy_action = "allow"
         policy_action = "allow"
         approval_context_policy_action = "allow"
+    if raw_runtime_command is not None:
+        observe_unlisted_cli(
+            store=store,
+            command=raw_runtime_command,
+            cwd=runtime_workspace or Path.cwd(),
+            home_dir=context.home_dir,
+        )
+        if (
+            current_action_override is None
+            and cli_action_normalization is None
+            and payload_action_normalization is None
+            and not data_flow_signals
+            and not scanner_evidence
+            and (package_evaluation is None or package_policy_action != "block")
+        ):
+            granted = apply_local_cli_grant(
+                store=store,
+                command=raw_runtime_command,
+                cwd=runtime_workspace or Path.cwd(),
+                home_dir=context.home_dir,
+                current_action=current_policy_action,
+            )
+            if granted != current_policy_action:
+                current_policy_action = granted
+                policy_action = granted
+                approval_context_policy_action = granted
     runtime_artifact_hash = _runtime_hook_approval_context_token(
         artifact=approval_context_artifact,
         content_hash=artifact_content_hash,
