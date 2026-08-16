@@ -43,24 +43,24 @@ jobs:
 
           source = Path('src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py')
           text = source.read_text(encoding='utf-8')
-          old = '''    try:
-              supplied_guard_home = Path(cli_args[3]).resolve(strict=False)
-              expected_guard_home = guard_home.resolve(strict=False)
-          except (OSError, RuntimeError):
-              return None
-          '''
-          new = '''    supplied_guard_home_value = Path(cli_args[3])
-          if not supplied_guard_home_value.is_absolute() or not guard_home.is_absolute():
-              return None
-          try:
-              supplied_guard_home = supplied_guard_home_value.resolve(strict=False)
-              expected_guard_home = guard_home.resolve(strict=False)
-          except (OSError, RuntimeError):
-              return None
-          '''
-          if text.count(old) != 1:
-              raise SystemExit('absolute Guard-home validation anchor changed')
-          source.write_text(text.replace(old, new, 1), encoding='utf-8')
+          validation_start = text.index('def _validated_frozen_cli_args(')
+          anchor_start = text.index('    try:\n', validation_start)
+          anchor_end = text.index('    if supplied_guard_home != expected_guard_home:\n', anchor_start)
+          replacement = '\n'.join(
+              [
+                  '    supplied_guard_home_value = Path(cli_args[3])',
+                  '    if not supplied_guard_home_value.is_absolute() or not guard_home.is_absolute():',
+                  '        return None',
+                  '    try:',
+                  '        supplied_guard_home = supplied_guard_home_value.resolve(strict=False)',
+                  '        expected_guard_home = guard_home.resolve(strict=False)',
+                  '    except (OSError, RuntimeError):',
+                  '        return None',
+                  '',
+              ]
+          )
+          text = text[:anchor_start] + replacement + text[anchor_end:]
+          source.write_text(text, encoding='utf-8')
 
           tests = Path('tests/test_bounded_cli_hook_bridge.py')
           test_text = tests.read_text(encoding='utf-8')
@@ -74,9 +74,9 @@ jobs:
           ) -> None:
               config = _config(tmp_path, harness="grok")
               cli_args = cast(list[str], config["cli_args"])
-              relative_guard_home = Path.cwd().relative_to(Path.cwd()) / (tmp_path / "guard-home").relative_to(Path.cwd())
-              cli_args[3] = str(relative_guard_home)
+              cli_args[3] = "guard-home"
               config["frozen_launcher"] = True
+              monkeypatch.chdir(tmp_path)
               monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
 
               def forbidden_daemon(**kwargs: object) -> object:
@@ -97,10 +97,11 @@ jobs:
               tmp_path: Path,
           ) -> None:
               config = _config(tmp_path, harness="grok")
-              config["guard_home"] = "relative-guard-home"
+              config["guard_home"] = "guard-home"
               cli_args = cast(list[str], config["cli_args"])
-              cli_args[3] = "relative-guard-home"
+              cli_args[3] = "guard-home"
               config["frozen_launcher"] = True
+              monkeypatch.chdir(tmp_path)
               monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
 
               def forbidden_daemon(**kwargs: object) -> object:
