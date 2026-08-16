@@ -1,4 +1,4 @@
-import { an as fetchLocalCliApi, r as reactExports, j as jsxRuntimeExports, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as HiMiniArrowLeft, B as HiMiniCloud, ap as buildApprovalProofCredentials, aq as isApprovalProofSubmitDisabled, ar as ApprovalProofFieldInputs, as as fetchExtensionControlApi, Z as HiMiniLockClosed, at as HiMiniArrowPath, au as HiMiniInformationCircle, w as HiMiniXMark, ak as HiMiniMagnifyingGlass, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, av as WorkspacePageHeader } from "../guard-dashboard.js";
+import { an as fetchLocalCliApi, r as reactExports, j as jsxRuntimeExports, o as HiMiniShieldCheck, J as HiMiniExclamationTriangle, l as HiMiniCheckCircle, c as HiMiniChevronRight, y as HiMiniChevronDown, ao as HiMiniArrowLeft, ap as HiMiniPlus, aq as buildApprovalProofCredentials, ar as isApprovalProofSubmitDisabled, as as ApprovalProofFieldInputs, at as fetchExtensionControlApi, Z as HiMiniLockClosed, au as HiMiniArrowPath, av as HiMiniInformationCircle, w as HiMiniXMark, ak as HiMiniMagnifyingGlass, U as HiMiniClipboardDocumentCheck, V as HiMiniClipboard, aw as WorkspacePageHeader } from "../guard-dashboard.js";
 import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./approval-proof-modal.js";
 const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
@@ -218,6 +218,12 @@ function optionalString$1(value) {
 function isLocalCliId(value) {
   return CLI_ID_PATTERN.test(value);
 }
+function addedCustomExtensions(items) {
+  return items.filter((item) => item.state !== "unset");
+}
+function suggestedCustomExtensions(items) {
+  return items.filter((item) => item.state === "unset");
+}
 function normalizeLocalCliItem(value) {
   if (!isRecord(value)) throw new Error("Invalid local CLI item");
   const cliId = requiredString(value.cli_id, "id");
@@ -384,7 +390,8 @@ function ProtectionModuleRow(props) {
       /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex flex-wrap items-center gap-2", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-sm text-brand-dark", children: props.name }),
         props.required ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Required" }) : null,
-        props.managed ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Managed" }) : null
+        props.managed ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Managed" }) : null,
+        props.custom ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] font-semibold text-brand-dark/55", children: "Custom" }) : null
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block truncate text-sm text-brand-dark/70", children: props.behavior })
     ] }),
@@ -406,33 +413,41 @@ function InlineError({ message }) {
 function randomToken$1() {
   return crypto.randomUUID().replaceAll("-", "");
 }
-function localCliStateLabel(item) {
-  if (item.stale) return "This CLI changed. Review the allow-list again.";
-  if (item.state === "allowed") return "All matching commands from this CLI are allowed on this device.";
-  if (item.state === "blocked") return "All matching commands from this CLI are blocked on this device.";
-  return "Guard asks before commands from this CLI run.";
+function reviewTitle(name, state) {
+  if (state === "allowed") return `Add ${name} as a custom extension`;
+  if (state === "blocked") return `Block ${name}`;
+  return `Remove ${name}`;
 }
-function LocalClisSection(props) {
-  if (props.items.length === 0) return null;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-10", "aria-labelledby": "other-clis-heading", children: [
+function customExtensionStateLabel(item) {
+  if (item.stale) return "This extension's files changed. Review it again.";
+  if (item.state === "allowed") return "Custom extension. Matching commands are allowed on this device.";
+  if (item.state === "blocked") return "Custom extension. Matching commands are blocked on this device.";
+  return "Seen on this device. Add it as a custom extension to allow its commands.";
+}
+function CustomExtensionsSection(props) {
+  const added = addedCustomExtensions(props.items);
+  if (added.length === 0) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-10", "aria-labelledby": "custom-extensions-heading", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "other-clis-heading", className: "text-xl font-semibold tracking-tight text-brand-dark", children: "Other CLIs" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: "Tools Guard has seen that are not in the built-in Extensions catalog. Allow every matching command from one of them on this device." })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "custom-extensions-heading", className: "text-xl font-semibold tracking-tight text-brand-dark", children: "Custom extensions" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: "CLIs you added that are not in Guard's built-in catalog." })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-brand-dark/70", children: [
-        props.items.length,
-        " tools"
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onAdd, className: "inline-flex min-h-11 items-center gap-2 rounded-xl px-3 text-sm font-semibold text-brand-blue", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniPlus, { className: "size-4", "aria-hidden": "true" }),
+        "Add custom extension"
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-3 inline-flex items-start gap-2 text-sm text-brand-dark/75", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { className: "mt-0.5 size-4 shrink-0", "aria-hidden": "true" }),
-      props.cloudSummary
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: props.items.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(LocalCliRow, { item, onOpen: props.onOpen }, item.cli_id)) })
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: added.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(CustomExtensionRow, { item, onOpen: props.onOpen }, item.cli_id)) })
   ] });
 }
-function LocalCliRow(props) {
+function AddCustomExtensionButton(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onClick, className: "inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniPlus, { className: "size-4", "aria-hidden": "true" }),
+    "Add custom extension"
+  ] });
+}
+function CustomExtensionRow(props) {
   const handleOpen = reactExports.useCallback(() => {
     props.onOpen(props.item.cli_id);
   }, [props]);
@@ -441,19 +456,32 @@ function LocalCliRow(props) {
     {
       name: props.item.name,
       description: props.item.example_label,
-      behavior: localCliStateLabel(props.item),
+      behavior: customExtensionStateLabel(props.item),
+      custom: true,
       onOpen: handleOpen
     }
   );
+}
+function AddCustomExtensionDialog(props) {
+  const suggestions = suggestedCustomExtensions(props.items);
+  const dialogRef = useModalDialog(props.onClose);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: dialogRef, tabIndex: -1, role: "dialog", "aria-modal": "true", "aria-labelledby": "add-custom-extension-title", className: "w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "add-custom-extension-title", className: "text-xl font-semibold text-brand-dark", children: "Add a custom extension" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-brand-dark/80", children: "Guard can turn a CLI it has already seen on this device into an extension. After you add it, you can allow every matching command from that tool." }),
+    suggestions.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 text-sm leading-6 text-brand-dark/75", children: "No unused CLIs yet. Run the tool once in a protected app, then come back here to add it." }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 max-h-80 overflow-auto", children: suggestions.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(CustomExtensionRow, { item, onOpen: props.onOpen }, item.cli_id)) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6 flex justify-end", children: /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: props.onClose, className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark", children: "Close" }) })
+  ] }) });
 }
 function LocalCliDetail(props) {
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const [pending, setPending] = reactExports.useState(null);
   const [busy, setBusy] = reactExports.useState(false);
   const [error, setError] = reactExports.useState(null);
+  const added = props.item.state !== "unset";
+  const requestAdd = reactExports.useCallback(() => setPending("allowed"), []);
   const requestAllow = reactExports.useCallback(() => setPending("allowed"), []);
   const requestBlock = reactExports.useCallback(() => setPending("blocked"), []);
-  const requestClear = reactExports.useCallback(() => setPending("unset"), []);
+  const requestRemove = reactExports.useCallback(() => setPending("unset"), []);
   const clearPending = reactExports.useCallback(() => {
     if (!busy) setPending(null);
   }, [busy]);
@@ -479,7 +507,7 @@ function LocalCliDetail(props) {
       setPending(null);
       await props.onRefresh();
     } catch (caught) {
-      setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not update this CLI allow-list.");
+      setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not update this custom extension.");
     } finally {
       setBusy(false);
     }
@@ -497,16 +525,16 @@ function LocalCliDetail(props) {
     /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mt-4 border-b border-slate-200 pb-6", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-mono text-xs font-semibold tracking-[0.14em] text-slate-400", children: props.item.example_label }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "mt-2 text-2xl font-semibold tracking-tight text-brand-dark", children: props.item.name }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-2xl text-sm leading-6 text-slate-500", children: localCliStateLabel(props.item) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 max-w-2xl text-sm leading-6 text-brand-dark/75", children: "Allowing this CLI covers every matching invocation of this exact tool on this device. Guard still blocks destructive or wrapped commands that are not just this CLI." }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 flex flex-wrap gap-3", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", onClick: requestAllow, children: "Allow this CLI" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark", onClick: requestBlock, children: "Block this CLI" }),
-        props.item.state !== "unset" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark/80", onClick: requestClear, children: "Clear this-device rule" }) : null
-      ] })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-2xl text-sm leading-6 text-slate-500", children: customExtensionStateLabel(props.item) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 max-w-2xl text-sm leading-6 text-brand-dark/75", children: "Adding this custom extension lets Guard treat this exact CLI like the built-in tools. You can allow every matching command on this device. Guard still blocks wrapped or destructive commands that are not just this tool." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 flex flex-wrap gap-3", children: added ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", onClick: requestAllow, children: "Allow this extension's commands" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark", onClick: requestBlock, children: "Block this extension" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark/80", onClick: requestRemove, children: "Remove custom extension" })
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", onClick: requestAdd, children: "Add custom extension" }) })
     ] }),
     pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-      LocalCliReviewModal,
+      CustomExtensionReviewModal,
       {
         item: props.item,
         nextState: pending,
@@ -519,11 +547,11 @@ function LocalCliDetail(props) {
     ) : null
   ] });
 }
-function LocalCliReviewModal(props) {
+function CustomExtensionReviewModal(props) {
   const [password, setPassword] = reactExports.useState("");
   const [totp, setTotp] = reactExports.useState("");
   const dialogRef = useModalDialog(props.onCancel, !props.busy);
-  const verb = props.nextState === "allowed" ? "Allow" : props.nextState === "blocked" ? "Block" : "Clear";
+  const title = reviewTitle(props.item.name, props.nextState);
   const handlePassword = reactExports.useCallback((event) => {
     setPassword(event.target.value);
   }, []);
@@ -542,16 +570,9 @@ function LocalCliReviewModal(props) {
     { approvalPassword: password, approvalTotpCode: totp },
     props.busy
   );
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { ref: dialogRef, tabIndex: -1, role: "dialog", "aria-modal": "true", "aria-labelledby": "local-cli-review-title", onSubmit: handleSubmit, className: "w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("h2", { id: "local-cli-review-title", className: "text-xl font-semibold text-brand-dark", children: [
-      verb,
-      " ",
-      props.item.name
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-2 text-sm leading-6 text-brand-dark/80", children: [
-      verb,
-      " every matching command from this CLI on this device. This does not sync to other machines."
-    ] }),
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { ref: dialogRef, tabIndex: -1, role: "dialog", "aria-modal": "true", "aria-labelledby": "custom-extension-review-title", onSubmit: handleSubmit, className: "w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "custom-extension-review-title", className: "text-xl font-semibold text-brand-dark", children: title }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-brand-dark/80", children: "This stays on this device. Guard Cloud can keep the same custom extension on your other machines." }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       ApprovalProofFieldInputs,
       {
@@ -577,7 +598,7 @@ function useLocalCliCatalog() {
       setData(await fetchLocalCliList());
       setError(null);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Guard could not load other CLIs.");
+      setError(caught instanceof Error ? caught.message : "Guard could not load custom extensions.");
     }
   }, []);
   reactExports.useEffect(() => {
@@ -3058,6 +3079,7 @@ function ProtectionCenterWorkspace() {
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = reactExports.useRef(null);
   const localClis = useLocalCliCatalog();
+  const [addingCustom, setAddingCustom] = reactExports.useState(false);
   const load = reactExports.useCallback(async () => {
     setState((current) => current.kind === "ready" ? current : { kind: "loading" });
     try {
@@ -3104,10 +3126,13 @@ function ProtectionCenterWorkspace() {
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
   const openLocalCliDetail = reactExports.useCallback((cliId) => {
+    setAddingCustom(false);
     window.history.pushState({}, "", localCliHref(cliId));
     setRouteState({ route: { kind: "local-cli", cliId }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
+  const openAddCustom = reactExports.useCallback(() => setAddingCustom(true), []);
+  const closeAddCustom = reactExports.useCallback(() => setAddingCustom(false), []);
   reactExports.useCallback((next) => {
     if (!canonicalSelected) return;
     const href = extensionDetailHref(canonicalSelected, next);
@@ -3262,22 +3287,25 @@ function ProtectionCenterWorkspace() {
     mutationError && !pending ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: mutationError }) }) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsx(PatternSearchConsole, { catalog: catalogExtensions, effective: state.effective, onRefresh: load, onOpenExtension: openExtension }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(
-      LocalClisSection,
+      CustomExtensionsSection,
       {
         items: localClis.data?.items ?? [],
-        cloudSummary: localClis.data?.cloud.summary ?? "These allows stay on this device. Guard Cloud can keep the same CLI trusted on your other devices.",
-        onOpen: openLocalCliDetail
+        onOpen: openLocalCliDetail,
+        onAdd: openAddCustom
       }
     ),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-10", "aria-labelledby": "all-tools-heading", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "all-tools-heading", className: "text-xl font-semibold tracking-tight text-brand-dark", children: "All tools" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: "Every tool Guard can watch on this device. Open one to adjust its command patterns." })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-slate-500", children: "Every built-in tool Guard can watch on this device. Open one to adjust its command patterns." })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-brand-dark/70", children: [
-          catalogExtensions.length,
-          " tools"
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-3", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(AddCustomExtensionButton, { onClick: openAddCustom }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-brand-dark/70", children: [
+            catalogExtensions.length,
+            " tools"
+          ] })
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: catalogExtensions.map((extension2) => /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -3293,6 +3321,14 @@ function ProtectionCenterWorkspace() {
         extension2.extension_id
       )) })
     ] }),
+    addingCustom ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      AddCustomExtensionDialog,
+      {
+        items: localClis.data?.items ?? [],
+        onClose: closeAddCustom,
+        onOpen: openLocalCliDetail
+      }
+    ) : null,
     pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(ReviewModal, { change: pending, busy, error: mutationError, approvalGate: resolvedApprovalGate, onCancel: () => {
       if (!busy) setPending(null);
     }, onConfirm: confirm }) : null

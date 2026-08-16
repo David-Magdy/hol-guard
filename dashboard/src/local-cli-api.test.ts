@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 
-import { isLocalCliId, normalizeLocalCliItem, normalizeLocalCliList } from "./local-cli-api";
+import {
+  addedCustomExtensions,
+  isLocalCliId,
+  normalizeLocalCliItem,
+  normalizeLocalCliList,
+  suggestedCustomExtensions,
+} from "./local-cli-api";
 import { parseProtectionRoute, localCliHref } from "./local-cli-links";
 
 assert.equal(isLocalCliId("local-cli.cwv-py-abcdef12"), true);
@@ -38,3 +44,5 @@ assert.deepEqual(parseProtectionRoute("/extensions/local-cli/local-cli.cwv-py-ab
 });
 assert.equal(parseProtectionRoute("/extensions/command.git").kind, "detail");
 assert.equal(localCliHref("local-cli.cwv-py-abcdef12"), "/extensions/local-cli/local-cli.cwv-py-abcdef12");
+assert.equal(addedCustomExtensions(list.items).length, 1);
+assert.equal(suggestedCustomExtensions(list.items).length, 0);

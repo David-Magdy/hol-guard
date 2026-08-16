@@ -66,9 +66,7 @@ def ensure_local_cli_schema(connection: sqlite3.Connection) -> None:
         )
         """
     )
-    _ = connection.execute(
-        "insert or ignore into local_cli_authority (singleton, revision) values (1, 0)"
-    )
+    _ = connection.execute("insert or ignore into local_cli_authority (singleton, revision) values (1, 0)")
 
 
 def _marker(row: object) -> tuple[int, str]:

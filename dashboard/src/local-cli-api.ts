@@ -77,6 +77,14 @@ export function isLocalCliId(value: string): boolean {
   return CLI_ID_PATTERN.test(value);
 }
 
+export function addedCustomExtensions(items: readonly LocalCliItem[]): LocalCliItem[] {
+  return items.filter((item) => item.state !== "unset");
+}
+
+export function suggestedCustomExtensions(items: readonly LocalCliItem[]): LocalCliItem[] {
+  return items.filter((item) => item.state === "unset");
+}
+
 export function normalizeLocalCliItem(value: unknown): LocalCliItem {
   if (!isRecord(value)) throw new Error("Invalid local CLI item");
   const cliId = requiredString(value.cli_id, "id");

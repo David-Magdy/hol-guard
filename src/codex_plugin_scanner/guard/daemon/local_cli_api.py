@@ -44,8 +44,8 @@ class LocalCliApiService:
             "cloud": {
                 "sync_local_only": True,
                 "summary": (
-                    "These allows stay on this device. "
-                    "Guard Cloud can keep the same CLI trusted on your other devices."
+                    "Custom extensions stay on this device. "
+                    "Guard Cloud can keep the same extension on your other machines."
                 ),
             },
         }
@@ -56,7 +56,7 @@ class LocalCliApiService:
         expected = self._required_int(payload, "previous_revision")
         if expected != current:
             raise LocalCliApiError(409, "revision_conflict")
-        verb = "Allow" if state == "allowed" else "Block" if state == "blocked" else "Clear"
+        summary = _preview_summary(identity.name, state)
         return {
             "schema_version": _LOCAL_CLI_API_SCHEMA,
             "previous_revision": current,
@@ -64,7 +64,7 @@ class LocalCliApiService:
             "cli_id": identity.cli_id,
             "identity_hash": identity.identity_hash,
             "state": state,
-            "summary": f"{verb} every matching command from {identity.name} on this device.",
+            "summary": summary,
         }
 
     def apply(self, payload: dict[str, object]) -> dict[str, object]:
@@ -151,6 +151,14 @@ class LocalCliApiService:
         if type(value) is not int:
             raise LocalCliApiError(400, f"missing_{key}")
         return value
+
+
+def _preview_summary(name: str, state: str) -> str:
+    if state == "allowed":
+        return f"Add {name} as a custom extension and allow its matching commands on this device."
+    if state == "blocked":
+        return f"Keep {name} as a custom extension and block its matching commands on this device."
+    return f"Remove the {name} custom extension from this device."
 
 
 def _cli_kind(value: str) -> LocalCliKind | None:

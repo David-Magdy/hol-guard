@@ -22,7 +22,13 @@ import {
   type ExtensionDetailUrlState,
 } from "../extension-control-center-model";
 import { parseProtectionRoute, localCliHref, type ProtectionRoute } from "../local-cli-links";
-import { LocalCliDetail, LocalClisSection, useLocalCliCatalog } from "./local-clis-panel";
+import {
+  AddCustomExtensionButton,
+  AddCustomExtensionDialog,
+  CustomExtensionsSection,
+  LocalCliDetail,
+  useLocalCliCatalog,
+} from "./local-clis-panel";
 import {
   acknowledgeDegradedExtensionControlAuthority,
   applyExtensionMutation,
@@ -220,6 +226,7 @@ export function ProtectionCenterWorkspace() {
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = useRef<string | null>(null);
   const localClis = useLocalCliCatalog();
+  const [addingCustom, setAddingCustom] = useState(false);
 
   const load = useCallback(async (): Promise<EffectiveExtensionControls | null> => {
     // Keep the already-rendered protection data mounted while a refresh is in
@@ -276,10 +283,13 @@ export function ProtectionCenterWorkspace() {
   }, []);
 
   const openLocalCliDetail = useCallback((cliId: string) => {
+    setAddingCustom(false);
     window.history.pushState({}, "", localCliHref(cliId));
     setRouteState({ route: { kind: "local-cli", cliId }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
+  const openAddCustom = useCallback(() => setAddingCustom(true), []);
+  const closeAddCustom = useCallback(() => setAddingCustom(false), []);
 
   const updateDetailState = useCallback((next: ExtensionDetailUrlState) => {
     if (!canonicalSelected) return;
@@ -440,19 +450,22 @@ export function ProtectionCenterWorkspace() {
 
     <PatternSearchConsole catalog={catalogExtensions} effective={state.effective} onRefresh={load} onOpenExtension={openExtension} />
 
-    <LocalClisSection
+    <CustomExtensionsSection
       items={localClis.data?.items ?? []}
-      cloudSummary={localClis.data?.cloud.summary ?? "These allows stay on this device. Guard Cloud can keep the same CLI trusted on your other devices."}
       onOpen={openLocalCliDetail}
+      onAdd={openAddCustom}
     />
 
     <section className="mt-10" aria-labelledby="all-tools-heading">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 id="all-tools-heading" className="text-xl font-semibold tracking-tight text-brand-dark">All tools</h2>
-          <p className="mt-1 text-sm text-slate-500">Every tool Guard can watch on this device. Open one to adjust its command patterns.</p>
+          <p className="mt-1 text-sm text-slate-500">Every built-in tool Guard can watch on this device. Open one to adjust its command patterns.</p>
         </div>
-        <span className="text-sm text-brand-dark/70">{catalogExtensions.length} tools</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <AddCustomExtensionButton onClick={openAddCustom} />
+          <span className="text-sm text-brand-dark/70">{catalogExtensions.length} tools</span>
+        </div>
       </div>
       <div className="mt-4">{catalogExtensions.map((extension) => <ProtectionModuleRow
         key={extension.extension_id}
@@ -465,6 +478,13 @@ export function ProtectionCenterWorkspace() {
       />)}</div>
     </section>
 
+    {addingCustom ? (
+      <AddCustomExtensionDialog
+        items={localClis.data?.items ?? []}
+        onClose={closeAddCustom}
+        onOpen={openLocalCliDetail}
+      />
+    ) : null}
     {pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}
   </div>;
 }
