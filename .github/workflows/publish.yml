@@ -127,7 +127,13 @@ jobs:
             PYPI_VERSIONS=$(uv run --no-project --with packaging==25.0 python release-tooling/scripts/verify_release_registry.py list-versions --registry pypi)
             TESTPYPI_VERSIONS=$(uv run --no-project --with packaging==25.0 python release-tooling/scripts/verify_release_registry.py list-versions --registry testpypi)
             TAG_VERSIONS=$(git -C release-tooling tag --list 'alpha/v3.1.0a*' | sed 's#^alpha/v##' | jq -R -s 'split("\n") | map(select(length > 0))')
-            EXISTING_VERSIONS=$(jq -n --argjson pypi "$PYPI_VERSIONS" --argjson testpypi "$TESTPYPI_VERSIONS" --argjson tags "$TAG_VERSIONS" '$pypi + $testpypi + $tags | unique')
+            EXISTING_VERSIONS=$(
+              jq -n \
+                --argjson pypi "$PYPI_VERSIONS" \
+                --argjson testpypi "$TESTPYPI_VERSIONS" \
+                --argjson tags "$TAG_VERSIONS" \
+                '$pypi + $testpypi + $tags | unique | map(select(contains(".dev") | not))'
+            )
 
             if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
               if [[ "$RELEASE_CHANNEL" != "alpha" || "$RELEASE_TRAIN" != "3.1" ]]; then
@@ -152,10 +158,7 @@ jobs:
               fi
             fi
 
-            mapfile -t OTHER_VERSIONS < <(
-              jq -r --arg version "$VERSION" \
-                '.[] | select(. != $version and (contains(".dev") | not))' <<< "$EXISTING_VERSIONS"
-            )
+            mapfile -t OTHER_VERSIONS < <(jq -r --arg version "$VERSION" '.[] | select(. != $version)' <<< "$EXISTING_VERSIONS")
             VALIDATOR=(--channel alpha --version "$VERSION" --git-ref refs/heads/release/3.1 --actual-ref "$EVENT_REF" --github-sha "$SOURCE_SHA" --expected-sha "$SOURCE_SHA")
             for existing in "${OTHER_VERSIONS[@]}"; do
               VALIDATOR+=(--existing-version "$existing")
