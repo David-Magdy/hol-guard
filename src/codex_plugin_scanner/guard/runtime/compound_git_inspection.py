@@ -119,10 +119,8 @@ def is_low_risk_git_inspection_segment(segment: ShellExecutionSegment) -> bool:
             )
         )
     if operation == "status":
-        return (
-            bool(args)
-            and all(_safe_status_arg(arg) for arg in args)
-            and git_status_has_execution_free_config(repository_cwd, git_binary=resolved_git)
+        return all(_safe_status_arg(arg) for arg in args) and git_status_has_execution_free_config(
+            repository_cwd, git_binary=resolved_git
         )
     if operation == "branch":
         return _safe_branch_args(args) and _git_log_has_execution_free_config(
@@ -244,7 +242,7 @@ def _safe_bounded_log_args(args: tuple[str, ...]) -> bool:
 
 
 def _safe_fetch_args(args: tuple[str, ...]) -> bool:
-    if args in {("origin", "--quiet"), ("--quiet", "origin")}:
+    if args in {("origin",), ("origin", "--quiet"), ("--quiet", "origin")}:
         return True
     return len(args) == 2 and args[0] == "origin" and _safe_ref(args[1])
 
@@ -413,8 +411,8 @@ def _git_log_has_execution_free_config(
 ) -> bool:
     git_pager = os.environ.get("GIT_PAGER")
     if git_pager is not None:
-        return git_pager.strip() in {"", "cat"} and git_config_routing_environment_is_clean()
-    if os.environ.get("PAGER", "").strip() not in {"", "cat"}:
+        return git_pager in {"", "cat"} and git_config_routing_environment_is_clean()
+    if os.environ.get("PAGER", "") not in {"", "cat"}:
         return False
     if not git_config_routing_environment_is_clean():
         return False
@@ -434,7 +432,7 @@ def _git_log_has_execution_free_config(
             continue
         if result.returncode != 0:
             return False
-        values = [value.strip() for value in result.stdout.split("\0") if value.strip()]
+        values = [value for value in result.stdout.split("\0") if value]
         if any(value != "cat" for value in values):
             return False
     return True

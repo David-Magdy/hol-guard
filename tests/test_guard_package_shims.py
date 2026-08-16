@@ -28,6 +28,7 @@ from codex_plugin_scanner.guard import store as guard_store_module
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.approvals import apply_approval_resolution
 from codex_plugin_scanner.guard.cli import commands as guard_commands_module
+from codex_plugin_scanner.guard.cli.commands_dispatch_local import _package_shim_approval_matches_fresh_request
 from codex_plugin_scanner.guard.models import PolicyDecision
 from codex_plugin_scanner.guard.package_shim_gate import (
     package_shim_command_requires_external_archive_binding,
@@ -596,6 +597,8 @@ def test_trusted_python_flags_omit_dash_p_before_python_311(monkeypatch: pytest.
 
 def test_package_manager_shim_uses_trusted_guard_import_path(tmp_path: Path, capsys) -> None:
     home_dir = tmp_path / "guard-home"
+    home_dir.mkdir()
+    (home_dir / "config.toml").write_text("approval_wait_timeout_seconds = 0\n", encoding="utf-8")
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir(parents=True, exist_ok=True)
     malicious_package = workspace_dir / "codex_plugin_scanner"
@@ -756,6 +759,8 @@ def test_package_manager_shim_runs_homebrew_monitor_only_command_once(tmp_path: 
 
 def test_package_manager_shim_waits_out_transient_store_writer_lock(tmp_path: Path, capsys) -> None:
     home_dir = tmp_path / "guard-home"
+    home_dir.mkdir()
+    (home_dir / "config.toml").write_text("approval_wait_timeout_seconds = 0\n", encoding="utf-8")
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir(parents=True, exist_ok=True)
     fake_bin = tmp_path / "fake-bin"

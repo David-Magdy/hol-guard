@@ -53,6 +53,11 @@ GITHUB_CAPABILITY_CASES = (
     (("ssh-key", "delete", "123"), "access_remote", "github.command.access-mutation"),
     (("run", "cancel", "--help"), "workflow_remote", "github.command.workflow-mutation"),
     (
+        ("run", "rerun", "31707639186", "--repo", "hashgraph-online/hol-guard", "--failed"),
+        "routine_workflow_remote",
+        "github.command.routine-failed-run-rerun",
+    ),
+    (
         ("--repo", "example/project", "workflow", "view", "release.yml"),
         "read_remote",
         "github.command.proven-read",
