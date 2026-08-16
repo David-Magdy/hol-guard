@@ -1,0 +1,41 @@
+name: Temporary format frozen hook backport
+
+on:
+  push:
+    branches:
+      - fix/release-30-frozen-cli-hook-bridge-isolated
+
+permissions:
+  contents: write
+
+jobs:
+  format-and-clean:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/release-30-frozen-cli-hook-bridge-isolated
+          persist-credentials: true
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: 0.9.26
+          enable-cache: false
+
+      - name: Apply exact Ruff formatting and remove helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          uvx --from ruff==0.15.17 ruff format src/codex_plugin_scanner/guard/daemon/bounded_http.py
+          uvx --from ruff==0.15.17 ruff format --check src/
+          git diff --check
+          git rm .github/workflows/temporary-format-frozen-hook-backport.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/codex_plugin_scanner/guard/daemon/bounded_http.py
+          git commit -m "fix(ci): format inherited daemon admission helper"
+          git push origin HEAD:fix/release-30-frozen-cli-hook-bridge-isolated
