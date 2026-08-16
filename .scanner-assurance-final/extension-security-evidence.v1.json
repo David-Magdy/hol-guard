@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hol.org/schemas/extension-security-evidence.v1.json",
+  "title": "HOL Guard extension security evidence envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "tenant_id",
+    "subject_id",
+    "sequence",
+    "created_at",
+    "artifact_digest",
+    "assurance_evidence_digest",
+    "assurance",
+    "provenance",
+    "evidence_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "hol-guard.extension-security-evidence.v1"},
+    "evidence_id": {"type": "string", "format": "uuid"},
+    "tenant_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "subject_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "sequence": {"type": "integer", "minimum": 1},
+    "created_at": {"type": "string", "format": "date-time"},
+    "artifact_digest": {"$ref": "#/$defs/sha256"},
+    "assurance_evidence_digest": {"$ref": "#/$defs/sha256"},
+    "assurance": {"$ref": "assurance-report.v1.json"},
+    "provenance": {"type": ["object", "null"]},
+    "evidence_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
