@@ -147,6 +147,7 @@ def test_frozen_fallback_runs_supported_cli_subcommand_without_python_flags(
     config = _config(tmp_path, harness="grok")
     config["python_executable"] = "/Applications/HOL Guard.app/Contents/MacOS/hol-guard"
     config["frozen_launcher"] = True
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
     monkeypatch.setattr(bounded_cli_hook_bridge.sys, "executable", config["python_executable"])
     monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", lambda **kwargs: None)
     monkeypatch.setattr(bounded_cli_hook_bridge, "run_isolated_hook_process", run)
@@ -172,6 +173,7 @@ def test_frozen_fallback_rejects_forged_executable_and_arguments(
     config["python_executable"] = "/bin/sh"
     config["cli_args"] = ["-c", "echo bypassed"]
     config["frozen_launcher"] = True
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
     monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", lambda **kwargs: None)
 
     def forbidden_runner(*args: object, **kwargs: object) -> BoundedHookProcessResult:
@@ -185,6 +187,89 @@ def test_frozen_fallback_rejects_forged_executable_and_arguments(
 
     assert returncode == 0
     assert _json_object(output.getvalue())["decision"] == "deny"
+
+
+def test_live_frozen_runtime_ignores_forged_config_mode_and_executable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    observed: list[str] = []
+
+    def run(command: Sequence[str], **kwargs: object) -> BoundedHookProcessResult:
+        del kwargs
+        observed.extend(command)
+        return BoundedHookProcessResult(0, '{"decision":"allow"}\n', False, False)
+
+    config = _config(tmp_path, harness="grok")
+    config["python_executable"] = "/bin/sh"
+    config["frozen_launcher"] = False
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "executable", "/app/hol-guard")
+    monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", lambda **kwargs: None)
+    monkeypatch.setattr(bounded_cli_hook_bridge, "run_isolated_hook_process", run)
+
+    assert bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}") == 0
+    assert observed == [
+        "/app/hol-guard",
+        "hook",
+        "--guard-home",
+        str((tmp_path / "guard-home").resolve()),
+        "--harness",
+        "grok",
+    ]
+
+
+def test_non_frozen_runtime_rejects_forged_frozen_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path, harness="grok")
+    config["frozen_launcher"] = True
+    monkeypatch.delattr(bounded_cli_hook_bridge.sys, "frozen", raising=False)
+    monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", lambda **kwargs: None)
+
+    def forbidden_runner(*args: object, **kwargs: object) -> BoundedHookProcessResult:
+        del args, kwargs
+        raise AssertionError("config must not force frozen dispatch")
+
+    monkeypatch.setattr(bounded_cli_hook_bridge, "run_isolated_hook_process", forbidden_runner)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        returncode = bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}")
+
+    assert returncode == 0
+    assert _json_object(output.getvalue())["decision"] == "deny"
+
+
+def test_frozen_fallback_accepts_equivalent_noncanonical_guard_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    observed: list[str] = []
+
+    def run(command: Sequence[str], **kwargs: object) -> BoundedHookProcessResult:
+        del kwargs
+        observed.extend(command)
+        return BoundedHookProcessResult(0, '{"decision":"allow"}\n', False, False)
+
+    config = _config(tmp_path, harness="grok")
+    cli_args = cast(list[str], config["cli_args"])
+    cli_args[3] = str(tmp_path / "unused" / ".." / "guard-home")
+    config["frozen_launcher"] = True
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "executable", "/app/hol-guard")
+    monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", lambda **kwargs: None)
+    monkeypatch.setattr(bounded_cli_hook_bridge, "run_isolated_hook_process", run)
+
+    assert bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}") == 0
+    assert observed == [
+        "/app/hol-guard",
+        "hook",
+        "--guard-home",
+        str((tmp_path / "guard-home").resolve()),
+        "--harness",
+        "grok",
+    ]
 
 
 @pytest.mark.parametrize("harness", ["hermes", "openclaw"])
@@ -203,6 +288,7 @@ def test_frozen_fallback_accepts_normalized_json_hook_contract(
     config = _config(tmp_path, harness=harness)
     config["cli_args"] = [*cast(list[str], config["cli_args"]), "--json"]
     config["frozen_launcher"] = True
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
     monkeypatch.setattr(bounded_cli_hook_bridge.sys, "executable", "/app/hol-guard")
     monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", lambda **kwargs: None)
     monkeypatch.setattr(bounded_cli_hook_bridge, "run_isolated_hook_process", run)
