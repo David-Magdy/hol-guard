@@ -10,7 +10,7 @@
   "oracle_source_sha256": {
     "guard_command_corpus_oracle.py": "7c7dee62735838dd5cf759156a64860e24c1afc6a5df54aeb402a9785f1a0d91",
     "guard_command_corpus_oracle_types.py": "31ae3f338de752bf5d122e9a8274184bc525c1fc4dbf4410f970bb380628e59c",
-    "guard_command_corpus_oracle_benign.py": "a857e5b8d4c4abce7e92c7b7f66f6440ee269a0c5201c88ed23bd4a40eb6e5b6",
+    "guard_command_corpus_oracle_benign.py": "7a2b72a23365f39ae602734f1e3c796af4fd76f6f459c7f2efcd49efb236530c",
     "guard_command_corpus_oracle_adversarial.py": "cbe6761e3ae7e6f646947d212998a26846742ccd702f2d6b237c72f83b8d23c5",
     "guard_command_corpus_oracle_loader.py": "21c96c2bfbb655cce88f70c17cad3a8681c9cfc4d87118fbb6685b8d88c6032f"
   },
@@ -28,7 +28,7 @@
   "canonical_digests": {
     "benign": "2a105eaceeab232cc4334fc83a65948e4c7eb5301cc657ac610a6c92eb6743d6",
     "adversarial": "ce76a78cfff66a5794a4daa203956bb4e56d69899af6b70c4708b69e741db702",
-    "oracle": "06587ff2da23a60f2c5322bfec27b9abe660118184edb44ef80bc2225e51c403"
+    "oracle": "5777323f4fa08172f8d18c2f36e1c28a88ccc936da18e134617ad642167eb570"
   },
   "benign_target_count": 1000,
   "benign_variants_per_seed": 25,
