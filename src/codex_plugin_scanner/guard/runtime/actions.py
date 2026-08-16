@@ -1028,6 +1028,8 @@ def _action_type(
         return "prompt"
     if mcp_server is not None:
         return "mcp_tool"
+    if normalized_tool in {"webfetch", "web_fetch", "web_search", "websearch"}:
+        return "network_request"
     if normalized_tool in _FILE_READ_TOOL_NAMES:
         return "file_read"
     if normalized_tool in _FILE_WRITE_TOOL_NAMES:

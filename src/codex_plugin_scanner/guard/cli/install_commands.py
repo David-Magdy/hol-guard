@@ -340,7 +340,13 @@ def _grok_pretool_is_catchall(pretool_hook: Path) -> bool:
     if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
         return False
     matcher = entries[0].get("matcher")
-    return matcher in {None, ""}
+    if matcher not in {None, ""}:
+        return False
+    nested = entries[0].get("hooks")
+    if not isinstance(nested, list) or len(nested) != 1 or not isinstance(nested[0], dict):
+        return False
+    command = nested[0].get("command")
+    return nested[0].get("type") == "command" and isinstance(command, str) and bool(command.strip())
 
 
 def _grok_protection_checks(context: HarnessContext) -> dict[str, object]:

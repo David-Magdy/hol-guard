@@ -112,6 +112,7 @@ class TestGrokInstallUninstall:
         assert "Read(**/.grok/auth/**)" in managed_text
         assert "Read(~/" not in managed_text
         assert "[[hooks.PreToolUse]]" in managed_text
+        assert "[[hooks.SessionStart]]" in managed_text
 
     def test_repeated_install_is_idempotent(self, tmp_path: Path, monkeypatch) -> None:
         ctx = _ctx(tmp_path)
@@ -288,6 +289,14 @@ class TestGrokHookPayloadFixtures:
     def test_webfetch_fixture_normalizes_tool(self) -> None:
         normalized = prepare_grok_hook_payload(_fixture("pretooluse_webfetch.json"))
         assert normalized["tool_name"] == "WebFetch"
+
+    def test_webfetch_envelope_is_network_request(self, tmp_path: Path) -> None:
+        envelope = normalize_grok_hook_payload(
+            _fixture("pretooluse_webfetch.json"),
+            workspace=tmp_path / "ws",
+            home_dir=tmp_path,
+        )
+        assert envelope.action_type == "network_request"
 
     def test_unknown_tool_is_preserved(self) -> None:
         normalized = prepare_grok_hook_payload(_fixture("pretooluse_unknown_tool.json"))

@@ -133,6 +133,22 @@ def test_grok_protection_checks_flag_stale_matchers(tmp_path: Path, monkeypatch)
     assert any("stale" in warning.lower() for warning in checks["warnings"])
 
 
+def test_grok_protection_checks_reject_empty_catchall(tmp_path: Path, monkeypatch) -> None:
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.adapters.grok.install_guard_shim",
+        lambda *args, **kwargs: {"shim_path": str(ctx.guard_home / "bin" / "guard-grok"), "notes": []},
+    )
+    GrokHarnessAdapter().install(ctx)
+    (ctx.guard_home / "bin").mkdir(parents=True, exist_ok=True)
+    (ctx.guard_home / "bin" / "guard-grok").write_text("#!/bin/sh\n", encoding="utf-8")
+    pretool = ctx.home_dir / ".grok" / "hooks" / "hol-guard-pretooluse.json"
+    pretool.write_text(json.dumps({"hooks": {"PreToolUse": [{}]}}), encoding="utf-8")
+    checks = _grok_protection_checks(ctx)
+    assert checks["pretool_catchall_installed"] is False
+    assert checks["ready"] is False
+
+
 def test_normalize_harness_payload_supports_grok_spawn_subagent(tmp_path: Path) -> None:
     envelope = normalize_harness_payload(
         "grok",

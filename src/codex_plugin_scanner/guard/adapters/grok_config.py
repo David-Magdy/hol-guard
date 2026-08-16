@@ -136,6 +136,9 @@ def build_managed_config_block(hook_command: str = "") -> str:
                 "",
                 "[[hooks.SubagentStart]]",
                 f"hooks = [{observe_hook}]",
+                "",
+                "[[hooks.SessionStart]]",
+                f"hooks = [{observe_hook}]",
             ]
         )
     lines.append(GUARD_MANAGED_END)

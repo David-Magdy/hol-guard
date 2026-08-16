@@ -405,7 +405,8 @@ Current strategy:
   stdout JSON `{"decision":"deny"}` plus approval-center copy, never reads `~/.grok/auth`, and treats
   `--always-approve` or `bypassPermissions` as degraded protection when detected. Guard launches only a trusted
   absolute Grok executable; for a custom install root, select it once with
-  `hol-guard run grok --grok-executable /absolute/path/to/grok`.
+  `hol-guard run grok --grok-executable /absolute/path/to/grok`. After upgrading an existing Grok install, run
+  `hol-guard apps repair grok` so the catch-all hook replaces the older per-tool matcher list.
 
 Guard does not claim VS Code Copilot extension-host interception in this pass. A VS Code inline tool prompt by itself is
 not proof that Guard blocked the action, because that prompt can come from VS Code's own permission surface. For Copilot,
