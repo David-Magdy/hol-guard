@@ -67,11 +67,9 @@ jobs:
           directives = {
               'src/codex_plugin_scanner/assurance/content_scan.py': '# ruff: noqa: E501, F401, SIM120, C401, SIM105, PERF401, RUF027',
               'src/codex_plugin_scanner/assurance/archive_scan.py': '# ruff: noqa: E501, S202, SIM115',
-              'src/codex_plugin_scanner/assurance/dependency_scan.py': '# ruff: noqa: E501',
               'src/codex_plugin_scanner/assurance/native_scan.py': '# ruff: noqa: E501',
               'src/codex_plugin_scanner/assurance/orchestrator.py': '# ruff: noqa: E501',
               'src/codex_plugin_scanner/assurance/surface_scan.py': '# ruff: noqa: E501',
-              'tests/test_assurance_security_vectors.py': '# ruff: noqa: E501',
           }
           for relative, directive in directives.items():
               target = Path(relative)
