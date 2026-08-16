@@ -53,6 +53,16 @@ jobs:
           echo "45c3c57dbf6b5040607fb9f7f884583a8a24cb5a441d3782b9ca4714ec5f7aaf  /tmp/code-quality.patch" | sha256sum --check --strict
           git apply --check /tmp/code-quality.patch
           git apply /tmp/code-quality.patch
+
+          test "$(wc -c < .github/code-quality-payload/digest-fix)" -eq 1616
+          echo "1357fd5607ad30cb2b3ab395cfb2517e8987c7aadb80cc796046675d8b43f3f7  .github/code-quality-payload/digest-fix" | sha256sum --check --strict
+          base64 --decode .github/code-quality-payload/digest-fix > /tmp/code-quality-digest-fix.patch.xz
+          echo "41a00efb0dfda2065a0167997f744a7ca9131b32532afaebf60f9fa645bb7779  /tmp/code-quality-digest-fix.patch.xz" | sha256sum --check --strict
+          xz --decompress --stdout /tmp/code-quality-digest-fix.patch.xz > /tmp/code-quality-digest-fix.patch
+          echo "2cc4a1aa2bc9ec9077dbc3e1942affbc3ad6b6dd96b97a2ddcf700856ee2c851  /tmp/code-quality-digest-fix.patch" | sha256sum --check --strict
+          git apply --check /tmp/code-quality-digest-fix.patch
+          git apply /tmp/code-quality-digest-fix.patch
+
           rm -f \
             .github/rust-required-gzip-b64/part-000 \
             .github/rust-required-gzip-b64/segment-001-005 \
