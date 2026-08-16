@@ -46,23 +46,10 @@ _VALID_ACTION_TYPES: frozenset[GuardActionType] = frozenset(
 )
 _SCHEMA_VERSION = 1
 _SHELL_TOOL_NAMES = frozenset({"bash", "shell", "sh", "zsh", "terminal", "run_command", "run_terminal_command"})
-_FILE_READ_TOOL_NAMES = frozenset(
-    {
-        "read",
-        "read_file",
-        "open_file",
-        "view",
-        "view_file",
-        "cat_file",
-        "grep",
-        "glob",
-        "list_dir",
-        "listdir",
-        "list_directory",
-    }
-)
+_FILE_READ_TOOL_NAMES = frozenset({"read", "read_file", "open_file", "view", "view_file", "cat_file"})
 _FILE_WRITE_TOOL_NAMES = frozenset({"write", "edit", "multiedit", "write_file", "edit_file", "apply_patch"})
-_SUBAGENT_TOOL_NAMES = frozenset({"task", "spawn_subagent"})
+_GROK_FILE_READ_TOOL_NAMES = frozenset({"grep", "glob", "list_dir", "listdir", "list_directory", "read"})
+_GROK_SUBAGENT_TOOL_NAMES = frozenset({"task", "spawn_subagent"})
 _PATH_KEYS = (
     "path",
     "paths",
@@ -469,13 +456,19 @@ def normalize_grok_hook_payload(
 
     from ..adapters.grok_hooks import prepare_grok_hook_payload
 
-    return _normalize_action_payload(
+    envelope = _normalize_action_payload(
         prepare_grok_hook_payload(payload),
         harness="grok",
         default_event_name=None,
         workspace=workspace,
         home_dir=home_dir,
     )
+    tool_name = (envelope.tool_name or "").lower()
+    if tool_name in _GROK_SUBAGENT_TOOL_NAMES:
+        return replace(envelope, action_type="prompt")
+    if tool_name in _GROK_FILE_READ_TOOL_NAMES:
+        return replace(envelope, action_type="file_read")
+    return envelope
 
 
 def normalize_zcode_hook_payload(
@@ -1002,9 +995,6 @@ def _mcp_parts(tool_name: str | None, *, known_servers: tuple[str, ...] = ()) ->
                 tool = suffix[len(prefix) :]
                 return (server, tool) if tool else (None, None)
         return None, None
-    if "__" in tool_name:
-        server, tool = tool_name.split("__", 1)
-        return (server, tool) if server and tool else (None, None)
     return None, None
 
 
@@ -1024,12 +1014,8 @@ def _action_type(
     normalized_tool = tool_name.lower() if tool_name is not None else ""
     if event_name == "UserPromptSubmit" and prompt_excerpt is not None:
         return "prompt"
-    if normalized_tool in _SUBAGENT_TOOL_NAMES:
-        return "prompt"
     if mcp_server is not None:
         return "mcp_tool"
-    if normalized_tool in {"webfetch", "web_fetch", "web_search", "websearch"}:
-        return "network_request"
     if normalized_tool in _FILE_READ_TOOL_NAMES:
         return "file_read"
     if normalized_tool in _FILE_WRITE_TOOL_NAMES:

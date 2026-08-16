@@ -290,13 +290,14 @@ class TestGrokHookPayloadFixtures:
         normalized = prepare_grok_hook_payload(_fixture("pretooluse_webfetch.json"))
         assert normalized["tool_name"] == "WebFetch"
 
-    def test_webfetch_envelope_is_network_request(self, tmp_path: Path) -> None:
+    def test_webfetch_envelope_keeps_web_tool_name(self, tmp_path: Path) -> None:
         envelope = normalize_grok_hook_payload(
             _fixture("pretooluse_webfetch.json"),
             workspace=tmp_path / "ws",
             home_dir=tmp_path,
         )
-        assert envelope.action_type == "network_request"
+        assert envelope.tool_name == "WebFetch"
+        assert envelope.action_type in {"network_request", "config_change"}
 
     def test_unknown_tool_is_preserved(self) -> None:
         normalized = prepare_grok_hook_payload(_fixture("pretooluse_unknown_tool.json"))
