@@ -133,6 +133,90 @@ def test_success_preserves_child_stdout_and_returncode(
     assert output.getvalue() == '{"decision":"deny"}\n'
 
 
+def test_frozen_hook_command_prefers_trusted_native_desktop_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        bounded_cli_hook_bridge,
+        "_trusted_desktop_hook_proxy",
+        lambda executable: "/Applications/HOL Guard.app/Contents/MacOS/HOL Guard",
+    )
+    command = bounded_cli_hook_bridge.bounded_cli_hook_command(
+        python_executable="/Applications/HOL Guard.app/Contents/MacOS/hol-guard",
+        package_root=tmp_path,
+        guard_home=tmp_path / "guard-home",
+        cli_args=(
+            "guard",
+            "hook",
+            "--guard-home",
+            str(tmp_path / "guard-home"),
+            "--harness",
+            "grok",
+        ),
+        harness="grok",
+        timeout_seconds=25,
+    )
+
+    assert command[0] == "/Applications/HOL Guard.app/Contents/MacOS/HOL Guard"
+    assert command[1] == "__guard-hook-proxy"
+    config = json.loads(command[2])
+    assert config["python_executable"].endswith("/hol-guard")
+    assert config["frozen_launcher"] is True
+
+
+def test_untrusted_native_proxy_falls_back_to_internal_frozen_bridge(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        bounded_cli_hook_bridge,
+        "_trusted_desktop_hook_proxy",
+        lambda executable: None,
+    )
+    command = bounded_cli_hook_bridge.bounded_cli_hook_command(
+        python_executable="/app/hol-guard",
+        package_root=tmp_path,
+        guard_home=tmp_path / "guard-home",
+        cli_args=(
+            "guard",
+            "hook",
+            "--guard-home",
+            str(tmp_path / "guard-home"),
+            "--harness",
+            "grok",
+        ),
+        harness="grok",
+        timeout_seconds=25,
+    )
+
+    assert command[:2] == ("/app/hol-guard", "__guard-bounded-hook")
+
+
+@pytest.mark.skipif(not bounded_cli_hook_bridge.sys.platform.startswith("linux"), reason="Linux trust contract")
+def test_linux_proxy_requires_exact_appimage_and_private_executable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    proxy = tmp_path / "HOL-Guard.AppImage"
+    proxy.write_text("proxy", encoding="utf-8")
+    proxy.chmod(0o755)
+    core = tmp_path / "hol-guard"
+    core.write_text("core", encoding="utf-8")
+    core.chmod(0o755)
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
+    monkeypatch.setenv("HOL_GUARD_DESKTOP_HOOK_PROXY", str(proxy))
+    monkeypatch.setenv("APPIMAGE", str(proxy))
+
+    assert bounded_cli_hook_bridge._trusted_desktop_hook_proxy(str(core)) == str(proxy.resolve())
+
+    proxy.chmod(0o777)
+    assert bounded_cli_hook_bridge._trusted_desktop_hook_proxy(str(core)) is None
+
+
 def test_frozen_fallback_runs_supported_cli_subcommand_without_python_flags(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

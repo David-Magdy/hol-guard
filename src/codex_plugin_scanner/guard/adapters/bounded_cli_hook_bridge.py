@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -30,6 +31,97 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 _DAEMON_TIMEOUT_BUDGET_SECONDS = 5.0
 _FROZEN_BRIDGE_COMMAND = "__guard-bounded-hook"
 _FROZEN_OPTIONAL_PATH_FLAGS = frozenset({"--home", "--workspace"})
+_DESKTOP_PROXY_ENV = "HOL_GUARD_DESKTOP_HOOK_PROXY"
+_DESKTOP_PROXY_COMMAND = "__guard-hook-proxy"
+
+
+def _codesign_team(path: Path) -> str | None:
+    """Return a verified Apple TeamIdentifier without importing the Desktop runtime."""
+
+    verify = subprocess.run(
+        ["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if verify.returncode != 0:
+        return None
+    display = subprocess.run(
+        ["/usr/bin/codesign", "--display", "--verbose=4", str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if display.returncode != 0:
+        return None
+    for line in display.stderr.splitlines():
+        team = line.strip().removeprefix("TeamIdentifier=")
+        if team != line.strip() and team and team != "not set":
+            return team
+    return None
+
+
+def _trusted_desktop_hook_proxy(python_executable: str) -> str | None:
+    """Return the native Desktop proxy only when its platform identity is trusted.
+
+    The variable is accepted only from a frozen Core launched by Desktop. On
+    macOS both executables must carry the same verified Apple TeamIdentifier.
+    On Linux the proxy must be the exact AppImage path inherited by the Core
+    process. Other platforms keep using the internal frozen bridge until an
+    equivalent platform trust check is implemented.
+    """
+
+    if not bool(getattr(sys, "frozen", False)) or os.environ.get("HOL_GUARD_DESKTOP") != "1":
+        return None
+    raw = os.environ.get(_DESKTOP_PROXY_ENV)
+    if not raw:
+        return None
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        return None
+    try:
+        raw_metadata = candidate.lstat()
+        resolved = candidate.resolve(strict=True)
+        metadata = resolved.stat()
+    except OSError:
+        return None
+    if stat.S_ISLNK(raw_metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        return None
+    if not os.access(resolved, os.X_OK):
+        return None
+    if os.name != "nt" and (metadata.st_uid not in {os.getuid(), 0} or stat.S_IMODE(metadata.st_mode) & 0o022):
+        return None
+
+    core = Path(python_executable)
+    if sys.platform == "darwin":
+        try:
+            core = core.resolve(strict=True)
+        except OSError:
+            return None
+        proxy_team = _codesign_team(resolved)
+        core_team = _codesign_team(core)
+        if proxy_team is not None and proxy_team == core_team:
+            return str(resolved)
+        if (
+            os.environ.get("HOL_GUARD_DESKTOP_E2E_ALLOW_ADHOC_SIGNATURE") == "1"
+            and proxy_team is None
+            and core_team is None
+        ):
+            return str(resolved)
+        return None
+
+    if sys.platform.startswith("linux"):
+        appimage = os.environ.get("APPIMAGE")
+        if appimage:
+            try:
+                trusted_appimage = Path(appimage).resolve(strict=True)
+            except OSError:
+                return None
+            return str(resolved) if resolved == trusted_appimage else None
+        if os.environ.get("HOL_GUARD_DESKTOP_E2E_ALLOW_ADHOC_SIGNATURE") == "1":
+            return str(resolved)
+        return None
+    return None
 
 
 def _assert_loopback_http_url(url: str) -> None:
@@ -89,11 +181,11 @@ def bounded_cli_hook_command(
         "raise SystemExit(main_from_argv(sys.argv[1:]))"
     )
     if frozen_launcher:
-        return (
-            python_executable,
-            _FROZEN_BRIDGE_COMMAND,
-            json.dumps(config, ensure_ascii=True, separators=(",", ":")),
-        )
+        config_json = json.dumps(config, ensure_ascii=True, separators=(",", ":"))
+        desktop_proxy = _trusted_desktop_hook_proxy(python_executable)
+        if desktop_proxy is not None:
+            return desktop_proxy, _DESKTOP_PROXY_COMMAND, config_json
+        return python_executable, _FROZEN_BRIDGE_COMMAND, config_json
     return (
         python_executable,
         "-I",
