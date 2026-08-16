@@ -5,9 +5,9 @@ x-lab-service: &lab-service
   build:
     context: ../../..
     dockerfile: scripts/mdm/cloud-lab/Dockerfile
-  user: ${HOL_MDM_LAB_UID:-10001}:${HOL_MDM_LAB_GID:-10001}
   init: true
   restart: "no"
+  user: ${HOL_MDM_LAB_UID:-10001}:${HOL_MDM_LAB_GID:-10001}
   read_only: true
   security_opt:
     - no-new-privileges:true
@@ -180,7 +180,7 @@ services:
       HOL_MDM_DEVICE_B_URL: http://device-b:8070
       HOL_MDM_DEVICE_C_URL: http://device-c:8070
     volumes:
-      - ${HOL_MDM_LAB_ARTIFACTS:-../../../artifacts/mdm-cloud-lab}:/artifacts
+      - lab-artifacts:/artifacts
     mem_limit: 512m
     cpus: 1
 
@@ -193,3 +193,4 @@ volumes:
   device-a-state:
   device-b-state:
   device-c-state:
+  lab-artifacts:
