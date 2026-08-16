@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hol.org/schemas/extension-baseline.v1.json",
+  "title": "HOL Guard approved extension baseline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifact_digest", "created_at", "files", "dependencies", "native_artifacts", "capabilities", "endpoints", "commands", "lifecycle_scripts", "security_controls", "baseline_digest"],
+  "properties": {
+    "schema_version": {"const": "hol-guard.extension-baseline.v1"},
+    "artifact_digest": {"$ref": "#/$defs/sha256"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "files": {"type": "array", "items": {"type": "object"}},
+    "dependencies": {"type": "array", "items": {"type": "object"}},
+    "native_artifacts": {"type": "array", "items": {"type": "object"}},
+    "capabilities": {"type": "array", "items": {"type": "string"}},
+    "endpoints": {"type": "array", "items": {"type": "string"}},
+    "commands": {"type": "array", "items": {"type": "string"}},
+    "lifecycle_scripts": {"type": "array", "items": {"type": "string"}},
+    "security_controls": {"type": "array", "items": {"type": "string"}},
+    "baseline_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}
