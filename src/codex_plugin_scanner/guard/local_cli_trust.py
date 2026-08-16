@@ -44,10 +44,11 @@ def matching_local_cli_grant(
     grant = lookup(identity.cli_id)
     if not isinstance(grant, Mapping):
         return None
-    state = grant.get("state")
+    raw_state = grant.get("state")
     identity_hash = grant.get("identity_hash")
-    if state != "allowed" and state != "blocked":
+    if raw_state != "allowed" and raw_state != "blocked":
         return None
+    state: LocalCliGrantState = "allowed" if raw_state == "allowed" else "blocked"
     if identity_hash != identity.identity_hash:
         return None
     return identity, state

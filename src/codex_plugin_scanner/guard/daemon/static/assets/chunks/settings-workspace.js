@@ -1,7 +1,6 @@
-import { W as requireReact, X as getDefaultExportFromCjs, j as jsxRuntimeExports, r as reactExports, F as useFocusTrap, Y as HiMiniKey, S as SectionLabel, A as ActionButton, o as HiMiniShieldCheck, Z as HiMiniLockClosed, _ as HiMiniBellAlert, $ as HiMiniAdjustmentsHorizontal, a0 as HiMiniCircleStack, a1 as TabBar, c as HiMiniChevronRight, a2 as resolveProtectionLevelCopy, a3 as fetchSettings, a4 as fetchRuntimeSnapshot, a5 as updateSettings, a6 as clearPolicy, a7 as clearReviewQueue, a8 as revokeApprovalGateCooldown, a9 as disableApprovalGateTotp, aa as importSettings, ab as resetSettings, ac as enrollApprovalGateTotp, ad as verifyApprovalGateTotp, ae as clearEvidence, af as exportDiagnostics, ag as repairApprovalCenter, ah as exportSettings, ai as setupDesktopNotifications, i as EmptyState, m as GuardHero, aj as Tag, ak as HiMiniMagnifyingGlass, al as HiMiniCog6Tooth, y as HiMiniChevronDown, l as HiMiniCheckCircle, J as HiMiniExclamationTriangle, am as approvalGateCooldownLabel, w as HiMiniXMark } from "../guard-dashboard.js";
+import { W as getDefaultExportFromCjs, r as reactExports, X as React, j as jsxRuntimeExports, F as useFocusTrap, Y as HiMiniKey, S as SectionLabel, A as ActionButton, o as HiMiniShieldCheck, Z as HiMiniLockClosed, _ as HiMiniBellAlert, $ as HiMiniAdjustmentsHorizontal, a0 as HiMiniCircleStack, a1 as TabBar, c as HiMiniChevronRight, a2 as resolveProtectionLevelCopy, a3 as fetchSettings, a4 as fetchRuntimeSnapshot, a5 as updateSettings, a6 as clearPolicy, a7 as clearReviewQueue, a8 as revokeApprovalGateCooldown, a9 as disableApprovalGateTotp, aa as importSettings, ab as resetSettings, ac as enrollApprovalGateTotp, ad as verifyApprovalGateTotp, ae as clearEvidence, af as exportDiagnostics, ag as repairApprovalCenter, ah as exportSettings, ai as setupDesktopNotifications, i as EmptyState, m as GuardHero, aj as Tag, ak as HiMiniMagnifyingGlass, al as HiMiniCog6Tooth, y as HiMiniChevronDown, l as HiMiniCheckCircle, J as HiMiniExclamationTriangle, am as approvalGateCooldownLabel, w as HiMiniXMark } from "../guard-dashboard.js";
 import { f as filterSettingsBySearch, R as RISK_CONTROL_CONSEQUENCES, s as securityLevelLabel } from "./app-catalog.js";
-var lib = {};
-var propTypes = { exports: {} };
+var propTypes$2 = { exports: {} };
 var ReactPropTypesSecret_1;
 var hasRequiredReactPropTypesSecret;
 function requireReactPropTypesSecret() {
@@ -67,12 +66,12 @@ function requireFactoryWithThrowingShims() {
 }
 var hasRequiredPropTypes;
 function requirePropTypes() {
-  if (hasRequiredPropTypes) return propTypes.exports;
+  if (hasRequiredPropTypes) return propTypes$2.exports;
   hasRequiredPropTypes = 1;
   {
-    propTypes.exports = /* @__PURE__ */ requireFactoryWithThrowingShims()();
+    propTypes$2.exports = /* @__PURE__ */ requireFactoryWithThrowingShims()();
   }
-  return propTypes.exports;
+  return propTypes$2.exports;
 }
 var ErrorCorrectLevel;
 var hasRequiredErrorCorrectLevel;
@@ -153,7 +152,7 @@ function requireRSBlock() {
     [1, 70, 44],
     [2, 35, 17],
     [2, 35, 13],
-    // 4		
+    // 4
     [1, 100, 80],
     [2, 50, 32],
     [2, 50, 24],
@@ -168,7 +167,7 @@ function requireRSBlock() {
     [4, 43, 27],
     [4, 43, 19],
     [4, 43, 15],
-    // 7		
+    // 7
     [2, 98, 78],
     [4, 49, 31],
     [2, 32, 14, 4, 33, 15],
@@ -183,7 +182,7 @@ function requireRSBlock() {
     [3, 58, 36, 2, 59, 37],
     [4, 36, 16, 4, 37, 17],
     [4, 36, 12, 4, 37, 13],
-    // 10		
+    // 10
     [2, 86, 68, 2, 87, 69],
     [4, 69, 43, 1, 70, 44],
     [6, 43, 19, 2, 44, 20],
@@ -212,7 +211,7 @@ function requireRSBlock() {
     [5, 109, 87, 1, 110, 88],
     [5, 65, 41, 5, 66, 42],
     [5, 54, 24, 7, 55, 25],
-    [11, 36, 12],
+    [11, 36, 12, 7, 37, 13],
     // 16
     [5, 122, 98, 1, 123, 99],
     [7, 73, 45, 3, 74, 46],
@@ -1360,15 +1359,15 @@ function resolveSettingsSaveProofModalCopy(input) {
     confirmLabel: "Save settings"
   };
 }
-function isSettingsSaveProofSubmitDisabled(mode2, credentials, totpRequired) {
+function isSettingsSaveProofSubmitDisabled(mode, credentials, totpRequired) {
   const current = credentials.currentPassword?.trim() ?? "";
   const next = credentials.newPassword?.trim() ?? "";
   const confirm = credentials.confirmPassword?.trim() ?? "";
   const totp = credentials.totpCode?.trim() ?? "";
-  if (mode2 === "setup-gate") {
+  if (mode === "setup-gate") {
     return next.length === 0 || confirm.length === 0 || next !== confirm;
   }
-  if (mode2 === "change-password") {
+  if (mode === "change-password") {
     if (next.length === 0 || confirm.length === 0 || next !== confirm) {
       return true;
     }
@@ -2047,8 +2046,8 @@ function normalizeGuardSettings(settings) {
 }
 function buildConsequenceSummary(settings) {
   const level = settings.security_level;
-  const mode2 = settings.mode;
-  if (mode2 === "observe") return "Guard is watching and recording what your AI apps do, but it will not pause any actions. Switch to Prompt or Enforce when you want Guard to actively protect you.";
+  const mode = settings.mode;
+  if (mode === "observe") return "Guard is watching and recording what your AI apps do, but it will not pause any actions. Switch to Prompt or Enforce when you want Guard to actively protect you.";
   if (level === "relaxed") return "Guard will warn about destructive commands and credential sharing but will not pause for approval. Most safe actions run automatically. Good for trusted environments.";
   if (level === "balanced") return "Guard will ask before secret access, hidden execution, and destructive commands. New network destinations get a warning. This is the recommended setting for most users.";
   if (level === "strict") return "Guard will ask before almost every risky action, including new network destinations. Use this when working with sensitive data or untrusted AI tools.";
@@ -2077,18 +2076,18 @@ function applyApprovalGateDraft(settings, updates) {
     }
   };
 }
-function protectionModeHelp(mode2) {
-  if (mode2 === "enforce") {
+function protectionModeHelp(mode) {
+  if (mode === "enforce") {
     return "Guard keeps risky actions stopped until you allow them.";
   }
-  if (mode2 === "observe") {
+  if (mode === "observe") {
     return "Guard logs what it sees without pausing anything.";
   }
   return "Guard pauses risky actions and asks what to do.";
 }
-function protectionModeLabel(mode2) {
-  const match = protectionModeChoices.find((choice) => choice.value === mode2);
-  return match?.label ?? mode2;
+function protectionModeLabel(mode) {
+  const match = protectionModeChoices.find((choice) => choice.value === mode);
+  return match?.label ?? mode;
 }
 function saveStatusText(saveSuccess, saveError) {
   if (saveSuccess) {
@@ -2372,8 +2371,8 @@ function SettingsWorkspace({ onApprovalGateChange }) {
       onApprovalGateChange?.(gate);
     }
   }, [onApprovalGateChange]);
-  const openProofModal = reactExports.useCallback((mode2, action) => {
-    setProofModalMode(mode2);
+  const openProofModal = reactExports.useCallback((mode, action) => {
+    setProofModalMode(mode);
     setPendingProofAction(action);
     setProofModalError(null);
     setProofModalOpen(true);
