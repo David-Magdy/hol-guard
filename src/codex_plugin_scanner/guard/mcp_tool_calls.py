@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .collections_support import dedupe_preserving_order
-
 import json
 import re
 from collections.abc import Callable, Mapping
@@ -15,12 +13,15 @@ from typing import Literal, cast
 
 from .action_lattice import most_restrictive_guard_action, normalize_guard_action
 from .approval_gate import ApprovalGateGrant
+from .collections_support import dedupe_preserving_order
 from .config import DEFAULT_SECURITY_LEVEL, GuardConfig, resolve_risk_action
 from .models import GuardAction, GuardArtifact, GuardReceipt, PolicyDecision
 from .receipts import build_receipt
 from .runtime.approval_context import (
     approval_context_tokens_validation_reason,
     build_approval_context_token,
+)
+from .runtime.approval_context import (
     saved_allow_context_validation_reason as _tool_call_saved_allow_validation_reason,
 )
 from .runtime.approval_reuse import (

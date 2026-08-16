@@ -129,7 +129,6 @@ class HarnessAdapter:
     def detect(self, context: HarnessContext) -> HarnessDetection:
         raise NotImplementedError
 
-
     def inventory_snapshot(
         self,
         context: HarnessContext,

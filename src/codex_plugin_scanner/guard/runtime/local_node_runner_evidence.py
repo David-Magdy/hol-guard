@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .package_evidence_common import resolved_package_bin_target, valid_sha512_integrity
-
 import hashlib
 import json
 import os
@@ -16,6 +14,7 @@ from typing import Literal, cast
 from urllib.parse import urlsplit
 
 from .containment_executor import file_sha256
+from .package_evidence_common import resolved_package_bin_target, valid_sha512_integrity
 from .package_intent_common import LocalPackageExecutionEvidence, PackageExecutionFileEvidence
 
 RunnerKind = Literal["vitest", "eslint", "tsx"]

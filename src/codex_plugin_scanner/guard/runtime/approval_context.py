@@ -9,8 +9,6 @@ approval evidence through the policy store.
 
 from __future__ import annotations
 
-from ..file_identity import content_stat_identity
-
 import base64
 import hashlib
 import hmac
@@ -28,6 +26,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal, TypeGuard, cast
 
+from ..file_identity import content_stat_identity
 from .env_wrapper import parse_env_wrapper
 from .extension_control_runtime import current_extension_control_binding_digest
 

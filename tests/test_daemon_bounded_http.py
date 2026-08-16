@@ -18,7 +18,7 @@ class _Handler(BaseHTTPRequestHandler):
     release = threading.Event()
     entered = threading.Event()
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         if self.path == "/hold":
             self.entered.set()
             self.release.wait(timeout=2)

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from functools import partial
-
 import re
 import shlex
+from functools import partial
 from pathlib import Path
 
 from .data_flow import (
@@ -22,8 +21,10 @@ from .kubernetes_command_support import (
     kubernetes_option_tokens_consumed,
     script_reads_sensitive_env,
     secret_volume_argument_value,
-    shell_command_script as _shell_c_script,
     skip_kubectl_options,
+)
+from .kubernetes_command_support import (
+    shell_command_script as _shell_c_script,
 )
 
 _ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*")

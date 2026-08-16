@@ -156,7 +156,7 @@ def test_default_publication_anchor_uses_pypi_yank_metadata(monkeypatch: pytest.
 
     def _urlopen(request: object, timeout: int) -> _FakePyPIResponse:
         del timeout
-        url = str(getattr(request, "full_url"))
+        url = str(request.full_url)
         version = url.rsplit("/", 2)[-2]
         seen.append(version)
         payload = json.dumps(
@@ -178,7 +178,7 @@ def test_default_publication_anchor_returns_none_when_all_stables_are_yanked(
 ) -> None:
     def _urlopen(request: object, timeout: int) -> _FakePyPIResponse:
         del timeout
-        url = str(getattr(request, "full_url"))
+        url = str(request.full_url)
         version = url.rsplit("/", 2)[-2]
         payload = json.dumps({"info": {"version": version}, "urls": [{"yanked": True}]}).encode()
         return _FakePyPIResponse(payload)

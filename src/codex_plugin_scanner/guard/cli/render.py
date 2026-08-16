@@ -10,8 +10,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO, TypeAlias
 
-from ..value_coercion import coerce_int as _coerce_int
 from ..redaction import redact_text
+from ..value_coercion import coerce_int as _coerce_int
 from .render_uninstall import render_self_uninstall
 
 try:

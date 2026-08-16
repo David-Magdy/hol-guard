@@ -9,10 +9,9 @@ import secrets
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-
-from ..durable_io import fsync_directory as _fsync_directory
 from typing import Protocol, cast
 
+from ..durable_io import fsync_directory as _fsync_directory
 from .contracts import HarnessCoverage, MachinePaths, ManagedPolicyState
 from .harness_coverage_artifacts import artifact_digest, managed_manifest_paths
 from .machine_state_lock import protected_machine_state_lock

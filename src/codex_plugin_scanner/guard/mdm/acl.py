@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .windows_support import windows_directory
-
 import base64
 import json
 import ntpath
@@ -16,6 +14,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from .contracts import MachinePaths
+from .windows_support import windows_directory
 
 AclState = Literal["healthy", "absent", "tampered", "unsupported", "unknown"]
 

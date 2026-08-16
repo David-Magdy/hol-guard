@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .package_evidence_common import read_package_json
-
 import hashlib
 import json
 import os
@@ -12,6 +10,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+
+from .package_evidence_common import read_package_json
 
 _DEPENDENCY_SECTIONS = ("dependencies", "optionalDependencies", "peerDependencies")
 _MAX_CLOSURE_PACKAGES = 1_000

@@ -21,7 +21,6 @@ from .base import (
 )
 from .bounded_cli_hook_bridge import bounded_cli_hook_command
 
-
 _KIMI_HOME_ENV_VAR = "KIMI_CODE_HOME"
 _KIMI_DIR = ".kimi-code"
 _KIMI_CONFIG_FILE = "config.toml"

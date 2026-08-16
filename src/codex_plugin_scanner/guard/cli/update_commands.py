@@ -47,6 +47,7 @@ from ..runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from ..runtime.extension_control_authority import AuthorityHealth
 from ..store import GuardStore
 from .install_commands import apply_managed_install
+from .managed_install_context import managed_install_context as _repair_context_from_managed_install
 from .update_artifact import (
     TrustedWheelArtifact,
     UpdateArtifactError,
@@ -60,7 +61,6 @@ from .update_subprocess import (
     UpdateSubprocessError,
     build_trusted_update_context,
 )
-from .managed_install_context import managed_install_context as _repair_context_from_managed_install
 
 _ALREADY_CURRENT_HINTS = (
     "already at latest version",
@@ -2557,7 +2557,6 @@ def _refresh_opencode_pretool_plugin(
     except (OSError, RuntimeError) as error:
         return f"Could not refresh OpenCode pretool plugin during update: {error}"
     return "Refreshed the OpenCode pretool plugin during update. Restart OpenCode to load it."
-
 
 
 def _repair_codex_install(

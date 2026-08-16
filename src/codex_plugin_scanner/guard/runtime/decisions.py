@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .data_flow_sink import data_flow_sink_type
-
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -21,6 +19,8 @@ from codex_plugin_scanner.guard.runtime.signals import (
     RiskSignalV2,
     parse_risk_confidence,
 )
+
+from .data_flow_sink import data_flow_sink_type
 
 GuardDecisionAction = Literal["allow", "warn", "ask", "block"]
 

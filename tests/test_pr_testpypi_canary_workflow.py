@@ -27,7 +27,10 @@ def test_pr_canary_requires_maintainer_opt_in_for_same_repository_prs() -> None:
     assert "contains(github.event.pull_request.labels.*.name, 'publish-testpypi-canary')" in installed_job["if"]
     assert job["environment"] == "testpypi"
     assert "github.event_name == 'pull_request'" in job["if"]
-    assert "github.event.action != 'labeled' || github.event.label.name == 'publish-testpypi-canary'" in workflow["jobs"]["build"]["if"]
+    assert (
+        "github.event.action != 'labeled' || github.event.label.name == 'publish-testpypi-canary'"
+        in workflow["jobs"]["build"]["if"]
+    )
     publish_step = next(
         step
         for step in job["steps"]

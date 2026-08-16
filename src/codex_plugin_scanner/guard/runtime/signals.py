@@ -329,6 +329,7 @@ def parse_risk_confidence(value: object) -> RiskConfidenceLabel:
         case _:
             raise ValueError("confidence must be a known confidence label")
 
+
 _parse_confidence = parse_risk_confidence
 
 

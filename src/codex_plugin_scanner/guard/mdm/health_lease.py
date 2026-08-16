@@ -14,14 +14,13 @@ from contextlib import suppress
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-
-from ..durable_io import fsync_directory as _fsync_directory
 from typing import cast
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from ..durable_io import fsync_directory as _fsync_directory
 from .continuity import (
     InstallationContinuityRecord,
     _atomic_write,

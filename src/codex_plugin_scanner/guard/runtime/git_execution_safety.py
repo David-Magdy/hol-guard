@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .executable_resolution import which_for_execution_cwd
-
 import os
 import re
 import shlex
@@ -14,6 +12,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
+
+from .executable_resolution import which_for_execution_cwd
 
 _GIT_CONFIG_ROUTING_ENV = frozenset(
     {

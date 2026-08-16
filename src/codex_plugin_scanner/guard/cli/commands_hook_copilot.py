@@ -73,7 +73,6 @@ def _record_copilot_pre_activity(
     )
 
 
-
 def _copilot_approval_reuse_evidence(
     decision: ToolCallDecision,
 ) -> dict[str, object] | None:

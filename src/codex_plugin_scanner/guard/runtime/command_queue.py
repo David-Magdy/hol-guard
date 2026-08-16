@@ -14,7 +14,6 @@ from urllib.parse import urlparse, urlunparse
 from ...version import __version__
 from ..adapters.base import HarnessContext
 from ..store import GuardStore
-from .time_support import parse_utc_timestamp
 from .auto_update import maybe_auto_update
 from .command_capability import (
     CommandCapabilityError,
@@ -45,6 +44,7 @@ from .runner import (
     _urlopen_json_with_timeout_retry,
     repair_guard_cloud_connect_storage,
 )
+from .time_support import parse_utc_timestamp
 
 COMMAND_QUEUE_STATE_KEY = "guard_command_queue_state"
 COMMAND_QUEUE_ENABLED_ENV = "GUARD_CLOUD_COMMAND_QUEUE_ENABLED"

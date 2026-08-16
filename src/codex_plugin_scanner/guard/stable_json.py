@@ -14,8 +14,7 @@ def stable_json_serialize(value: object) -> str:
         return (
             "{"
             + ",".join(
-                f"{json.dumps(key, separators=(',', ':'), ensure_ascii=False)}:"
-                f"{stable_json_serialize(value[key])}"
+                f"{json.dumps(key, separators=(',', ':'), ensure_ascii=False)}:{stable_json_serialize(value[key])}"
                 for key in sorted(value)
             )
             + "}"

@@ -24,13 +24,7 @@ def canonical_existing_directory(path: Path) -> Path:
 def clean_containment_environment(environment: dict[str, str]) -> tuple[tuple[str, str], ...]:
     """Retain only non-sensitive presentation variables for a contained child."""
 
-    return tuple(
-        sorted(
-            (key, value)
-            for key in _ALLOWED_ENVIRONMENT_KEYS
-            if (value := environment.get(key))
-        )
-    )
+    return tuple(sorted((key, value) for key in _ALLOWED_ENVIRONMENT_KEYS if (value := environment.get(key))))
 
 
 def containment_binding_digest(payload: dict[str, object]) -> str:

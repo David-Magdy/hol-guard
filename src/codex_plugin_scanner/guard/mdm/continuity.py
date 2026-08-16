@@ -19,11 +19,13 @@ from pathlib import Path
 from typing import Literal
 
 from .contracts import MachinePaths, default_machine_paths
+from .device_key import require_machine_device_context, verified_machine_device_key_ids
 from .file_lock import (
     acquire_file_lock as _acquire_lock,
+)
+from .file_lock import (
     release_file_lock as _release_lock,
 )
-from .device_key import require_machine_device_context, verified_machine_device_key_ids
 
 _SCHEMA = "hol-guard-installation-continuity.v1"
 _STATE_NAME = "installation-continuity.json"

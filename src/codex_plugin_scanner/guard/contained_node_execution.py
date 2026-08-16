@@ -10,11 +10,17 @@ from pathlib import Path
 
 from .containment_execution_support import (
     containment_positive_proof as _proof_from_result,
+)
+from .containment_execution_support import (
     load_current_containment_health as _load_current_containment_health,
 )
 from .runtime.contained_execution_common import (
     canonical_existing_directory as _canonical_directory,
+)
+from .runtime.contained_execution_common import (
     clean_containment_environment as _clean_environment,
+)
+from .runtime.contained_execution_common import (
     containment_binding_digest as _binding_digest,
 )
 from .runtime.containment_contract import ContainmentPolicy, ContainmentRequest
@@ -154,7 +160,6 @@ def try_execute_contained_node_command(
         decision,
         evidence.operation_id,
     )
-
 
 
 def _contained_decision(proof: PositiveProof, *, operation_id: str) -> EffectDecision:

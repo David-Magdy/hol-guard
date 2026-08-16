@@ -306,7 +306,6 @@ def _routine_local_runner_versions_match(
     return locked_versions == {installed_version} and _routine_semver_spec_matches(declared_version, installed_version)
 
 
-
 def _unmodeled_shell_runtime_artifact(
     *,
     harness: str,

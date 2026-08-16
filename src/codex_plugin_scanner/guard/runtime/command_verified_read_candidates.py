@@ -6,8 +6,8 @@ import re
 from pathlib import Path
 from typing import Final
 
-from .command_model import CanonicalCommand, CommandSegment
 from .command_candidate_common import command_has_exact_plain_shell_shape as _plain_exact_command
+from .command_model import CanonicalCommand, CommandSegment
 from .effect_contract import DecisionBasis
 from .effect_decision import DecisionFactor, DecisionFactorSource
 from .github_command_capabilities import classify_github_cli

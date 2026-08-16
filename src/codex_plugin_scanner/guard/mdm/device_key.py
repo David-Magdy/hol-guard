@@ -21,13 +21,15 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from .contracts import KeyProtectionLevel, KeyProtectionStatus, MachinePaths, default_machine_paths
-from .file_lock import (
-    acquire_file_lock as _acquire_lock,
-    release_file_lock as _release_lock,
-)
 from .device_key_native import NativeKeyEvidence
 from .device_key_native import require_machine_context as require_machine_device_context
 from .device_key_native import run_helper as _run_helper
+from .file_lock import (
+    acquire_file_lock as _acquire_lock,
+)
+from .file_lock import (
+    release_file_lock as _release_lock,
+)
 
 _METADATA_SCHEMA = "hol-guard-device-key.v1"
 _METADATA_NAME = "device-key.json"

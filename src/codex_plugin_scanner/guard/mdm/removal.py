@@ -11,10 +11,9 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
-from ..durable_io import fsync_directory as _fsync_directory
 from typing import cast
 
+from ..durable_io import fsync_directory as _fsync_directory
 from .acl import verify_protected_ownership_and_acl
 from .continuity import verify_installation_continuity
 from .contracts import MDM_STATUS_SCHEMA_VERSION, MachinePaths, default_machine_paths

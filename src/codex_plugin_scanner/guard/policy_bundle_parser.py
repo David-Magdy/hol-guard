@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .stable_json import stable_json_serialize
-
 import base64
 import binascii
 import hashlib
@@ -31,6 +29,7 @@ from .policy_bundle_v2 import (
     POLICY_BUNDLE_MAX_DEPTH,
     POLICY_BUNDLE_MAX_STRING_LENGTH,
 )
+from .stable_json import stable_json_serialize
 
 _POLICY_BUNDLE_CORE_KEYS = (
     "contractVersion",

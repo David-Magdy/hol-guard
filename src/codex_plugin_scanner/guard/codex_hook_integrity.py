@@ -20,11 +20,10 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from .durable_io import fsync_directory as _fsync_directory
 from typing import Any
 
 from .codex_hook_file_integrity import CodexHookIntegrityError, canonical_path
+from .durable_io import fsync_directory as _fsync_directory
 from .local_authority_integrity import (
     LOCAL_AUTHORITY_INTEGRITY_MAC_ALGORITHM,
     sign_local_authority_payload,

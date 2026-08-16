@@ -502,7 +502,10 @@ def test_release_merged_same_repo_pr_publishes_alpha_when_push_is_missing() -> N
 
     assert "closed" in workflow[True]["pull_request"]["types"]
     assert "github.event.pull_request.merge_commit_sha" in workflow_text
-    assert "hol-guard-publish-${{ github.event.pull_request.merged && format('refs/heads/{0}', github.event.pull_request.base.ref) || github.ref }}" in workflow_text
+    assert (
+        "hol-guard-publish-${{ github.event.pull_request.merged && format('refs/heads/{0}', github.event.pull_request.base.ref) || github.ref }}"
+        in workflow_text
+    )
     for job_name in (
         "reserve-alpha-tag",
         "publish-alpha-testpypi",

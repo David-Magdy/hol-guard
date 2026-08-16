@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-from ..runtime.data_flow_sink import data_flow_sink_type
-
 import importlib
 import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
+
+from ..runtime.data_flow_sink import data_flow_sink_type
 
 if TYPE_CHECKING:
     from ._commands_shared import _HOOK_DAEMON_UNREACHABLE_REASON_MARKER, _now

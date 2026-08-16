@@ -71,10 +71,7 @@ def test_scan_step_summary_includes_complete_finding_details(monkeypatch, tmp_pa
     assert "- Category: Security" in summary
     assert "- Source: native" in summary
     assert "- Location: plugin/example.py:42" in summary
-    assert (
-        "- Description: The scanner found a concrete issue that should be visible in the job summary."
-        in summary
-    )
+    assert "- Description: The scanner found a concrete issue that should be visible in the job summary." in summary
     assert "- Remediation: Apply the documented remediation and rerun the scanner." in summary
 
 

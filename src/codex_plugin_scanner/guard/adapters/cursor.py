@@ -13,7 +13,6 @@ from ..models import GuardArtifact, HarnessDetection
 from ..runtime.mcp_skill_firewall import enrich_artifact_with_mcp_skill_firewall
 from ..shims import ensure_guard_shim_path_in_shell_profile, install_guard_shim, remove_guard_shim
 from .base import HarnessAdapter, HarnessContext, _json_payload, _run_command_probe
-from .state_files import load_backup_payload
 from .cursor_cli import (
     CURSOR_CLI_SHIM_COMMANDS,
     cursor_cli_command_available,
@@ -28,6 +27,7 @@ from .mcp_servers import (
     proxy_process_env,
     skipped_stdio_server_names,
 )
+from .state_files import load_backup_payload
 
 
 class CursorHarnessAdapter(HarnessAdapter):

@@ -16,11 +16,9 @@ from ...ecosystems.opencode import _strip_jsonc
 from ..launcher import merge_guard_launcher_env
 from ..models import GuardArtifact, HarnessDetection
 from ..shims import install_guard_shim, remove_guard_shim
-from .hook_payloads import inline_hooks_payload
-from .workspace_overrides import should_skip_workspace_override
 from .base import HarnessAdapter, HarnessContext, _json_payload, _run_command_probe
-from .state_files import load_backup_payload, load_string_state_payload
 from .bounded_cli_hook_bridge import bounded_cli_hook_command
+from .hook_payloads import inline_hooks_payload
 from .mcp_servers import (
     ManagedMcpServer,
     is_guard_proxy_command,
@@ -29,6 +27,8 @@ from .mcp_servers import (
     proxy_process_env,
     skipped_stdio_server_names,
 )
+from .state_files import load_backup_payload, load_string_state_payload
+from .workspace_overrides import should_skip_workspace_override
 
 _MANAGED_HOOK_EVENTS = ("userPromptSubmitted", "preToolUse", "postToolUse", "permissionRequest")
 _DETECTABLE_HOOK_EVENTS = (

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .path_security import path_has_symlink_component
-
 import hashlib
 import importlib
 import ipaddress
@@ -19,6 +17,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..path_support import resolves_within_root
 from ..version import __version__
+from .path_security import path_has_symlink_component
 from .skill_directory_identity import validated_complete_skill_directory_hash
 
 InventoryItemKind = Literal[

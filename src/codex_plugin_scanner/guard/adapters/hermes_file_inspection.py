@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from ..file_identity import full_stat_identity
-
 import codecs
 import hashlib
 import json
@@ -16,6 +14,7 @@ from typing import Literal
 
 import yaml  # type: ignore[import-untyped]
 
+from ..file_identity import full_stat_identity
 from ..windows_paths import open_windows_locked_regular_descriptor
 
 HERMES_PREVIEW_BYTES = 64 * 1024

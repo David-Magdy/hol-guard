@@ -31,12 +31,14 @@ from ..models import GuardAction, GuardArtifact, HarnessDetection
 from ..receipts import build_receipt
 from ..runtime.approval_context import (
     approval_context_tokens_validation_reason,
-    saved_allow_context_validation_reason as _sensitive_read_saved_allow_validation_reason,
     build_approval_context_token,
     build_configured_environment_hash,
     build_runtime_launch_identity,
     resolved_runtime_launch_executable,
     runtime_launch_identity_matches,
+)
+from ..runtime.approval_context import (
+    saved_allow_context_validation_reason as _sensitive_read_saved_allow_validation_reason,
 )
 from ..runtime.approval_reuse import (
     APPROVAL_REUSE_CLAIM_FAILED,

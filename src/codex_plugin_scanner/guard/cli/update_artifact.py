@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from ..file_identity import content_stat_identity
-
 import ctypes
 import hashlib
 import hmac
@@ -22,6 +20,7 @@ from typing import final
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 
+from ..file_identity import content_stat_identity
 from .update_subprocess import FilesystemIdentity, UpdateSubprocessError
 
 _MAX_WHEEL_BYTES = 512 * 1024 * 1024

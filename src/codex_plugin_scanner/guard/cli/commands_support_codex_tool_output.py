@@ -7,14 +7,13 @@ from __future__ import annotations
 
 from functools import partial
 
+from ..runtime.env_wrapper import parse_env_wrapper
+from ..runtime.shell_execution_context import model_shell_execution_context, validate_shell_execution_segment
+from ._commands_shared import *
 from .codex_output_safety import (
     output_uses_placeholder_private_key_fixture,
     source_name_stem_has_compound_secret_segment,
 )
-
-from ..runtime.env_wrapper import parse_env_wrapper
-from ..runtime.shell_execution_context import model_shell_execution_context, validate_shell_execution_segment
-from ._commands_shared import *
 from .commands_parser_helpers import *
 from .commands_support_codex_paths import _PROMPT_PATH_TOKEN_PATTERN, _codex_search_target_is_source_like
 from .commands_support_codex_reads import (

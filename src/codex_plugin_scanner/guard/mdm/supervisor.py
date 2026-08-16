@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .windows_support import windows_directory
-
 import ntpath
 import os
 import platform
@@ -16,6 +14,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from .contracts import MachinePaths, SupervisorStatus, default_machine_paths
+from .windows_support import windows_directory
 
 _MACOS_LABEL = "org.hol.guard.machine-health"
 _MACOS_PLIST = Path(f"/Library/LaunchDaemons/{_MACOS_LABEL}.plist")

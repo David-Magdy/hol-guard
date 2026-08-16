@@ -13,6 +13,8 @@ from typing import Final
 
 from .contained_execution_common import (
     canonical_existing_directory as _canonical_directory,
+)
+from .contained_execution_common import (
     containment_binding_digest as _binding_digest,
 )
 from .containment_contract import ContainmentInput

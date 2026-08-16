@@ -19,7 +19,10 @@ from codex_plugin_scanner.guard.runtime.command_evaluation import evaluate_comma
 from codex_plugin_scanner.guard.runtime.command_verified_read_candidates import verified_read_candidate_operation
 from codex_plugin_scanner.guard.runtime.effect_contract import ProofRoute
 from codex_plugin_scanner.guard.runtime.effect_decision import FinalDisposition
-from codex_plugin_scanner.guard.runtime.launch_identity_binding import RuleVersionBinding, observe_launch_identity_binding
+from codex_plugin_scanner.guard.runtime.launch_identity_binding import (
+    RuleVersionBinding,
+    observe_launch_identity_binding,
+)
 from codex_plugin_scanner.guard.runtime.verified_github_reads import try_read_verified_public_github_pull_request
 from codex_plugin_scanner.guard.runtime.verified_read_execution import try_execute_verified_local_read
 from tests.guard_command_corpus import iter_benign_corpus

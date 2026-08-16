@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .package_evidence_common import read_package_json
-
 import json
 import os
 import re
@@ -14,6 +12,7 @@ from typing import cast
 
 from .jsonc import loads_jsonc
 from .node_semver import node_semver_spec_matches as _semver_spec_matches
+from .package_evidence_common import read_package_json
 from .routine_node_identity import (
     routine_configuration_identity,
     routine_dependency_closure_digest,
@@ -368,7 +367,6 @@ def _package_tree_has_trusted_identity(
         return routine_package_tree_digest(package_dir) == expected
     except (OSError, RuntimeError, ValueError):
         return False
-
 
 
 __all__ = (

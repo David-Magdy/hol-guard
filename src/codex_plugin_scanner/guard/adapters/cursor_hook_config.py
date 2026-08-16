@@ -8,8 +8,8 @@ import stat
 from hashlib import sha256
 from pathlib import Path
 
-from .hook_payloads import inline_hooks_payload
 from .base import HarnessContext
+from .hook_payloads import inline_hooks_payload
 from .state_files import load_backup_payload
 
 HOOK_SCRIPT_NAME = "hol-guard-cursor-hook.py"

@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlparse
 
-from ..private_file_io import read_private_regular_text
 from ..codex_hook_launch_runtime import (
     isolated_guard_cli_command,
     isolated_hook_environment,
     run_isolated_hook_process,
 )
+from ..private_file_io import read_private_regular_text
 
 _MAX_HOOK_INPUT_BYTES = 1_000_000
 _MAX_HOOK_RESPONSE_BYTES = 1_000_000

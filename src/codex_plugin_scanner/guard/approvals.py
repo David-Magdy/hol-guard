@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .value_coercion import coerce_non_negative_int
-
 import hashlib
 import importlib.metadata
 import threading
@@ -89,6 +87,7 @@ from .trusted_local_tools import (
     local_tool_grant_decision,
     parse_local_tool_grant_selection,
 )
+from .value_coercion import coerce_non_negative_int
 
 GUARD_COMMAND = "hol-guard"
 GUARD_DASHBOARD_URL = "https://hol.org/guard"

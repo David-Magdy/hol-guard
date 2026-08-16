@@ -12,9 +12,7 @@ from ..aibom_detection import extend_detection_with_workspace_aibom
 from ..launcher import merge_guard_launcher_env
 from ..models import HarnessDetection
 from ..shims import install_guard_shim, remove_guard_shim
-from .workspace_overrides import should_skip_workspace_override
 from .base import HarnessAdapter, HarnessContext, _command_available, _run_command_probe
-from .state_files import load_backup_payload, load_string_state_payload
 from .hook_python import guard_cli_command
 from .mcp_servers import (
     GUARD_MCP_COMPANION_PREFIX,
@@ -43,6 +41,8 @@ from .opencode_install_snapshot import (
     write_json_transaction,
 )
 from .opencode_pretool import install_pretool_plugin, remove_pretool_plugin
+from .state_files import load_backup_payload, load_string_state_payload
+from .workspace_overrides import should_skip_workspace_override
 
 _OPENCODE_SCHEMA = "https://opencode.ai/config.json"
 _GUARD_MCP_COMPANION_PREFIX = GUARD_MCP_COMPANION_PREFIX

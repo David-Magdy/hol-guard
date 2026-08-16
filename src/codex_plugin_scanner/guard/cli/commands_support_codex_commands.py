@@ -8,13 +8,12 @@
 from __future__ import annotations
 
 from functools import partial
+from typing import TYPE_CHECKING
 
 from .codex_output_safety import (
     output_uses_placeholder_private_key_fixture,
     source_name_stem_has_compound_secret_segment,
 )
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .commands_support_codex_git import _git_grep_search_args

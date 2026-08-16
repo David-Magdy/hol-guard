@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from ..executable_resolution import which_for_execution_cwd
-
 import shlex
 from pathlib import Path
 
 from ..env_wrapper import parse_env_wrapper
+from ..executable_resolution import which_for_execution_cwd
 from ..shell_execution_context import ShellExecutionContext, validate_shell_execution_segment
 from .constants_core import (
     _DOCKER_ALWAYS_SENSITIVE_SUBCOMMANDS,
@@ -36,7 +35,6 @@ from .shell_tokenization import (
     _shell_segment_primary_command,
     _split_shell_parts,
 )
-
 
 _which_for_execution_cwd = which_for_execution_cwd
 

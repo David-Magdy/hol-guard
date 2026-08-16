@@ -527,7 +527,6 @@ def _locked_package_version(path: Path, package_name: str) -> str | None:
     return version if isinstance(version, str) else None
 
 
-
 def _contained_test_target(target: str, *, workspace: Path) -> bool:
     if _has_shell_dynamics(target) or target.startswith(("/", "~")):
         return False

@@ -23,9 +23,6 @@ from .codex_hook_file_integrity import (
     verify_executable_file_identity,
     verify_regular_file_identity,
 )
-from .codex_hook_package_identity import (
-    assert_package_reauthentication_is_safe as assert_package_reauthentication_is_safe,
-)
 from .codex_hook_integrity import (
     HOOK_MANIFEST_SCHEMA_VERSION,
     hook_manifest_path,
@@ -33,6 +30,9 @@ from .codex_hook_integrity import (
     load_authenticated_hook_manifest,
     load_or_create_hook_secret,
     sign_hook_manifest,
+)
+from .codex_hook_package_identity import (
+    assert_package_reauthentication_is_safe as assert_package_reauthentication_is_safe,
 )
 
 MANAGED_CODEX_HOOK_EVENTS = ("PreToolUse", "PermissionRequest", "UserPromptSubmit", "PostToolUse")
@@ -149,7 +149,6 @@ def authenticated_manifest_for_ownership(spec: CodexHookManifestSpec) -> dict[st
     except (CodexHookIntegrityError, OSError):
         return None
     return manifest if _manifest_has_owned_installation_context(manifest, spec) else None
-
 
 
 def manifest_bindings(manifest: object) -> list[dict[str, object]]:

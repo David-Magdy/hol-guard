@@ -66,7 +66,6 @@ from ..config import MAX_APPROVAL_WAIT_TIMEOUT_SECONDS, load_guard_config, resol
 from ..launcher import merge_guard_launcher_env
 from ..models import GuardArtifact, HarnessDetection
 from ..shims import install_guard_shim, remove_guard_shim
-from .workspace_overrides import should_skip_workspace_override
 from .base import HarnessAdapter, HarnessContext, _command_available, _warnings_include_setup_failure
 from .codex_remote_control import (
     codex_remote_launch_environment,
@@ -82,7 +81,7 @@ from .mcp_servers import (
     proxy_process_env,
     skipped_stdio_server_names,
 )
-
+from .workspace_overrides import should_skip_workspace_override
 
 _read_toml = read_toml_payload
 

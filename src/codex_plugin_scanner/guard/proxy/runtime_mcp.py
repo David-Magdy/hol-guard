@@ -236,7 +236,6 @@ def _guard_action_normalization_evidence(
     }
 
 
-
 def _tool_decision_after_runtime_allow(decision: ToolCallDecision, *, source: str) -> ToolCallDecision:
     return replace(
         decision,

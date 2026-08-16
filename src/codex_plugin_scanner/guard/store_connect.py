@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from .value_coercion import coerce_non_negative_int
-
 import json
 import sqlite3
 from collections.abc import Mapping
 from datetime import datetime, timezone
+
+from .value_coercion import coerce_non_negative_int
 
 CONNECT_STATE_VERSION = "guard-connect-state.v1"
 CONNECT_STATE_STATUS_VALUES = {"waiting", "connected", "retry_required", "expired"}

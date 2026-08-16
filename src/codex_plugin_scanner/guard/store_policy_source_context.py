@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from functools import partial
-
-from .artifact_identity import artifact_family_key
-
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from functools import partial
 from hashlib import sha256
 from pathlib import Path
+
+from .artifact_identity import artifact_family_key
 
 _GENERIC_POLICY_REASONS = (
     "approved in review",

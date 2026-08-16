@@ -13,10 +13,9 @@ import tempfile
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
-
-from ..durable_io import fsync_directory as _fsync_directory
 from typing import Final, cast
 
+from ..durable_io import fsync_directory as _fsync_directory
 from .command_activity_contract import CorrelationHandle, CorrelationKind
 from .command_activity_privacy import (
     InstallationCorrelationKey,

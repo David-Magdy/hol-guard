@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from functools import partial
-
 import re
 import shlex
+from functools import partial
 from pathlib import Path
 
 from .data_flow import extract_command_segments, extract_command_substitutions, extract_input_redirects
@@ -23,8 +22,10 @@ from .kubernetes_command_support import (
     remote_cp_path,
     resource_token_includes_secret,
     script_reads_sensitive_env,
-    shell_command_script as _shell_c_script,
     skip_kubectl_options,
+)
+from .kubernetes_command_support import (
+    shell_command_script as _shell_c_script,
 )
 from .kubernetes_heredoc_support import kubernetes_heredoc_secret_source
 from .shell_command_wrappers import normalize_transparent_shell_command

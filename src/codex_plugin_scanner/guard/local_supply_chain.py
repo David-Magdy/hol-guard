@@ -37,11 +37,13 @@ from .package_execution_context import PackageExecutionContext, build_package_ex
 from .redaction import redact_local_path, redact_text
 from .runtime.approval_context import (
     approval_context_tokens_validation_reason,
-    saved_allow_context_validation_reason as package_saved_allow_validation_reason,
     build_approval_context_token,
     build_runtime_launch_identity,
     resolved_runtime_launch_argv,
     runtime_launch_identity_is_reusable,
+)
+from .runtime.approval_context import (
+    saved_allow_context_validation_reason as package_saved_allow_validation_reason,
 )
 from .runtime.approval_reuse import (
     APPROVAL_REUSE_CLAIM_FAILED,

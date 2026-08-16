@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .path_security import path_has_symlink_component
-
 import hashlib
 import ipaddress
 import os
@@ -11,6 +9,8 @@ import re
 import stat
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from .path_security import path_has_symlink_component
 
 MAX_SKILL_DOCUMENT_BYTES = 256 * 1024
 _ANALYSIS_VERSION = "1"

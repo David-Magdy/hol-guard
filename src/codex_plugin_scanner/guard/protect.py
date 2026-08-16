@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .collections_support import dedupe_preserving_order
-
 import hashlib
 import json
 import os
@@ -19,6 +17,7 @@ from uuid import uuid4
 
 from .action_lattice import normalize_guard_action
 from .advisory_model import ProtectTargetIdentity, advisory_matches_target, build_package_url
+from .collections_support import dedupe_preserving_order
 from .config import GuardConfig
 from .models import GuardReceipt
 from .redaction import redact_text

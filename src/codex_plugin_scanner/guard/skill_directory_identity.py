@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .file_identity import full_stat_identity
-
 import errno
 import hashlib
 import os
@@ -34,6 +32,8 @@ from codex_plugin_scanner.guard.skill_directory_identity_contract import (
     validated_complete_skill_directory_hash,
 )
 from codex_plugin_scanner.guard.windows_paths import open_windows_locked_regular_descriptor
+
+from .file_identity import full_stat_identity
 
 _HASH_CHUNK_BYTES = 64 * 1024
 

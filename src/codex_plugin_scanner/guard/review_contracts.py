@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from .stable_json import stable_json_serialize
-
 import base64
 import hashlib
 import json
@@ -32,6 +30,7 @@ from .policy_bundle_trusted_keys import (
     safe_load_policy_bundle_verification_keys,
     signing_key_is_current,
 )
+from .stable_json import stable_json_serialize
 
 _LOCAL_REVIEW_REQUEST_CONTRACT_VERSION = "guard.local-review-request.v1"
 _REMOTE_APPROVAL_CONTRACT_VERSION = "guard.remote-approval.v1"

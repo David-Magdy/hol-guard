@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ._json_support import load_json_object
-
 from ..path_support import resolves_within_root
+from ._json_support import load_json_object
 from .base import iter_safe_recursive_files
 from .types import Ecosystem, NormalizedPackage, PackageCandidate
-
 
 _load_json = load_json_object
 
