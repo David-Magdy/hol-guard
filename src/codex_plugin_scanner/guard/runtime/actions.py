@@ -850,11 +850,6 @@ def command_text_from_tool_payload(tool_name: object, tool_input: object) -> str
         value = tool_input.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    normalized_tool = tool_name.strip().lower() if isinstance(tool_name, str) else ""
-    if normalized_tool in _FILE_READ_TOOL_NAMES or normalized_tool in {"egrep", "fgrep", "rg"}:
-        # Search/read tools carry a regex in `pattern`. That is not a shell
-        # command; treating `|` as a pipeline over-blocks ordinary greps.
-        return None
     native_command = _native_tool_command_text(tool_name, tool_input)
     if native_command is not None:
         return native_command

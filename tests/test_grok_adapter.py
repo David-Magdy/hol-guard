@@ -336,7 +336,8 @@ class TestGrokActionEnvelopes:
             home_dir=tmp_path,
         )
         assert envelope.action_type == "file_read"
-        assert envelope.command is None
+        assert envelope.command is not None
+        assert envelope.command.startswith("grep ")
 
     def test_session_id_is_preserved(self, tmp_path: Path) -> None:
         envelope = normalize_grok_hook_payload(
@@ -579,7 +580,8 @@ class TestGrokInventoryAndResponses:
             home_dir=tmp_path,
         )
         assert envelope.action_type == "file_read"
-        assert envelope.command is None
+        assert envelope.command is not None
+        assert "prepare_grok_hook_payload" in envelope.command
 
     def test_list_dir_maps_to_file_read_of_target(self, tmp_path: Path) -> None:
         envelope = normalize_grok_hook_payload(
