@@ -133,15 +133,25 @@ def test_success_preserves_child_stdout_and_returncode(
     assert output.getvalue() == '{"decision":"deny"}\n'
 
 
-def test_frozen_hook_command_prefers_trusted_native_desktop_proxy(
+def test_frozen_hook_command_prefers_fd_bound_signed_macos_proxy(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+    expected = (
+        "/bin/sh",
+        "-c",
+        "verified-launcher",
+        "hol-guard-desktop-proxy",
+        "/Applications/HOL Guard.app/Contents/MacOS/HOL Guard",
+        "TEAMID",
+        "config",
+        "/Applications/HOL Guard.app/Contents/MacOS/hol-guard",
+    )
     monkeypatch.setattr(
         bounded_cli_hook_bridge,
-        "_trusted_desktop_hook_proxy",
-        lambda executable: "/Applications/HOL Guard.app/Contents/MacOS/HOL Guard",
+        "_trusted_desktop_hook_proxy_command",
+        lambda executable, config: (*expected[:-2], config, executable),
     )
     command = bounded_cli_hook_bridge.bounded_cli_hook_command(
         python_executable="/Applications/HOL Guard.app/Contents/MacOS/hol-guard",
@@ -159,11 +169,11 @@ def test_frozen_hook_command_prefers_trusted_native_desktop_proxy(
         timeout_seconds=25,
     )
 
-    assert command[0] == "/Applications/HOL Guard.app/Contents/MacOS/HOL Guard"
-    assert command[1] == "__guard-hook-proxy"
-    config = json.loads(command[2])
+    assert command[:6] == expected[:6]
+    config = json.loads(command[6])
     assert config["python_executable"].endswith("/hol-guard")
     assert config["frozen_launcher"] is True
+    assert command[7].endswith("/hol-guard")
 
 
 def test_untrusted_native_proxy_falls_back_to_internal_frozen_bridge(
@@ -173,8 +183,8 @@ def test_untrusted_native_proxy_falls_back_to_internal_frozen_bridge(
     monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
     monkeypatch.setattr(
         bounded_cli_hook_bridge,
-        "_trusted_desktop_hook_proxy",
-        lambda executable: None,
+        "_trusted_desktop_hook_proxy_command",
+        lambda executable, config: None,
     )
     command = bounded_cli_hook_bridge.bounded_cli_hook_command(
         python_executable="/app/hol-guard",
@@ -195,8 +205,7 @@ def test_untrusted_native_proxy_falls_back_to_internal_frozen_bridge(
     assert command[:2] == ("/app/hol-guard", "__guard-bounded-hook")
 
 
-@pytest.mark.skipif(not bounded_cli_hook_bridge.sys.platform.startswith("linux"), reason="Linux trust contract")
-def test_linux_proxy_requires_exact_appimage_and_private_executable(
+def test_linux_never_uses_caller_controlled_appimage_as_proxy_provenance(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -207,14 +216,22 @@ def test_linux_proxy_requires_exact_appimage_and_private_executable(
     core.write_text("core", encoding="utf-8")
     core.chmod(0o755)
     monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "platform", "linux")
     monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
     monkeypatch.setenv("HOL_GUARD_DESKTOP_HOOK_PROXY", str(proxy))
     monkeypatch.setenv("APPIMAGE", str(proxy))
 
-    assert bounded_cli_hook_bridge._trusted_desktop_hook_proxy(str(core)) == str(proxy.resolve())
+    assert bounded_cli_hook_bridge._trusted_desktop_hook_proxy_command(str(core), "{}") is None
 
-    proxy.chmod(0o777)
-    assert bounded_cli_hook_bridge._trusted_desktop_hook_proxy(str(core)) is None
+
+def test_macos_launcher_binds_codesign_validation_to_the_executed_descriptor() -> None:
+    launcher = bounded_cli_hook_bridge._DESKTOP_PROXY_LAUNCH_SCRIPT
+    assert 'exec 3<"$proxy"' in launcher
+    assert "/usr/bin/stat -f '%d:%i' /dev/fd/3" in launcher
+    assert "/usr/bin/codesign --verify --strict" in launcher
+    assert "path_after=$(/usr/bin/stat -f" in launcher
+    assert 'exec /dev/fd/3 __guard-hook-proxy "$config"' in launcher
+    assert 'exec "$fallback" __guard-bounded-hook "$config"' in launcher
 
 
 def test_frozen_fallback_runs_supported_cli_subcommand_without_python_flags(

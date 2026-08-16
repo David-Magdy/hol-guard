@@ -61,17 +61,57 @@ def _codesign_team(path: Path) -> str | None:
     return None
 
 
-def _trusted_desktop_hook_proxy(python_executable: str) -> str | None:
-    """Return the native Desktop proxy only when its platform identity is trusted.
+_DESKTOP_PROXY_LAUNCH_SCRIPT = r"""
+set -eu
+proxy=$1
+expected_team=$2
+config=$3
+fallback=$4
+fallback_bridge() {
+  exec "$fallback" __guard-bounded-hook "$config"
+}
+exec 3<"$proxy" || fallback_bridge
+fd_identity=$(/usr/bin/stat -f '%d:%i' /dev/fd/3 2>/dev/null) || fallback_bridge
+path_identity=$(/usr/bin/stat -f '%d:%i' "$proxy" 2>/dev/null) || fallback_bridge
+[ "$fd_identity" = "$path_identity" ] || fallback_bridge
+/usr/bin/codesign --verify --strict --verbose=2 "$proxy" >/dev/null 2>&1 || fallback_bridge
+actual_team=$(
+  /usr/bin/codesign --display --verbose=4 "$proxy" 2>&1 \
+    | /usr/bin/sed -n 's/^TeamIdentifier=//p' \
+    | /usr/bin/head -n 1
+)
+if [ "$expected_team" = "adhoc-e2e" ]; then
+  [ "${HOL_GUARD_DESKTOP_E2E_ALLOW_ADHOC_SIGNATURE:-}" = "1" ] || fallback_bridge
+  [ -z "$actual_team" ] || fallback_bridge
+else
+  [ "$actual_team" = "$expected_team" ] || fallback_bridge
+fi
+path_after=$(/usr/bin/stat -f '%d:%i' "$proxy" 2>/dev/null) || fallback_bridge
+[ "$fd_identity" = "$path_after" ] || fallback_bridge
+exec /dev/fd/3 __guard-hook-proxy "$config"
+""".strip()
 
-    The variable is accepted only from a frozen Core launched by Desktop. On
-    macOS both executables must carry the same verified Apple TeamIdentifier.
-    On Linux the proxy must be the exact AppImage path inherited by the Core
-    process. Other platforms keep using the internal frozen bridge until an
-    equivalent platform trust check is implemented.
+
+def _trusted_desktop_hook_proxy_command(
+    python_executable: str,
+    config_json: str,
+) -> tuple[str, ...] | None:
+    """Return an fd-bound signed macOS proxy command or retain the Core bridge.
+
+    Linux intentionally stays on the internal frozen bridge. AppImage path
+    variables are caller-controlled and are not accepted as executable
+    provenance. The macOS launcher opens the proxy before validation, compares
+    the open descriptor with the validated path before and after codesign, and
+    executes that same descriptor through /dev/fd/3. A path replacement can
+    therefore only trigger the verified Core fallback, never execute unchecked
+    bytes.
     """
 
-    if not bool(getattr(sys, "frozen", False)) or os.environ.get("HOL_GUARD_DESKTOP") != "1":
+    if (
+        sys.platform != "darwin"
+        or not bool(getattr(sys, "frozen", False))
+        or os.environ.get("HOL_GUARD_DESKTOP") != "1"
+    ):
         return None
     raw = os.environ.get(_DESKTOP_PROXY_ENV)
     if not raw:
@@ -83,45 +123,42 @@ def _trusted_desktop_hook_proxy(python_executable: str) -> str | None:
         raw_metadata = candidate.lstat()
         resolved = candidate.resolve(strict=True)
         metadata = resolved.stat()
+        core = Path(python_executable).resolve(strict=True)
     except OSError:
         return None
     if stat.S_ISLNK(raw_metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         return None
     if not os.access(resolved, os.X_OK):
         return None
-    if os.name != "nt" and (metadata.st_uid not in {os.getuid(), 0} or stat.S_IMODE(metadata.st_mode) & 0o022):
+    if metadata.st_uid not in {os.getuid(), 0} or stat.S_IMODE(metadata.st_mode) & 0o022:
         return None
 
-    core = Path(python_executable)
-    if sys.platform == "darwin":
-        try:
-            core = core.resolve(strict=True)
-        except OSError:
-            return None
-        proxy_team = _codesign_team(resolved)
-        core_team = _codesign_team(core)
-        if proxy_team is not None and proxy_team == core_team:
-            return str(resolved)
-        if (
-            os.environ.get("HOL_GUARD_DESKTOP_E2E_ALLOW_ADHOC_SIGNATURE") == "1"
-            and proxy_team is None
-            and core_team is None
-        ):
-            return str(resolved)
+    proxy_team = _codesign_team(resolved)
+    core_team = _codesign_team(core)
+    expected_team: str | None
+    if proxy_team is not None and proxy_team == core_team:
+        expected_team = proxy_team
+    elif (
+        os.environ.get("HOL_GUARD_DESKTOP_E2E_ALLOW_ADHOC_SIGNATURE") == "1"
+        and proxy_team is None
+        and core_team is None
+    ):
+        expected_team = "adhoc-e2e"
+    else:
+        expected_team = None
+    if expected_team is None:
         return None
 
-    if sys.platform.startswith("linux"):
-        appimage = os.environ.get("APPIMAGE")
-        if appimage:
-            try:
-                trusted_appimage = Path(appimage).resolve(strict=True)
-            except OSError:
-                return None
-            return str(resolved) if resolved == trusted_appimage else None
-        if os.environ.get("HOL_GUARD_DESKTOP_E2E_ALLOW_ADHOC_SIGNATURE") == "1":
-            return str(resolved)
-        return None
-    return None
+    return (
+        "/bin/sh",
+        "-c",
+        _DESKTOP_PROXY_LAUNCH_SCRIPT,
+        "hol-guard-desktop-proxy",
+        str(resolved),
+        expected_team,
+        config_json,
+        str(core),
+    )
 
 
 def _assert_loopback_http_url(url: str) -> None:
@@ -182,9 +219,9 @@ def bounded_cli_hook_command(
     )
     if frozen_launcher:
         config_json = json.dumps(config, ensure_ascii=True, separators=(",", ":"))
-        desktop_proxy = _trusted_desktop_hook_proxy(python_executable)
+        desktop_proxy = _trusted_desktop_hook_proxy_command(python_executable, config_json)
         if desktop_proxy is not None:
-            return desktop_proxy, _DESKTOP_PROXY_COMMAND, config_json
+            return desktop_proxy
         return python_executable, _FROZEN_BRIDGE_COMMAND, config_json
     return (
         python_executable,
