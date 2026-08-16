@@ -1,0 +1,196 @@
+name: Finalize scanner assurance v2
+
+on:
+  push:
+    branches: [feat/scanner-assurance-rust-hardening]
+    paths:
+      - ".github/workflows/tmp-finalize-scanner-assurance-v2.yml"
+      - "scripts/ci/finalize_scanner_assurance_v2.py"
+      - "src/codex_plugin_scanner/assurance.py"
+      - "src/codex_plugin_scanner/assurance_cli.py"
+      - "src/codex_plugin_scanner/evidence_envelope.py"
+      - "src/codex_plugin_scanner/runtime_assurance.py"
+      - "src/codex_plugin_scanner/rust_kernel.py"
+      - "rust/scanner-kernel/**"
+      - "tests/assurance_corpus.py"
+      - "tests/test_assurance_scanner.py"
+      - "tests/test_evidence_envelope.py"
+      - "tests/test_runtime_assurance.py"
+      - "tests/test_rust_scanner_kernel_contract.py"
+      - "scripts/ci/scanner_assurance_benchmark.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-scanner-assurance-v2
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/scanner-assurance-rust-hardening
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+          save-cache: false
+      - name: Apply, validate, and commit the final implementation
+        shell: bash
+        env:
+          BRANCH: feat/scanner-assurance-rust-hardening
+        run: |
+          set -u
+          log="$RUNNER_TEMP/scanner-assurance-validation.log"
+          : > "$log"
+          status=0
+
+          run_step() {
+            local label="$1"
+            shift
+            if [ "$status" -ne 0 ]; then
+              return 0
+            fi
+            {
+              echo
+              echo "===== $label ====="
+              printf 'command:'
+              printf ' %q' "$@"
+              echo
+            } | tee -a "$log"
+            set +e
+            "$@" 2>&1 | tee -a "$log"
+            local rc=${PIPESTATUS[0]}
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              status="$rc"
+              echo "FAILED: $label (exit $rc)" | tee -a "$log"
+            else
+              echo "PASSED: $label" | tee -a "$log"
+            fi
+          }
+
+          run_shell() {
+            local label="$1"
+            local command="$2"
+            run_step "$label" bash -o pipefail -c "$command"
+          }
+
+          run_step "finalize sources" python scripts/ci/finalize_scanner_assurance_v2.py
+          run_step "install locked Python environment" uv sync --frozen --extra dev --python 3.12
+          run_step "validate lockfile" uv lock --check
+
+          python_files=(
+            src/codex_plugin_scanner/assurance.py
+            src/codex_plugin_scanner/assurance_cli.py
+            src/codex_plugin_scanner/evidence_envelope.py
+            src/codex_plugin_scanner/runtime_assurance.py
+            src/codex_plugin_scanner/rust_kernel.py
+            src/codex_plugin_scanner/scanner.py
+            src/codex_plugin_scanner/policy.py
+            tests/assurance_corpus.py
+            tests/test_assurance_scanner.py
+            tests/test_evidence_envelope.py
+            tests/test_runtime_assurance.py
+            tests/test_rust_scanner_kernel_contract.py
+            scripts/ci/scanner_assurance_benchmark.py
+          )
+          run_step "ruff autofix" uv run --no-sync ruff check --fix "${python_files[@]}"
+          run_step "ruff format" uv run --no-sync ruff format "${python_files[@]}"
+          run_step "ruff validation" uv run --no-sync ruff check "${python_files[@]}"
+          run_step "Python compilation" uv run --no-sync python -m compileall -q src/codex_plugin_scanner tests scripts/ci
+          run_step "basedpyright" uv run --no-sync basedpyright --level error \
+            src/codex_plugin_scanner/assurance.py \
+            src/codex_plugin_scanner/assurance_cli.py \
+            src/codex_plugin_scanner/evidence_envelope.py \
+            src/codex_plugin_scanner/runtime_assurance.py \
+            src/codex_plugin_scanner/rust_kernel.py \
+            src/codex_plugin_scanner/scanner.py \
+            src/codex_plugin_scanner/policy.py
+
+          run_step "Rust formatting" cargo fmt --manifest-path rust/scanner-kernel/Cargo.toml
+          run_step "Rust clippy autofix" cargo clippy --locked --manifest-path rust/scanner-kernel/Cargo.toml --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+          run_step "Rust clippy validation" cargo clippy --locked --manifest-path rust/scanner-kernel/Cargo.toml --all-targets -- -D warnings
+          run_step "Rust unit tests" cargo test --locked --manifest-path rust/scanner-kernel/Cargo.toml
+          run_step "Rust release build" cargo build --locked --release --manifest-path rust/scanner-kernel/Cargo.toml
+
+          export HOL_GUARD_SCANNER_KERNEL="$GITHUB_WORKSPACE/rust/scanner-kernel/target/release/hol-guard-scanner-kernel"
+          run_step "layered assurance regression tests" uv run --no-sync pytest \
+            tests/test_assurance_scanner.py \
+            tests/test_evidence_envelope.py \
+            tests/test_runtime_assurance.py \
+            tests/test_rust_scanner_kernel_contract.py \
+            --tb=short
+          run_step "scanner compatibility tests" uv run --no-sync pytest \
+            tests/test_cli.py \
+            tests/test_integration.py \
+            tests/test_policy.py \
+            tests/test_reporting.py \
+            tests/test_schema_contracts.py \
+            tests/test_security_ops.py \
+            tests/test_verification.py \
+            --tb=short
+          run_step "precision recall and latency benchmark" env PYTHONPATH=. uv run --no-sync python \
+            scripts/ci/scanner_assurance_benchmark.py \
+            --output scanner-assurance-benchmark.json
+          run_shell "scanner self-inspection evidence" '
+            set +e
+            uv run --no-sync python -m codex_plugin_scanner.assurance_cli scan . --output scanner-assurance-self-evidence.json
+            rc=$?
+            set -e
+            test "$rc" -eq 0 -o "$rc" -eq 1
+            uv run --no-sync python -m json.tool scanner-assurance-self-evidence.json >/dev/null
+          '
+          run_step "test inventory" uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          run_step "test-suite ratchet" uv run --no-sync python scripts/ci/test_suite_ratchet.py \
+            --baseline ci/test-suite-ratchet-baseline.json \
+            --inventory test-inventory.json
+          run_step "patch whitespace validation" git diff --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ "$status" -ne 0 ]; then
+            mkdir -p .scanner-assurance-debug
+            {
+              echo "head=$(git rev-parse HEAD)"
+              echo "status=$status"
+              echo "generated_at=$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
+              echo
+              tail -c 240000 "$log"
+            } \
+              | sed -E 's/(Bearer|token|authorization)[=: ]+[^[:space:]]+/\1=[redacted]/Ig' \
+              > .scanner-assurance-debug/validation.log
+            git add .scanner-assurance-debug/validation.log
+            git commit -m "test(scanner): preserve assurance validation failure" || true
+            git push origin "HEAD:$BRANCH"
+            exit "$status"
+          fi
+
+          rm -rf .scanner-assurance-debug
+          rm -f \
+            scripts/ci/apply_scanner_assurance_integration.py \
+            scripts/ci/repair_scanner_assurance.py \
+            scripts/ci/finalize_scanner_assurance.py \
+            scripts/ci/finalize_scanner_assurance_v2.py \
+            .github/workflows/tmp-apply-scanner-assurance.yml \
+            .github/workflows/tmp-finalize-scanner-assurance-v2.yml \
+            .github/workflows/scanner-assurance-source-snapshot.yml \
+            .github/workflows/scanner-reliability-payload-inspect.yml \
+            .github/workflows/scanner-reliability-source-snapshot.yml
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(scanner): add layered assurance and Rust hot paths"
+          git push origin "HEAD:$BRANCH"
