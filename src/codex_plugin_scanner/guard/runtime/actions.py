@@ -48,6 +48,9 @@ _SCHEMA_VERSION = 1
 _SHELL_TOOL_NAMES = frozenset({"bash", "shell", "sh", "zsh", "terminal", "run_command", "run_terminal_command"})
 _FILE_READ_TOOL_NAMES = frozenset({"read", "read_file", "open_file", "view", "view_file", "cat_file"})
 _FILE_WRITE_TOOL_NAMES = frozenset({"write", "edit", "multiedit", "write_file", "edit_file", "apply_patch"})
+_GROK_FILE_READ_TOOL_NAMES = frozenset({"grep", "glob", "list_dir", "listdir", "list_directory", "read"})
+_GROK_SUBAGENT_TOOL_NAMES = frozenset({"task", "spawn_subagent"})
+_GROK_LIFECYCLE_ENVELOPE_EVENTS = frozenset({"SessionStart", "SubagentStart"})
 _PATH_KEYS = (
     "path",
     "paths",
@@ -64,6 +67,10 @@ _PATH_KEYS = (
     "target_paths",
     "targetPath",
     "targetPaths",
+    "target_directory",
+    "targetDirectory",
+    "directory",
+    "dir",
 )
 _COMMAND_KEYS = (
     "command",
@@ -450,13 +457,23 @@ def normalize_grok_hook_payload(
 
     from ..adapters.grok_hooks import prepare_grok_hook_payload
 
-    return _normalize_action_payload(
+    envelope = _normalize_action_payload(
         prepare_grok_hook_payload(payload),
         harness="grok",
         default_event_name=None,
         workspace=workspace,
         home_dir=home_dir,
     )
+    if envelope.event_name in _GROK_LIFECYCLE_ENVELOPE_EVENTS:
+        return replace(envelope, action_type="config_change")
+    if envelope.event_name != "PreToolUse":
+        return envelope
+    tool_name = (envelope.tool_name or "").lower()
+    if tool_name in _GROK_SUBAGENT_TOOL_NAMES:
+        return replace(envelope, action_type="prompt")
+    if tool_name in _GROK_FILE_READ_TOOL_NAMES:
+        return replace(envelope, action_type="file_read")
+    return envelope
 
 
 def normalize_zcode_hook_payload(

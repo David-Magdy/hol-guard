@@ -102,27 +102,17 @@ class TestGrokInstallUninstall:
         assert pretool_hook.is_file()
         assert prompt_hook.is_file()
         pretool_payload = json.loads(pretool_hook.read_text(encoding="utf-8"))
+        prompt_payload = json.loads(prompt_hook.read_text(encoding="utf-8"))
         assert "UserPromptSubmit" not in pretool_payload["hooks"]
-        matchers = {
-            entry["matcher"]
-            for entry in pretool_payload["hooks"]["PreToolUse"]
-            if isinstance(entry, dict) and isinstance(entry.get("matcher"), str)
-        }
-        assert matchers == {
-            "Bash",
-            "Read",
-            "Edit",
-            "Grep",
-            "MCPTool",
-            "WebFetch",
-            "run_terminal_command",
-            "read_file",
-            "grep",
-            "web_fetch",
-            "web_search",
-            "write",
-            "search_replace",
-        }
+        pretool_entries = pretool_payload["hooks"]["PreToolUse"]
+        assert len(pretool_entries) == 1
+        assert "matcher" not in pretool_entries[0]
+        assert set(prompt_payload["hooks"]) == {"UserPromptSubmit", "SubagentStart", "SessionStart"}
+        managed_text = managed_config.read_text(encoding="utf-8")
+        assert "Read(**/.grok/auth/**)" in managed_text
+        assert "Read(~/" not in managed_text
+        assert "[[hooks.PreToolUse]]" in managed_text
+        assert "[[hooks.SessionStart]]" in managed_text
 
     def test_repeated_install_is_idempotent(self, tmp_path: Path, monkeypatch) -> None:
         ctx = _ctx(tmp_path)
@@ -199,6 +189,37 @@ class TestGrokHookResponses:
         emit_grok_hook_response(policy_action="allow", reason="", output_stream=stream)
         assert json.loads(stream.getvalue()) == {"decision": "allow"}
 
+    def test_observe_prompt_hook_allows_even_when_policy_blocks(self, tmp_path: Path) -> None:
+        from codex_plugin_scanner.guard.cli.commands_hook_generic import _run_hook_generic_payload
+        from codex_plugin_scanner.guard.config import GuardConfig
+        from codex_plugin_scanner.guard.store import GuardStore
+
+        guard_home = tmp_path / ".hol-guard"
+        store = GuardStore(guard_home)
+        config = GuardConfig(guard_home=guard_home, workspace=tmp_path)
+        args = argparse.Namespace(
+            harness="grok",
+            json=False,
+            policy_action="block",
+            artifact_id=None,
+            artifact_name=None,
+        )
+        stdout_capture = io.StringIO()
+        stderr_capture = io.StringIO()
+        with redirect_stderr(stderr_capture):
+            rc = _run_hook_generic_payload(
+                args,
+                action_envelope=None,
+                config=config,
+                output_stream=stdout_capture,
+                payload=_fixture("user_prompt_submit.json"),
+                home_dir=tmp_path,
+                runtime_workspace=tmp_path,
+                store=store,
+            )
+        assert rc == 0
+        assert json.loads(stdout_capture.getvalue()) == {"decision": "allow"}
+
     def test_grok_block_emits_deny_json_and_stderr(self, tmp_path: Path) -> None:
         from codex_plugin_scanner.guard.cli.commands_hook_generic import _run_hook_generic_payload
         from codex_plugin_scanner.guard.config import GuardConfig
@@ -269,6 +290,15 @@ class TestGrokHookPayloadFixtures:
         normalized = prepare_grok_hook_payload(_fixture("pretooluse_webfetch.json"))
         assert normalized["tool_name"] == "WebFetch"
 
+    def test_webfetch_envelope_keeps_web_tool_name(self, tmp_path: Path) -> None:
+        envelope = normalize_grok_hook_payload(
+            _fixture("pretooluse_webfetch.json"),
+            workspace=tmp_path / "ws",
+            home_dir=tmp_path,
+        )
+        assert envelope.tool_name == "WebFetch"
+        assert envelope.action_type in {"network_request", "config_change"}
+
     def test_unknown_tool_is_preserved(self) -> None:
         normalized = prepare_grok_hook_payload(_fixture("pretooluse_unknown_tool.json"))
         assert normalized["tool_name"] == "custom_plugin_action"
@@ -281,6 +311,23 @@ class TestGrokHookPayloadFixtures:
         normalized = prepare_grok_hook_payload({})
         assert normalized == {}
 
+    def test_spawn_subagent_maps_prompt_and_type(self) -> None:
+        normalized = prepare_grok_hook_payload(_fixture("pretooluse_spawn_subagent.json"))
+        assert normalized["tool_name"] == "Task"
+        assert normalized["subagent_type"] == "explore"
+        assert "adapter layout" in str(normalized["prompt"])
+
+    def test_qualified_mcp_tool_maps_server_and_tool(self) -> None:
+        normalized = prepare_grok_hook_payload(_fixture("pretooluse_mcp_qualified.json"))
+        assert normalized["tool_name"] == "MCPTool"
+        assert normalized["mcp_server"] == "filesystem"
+        assert normalized["mcp_tool"] == "write_file"
+
+    def test_subagent_start_is_observe_event(self) -> None:
+        normalized = prepare_grok_hook_payload(_fixture("subagent_start.json"))
+        assert normalized["hook_event_name"] == "SubagentStart"
+        assert normalized["subagent_type"] == "explore"
+
 
 class TestGrokActionEnvelopes:
     def test_read_secret_maps_to_file_read(self, tmp_path: Path) -> None:
@@ -292,13 +339,15 @@ class TestGrokActionEnvelopes:
         assert envelope.action_type == "file_read"
         assert ".env" in envelope.target_paths[0]
 
-    def test_safe_grep_maps_to_shell_command(self, tmp_path: Path) -> None:
+    def test_safe_grep_maps_to_file_read(self, tmp_path: Path) -> None:
         envelope = normalize_grok_hook_payload(
             _fixture("pretooluse_grep_safe.json"),
             workspace=tmp_path / "ws",
             home_dir=tmp_path,
         )
-        assert envelope.action_type in {"shell_command", "file_read", "config_change"}
+        assert envelope.action_type == "file_read"
+        assert envelope.command is not None
+        assert envelope.command.startswith("grep ")
 
     def test_session_id_is_preserved(self, tmp_path: Path) -> None:
         envelope = normalize_grok_hook_payload(
@@ -506,6 +555,109 @@ class TestGrokInventoryAndResponses:
         payload = grok_hook_response_from_guard(policy_action="block", reason="Grok tried to read a credential file.")
         assert payload["decision"] == "deny"
         assert "{" not in str(payload["reason"])
+
+    def test_observe_events_never_deny(self) -> None:
+        payload = grok_hook_response_from_guard(
+            policy_action="block",
+            reason="Blocked by HOL Guard.",
+            event_name="UserPromptSubmit",
+        )
+        assert payload == {"decision": "allow"}
+
+    def test_subagent_start_with_tool_name_is_not_prompt(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        envelope = normalize_grok_hook_payload(
+            {
+                "hookEventName": "subagent_start",
+                "sessionId": "session-redacted-015",
+                "cwd": str(workspace),
+                "workspaceRoot": str(workspace),
+                "subagentType": "explore",
+                "toolName": "spawn_subagent",
+            },
+            workspace=workspace,
+            home_dir=tmp_path,
+        )
+        assert envelope.event_name == "SubagentStart"
+        assert envelope.action_type == "config_change"
+
+    def test_session_start_with_read_tool_is_not_file_read(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        envelope = normalize_grok_hook_payload(
+            {
+                "hookEventName": "session_start",
+                "sessionId": "session-redacted-016",
+                "cwd": str(workspace),
+                "workspaceRoot": str(workspace),
+                "toolName": "read_file",
+                "toolInput": {"target_file": str(tmp_path / ".env")},
+            },
+            workspace=workspace,
+            home_dir=tmp_path,
+        )
+        assert envelope.event_name == "SessionStart"
+        assert envelope.action_type == "config_change"
+
+    def test_spawn_subagent_envelope_is_prompt(self, tmp_path: Path) -> None:
+        envelope = normalize_grok_hook_payload(
+            _fixture("pretooluse_spawn_subagent.json"),
+            workspace=tmp_path / "ws",
+            home_dir=tmp_path,
+        )
+        assert envelope.action_type == "prompt"
+        assert envelope.tool_name == "Task"
+
+    def test_secret_spawn_prompt_keeps_secret_marker(self, tmp_path: Path) -> None:
+        envelope = normalize_grok_hook_payload(
+            _fixture("pretooluse_spawn_subagent_secret.json"),
+            workspace=tmp_path / "ws",
+            home_dir=tmp_path,
+        )
+        assert envelope.action_type == "prompt"
+        assert envelope.prompt_text is not None
+        assert ".env" in envelope.prompt_text
+
+    def test_grep_pipe_pattern_is_not_a_shell_pipeline(self, tmp_path: Path) -> None:
+        envelope = normalize_grok_hook_payload(
+            _fixture("pretooluse_grep_pipe_pattern.json"),
+            workspace=tmp_path / "ws",
+            home_dir=tmp_path,
+        )
+        assert envelope.action_type == "file_read"
+        assert envelope.command is not None
+        assert "prepare_grok_hook_payload" in envelope.command
+
+    def test_list_dir_maps_to_file_read_of_target(self, tmp_path: Path) -> None:
+        envelope = normalize_grok_hook_payload(
+            _fixture("pretooluse_list_dir.json"),
+            workspace=tmp_path / "ws",
+            home_dir=tmp_path,
+        )
+        assert envelope.action_type == "file_read"
+        assert any(".ssh" in path for path in envelope.target_paths)
+
+    def test_qualified_mcp_envelope_is_mcp_tool(self, tmp_path: Path) -> None:
+        envelope = normalize_grok_hook_payload(
+            _fixture("pretooluse_mcp_qualified.json"),
+            workspace=tmp_path / "ws",
+            home_dir=tmp_path,
+        )
+        assert envelope.action_type == "mcp_tool"
+        assert envelope.mcp_server == "filesystem"
+        assert envelope.mcp_tool == "write_file"
+
+    def test_detects_workflow_and_agent_surfaces(self, tmp_path: Path) -> None:
+        ctx = _ctx(tmp_path)
+        grok_root = ctx.home_dir / ".grok"
+        (grok_root / "workflows").mkdir(parents=True)
+        (grok_root / "agents").mkdir(parents=True)
+        (grok_root / "sandbox.toml").write_text("[profiles.project]\nextends = \"workspace\"\n", encoding="utf-8")
+        result = GrokHarnessAdapter().detect(ctx)
+        assert any(path.endswith(".grok/workflows") for path in result.config_paths)
+        assert any(path.endswith(".grok/agents") for path in result.config_paths)
+        assert any(path.endswith(".grok/sandbox.toml") for path in result.config_paths)
 
 
 class TestGrokFixtureHygiene:

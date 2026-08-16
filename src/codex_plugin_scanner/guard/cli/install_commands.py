@@ -324,6 +324,31 @@ def _opencode_protection_checks(context: HarnessContext, store: GuardStore | Non
     }
 
 
+def _grok_pretool_is_catchall(pretool_hook: Path) -> bool:
+    if not pretool_hook.is_file():
+        return False
+    try:
+        payload = json.loads(pretool_hook.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    entries = hooks.get("PreToolUse")
+    if not isinstance(entries, list) or len(entries) != 1 or not isinstance(entries[0], dict):
+        return False
+    matcher = entries[0].get("matcher")
+    if matcher not in {None, ""}:
+        return False
+    nested = entries[0].get("hooks")
+    if not isinstance(nested, list) or len(nested) != 1 or not isinstance(nested[0], dict):
+        return False
+    command = nested[0].get("command")
+    return nested[0].get("type") == "command" and isinstance(command, str) and bool(command.strip())
+
+
 def _grok_protection_checks(context: HarnessContext) -> dict[str, object]:
     from ..adapters.grok import GrokHarnessAdapter
 
@@ -335,10 +360,20 @@ def _grok_protection_checks(context: HarnessContext) -> dict[str, object]:
     warnings: list[str] = []
     if not pretool_hook.is_file() or not prompt_hook.is_file():
         warnings.append("Grok Guard hook files are missing from ~/.grok/hooks/. Re-run `hol-guard apps connect grok`.")
-    if not managed_config.is_file() or "BEGIN HOL GUARD MANAGED GROK" not in managed_config.read_text(encoding="utf-8"):
+    elif not _grok_pretool_is_catchall(pretool_hook):
+        warnings.append(
+            "Grok Guard pre-tool hook still uses a stale per-tool matcher list. Re-run `hol-guard apps repair grok`."
+        )
+    managed_text = managed_config.read_text(encoding="utf-8") if managed_config.is_file() else ""
+    if not managed_config.is_file() or "BEGIN HOL GUARD MANAGED GROK" not in managed_text:
         warnings.append(
             "Grok managed permission rules are missing from ~/.grok/managed_config.toml. "
             "Re-run `hol-guard apps connect grok`."
+        )
+    elif "Read(~/" in managed_text or "Read(~/" in managed_text:
+        warnings.append(
+            "Grok managed deny rules still use literal home prefixes that Grok does not expand. "
+            "Re-run `hol-guard apps repair grok`."
         )
     shim_path = context.guard_home / "bin" / "guard-grok"
     if not shim_path.is_file():
@@ -349,6 +384,7 @@ def _grok_protection_checks(context: HarnessContext) -> dict[str, object]:
     return {
         "pretool_hook_installed": pretool_hook.is_file(),
         "prompt_hook_installed": prompt_hook.is_file(),
+        "pretool_catchall_installed": _grok_pretool_is_catchall(pretool_hook),
         "managed_config_installed": managed_config.is_file(),
         "launch_shim_installed": shim_path.is_file(),
         "warnings": warnings,
