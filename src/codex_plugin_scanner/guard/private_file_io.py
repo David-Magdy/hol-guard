@@ -7,7 +7,11 @@ import stat
 from pathlib import Path
 
 
-def private_regular_file_is_valid(path: Path, *, require_private_parent: bool = False) -> bool:
+def private_regular_file_is_valid(
+    path: Path,
+    *,
+    require_private_parent: bool = False,
+) -> bool:
     """Return whether a path names an owner-only regular file.
 
     Parent validation is optional because some legacy authority files live in a
@@ -19,7 +23,9 @@ def private_regular_file_is_valid(path: Path, *, require_private_parent: bool = 
         metadata = path.lstat()
     except OSError:
         return False
-    if parent_metadata is not None and not _private_directory_metadata_is_valid(parent_metadata):
+    if parent_metadata is not None and not _private_directory_metadata_is_valid(
+        parent_metadata
+    ):
         return False
     return _private_file_metadata_is_valid(metadata)
 
@@ -39,32 +45,42 @@ def read_private_regular_bytes(
         path_before = path.lstat()
     except OSError:
         return None
-    if parent_before is not None and not _private_directory_metadata_is_valid(parent_before):
+    if parent_before is not None and not _private_directory_metadata_is_valid(
+        parent_before
+    ):
         return None
     if not _private_file_metadata_is_valid(path_before):
         return None
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     try:
         descriptor = os.open(path, flags)
     except OSError:
         return None
     try:
         opened = os.fstat(descriptor)
-        if not _private_file_metadata_is_valid(opened) or not _same_file(path_before, opened):
+        if not _private_file_metadata_is_valid(opened) or not _same_file(
+            path_before,
+            opened,
+        ):
             return None
         if opened.st_size > max_bytes:
             return None
         chunks: list[bytes] = []
         consumed = 0
-        while consumed <= max_bytes:
-            chunk = os.read(descriptor, min(64 * 1024, max_bytes - consumed + 1))
+        while consumed < max_bytes:
+            chunk = os.read(
+                descriptor,
+                min(64 * 1024, max_bytes - consumed),
+            )
             if not chunk:
                 break
             chunks.append(chunk)
             consumed += len(chunk)
-        if consumed > max_bytes:
-            return None
         closed_state = os.fstat(descriptor)
         if not _stable_file_metadata(opened, closed_state):
             return None
@@ -76,7 +92,10 @@ def read_private_regular_bytes(
             parent_after = path.parent.lstat()
         except OSError:
             return None
-        if parent_before is None or not _stable_directory_metadata(parent_before, parent_after):
+        if parent_before is None or not _stable_directory_metadata(
+            parent_before,
+            parent_after,
+        ):
             return None
     return b"".join(chunks)
 
@@ -122,7 +141,10 @@ def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
     return left.st_dev == right.st_dev and left.st_ino == right.st_ino
 
 
-def _stable_file_metadata(before: os.stat_result, after: os.stat_result) -> bool:
+def _stable_file_metadata(
+    before: os.stat_result,
+    after: os.stat_result,
+) -> bool:
     return (
         _same_file(before, after)
         and before.st_mode == after.st_mode
@@ -132,7 +154,10 @@ def _stable_file_metadata(before: os.stat_result, after: os.stat_result) -> bool
     )
 
 
-def _stable_directory_metadata(before: os.stat_result, after: os.stat_result) -> bool:
+def _stable_directory_metadata(
+    before: os.stat_result,
+    after: os.stat_result,
+) -> bool:
     return (
         _private_directory_metadata_is_valid(after)
         and _same_file(before, after)
