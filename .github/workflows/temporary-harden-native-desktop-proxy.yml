@@ -1,0 +1,55 @@
+name: Temporary harden native Desktop proxy
+
+on:
+  push:
+    branches:
+      - perf/native-desktop-hook-proxy
+
+permissions:
+  contents: write
+
+jobs:
+  harden-and-validate:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: perf/native-desktop-hook-proxy
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Apply hardening and run focused gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/harden_native_desktop_proxy.py
+          uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync ruff format src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py tests/test_bounded_cli_hook_bridge.py
+          uv run --no-sync ruff check src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py tests/test_bounded_cli_hook_bridge.py
+          uv run --no-sync basedpyright --level error src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py tests/test_bounded_cli_hook_bridge.py
+          uv run --no-sync pytest -q tests/test_bounded_cli_hook_bridge.py tests/test_grok_adapter.py tests/test_cli_only_hook_resilience.py --tb=short
+          git diff --check
+
+      - name: Commit hardening and remove one-shot tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm scripts/ci/harden_native_desktop_proxy.py .github/workflows/temporary-harden-native-desktop-proxy.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py tests/test_bounded_cli_hook_bridge.py
+          git commit -m "fix(hooks): bind the signed proxy to the executed fd"
+          git push origin HEAD:perf/native-desktop-hook-proxy
