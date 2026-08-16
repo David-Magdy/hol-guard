@@ -1,0 +1,298 @@
+# pyright: basic
+"""Ed25519 DSSE provenance bound to exact extension and evidence digests."""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from .models import canonical_json_bytes
+
+try:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+except ImportError:  # pragma: no cover - exercised in dependency-missing environments
+    InvalidSignature = Exception  # type: ignore[assignment,misc]
+    Ed25519PrivateKey = None  # type: ignore[assignment,misc]
+    Ed25519PublicKey = None  # type: ignore[assignment,misc]
+    serialization = None  # type: ignore[assignment]
+
+
+PAYLOAD_TYPE = "application/vnd.in-toto+json"
+STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
+PREDICATE_TYPE = "https://hol.org/guard/extension-assurance/v1"
+
+
+class ProvenanceError(ValueError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class VerificationResult:
+    verified: bool
+    key_id: str | None
+    reason: str
+    statement: dict[str, Any] | None = None
+
+
+def generate_keypair(private_path: Path, public_path: Path) -> str:
+    _require_crypto()
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key()
+    private_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    private_path.parent.mkdir(parents=True, exist_ok=True)
+    public_path.parent.mkdir(parents=True, exist_ok=True)
+    private_path.write_bytes(private_bytes)
+    public_path.write_bytes(public_bytes)
+    try:
+        private_path.chmod(0o600)
+        public_path.chmod(0o644)
+    except OSError:
+        pass
+    return key_id_for_public_key(public_key)
+
+
+def build_statement(
+    *,
+    artifact_digest: str,
+    evidence_digest: str | None,
+    scanner_version: str,
+    decision: str,
+    coverage_state: str,
+    assurance_level: str,
+) -> dict[str, Any]:
+    _validate_sha256(artifact_digest, "artifact_digest")
+    if evidence_digest is not None:
+        _validate_sha256(evidence_digest, "evidence_digest")
+    predicate: dict[str, Any] = {
+        "scannerVersion": scanner_version,
+        "decision": decision,
+        "coverageState": coverage_state,
+        "assuranceLevel": assurance_level,
+        "issuedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    if evidence_digest is not None:
+        predicate["evidenceDigest"] = {"sha256": evidence_digest}
+    return {
+        "_type": STATEMENT_TYPE,
+        "subject": [{"name": "extension", "digest": {"sha256": artifact_digest}}],
+        "predicateType": PREDICATE_TYPE,
+        "predicate": predicate,
+    }
+
+
+def build_artifact_statement(*, artifact_digest: str, scanner_version: str) -> dict[str, Any]:
+    return build_statement(
+        artifact_digest=artifact_digest,
+        evidence_digest=None,
+        scanner_version=scanner_version,
+        decision="not-evaluated",
+        coverage_state="not-evaluated",
+        assurance_level="artifact-provenance",
+    )
+
+
+def sign_statement(statement: dict[str, Any], private_key_path: Path) -> dict[str, Any]:
+    _require_crypto()
+    private_key = serialization.load_pem_private_key(private_key_path.read_bytes(), password=None)
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise ProvenanceError("private key must be Ed25519")
+    public_key = private_key.public_key()
+    key_id = key_id_for_public_key(public_key)
+    payload = canonical_json_bytes(statement)
+    signature = private_key.sign(dsse_pae(PAYLOAD_TYPE, payload))
+    return {
+        "payloadType": PAYLOAD_TYPE,
+        "payload": base64.b64encode(payload).decode("ascii"),
+        "signatures": [{"keyid": key_id, "sig": base64.b64encode(signature).decode("ascii")}],
+    }
+
+
+def verify_envelope(
+    envelope: object,
+    public_key_paths: tuple[Path, ...],
+    *,
+    expected_artifact_digest: str | None = None,
+    expected_evidence_digest: str | None = None,
+) -> VerificationResult:
+    _require_crypto()
+    try:
+        payload_type, payload, signatures = _parse_envelope(envelope)
+    except ProvenanceError as exc:
+        return VerificationResult(False, None, str(exc))
+    if payload_type != PAYLOAD_TYPE:
+        return VerificationResult(False, None, "unexpected DSSE payload type")
+    try:
+        statement = json.loads(payload, object_pairs_hook=_reject_duplicate_pairs)
+    except (UnicodeDecodeError, json.JSONDecodeError, ProvenanceError):
+        return VerificationResult(False, None, "DSSE payload is not valid unambiguous JSON")
+    try:
+        _validate_statement(
+            statement,
+            expected_artifact_digest=expected_artifact_digest,
+            expected_evidence_digest=expected_evidence_digest,
+        )
+    except ProvenanceError as exc:
+        return VerificationResult(False, None, str(exc))
+
+    keys: dict[str, Any] = {}
+    for path in public_key_paths:
+        try:
+            key = serialization.load_pem_public_key(path.read_bytes())
+        except (OSError, ValueError):
+            continue
+        if isinstance(key, Ed25519PublicKey):
+            keys[key_id_for_public_key(key)] = key
+    if not keys:
+        return VerificationResult(False, None, "no valid trusted Ed25519 public keys were loaded")
+
+    pae = dsse_pae(payload_type, payload)
+    for signature_record in signatures:
+        key_id = signature_record["keyid"]
+        key = keys.get(key_id)
+        if key is None:
+            continue
+        try:
+            signature = base64.b64decode(signature_record["sig"], validate=True)
+            key.verify(signature, pae)
+        except (ValueError, binascii.Error, InvalidSignature):
+            continue
+        return VerificationResult(True, key_id, "signature and digest bindings verified", statement)
+    return VerificationResult(False, None, "no trusted signature verified")
+
+
+def key_id_for_public_key(public_key: Any) -> str:
+    _require_crypto()
+    raw = public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return hashlib.sha256(raw).hexdigest()
+
+
+def dsse_pae(payload_type: str, payload: bytes) -> bytes:
+    type_bytes = payload_type.encode("utf-8")
+    return b"DSSEv1 %d %b %d %b" % (len(type_bytes), type_bytes, len(payload), payload)
+
+
+def _parse_envelope(envelope: object) -> tuple[str, bytes, list[dict[str, str]]]:
+    if not isinstance(envelope, dict):
+        raise ProvenanceError("DSSE envelope must be an object")
+    allowed = {"payloadType", "payload", "signatures"}
+    unknown = set(envelope) - allowed
+    if unknown:
+        raise ProvenanceError(f"unknown DSSE envelope fields: {', '.join(sorted(unknown))}")
+    payload_type = envelope.get("payloadType")
+    encoded_payload = envelope.get("payload")
+    raw_signatures = envelope.get("signatures")
+    if not isinstance(payload_type, str) or not isinstance(encoded_payload, str):
+        raise ProvenanceError("DSSE payloadType and payload must be strings")
+    if not isinstance(raw_signatures, list) or not raw_signatures or len(raw_signatures) > 32:
+        raise ProvenanceError("DSSE signatures must be a non-empty bounded array")
+    signatures: list[dict[str, str]] = []
+    for item in raw_signatures:
+        if not isinstance(item, dict) or set(item) != {"keyid", "sig"}:
+            raise ProvenanceError("each DSSE signature must contain only keyid and sig")
+        key_id = item.get("keyid")
+        signature = item.get("sig")
+        if not isinstance(key_id, str) or not isinstance(signature, str):
+            raise ProvenanceError("DSSE keyid and sig must be strings")
+        if len(key_id) != 64 or len(signature) > 1024:
+            raise ProvenanceError("DSSE signature record exceeds strict bounds")
+        signatures.append({"keyid": key_id, "sig": signature})
+    try:
+        payload = base64.b64decode(encoded_payload, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ProvenanceError("DSSE payload is not valid base64") from exc
+    if len(payload) > 16 * 1024 * 1024:
+        raise ProvenanceError("DSSE payload exceeds size limit")
+    return payload_type, payload, signatures
+
+
+def _validate_statement(
+    statement: object,
+    *,
+    expected_artifact_digest: str | None,
+    expected_evidence_digest: str | None,
+) -> None:
+    if not isinstance(statement, dict):
+        raise ProvenanceError("in-toto statement must be an object")
+    allowed = {"_type", "subject", "predicateType", "predicate"}
+    if set(statement) - allowed:
+        raise ProvenanceError("in-toto statement contains unknown fields")
+    if statement.get("_type") != STATEMENT_TYPE or statement.get("predicateType") != PREDICATE_TYPE:
+        raise ProvenanceError("unexpected in-toto statement type")
+    subjects = statement.get("subject")
+    if not isinstance(subjects, list) or len(subjects) != 1 or not isinstance(subjects[0], dict):
+        raise ProvenanceError("statement must contain exactly one subject")
+    digest = subjects[0].get("digest")
+    artifact_digest = digest.get("sha256") if isinstance(digest, dict) else None
+    if not isinstance(artifact_digest, str):
+        raise ProvenanceError("statement subject lacks a sha256 digest")
+    _validate_sha256(artifact_digest, "statement artifact digest")
+    predicate = statement.get("predicate")
+    if not isinstance(predicate, dict):
+        raise ProvenanceError("statement predicate must be an object")
+    issued_at = predicate.get("issuedAt")
+    if not isinstance(issued_at, str):
+        raise ProvenanceError("statement predicate lacks issuedAt")
+    _parse_timestamp(issued_at)
+    evidence_digest_record = predicate.get("evidenceDigest")
+    evidence_digest = (
+        evidence_digest_record.get("sha256") if isinstance(evidence_digest_record, dict) else None
+    )
+    if evidence_digest is not None:
+        if not isinstance(evidence_digest, str):
+            raise ProvenanceError("statement evidence digest is malformed")
+        _validate_sha256(evidence_digest, "statement evidence digest")
+    if expected_artifact_digest is not None and artifact_digest != expected_artifact_digest:
+        raise ProvenanceError("statement artifact digest does not match the scanned artifact")
+    if expected_evidence_digest is not None:
+        if evidence_digest is None:
+            raise ProvenanceError("statement lacks the required evidence digest")
+        if evidence_digest != expected_evidence_digest:
+            raise ProvenanceError("statement evidence digest does not match the evidence envelope")
+
+
+def _validate_sha256(value: str, field_name: str) -> None:
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value.lower()):
+        raise ProvenanceError(f"{field_name} must be a complete SHA-256 digest")
+
+
+def _parse_timestamp(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ProvenanceError("statement timestamp is invalid") from exc
+    if parsed.tzinfo is None:
+        raise ProvenanceError("statement timestamp must include a timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _reject_duplicate_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ProvenanceError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _require_crypto() -> None:
+    if Ed25519PrivateKey is None or serialization is None:
+        raise ProvenanceError("the cryptography package with Ed25519 support is required")
