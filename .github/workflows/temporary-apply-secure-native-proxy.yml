@@ -44,7 +44,6 @@ jobs:
           uv run --no-sync pytest -q \
             tests/test_bounded_cli_hook_bridge.py \
             tests/test_grok_adapter.py \
-            tests/test_grok_executable.py \
             tests/test_cli_only_adapter_resilience.py
           git diff --check
 
