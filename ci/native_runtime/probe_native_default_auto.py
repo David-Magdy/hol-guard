@@ -45,6 +45,14 @@ def _synthetic_github_token() -> str:
     return "".join(("gh", "p_", "c" * 30))
 
 
+def _short_temp_parent() -> str | None:
+    """Keep Unix resident socket paths below platform sun_path limits."""
+    if os.name == "nt":
+        return None
+    candidate = Path("/tmp")
+    return str(candidate) if candidate.is_dir() else None
+
+
 def main() -> int:
     assert "HOL_GUARD_NATIVE" not in os.environ
     assert "HOL_GUARD_NATIVE_BINARY" not in os.environ
@@ -61,14 +69,13 @@ def main() -> int:
     assert status.identity is not None
     assert status.capabilities is not None
 
-    with tempfile.TemporaryDirectory(prefix="hg-auto-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="hg-auto-", dir=_short_temp_parent()) as temporary:
         root = Path(temporary)
         try:
             clean = review_post_tool_native(
                 _request(root, "const value = 1;\n", "default-auto-clean"),
                 observe_mode=False,
             )
-            print(f"native health after clean: {native_runtime_health(root / 'guard-home')!r}", flush=True)
             assert clean is not None
             assert clean.decision == "allow"
             assert clean.reason_code == "output_scan_allow"
@@ -77,10 +84,16 @@ def main() -> int:
                 _request(root, _synthetic_github_token(), "default-auto-secret"),
                 observe_mode=False,
             )
-            print(f"native health after secret: {native_runtime_health(root / 'guard-home')!r}", flush=True)
             assert secret is not None
             assert secret.decision == "deny"
             assert secret.reason_code == "output_secret_match"
+
+            health = native_runtime_health(root / "guard-home")
+            assert health.state == "healthy", health
+            assert health.reason == "native_ready", health
+            assert health.resident_failures == 0, health
+            assert health.oneshot_failures == 0, health
+            assert health.starts == 1, health
         finally:
             close_resident_native_runtimes()
 
