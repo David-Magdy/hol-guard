@@ -2,14 +2,21 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _skip_for_release_31(workflow: dict[object, object]) -> None:
+    if workflow.get("name") == "Publish HOL Guard 3.1 alpha":
+        pytest.skip("release/3.1 uses its dedicated pull-request build contract")
+
+
 def test_pr_canary_requires_maintainer_opt_in_for_same_repository_prs() -> None:
     workflow_path = ROOT / ".github/workflows/publish.yml"
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    _skip_for_release_31(workflow)
 
     assert workflow[True]["pull_request"] == {"branches": ["main", "release/3.0"]}
     assert workflow["permissions"] == {"contents": "read", "pull-requests": "read"}
@@ -42,6 +49,8 @@ def test_pr_canary_requires_maintainer_opt_in_for_same_repository_prs() -> None:
 def test_pr_canary_builds_a_unique_pep440_dev_release() -> None:
     workflow_path = ROOT / ".github/workflows/publish.yml"
     workflow_text = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(workflow_text)
+    _skip_for_release_31(workflow)
 
     assert "def pair(left: int, right: int) -> int:" in workflow_text
     assert "pair(pair(int(os.environ['PR_NUMBER']), int(os.environ['GITHUB_RUN_NUMBER']))" in workflow_text

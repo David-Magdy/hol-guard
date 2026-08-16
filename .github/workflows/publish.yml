@@ -167,11 +167,57 @@ jobs:
       - name: Stamp exact package version
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: python3 release-tooling/scripts/sync_repo_version.py --repo-root source --version "$VERSION"
-      - name: Build Guard distribution
+        run: >-
+          uv run --no-project --with packaging==25.0 python
+          release-tooling/scripts/sync_repo_version.py --repo-root source --version "$VERSION"
+      - name: Build Guard package (hol-guard)
         working-directory: source
-        run: uv run --no-sync python -m build --wheel --sdist --outdir "$GITHUB_WORKSPACE/dist"
-      - name: Verify Guard distribution
+        run: |
+          cp pyproject.toml pyproject.toml.bak
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("pyproject.toml")
+          text = path.read_text(encoding="utf-8")
+          start = text.index("[project.scripts]")
+          end = text.index("\n\n[project.urls]")
+          scripts = "[project.scripts]\n" \
+              'hol-guard = "codex_plugin_scanner.cli:main"\n' \
+              'plugin-guard = "codex_plugin_scanner.cli:main"'
+          path.write_text(text[:start] + scripts + text[end:], encoding="utf-8")
+          PY
+          uv run --no-sync python -m build --wheel --sdist --outdir "$GITHUB_WORKSPACE/dist"
+          mv pyproject.toml.bak pyproject.toml
+      - name: Build scanner package (plugin-scanner)
+        working-directory: source
+        run: |
+          cp pyproject.toml pyproject.toml.bak
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          path = Path("pyproject.toml")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace('name = "hol-guard"', 'name = "plugin-scanner"', 1)
+          text, count = re.subn(
+              r'^description = ".*"$',
+              'description = "Lint, verify, and gate plugin ecosystems for maintainers, CI, and publish workflows."',
+              text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if count != 1:
+              raise RuntimeError("Expected one project description")
+          start = text.index("[project.scripts]")
+          end = text.index("\n\n[project.urls]")
+          scripts = "[project.scripts]\n" \
+              'plugin-scanner = "codex_plugin_scanner.cli:main"\n' \
+              'plugin-ecosystem-scanner = "codex_plugin_scanner.cli:main"'
+          path.write_text(text[:start] + scripts + text[end:], encoding="utf-8")
+          PY
+          uv run --no-sync python -m build --wheel --sdist --outdir "$GITHUB_WORKSPACE/dist"
+          mv pyproject.toml.bak pyproject.toml
+      - name: Verify distributions
         working-directory: source
         run: uv run --no-sync twine check "$GITHUB_WORKSPACE"/dist/*
       - name: Record immutable distribution hashes
@@ -242,6 +288,8 @@ jobs:
           name: distribution-sha256
       - name: Verify immutable bytes
         run: sha256sum --check distribution-sha256.txt
+      - name: Keep only the Guard release distribution
+        run: rm -f dist/plugin_scanner-* dist/plugin-scanner-*
       - name: Inspect TestPyPI state
         id: state
         env:
@@ -306,30 +354,63 @@ jobs:
           git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/release/3.1
           tag_sha=$(git ls-remote origin "refs/tags/alpha/v${VERSION}" | awk '{print $1}')
           [[ "$tag_sha" == "$SOURCE_SHA" ]]
+      - name: Prepare project-specific distributions
+        run: |
+          shopt -s nullglob
+          guard_files=(dist/hol_guard-* dist/hol-guard-*)
+          scanner_files=(dist/plugin_scanner-* dist/plugin-scanner-*)
+          [[ "${#guard_files[@]}" == "2" && "${#scanner_files[@]}" == "2" ]]
+          mkdir dist-hol-guard dist-plugin-scanner
+          cp "${guard_files[@]}" dist-hol-guard/
+          cp "${scanner_files[@]}" dist-plugin-scanner/
       - name: Inspect PyPI state
         id: state
         env:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
-          result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py verify-release --registry pypi --version "$VERSION" --dist-dir dist)
-          status=$(jq -r '.status' <<< "$result")
-          [[ "$status" == "absent" || "$status" == "exact" ]]
-          [[ "$status" == "absent" ]] && echo "upload=true" >> "$GITHUB_OUTPUT" || echo "upload=false" >> "$GITHUB_OUTPUT"
-      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
-        if: steps.state.outputs.upload == 'true'
+          guard_result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py \
+            verify-release --registry pypi --project hol-guard --version "$VERSION" --dist-dir dist-hol-guard)
+          scanner_result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py \
+            verify-release --registry pypi --project plugin-scanner --version "$VERSION" --dist-dir dist-plugin-scanner)
+          guard_status=$(jq -r '.status' <<< "$guard_result")
+          scanner_status=$(jq -r '.status' <<< "$scanner_result")
+          [[ "$guard_status" == "absent" || "$guard_status" == "exact" ]]
+          [[ "$scanner_status" == "absent" || "$scanner_status" == "exact" ]]
+          [[ "$guard_status" == "absent" ]] && echo "hol_guard_upload=true" >> "$GITHUB_OUTPUT" || echo "hol_guard_upload=false" >> "$GITHUB_OUTPUT"
+          [[ "$scanner_status" == "absent" ]] && echo "plugin_scanner_upload=true" >> "$GITHUB_OUTPUT" || echo "plugin_scanner_upload=false" >> "$GITHUB_OUTPUT"
+      - name: Publish HOL Guard to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        if: steps.state.outputs.hol_guard_upload == 'true'
+        with:
+          packages-dir: dist-hol-guard/
+      - name: Publish plugin-scanner to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+        if: steps.state.outputs.plugin_scanner_upload == 'true'
+        with:
+          packages-dir: dist-plugin-scanner/
+      - name: Remove generated upload attestations
+        run: rm -f dist-hol-guard/*.publish.attestation dist-plugin-scanner/*.publish.attestation
       - name: Verify published PyPI bytes and CLI
         env:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           for attempt in {1..60}; do
-            result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py verify-release --registry pypi --version "$VERSION" --dist-dir dist --download-dir verified-pypi || true)
-            status=$(jq -r '.status // "error"' <<< "$result")
-            [[ "$status" == "exact" ]] && break
-            [[ "$attempt" == "60" ]] && { echo "Exact PyPI release did not appear" >&2; exit 1; }
+            guard_result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py \
+              verify-release --registry pypi --project hol-guard --version "$VERSION" \
+              --dist-dir dist-hol-guard --download-dir verified-pypi-hol-guard || true)
+            scanner_result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py \
+              verify-release --registry pypi --project plugin-scanner --version "$VERSION" \
+              --dist-dir dist-plugin-scanner --download-dir verified-pypi-plugin-scanner || true)
+            guard_status=$(jq -r '.status // "error"' <<< "$guard_result")
+            scanner_status=$(jq -r '.status // "error"' <<< "$scanner_result")
+            [[ "$guard_status" == "exact" && "$scanner_status" == "exact" ]] && break
+            [[ "$attempt" == "60" ]] && { echo "Exact PyPI releases did not appear" >&2; exit 1; }
             sleep 5
           done
-          wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$result")
-          [[ "$(uv tool run --from "$wheel" hol-guard --version)" == "hol-guard $VERSION" ]]
+          guard_wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$guard_result")
+          scanner_wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$scanner_result")
+          [[ "$(uv tool run --from "$guard_wheel" hol-guard --version)" == "hol-guard $VERSION" ]]
+          [[ "$(uv tool run --from "$scanner_wheel" plugin-scanner --version)" == "plugin-scanner $VERSION" ]]
 
   release-alpha:
     name: Create alpha GitHub prerelease
