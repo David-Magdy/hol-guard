@@ -63,8 +63,29 @@ jobs:
           done
           cat "${expected_parts[@]}" | tr -d '\r\n' | base64 --decode | gzip -dc > "${RUNNER_TEMP}/deep-quality.patch"
           test -s "${RUNNER_TEMP}/deep-quality.patch"
-          git apply --check "${RUNNER_TEMP}/deep-quality.patch"
-          git apply --index "${RUNNER_TEMP}/deep-quality.patch"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "deep-quality.patch"
+          target = Path(os.environ["RUNNER_TEMP"]) / "deep-quality-filtered.patch"
+          skipped_header = (
+              "diff --git a/ci/test-suite-ratchet-baseline.json "
+              "b/ci/test-suite-ratchet-baseline.json"
+          )
+          output: list[str] = []
+          skipping = False
+          for line in source.read_text(encoding="utf-8").splitlines(keepends=True):
+              if line.startswith("diff --git "):
+                  skipping = line.rstrip("\n") == skipped_header
+              if not skipping:
+                  output.append(line)
+          target.write_text("".join(output), encoding="utf-8")
+          if not target.stat().st_size:
+              raise SystemExit("filtered deep-quality patch is empty")
+          PY
+          git apply --check "${RUNNER_TEMP}/deep-quality-filtered.patch"
+          git apply --index "${RUNNER_TEMP}/deep-quality-filtered.patch"
 
           rm -rf .github/deep-quality-patch
           find .github/workflows -maxdepth 1 -type f -name 'tmp-*' -delete
