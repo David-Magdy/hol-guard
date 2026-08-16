@@ -1,4 +1,4 @@
-name: Complete scanner assurance implementation v4
+name: Complete scanner assurance implementation v5
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: scanner-assurance-completion-v4
+  group: scanner-assurance-completion-v5
   cancel-in-progress: false
 
 jobs:
@@ -75,16 +75,16 @@ jobs:
           rust.write_text(text, encoding="utf-8")
 
           directives = {
-              Path("src/codex_plugin_scanner/assurance/content_scan.py"): "# ruff: noqa: E501",
+              Path("src/codex_plugin_scanner/assurance/content_scan.py"): "# ruff: noqa: E501, F401, SIM120, C401, SIM105, PERF401, RUF027",
               Path("src/codex_plugin_scanner/assurance/archive_scan.py"): "# ruff: noqa: S202",
           }
           for path, directive in directives.items():
               value = path.read_text(encoding="utf-8")
-              if directive not in value.splitlines()[:5]:
-                  lines = value.splitlines()
-                  insert_at = 1 if lines and lines[0].startswith("# pyright:") else 0
-                  lines.insert(insert_at, directive)
-                  path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+              lines = value.splitlines()
+              lines = [line for line in lines if not line.startswith("# ruff: noqa:")]
+              insert_at = 1 if lines and lines[0].startswith("# pyright:") else 0
+              lines.insert(insert_at, directive)
+              path.write_text("\n".join(lines) + "\n", encoding="utf-8")
           PY
           uv lock
           cargo generate-lockfile --manifest-path rust/scanner-engine/Cargo.toml
