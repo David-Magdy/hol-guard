@@ -312,28 +312,48 @@ jobs:
           [[ "$status" == "absent" || "$status" == "exact" ]]
           capacity_limited=false
           upload=false
+          current_bytes=0
+          artifact_bytes=0
           if [[ "$status" == "absent" ]]; then
             size_result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py project-size --registry testpypi)
             current_bytes=$(jq -r '.size_bytes' <<< "$size_result")
             artifact_bytes=$(python -c 'from pathlib import Path; print(sum(path.stat().st_size for path in Path("dist").iterdir() if path.is_file()))')
-            if (( current_bytes + artifact_bytes > 10000000000 )); then
+            if (( current_bytes + artifact_bytes >= 10000000000 )); then
               capacity_limited=true
             else
               upload=true
             fi
           fi
+          echo "artifact_bytes=$artifact_bytes" >> "$GITHUB_OUTPUT"
           echo "capacity_limited=$capacity_limited" >> "$GITHUB_OUTPUT"
+          echo "current_bytes=$current_bytes" >> "$GITHUB_OUTPUT"
           echo "upload=$upload" >> "$GITHUB_OUTPUT"
       - id: publish
+        continue-on-error: true
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         if: steps.state.outputs.upload == 'true'
         with:
           repository-url: https://test.pypi.org/legacy/
+      - name: Classify TestPyPI publish failure
+        id: classify
+        if: steps.publish.outcome == 'failure'
+        env:
+          ARTIFACT_BYTES: ${{ steps.state.outputs.artifact_bytes }}
+          CURRENT_BYTES: ${{ steps.state.outputs.current_bytes }}
+        run: |
+          size_result=$(uv run --no-project --with packaging==25.0 python scripts/verify_release_registry.py project-size --registry testpypi)
+          post_bytes=$(jq -r '.size_bytes' <<< "$size_result")
+          if (( post_bytes > CURRENT_BYTES && post_bytes + ARTIFACT_BYTES >= 10000000000 )); then
+            echo "capacity_limited=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "TestPyPI publish failed without a confirmed capacity race" >&2
+            exit 1
+          fi
       - name: Report unavailable TestPyPI canary
-        if: steps.state.outputs.capacity_limited == 'true'
+        if: steps.state.outputs.capacity_limited == 'true' || steps.classify.outputs.capacity_limited == 'true'
         run: echo "::warning::TestPyPI project capacity reached; continuing with immutable build hashes and independent PyPI verification"
       - name: Verify published TestPyPI bytes and CLI
-        if: steps.state.outputs.capacity_limited != 'true'
+        if: steps.state.outputs.capacity_limited != 'true' && steps.classify.outputs.capacity_limited != 'true'
         env:
           VERSION: ${{ needs.build.outputs.version }}
         run: |

@@ -166,14 +166,22 @@ def test_testpypi_uses_protected_trusted_publishing() -> None:
     assert job["permissions"]["id-token"] == "write"
     publish = next(step for step in job["steps"] if step.get("id") == "publish")
     assert str(publish["uses"]).startswith("pypa/gh-action-pypi-publish@")
-    assert "continue-on-error" not in publish
+    assert publish["continue-on-error"] is True
 
     verify = next(step for step in job["steps"] if step.get("name") == "Verify published TestPyPI bytes and CLI")
-    assert verify["if"] == "steps.state.outputs.capacity_limited != 'true'"
+    assert "steps.state.outputs.capacity_limited != 'true'" in verify["if"]
+    assert "steps.classify.outputs.capacity_limited != 'true'" in verify["if"]
 
     warning = next(step for step in job["steps"] if step.get("name") == "Report unavailable TestPyPI canary")
-    assert warning["if"] == "steps.state.outputs.capacity_limited == 'true'"
+    assert "steps.state.outputs.capacity_limited == 'true'" in warning["if"]
+    assert "steps.classify.outputs.capacity_limited == 'true'" in warning["if"]
     assert "project capacity reached" in warning["run"]
+
+    classify = next(step for step in job["steps"] if step.get("name") == "Classify TestPyPI publish failure")
+    assert classify["if"] == "steps.publish.outcome == 'failure'"
+    assert "post_bytes > CURRENT_BYTES" in classify["run"]
+    assert "post_bytes + ARTIFACT_BYTES >= 10000000000" in classify["run"]
+    assert "exit 1" in classify["run"]
 
 
 def test_pypi_uses_protected_trusted_publishing() -> None:
