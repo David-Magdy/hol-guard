@@ -48,6 +48,7 @@ const simple = renderToStaticMarkup(createElement(ProtectionModuleDetail, {
 }));
 assert.match(simple, />Git</);
 assert.match(simple, /font-mono[^"]*">git</);
+assert.match(simple, /data-extension-brand="git"/);
 assert.match(simple, /Protection settings/);
 assert.match(simple, /Forced Git push/);
 assert.match(simple, /git push --force/);

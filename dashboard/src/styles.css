@@ -496,6 +496,69 @@ a:focus-visible {
   background: color-mix(in srgb, var(--brand-blue) 6%, transparent);
 }
 
+.guard-extension-mark {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--extension-brand, var(--brand-blue)) 28%, transparent);
+  background: color-mix(in srgb, var(--extension-brand, var(--brand-blue)) 12%, white);
+  color: var(--extension-brand, var(--brand-blue));
+  box-shadow: 0 1px 2px rgb(63 65 116 / 0.06);
+  transition: transform 160ms var(--ease-out-quart);
+}
+
+.guard-extension-mark[data-size="sm"] {
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  border-radius: 0.375rem;
+}
+
+.guard-extension-mark[data-size="md"] {
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  border-radius: 0.75rem;
+}
+
+.guard-extension-mark[data-size="lg"] {
+  inline-size: 3.5rem;
+  block-size: 3.5rem;
+  border-radius: 1rem;
+}
+
+.guard-extension-mark svg {
+  inline-size: 55%;
+  block-size: 55%;
+}
+
+.guard-extension-mark img {
+  inline-size: 62%;
+  block-size: 62%;
+  object-fit: contain;
+}
+
+.guard-extension-mark-cluster {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.guard-extension-mark-cluster .guard-extension-mark {
+  box-shadow: 0 0 0 2px #fff, 0 1px 2px rgb(63 65 116 / 0.08);
+}
+
+.guard-extension-mark-cluster .guard-extension-mark:not(:first-child) {
+  margin-inline-start: -0.55rem;
+}
+
+.guard-extension-mark-cluster[data-size="sm"] .guard-extension-mark {
+  inline-size: 1.15rem;
+  block-size: 1.15rem;
+}
+
+.guard-extensions-row:hover .guard-extension-mark {
+  transform: translateY(-1px);
+}
+
 .guard-pattern-row {
   display: grid;
   gap: 0.75rem;
@@ -523,7 +586,7 @@ a:focus-visible {
 .guard-pattern-family-heading {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 0.5rem;
   padding-bottom: 0.35rem;
   border-bottom: 1px solid color-mix(in srgb, var(--brand-dark) 10%, transparent);
@@ -624,6 +687,14 @@ a:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .guard-extensions-row {
     transition: none;
+  }
+
+  .guard-extension-mark {
+    transition: none;
+  }
+
+  .guard-extensions-row:hover .guard-extension-mark {
+    transform: none;
   }
 }
 

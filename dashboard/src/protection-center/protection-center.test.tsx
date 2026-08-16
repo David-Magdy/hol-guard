@@ -102,15 +102,38 @@ assert.match(hero, /No action required/);
 assert.doesNotMatch(hero, /revision|catalog digest|authority/);
 
 const moduleRow = renderToStaticMarkup(createElement(ProtectionModuleRow, {
+  extensionId: "command.git",
   name: "Git",
   description: "Protects source-control history.",
   behavior: "Ask first",
+  executables: ["git"],
+  ecosystemIds: ["git"],
   onOpen: () => undefined,
 }));
 assert.match(moduleRow, /Git/);
 assert.match(moduleRow, /Ask first/);
 assert.match(moduleRow, /guard-extensions-row/);
+assert.match(moduleRow, /data-extension-brand="git"/);
+assert.match(moduleRow, /guard-extension-mark/);
 assert.doesNotMatch(moduleRow, />[^<]*(?:permission|rule|version)[^<]*</i);
+
+const awsRow = renderToStaticMarkup(createElement(ProtectionModuleRow, {
+  extensionId: "command.cloud.aws",
+  name: "AWS command protection",
+  description: "Reviews AWS CLI deletions.",
+  behavior: "Ask first",
+  onOpen: () => undefined,
+}));
+assert.match(awsRow, /data-extension-brand="aws"/);
+
+const cloudCluster = renderToStaticMarkup(createElement(ProtectionModuleRow, {
+  extensionId: "command.dns",
+  name: "DNS command protection",
+  description: "Reviews hosted-zone deletion.",
+  behavior: "Ask first",
+  onOpen: () => undefined,
+}));
+assert.match(cloudCluster, /data-extension-brand="aws gcp azure"/);
 
 const technical = renderToStaticMarkup(createElement(TechnicalDetails, { children: createElement("code", null, "command.git") }));
 assert.match(technical, /<details/);

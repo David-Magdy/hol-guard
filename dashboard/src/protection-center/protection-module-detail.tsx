@@ -5,6 +5,7 @@ import { controlProvenance, permissionForRule, treatmentLabel } from "../extensi
 import type { EffectiveExtensionControls, ExtensionCatalogItem } from "../extension-controls-api";
 import { ExtensionPolicyPanel } from "../extension-policy-panel";
 import { TechnicalDetails } from "./components/protection-primitives";
+import { ExtensionBrandMark } from "./components/extension-brand-mark";
 import { ProtectionTestLab } from "./protection-test-lab";
 
 function sourceForTarget(
@@ -167,9 +168,20 @@ export function ProtectionModuleDetail(props: {
         Extensions
       </button>
       <header className="mt-4 border-b border-slate-200 pb-6">
-        <p className="font-mono text-xs font-semibold tracking-[0.14em] text-slate-400">{props.extension.executables.join(" · ")}</p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-brand-dark">{props.extension.name}</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{props.extension.description}</p>
+        <div className="flex items-start gap-4">
+          <ExtensionBrandMark
+            extension_id={props.extension.extension_id}
+            name={props.extension.name}
+            executables={props.extension.executables}
+            ecosystem_ids={props.extension.ecosystem_ids}
+            size="lg"
+          />
+          <div className="min-w-0 flex-1">
+            <p className="font-mono text-xs font-semibold tracking-[0.14em] text-slate-400">{props.extension.executables.join(" · ")}</p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-brand-dark">{props.extension.name}</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{props.extension.description}</p>
+          </div>
+        </div>
         {requiredNote ? <p className="mt-3 max-w-2xl text-sm leading-6 text-brand-dark/80">{requiredNote}</p> : null}
         {props.extension.required ? (
           <p className="mt-2 text-sm text-brand-dark/70">This protection is required by Guard and cannot be turned off.</p>
