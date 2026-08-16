@@ -167,7 +167,9 @@ jobs:
       - name: Stamp exact package version
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: python3 release-tooling/scripts/sync_repo_version.py --repo-root source --version "$VERSION"
+        run: >-
+          uv run --no-project --with packaging==25.0 python
+          release-tooling/scripts/sync_repo_version.py --repo-root source --version "$VERSION"
       - name: Build Guard distribution
         working-directory: source
         run: |
