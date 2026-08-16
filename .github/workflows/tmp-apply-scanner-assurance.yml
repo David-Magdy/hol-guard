@@ -1,0 +1,136 @@
+name: Apply scanner assurance integration
+
+on:
+  push:
+    branches:
+      - feat/scanner-assurance-rust-hardening-20260816
+    paths:
+      - .github/workflows/tmp-apply-scanner-assurance.yml
+      - scripts/tmp_apply_scanner_assurance.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-scanner-assurance-integration
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/scanner-assurance-rust-hardening-20260816
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+      - name: Apply idempotent integration edits
+        run: python scripts/tmp_apply_scanner_assurance.py
+      - name: Repair known test setup and lint anchors
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/test_assurance_policy_ingestion.py')
+          text = path.read_text()
+          old = 'def _benign_report(tmp_path: Path) -> dict[str, object]:\n    (tmp_path / "README.md").write_text'
+          new = 'def _benign_report(tmp_path: Path) -> dict[str, object]:\n    tmp_path.mkdir(parents=True, exist_ok=True)\n    (tmp_path / "README.md").write_text'
+          if old in text:
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          cli = Path('src/codex_plugin_scanner/assurance_cli.py')
+          cli_text = cli.read_text().replace(
+              'from .assurance.drift import build_baseline, validate_baseline, write_baseline\n',
+              'from .assurance.drift import build_baseline, write_baseline\n',
+          )
+          cli.write_text(cli_text)
+          PY
+      - name: Update deterministic dependency locks
+        run: |
+          uv lock
+          cargo generate-lockfile --manifest-path rust/scanner-engine/Cargo.toml
+      - name: Format and autofix scoped sources
+        run: |
+          cargo fmt --manifest-path rust/scanner-engine/Cargo.toml
+          uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync python -m ruff check --fix \
+            src/codex_plugin_scanner/assurance \
+            src/codex_plugin_scanner/assurance_cli.py \
+            src/codex_plugin_scanner/models.py \
+            src/codex_plugin_scanner/reporting.py \
+            src/codex_plugin_scanner/scanner.py \
+            src/codex_plugin_scanner/_scanner_commands.py \
+            src/codex_plugin_scanner/quality_artifact.py \
+            tests/test_assurance_archive.py \
+            tests/test_assurance_dependencies.py \
+            tests/test_assurance_drift_detonation.py \
+            tests/test_assurance_integration.py \
+            tests/test_assurance_native.py \
+            tests/test_assurance_policy_ingestion.py \
+            tests/test_assurance_security_vectors.py
+          uv run --no-sync python -m ruff format \
+            src/codex_plugin_scanner/assurance \
+            src/codex_plugin_scanner/assurance_cli.py \
+            src/codex_plugin_scanner/models.py \
+            src/codex_plugin_scanner/reporting.py \
+            src/codex_plugin_scanner/scanner.py \
+            src/codex_plugin_scanner/_scanner_commands.py \
+            src/codex_plugin_scanner/quality_artifact.py \
+            tests/test_assurance_archive.py \
+            tests/test_assurance_dependencies.py \
+            tests/test_assurance_drift_detonation.py \
+            tests/test_assurance_integration.py \
+            tests/test_assurance_native.py \
+            tests/test_assurance_policy_ingestion.py \
+            tests/test_assurance_security_vectors.py
+      - name: Compile and test Rust hot path
+        run: |
+          cargo fmt --manifest-path rust/scanner-engine/Cargo.toml -- --check
+          cargo clippy --manifest-path rust/scanner-engine/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path rust/scanner-engine/Cargo.toml
+          cargo build --release --locked --manifest-path rust/scanner-engine/Cargo.toml
+      - name: Compile and run assurance regressions
+        env:
+          HOL_GUARD_SCANNER_ENGINE: ${{ github.workspace }}/rust/scanner-engine/target/release/hol-guard-scanner-engine
+        run: |
+          python -m compileall -q src/codex_plugin_scanner/assurance src/codex_plugin_scanner/assurance_cli.py
+          uv run --no-sync pytest \
+            tests/test_assurance_archive.py \
+            tests/test_assurance_dependencies.py \
+            tests/test_assurance_drift_detonation.py \
+            tests/test_assurance_integration.py \
+            tests/test_assurance_native.py \
+            tests/test_assurance_policy_ingestion.py \
+            tests/test_assurance_security_vectors.py \
+            tests/test_policy.py \
+            tests/test_reporting.py \
+            tests/test_schema_contracts.py \
+            --tb=short
+      - name: Remove temporary materialization files
+        run: |
+          rm -f scripts/tmp_apply_scanner_assurance.py
+          rm -f .github/workflows/tmp-apply-scanner-assurance.yml
+          rm -f .github/workflows/tmp-scanner-hardening-source-snapshot.yml
+      - name: Commit materialized implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git status --short
+          test -n "$(git status --short)"
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git add -A
+          git commit -s -m "feat(scanner): add layered assurance and Rust native analysis"
+          git push origin HEAD:feat/scanner-assurance-rust-hardening-20260816
