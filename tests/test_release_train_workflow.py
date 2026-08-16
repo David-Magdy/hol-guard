@@ -191,18 +191,21 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
         "publish-alpha-testpypi",
     ]
     assert "needs.publish-alpha-testpypi.result == 'success'" in jobs["publish-alpha-pypi"]["if"]
-    for job_name in (
-        "publish-alpha-testpypi",
-        "publish-alpha-pypi",
-        "publish-main-testpypi",
-        "publish-main-pypi",
-    ):
+    for job_name in ("publish-alpha-testpypi", "publish-main-testpypi"):
         steps = jobs[job_name]["steps"]
         assert any(step.get("run") == "sha256sum --check distribution-sha256.txt" for step in steps)
         assert any(
             step.get("name") == "Keep only the Guard release distribution" and "plugin_scanner" in step.get("run", "")
             for step in steps
         )
+
+    for job_name in ("publish-alpha-pypi", "publish-main-pypi"):
+        steps = jobs[job_name]["steps"]
+        assert any(step.get("run") == "sha256sum --check distribution-sha256.txt" for step in steps)
+        prepare_step = next(step for step in steps if step.get("name") == "Prepare project-specific distributions")
+        assert "dist-hol-guard" in prepare_step["run"]
+        assert "dist-plugin-scanner" in prepare_step["run"]
+        assert not any(step.get("name") == "Keep only the Guard release distribution" for step in steps)
 
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "skip-existing" not in workflow_text and "pytest" not in workflow_text
@@ -310,19 +313,33 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
     for job_name in ("publish-alpha-pypi", "publish-main-pypi"):
         steps = jobs[job_name]["steps"]
         inspect_step = next(step for step in steps if step.get("name") == "Inspect PyPI release state")
-        publish_step = next(step for step in steps if str(step.get("uses", "")).startswith("pypa/"))
+        publish_steps = [step for step in steps if str(step.get("uses", "")).startswith("pypa/")]
         cleanup_step = next(step for step in steps if step.get("name") == "Remove generated upload attestations")
         verify_step = next(step for step in steps if step.get("name") == "Download and verify exact PyPI artifacts")
-        assert "verify-release --registry pypi" in inspect_step["run"]
-        assert publish_step["if"] == "steps.pypi.outputs.upload == 'true'"
-        assert cleanup_step["run"] == "rm -f dist/*.publish.attestation"
-        assert steps.index(publish_step) < steps.index(cleanup_step) < steps.index(verify_step)
+        assert "--project hol-guard" in inspect_step["run"]
+        assert "--project plugin-scanner" in inspect_step["run"]
+        assert len(publish_steps) == 2
+        assert {step["if"] for step in publish_steps} == {
+            "steps.pypi.outputs.hol_guard_upload == 'true'",
+            "steps.pypi.outputs.plugin_scanner_upload == 'true'",
+        }
+        assert {step["with"]["packages-dir"] for step in publish_steps} == {
+            "dist-hol-guard/",
+            "dist-plugin-scanner/",
+        }
+        assert "dist-hol-guard/*.publish.attestation" in cleanup_step["run"]
+        assert "dist-plugin-scanner/*.publish.attestation" in cleanup_step["run"]
+        assert all(steps.index(step) < steps.index(cleanup_step) for step in publish_steps)
+        assert steps.index(cleanup_step) < steps.index(verify_step)
         assert "--download-dir verified-pypi" in verify_step["run"]
-        assert 'status" == "exact"' in verify_step["run"]
-        assert 'status" != "absent"' in verify_step["run"]
+        assert "--project hol-guard" in verify_step["run"]
+        assert "--project plugin-scanner" in verify_step["run"]
+        assert 'guard_status" == "exact"' in verify_step["run"]
+        assert 'scanner_status" == "exact"' in verify_step["run"]
         assert "for attempt in {1..60}" in verify_step["run"]
         assert 'attempt" == "60"' in verify_step["run"]
         assert '== "hol-guard $VERSION"' in verify_step["run"]
+        assert '== "plugin-scanner $VERSION"' in verify_step["run"]
 
 
 def test_release_tags_are_bound_to_the_exact_published_source() -> None:
