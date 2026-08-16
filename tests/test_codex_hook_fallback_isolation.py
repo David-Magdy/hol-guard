@@ -326,8 +326,8 @@ def test_parent_liveness_stops_child_after_supervisor_is_killed(tmp_path: Path) 
     child = (
         "import os;from pathlib import Path;"
         f"Path({str(child_pid_path)!r}).write_text(str(os.getpid()));"
-        "path=Path(os.environ['HOL_GUARD_PARENT_LIVENESS_PATH']);"
-        "stream=path.open('rb',buffering=0);path.unlink(missing_ok=True);stream.read(1)"
+        "descriptor=int(os.environ['HOL_GUARD_PARENT_LIVENESS_FD']);"
+        "os.fdopen(os.dup(descriptor),'rb',closefd=True).read(1)"
     )
     package_source = Path(launch_runtime.__file__).resolve().parents[2]
     supervisor_code = (

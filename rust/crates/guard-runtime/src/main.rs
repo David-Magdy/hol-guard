@@ -16,7 +16,6 @@ use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -54,7 +53,7 @@ const MAX_JSON_COLLECTION_ITEMS: usize = 4_096;
 const MAX_JSON_STRING_BYTES: usize = 1024 * 1024;
 const SERVER_PROOF_LABEL: &[u8] = b"hol-guard-resident-server-v1\0";
 const CLIENT_PROOF_LABEL: &[u8] = b"hol-guard-resident-client-v1\0";
-const PARENT_LIVENESS_PATH_ENV: &str = "HOL_GUARD_PARENT_LIVENESS_PATH";
+const PARENT_LIVENESS_FD_ENV: &str = "HOL_GUARD_PARENT_LIVENESS_FD";
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "operation", content = "request", rename_all = "snake_case")]
@@ -581,14 +580,17 @@ fn admit_connection(
 #[cfg(unix)]
 fn resident_parent_liveness() -> Result<Arc<AtomicBool>, String> {
     let alive = Arc::new(AtomicBool::new(true));
-    let Ok(raw_path) = env::var(PARENT_LIVENESS_PATH_ENV) else {
+    let Ok(raw_descriptor) = env::var(PARENT_LIVENESS_FD_ENV) else {
         return Ok(alive);
     };
-    let path = Path::new(&raw_path);
-    let mut pipe = std::fs::File::open(path)
-        .map_err(|_| "native_parent_liveness_path_unavailable".to_owned())?;
-    std::fs::remove_file(path)
-        .map_err(|_| "native_parent_liveness_path_cleanup_failed".to_owned())?;
+    let descriptor = raw_descriptor
+        .parse::<u32>()
+        .map_err(|_| "native_parent_liveness_fd_invalid".to_owned())?;
+    let dev_path = format!("/dev/fd/{descriptor}");
+    let proc_path = format!("/proc/self/fd/{descriptor}");
+    let mut pipe = std::fs::File::open(dev_path)
+        .or_else(|_| std::fs::File::open(proc_path))
+        .map_err(|_| "native_parent_liveness_fd_unavailable".to_owned())?;
     let watcher_state = Arc::clone(&alive);
     thread::spawn(move || {
         let mut byte = [0u8; 1];
