@@ -83,10 +83,12 @@ function CustomExtensionRow(props: { item: LocalCliItem; onOpen: (cliId: string)
   }, [props]);
   return (
     <ProtectionModuleRow
+      extensionId={props.item.cli_id}
       name={props.item.name}
       description={props.item.example_label}
       behavior={customExtensionStateLabel(props.item)}
       custom
+      executables={[props.item.name]}
       onOpen={handleOpen}
     />
   );

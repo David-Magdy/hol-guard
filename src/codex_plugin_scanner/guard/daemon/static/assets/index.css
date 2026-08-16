@@ -7218,6 +7218,87 @@ input:focus-visible, button:focus-visible, a:focus-visible {
   }
 }
 
+.guard-extension-mark {
+  border: 1px solid var(--extension-brand, var(--brand-blue));
+  flex-shrink: 0;
+  place-items: center;
+  display: grid;
+}
+
+@supports (color: color-mix(in lab, red, red)) {
+  .guard-extension-mark {
+    border: 1px solid color-mix(in srgb, var(--extension-brand, var(--brand-blue)) 28%, transparent);
+  }
+}
+
+.guard-extension-mark {
+  background: var(--extension-brand, var(--brand-blue));
+}
+
+@supports (color: color-mix(in lab, red, red)) {
+  .guard-extension-mark {
+    background: color-mix(in srgb, var(--extension-brand, var(--brand-blue)) 12%, white);
+  }
+}
+
+.guard-extension-mark {
+  color: var(--extension-brand, var(--brand-blue));
+  transition: transform .16s var(--ease-out-quart);
+  box-shadow: 0 1px 2px #3f41740f;
+}
+
+.guard-extension-mark[data-size="sm"] {
+  border-radius: .375rem;
+  block-size: 1.25rem;
+  inline-size: 1.25rem;
+}
+
+.guard-extension-mark[data-size="md"] {
+  border-radius: .75rem;
+  block-size: 2.5rem;
+  inline-size: 2.5rem;
+}
+
+.guard-extension-mark[data-size="lg"] {
+  border-radius: 1rem;
+  block-size: 3.5rem;
+  inline-size: 3.5rem;
+}
+
+.guard-extension-mark svg {
+  block-size: 55%;
+  inline-size: 55%;
+}
+
+.guard-extension-mark img {
+  object-fit: contain;
+  block-size: 62%;
+  inline-size: 62%;
+}
+
+.guard-extension-mark-cluster {
+  flex-shrink: 0;
+  align-items: center;
+  display: flex;
+}
+
+.guard-extension-mark-cluster .guard-extension-mark {
+  box-shadow: 0 0 0 2px #fff, 0 1px 2px #3f417414;
+}
+
+.guard-extension-mark-cluster .guard-extension-mark:not(:first-child) {
+  margin-inline-start: -.55rem;
+}
+
+.guard-extension-mark-cluster[data-size="sm"] .guard-extension-mark {
+  block-size: 1.15rem;
+  inline-size: 1.15rem;
+}
+
+.guard-extensions-row:hover .guard-extension-mark {
+  transform: translateY(-1px);
+}
+
 .guard-pattern-row {
   border-bottom: 1px solid var(--brand-dark);
   gap: .75rem;
@@ -7260,7 +7341,7 @@ input:focus-visible, button:focus-visible, a:focus-visible {
 .guard-pattern-family-heading {
   border-bottom: 1px solid var(--brand-dark);
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: .5rem;
   padding-bottom: .35rem;
   display: flex;
@@ -7404,8 +7485,12 @@ input:focus-visible, button:focus-visible, a:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .guard-extensions-row {
+  .guard-extensions-row, .guard-extension-mark {
     transition: none;
+  }
+
+  .guard-extensions-row:hover .guard-extension-mark {
+    transform: none;
   }
 }
 
