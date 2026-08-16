@@ -453,3 +453,52 @@ def test_valid_frozen_args_retain_daemon_fast_path(
 
     assert returncode == 0
     assert _json_object(output.getvalue())["decision"] == "allow"
+
+
+def test_relative_frozen_guard_home_denies_before_daemon_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path, harness="grok")
+    cli_args = cast(list[str], config["cli_args"])
+    cli_args[3] = "guard-home"
+    config["frozen_launcher"] = True
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+
+    def forbidden_daemon(**kwargs: object) -> object:
+        del kwargs
+        raise AssertionError("relative frozen Guard home must not reach the daemon")
+
+    monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", forbidden_daemon)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        returncode = bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}")
+
+    assert returncode == 0
+    assert _json_object(output.getvalue())["decision"] == "deny"
+
+
+def test_relative_configured_guard_home_denies_before_daemon_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path, harness="grok")
+    config["guard_home"] = "guard-home"
+    cli_args = cast(list[str], config["cli_args"])
+    cli_args[3] = "guard-home"
+    config["frozen_launcher"] = True
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
+
+    def forbidden_daemon(**kwargs: object) -> object:
+        del kwargs
+        raise AssertionError("relative configured Guard home must not reach the daemon")
+
+    monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", forbidden_daemon)
+    output = io.StringIO()
+    with redirect_stdout(output):
+        returncode = bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}")
+
+    assert returncode == 0
+    assert _json_object(output.getvalue())["decision"] == "deny"

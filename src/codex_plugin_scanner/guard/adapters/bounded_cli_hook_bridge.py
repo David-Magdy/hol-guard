@@ -118,8 +118,11 @@ def _validated_frozen_cli_args(
 ) -> tuple[str, ...] | None:
     if len(cli_args) < 6 or tuple(cli_args[:3]) != ("guard", "hook", "--guard-home"):
         return None
+    supplied_guard_home_value = Path(cli_args[3])
+    if not supplied_guard_home_value.is_absolute() or not guard_home.is_absolute():
+        return None
     try:
-        supplied_guard_home = Path(cli_args[3]).resolve(strict=False)
+        supplied_guard_home = supplied_guard_home_value.resolve(strict=False)
         expected_guard_home = guard_home.resolve(strict=False)
     except (OSError, RuntimeError):
         return None
