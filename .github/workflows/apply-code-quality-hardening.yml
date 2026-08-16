@@ -88,10 +88,26 @@ jobs:
             tests/test_guard_node_semver.py \
             tests/test_guard_private_file_io.py
       - name: Verify audit baseline
+        shell: bash
         run: |
-          PYTHONPATH=scripts/ci python scripts/ci/code_quality_audit.py \
+          set -euo pipefail
+          set +e
+          output=$(PYTHONPATH=scripts/ci python scripts/ci/code_quality_audit.py \
             --root . \
-            --baseline ci/code-quality-baseline.json
+            --baseline ci/code-quality-baseline.json 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if (( status != 0 )); then
+            printf '%s\n' "$output" > .github/code-quality-audit-diagnostics.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -f .github/code-quality-audit-diagnostics.txt
+            git commit -m "chore(audit): capture code-quality ratchet diagnostics"
+            git push origin HEAD:refactor/release-3-code-quality-hardening
+            exit "$status"
+          fi
+          rm -f .github/code-quality-audit-diagnostics.txt
       - name: Commit finalized tree
         shell: bash
         run: |
