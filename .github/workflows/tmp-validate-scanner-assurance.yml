@@ -1,0 +1,168 @@
+name: Validate materialized scanner assurance
+
+on:
+  push:
+    branches:
+      - feat/scanner-assurance-rust-hardening-20260816
+    paths:
+      - .github/workflows/tmp-validate-scanner-assurance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scanner-assurance-materialization
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/scanner-assurance-rust-hardening-20260816
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+            rust/scanner-engine/Cargo.lock
+      - name: Run complete validation and retain diagnostics
+        id: validation
+        shell: bash
+        env:
+          HOL_GUARD_SCANNER_ENGINE: ${{ github.workspace }}/rust/scanner-engine/target/release/hol-guard-scanner-engine
+        run: |
+          set -u
+          mkdir -p .scanner-assurance-diagnostics
+          : > .scanner-assurance-diagnostics/summary.tsv
+          run_check() {
+            name="$1"
+            shift
+            log=".scanner-assurance-diagnostics/${name}.log"
+            set +e
+            "$@" >"$log" 2>&1
+            status=$?
+            set -e
+            printf '%s\t%s\n' "$name" "$status" >> .scanner-assurance-diagnostics/summary.tsv
+            return 0
+          }
+
+          run_check integration-markers bash -c '
+            test -f src/codex_plugin_scanner/assurance/orchestrator.py &&
+            test -f rust/scanner-engine/Cargo.toml &&
+            grep -q "hol-guard-extension-security" pyproject.toml &&
+            grep -q "assurance" src/codex_plugin_scanner/models.py &&
+            grep -q "quarantined" src/codex_plugin_scanner/assurance/ingestion.py
+          '
+          run_check uv-lock uv lock --check
+          run_check uv-sync uv sync --frozen --extra dev --python 3.12
+          run_check cargo-fmt cargo fmt --manifest-path rust/scanner-engine/Cargo.toml -- --check
+          run_check cargo-clippy cargo clippy --manifest-path rust/scanner-engine/Cargo.toml --all-targets -- -D warnings
+          run_check cargo-test cargo test --manifest-path rust/scanner-engine/Cargo.toml
+          run_check cargo-build cargo build --release --locked --manifest-path rust/scanner-engine/Cargo.toml
+          run_check compile python -m compileall -q src/codex_plugin_scanner/assurance src/codex_plugin_scanner/assurance_cli.py
+          run_check ruff uv run --no-sync python -m ruff check \
+            src/codex_plugin_scanner/assurance \
+            src/codex_plugin_scanner/assurance_cli.py \
+            src/codex_plugin_scanner/models.py \
+            src/codex_plugin_scanner/reporting.py \
+            src/codex_plugin_scanner/scanner.py \
+            src/codex_plugin_scanner/_scanner_commands.py \
+            src/codex_plugin_scanner/quality_artifact.py \
+            tests/test_assurance_archive.py \
+            tests/test_assurance_dependencies.py \
+            tests/test_assurance_drift_detonation.py \
+            tests/test_assurance_integration.py \
+            tests/test_assurance_native.py \
+            tests/test_assurance_policy_ingestion.py \
+            tests/test_assurance_security_vectors.py
+          run_check format uv run --no-sync python -m ruff format --check \
+            src/codex_plugin_scanner/assurance \
+            src/codex_plugin_scanner/assurance_cli.py \
+            tests/test_assurance_archive.py \
+            tests/test_assurance_dependencies.py \
+            tests/test_assurance_drift_detonation.py \
+            tests/test_assurance_integration.py \
+            tests/test_assurance_native.py \
+            tests/test_assurance_policy_ingestion.py \
+            tests/test_assurance_security_vectors.py
+          run_check basedpyright uv run --no-sync basedpyright --level error \
+            src/codex_plugin_scanner/assurance \
+            src/codex_plugin_scanner/assurance_cli.py
+          run_check pytest uv run --no-sync pytest \
+            tests/test_assurance_archive.py \
+            tests/test_assurance_dependencies.py \
+            tests/test_assurance_drift_detonation.py \
+            tests/test_assurance_integration.py \
+            tests/test_assurance_native.py \
+            tests/test_assurance_policy_ingestion.py \
+            tests/test_assurance_security_vectors.py \
+            tests/test_policy.py \
+            tests/test_reporting.py \
+            tests/test_schema_contracts.py \
+            tests/test_security_ops.py \
+            tests/test_integration.py \
+            tests/test_verification.py \
+            --tb=short
+          run_check wheel uv build --wheel
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          rows = []
+          for line in Path('.scanner-assurance-diagnostics/summary.tsv').read_text().splitlines():
+              name, status = line.split('\t')
+              rows.append({'check': name, 'status': int(status)})
+          payload = {
+              'schema_version': 'hol-guard.scanner-assurance-validation.v1',
+              'success': all(row['status'] == 0 for row in rows),
+              'checks': rows,
+          }
+          Path('.scanner-assurance-diagnostics/result.json').write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + '\n'
+          )
+          PY
+          cat .scanner-assurance-diagnostics/result.json
+      - name: Commit validation result
+        shell: bash
+        run: |
+          set -euo pipefail
+          success=$(python -c 'import json; print(str(json.load(open(".scanner-assurance-diagnostics/result.json"))["success"]).lower())')
+          if test "$success" = true; then
+            rm -rf .scanner-assurance-diagnostics
+            rm -rf .scanner-assurance-repair
+            rm -f scripts/tmp_apply_scanner_assurance.py
+            rm -f .github/workflows/tmp-apply-scanner-assurance.yml
+            rm -f .github/workflows/tmp-harden-scanner-assurance.yml
+            rm -f .github/workflows/tmp-scanner-hardening-source-snapshot.yml
+            rm -f .github/workflows/tmp-validate-scanner-assurance.yml
+            message="test(scanner): verify layered assurance implementation"
+          else
+            message="chore(scanner): record assurance validation diagnostics"
+          fi
+          git config user.name "Michael Kantor"
+          git config user.email "6068672+kantorcodes@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -s -m "$message"
+          git pull --rebase origin feat/scanner-assurance-rust-hardening-20260816
+          git push origin HEAD:feat/scanner-assurance-rust-hardening-20260816
+      - name: Upload validation diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: scanner-assurance-validation
+          path: .scanner-assurance-diagnostics
+          if-no-files-found: ignore
+          retention-days: 14
