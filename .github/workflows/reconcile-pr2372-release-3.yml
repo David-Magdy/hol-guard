@@ -1,0 +1,100 @@
+name: Reconcile PR 2372 with release/3.0
+
+on:
+  push:
+    branches:
+      - chore/reconcile-pr2372-release-3
+    paths:
+      - .github/workflows/reconcile-pr2372-release-3.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: reconcile-pr2372-release-3
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          ref: fix/rust-p0-p2-regression-hardening
+
+      - name: Merge current release/3.0
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags origin '+refs/heads/release/3.0:refs/remotes/origin/release/3.0'
+          set +e
+          git merge --no-ff --no-commit -X ours origin/release/3.0
+          status=$?
+          set -e
+          if [[ "$status" -ne 0 ]]; then
+            mapfile -t unresolved < <(git diff --name-only --diff-filter=U)
+            if [[ "${#unresolved[@]}" -eq 0 ]]; then
+              exit "$status"
+            fi
+            for path in "${unresolved[@]}"; do
+              if git cat-file -e "HEAD:${path}" 2>/dev/null; then
+                git checkout --ours -- "$path" 2>/dev/null || {
+                  mkdir -p "$(dirname "$path")"
+                  git show "HEAD:${path}" > "$path"
+                }
+                git add -- "$path"
+              elif git cat-file -e "origin/release/3.0:${path}" 2>/dev/null; then
+                git checkout --theirs -- "$path" 2>/dev/null || {
+                  mkdir -p "$(dirname "$path")"
+                  git show "origin/release/3.0:${path}" > "$path"
+                }
+                git add -- "$path"
+              else
+                git rm -f --ignore-unmatch -- "$path"
+              fi
+            done
+          fi
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            git diff --name-only --diff-filter=U >&2
+            exit 1
+          fi
+          git commit -m "chore: reconcile Rust regression hardening with current release/3.0" \
+            -m "Signed-off-by: Michael Kantor <6068672+kantorcodes@users.noreply.github.com>"
+
+      - name: Reject unresolved conflict markers
+        run: |
+          if git grep -nE '^(<<<<<<<|=======|>>>>>>>)' -- ':!*.lock'; then
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Validate Rust regression hardening
+        run: |
+          uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync python -m ruff format --check \
+            ci/run_rust_migration_regression.py \
+            ci/rust_migration_regression_audit.py \
+            tests/test_rust_migration_regression_audit.py
+          uv run --no-sync python -m ruff check \
+            ci/run_rust_migration_regression.py \
+            ci/rust_migration_regression_audit.py \
+            tests/test_rust_migration_regression_audit.py
+          uv run --no-sync pytest tests/test_rust_migration_regression_audit.py --tb=short
+          uv run --no-sync python ci/rust_migration_regression_audit.py
+
+      - name: Push reconciled feature branch
+        run: git push origin HEAD:fix/rust-p0-p2-regression-hardening
