@@ -63,6 +63,7 @@ def test_grok_protection_checks_ready_after_install(tmp_path: Path, monkeypatch)
     checks = _grok_protection_checks(ctx)
     assert checks["pretool_hook_installed"] is True
     assert checks["prompt_hook_installed"] is True
+    assert checks["pretool_catchall_installed"] is True
     assert checks["managed_config_installed"] is True
     assert checks["ready"] is True
 
@@ -98,6 +99,59 @@ def test_normalize_harness_payload_supports_grok_bash(tmp_path: Path) -> None:
     assert envelope.action_type == "shell_command"
     assert envelope.command is not None
     assert "git diff" in envelope.command
+
+
+def test_grok_protection_checks_flag_stale_matchers(tmp_path: Path, monkeypatch) -> None:
+    ctx = _ctx(tmp_path)
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.adapters.grok.install_guard_shim",
+        lambda *args, **kwargs: {"shim_path": str(ctx.guard_home / "bin" / "guard-grok"), "notes": []},
+    )
+    GrokHarnessAdapter().install(ctx)
+    (ctx.guard_home / "bin").mkdir(parents=True, exist_ok=True)
+    (ctx.guard_home / "bin" / "guard-grok").write_text("#!/bin/sh\n", encoding="utf-8")
+    pretool = ctx.home_dir / ".grok" / "hooks" / "hol-guard-pretooluse.json"
+    pretool.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {"matcher": "Bash", "hooks": [{"type": "command", "command": "true", "timeout": 30}]},
+                        {
+                            "matcher": "run_terminal_command",
+                            "hooks": [{"type": "command", "command": "true", "timeout": 30}],
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    checks = _grok_protection_checks(ctx)
+    assert checks["pretool_catchall_installed"] is False
+    assert checks["ready"] is False
+    assert any("stale" in warning.lower() for warning in checks["warnings"])
+
+
+def test_normalize_harness_payload_supports_grok_spawn_subagent(tmp_path: Path) -> None:
+    envelope = normalize_harness_payload(
+        "grok",
+        "PreToolUse",
+        {
+            "hookEventName": "pre_tool_use",
+            "toolName": "spawn_subagent",
+            "toolInput": {
+                "prompt": "Read the README and summarize it.",
+                "description": "Summarize docs",
+                "subagent_type": "explore",
+            },
+        },
+        workspace=tmp_path / "workspace",
+        home_dir=tmp_path,
+    )
+    assert envelope.harness == "grok"
+    assert envelope.action_type == "prompt"
+    assert envelope.tool_name == "Task"
 
 
 def test_normalize_harness_payload_supports_grok_secret_read(tmp_path: Path) -> None:

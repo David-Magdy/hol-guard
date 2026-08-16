@@ -46,8 +46,23 @@ _VALID_ACTION_TYPES: frozenset[GuardActionType] = frozenset(
 )
 _SCHEMA_VERSION = 1
 _SHELL_TOOL_NAMES = frozenset({"bash", "shell", "sh", "zsh", "terminal", "run_command", "run_terminal_command"})
-_FILE_READ_TOOL_NAMES = frozenset({"read", "read_file", "open_file", "view", "view_file", "cat_file"})
+_FILE_READ_TOOL_NAMES = frozenset(
+    {
+        "read",
+        "read_file",
+        "open_file",
+        "view",
+        "view_file",
+        "cat_file",
+        "grep",
+        "glob",
+        "list_dir",
+        "listdir",
+        "list_directory",
+    }
+)
 _FILE_WRITE_TOOL_NAMES = frozenset({"write", "edit", "multiedit", "write_file", "edit_file", "apply_patch"})
+_SUBAGENT_TOOL_NAMES = frozenset({"task", "spawn_subagent"})
 _PATH_KEYS = (
     "path",
     "paths",
@@ -64,6 +79,10 @@ _PATH_KEYS = (
     "target_paths",
     "targetPath",
     "targetPaths",
+    "target_directory",
+    "targetDirectory",
+    "directory",
+    "dir",
 )
 _COMMAND_KEYS = (
     "command",
@@ -831,6 +850,11 @@ def command_text_from_tool_payload(tool_name: object, tool_input: object) -> str
         value = tool_input.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    normalized_tool = tool_name.strip().lower() if isinstance(tool_name, str) else ""
+    if normalized_tool in _FILE_READ_TOOL_NAMES or normalized_tool in {"egrep", "fgrep", "rg"}:
+        # Search/read tools carry a regex in `pattern`. That is not a shell
+        # command; treating `|` as a pipeline over-blocks ordinary greps.
+        return None
     native_command = _native_tool_command_text(tool_name, tool_input)
     if native_command is not None:
         return native_command
@@ -983,6 +1007,9 @@ def _mcp_parts(tool_name: str | None, *, known_servers: tuple[str, ...] = ()) ->
                 tool = suffix[len(prefix) :]
                 return (server, tool) if tool else (None, None)
         return None, None
+    if "__" in tool_name:
+        server, tool = tool_name.split("__", 1)
+        return (server, tool) if server and tool else (None, None)
     return None, None
 
 
@@ -1001,6 +1028,8 @@ def _action_type(
 ) -> GuardActionType:
     normalized_tool = tool_name.lower() if tool_name is not None else ""
     if event_name == "UserPromptSubmit" and prompt_excerpt is not None:
+        return "prompt"
+    if normalized_tool in _SUBAGENT_TOOL_NAMES:
         return "prompt"
     if mcp_server is not None:
         return "mcp_tool"

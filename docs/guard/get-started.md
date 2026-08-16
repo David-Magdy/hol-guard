@@ -400,9 +400,10 @@ Current strategy:
   calls and prompts with exit code `2` plus a JSON `permissionDecision: "deny"` response, and fails open on hook crash
   or timeout
 - `grok`
-  installs Guard-owned Grok hook JSON in `~/.grok/hooks/` and permission deny rules in `~/.grok/managed_config.toml`,
-  blocks with Grok-native stdout JSON `{"decision":"deny"}` plus approval-center copy, never reads `~/.grok/auth`, and
-  treats `--always-approve` or `bypassPermissions` as degraded protection when detected. Guard launches only a trusted
+  installs a catch-all Guard `PreToolUse` hook plus observe-only prompt and subagent hooks in `~/.grok/hooks/`,
+  writes permission deny rules and backup hooks in `~/.grok/managed_config.toml`, blocks tool calls with Grok-native
+  stdout JSON `{"decision":"deny"}` plus approval-center copy, never reads `~/.grok/auth`, and treats
+  `--always-approve` or `bypassPermissions` as degraded protection when detected. Guard launches only a trusted
   absolute Grok executable; for a custom install root, select it once with
   `hol-guard run grok --grok-executable /absolute/path/to/grok`.
 

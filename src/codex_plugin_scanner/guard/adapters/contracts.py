@@ -307,13 +307,15 @@ HARNESS_CONTRACTS: tuple[HarnessProtectionContract, ...] = (
             "~/.grok/managed_config.toml",
             "~/.grok/hooks/",
         ),
-        event_surfaces=("shell", "prompt", "mcp_tool", "file_read"),
+        event_surfaces=("shell", "prompt", "mcp_tool", "file_read", "file_write"),
         native_approval=False,
         browser_fallback=True,
         resume_support=False,
         known_blind_spots=(
-            "--always-approve and bypassPermissions weaken prompt policy, but the bounded Guard hook still "
-            "returns a native deny when its local review cannot finish."
+            "Grok UserPromptSubmit hooks are observe-only, so prompt screening cannot block the model from "
+            "seeing a prompt. Enforcement is the catch-all PreToolUse hook, including subagent and MCP tools. "
+            "--always-approve and bypassPermissions weaken Grok's own prompt policy, but the Guard hook still "
+            "returns a native deny when policy blocks a tool call."
         ),
         smoke_command="hol-guard install grok --dry-run",
     ),

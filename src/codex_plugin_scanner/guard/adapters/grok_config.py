@@ -20,20 +20,44 @@ GUARD_MANAGED_END = "# END HOL GUARD MANAGED GROK"
 GUARD_MANAGED_MARKER = "HOL GUARD MANAGED GROK"
 GUARD_HOOK_PRETOOL_FILE = "hol-guard-pretooluse.json"
 GUARD_HOOK_PROMPT_FILE = "hol-guard-prompt.json"
-PRETOOL_MATCHERS = (
-    "Bash",
-    "Read",
-    "Edit",
-    "Grep",
-    "MCPTool",
-    "WebFetch",
-    "run_terminal_command",
-    "read_file",
-    "grep",
-    "web_fetch",
-    "web_search",
-    "write",
-    "search_replace",
+# Kept empty: a per-tool matcher list double-fired after Grok aliased Bash→run_terminal_command.
+PRETOOL_MATCHERS: tuple[str, ...] = ()
+MANAGED_DENY_RULES = (
+    "Bash(hol-guard apps disconnect grok*)",
+    "Bash(hol-guard apps uninstall*)",
+    "Bash(rm -rf **/.grok/hooks/hol-guard*)",
+    "Edit(**/.grok/hooks/hol-guard*)",
+    "Edit(**/.grok/managed_config.toml)",
+    "Read(**/.grok/auth/**)",
+    "Read(**/.grok/auth.json)",
+    "Read(**/.env)",
+    "Read(**/.npmrc)",
+    "Read(**/.ssh/**)",
+    "Read(**/.hol-guard/secrets/**)",
+    "Read(**/.hol-guard/totp-secrets/**)",
+    "Read(**/.hol-guard/daemon-auth-token)",
+)
+OBSERVE_HOOK_EVENTS = ("UserPromptSubmit", "SubagentStart", "SessionStart")
+GROK_SURFACE_RELATIVES = (
+    "skills",
+    "plugins",
+    "plugins/marketplaces",
+    "plugins/known_marketplaces.json",
+    "sessions",
+    "agents",
+    "personas",
+    "workflows",
+    "sandbox.toml",
+    "trusted_folders.toml",
+)
+GROK_PROJECT_SURFACE_RELATIVES = (
+    "skills",
+    "plugins",
+    "hooks",
+    "agents",
+    "personas",
+    "workflows",
+    "sandbox.toml",
 )
 SYSTEM_MANAGED_CONFIG = Path("/etc/grok/managed_config.toml")
 SYSTEM_REQUIREMENTS = Path("/etc/grok/requirements.toml")
@@ -48,41 +72,75 @@ DEGRADED_MODE_MARKERS = (
 )
 
 
-def build_pretool_hook_json(hook_command: str) -> dict[str, object]:
-    entries: list[dict[str, object]] = []
-    for matcher in PRETOOL_MATCHERS:
-        entries.append(
+def _command_hook_entry(hook_command: str, *, timeout: int) -> dict[str, object]:
+    return {
+        "hooks": [
             {
-                "matcher": matcher,
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": hook_command,
-                        "timeout": 30,
-                    }
-                ],
+                "type": "command",
+                "command": hook_command,
+                "timeout": timeout,
             }
-        )
-    return {"hooks": {"PreToolUse": entries}}
+        ]
+    }
 
 
-def build_managed_config_block() -> str:
-    home = "~"
+def build_pretool_hook_json(hook_command: str) -> dict[str, object]:
+    """Install one catch-all PreToolUse handler.
+
+    Grok matchers are regexes against the native tool name and also expand
+    aliases, so listing both ``Bash`` and ``run_terminal_command`` ran Guard
+    twice. An omitted matcher covers current and future tools, including
+    ``spawn_subagent``, ``list_dir``, and ``server__tool`` MCP names.
+    """
+
+    return {"hooks": {"PreToolUse": [_command_hook_entry(hook_command, timeout=30)]}}
+
+
+def build_observe_hook_json(hook_command: str) -> dict[str, object]:
+    """Install observe-only lifecycle hooks.
+
+    Grok ignores deny/stdout on these events. Guard still records prompt and
+    subagent inventory; enforcement stays on PreToolUse.
+    """
+
+    return {
+        "hooks": {
+            event_name: [_command_hook_entry(hook_command, timeout=15)] for event_name in OBSERVE_HOOK_EVENTS
+        }
+    }
+
+
+def _toml_inline_command_hook(hook_command: str, *, timeout: int) -> str:
+    return "{ type = \"command\", command = " + json.dumps(hook_command) + f", timeout = {timeout} }}"
+
+
+def build_managed_config_block(hook_command: str = "") -> str:
+    deny_lines = ",\n".join(f'  "{rule}"' for rule in MANAGED_DENY_RULES)
     lines = [
         GUARD_MANAGED_BEGIN,
         "# Permission rules below are managed by HOL Guard. Do not edit manually.",
         "[permission]",
         "deny = [",
-        '  "Bash(hol-guard apps disconnect grok*)",',
-        f'  "Bash(rm -rf {home}/.grok/hooks/hol-guard*)",',
-        f'  "Read({home}/.grok/auth/**)",',
-        f'  "Read({home}/.env)",',
-        '  "Read(**/.env)",',
-        '  "Read(**/.npmrc)",',
-        f'  "Read({home}/.ssh/**)",',
+        deny_lines,
         "]",
-        GUARD_MANAGED_END,
     ]
+    if hook_command.strip():
+        command_hook = _toml_inline_command_hook(hook_command, timeout=30)
+        observe_hook = _toml_inline_command_hook(hook_command, timeout=15)
+        lines.extend(
+            [
+                "",
+                "[[hooks.PreToolUse]]",
+                f"hooks = [{command_hook}]",
+                "",
+                "[[hooks.UserPromptSubmit]]",
+                f"hooks = [{observe_hook}]",
+                "",
+                "[[hooks.SubagentStart]]",
+                f"hooks = [{observe_hook}]",
+            ]
+        )
+    lines.append(GUARD_MANAGED_END)
     return "\n".join(lines)
 
 
