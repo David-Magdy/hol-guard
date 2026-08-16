@@ -6,6 +6,7 @@ import os
 import signal
 import stat
 import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -222,8 +223,8 @@ def run_isolated_hook_process(
     if _HOOK_PROCESS_CONTAINMENT_FAILED.is_set() and not _retry_quarantined_hook_processes():
         return BoundedHookProcessResult(None, "", False, False, containment_failed=True)
     windows_job: WindowsHookJob | None = None
-    liveness_read_fd: int | None = None
-    liveness_write_fd: int | None = None
+    liveness_path: Path | None = None
+    liveness_keeper_fd: int | None = None
     try:
         if os.name == "nt":
             process, windows_job = spawn_windows_hook_process(
@@ -234,12 +235,14 @@ def run_isolated_hook_process(
             )
         else:
             child_environment = dict(environment)
-            pass_fds: tuple[int, ...] = ()
             if parent_liveness:
-                liveness_read_fd, liveness_write_fd = os.pipe()
-                os.set_inheritable(liveness_read_fd, True)
-                child_environment["HOL_GUARD_PARENT_LIVENESS_FD"] = str(liveness_read_fd)
-                pass_fds = (liveness_read_fd,)
+                placeholder_fd, placeholder = tempfile.mkstemp(prefix=".guard-parent-", dir=cwd)
+                os.close(placeholder_fd)
+                liveness_path = Path(placeholder)
+                liveness_path.unlink()
+                os.mkfifo(liveness_path, mode=0o600)
+                liveness_keeper_fd = os.open(liveness_path, os.O_RDWR | os.O_NONBLOCK)
+                child_environment["HOL_GUARD_PARENT_LIVENESS_PATH"] = str(liveness_path)
             process = subprocess.Popen(
                 list(command),
                 cwd=cwd,
@@ -248,15 +251,14 @@ def run_isolated_hook_process(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
-                pass_fds=pass_fds,
             )
     except OSError:
-        for descriptor in (liveness_read_fd, liveness_write_fd):
-            if descriptor is not None:
-                os.close(descriptor)
+        if liveness_keeper_fd is not None:
+            os.close(liveness_keeper_fd)
+        if liveness_path is not None:
+            with suppress(FileNotFoundError):
+                liveness_path.unlink()
         return BoundedHookProcessResult(None, "", False, False)
-    if liveness_read_fd is not None:
-        os.close(liveness_read_fd)
 
     stdout_bytes = bytearray()
     output_bytes = 0
@@ -342,8 +344,11 @@ def run_isolated_hook_process(
             containment_confirmed = False
     if not containment_confirmed:
         _quarantine_hook_process(process, windows_job, io_threads)
-    if liveness_write_fd is not None:
-        os.close(liveness_write_fd)
+    if liveness_keeper_fd is not None:
+        os.close(liveness_keeper_fd)
+    if liveness_path is not None:
+        with suppress(FileNotFoundError):
+            liveness_path.unlink()
     with output_lock:
         stdout_decoded = stdout_bytes.decode("utf-8", errors="replace")
     return BoundedHookProcessResult(
