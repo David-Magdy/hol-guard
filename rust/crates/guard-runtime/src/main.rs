@@ -641,7 +641,12 @@ fn serve(socket_path: &str) -> Result<(), String> {
     let parent_alive = resident_parent_liveness()?;
     while parent_alive.load(Ordering::Acquire) {
         match listener.accept() {
-            Ok((stream, _address)) => admit_connection(&sender, Box::new(stream))?,
+            Ok((stream, _address)) => {
+                stream
+                    .set_nonblocking(false)
+                    .map_err(|_| "native_socket_stream_blocking_failed".to_owned())?;
+                admit_connection(&sender, Box::new(stream))?
+            }
             Err(error)
                 if matches!(
                     error.kind(),
