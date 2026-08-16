@@ -18702,6 +18702,426 @@ function ShellFooter() {
     )) })
   ] }) });
 }
+function formatEmailDisplay(email) {
+  const trimmed = email.trim();
+  if (trimmed.length <= 24) return trimmed;
+  const atIndex = trimmed.indexOf("@");
+  if (atIndex > 0 && atIndex < trimmed.length - 1) {
+    const localPart = trimmed.slice(0, atIndex);
+    const domain = trimmed.slice(atIndex);
+    if (localPart.length > 10) {
+      return `${localPart.slice(0, 8)}…${domain}`;
+    }
+  }
+  return `${trimmed.slice(0, 12)}…`;
+}
+function resolveInitials(name, email) {
+  const trimmed = name.trim();
+  if (trimmed) {
+    const parts = trimmed.split(/\s+/);
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+    }
+    return trimmed.slice(0, 2).toUpperCase();
+  }
+  return email.trim().slice(0, 2).toUpperCase();
+}
+function resolveDisplayName(profile) {
+  const name = profile.display_name?.trim();
+  if (name) return name;
+  return profile.email.split("@")[0];
+}
+function CloudUserMenu(props) {
+  const [open, setOpen] = reactExports.useState(false);
+  const [copied, setCopied] = reactExports.useState(false);
+  const containerRef = reactExports.useRef(null);
+  const copyTimeoutRef = reactExports.useRef(null);
+  const handleClickOutside = reactExports.useCallback((event) => {
+    if (containerRef.current && !containerRef.current.contains(event.target)) {
+      setOpen(false);
+      setCopied(false);
+    }
+  }, []);
+  reactExports.useEffect(() => {
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open, handleClickOutside]);
+  reactExports.useEffect(() => {
+    return () => clearTimeout(copyTimeoutRef.current);
+  }, []);
+  const handleCopyWorkspaceId = reactExports.useCallback(async () => {
+    if (!props.workspaceId) return;
+    try {
+      await navigator.clipboard.writeText(props.workspaceId);
+      setCopied(true);
+      clearTimeout(copyTimeoutRef.current);
+      copyTimeoutRef.current = setTimeout(() => setCopied(false), 2e3);
+    } catch {
+    }
+  }, [props.workspaceId]);
+  if (!props.userProfile) {
+    if (props.collapsed) {
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex justify-center pb-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-8 w-8 items-center justify-center rounded-full bg-slate-200", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { className: "h-4 w-4 text-slate-400" }) }) });
+    }
+    return null;
+  }
+  const displayName = resolveDisplayName(props.userProfile);
+  const initials = resolveInitials(props.userProfile.display_name || "", props.userProfile.email);
+  if (props.collapsed) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: containerRef, className: "relative flex justify-center pb-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: () => setOpen((prev) => !prev),
+          className: "relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-full ring-2 ring-brand-blue/30 transition hover:ring-brand-blue/60",
+          title: `${displayName} (${props.userProfile.email})`,
+          "aria-label": `Cloud user: ${displayName}`,
+          children: props.userProfile.avatar_url ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "img",
+            {
+              src: props.userProfile.avatar_url,
+              alt: "",
+              className: "h-full w-full object-cover"
+            }
+          ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-bold text-brand-blue", children: initials })
+        }
+      ),
+      open && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "div",
+        {
+          className: "absolute bottom-16 left-16 z-50 w-56 rounded-xl border border-slate-200 bg-white p-3 shadow-lg",
+          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-1 text-center", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold text-brand-dark", children: displayName }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[10px] text-slate-500", children: formatEmailDisplay(props.userProfile.email) }),
+            props.workspaceId ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "button",
+              {
+                type: "button",
+                onClick: handleCopyWorkspaceId,
+                className: "mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-50 px-2 py-1.5 text-[10px] font-mono text-slate-600 transition hover:bg-slate-100",
+                children: [
+                  copied ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheck, { className: "h-3 w-3 text-green-600" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniClipboardDocument, { className: "h-3 w-3" }),
+                  props.workspaceId.slice(0, 8),
+                  "…"
+                ]
+              }
+            ) : null,
+            props.planId ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-1 inline-flex items-center rounded-md bg-brand-blue/10 px-1.5 py-0.5 text-[10px] font-semibold capitalize text-brand-blue", children: props.planId }) : null
+          ] })
+        }
+      )
+    ] });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: containerRef, className: "relative", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        type: "button",
+        onClick: () => setOpen((prev) => !prev),
+        className: "flex w-full items-center gap-2 rounded-xl px-2 py-1.5 transition hover:bg-slate-100",
+        "aria-expanded": open,
+        "aria-label": `Cloud user: ${displayName}`,
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full ring-2 ring-brand-blue/20", children: props.userProfile.avatar_url ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "img",
+            {
+              src: props.userProfile.avatar_url,
+              alt: "",
+              className: "h-full w-full object-cover"
+            }
+          ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-bold text-brand-blue", children: initials }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-w-0 flex-1 flex-col", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-xs font-semibold text-brand-dark", children: displayName }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-[10px] text-slate-500", children: formatEmailDisplay(props.userProfile.email) })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            HiMiniChevronDown,
+            {
+              className: `h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`
+            }
+          )
+        ]
+      }
+    ),
+    open && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute bottom-full left-0 right-0 mb-1 rounded-xl border border-slate-200 bg-white p-3 shadow-lg", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { className: "h-3 w-3 text-brand-blue" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-mono text-[9px] font-semibold uppercase tracking-widest text-brand-blue", children: "HOL Guard Cloud" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-t border-slate-100 pt-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[10px] font-medium uppercase tracking-wider text-slate-400", children: "Workspace ID" }),
+        props.workspaceId ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            type: "button",
+            onClick: handleCopyWorkspaceId,
+            className: "mt-1 flex w-full items-center justify-between gap-2 rounded-lg bg-slate-50 px-2 py-1.5 font-mono text-[10px] text-slate-600 transition hover:bg-slate-100",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: props.workspaceId }),
+              copied ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheck, { className: "h-3 w-3 shrink-0 text-green-600" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniClipboardDocument, { className: "h-3 w-3 shrink-0 text-slate-400" })
+            ]
+          }
+        ) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-[10px] text-slate-400", children: "Not available" })
+      ] }),
+      props.planId ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-t border-slate-100 pt-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[10px] font-medium uppercase tracking-wider text-slate-400", children: "Plan" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 flex items-center gap-1.5", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "inline-flex items-center rounded-md bg-brand-blue/10 px-1.5 py-0.5 text-[10px] font-semibold capitalize text-brand-blue", children: props.planId }) })
+      ] }) : null
+    ] }) })
+  ] });
+}
+function Surface(props) {
+  const toneClass = surfaceToneClass(props.tone);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "section",
+    {
+      className: `guard-surface-in rounded-xl border p-4 sm:p-5 ${toneClass}${props.className ? ` ${props.className}` : ""}`,
+      children: props.children
+    }
+  );
+}
+function SectionLabel(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-mono text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-blue", children: props.children });
+}
+function PolicyStatField(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `min-w-0 ${props.className ?? ""}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-[10px] font-semibold uppercase tracking-wider text-slate-500", children: props.label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { className: "mt-1 min-w-0", children: props.children })
+  ] });
+}
+function Badge(props) {
+  const toneClass = badgeToneClass(props.tone);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-normal w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1.5 [&>svg]:pointer-events-none transition-colors duration-200 overflow-hidden ${toneClass}`, children: props.children });
+}
+function Tag(props) {
+  const toneClass = tagToneClass(props.tone);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex items-center rounded-full border px-3 py-1 text-xs font-normal whitespace-nowrap ${toneClass}`, children: props.children });
+}
+function EmptyState(props) {
+  const isTeach = props.tone === "teach";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `flex flex-col items-center justify-center py-12 text-center sm:py-16 ${isTeach ? "rounded-2xl border border-brand-blue/10 bg-gradient-to-br from-white to-brand-blue/[0.02] px-6" : "px-6"}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `mb-5 flex h-14 w-14 items-center justify-center rounded-full ${isTeach ? "bg-brand-blue/10" : "bg-slate-100"}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniInformationCircle, { className: `h-7 w-7 ${isTeach ? "text-brand-blue" : "text-slate-400"}`, "aria-hidden": "true" }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "text-lg font-semibold tracking-tight text-brand-dark", children: props.title }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground", children: props.body }),
+    props.action ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: props.action }) : null
+  ] });
+}
+function anchorPropsFromButtonProps(props) {
+  const {
+    disabled: _disabled,
+    form: _form,
+    formAction: _formAction,
+    formEncType: _formEncType,
+    formMethod: _formMethod,
+    formNoValidate: _formNoValidate,
+    formTarget: _formTarget,
+    name: _name,
+    value: _value,
+    type: _type,
+    ...rest
+  } = props;
+  return rest;
+}
+const ActionButton = reactExports.forwardRef(
+  ({ children, href, variant, disabled, onClick, className: customClassName, type, ...buttonProps }, ref) => {
+    const className = `${actionButtonClass(variant)}${customClassName ? ` ${customClassName}` : ""}`;
+    if (href) {
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "a",
+        {
+          ref,
+          href: guardAwareHref(href),
+          target: href.startsWith("https://") ? "_blank" : void 0,
+          rel: href.startsWith("https://") ? "noreferrer" : void 0,
+          onClick,
+          className,
+          ...anchorPropsFromButtonProps(buttonProps),
+          children
+        }
+      );
+    }
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("button", { ref, type: type ?? "button", className, onClick, disabled, ...buttonProps, children });
+  }
+);
+ActionButton.displayName = "ActionButton";
+function IconActionButton({ label, icon, variant = "outline", onClick, disabled, spinning, "aria-label": ariaLabel }) {
+  const base = "inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-semibold transition-[color,background-color,border-color,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 min-h-9 h-9 px-2.5 sm:px-3";
+  const tone = variant === "primary" ? "bg-brand-blue text-white shadow-sm hover:bg-brand-blue/90" : variant === "danger" ? "bg-brand-purple text-white shadow-sm hover:bg-brand-purple/90" : variant === "ghost" ? "text-slate-600 hover:bg-slate-100" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick, disabled, "aria-label": ariaLabel ?? label, className: `${base} ${tone}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `h-4 w-4 ${spinning ? "animate-spin" : ""}`, "aria-hidden": "true", children: icon }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden sm:inline", children: spinning ? "Running..." : label })
+  ] });
+}
+function PaginationControls(props) {
+  const firstItem = props.totalItems === 0 ? 0 : (props.page - 1) * props.pageSize + 1;
+  const lastItem = Math.min(props.totalItems, props.page * props.pageSize);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between${props.className ? ` ${props.className}` : ""}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+      firstItem,
+      "-",
+      lastItem,
+      " of ",
+      props.totalItems
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: props.onPrevious,
+          disabled: props.page <= 1,
+          className: "min-h-9 rounded-lg border border-slate-200 bg-white px-3 font-semibold text-brand-dark transition-colors duration-150 hover:border-brand-blue/30 disabled:pointer-events-none disabled:opacity-40",
+          children: "Previous"
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "font-mono text-[11px] text-slate-400", children: [
+        props.page,
+        "/",
+        props.totalPages
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: props.onNext,
+          disabled: props.page >= props.totalPages,
+          className: "min-h-9 rounded-lg border border-slate-200 bg-white px-3 font-semibold text-brand-dark transition-colors duration-150 hover:border-brand-blue/30 disabled:pointer-events-none disabled:opacity-40",
+          children: "Next"
+        }
+      )
+    ] })
+  ] });
+}
+function surfaceToneClass(tone) {
+  if (tone === "accent") return "border-brand-blue/15 bg-gradient-to-b from-white to-blue-50/30";
+  if (tone === "success") return "border-brand-green/15 bg-brand-green-bg/20";
+  if (tone === "warning") return "border-brand-blue/20 bg-brand-blue/[0.03]";
+  if (tone === "danger") return "border-brand-purple/20 bg-brand-purple/[0.03]";
+  if (tone === "attention") return "border-brand-attention/15 bg-brand-attention-bg/60";
+  return "border-slate-100 bg-white/60";
+}
+function badgeToneClass(tone) {
+  if (tone === "success") return "border-transparent bg-accent/10 text-accent border-accent/20";
+  if (tone === "warning") return "border-transparent bg-brand-blue/10 text-brand-blue border-brand-blue/20";
+  if (tone === "info") return "border-transparent bg-blue-500/10 text-blue-700 border-blue-500/20";
+  if (tone === "destructive") return "border-transparent bg-brand-purple/10 text-brand-purple border-brand-purple/20";
+  if (tone === "attention") return "border-transparent bg-brand-attention-bg text-brand-attention border-brand-attention/20";
+  return "border-transparent bg-gray-100 text-gray-600 border-gray-200";
+}
+function tagToneClass(tone) {
+  if (tone === "green") return "border-transparent bg-brand-green-bg/60 text-brand-green-text";
+  if (tone === "purple") return "border-transparent bg-brand-purple/10 text-brand-purple";
+  if (tone === "destructive") return "border-transparent bg-brand-purple/10 text-brand-purple";
+  if (tone === "red") return "border-transparent bg-brand-purple/10 text-brand-purple";
+  if (tone === "amber") return "border-transparent bg-amber-50 text-amber-700";
+  if (tone === "warning") return "border-transparent bg-amber-50 text-amber-700";
+  if (tone === "info") return "border-transparent bg-blue-500/10 text-blue-700";
+  if (tone === "default") return "border-gray-200 bg-gray-100 text-gray-500";
+  if (tone === "slate") return "border-gray-200 bg-gray-100 text-gray-500";
+  if (tone === "attention") return "border-transparent bg-brand-attention-bg text-brand-attention";
+  return "border-transparent bg-blue-500/10 text-blue-700";
+}
+function actionButtonClass(variant) {
+  const base = "inline-flex items-center justify-center rounded-lg text-sm font-semibold ring-offset-background transition-[color,background-color,border-color,opacity,transform,box-shadow] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 min-w-0";
+  const sizeDefault = "min-h-11 h-auto px-3 py-1.5 sm:px-4 sm:py-2";
+  if (variant === "outline") return `${base} ${sizeDefault} border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-900`;
+  if (variant === "secondary") return `${base} ${sizeDefault} border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-900`;
+  if (variant === "ghost") return `${base} ${sizeDefault} hover:bg-slate-100 hover:text-slate-900`;
+  if (variant === "danger") return `${base} ${sizeDefault} bg-brand-purple text-white shadow-lg shadow-brand-blue/10 hover:bg-brand-purple/90 hover:shadow-brand-blue/20`;
+  if (variant === "success") return `${base} ${sizeDefault} bg-[#059669] text-white shadow-lg shadow-emerald-500/15 hover:bg-[#047857] hover:shadow-emerald-500/20`;
+  if (variant === "quiet") return `${base} ${sizeDefault} bg-transparent text-brand-dark hover:bg-surface-1`;
+  return `${base} ${sizeDefault} bg-brand-blue text-white shadow-lg shadow-brand-blue/20 hover:bg-brand-blue/90 hover:shadow-brand-blue/30`;
+}
+function GuardHero(props) {
+  let bgClass = "bg-[radial-gradient(circle_at_top_left,rgba(85,153,254,0.12),transparent_32%),linear-gradient(135deg,#ffffff_0%,#ffffff_58%,rgba(72,223,123,0.10)_100%)]";
+  if (props.status === "needs_review" || props.status === "degraded") {
+    bgClass = "bg-[radial-gradient(circle_at_top_left,rgba(85,153,254,0.12),transparent_32%),linear-gradient(135deg,#ffffff_0%,#ffffff_58%,rgba(245,158,11,0.08)_100%)]";
+  } else if (props.status !== "clear") {
+    bgClass = "bg-[radial-gradient(circle_at_top_left,rgba(85,153,254,0.12),transparent_32%),linear-gradient(135deg,#ffffff_0%,#ffffff_58%,rgba(85,153,254,0.06)_100%)]";
+  }
+  let statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "success", children: "Protected" });
+  let HeroIcon = HiMiniShieldCheck;
+  let iconColorClass = "text-brand-green";
+  let iconBgClass = "bg-brand-green/10";
+  if (props.status === "needs_review") {
+    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "attention", children: "Needs your choice" });
+    HeroIcon = HiMiniExclamationTriangle;
+    iconColorClass = "text-brand-attention";
+    iconBgClass = "bg-brand-attention/10";
+  } else if (props.status === "degraded") {
+    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "attention", children: "Degraded" });
+    HeroIcon = HiMiniInformationCircle;
+    iconColorClass = "text-brand-attention";
+    iconBgClass = "bg-brand-attention/10";
+  } else if (props.status === "partial") {
+    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "info", children: "Partially protected" });
+    HeroIcon = HiMiniInformationCircle;
+    iconColorClass = "text-brand-blue";
+    iconBgClass = "bg-brand-blue/10";
+  } else if (props.status === "neutral") {
+    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "info", children: "Configuration" });
+    HeroIcon = HiMiniInformationCircle;
+    iconColorClass = "text-brand-blue";
+    iconBgClass = "bg-brand-blue/10";
+  } else if (props.status === "setup_gap") {
+    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "default", children: "Setup needed" });
+    HeroIcon = HiMiniInformationCircle;
+    iconColorClass = "text-brand-blue";
+    iconBgClass = "bg-brand-blue/10";
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "section",
+    {
+      className: `guard-surface-in relative overflow-hidden rounded-2xl border border-brand-blue/10 ${bgClass} p-5 sm:p-6 lg:p-7`,
+      role: "region",
+      "aria-label": "Protection status",
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative space-y-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: "Protection status" }),
+          statusBadge
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "max-w-3xl", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${iconBgClass}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(HeroIcon, { className: `h-4 w-4 ${iconColorClass}`, "aria-hidden": "true" }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-xl font-semibold tracking-tight text-brand-dark sm:text-2xl", children: props.headline }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-relaxed text-brand-dark/70", children: props.subheadline })
+          ] })
+        ] }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-3", children: [
+          props.cta,
+          props.secondaryCta
+        ] })
+      ] })
+    }
+  );
+}
+function ProofStrip(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-4", children: props.items.map((item) => {
+    const toneColor = item.tone === "blue" ? "text-brand-blue" : item.tone === "green" ? "text-emerald-600" : item.tone === "purple" ? "text-brand-purple" : item.tone === "attention" ? "text-amber-600" : "text-brand-dark";
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col", title: item.hint, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[11px] font-semibold uppercase tracking-wider text-slate-400", children: item.label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `text-2xl font-semibold tracking-tight ${toneColor}`, children: item.value })
+    ] }, item.label);
+  }) });
+}
+function TabBar(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { role: "tablist", className: "flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5", children: props.tabs.map((tab) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "button",
+    {
+      id: tab.id ?? tab.value,
+      type: "button",
+      role: "tab",
+      "aria-selected": props.active === tab.value,
+      onClick: () => props.onChange(tab.value),
+      className: `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${props.active === tab.value ? "bg-white text-brand-dark shadow-sm" : "text-slate-500 hover:text-brand-dark"}`,
+      children: tab.label
+    },
+    tab.value
+  )) });
+}
 function approvalProofRequiresPassword(gate) {
   return gate?.totp_enabled !== true;
 }
@@ -19400,670 +19820,648 @@ function useGuardUpdate(options) {
     refreshUpdateStatus
   };
 }
-function formatEmailDisplay(email) {
-  const trimmed = email.trim();
-  if (trimmed.length <= 24) return trimmed;
-  const atIndex = trimmed.indexOf("@");
-  if (atIndex > 0 && atIndex < trimmed.length - 1) {
-    const localPart = trimmed.slice(0, atIndex);
-    const domain = trimmed.slice(atIndex);
-    if (localPart.length > 10) {
-      return `${localPart.slice(0, 8)}…${domain}`;
-    }
+const SHELL_NAV_ITEMS = [
+  {
+    href: "/",
+    label: "Home",
+    shortLabel: "Home",
+    description: "Protection overview and next actions",
+    view: "home",
+    group: "primary",
+    icon: HiMiniHome
+  },
+  {
+    href: "/inbox",
+    label: "Inbox",
+    shortLabel: "Inbox",
+    description: "Actions waiting for a Guard decision",
+    view: "inbox",
+    group: "primary",
+    icon: HiMiniInbox
+  },
+  {
+    href: "/protect",
+    label: "Protect",
+    shortLabel: "Protect",
+    description: "Apps, integrations, and protection health",
+    view: "fleet",
+    group: "primary",
+    icon: HiMiniShieldCheck
+  },
+  {
+    href: "/evidence",
+    label: "Evidence",
+    shortLabel: "Evidence",
+    description: "Receipts, commands, and security insights",
+    view: "evidence",
+    group: "primary",
+    icon: HiMiniDocumentText
+  },
+  {
+    href: "/supply-chain",
+    label: "Supply chain",
+    shortLabel: "Supply",
+    description: "Packages, audits, and feed health",
+    view: "supply-chain",
+    group: "manage",
+    icon: HiMiniSquares2X2
+  },
+  {
+    href: "/policy",
+    label: "Policy",
+    shortLabel: "Policy",
+    description: "Saved decisions and local controls",
+    view: "policy",
+    group: "manage",
+    icon: HiMiniClipboardDocumentList
+  },
+  {
+    href: "/extensions",
+    label: "Extensions",
+    shortLabel: "Extensions",
+    description: "Managed extensions and integrations",
+    view: "extensions",
+    group: "manage",
+    icon: HiMiniPuzzlePiece
+  },
+  {
+    href: "/settings",
+    label: "Settings",
+    shortLabel: "Settings",
+    description: "Local Guard preferences and security",
+    view: "settings",
+    group: "manage",
+    icon: HiMiniAdjustmentsHorizontal
+  },
+  {
+    href: "/about",
+    label: "About",
+    shortLabel: "About",
+    description: "Version, support, and diagnostics",
+    view: "about",
+    group: "support",
+    icon: HiMiniInformationCircle
   }
-  return `${trimmed.slice(0, 12)}…`;
+];
+const MOBILE_PRIMARY_VIEWS = /* @__PURE__ */ new Set(["home", "inbox", "fleet", "evidence"]);
+const NAVIGATION_GROUPS = [
+  { id: "primary", label: "Guard" },
+  { id: "manage", label: "Manage" },
+  { id: "support", label: "Support" }
+];
+function canonicalNavigationView(view) {
+  if (view === "app-detail") return "fleet";
+  if (view === "audit" || view === "feed-health") return "supply-chain";
+  return view;
 }
-function resolveInitials(name, email) {
-  const trimmed = name.trim();
-  if (trimmed) {
-    const parts = trimmed.split(/\s+/);
-    if (parts.length >= 2) {
-      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-    }
-    return trimmed.slice(0, 2).toUpperCase();
+function navigationItemForView(view) {
+  const canonical = canonicalNavigationView(view);
+  return SHELL_NAV_ITEMS.find((item) => item.view === canonical) ?? SHELL_NAV_ITEMS[0];
+}
+function isNavigationItemActive(item, view) {
+  return item.view === canonicalNavigationView(view);
+}
+function mobilePrimaryNavigationItems() {
+  return SHELL_NAV_ITEMS.filter((item) => MOBILE_PRIMARY_VIEWS.has(item.view));
+}
+function isMobilePrimaryView(view) {
+  return MOBILE_PRIMARY_VIEWS.has(canonicalNavigationView(view));
+}
+function queueCountDisplay(count) {
+  return count > 99 ? "99+" : String(count);
+}
+function queueAriaLabel(count) {
+  if (count === 0) return "Inbox, no Guard actions waiting";
+  return `Inbox, ${count} Guard ${count === 1 ? "action" : "actions"} waiting`;
+}
+function shellHref(pathname) {
+  return typeof window === "undefined" ? pathname : guardAwareHref(pathname);
+}
+function navigateFromAnchor(event, pathname, props) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return;
   }
-  return email.trim().slice(0, 2).toUpperCase();
+  event.preventDefault();
+  props.onBeforeNavigate?.();
+  props.onNavigate(pathname);
 }
-function resolveDisplayName(profile) {
-  const name = profile.display_name?.trim();
-  if (name) return name;
-  return profile.email.split("@")[0];
-}
-function CloudUserMenu(props) {
-  const [open, setOpen] = reactExports.useState(false);
-  const [copied, setCopied] = reactExports.useState(false);
-  const containerRef = reactExports.useRef(null);
-  const copyTimeoutRef = reactExports.useRef(null);
-  const handleClickOutside = reactExports.useCallback((event) => {
-    if (containerRef.current && !containerRef.current.contains(event.target)) {
-      setOpen(false);
-      setCopied(false);
+function NavigationLink(props) {
+  const Icon = props.item.icon;
+  const active = isNavigationItemActive(props.item, props.view);
+  const accessibleLabel = props.item.view === "inbox" ? queueAriaLabel(props.queuedCount) : props.item.label;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "a",
+    {
+      href: shellHref(props.item.href),
+      "aria-current": active ? "page" : void 0,
+      "aria-label": accessibleLabel,
+      "data-navigation-item": props.item.view,
+      "data-navigation-variant": props.variant,
+      "data-active": active ? "true" : "false",
+      className: `guard-shell-navigation-link guard-shell-navigation-link--${props.variant}`,
+      title: props.variant === "sidebar" ? props.item.label : void 0,
+      onClick: (event) => navigateFromAnchor(event, props.item.href, {
+        onNavigate: props.onNavigate,
+        onBeforeNavigate: props.onBeforeNavigate
+      }),
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-navigation-link__icon", "aria-hidden": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, {}) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-navigation-link__label", children: props.variant === "bottom" ? props.item.shortLabel : props.item.label }),
+        props.variant === "drawer" ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-navigation-link__description", children: props.item.description }) : null,
+        props.item.view === "inbox" && props.queuedCount > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-navigation-link__badge", "aria-hidden": "true", children: queueCountDisplay(props.queuedCount) }) : null
+      ]
     }
-  }, []);
+  );
+}
+function focusableElements(container2) {
+  const selector = [
+    "a[href]",
+    "button:not([disabled])",
+    "input:not([disabled])",
+    "select:not([disabled])",
+    "textarea:not([disabled])",
+    '[tabindex]:not([tabindex="-1"])'
+  ].join(",");
+  return Array.from(container2.querySelectorAll(selector)).filter(
+    (element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true"
+  );
+}
+function useNavigationDrawerFocus(open, dialogRef, closeButtonRef, onClose) {
+  const restoreFocusRef = reactExports.useRef(null);
   reactExports.useEffect(() => {
-    if (open) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [open, handleClickOutside]);
-  reactExports.useEffect(() => {
-    return () => clearTimeout(copyTimeoutRef.current);
+    if (!open) return;
+    restoreFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const persistentSurfaces = Array.from(
+      document.querySelectorAll('[data-navigation-surface="persistent"], .guard-shell-content')
+    );
+    persistentSurfaces.forEach((surface) => surface.setAttribute("inert", ""));
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || dialogRef.current === null) return;
+      const focusable = focusableElements(dialogRef.current);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      persistentSurfaces.forEach((surface) => surface.removeAttribute("inert"));
+      const restoreTarget = restoreFocusRef.current;
+      restoreFocusRef.current = null;
+      if (restoreTarget?.isConnected && restoreTarget.getClientRects().length > 0) {
+        restoreTarget.focus();
+      }
+    };
+  }, [open, dialogRef, closeButtonRef, onClose]);
+  return reactExports.useCallback(() => {
+    restoreFocusRef.current = null;
   }, []);
-  const handleCopyWorkspaceId = reactExports.useCallback(async () => {
-    if (!props.workspaceId) return;
-    try {
-      await navigator.clipboard.writeText(props.workspaceId);
-      setCopied(true);
-      clearTimeout(copyTimeoutRef.current);
-      copyTimeoutRef.current = setTimeout(() => setCopied(false), 2e3);
-    } catch {
-    }
-  }, [props.workspaceId]);
-  if (!props.userProfile) {
-    if (props.collapsed) {
-      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex justify-center pb-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-8 w-8 items-center justify-center rounded-full bg-slate-200", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { className: "h-4 w-4 text-slate-400" }) }) });
-    }
-    return null;
-  }
-  const displayName = resolveDisplayName(props.userProfile);
-  const initials = resolveInitials(props.userProfile.display_name || "", props.userProfile.email);
-  if (props.collapsed) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: containerRef, className: "relative flex justify-center pb-2", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          type: "button",
-          onClick: () => setOpen((prev) => !prev),
-          className: "relative flex h-8 w-8 items-center justify-center overflow-hidden rounded-full ring-2 ring-brand-blue/30 transition hover:ring-brand-blue/60",
-          title: `${displayName} (${props.userProfile.email})`,
-          "aria-label": `Cloud user: ${displayName}`,
-          children: props.userProfile.avatar_url ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "img",
-            {
-              src: props.userProfile.avatar_url,
-              alt: "",
-              className: "h-full w-full object-cover"
-            }
-          ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-bold text-brand-blue", children: initials })
-        }
-      ),
-      open && /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "div",
-        {
-          className: "absolute bottom-16 left-16 z-50 w-56 rounded-xl border border-slate-200 bg-white p-3 shadow-lg",
-          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-1 text-center", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold text-brand-dark", children: displayName }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[10px] text-slate-500", children: formatEmailDisplay(props.userProfile.email) }),
-            props.workspaceId ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
-              "button",
-              {
-                type: "button",
-                onClick: handleCopyWorkspaceId,
-                className: "mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-slate-50 px-2 py-1.5 text-[10px] font-mono text-slate-600 transition hover:bg-slate-100",
-                children: [
-                  copied ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheck, { className: "h-3 w-3 text-green-600" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniClipboardDocument, { className: "h-3 w-3" }),
-                  props.workspaceId.slice(0, 8),
-                  "…"
-                ]
-              }
-            ) : null,
-            props.planId ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-1 inline-flex items-center rounded-md bg-brand-blue/10 px-1.5 py-0.5 text-[10px] font-semibold capitalize text-brand-blue", children: props.planId }) : null
-          ] })
-        }
-      )
-    ] });
-  }
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: containerRef, className: "relative", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+}
+function NavigationDrawer(props) {
+  const dialogRef = reactExports.useRef(null);
+  const closeButtonRef = reactExports.useRef(null);
+  const suppressFocusRestore = useNavigationDrawerFocus(
+    props.open,
+    dialogRef,
+    closeButtonRef,
+    props.onClose
+  );
+  if (!props.open) return null;
+  const handleNavigate = (pathname) => {
+    suppressFocusRestore();
+    props.onClose();
+    props.onNavigate(pathname);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-navigation-drawer-layer", "data-testid": "navigation-drawer", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
       "button",
       {
         type: "button",
-        onClick: () => setOpen((prev) => !prev),
-        className: "flex w-full items-center gap-2 rounded-xl px-2 py-1.5 transition hover:bg-slate-100",
-        "aria-expanded": open,
-        "aria-label": `Cloud user: ${displayName}`,
-        children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full ring-2 ring-brand-blue/20", children: props.userProfile.avatar_url ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "img",
-            {
-              src: props.userProfile.avatar_url,
-              alt: "",
-              className: "h-full w-full object-cover"
-            }
-          ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-bold text-brand-blue", children: initials }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-w-0 flex-1 flex-col", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-xs font-semibold text-brand-dark", children: displayName }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-[10px] text-slate-500", children: formatEmailDisplay(props.userProfile.email) })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            HiMiniChevronDown,
-            {
-              className: `h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`
-            }
-          )
-        ]
+        className: "guard-navigation-drawer-scrim",
+        "aria-label": "Close navigation",
+        onClick: props.onClose
       }
     ),
-    open && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute bottom-full left-0 right-0 mb-1 rounded-xl border border-slate-200 bg-white p-3 shadow-lg", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { className: "h-3 w-3 text-brand-blue" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-mono text-[9px] font-semibold uppercase tracking-widest text-brand-blue", children: "HOL Guard Cloud" })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-t border-slate-100 pt-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[10px] font-medium uppercase tracking-wider text-slate-400", children: "Workspace ID" }),
-        props.workspaceId ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "button",
-          {
-            type: "button",
-            onClick: handleCopyWorkspaceId,
-            className: "mt-1 flex w-full items-center justify-between gap-2 rounded-lg bg-slate-50 px-2 py-1.5 font-mono text-[10px] text-slate-600 transition hover:bg-slate-100",
-            children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: props.workspaceId }),
-              copied ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCheck, { className: "h-3 w-3 shrink-0 text-green-600" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniClipboardDocument, { className: "h-3 w-3 shrink-0 text-slate-400" })
-            ]
-          }
-        ) : /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-[10px] text-slate-400", children: "Not available" })
-      ] }),
-      props.planId ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-t border-slate-100 pt-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[10px] font-medium uppercase tracking-wider text-slate-400", children: "Plan" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 flex items-center gap-1.5", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "inline-flex items-center rounded-md bg-brand-blue/10 px-1.5 py-0.5 text-[10px] font-semibold capitalize text-brand-blue", children: props.planId }) })
-      ] }) : null
-    ] }) })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "section",
+      {
+        id: "guard-navigation-drawer",
+        ref: dialogRef,
+        className: "guard-navigation-drawer",
+        role: "dialog",
+        "aria-modal": "true",
+        "aria-labelledby": "guard-navigation-drawer-title",
+        tabIndex: -1,
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "guard-navigation-drawer__header", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "HOL Guard" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "guard-navigation-drawer-title", children: "All sections" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                ref: closeButtonRef,
+                type: "button",
+                "aria-label": "Close navigation",
+                onClick: props.onClose,
+                children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniXMark, { "aria-hidden": "true" })
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-navigation-drawer__body", children: [
+            NAVIGATION_GROUPS.map((group) => /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": `guard-navigation-group-${group.id}`, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: `guard-navigation-group-${group.id}`, children: group.label }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { "aria-label": `${group.label} sections`, children: SHELL_NAV_ITEMS.filter((item) => item.group === group.id).map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+                NavigationLink,
+                {
+                  item,
+                  view: props.view,
+                  queuedCount: props.queuedCount,
+                  variant: "drawer",
+                  onNavigate: handleNavigate
+                },
+                item.href
+              )) })
+            ] }, group.id)),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "guard-navigation-quick-actions", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "guard-navigation-quick-actions", children: "Quick actions" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-navigation-drawer__quick-actions", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  "a",
+                  {
+                    href: shellHref("/"),
+                    onClick: (event) => navigateFromAnchor(event, "/", { onNavigate: handleNavigate }),
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCommandLine, { "aria-hidden": "true" }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Local dashboard" })
+                    ]
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("a", { href: "https://hol.org/guard", target: "_blank", rel: "noopener noreferrer", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { "aria-hidden": "true" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Open Guard Cloud" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowTopRightOnSquare, { "aria-hidden": "true" })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("a", { href: GITHUB_ISSUE_LINK, target: "_blank", rel: "noopener noreferrer", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniBugAnt, { "aria-hidden": "true" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: GITHUB_ISSUE_BUTTON_LABEL }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowTopRightOnSquare, { "aria-hidden": "true" })
+                ] })
+              ] })
+            ] }),
+            props.cloudUserProfile ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { "aria-labelledby": "guard-navigation-account", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "guard-navigation-account", children: "Account" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                CloudUserMenu,
+                {
+                  userProfile: props.cloudUserProfile,
+                  workspaceId: props.workspaceId,
+                  planId: props.planId,
+                  collapsed: false
+                }
+              )
+            ] }) : null,
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "section",
+              {
+                className: "guard-navigation-drawer__status",
+                "aria-labelledby": "guard-navigation-local-status",
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "guard-navigation-local-status", children: "Local Guard" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: props.queuedCount > 0 ? `${props.queuedCount} ${props.queuedCount === 1 ? "action is" : "actions are"} waiting for review.` : "No local approvals are waiting." }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    GuardUpdatePanel,
+                    {
+                      guardVersion: props.guardVersion,
+                      updateStatus: props.updateStatus,
+                      updatePhase: props.updatePhase,
+                      onUpdateGuard: props.onUpdateGuard,
+                      onReinstallGuard: props.onReinstallGuard,
+                      approvalGate: props.approvalGate
+                    }
+                  )
+                ]
+              }
+            )
+          ] })
+        ]
+      }
+    )
   ] });
 }
-function ShellHeader(props) {
-  function handleMobileNavigationChange(event) {
-    props.onNavigate(event.target.value);
-  }
-  const countDisplay = props.queuedCount > 99 ? "99+" : String(props.queuedCount);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+function NavigationTrigger(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "button",
+    {
+      type: "button",
+      className: props.className,
+      "data-testid": props.testId,
+      "aria-label": "Open all Guard sections",
+      "aria-expanded": props.open,
+      "aria-controls": "guard-navigation-drawer",
+      onClick: props.onOpen,
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(HiBars3, { "aria-hidden": "true" }),
+        props.updateAvailable ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-navigation-update-dot", "aria-hidden": "true" }) : null
+      ]
+    }
+  );
+}
+function MobileHeader(props) {
+  const currentItem = navigationItemForView(props.view);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "header",
     {
-      className: "sticky top-0 z-30 flex min-h-16 items-center border-b border-brand-blue/20 bg-gradient-to-r from-brand-blue to-brand-dark px-4 text-white shadow-sm lg:hidden",
-      style: { contain: "layout style paint" },
-      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex w-full items-center gap-3", children: [
+      className: "guard-shell-mobile-header",
+      "data-testid": "guard-shell-mobile-header",
+      "data-navigation-surface": "persistent",
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          NavigationTrigger,
+          {
+            open: props.drawerOpen,
+            onOpen: props.onOpenDrawer,
+            className: "guard-shell-mobile-header__button",
+            testId: "mobile-navigation-trigger",
+            updateAvailable: Boolean(props.updateStatus?.update_available)
+          }
+        ),
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "a",
           {
-            href: guardAwareHref("/"),
-            className: "flex min-h-11 min-w-0 items-center gap-2.5 text-white no-underline transition-opacity duration-150 hover:opacity-85",
+            href: shellHref("/"),
+            className: "guard-shell-mobile-header__brand",
+            "aria-label": "HOL Guard Home",
+            onClick: (event) => navigateFromAnchor(event, "/", props),
             children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "/brand/Logo_Icon_Dark.png", alt: "HOL", className: "h-9 w-9 shrink-0 rounded-none bg-transparent object-contain" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-base font-semibold tracking-tight text-white hidden sm:inline", children: "HOL Guard" })
+              /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "/brand/Logo_Icon_Dark.png", alt: "", "aria-hidden": "true" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-mobile-header__brand-name", children: "HOL Guard" })
             ]
           }
         ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "min-w-0 flex-1", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "select",
-          {
-            id: "guard-mobile-navigation",
-            name: "guard-mobile-navigation",
-            "aria-label": "Navigate Guard sections",
-            className: "h-11 w-full rounded-full border border-white/25 bg-white/95 px-4 text-sm font-medium text-brand-dark shadow-none transition-colors duration-150 focus:border-white focus:outline-none focus:ring-2 focus:ring-white/40",
-            onChange: handleMobileNavigationChange,
-            value: sidebarLinks.find((item) => item.view === props.view)?.href ?? (hubViews.has(props.view) ? "/supply-chain" : "/"),
-            children: sidebarLinks.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: item.href, children: item.label }, item.href))
-          }
-        ) }),
-        props.onOpenMobileQueue && props.view === "inbox" && props.queuedCount > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "button",
-          {
-            type: "button",
-            onClick: props.onOpenMobileQueue,
-            "aria-label": `Open queue list — ${props.queuedCount} decisions waiting`,
-            className: "inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border border-white/25 bg-white/10 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors duration-150 hover:bg-white/15",
-            children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx(HiBars3, { className: "h-4 w-4", "aria-hidden": "true" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden sm:inline", children: props.queuedCount > 1 ? `${countDisplay} decisions waiting` : countDisplay }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sm:hidden", children: countDisplay })
-            ]
-          }
-        ),
-        (!props.onOpenMobileQueue || props.view !== "inbox" || props.queuedCount === 0) && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-mobile-header__location", "aria-live": "polite", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Current section" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: currentItem.label })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "a",
           {
-            href: guardAwareHref("/inbox"),
-            className: "inline-flex min-h-11 shrink-0 items-center rounded-full border border-white/25 bg-white/10 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors duration-150 hover:bg-white/15",
-            "aria-label": `${props.queuedCount} Guard actions queued`,
-            children: props.queuedCount > 99 ? "99+" : props.queuedCount
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "a",
-          {
-            href: GITHUB_ISSUE_LINK,
-            target: "_blank",
-            rel: "noopener noreferrer",
-            "aria-label": GITHUB_ISSUE_BUTTON_LABEL,
-            title: GITHUB_ISSUE_BUTTON_LABEL,
-            className: "inline-flex min-h-11 shrink-0 items-center rounded-full border border-white/25 bg-white/10 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors duration-150 hover:bg-white/15",
-            children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniBugAnt, { className: "h-4 w-4", "aria-hidden": "true" })
-          }
-        ),
-        props.guardVersion ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "span",
-          {
-            className: "hidden min-h-11 shrink-0 items-center rounded-full border border-white/20 bg-white/10 px-2.5 font-mono text-[10px] text-white/85 sm:inline-flex",
-            "aria-label": `Guard version ${props.guardVersion}`,
-            title: `Guard version ${props.guardVersion}`,
+            href: shellHref("/inbox"),
+            className: "guard-shell-mobile-header__queue",
+            "aria-label": queueAriaLabel(props.queuedCount),
+            onClick: (event) => navigateFromAnchor(event, "/inbox", props),
             children: [
-              "v",
-              props.guardVersion
+              /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniInbox, { "aria-hidden": "true" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: queueCountDisplay(props.queuedCount) })
             ]
           }
-        ) : null,
-        props.updateStatus?.update_available && props.onUpdateGuard ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            type: "button",
-            onClick: props.onUpdateGuard,
-            disabled: props.updatePhase === "updating" || props.updatePhase === "reconnecting",
-            className: "inline-flex min-h-11 shrink-0 items-center rounded-full border border-white/25 bg-white px-3 py-2 text-xs font-semibold text-brand-blue transition-colors duration-150 hover:bg-white/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:cursor-not-allowed disabled:opacity-70",
-            "aria-label": "Update Guard to the latest version",
-            children: props.updatePhase === "updating" || props.updatePhase === "reconnecting" ? "Updating…" : "Update"
-          }
-        ) : null
-      ] })
+        )
+      ]
     }
   );
 }
-const hubViews = /* @__PURE__ */ new Set(["audit", "feed-health"]);
-const sidebarLinks = [
-  { href: "/", label: "Home", view: "home", icon: HiMiniHome },
-  { href: "/inbox", label: "Inbox", view: "inbox", icon: HiMiniInbox },
-  { href: "/protect", label: "Protect", view: "fleet", icon: HiMiniShieldCheck },
-  { href: "/evidence", label: "Evidence", view: "evidence", icon: HiMiniDocumentText },
-  { href: "/supply-chain", label: "Supply chain", view: "supply-chain", icon: HiMiniSquares2X2 },
-  { href: "/policy", label: "Policy", view: "policy", icon: HiMiniClipboardDocumentList },
-  { href: "/extensions", label: "Extensions", view: "extensions", icon: HiMiniPuzzlePiece },
-  { href: "/settings", label: "Settings", view: "settings", icon: HiMiniAdjustmentsHorizontal },
-  { href: "/about", label: "About", view: "about", icon: HiMiniInformationCircle }
-];
-function ShellSidebar(props) {
-  const collapsed = props.collapsed ?? false;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: `fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-slate-200 bg-[#f8fafc] transition-all duration-200 lg:flex ${collapsed ? "w-20" : "w-64"}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-[72px] shrink-0 items-center border-b border-brand-blue/20 bg-gradient-to-r from-brand-blue to-brand-dark px-6", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("a", { href: guardAwareHref("/"), className: "flex items-center gap-2.5 text-white no-underline transition-opacity hover:opacity-85", title: "HOL Guard", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "/brand/Logo_Icon_Dark.png", alt: "HOL", className: "h-10 w-10 shrink-0 rounded-none bg-transparent object-contain" }),
-        !collapsed && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-base font-semibold tracking-tight text-white", children: "HOL Guard" })
-      ] }),
-      !collapsed && /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          onClick: props.onToggleCollapse,
-          className: "ml-auto rounded-md p-1 text-white/60 transition-colors hover:bg-white/10 hover:text-white",
-          "aria-label": "Collapse sidebar",
-          title: "Collapse sidebar",
-          children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronLeft, { className: "h-4 w-4", "aria-hidden": "true" })
-        }
-      ),
-      collapsed && /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          onClick: props.onToggleCollapse,
-          className: "absolute -right-3 top-6 rounded-full border border-slate-200 bg-white p-1 text-slate-400 shadow-sm transition-colors hover:text-brand-dark",
-          "aria-label": "Expand sidebar",
-          title: "Expand sidebar",
-          children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronRight, { className: "h-3.5 w-3.5", "aria-hidden": "true" })
-        }
-      )
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-1 flex-col overflow-y-auto px-3 py-5", children: [
-      !collapsed && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mb-2 px-3 font-mono text-[10px] font-semibold uppercase tracking-widest text-slate-400", children: "Guard" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "flex flex-col gap-0.5", "aria-label": "Guard dashboard", children: sidebarLinks.map((item) => {
-        const Icon = item.icon;
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(
-          SidebarLink,
-          {
-            href: item.href,
-            active: props.view === item.view || props.view === "app-detail" && item.view === "fleet" || item.view === "supply-chain" && hubViews.has(props.view),
-            icon: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon, { className: "h-4 w-4" }),
-            badgeCount: item.view === "inbox" ? props.queuedCount : 0,
-            collapsed,
-            children: item.label
-          },
-          item.href
-        );
-      }) }),
-      !collapsed && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 space-y-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "px-3 font-mono text-[10px] font-semibold uppercase tracking-widest text-slate-400", children: "Quick Actions" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarAction, { href: "/", icon: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCommandLine, { className: "h-4 w-4", "aria-hidden": "true" }), children: "Local dashboard" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarAction, { href: "https://hol.org/guard", external: true, icon: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { className: "h-4 w-4", "aria-hidden": "true" }), children: "Open Guard Cloud" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(SidebarAction, { href: GITHUB_ISSUE_LINK, external: true, icon: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniBugAnt, { className: "h-4 w-4", "aria-hidden": "true" }), children: GITHUB_ISSUE_BUTTON_LABEL })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-auto border-t border-slate-200 pt-4", children: [
-        props.cloudUserProfile ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `mb-3 ${collapsed ? "px-1" : "px-2"}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-          CloudUserMenu,
-          {
-            userProfile: props.cloudUserProfile,
-            workspaceId: props.workspaceId,
-            planId: props.planId,
-            collapsed
-          }
-        ) }) : null,
-        !collapsed ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mx-2 overflow-hidden rounded-xl border border-brand-blue/25 bg-gradient-to-br from-brand-blue/[0.05] to-brand-dark/[0.03]", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2 px-3 pb-2.5 pt-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-2", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "h-3.5 w-3.5 text-brand-blue" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-mono text-[10px] font-semibold uppercase tracking-widest text-brand-blue", children: "Local Guard" })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-brand-blue/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-brand-blue", children: props.queuedCount > 0 ? "Review" : "Clear" })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[11px] leading-relaxed text-brand-dark/70", children: props.queuedCount > 0 ? `${props.queuedCount} local ${props.queuedCount === 1 ? "action needs" : "actions need"} a Guard decision.` : "No local approvals are waiting." }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            GuardUpdatePanel,
+function PersistentSidebar(props) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "aside",
+    {
+      className: "guard-shell-sidebar",
+      "data-testid": "guard-shell-sidebar",
+      "data-navigation-surface": "persistent",
+      "data-collapsed": props.collapsed ? "true" : "false",
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-sidebar__brand-row", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "a",
             {
-              guardVersion: props.guardVersion,
-              updateStatus: props.updateStatus,
-              updatePhase: props.updatePhase,
-              onUpdateGuard: props.onUpdateGuard,
-              onReinstallGuard: props.onReinstallGuard,
-              onSetUpdateChannel: props.onSetUpdateChannel,
-              approvalGate: props.approvalGate
-            }
-          )
-        ] }) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center gap-2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex h-5 min-w-5 items-center justify-center rounded-full text-[10px] font-bold ${props.queuedCount > 0 ? "bg-brand-blue/15 text-brand-blue" : "bg-slate-200 text-slate-400"}`, children: props.queuedCount > 0 ? props.queuedCount > 99 ? "99+" : props.queuedCount : "0" }),
-          props.guardVersion ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "span",
-            {
-              className: "font-mono text-[9px] text-brand-dark/50",
-              "aria-label": `Guard version ${props.guardVersion}`,
-              title: `Guard version ${props.guardVersion}`,
+              href: shellHref("/"),
+              className: "guard-shell-sidebar__brand",
+              "aria-label": "HOL Guard Home",
+              onClick: (event) => navigateFromAnchor(event, "/", props),
               children: [
-                "v",
-                props.guardVersion
+                /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "/brand/Logo_Icon_Dark.png", alt: "", "aria-hidden": "true" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-sidebar__expanded-only", children: "HOL Guard" })
               ]
             }
-          ) : null
-        ] })
-      ] })
-    ] })
-  ] });
-}
-function Surface(props) {
-  const toneClass = surfaceToneClass(props.tone);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(
-    "section",
-    {
-      className: `guard-surface-in rounded-xl border p-4 sm:p-5 ${toneClass}${props.className ? ` ${props.className}` : ""}`,
-      children: props.children
-    }
-  );
-}
-function SectionLabel(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-mono text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-blue", children: props.children });
-}
-function PolicyStatField(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `min-w-0 ${props.className ?? ""}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-[10px] font-semibold uppercase tracking-wider text-slate-500", children: props.label }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { className: "mt-1 min-w-0", children: props.children })
-  ] });
-}
-function Badge(props) {
-  const toneClass = badgeToneClass(props.tone);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex items-center justify-center rounded-full border px-3 py-1 text-xs font-normal w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1.5 [&>svg]:pointer-events-none transition-colors duration-200 overflow-hidden ${toneClass}`, children: props.children });
-}
-function Tag(props) {
-  const toneClass = tagToneClass(props.tone);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `inline-flex items-center rounded-full border px-3 py-1 text-xs font-normal whitespace-nowrap ${toneClass}`, children: props.children });
-}
-function EmptyState(props) {
-  const isTeach = props.tone === "teach";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `flex flex-col items-center justify-center py-12 text-center sm:py-16 ${isTeach ? "rounded-2xl border border-brand-blue/10 bg-gradient-to-br from-white to-brand-blue/[0.02] px-6" : "px-6"}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `mb-5 flex h-14 w-14 items-center justify-center rounded-full ${isTeach ? "bg-brand-blue/10" : "bg-slate-100"}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniInformationCircle, { className: `h-7 w-7 ${isTeach ? "text-brand-blue" : "text-slate-400"}`, "aria-hidden": "true" }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "text-lg font-semibold tracking-tight text-brand-dark", children: props.title }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted-foreground", children: props.body }),
-    props.action ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-6", children: props.action }) : null
-  ] });
-}
-function anchorPropsFromButtonProps(props) {
-  const {
-    disabled: _disabled,
-    form: _form,
-    formAction: _formAction,
-    formEncType: _formEncType,
-    formMethod: _formMethod,
-    formNoValidate: _formNoValidate,
-    formTarget: _formTarget,
-    name: _name,
-    value: _value,
-    type: _type,
-    ...rest
-  } = props;
-  return rest;
-}
-const ActionButton = reactExports.forwardRef(
-  ({ children, href, variant, disabled, onClick, className: customClassName, type, ...buttonProps }, ref) => {
-    const className = `${actionButtonClass(variant)}${customClassName ? ` ${customClassName}` : ""}`;
-    if (href) {
-      return /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "a",
-        {
-          ref,
-          href: guardAwareHref(href),
-          target: href.startsWith("https://") ? "_blank" : void 0,
-          rel: href.startsWith("https://") ? "noreferrer" : void 0,
-          onClick,
-          className,
-          ...anchorPropsFromButtonProps(buttonProps),
-          children
-        }
-      );
-    }
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("button", { ref, type: type ?? "button", className, onClick, disabled, ...buttonProps, children });
-  }
-);
-ActionButton.displayName = "ActionButton";
-function IconActionButton({ label, icon, variant = "outline", onClick, disabled, spinning, "aria-label": ariaLabel }) {
-  const base = "inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-semibold transition-[color,background-color,border-color,opacity] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 min-h-9 h-9 px-2.5 sm:px-3";
-  const tone = variant === "primary" ? "bg-brand-blue text-white shadow-sm hover:bg-brand-blue/90" : variant === "danger" ? "bg-brand-purple text-white shadow-sm hover:bg-brand-purple/90" : variant === "ghost" ? "text-slate-600 hover:bg-slate-100" : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300";
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick, disabled, "aria-label": ariaLabel ?? label, className: `${base} ${tone}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `h-4 w-4 ${spinning ? "animate-spin" : ""}`, "aria-hidden": "true", children: icon }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden sm:inline", children: spinning ? "Running..." : label })
-  ] });
-}
-function PaginationControls(props) {
-  const firstItem = props.totalItems === 0 ? 0 : (props.page - 1) * props.pageSize + 1;
-  const lastItem = Math.min(props.totalItems, props.page * props.pageSize);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between${props.className ? ` ${props.className}` : ""}`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-      firstItem,
-      "-",
-      lastItem,
-      " of ",
-      props.totalItems
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          type: "button",
-          onClick: props.onPrevious,
-          disabled: props.page <= 1,
-          className: "min-h-9 rounded-lg border border-slate-200 bg-white px-3 font-semibold text-brand-dark transition-colors duration-150 hover:border-brand-blue/30 disabled:pointer-events-none disabled:opacity-40",
-          children: "Previous"
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "font-mono text-[11px] text-slate-400", children: [
-        props.page,
-        "/",
-        props.totalPages
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "button",
-        {
-          type: "button",
-          onClick: props.onNext,
-          disabled: props.page >= props.totalPages,
-          className: "min-h-9 rounded-lg border border-slate-200 bg-white px-3 font-semibold text-brand-dark transition-colors duration-150 hover:border-brand-blue/30 disabled:pointer-events-none disabled:opacity-40",
-          children: "Next"
-        }
-      )
-    ] })
-  ] });
-}
-function SidebarLink(props) {
-  const collapsed = props.collapsed ?? false;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-    "a",
-    {
-      href: guardAwareHref(props.href),
-      "aria-current": props.active ? "page" : void 0,
-      title: collapsed ? String(props.children) : void 0,
-      className: `flex min-h-10 items-center rounded-lg no-underline transition-colors duration-150 ${collapsed ? "justify-center px-2 py-2" : "gap-2.5 px-3 py-2 text-sm font-medium"} ${props.active ? "bg-brand-blue/[0.05] font-semibold text-brand-dark" : "text-slate-600 hover:bg-slate-200/50 hover:text-slate-900"}`,
-      children: [
-        props.icon ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `shrink-0 ${props.active ? "text-brand-blue" : "text-slate-400"}`, children: props.icon }) : null,
-        !collapsed && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "flex-1 truncate", children: props.children }),
-        !collapsed && props.badgeCount && props.badgeCount > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-blue/15 px-1.5 text-[10px] font-bold text-brand-blue", children: props.badgeCount > 99 ? "99+" : props.badgeCount }) : null
-      ]
-    }
-  );
-}
-function SidebarAction(props) {
-  const collapsed = props.collapsed ?? false;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-    "a",
-    {
-      href: props.external ? props.href : guardAwareHref(props.href),
-      target: props.external ? "_blank" : void 0,
-      rel: props.external ? "noopener noreferrer" : void 0,
-      title: collapsed ? String(props.children) : void 0,
-      className: `flex min-h-10 items-center rounded-lg border border-slate-200 bg-white no-underline transition-colors duration-150 hover:border-brand-blue/30 hover:text-brand-dark ${collapsed ? "justify-center px-2 py-2" : "gap-2.5 px-3 py-2 text-sm font-medium text-slate-700"}`,
-      children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "shrink-0 text-slate-400", children: props.icon }),
-        !collapsed && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "flex-1 truncate", children: props.children }),
-        !collapsed && props.external ? /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowTopRightOnSquare, { className: "h-3.5 w-3.5 shrink-0 text-slate-300" }) : null
-      ]
-    }
-  );
-}
-function surfaceToneClass(tone) {
-  if (tone === "accent") return "border-brand-blue/15 bg-gradient-to-b from-white to-blue-50/30";
-  if (tone === "success") return "border-brand-green/15 bg-brand-green-bg/20";
-  if (tone === "warning") return "border-brand-blue/20 bg-brand-blue/[0.03]";
-  if (tone === "danger") return "border-brand-purple/20 bg-brand-purple/[0.03]";
-  if (tone === "attention") return "border-brand-attention/15 bg-brand-attention-bg/60";
-  return "border-slate-100 bg-white/60";
-}
-function badgeToneClass(tone) {
-  if (tone === "success") return "border-transparent bg-accent/10 text-accent border-accent/20";
-  if (tone === "warning") return "border-transparent bg-brand-blue/10 text-brand-blue border-brand-blue/20";
-  if (tone === "info") return "border-transparent bg-blue-500/10 text-blue-700 border-blue-500/20";
-  if (tone === "destructive") return "border-transparent bg-brand-purple/10 text-brand-purple border-brand-purple/20";
-  if (tone === "attention") return "border-transparent bg-brand-attention-bg text-brand-attention border-brand-attention/20";
-  return "border-transparent bg-gray-100 text-gray-600 border-gray-200";
-}
-function tagToneClass(tone) {
-  if (tone === "green") return "border-transparent bg-brand-green-bg/60 text-brand-green-text";
-  if (tone === "purple") return "border-transparent bg-brand-purple/10 text-brand-purple";
-  if (tone === "destructive") return "border-transparent bg-brand-purple/10 text-brand-purple";
-  if (tone === "red") return "border-transparent bg-brand-purple/10 text-brand-purple";
-  if (tone === "amber") return "border-transparent bg-amber-50 text-amber-700";
-  if (tone === "warning") return "border-transparent bg-amber-50 text-amber-700";
-  if (tone === "info") return "border-transparent bg-blue-500/10 text-blue-700";
-  if (tone === "default") return "border-gray-200 bg-gray-100 text-gray-500";
-  if (tone === "slate") return "border-gray-200 bg-gray-100 text-gray-500";
-  if (tone === "attention") return "border-transparent bg-brand-attention-bg text-brand-attention";
-  return "border-transparent bg-blue-500/10 text-blue-700";
-}
-function actionButtonClass(variant) {
-  const base = "inline-flex items-center justify-center rounded-lg text-sm font-semibold ring-offset-background transition-[color,background-color,border-color,opacity,transform,box-shadow] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 min-w-0";
-  const sizeDefault = "min-h-11 h-auto px-3 py-1.5 sm:px-4 sm:py-2";
-  if (variant === "outline") return `${base} ${sizeDefault} border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-900`;
-  if (variant === "secondary") return `${base} ${sizeDefault} border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-900`;
-  if (variant === "ghost") return `${base} ${sizeDefault} hover:bg-slate-100 hover:text-slate-900`;
-  if (variant === "danger") return `${base} ${sizeDefault} bg-brand-purple text-white shadow-lg shadow-brand-blue/10 hover:bg-brand-purple/90 hover:shadow-brand-blue/20`;
-  if (variant === "success") return `${base} ${sizeDefault} bg-[#059669] text-white shadow-lg shadow-emerald-500/15 hover:bg-[#047857] hover:shadow-emerald-500/20`;
-  if (variant === "quiet") return `${base} ${sizeDefault} bg-transparent text-brand-dark hover:bg-surface-1`;
-  return `${base} ${sizeDefault} bg-brand-blue text-white shadow-lg shadow-brand-blue/20 hover:bg-brand-blue/90 hover:shadow-brand-blue/30`;
-}
-function GuardHero(props) {
-  let bgClass = "bg-[radial-gradient(circle_at_top_left,rgba(85,153,254,0.12),transparent_32%),linear-gradient(135deg,#ffffff_0%,#ffffff_58%,rgba(72,223,123,0.10)_100%)]";
-  if (props.status === "needs_review" || props.status === "degraded") {
-    bgClass = "bg-[radial-gradient(circle_at_top_left,rgba(85,153,254,0.12),transparent_32%),linear-gradient(135deg,#ffffff_0%,#ffffff_58%,rgba(245,158,11,0.08)_100%)]";
-  } else if (props.status !== "clear") {
-    bgClass = "bg-[radial-gradient(circle_at_top_left,rgba(85,153,254,0.12),transparent_32%),linear-gradient(135deg,#ffffff_0%,#ffffff_58%,rgba(85,153,254,0.06)_100%)]";
-  }
-  let statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "success", children: "Protected" });
-  let HeroIcon = HiMiniShieldCheck;
-  let iconColorClass = "text-brand-green";
-  let iconBgClass = "bg-brand-green/10";
-  if (props.status === "needs_review") {
-    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "attention", children: "Needs your choice" });
-    HeroIcon = HiMiniExclamationTriangle;
-    iconColorClass = "text-brand-attention";
-    iconBgClass = "bg-brand-attention/10";
-  } else if (props.status === "degraded") {
-    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "attention", children: "Degraded" });
-    HeroIcon = HiMiniInformationCircle;
-    iconColorClass = "text-brand-attention";
-    iconBgClass = "bg-brand-attention/10";
-  } else if (props.status === "partial") {
-    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "info", children: "Partially protected" });
-    HeroIcon = HiMiniInformationCircle;
-    iconColorClass = "text-brand-blue";
-    iconBgClass = "bg-brand-blue/10";
-  } else if (props.status === "neutral") {
-    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "info", children: "Configuration" });
-    HeroIcon = HiMiniInformationCircle;
-    iconColorClass = "text-brand-blue";
-    iconBgClass = "bg-brand-blue/10";
-  } else if (props.status === "setup_gap") {
-    statusBadge = /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: "default", children: "Setup needed" });
-    HeroIcon = HiMiniInformationCircle;
-    iconColorClass = "text-brand-blue";
-    iconBgClass = "bg-brand-blue/10";
-  }
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(
-    "section",
-    {
-      className: `guard-surface-in relative overflow-hidden rounded-2xl border border-brand-blue/10 ${bgClass} p-5 sm:p-6 lg:p-7`,
-      role: "region",
-      "aria-label": "Protection status",
-      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative space-y-4", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: "Protection status" }),
-          statusBadge
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              type: "button",
+              className: "guard-shell-sidebar__collapse guard-shell-sidebar__expanded-only",
+              onClick: props.onToggleCollapse,
+              "aria-label": "Collapse sidebar",
+              title: "Collapse sidebar",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronLeft, { "aria-hidden": "true" })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              type: "button",
+              className: "guard-shell-sidebar__expand guard-shell-sidebar__collapsed-only",
+              onClick: props.onToggleCollapse,
+              "aria-label": "Expand sidebar",
+              title: "Expand sidebar",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniChevronRight, { "aria-hidden": "true" })
+            }
+          )
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "max-w-3xl", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${iconBgClass}`, children: /* @__PURE__ */ jsxRuntimeExports.jsx(HeroIcon, { className: `h-4 w-4 ${iconColorClass}`, "aria-hidden": "true" }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-xl font-semibold tracking-tight text-brand-dark sm:text-2xl", children: props.headline }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-relaxed text-brand-dark/70", children: props.subheadline })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-sidebar__scroll", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            NavigationTrigger,
+            {
+              open: props.drawerOpen,
+              onOpen: props.onOpenDrawer,
+              className: "guard-shell-sidebar__drawer-trigger guard-shell-sidebar__collapsed-only",
+              testId: "compact-navigation-trigger",
+              updateAvailable: Boolean(props.updateStatus?.update_available)
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("nav", { className: "guard-shell-sidebar__nav", "aria-label": "Guard dashboard", children: NAVIGATION_GROUPS.map((group) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "div",
+            {
+              className: "guard-shell-sidebar__nav-group",
+              "data-navigation-group": group.id,
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "guard-shell-sidebar__group-label guard-shell-sidebar__expanded-only", children: group.label }),
+                SHELL_NAV_ITEMS.filter((item) => item.group === group.id).map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  NavigationLink,
+                  {
+                    item,
+                    view: props.view,
+                    queuedCount: props.queuedCount,
+                    variant: "sidebar",
+                    onNavigate: props.onNavigate
+                  },
+                  item.href
+                ))
+              ]
+            },
+            group.id
+          )) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-sidebar__quick-actions guard-shell-sidebar__expanded-only", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "guard-shell-sidebar__group-label", children: "Quick actions" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("a", { href: shellHref("/"), onClick: (event) => navigateFromAnchor(event, "/", props), children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCommandLine, { "aria-hidden": "true" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Local dashboard" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("a", { href: "https://hol.org/guard", target: "_blank", rel: "noopener noreferrer", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniCloud, { "aria-hidden": "true" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Open Guard Cloud" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowTopRightOnSquare, { "aria-hidden": "true" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("a", { href: GITHUB_ISSUE_LINK, target: "_blank", rel: "noopener noreferrer", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniBugAnt, { "aria-hidden": "true" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: GITHUB_ISSUE_BUTTON_LABEL }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowTopRightOnSquare, { "aria-hidden": "true" })
+            ] })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-sidebar__footer", children: [
+            props.cloudUserProfile ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-shell-sidebar__account guard-shell-sidebar__expanded-only", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                CloudUserMenu,
+                {
+                  userProfile: props.cloudUserProfile,
+                  workspaceId: props.workspaceId,
+                  planId: props.planId,
+                  collapsed: false
+                }
+              ) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-shell-sidebar__account guard-shell-sidebar__collapsed-only", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                CloudUserMenu,
+                {
+                  userProfile: props.cloudUserProfile,
+                  workspaceId: props.workspaceId,
+                  planId: props.planId,
+                  collapsed: true
+                }
+              ) })
+            ] }) : null,
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-sidebar__status guard-shell-sidebar__expanded-only", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-sidebar__status-heading", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { "aria-hidden": "true" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Local Guard" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: props.queuedCount > 0 ? "Review" : "Clear" })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: props.queuedCount > 0 ? `${props.queuedCount} local ${props.queuedCount === 1 ? "action needs" : "actions need"} a decision.` : "No local approvals are waiting." }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                GuardUpdatePanel,
+                {
+                  guardVersion: props.guardVersion,
+                  updateStatus: props.updateStatus,
+                  updatePhase: props.updatePhase,
+                  onUpdateGuard: props.onUpdateGuard,
+                  onReinstallGuard: props.onReinstallGuard,
+                  approvalGate: props.approvalGate
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-sidebar__compact-status guard-shell-sidebar__collapsed-only", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-sidebar__compact-count", "aria-label": queueAriaLabel(props.queuedCount), children: queueCountDisplay(props.queuedCount) }),
+              props.guardVersion ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { title: `Guard version ${props.guardVersion}`, children: [
+                "v",
+                props.guardVersion
+              ] }) : null
+            ] })
           ] })
-        ] }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-3", children: [
-          props.cta,
-          props.secondaryCta
         ] })
-      ] })
+      ]
     }
   );
 }
-function ProofStrip(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-4", children: props.items.map((item) => {
-    const toneColor = item.tone === "blue" ? "text-brand-blue" : item.tone === "green" ? "text-emerald-600" : item.tone === "purple" ? "text-brand-purple" : item.tone === "attention" ? "text-amber-600" : "text-brand-dark";
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col", title: item.hint, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[11px] font-semibold uppercase tracking-wider text-slate-400", children: item.label }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `text-2xl font-semibold tracking-tight ${toneColor}`, children: item.value })
-    ] }, item.label);
-  }) });
-}
-function TabBar(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { role: "tablist", className: "flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-slate-50 p-0.5", children: props.tabs.map((tab) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-    "button",
+function MobileBottomNavigation(props) {
+  const moreActive = !isMobilePrimaryView(props.view);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "nav",
     {
-      id: tab.id ?? tab.value,
-      type: "button",
-      role: "tab",
-      "aria-selected": props.active === tab.value,
-      onClick: () => props.onChange(tab.value),
-      className: `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${props.active === tab.value ? "bg-white text-brand-dark shadow-sm" : "text-slate-500 hover:text-brand-dark"}`,
-      children: tab.label
-    },
-    tab.value
-  )) });
+      className: "guard-shell-bottom-nav",
+      "aria-label": "Primary Guard sections",
+      "data-testid": "mobile-bottom-navigation",
+      "data-navigation-surface": "persistent",
+      children: [
+        mobilePrimaryNavigationItems().map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+          NavigationLink,
+          {
+            item,
+            view: props.view,
+            queuedCount: props.queuedCount,
+            variant: "bottom",
+            onNavigate: props.onNavigate
+          },
+          item.href
+        )),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            type: "button",
+            className: "guard-shell-navigation-link guard-shell-navigation-link--bottom",
+            "data-navigation-item": "more",
+            "data-active": moreActive ? "true" : "false",
+            "data-testid": "mobile-more-navigation",
+            "aria-label": "More Guard sections",
+            "aria-current": moreActive ? "page" : void 0,
+            "aria-expanded": props.drawerOpen,
+            "aria-controls": "guard-navigation-drawer",
+            onClick: props.onOpenDrawer,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-navigation-link__icon", "aria-hidden": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiBars3, {}) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-navigation-link__label", children: "More" }),
+              props.updateStatus?.update_available ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "guard-shell-navigation-update-dot", "aria-hidden": "true" }) : null
+            ]
+          }
+        )
+      ]
+    }
+  );
+}
+function ShellNavigation(props) {
+  const [drawerOpen, setDrawerOpen] = reactExports.useState(false);
+  const openDrawer = reactExports.useCallback(() => setDrawerOpen(true), []);
+  const closeDrawer = reactExports.useCallback(() => setDrawerOpen(false), []);
+  reactExports.useEffect(() => {
+    setDrawerOpen(false);
+  }, [props.view]);
+  reactExports.useEffect(() => {
+    const persistentQuery = window.matchMedia("(min-width: 48rem)");
+    const expandedQuery = window.matchMedia("(min-width: 80rem)");
+    const closeForResponsiveMode = (event) => {
+      if (event.matches) setDrawerOpen(false);
+    };
+    persistentQuery.addEventListener("change", closeForResponsiveMode);
+    expandedQuery.addEventListener("change", closeForResponsiveMode);
+    return () => {
+      persistentQuery.removeEventListener("change", closeForResponsiveMode);
+      expandedQuery.removeEventListener("change", closeForResponsiveMode);
+    };
+  }, []);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(MobileHeader, { ...props, drawerOpen, onOpenDrawer: openDrawer }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(PersistentSidebar, { ...props, drawerOpen, onOpenDrawer: openDrawer }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(MobileBottomNavigation, { ...props, drawerOpen, onOpenDrawer: openDrawer }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(NavigationDrawer, { ...props, open: drawerOpen, onClose: closeDrawer })
+  ] });
 }
 const ANALYTICS_CACHE_TTL_MS = 6e4;
 let analyticsCache = null;
@@ -29604,8 +30002,8 @@ function ApprovalCenterLayout(props) {
     queuedCount = queuedItems.length;
   }
   const handleToggleSidebar = reactExports.useCallback(() => {
-    setSidebarCollapsed((prev) => {
-      const next = !prev;
+    setSidebarCollapsed((previous) => {
+      const next = !previous;
       try {
         localStorage.setItem("guard-sidebar-collapsed", String(next));
       } catch {
@@ -29622,30 +30020,19 @@ function ApprovalCenterLayout(props) {
   } = useGuardUpdate({ onReconnected: props.onGuardReconnected, enabled: props.enableUpdateStatus });
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-h-screen bg-white text-brand-dark", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(
-      ShellHeader,
-      {
-        queuedCount,
-        view: props.view,
-        onNavigate: props.onNavigate,
-        guardVersion,
-        updateStatus,
-        updatePhase,
-        onUpdateGuard,
-        onReinstallGuard
-      }
-    ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      ShellSidebar,
+      ShellNavigation,
       {
         queuedCount,
         view: props.view,
         collapsed: sidebarCollapsed,
         onToggleCollapse: handleToggleSidebar,
+        onNavigate: props.onNavigate,
         guardVersion,
         updateStatus,
         updatePhase,
         onUpdateGuard,
         onReinstallGuard,
+        approvalGate: props.approvalGate ?? null,
         cloudUserProfile: props.runtime.kind === "ready" ? props.runtime.snapshot.cloud_user_profile : null,
         workspaceId: props.runtime.kind === "ready" ? props.runtime.snapshot.cloud_pairing_state.workspace_id ?? null : null,
         planId: props.runtime.kind === "ready" ? props.runtime.snapshot.cloud_pairing_state.plan_id ?? null : null
@@ -29654,9 +30041,10 @@ function ApprovalCenterLayout(props) {
     /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
-        className: `flex flex-col transition-all duration-200 lg:min-h-screen ${sidebarCollapsed ? "lg:pl-20" : "lg:pl-64"}`,
+        className: "guard-shell-content flex flex-col",
+        "data-sidebar-collapsed": sidebarCollapsed ? "true" : "false",
         children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("main", { id: "main-content", className: "flex-1 p-4 sm:p-6 lg:p-8", tabIndex: -1, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: props.view === "inbox" ? "mx-auto max-w-none" : "mx-auto max-w-6xl", children: renderViewContent(props) }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("main", { id: "main-content", className: "guard-shell-main flex-1", tabIndex: -1, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-shell-workspace", "data-view": props.view, children: renderViewContent(props) }) }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(ShellFooter, {})
         ]
       }
