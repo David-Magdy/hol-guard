@@ -44,18 +44,8 @@ jobs:
           bridge_path = Path('src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py')
           text = bridge_path.read_text(encoding='utf-8')
 
-          old_prefix = '''    expected_prefix = (
-              "guard",
-              "hook",
-              "--guard-home",
-              str(guard_home),
-              "--harness",
-              harness,
-          )
-          if tuple(cli_args[: len(expected_prefix)]) != expected_prefix:
-              return None
-          tail = cli_args[len(expected_prefix) :]
-          '''
+          prefix_start = text.index('    expected_prefix = (\n')
+          prefix_end = text.index('    json_output = ', prefix_start)
           new_prefix = '''    if len(cli_args) < 6 or tuple(cli_args[:3]) != ("guard", "hook", "--guard-home"):
               return None
           try:
@@ -69,15 +59,10 @@ jobs:
               return None
           tail = cli_args[6:]
           '''
-          if text.count(old_prefix) != 1:
-              raise SystemExit('frozen CLI prefix anchor changed unexpectedly')
-          text = text.replace(old_prefix, new_prefix, 1)
+          text = text[:prefix_start] + new_prefix + text[prefix_end:]
 
-          old_command = '''    command = ("hook", *cli_args[2 : len(cli_args) - int(json_output)])
-          if json_output:
-              command = (*command, "--json")
-          return command
-          '''
+          command_start = text.index('    command = ("hook",')
+          command_end = text.index('\n\n\ndef _json_object', command_start)
           new_command = '''    command: tuple[str, ...] = (
               "hook",
               "--guard-home",
@@ -88,28 +73,12 @@ jobs:
           )
           if json_output:
               command = (*command, "--json")
-          return command
-          '''
-          if text.count(old_command) != 1:
-              raise SystemExit('frozen CLI command anchor changed unexpectedly')
-          text = text.replace(old_command, new_command, 1)
+          return command'''
+          text = text[:command_start] + new_command + text[command_end:]
 
-          old_dispatch = '''    if frozen_launcher:
-              direct_cli_args = _validated_frozen_cli_args(
-                  cli_args,
-                  guard_home=guard_home,
-                  harness=harness,
-              )
-              if direct_cli_args is None:
-                  return _emit_failure(harness=harness, input_text=input_text)
-              command = (sys.executable, *direct_cli_args)
-          else:
-              command = isolated_guard_cli_command(
-                  python_executable,
-                  package_root,
-                  cli_args,
-              )
-          '''
+          run_start = text.index('def run_bounded_cli_hook(')
+          dispatch_start = text.index('    if frozen_launcher:\n', run_start)
+          dispatch_end = text.index('    result = run_isolated_hook_process(', dispatch_start)
           new_dispatch = '''    runtime_frozen = bool(getattr(sys, "frozen", False))
           if runtime_frozen:
               direct_cli_args = _validated_frozen_cli_args(
@@ -129,9 +98,8 @@ jobs:
                   cli_args,
               )
           '''
-          if text.count(old_dispatch) != 1:
-              raise SystemExit('frozen CLI dispatch anchor changed unexpectedly')
-          bridge_path.write_text(text.replace(old_dispatch, new_dispatch, 1), encoding='utf-8')
+          text = text[:dispatch_start] + new_dispatch + text[dispatch_end:]
+          bridge_path.write_text(text, encoding='utf-8')
 
           tests_path = Path('tests/test_bounded_cli_hook_bridge.py')
           tests = tests_path.read_text(encoding='utf-8')
@@ -144,30 +112,9 @@ jobs:
               marker + '    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)\n',
           )
 
-          insertion_anchor = '''def test_frozen_fallback_rejects_forged_executable_and_arguments(
-              monkeypatch: pytest.MonkeyPatch,
-              tmp_path: Path,
-          ) -> None:
-              config = _config(tmp_path, harness="grok")
-              config["python_executable"] = "/bin/sh"
-              config["cli_args"] = ["-c", "echo bypassed"]
-              config["frozen_launcher"] = True
-              monkeypatch.setattr(bounded_cli_hook_bridge.sys, "frozen", True, raising=False)
-              monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", lambda **kwargs: None)
-
-              def forbidden_runner(*args: object, **kwargs: object) -> BoundedHookProcessResult:
-                  del args, kwargs
-                  raise AssertionError("forged hook arguments must not execute")
-
-              monkeypatch.setattr(bounded_cli_hook_bridge, "run_isolated_hook_process", forbidden_runner)
-              output = io.StringIO()
-              with redirect_stdout(output):
-                  returncode = bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}")
-
-              assert returncode == 0
-              assert _json_object(output.getvalue())["decision"] == "deny"
-          '''
-          added_tests = insertion_anchor + '''
+          insertion_start = tests.index('def test_frozen_fallback_rejects_forged_executable_and_arguments(')
+          insertion_at = tests.index('\n\n@pytest.mark.parametrize("harness", ["hermes", "openclaw"])', insertion_start)
+          added_tests = '''
 
           def test_live_frozen_runtime_ignores_forged_config_mode_and_executable(
               monkeypatch: pytest.MonkeyPatch,
@@ -251,9 +198,7 @@ jobs:
                   "grok",
               ]
           '''
-          if tests.count(insertion_anchor) != 1:
-              raise SystemExit('frozen forged-argument test anchor changed unexpectedly')
-          tests_path.write_text(tests.replace(insertion_anchor, added_tests, 1), encoding='utf-8')
+          tests_path.write_text(tests[:insertion_at] + added_tests + tests[insertion_at:], encoding='utf-8')
           PY
 
       - name: Format and run focused security contracts
@@ -274,8 +219,8 @@ jobs:
           import json
           from pathlib import Path
 
-          inventory = json.loads(Path('test-inventory.json').read_text(encoding='utf-8'))['inventory']
           full = json.loads(Path('test-inventory.json').read_text(encoding='utf-8'))
+          inventory = full['inventory']
           baseline = {
               'maximum_collected_cases': inventory['collected_cases'],
               'maximum_test_source_lines': full['test_source_lines'],
