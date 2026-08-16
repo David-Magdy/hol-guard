@@ -127,6 +127,9 @@ def _validated_frozen_cli_args(
     if tuple(cli_args[: len(expected_prefix)]) != expected_prefix:
         return None
     tail = cli_args[len(expected_prefix) :]
+    json_output = bool(tail and tail[-1] == "--json")
+    if json_output:
+        tail = tail[:-1]
     if len(tail) % 2 != 0:
         return None
     seen_flags: set[str] = set()
@@ -137,7 +140,10 @@ def _validated_frozen_cli_args(
         if not Path(value).is_absolute():
             return None
         seen_flags.add(flag)
-    return ("hook", *cli_args[2:])
+    command = ("hook", *cli_args[2 : len(cli_args) - int(json_output)])
+    if json_output:
+        command = (*command, "--json")
+    return command
 
 
 def _json_object(text: str) -> dict[str, object] | None:

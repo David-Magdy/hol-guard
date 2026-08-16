@@ -187,6 +187,38 @@ def test_frozen_fallback_rejects_forged_executable_and_arguments(
     assert _json_object(output.getvalue())["decision"] == "deny"
 
 
+@pytest.mark.parametrize("harness", ["hermes", "openclaw"])
+def test_frozen_fallback_accepts_normalized_json_hook_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    harness: str,
+) -> None:
+    observed: list[str] = []
+
+    def run(command: Sequence[str], **kwargs: object) -> BoundedHookProcessResult:
+        del kwargs
+        observed.extend(command)
+        return BoundedHookProcessResult(0, '{"decision":"allow"}\n', False, False)
+
+    config = _config(tmp_path, harness=harness)
+    config["cli_args"] = [*cast(list[str], config["cli_args"]), "--json"]
+    config["frozen_launcher"] = True
+    monkeypatch.setattr(bounded_cli_hook_bridge.sys, "executable", "/app/hol-guard")
+    monkeypatch.setattr(bounded_cli_hook_bridge, "_try_daemon_hook", lambda **kwargs: None)
+    monkeypatch.setattr(bounded_cli_hook_bridge, "run_isolated_hook_process", run)
+
+    assert bounded_cli_hook_bridge.run_bounded_cli_hook(config, input_text="{}") == 0
+    assert observed == [
+        "/app/hol-guard",
+        "hook",
+        "--guard-home",
+        str(tmp_path / "guard-home"),
+        "--harness",
+        harness,
+        "--json",
+    ]
+
+
 def test_empty_failed_child_is_converted_to_native_deny(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

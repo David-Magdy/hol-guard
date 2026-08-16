@@ -71,11 +71,12 @@ def overlay_payload(detection: HarnessDetection) -> dict[str, object]:
 
 def pretool_payload(*, context: HarnessContext) -> dict[str, object]:
     cli_args = [
+        "guard",
         "hook",
-        "--harness",
-        "openclaw",
         "--guard-home",
         str(context.guard_home),
+        "--harness",
+        "openclaw",
         "--home",
         str(context.home_dir),
         "--json",

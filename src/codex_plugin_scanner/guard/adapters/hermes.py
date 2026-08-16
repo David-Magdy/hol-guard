@@ -1121,10 +1121,12 @@ def _mcp_proxy_command(*, context: HarnessContext, server_key: str) -> list[str]
 
 def _pretool_payload(*, context: HarnessContext) -> dict[str, object]:
     cli_args = [
-        "hermes",
-        "pretool",
+        "guard",
+        "hook",
         "--guard-home",
         str(context.guard_home),
+        "--harness",
+        "hermes",
         "--json",
     ]
     if context.home_dir.resolve() != Path.home().resolve():
