@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..command_evaluation import evaluate_command
 from ..command_extension_interaction import classify_command_extension_interaction
 from ..command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from ..command_model import CanonicalCommand, parse_shell_command
 from ..direct_vitest import direct_local_typescript_execution_context, direct_local_vitest_execution_context
+from ..extension_control_runtime import current_extension_control_snapshot
+from ..github_capability_contract import github_capability_contract
 from ..github_capability_interaction import github_capability_action_class, github_capability_requires_confirmation
 from ..pytest_config import PytestConfigAssessment
 from ..restricted_pytest import PYTEST_RESTRICTED_PROFILE_VERSION
@@ -423,6 +426,30 @@ def _destructive_shell_tool_action_request(
             canonical_command=canonical_command,
             interpreter_executable_identities=interpreter_executable_identities,
         )
+    controlled_action_class = (
+        github_capability_contract(github_assessment.capability).action_class
+        if github_assessment is not None and current_extension_control_snapshot() is not None
+        else None
+    )
+    if github_assessment is not None and controlled_action_class is not None:
+        action_class = controlled_action_class
+        controlled_evaluation = evaluate_command(
+            raw_command_text or detection_command_text,
+            compatibility_action_class=action_class,
+            compatibility_reason=github_assessment.detail,
+            cwd=cwd,
+            home_dir=home_dir,
+        )
+        if controlled_evaluation.control_resolution.blocked:
+            return ToolActionRequestMatch(
+                tool_name=tool_name,
+                normalized_tool_name=normalized_tool_name,
+                command_text=command_text,
+                action_class=action_class,
+                reason="Guard extension controls block this GitHub capability.",
+                canonical_command=canonical_command,
+                interpreter_executable_identities=interpreter_executable_identities,
+            )
     if extension_interaction.fallback is not None:
         return ToolActionRequestMatch(
             tool_name=tool_name,

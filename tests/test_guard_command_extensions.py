@@ -118,7 +118,7 @@ def test_command_extension_registry_is_deterministic_and_complete() -> None:
     assert BUILT_IN_COMMAND_EXTENSION_REGISTRY.rule_for_action_class("destructive shell command") is not None
     assert BUILT_IN_COMMAND_EXTENSION_REGISTRY.for_action_class("GitHub merge command") is not None
     assert BUILT_IN_COMMAND_EXTENSION_REGISTRY.rule_for_action_class("GitHub merge command") is not None
-    assert sum(extension["rule_count"] for extension in payload["extensions"]) == 85
+    assert sum(extension["rule_count"] for extension in payload["extensions"]) == 86
 
 
 @pytest.mark.parametrize(
@@ -750,7 +750,7 @@ def test_explicit_permission_allow_requires_protected_authority(tmp_path: Path) 
         ),
         ("gh pr merge 5115 --repo example/project --squash --auto", (), "require-reapproval"),
         (
-            "gh pr merge 5115 --repo example/project --squash --delete-branch",
+            "gh pr merge 5115 --repo example/project --delete-branch",
             ("command.github.permission.merge-remote",),
             "require-reapproval",
         ),
@@ -832,6 +832,47 @@ def test_managed_github_merge_block_dominates_local_allow(tmp_path: Path) -> Non
         "blocked": True,
         "failures": [],
     }
+
+
+def test_managed_routine_merge_block_still_gates_merged_branch_cleanup(tmp_path: Path) -> None:
+    command = (
+        "gh pr merge 5134 --repo example/project --squash --delete-branch && "
+        "gh pr view 5134 --repo example/project --json state,mergedAt,mergeCommit,url"
+    )
+    layer = ExtensionControlLayer(
+        schema_version=CONTROL_SCHEMA_VERSION,
+        kind=ControlLayerKind.SIGNED_CLOUD,
+        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+        global_lockdown=False,
+        controls=(
+            ExtensionControl(
+                target=ControlTarget(
+                    ControlTargetKind.PERMISSION,
+                    "command.github.permission.routine-merge-remote",
+                ),
+                state=ControlState.DISABLED,
+            ),
+        ),
+    )
+    snapshot = ExtensionControlRuntimeSnapshot.from_authority_view(
+        ExtensionControlAuthorityView(
+            health=AuthorityHealth.PROTECTED,
+            revision=10,
+            catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+            layers=(layer,),
+        )
+    )
+
+    with use_extension_control_snapshot(snapshot):
+        request = extract_sensitive_tool_action_request(
+            "Shell",
+            {"command": command},
+            cwd=tmp_path,
+            home_dir=tmp_path,
+        )
+
+    assert request is not None
+    assert request.action_class == "GitHub routine pull-request merge command"
 
 
 def test_inspection_and_runtime_artifact_share_canonical_wrapper_evidence(tmp_path: Path) -> None:

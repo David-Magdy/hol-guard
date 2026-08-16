@@ -21,7 +21,7 @@ PR_MERGE_ADMIN_CAPABILITY_CASES: tuple[tuple[str, tuple[str, ...], tuple[GitHubC
     ("admin-010", ("pr", "merge", "123", "--", "--admin"), ("merge_remote",)),
     ("routine-001", ("pr", "merge", "0", "--squash"), ("merge_remote",)),
     ("routine-002", ("pr", "merge", "123", "--squash", "--auto"), ("merge_remote",)),
-    ("routine-003", ("pr", "merge", "123", "--squash", "--delete-branch"), ("merge_remote", "delete_remote")),
+    ("routine-003", ("pr", "merge", "123", "--squash", "--delete-branch"), ("routine_merge_remote",)),
     ("routine-004", ("pr", "merge", "$PR", "--squash"), ("merge_remote",)),
     (
         "routine-005",
@@ -41,7 +41,7 @@ PR_MERGE_ADMIN_CAPABILITY_CASES: tuple[tuple[str, tuple[str, ...], tuple[GitHubC
     (
         "routine-008",
         ("pr", "merge", "4751", "--repo", "example/project", "--squash", "--delete-branch"),
-        ("merge_remote", "delete_remote"),
+        ("routine_merge_remote",),
     ),
 )
 
@@ -121,7 +121,6 @@ def test_pr_merge_admin_capability_matches_github_boolean_option_semantics(
         ("pr", "merge", "0", "--squash"),
         ("pr", "merge", "$PR", "--squash"),
         ("pr", "merge", "123", "--squash", "--auto"),
-        ("pr", "merge", "123", "--squash", "--delete-branch"),
         ("pr", "merge", "123", "--squash", "--admin"),
         ("pr", "merge", "123", "--repo", "$REPOSITORY", "--squash"),
         ("pr", "merge", "123", "--repo", "ghe.example/o/r", "--squash"),
