@@ -258,11 +258,16 @@ jobs:
         run: |
           set -euo pipefail
           tag="alpha/v${VERSION}"
-          encoded_tag=${tag//\//%2F}
-          existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${encoded_tag}" --jq '.object.sha' 2>/dev/null || true)
+          ref="refs/tags/${tag}"
+          exact_tag_sha() {
+            gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${tag}" \
+              | jq -r --arg ref "$ref" '.[] | select(.ref == $ref) | .object.sha'
+          }
+          existing=$(exact_tag_sha)
           if [[ -z "$existing" ]]; then
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${tag}" -f sha="$SOURCE_SHA" >/dev/null
-            existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${encoded_tag}" --jq '.object.sha')
+            if ! existing=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="$ref" -f sha="$SOURCE_SHA" --jq '.object.sha'); then
+              existing=$(exact_tag_sha)
+            fi
           fi
           if [[ "$existing" != "$SOURCE_SHA" ]]; then
             echo "Alpha tag is already bound to a different source" >&2
