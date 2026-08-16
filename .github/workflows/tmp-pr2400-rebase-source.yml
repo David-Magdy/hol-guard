@@ -1,0 +1,44 @@
+name: Temporary PR 2400 rebase source
+
+on:
+  push:
+    branches:
+      - tmp/pr2400-rebase-source-20260816
+    paths:
+      - .github/workflows/tmp-pr2400-rebase-source.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: tmp/pr2400-rebase-source-20260816
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export exact release source and history
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin release/3.0:refs/remotes/origin/release/3.0
+          release_sha=$(git rev-parse refs/remotes/origin/release/3.0)
+          test "$release_sha" = "c7086ba0bfb10d6f1a5f98a3306c8560af4c0518"
+          git archive --format=tar.gz --output="$RUNNER_TEMP/release-source.tar.gz" "$release_sha"
+          git bundle create "$RUNNER_TEMP/release.bundle" refs/remotes/origin/release/3.0
+          printf '%s\n' "$release_sha" > "$RUNNER_TEMP/release-sha.txt"
+          sha256sum "$RUNNER_TEMP/release-source.tar.gz" "$RUNNER_TEMP/release.bundle" > "$RUNNER_TEMP/SHA256SUMS"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: pr2400-rebase-source-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/release-source.tar.gz
+            ${{ runner.temp }}/release.bundle
+            ${{ runner.temp }}/release-sha.txt
+            ${{ runner.temp }}/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
