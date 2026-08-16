@@ -87,6 +87,59 @@ jobs:
               1,
           )
           orchestrator.write_text(value)
+
+          archive = Path('src/codex_plugin_scanner/assurance/archive_scan.py')
+          value = archive.read_text()
+          value = value.replace('from typing import BinaryIO\n', 'from typing import Protocol\n', 1)
+          value = value.replace(
+              'def _read_stream_bounded(handle: BinaryIO, limit: int) -> bytes:\n',
+              '''class _ReadableBinaryStream(Protocol):
+              def read(self, size: int = -1, /) -> bytes: ...
+
+
+              def _read_stream_bounded(handle: _ReadableBinaryStream, limit: int) -> bytes:
+              ''',
+              1,
+          )
+          value = value.replace(
+              '    handle: BinaryIO\n',
+              '    handle: gzip.GzipFile | lzma.LZMAFile\n',
+              1,
+          )
+          archive.write_text(value)
+
+          for relative in (
+              'src/codex_plugin_scanner/assurance/dependency_scan.py',
+              'src/codex_plugin_scanner/assurance/policy.py',
+              'src/codex_plugin_scanner/assurance/surface_scan.py',
+          ):
+              target = Path(relative)
+              value = target.read_text().replace(
+                  '    import tomli as tomllib\n',
+                  '    import tomli as tomllib  # pyright: ignore[reportMissingImports]\n',
+                  1,
+              )
+              target.write_text(value)
+
+          provenance = Path('src/codex_plugin_scanner/assurance/provenance.py')
+          value = provenance.read_text().replace(
+              '    signature = private_key.sign(dsse_pae(PAYLOAD_TYPE, payload))\n',
+              '''    signature = private_key.sign(  # pyright: ignore[reportAttributeAccessIssue]
+                  dsse_pae(PAYLOAD_TYPE, payload)
+              )
+              ''',
+              1,
+          )
+          provenance.write_text(value)
+
+          upload = Path('src/codex_plugin_scanner/assurance/upload.py')
+          value = upload.read_text().replace(
+              '        self._peer_ips = peer_ips\n',
+              '        self._peer_ips = peer_ips\n        self._tls_context = context\n',
+              1,
+          )
+          value = value.replace('self._context.wrap_socket(', 'self._tls_context.wrap_socket(', 1)
+          upload.write_text(value)
           PY
           uv lock
           cargo generate-lockfile --manifest-path rust/scanner-engine/Cargo.toml
