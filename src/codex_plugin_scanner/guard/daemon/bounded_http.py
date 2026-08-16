@@ -180,13 +180,13 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
             _MAX_SOCKET_TIMEOUT_SECONDS,
         )
 
-    def verify_request(self, request: socket.socket, client_address: object) -> bool:
+    def verify_request(self, request: Any, client_address: object) -> bool:
         if not _loopback(client_address):
             _METRICS.rejected_non_loopback()
             return False
         return super().verify_request(request, cast(Any, client_address))
 
-    def process_request(self, request: socket.socket, client_address: object) -> None:
+    def process_request(self, request: Any, client_address: object) -> None:
         if not self._guard_slots.acquire(blocking=False):
             _METRICS.rejected_overload()
             self._reject_overload(request)
@@ -201,14 +201,14 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
             _METRICS.released()
             raise
 
-    def process_request_thread(self, request: socket.socket, client_address: object) -> None:
+    def process_request_thread(self, request: Any, client_address: object) -> None:
         try:
             super().process_request_thread(request, cast(Any, client_address))
         finally:
             self._guard_slots.release()
             _METRICS.released()
 
-    def handle_error(self, request: socket.socket, client_address: object) -> None:
+    def handle_error(self, request: Any, client_address: object) -> None:
         error = cast(BaseException | None, __import__("sys").exception())
         if isinstance(error, socket.timeout):
             _METRICS.timeout()
