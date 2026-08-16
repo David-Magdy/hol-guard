@@ -1591,6 +1591,38 @@ def test_isolated_daemon_bootstrap_ignores_python_startup_hooks(tmp_path, monkey
     assert all(key not in child_env for key in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "VIRTUAL_ENV"))
 
 
+def test_frozen_desktop_daemon_launcher_preserves_managed_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon_manager_module.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("PYINSTALLER_RESET_ENVIRONMENT", "untrusted-parent-value")
+    monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
+
+    child_env = daemon_manager_module._daemon_launcher_env(home_dir=tmp_path)
+
+    assert child_env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert child_env["HOL_GUARD_DESKTOP"] == "1"
+
+
+def test_frozen_non_desktop_daemon_launcher_does_not_gain_desktop_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon_manager_module.sys, "frozen", True, raising=False)
+    monkeypatch.delenv("HOL_GUARD_DESKTOP", raising=False)
+
+    child_env = daemon_manager_module._daemon_launcher_env(home_dir=tmp_path)
+
+    assert child_env["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert "HOL_GUARD_DESKTOP" not in child_env
+
+
+def test_non_frozen_daemon_launcher_drops_desktop_context(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon_manager_module.sys, "frozen", False, raising=False)
+    monkeypatch.setenv("PYINSTALLER_RESET_ENVIRONMENT", "1")
+    monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
+
+    child_env = daemon_manager_module._daemon_launcher_env(home_dir=tmp_path)
+
+    assert "PYINSTALLER_RESET_ENVIRONMENT" not in child_env
+    assert "HOL_GUARD_DESKTOP" not in child_env
+
+
 @pytest.mark.parametrize(
     ("script", "timeout_seconds", "output_limit_bytes"),
     (
