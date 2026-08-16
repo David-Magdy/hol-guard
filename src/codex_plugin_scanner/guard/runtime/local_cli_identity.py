@@ -15,6 +15,7 @@ from .approval_context import (
 )
 from .command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY, CommandSafetyExtensionRegistry
 from .command_model import CanonicalCommand, CommandSegment, parse_shell_command
+from .command_rules import matcher_index_hints
 from .command_tokens import executable_name
 
 LocalCliKind = Literal["executable", "script"]
@@ -84,6 +85,13 @@ def catalog_owned_executables(
             normalized = executable.strip().lower()
             if normalized:
                 names.add(normalized)
+        for rule in extension.rules:
+            if rule.matcher is None:
+                continue
+            for executable in matcher_index_hints(rule.matcher).executables:
+                normalized = executable.strip().lower()
+                if normalized:
+                    names.add(normalized)
     return frozenset(names)
 
 

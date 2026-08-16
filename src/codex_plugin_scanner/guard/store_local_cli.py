@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
-from typing import cast
+from contextlib import AbstractContextManager
+from typing import TYPE_CHECKING, cast
 
 from .runtime.local_cli_identity import UnlistedCliIdentity, is_local_cli_id
 from .store_local_cli_schema import ensure_local_cli_schema
 
 
 class StoreLocalCliMixin:
+    if TYPE_CHECKING:
+
+        def _connect(self) -> AbstractContextManager[sqlite3.Connection]: ...
+
     def record_local_cli_observation(self, identity: UnlistedCliIdentity, *, seen_at: str) -> None:
         if not is_local_cli_id(identity.cli_id):
             raise ValueError("invalid local CLI id")
@@ -99,7 +104,7 @@ class StoreLocalCliMixin:
                     "grant_revision": grant["revision"],
                 }
             )
-        authority_revision = 0 if revision_row is None else int(cast(object, revision_row[0]))
+        authority_revision = 0 if revision_row is None else _row_int(revision_row[0])
         for item in items:
             item["authority_revision"] = authority_revision
         return items
@@ -119,7 +124,7 @@ class StoreLocalCliMixin:
         with self._connect() as connection:
             ensure_local_cli_schema(connection)
             row = connection.execute("select revision from local_cli_authority where singleton = 1").fetchone()
-        return 0 if row is None else int(cast(object, row[0]))
+        return 0 if row is None else _row_int(row[0])
 
     def upsert_local_cli_grant(
         self,
@@ -136,7 +141,7 @@ class StoreLocalCliMixin:
         with self._connect() as connection:
             ensure_local_cli_schema(connection)
             current = connection.execute("select revision from local_cli_authority where singleton = 1").fetchone()
-            current_revision = 0 if current is None else int(cast(object, current[0]))
+            current_revision = 0 if current is None else _row_int(current[0])
             if current_revision != expected_revision:
                 raise ValueError("local_cli_revision_conflict")
             next_revision = current_revision + 1
@@ -215,6 +220,12 @@ def _row_values(row: object, count: int) -> tuple[object, ...]:
             raise ValueError("invalid local CLI row")
         return values
     raise ValueError("invalid local CLI row")
+
+
+def _row_int(value: object) -> int:
+    if type(value) is not int:
+        raise ValueError("invalid local CLI row")
+    return value
 
 
 def _row_text(row: object, index: int) -> str:

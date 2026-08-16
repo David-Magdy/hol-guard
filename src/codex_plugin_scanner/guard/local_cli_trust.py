@@ -46,7 +46,7 @@ def matching_local_cli_grant(
         return None
     state = grant.get("state")
     identity_hash = grant.get("identity_hash")
-    if state not in {"allowed", "blocked"}:
+    if state != "allowed" and state != "blocked":
         return None
     if identity_hash != identity.identity_hash:
         return None
