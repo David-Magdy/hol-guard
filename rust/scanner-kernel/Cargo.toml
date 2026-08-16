@@ -1,0 +1,18 @@
+[package]
+name = "hol-guard-scanner-kernel"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "Deterministic hashing and binary inventory kernel for HOL Guard"
+publish = false
+
+[[bin]]
+name = "hol-guard-scanner-kernel"
+path = "src/main.rs"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = "symbols"
