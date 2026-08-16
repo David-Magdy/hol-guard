@@ -103,6 +103,7 @@ jobs:
           quality_files=(
             scripts/ci/code_quality_ast.py
             scripts/ci/code_quality_audit.py
+            scripts/ci/code_quality_report.py
             src/codex_plugin_scanner/guard/private_file_io.py
             src/codex_plugin_scanner/guard/runtime/kubernetes_command_support.py
             tests/test_code_quality_audit.py
