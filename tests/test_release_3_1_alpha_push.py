@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 PUBLISH_WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "publish.yml"
 
 
@@ -27,7 +26,9 @@ def test_release_3_1_push_reaches_testpypi_then_pypi() -> None:
     assert testpypi < pypi < prerelease
     assert "environment: testpypi" in text[testpypi:pypi]
     assert "environment: pypi" in text[pypi:prerelease]
-    assert text.count("pypa/gh-action-pypi-publish@") == 2
+    assert text.count("pypa/gh-action-pypi-publish@") == 3
+    assert "packages-dir: dist-hol-guard/" in text[pypi:prerelease]
+    assert "packages-dir: dist-plugin-scanner/" in text[pypi:prerelease]
 
 
 def test_release_3_1_dispatch_can_backfill_an_exact_ancestor() -> None:
