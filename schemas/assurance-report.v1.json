@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hol.org/schemas/assurance-report.v1.json",
+  "title": "HOL Guard extension assurance report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scanner_version",
+    "artifact_root",
+    "artifact_digest",
+    "generated_at",
+    "assurance_level",
+    "coverage",
+    "findings",
+    "decision",
+    "layers",
+    "capabilities",
+    "dependencies",
+    "native_artifacts",
+    "archive_artifacts",
+    "policy",
+    "drift",
+    "provenance",
+    "detonation",
+    "evidence_digest"
+  ],
+  "properties": {
+    "schema_version": {"const": "hol-guard.assurance-report.v1"},
+    "scanner_version": {"type": "string", "minLength": 1},
+    "artifact_root": {"type": "string", "minLength": 1},
+    "artifact_digest": {"$ref": "#/$defs/sha256"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "assurance_level": {
+      "enum": ["static", "provenance-verified", "sandbox-planned", "sandbox-observed"]
+    },
+    "coverage": {"$ref": "#/$defs/coverage"},
+    "findings": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {"$ref": "#/$defs/finding"}
+    },
+    "decision": {"$ref": "#/$defs/decision"},
+    "layers": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/layer"}
+    },
+    "capabilities": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "dependencies": {"type": "array", "items": {"type": "object"}},
+    "native_artifacts": {"type": "array", "items": {"type": "object"}},
+    "archive_artifacts": {"type": "array", "items": {"type": "object"}},
+    "policy": {"type": "object"},
+    "drift": {"type": ["object", "null"]},
+    "provenance": {"type": ["object", "null"]},
+    "detonation": {"type": ["object", "null"]},
+    "evidence_digest": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "severity": {"enum": ["critical", "high", "medium", "low", "info"]},
+    "confidence": {"enum": ["high", "medium", "low", "unknown"]},
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "start_line", "end_line", "symbol", "excerpt_sha256"],
+      "properties": {
+        "path": {"type": ["string", "null"]},
+        "start_line": {"type": ["integer", "null"], "minimum": 1},
+        "end_line": {"type": ["integer", "null"], "minimum": 1},
+        "symbol": {"type": ["string", "null"]},
+        "excerpt_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "severity",
+        "confidence",
+        "category",
+        "title",
+        "description",
+        "remediation",
+        "locations",
+        "source",
+        "fingerprint",
+        "metadata"
+      ],
+      "properties": {
+        "rule_id": {"type": "string", "minLength": 1},
+        "severity": {"$ref": "#/$defs/severity"},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "category": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "description": {"type": "string", "minLength": 1},
+        "remediation": {"type": "string", "minLength": 1},
+        "locations": {"type": "array", "items": {"$ref": "#/$defs/location"}},
+        "source": {"type": "string", "minLength": 1},
+        "fingerprint": {"$ref": "#/$defs/sha256"},
+        "metadata": {"type": "object"}
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "state",
+        "inventory_files",
+        "analyzed_files",
+        "analyzed_bytes",
+        "opaque_files",
+        "unreadable_files",
+        "oversized_files",
+        "archive_members",
+        "native_artifacts",
+        "rust_accelerated_files",
+        "gaps",
+        "limitations"
+      ],
+      "properties": {
+        "state": {"enum": ["complete", "partial", "incomplete", "error"]},
+        "inventory_files": {"type": "integer", "minimum": 0},
+        "analyzed_files": {"type": "integer", "minimum": 0},
+        "analyzed_bytes": {"type": "integer", "minimum": 0},
+        "opaque_files": {"type": "integer", "minimum": 0},
+        "unreadable_files": {"type": "integer", "minimum": 0},
+        "oversized_files": {"type": "integer", "minimum": 0},
+        "archive_members": {"type": "integer", "minimum": 0},
+        "native_artifacts": {"type": "integer", "minimum": 0},
+        "rust_accelerated_files": {"type": "integer", "minimum": 0},
+        "gaps": {"type": "array", "items": {"type": "object"}},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": ["disposition", "reason", "blocking_fingerprints", "review_fingerprints", "required_actions"],
+      "properties": {
+        "disposition": {"enum": ["allow", "warn", "review", "block", "error"]},
+        "reason": {"type": "string", "minLength": 1},
+        "blocking_fingerprints": {"type": "array", "items": {"$ref": "#/$defs/sha256"}},
+        "review_fingerprints": {"type": "array", "items": {"$ref": "#/$defs/sha256"}},
+        "required_actions": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "layer": {
+      "type": "object",
+      "required": ["name", "status", "summary", "digest", "metadata"],
+      "properties": {
+        "name": {"type": "string"},
+        "status": {"type": "string"},
+        "summary": {"type": "string"},
+        "digest": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "metadata": {"type": "object"}
+      }
+    }
+  }
+}
