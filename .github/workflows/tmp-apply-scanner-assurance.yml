@@ -1,0 +1,99 @@
+name: Apply scanner assurance integration
+
+on:
+  push:
+    branches: [feat/scanner-assurance-rust-hardening]
+    paths:
+      - "scripts/ci/apply_scanner_assurance_integration.py"
+      - ".github/workflows/tmp-apply-scanner-assurance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-scanner-assurance-integration
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: feat/scanner-assurance-rust-hardening
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+          save-cache: false
+      - name: Apply integration patch
+        run: python scripts/ci/apply_scanner_assurance_integration.py
+      - name: Install locked environment
+        run: uv sync --frozen --extra dev --python 3.12
+      - name: Format and lint changed Python
+        shell: bash
+        run: |
+          files=(
+            src/codex_plugin_scanner/assurance.py
+            src/codex_plugin_scanner/assurance_cli.py
+            src/codex_plugin_scanner/evidence_envelope.py
+            src/codex_plugin_scanner/runtime_assurance.py
+            src/codex_plugin_scanner/rust_kernel.py
+            src/codex_plugin_scanner/scanner.py
+            src/codex_plugin_scanner/policy.py
+            tests/assurance_corpus.py
+            tests/test_assurance_scanner.py
+            tests/test_evidence_envelope.py
+            tests/test_runtime_assurance.py
+            tests/test_rust_scanner_kernel_contract.py
+            scripts/ci/scanner_assurance_benchmark.py
+          )
+          uv run --no-sync ruff check --fix "${files[@]}"
+          uv run --no-sync ruff format "${files[@]}"
+          uv run --no-sync ruff check "${files[@]}"
+      - name: Format and test Rust kernel
+        run: |
+          cargo fmt --manifest-path rust/scanner-kernel/Cargo.toml
+          cargo clippy --locked --manifest-path rust/scanner-kernel/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path rust/scanner-kernel/Cargo.toml
+          cargo build --locked --release --manifest-path rust/scanner-kernel/Cargo.toml
+      - name: Run focused assurance tests
+        env:
+          HOL_GUARD_SCANNER_KERNEL: ${{ github.workspace }}/rust/scanner-kernel/target/release/hol-guard-scanner-kernel
+        run: >-
+          uv run --no-sync pytest
+          tests/test_assurance_scanner.py
+          tests/test_evidence_envelope.py
+          tests/test_runtime_assurance.py
+          tests/test_rust_scanner_kernel_contract.py
+          --tb=short
+      - name: Run assurance benchmark
+        env:
+          HOL_GUARD_SCANNER_KERNEL: ${{ github.workspace }}/rust/scanner-kernel/target/release/hol-guard-scanner-kernel
+        run: >-
+          PYTHONPATH=.
+          uv run --no-sync python scripts/ci/scanner_assurance_benchmark.py
+          --output scanner-assurance-benchmark.json
+      - name: Remove temporary application files
+        run: |
+          rm -f scripts/ci/apply_scanner_assurance_integration.py
+          rm -f .github/workflows/tmp-apply-scanner-assurance.yml
+      - name: Commit verified integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "feat(scanner): add layered assurance and Rust hot paths"
+          git push origin HEAD:feat/scanner-assurance-rust-hardening
