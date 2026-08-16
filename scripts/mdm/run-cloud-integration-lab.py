@@ -31,6 +31,8 @@ def main() -> int:
         {
             "HOL_MDM_LAB_PROJECT": args.project,
             "HOL_MDM_LAB_ARTIFACTS": str(artifacts),
+            "HOL_MDM_LAB_UID": str(os.getuid()),
+            "HOL_MDM_LAB_GID": str(os.getgid()),
         }
     )
     base = ["docker", "compose", "--project-name", args.project, "--file", str(COMPOSE_FILE)]

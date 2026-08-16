@@ -5,6 +5,7 @@ x-lab-service: &lab-service
   build:
     context: ../../..
     dockerfile: scripts/mdm/cloud-lab/Dockerfile
+  user: ${HOL_MDM_LAB_UID:-10001}:${HOL_MDM_LAB_GID:-10001}
   init: true
   restart: "no"
   read_only: true
@@ -87,7 +88,7 @@ services:
       - device-a-state:/state
     tmpfs:
       - /tmp:size=64m,mode=1777
-      - /etc/hol-guard:size=8m,mode=0700
+      - /etc/hol-guard:size=8m,mode=0700,uid=${HOL_MDM_LAB_UID:-10001},gid=${HOL_MDM_LAB_GID:-10001}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8070/healthz', timeout=2).read()"]
       interval: 2s
@@ -115,7 +116,7 @@ services:
       - device-b-state:/state
     tmpfs:
       - /tmp:size=64m,mode=1777
-      - /etc/hol-guard:size=8m,mode=0700
+      - /etc/hol-guard:size=8m,mode=0700,uid=${HOL_MDM_LAB_UID:-10001},gid=${HOL_MDM_LAB_GID:-10001}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8070/healthz', timeout=2).read()"]
       interval: 2s
@@ -143,7 +144,7 @@ services:
       - device-c-state:/state
     tmpfs:
       - /tmp:size=64m,mode=1777
-      - /etc/hol-guard:size=8m,mode=0700
+      - /etc/hol-guard:size=8m,mode=0700,uid=${HOL_MDM_LAB_UID:-10001},gid=${HOL_MDM_LAB_GID:-10001}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8070/healthz', timeout=2).read()"]
       interval: 2s
