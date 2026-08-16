@@ -1,4 +1,4 @@
-name: Temporary backport native Desktop hook proxy
+name: Temporary analyze native Desktop hook proxy backport
 
 on:
   push:
@@ -6,64 +6,52 @@ on:
       - backport/native-desktop-hook-proxy-release-3.0
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: backport-native-desktop-hook-proxy-release-3.0
   cancel-in-progress: false
 
 jobs:
-  backport:
+  analyze:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - name: Check out release backport branch
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           ref: backport/native-desktop-hook-proxy-release-3.0
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
 
-      - name: Apply reviewed mainline proxy commit
+      - name: Compare release and reviewed mainline tests
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --no-tags origin d7386b7caa06499764f008d362949e7cae5527e4
-          git cherry-pick FETCH_HEAD
+          git show FETCH_HEAD:tests/test_bounded_cli_hook_bridge.py > "$RUNNER_TEMP/main-tests.py"
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
 
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-        with:
-          python-version: "3.12"
+          release_path = Path('tests/test_bounded_cli_hook_bridge.py')
+          main_path = Path(__import__('os').environ['RUNNER_TEMP']) / 'main-tests.py'
+          release_tree = ast.parse(release_path.read_text(encoding='utf-8'))
+          main_tree = ast.parse(main_path.read_text(encoding='utf-8'))
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
-        with:
-          version: "0.9.26"
-          enable-cache: true
+          def names(tree):
+              return {
+                  node.name
+                  for node in tree.body
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+              }
 
-      - name: Install frozen release dependencies
-        run: uv sync --frozen --python 3.12
+          release_names = names(release_tree)
+          main_names = names(main_tree)
+          print('release_only=' + ','.join(sorted(release_names - main_names)))
+          print('main_only=' + ','.join(sorted(main_names - release_names)))
+          print(f'release_defs={len(release_names)} main_defs={len(main_names)}')
+          PY
 
-      - name: Validate focused proxy contracts
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv run --no-sync ruff format --check \
-            src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py \
-            tests/test_bounded_cli_hook_bridge.py
-          uv run --no-sync ruff check \
-            src/codex_plugin_scanner/guard/adapters/bounded_cli_hook_bridge.py \
-            tests/test_bounded_cli_hook_bridge.py
-          uv run --no-sync pytest -q tests/test_bounded_cli_hook_bridge.py
-
-      - name: Remove one-shot workflow and publish backport branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          git rm .github/workflows/temporary-backport-native-desktop-hook-proxy.yml
-          git commit -m "chore: remove temporary proxy backport workflow"
-          git push origin HEAD:backport/native-desktop-hook-proxy-release-3.0
+          git diff --no-index --stat tests/test_bounded_cli_hook_bridge.py "$RUNNER_TEMP/main-tests.py" || true
