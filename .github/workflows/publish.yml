@@ -170,7 +170,7 @@ jobs:
         run: >-
           uv run --no-project --with packaging==25.0 python
           release-tooling/scripts/sync_repo_version.py --repo-root source --version "$VERSION"
-      - name: Build Guard distribution
+      - name: Build Guard package (hol-guard)
         working-directory: source
         run: |
           cp pyproject.toml pyproject.toml.bak
@@ -188,7 +188,7 @@ jobs:
           PY
           uv run --no-sync python -m build --wheel --sdist --outdir "$GITHUB_WORKSPACE/dist"
           mv pyproject.toml.bak pyproject.toml
-      - name: Build scanner distribution
+      - name: Build scanner package (plugin-scanner)
         working-directory: source
         run: |
           cp pyproject.toml pyproject.toml.bak

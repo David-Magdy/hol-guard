@@ -241,6 +241,6 @@ def test_no_stable_main_publish_path_exists_on_release_branch() -> None:
 
 def test_plugin_scanner_distribution_is_built_from_release_3_1() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
-    assert "Build scanner distribution" in text
+    assert "Build scanner package (plugin-scanner)" in text
     assert 'name = "plugin-scanner"' in text
     assert "plugin_scanner-*" in text
