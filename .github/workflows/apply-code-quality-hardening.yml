@@ -95,7 +95,6 @@ jobs:
 
           import hashlib
           import json
-          import shutil
           import subprocess
           from pathlib import Path
 
@@ -152,8 +151,6 @@ jobs:
           )
           PY
 
-          git restore --source=HEAD --staged --worktree -- .github/workflows
-          git clean -f -- .github/workflows
           git diff --check
       - name: Compile changed Python
         run: |
@@ -170,6 +167,13 @@ jobs:
           PYTHONPATH=scripts/ci python scripts/ci/code_quality_audit.py \
             --root . \
             --baseline ci/code-quality-baseline.json
+      - name: Restore workflow tree for token-safe push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git restore --source=HEAD --staged --worktree -- .github/workflows
+          git clean -f -- .github/workflows
+          git diff --check
       - name: Commit finalized non-workflow tree
         shell: bash
         run: |
