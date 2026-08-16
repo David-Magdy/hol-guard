@@ -107,6 +107,7 @@ def _safe_path_operand(value: str) -> bool:
         value
         and not value.startswith("-")
         and (not value.startswith("~") or value.startswith("~/"))
+        and not value.startswith("~//")
         and re.fullmatch(r"[A-Za-z0-9._/~+-]+", value)
     )
 
