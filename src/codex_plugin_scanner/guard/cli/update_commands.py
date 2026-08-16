@@ -25,6 +25,7 @@ from urllib.parse import ParseResult, urlparse
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
+from ... import version as package_version
 from ..adapters.base import HarnessContext
 from ..adapters.codex import CodexHarnessAdapter, codex_native_hook_state
 from ..adapters.cursor_hooks import cursor_native_hook_state
@@ -1007,6 +1008,16 @@ def _expected_script_dir(installer_binary: str, installer: str) -> Path | None:
 
 
 def build_guard_install_surface_payload() -> dict[str, object]:
+    if _is_desktop_managed_runtime():
+        return {
+            "installer": "desktop",
+            "binary_diagnostics": {
+                "resolved_hol_guard": str(Path(sys.executable).resolve()),
+                "installer_binary": None,
+                "expected_script_dir": None,
+                "path_status": "bundled",
+            },
+        }
     installer = _installer_kind()
     return {
         "installer": installer,
@@ -1505,7 +1516,29 @@ def _current_version() -> str:
     try:
         return importlib.metadata.version("hol-guard")
     except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+        return package_version.__version__ if _is_frozen_runtime() else "unknown"
+
+
+def _is_frozen_runtime() -> bool:
+    return getattr(sys, "frozen", False) is True
+
+
+def _is_desktop_managed_runtime() -> bool:
+    return _is_frozen_runtime() and os.environ.get("HOL_GUARD_DESKTOP") == "1"
+
+
+def _runtime_package_path() -> Path:
+    return Path(__file__).resolve()
+
+
+def _runtime_installer_kind() -> str | None:
+    for parent in _runtime_package_path().parents:
+        normalized_parent = parent.as_posix().lower()
+        if "/pipx/venvs/" in normalized_parent and (parent / "pipx_metadata.json").is_file():
+            return "pipx"
+        if "/uv/tools/" in normalized_parent and (parent / "pyvenv.cfg").is_file():
+            return "uv"
+    return None
 
 
 def _installer_kind() -> str:
@@ -1517,7 +1550,7 @@ def _installer_kind() -> str:
         return "pipx"
     if "/pipx/venvs/" in normalized_prefix:
         return "pipx"
-    return "pip"
+    return _runtime_installer_kind() or "pip"
 
 
 def _should_upgrade_from_pypi(
@@ -2615,7 +2648,15 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
     blocked_reason: str | None = None
     trusted_failure_reason: str | None = None
     recovery_reinstall_available = False
-    installed_distribution: InstalledDistribution | None = None
+    installed_distribution = (
+        InstalledDistribution(
+            name="hol-guard",
+            version=_current_version(),
+            root=Path(sys.executable).resolve().parent,
+        )
+        if installer == "desktop"
+        else None
+    )
 
     if managed_state.status != "absent" and managed_policy is None:
         auto_updatable = False
@@ -2630,6 +2671,9 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
     ):
         auto_updatable = False
         blocked_reason = "An organization-configured package source is required."
+    elif installer == "desktop":
+        auto_updatable = False
+        blocked_reason = "Updates are managed by HOL Guard Desktop."
     else:
         try:
             installed_distribution = _status_installed_distribution(
@@ -2658,11 +2702,11 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
             network_policy=(managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()),
             include_alpha=include_alpha,
         )
-        if installed_distribution is not None
+        if installed_distribution is not None and installer != "desktop"
         else {
             "source": source_kind,
-            "status": "unavailable",
-            "current_version": None,
+            "status": "managed" if installer == "desktop" else "unavailable",
+            "current_version": current_version if installer == "desktop" else None,
             "latest_version": None,
             "update_available": None,
         }
