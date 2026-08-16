@@ -156,6 +156,8 @@ def test_project_metadata_declares_apache_license() -> None:
     pyproject_text = _read_repo_file("pyproject.toml")
     readme_text = _read_repo_file("README.md")
 
+    # The canonical Apache License 2.0 text is kept verbatim (no SPDX banner)
+    # so GitHub classifies the repository license instead of NOASSERTION.
     assert "Apache License" in license_text
     assert "Version 2.0, January 2004" in license_text
     pyproject_data = tomllib.loads(pyproject_text)
