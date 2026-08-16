@@ -259,17 +259,20 @@ function normalizeLocalCliList(value) {
     items,
     cloud: {
       sync_local_only: cloud.sync_local_only !== false,
-      summary: typeof cloud.summary === "string" ? cloud.summary : "These allows stay on this device. Guard Cloud can keep the same CLI trusted on your other devices."
+      summary: typeof cloud.summary === "string" ? cloud.summary : "Custom extensions stay on this device. Guard Cloud can keep the same extension on your other machines."
     }
   };
 }
 async function readJson(response) {
-  const payload = await response.json();
+  const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const record2 = isRecord(payload) ? payload : {};
     const code = typeof record2.error === "string" ? record2.error : "local_cli_request_failed";
-    const message = typeof record2.message === "string" ? record2.message : "Guard could not update this CLI allow-list.";
+    const message = typeof record2.message === "string" ? record2.message : "Guard could not update this custom extension.";
     throw new LocalCliApiError(code, message);
+  }
+  if (payload === null) {
+    throw new LocalCliApiError("local_cli_request_failed", "Guard could not update this custom extension.");
   }
   return payload;
 }
@@ -504,8 +507,8 @@ function LocalCliDetail(props) {
       };
       await previewLocalCliMutation(payload);
       await applyLocalCliMutation(payload);
-      setPending(null);
       await props.onRefresh();
+      setPending(null);
     } catch (caught) {
       setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not update this custom extension.");
     } finally {
@@ -533,6 +536,7 @@ function LocalCliDetail(props) {
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark/80", onClick: requestRemove, children: "Remove custom extension" })
       ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", onClick: requestAdd, children: "Add custom extension" }) })
     ] }),
+    error && !pending ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: error }) }) : null,
     pending ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       CustomExtensionReviewModal,
       {
@@ -3133,6 +3137,9 @@ function ProtectionCenterWorkspace() {
   }, []);
   const openAddCustom = reactExports.useCallback(() => setAddingCustom(true), []);
   const closeAddCustom = reactExports.useCallback(() => setAddingCustom(false), []);
+  const retryLocalClis = reactExports.useCallback(() => {
+    void localClis.load();
+  }, [localClis.load]);
   reactExports.useCallback((next) => {
     if (!canonicalSelected) return;
     const href = extensionDetailHref(canonicalSelected, next);
@@ -3233,8 +3240,28 @@ function ProtectionCenterWorkspace() {
       }
     }
   ) : null;
-  const selectedLocalCli = routeState.route.kind === "local-cli" ? localClis.data?.items.find((item) => item.cli_id === routeState.route.cliId) ?? null : null;
-  if (routeState.route.kind === "local-cli" && selectedLocalCli && localClis.data) {
+  if (routeState.route.kind === "local-cli") {
+    if (!localClis.data) {
+      if (localClis.error) {
+        return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mx-auto max-w-4xl", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-semibold text-red-950", children: "Custom extension unavailable" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { role: "alert", className: "mt-2 text-sm text-red-800", children: localClis.error }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: retryLocalClis, className: "mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white", children: "Try again" })
+        ] }) });
+      }
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid min-h-[60vh] place-items-center", "aria-busy": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowPath, { className: "size-7 animate-spin text-brand-blue motion-reduce:animate-none", "aria-label": "Loading custom extension" }) });
+    }
+    const selectedLocalCli = localClis.data.items.find((item) => item.cli_id === routeState.route.cliId) ?? null;
+    if (!selectedLocalCli) {
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mx-auto max-w-4xl", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "font-semibold text-amber-950", children: "Custom extension not found" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm text-amber-900", children: "This link does not match a CLI Guard has seen on this device." }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: closeExtension, className: "mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", children: "Back to Extensions" })
+        ] }) }),
+        authorityNotice
+      ] });
+    }
     return /* @__PURE__ */ jsxRuntimeExports.jsx(
       LocalCliDetail,
       {

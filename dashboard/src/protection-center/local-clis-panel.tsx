@@ -19,7 +19,6 @@ import {
   type LocalCliListResponse,
   type LocalCliState,
 } from "../local-cli-api";
-import { localCliHref } from "../local-cli-links";
 import { useModalDialog } from "../use-modal-dialog";
 import { useResolvedApprovalGate } from "../use-resolved-approval-gate";
 import { InlineError, ProtectionModuleRow } from "./components/protection-primitives";
@@ -163,8 +162,8 @@ export function LocalCliDetail(props: {
       };
       await previewLocalCliMutation(payload);
       await applyLocalCliMutation(payload);
-      setPending(null);
       await props.onRefresh();
+      setPending(null);
     } catch (caught) {
       setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not update this custom extension.");
     } finally {
@@ -211,6 +210,7 @@ export function LocalCliDetail(props: {
           )}
         </div>
       </header>
+      {error && !pending ? <div className="mt-4"><InlineError message={error} /></div> : null}
       {pending ? (
         <CustomExtensionReviewModal
           item={props.item}
@@ -300,8 +300,4 @@ export function useLocalCliCatalog() {
     void load();
   }, [load]);
   return { data, error, load };
-}
-
-export function openLocalCli(cliId: string): void {
-  window.history.pushState({}, "", localCliHref(cliId));
 }

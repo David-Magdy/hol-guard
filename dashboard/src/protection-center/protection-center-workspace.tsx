@@ -290,6 +290,9 @@ export function ProtectionCenterWorkspace() {
   }, []);
   const openAddCustom = useCallback(() => setAddingCustom(true), []);
   const closeAddCustom = useCallback(() => setAddingCustom(false), []);
+  const retryLocalClis = useCallback(() => {
+    void localClis.load();
+  }, [localClis.load]);
 
   const updateDetailState = useCallback((next: ExtensionDetailUrlState) => {
     if (!canonicalSelected) return;
@@ -404,10 +407,17 @@ export function ProtectionCenterWorkspace() {
     }}
   /> : null;
 
-  const selectedLocalCli = routeState.route.kind === "local-cli"
-    ? localClis.data?.items.find((item) => item.cli_id === routeState.route.cliId) ?? null
-    : null;
-  if (routeState.route.kind === "local-cli" && selectedLocalCli && localClis.data) {
+  if (routeState.route.kind === "local-cli") {
+    if (!localClis.data) {
+      if (localClis.error) {
+        return <div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`}><h1 className="text-xl font-semibold text-red-950">Custom extension unavailable</h1><p role="alert" className="mt-2 text-sm text-red-800">{localClis.error}</p><button type="button" onClick={retryLocalClis} className="mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white">Try again</button></div></div>;
+      }
+      return <div className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" aria-label="Loading custom extension" /></div>;
+    }
+    const selectedLocalCli = localClis.data.items.find((item) => item.cli_id === routeState.route.cliId) ?? null;
+    if (!selectedLocalCli) {
+      return <><div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`}><h1 className="font-semibold text-amber-950">Custom extension not found</h1><p className="mt-2 text-sm text-amber-900">This link does not match a CLI Guard has seen on this device.</p><button type="button" onClick={closeExtension} className="mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Back to Extensions</button></div></div>{authorityNotice}</>;
+    }
     return (
       <LocalCliDetail
         item={selectedLocalCli}

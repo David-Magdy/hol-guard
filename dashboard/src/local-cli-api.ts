@@ -125,18 +125,23 @@ export function normalizeLocalCliList(value: unknown): LocalCliListResponse {
       sync_local_only: cloud.sync_local_only !== false,
       summary: typeof cloud.summary === "string"
         ? cloud.summary
-        : "These allows stay on this device. Guard Cloud can keep the same CLI trusted on your other devices.",
+        : "Custom extensions stay on this device. Guard Cloud can keep the same extension on your other machines.",
     },
   };
 }
 
 async function readJson(response: Response): Promise<unknown> {
-  const payload = await response.json() as unknown;
+  const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const record = isRecord(payload) ? payload : {};
     const code = typeof record.error === "string" ? record.error : "local_cli_request_failed";
-    const message = typeof record.message === "string" ? record.message : "Guard could not update this CLI allow-list.";
+    const message = typeof record.message === "string"
+      ? record.message
+      : "Guard could not update this custom extension.";
     throw new LocalCliApiError(code, message);
+  }
+  if (payload === null) {
+    throw new LocalCliApiError("local_cli_request_failed", "Guard could not update this custom extension.");
   }
   return payload;
 }

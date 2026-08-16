@@ -46,3 +46,30 @@ assert.equal(parseProtectionRoute("/extensions/command.git").kind, "detail");
 assert.equal(localCliHref("local-cli.cwv-py-abcdef12"), "/extensions/local-cli/local-cli.cwv-py-abcdef12");
 assert.equal(addedCustomExtensions(list.items).length, 1);
 assert.equal(suggestedCustomExtensions(list.items).length, 0);
+
+const blockedItem = normalizeLocalCliItem({
+  ...item,
+  cli_id: "local-cli.blocked-tool-abcdef12",
+  name: "blocked-tool",
+  state: "blocked",
+});
+const unsetItem = normalizeLocalCliItem({
+  ...item,
+  cli_id: "local-cli.unset-tool-abcdef12",
+  name: "unset-tool",
+  state: "unset",
+  grant_revision: null,
+});
+const mixed = [item, blockedItem, unsetItem];
+assert.deepEqual(addedCustomExtensions(mixed).map((entry) => entry.state), ["allowed", "blocked"]);
+assert.deepEqual(suggestedCustomExtensions(mixed).map((entry) => entry.state), ["unset"]);
+
+const fallbackCloud = normalizeLocalCliList({
+  schema_version: "guard.daemon.local-clis.v1",
+  revision: 1,
+  items: [],
+});
+assert.equal(
+  fallbackCloud.cloud.summary,
+  "Custom extensions stay on this device. Guard Cloud can keep the same extension on your other machines.",
+);

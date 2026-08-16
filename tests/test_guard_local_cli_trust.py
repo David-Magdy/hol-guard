@@ -69,6 +69,31 @@ def test_grant_does_not_override_block(tmp_path: Path) -> None:
     )
 
 
+def test_blocked_grant_applies_to_review(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    store = GuardStore(home)
+    script = tmp_path / "cwv.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+    identity = identify_unlisted_cli(f"python3 {script}", cwd=tmp_path, home_dir=tmp_path)
+    assert identity is not None
+    store.upsert_local_cli_grant(
+        identity=identity,
+        state="blocked",
+        expected_revision=0,
+        updated_at=utc_now(),
+    )
+    matched = matching_local_cli_grant(
+        store=store,
+        command=f"python3 {script}",
+        cwd=tmp_path,
+        home_dir=tmp_path,
+        current_action="review",
+    )
+    assert matched is not None
+    assert matched[1] == "blocked"
+
+
 def test_list_merges_observation_and_grant(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()

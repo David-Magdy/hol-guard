@@ -8,7 +8,7 @@ On the Extensions page, choose **Add custom extension**. Guard lists CLIs it has
 
 A custom extension is a this-device setting. It does not require Guard Cloud and does not sync to other machines.
 
-The extension binds to the tool's verified file identity. Changing the binary or script means you review it again. Compound commands, wrappers, redirects, and environment overrides are not covered. Built-in destructive floors still apply.
+The extension binds to the tool's verified file identity. If that file changes, the previous grant no longer matches and those commands go back to Guard's normal review path. Compound commands, wrappers, redirects, and environment overrides are not covered. An allow grant does not override Guard's built-in blocks for destructive or wrapped commands.
 
 Interpreters themselves are never added as a whole. `python3 <skill-root>/scripts/cwv.py --by url` becomes a `cwv.py` custom extension, not every Python command.
 

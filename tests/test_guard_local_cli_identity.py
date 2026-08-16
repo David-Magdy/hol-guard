@@ -72,3 +72,4 @@ def test_standalone_binary_is_unlisted(tmp_path: Path) -> None:
     assert identity is not None
     assert identity.kind == "executable"
     assert identity.name == "internal-deploy"
+    assert identity.example_label == "internal-deploy"
