@@ -282,7 +282,7 @@ export function ShellSidebar(props: {
                 {props.queuedCount > 0 ? (
                   <a
                     href={guardAwareHref("/inbox")}
-                    className="block text-[11px] font-medium leading-relaxed text-brand-blue underline underline-offset-2 hover:no-underline"
+                    className="block text-[11px] font-medium leading-relaxed text-brand-blue guard-quiet-link"
                   >
                     {props.queuedCount} local {props.queuedCount === 1 ? "action needs" : "actions need"} a Guard decision. Open Inbox to review.
                   </a>
