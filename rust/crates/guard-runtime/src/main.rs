@@ -329,7 +329,7 @@ fn encode_response<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
     let encoded =
         serde_json::to_vec(value).map_err(|_| "native_response_encode_failed".to_owned())?;
     if encoded.len() > MAX_NATIVE_RESPONSE_BYTES {
-        return Err("native_response_too_large".into());
+        return Err("native_response_too_large".to_owned());
     }
     Ok(encoded)
 }
@@ -641,7 +641,12 @@ fn serve(socket_path: &str) -> Result<(), String> {
     let parent_alive = resident_parent_liveness()?;
     while parent_alive.load(Ordering::Acquire) {
         match listener.accept() {
-            Ok((stream, _address)) => admit_connection(&sender, Box::new(stream))?,
+            Ok((stream, _address)) => {
+                if stream.set_nonblocking(false).is_err() {
+                    continue;
+                }
+                admit_connection(&sender, Box::new(stream))?
+            }
             Err(error)
                 if matches!(
                     error.kind(),
