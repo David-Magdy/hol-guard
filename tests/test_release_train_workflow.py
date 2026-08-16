@@ -155,6 +155,8 @@ def test_alpha_tag_is_bound_to_source_sha() -> None:
         if step.get("name") == "Reserve version for source commit"
     )
     assert '-f sha="$SOURCE_SHA"' in run
+    assert "git/matching-refs/tags/${tag}" in run
+    assert "existing=$(exact_tag_sha)" in run
     assert '"$existing" != "$SOURCE_SHA"' in run
 
 
