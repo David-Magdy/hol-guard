@@ -289,21 +289,17 @@ def _validated_frozen_cli_args(
     guard_home: Path,
     harness: str,
 ) -> tuple[str, ...] | None:
-    if len(cli_args) < 6 or tuple(cli_args[:3]) != ("guard", "hook", "--guard-home"):
+    expected_prefix = (
+        "guard",
+        "hook",
+        "--guard-home",
+        str(guard_home),
+        "--harness",
+        harness,
+    )
+    if tuple(cli_args[: len(expected_prefix)]) != expected_prefix:
         return None
-    supplied_guard_home_value = Path(cli_args[3])
-    if not supplied_guard_home_value.is_absolute() or not guard_home.is_absolute():
-        return None
-    try:
-        supplied_guard_home = supplied_guard_home_value.resolve(strict=False)
-        expected_guard_home = guard_home.resolve(strict=False)
-    except (OSError, RuntimeError):
-        return None
-    if supplied_guard_home != expected_guard_home:
-        return None
-    if tuple(cli_args[4:6]) != ("--harness", harness):
-        return None
-    tail = cli_args[6:]
+    tail = cli_args[len(expected_prefix) :]
     json_output = bool(tail and tail[-1] == "--json")
     if json_output:
         tail = tail[:-1]
@@ -317,14 +313,7 @@ def _validated_frozen_cli_args(
         if not Path(value).is_absolute():
             return None
         seen_flags.add(flag)
-    command: tuple[str, ...] = (
-        "hook",
-        "--guard-home",
-        str(expected_guard_home),
-        "--harness",
-        harness,
-        *tail,
-    )
+    command = ("hook", *cli_args[2 : len(cli_args) - int(json_output)])
     if json_output:
         command = (*command, "--json")
     return command
@@ -680,25 +669,7 @@ def run_bounded_cli_hook(config: Mapping[str, object], *, input_text: str) -> in
         return _emit_failure(harness=harness, input_text=input_text)
     package_root = Path(package_root_value)
     guard_home = Path(guard_home_value)
-    runtime_frozen = bool(getattr(sys, "frozen", False))
-    if runtime_frozen:
-        direct_cli_args = _validated_frozen_cli_args(
-            cli_args,
-            guard_home=guard_home,
-            harness=harness,
-        )
-        if direct_cli_args is None:
-            return _emit_failure(harness=harness, input_text=input_text)
-        command = (sys.executable, *direct_cli_args)
-    elif frozen_launcher:
-        return _emit_failure(harness=harness, input_text=input_text)
-    else:
-        command = isolated_guard_cli_command(
-            python_executable,
-            package_root,
-            cli_args,
-        )
-    # Fast path: serve an already-validated hook through the running daemon (~50ms)
+    # Fast path: serve the hook from the already-running daemon (~50ms)
     # instead of paying a fresh interpreter + full CLI import (~1s).
     daemon_result = _try_daemon_hook(
         guard_home=guard_home,
@@ -713,6 +684,21 @@ def run_bounded_cli_hook(config: Mapping[str, object], *, input_text: str) -> in
         if daemon_stderr:
             print(daemon_stderr, file=sys.stderr)
         return daemon_exit
+    if frozen_launcher:
+        direct_cli_args = _validated_frozen_cli_args(
+            cli_args,
+            guard_home=guard_home,
+            harness=harness,
+        )
+        if direct_cli_args is None:
+            return _emit_failure(harness=harness, input_text=input_text)
+        command = (sys.executable, *direct_cli_args)
+    else:
+        command = isolated_guard_cli_command(
+            python_executable,
+            package_root,
+            cli_args,
+        )
     result = run_isolated_hook_process(
         command,
         input_text=input_text,
