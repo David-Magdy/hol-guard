@@ -1,0 +1,12 @@
+Would reformat: src/codex_plugin_scanner/assurance/archive_scan.py
+Would reformat: src/codex_plugin_scanner/assurance/dependency_scan.py
+Would reformat: src/codex_plugin_scanner/assurance/inventory.py
+Would reformat: src/codex_plugin_scanner/assurance/orchestrator.py
+Would reformat: src/codex_plugin_scanner/assurance/policy.py
+Would reformat: src/codex_plugin_scanner/assurance/provenance.py
+Would reformat: src/codex_plugin_scanner/assurance/surface_scan.py
+Would reformat: src/codex_plugin_scanner/assurance/upload.py
+Would reformat: tests/test_assurance_dependencies.py
+Would reformat: tests/test_assurance_integration.py
+Would reformat: tests/test_assurance_security_vectors.py
+11 files would be reformatted, 14 files already formatted

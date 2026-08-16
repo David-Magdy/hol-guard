@@ -1,0 +1,13 @@
+integration-markers	1
+uv-lock	0
+uv-sync	0
+cargo-fmt	1
+cargo-clippy	101
+cargo-test	101
+cargo-build	101
+compile	0
+ruff	1
+format	1
+basedpyright	1
+pytest	4
+wheel	0

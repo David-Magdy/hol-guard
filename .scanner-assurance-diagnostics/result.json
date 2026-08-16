@@ -1,0 +1,58 @@
+{
+  "checks": [
+    {
+      "check": "integration-markers",
+      "status": 1
+    },
+    {
+      "check": "uv-lock",
+      "status": 0
+    },
+    {
+      "check": "uv-sync",
+      "status": 0
+    },
+    {
+      "check": "cargo-fmt",
+      "status": 1
+    },
+    {
+      "check": "cargo-clippy",
+      "status": 101
+    },
+    {
+      "check": "cargo-test",
+      "status": 101
+    },
+    {
+      "check": "cargo-build",
+      "status": 101
+    },
+    {
+      "check": "compile",
+      "status": 0
+    },
+    {
+      "check": "ruff",
+      "status": 1
+    },
+    {
+      "check": "format",
+      "status": 1
+    },
+    {
+      "check": "basedpyright",
+      "status": 1
+    },
+    {
+      "check": "pytest",
+      "status": 4
+    },
+    {
+      "check": "wheel",
+      "status": 0
+    }
+  ],
+  "schema_version": "hol-guard.scanner-assurance-validation.v1",
+  "success": false
+}

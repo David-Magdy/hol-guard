@@ -1,0 +1,94 @@
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/archive_scan.py:666:24 - error: Cannot access attribute "read" for class "object"
+  Attribute "read" is unknown (reportAttributeAccessIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/archive_scan.py,line=666,col=24::Cannot access attribute "read" for class "object"%0A  Attribute "read" is unknown (reportAttributeAccessIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/dependency_scan.py:662:73 - error: Argument of type "object" cannot be assigned to parameter "hdrs" of type "Message[str, str]" in function "__init__"
+  "object" is not assignable to "Message[str, str]" (reportArgumentType)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/dependency_scan.py,line=662,col=73::Argument of type "object" cannot be assigned to parameter "hdrs" of type "Message[str, str]" in function "__init__"%0A  "object" is not assignable to "Message[str, str]" (reportArgumentType)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/dependency_scan.py:662:82 - error: Argument of type "object" cannot be assigned to parameter "fp" of type "IO[bytes] | None" in function "__init__"
+  Type "object" is not assignable to type "IO[bytes] | None"
+    "object" is not assignable to "IO[bytes]"
+    "object" is not assignable to "None" (reportArgumentType)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/dependency_scan.py,line=662,col=82::Argument of type "object" cannot be assigned to parameter "fp" of type "IO[bytes] | None" in function "__init__"%0A  Type "object" is not assignable to type "IO[bytes] | None"%0A    "object" is not assignable to "IO[bytes]"%0A    "object" is not assignable to "None" (reportArgumentType)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/evidence.py:111:8 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/evidence.py,line=111,col=8::Object of type "None" is not subscriptable (reportOptionalSubscript)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/evidence.py:113:8 - error: Object of type "None" is not subscriptable (reportOptionalSubscript)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/evidence.py,line=113,col=8::Object of type "None" is not subscriptable (reportOptionalSubscript)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/native_scan.py:239:17 - error: No overloads for "__init__" match the provided arguments (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/native_scan.py,line=239,col=17::No overloads for "__init__" match the provided arguments (reportCallIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/native_scan.py:239:17 - error: Argument of type "dict[bytes, bytes]" cannot be assigned to parameter "summary" of type "dict[str, Any]" in function "__init__"
+  "dict[bytes, bytes]" is not assignable to "dict[str, Any]"
+    Type parameter "_KT@dict" is invariant, but "bytes" is not the same as "str" (reportArgumentType)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/native_scan.py,line=239,col=17::Argument of type "dict[bytes, bytes]" cannot be assigned to parameter "summary" of type "dict[str, Any]" in function "__init__"%0A  "dict[bytes, bytes]" is not assignable to "dict[str, Any]"%0A    Type parameter "_KT@dict" is invariant, but "bytes" is not the same as "str" (reportArgumentType)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/native_scan.py:239:22 - error: Argument of type "Unknown | dict[Unknown, Unknown] | None" cannot be assigned to parameter "iterable" of type "Iterable[list[bytes]]" in function "__init__"
+  Type "Unknown | dict[Unknown, Unknown] | None" is not assignable to type "Iterable[list[bytes]]"
+    "None" is incompatible with protocol "Iterable[list[bytes]]"
+      "__iter__" is not present (reportArgumentType)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/native_scan.py,line=239,col=22::Argument of type "Unknown | dict[Unknown, Unknown] | None" cannot be assigned to parameter "iterable" of type "Iterable[list[bytes]]" in function "__init__"%0A  Type "Unknown | dict[Unknown, Unknown] | None" is not assignable to type "Iterable[list[bytes]]"%0A    "None" is incompatible with protocol "Iterable[list[bytes]]"%0A      "__iter__" is not present (reportArgumentType)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:45:37 - error: "generate" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=45,col=37::"generate" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:48:32 - error: "Encoding" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=48,col=32::"Encoding" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:49:30 - error: "PrivateFormat" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=49,col=30::"PrivateFormat" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:50:44 - error: "NoEncryption" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=50,col=44::"NoEncryption" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:53:32 - error: "Encoding" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=53,col=32::"Encoding" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:54:30 - error: "PublicFormat" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=54,col=30::"PublicFormat" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:96:33 - error: "load_pem_private_key" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=96,col=33::"load_pem_private_key" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:97:36 - error: Argument of type "type[Ed25519PrivateKey] | None" cannot be assigned to parameter "class_or_tuple" of type "_ClassInfo" in function "isinstance"
+  Type "type[Ed25519PrivateKey] | None" is not assignable to type "_ClassInfo"
+    Type "None" is not assignable to type "_ClassInfo"
+      "None" is not assignable to "type"
+      "None" is not assignable to "UnionType"
+      "None" is not assignable to "tuple[_ClassInfo, ...]" (reportArgumentType)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=97,col=36::Argument of type "type[Ed25519PrivateKey] | None" cannot be assigned to parameter "class_or_tuple" of type "_ClassInfo" in function "isinstance"%0A  Type "type[Ed25519PrivateKey] | None" is not assignable to type "_ClassInfo"%0A    Type "None" is not assignable to type "_ClassInfo"%0A      "None" is not assignable to "type"%0A      "None" is not assignable to "UnionType"%0A      "None" is not assignable to "tuple[_ClassInfo, ...]" (reportArgumentType)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:97:36 - error: Second argument to "isinstance" must be a class or tuple of classes
+  None cannot be used for instance or class checks (reportArgumentType)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=97,col=36::Second argument to "isinstance" must be a class or tuple of classes%0A  None cannot be used for instance or class checks (reportArgumentType)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:102:17 - error: Arguments missing for parameters "padding", "algorithm" (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=102,col=17::Arguments missing for parameters "padding", "algorithm" (reportCallIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:102:17 - error: Argument missing for parameter "algorithm" (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=102,col=17::Argument missing for parameter "algorithm" (reportCallIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:102:17 - error: Argument missing for parameter "signature_algorithm" (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=102,col=17::Argument missing for parameter "signature_algorithm" (reportCallIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:102:29 - error: Cannot access attribute "sign" for class "_DHPrivateKey"
+  Attribute "sign" is unknown (reportAttributeAccessIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=102,col=29::Cannot access attribute "sign" for class "_DHPrivateKey"%0A  Attribute "sign" is unknown (reportAttributeAccessIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:102:29 - error: Cannot access attribute "sign" for class "MLKEM768PrivateKey"
+  Attribute "sign" is unknown (reportAttributeAccessIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=102,col=29::Cannot access attribute "sign" for class "MLKEM768PrivateKey"%0A  Attribute "sign" is unknown (reportAttributeAccessIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:102:29 - error: Cannot access attribute "sign" for class "MLKEM1024PrivateKey"
+  Attribute "sign" is unknown (reportAttributeAccessIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=102,col=29::Cannot access attribute "sign" for class "MLKEM1024PrivateKey"%0A  Attribute "sign" is unknown (reportAttributeAccessIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:102:29 - error: Cannot access attribute "sign" for class "X25519PrivateKey"
+  Attribute "sign" is unknown (reportAttributeAccessIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=102,col=29::Cannot access attribute "sign" for class "X25519PrivateKey"%0A  Attribute "sign" is unknown (reportAttributeAccessIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:102:29 - error: Cannot access attribute "sign" for class "X448PrivateKey"
+  Attribute "sign" is unknown (reportAttributeAccessIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=102,col=29::Cannot access attribute "sign" for class "X448PrivateKey"%0A  Attribute "sign" is unknown (reportAttributeAccessIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:140:33 - error: "load_pem_public_key" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=140,col=33::"load_pem_public_key" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:143:28 - error: Argument of type "type[Ed25519PublicKey] | None" cannot be assigned to parameter "class_or_tuple" of type "_ClassInfo" in function "isinstance"
+  Type "type[Ed25519PublicKey] | None" is not assignable to type "_ClassInfo"
+    Type "None" is not assignable to type "_ClassInfo"
+      "None" is not assignable to "type"
+      "None" is not assignable to "UnionType"
+      "None" is not assignable to "tuple[_ClassInfo, ...]" (reportArgumentType)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=143,col=28::Argument of type "type[Ed25519PublicKey] | None" cannot be assigned to parameter "class_or_tuple" of type "_ClassInfo" in function "isinstance"%0A  Type "type[Ed25519PublicKey] | None" is not assignable to type "_ClassInfo"%0A    Type "None" is not assignable to type "_ClassInfo"%0A      "None" is not assignable to "type"%0A      "None" is not assignable to "UnionType"%0A      "None" is not assignable to "tuple[_ClassInfo, ...]" (reportArgumentType)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:143:28 - error: Second argument to "isinstance" must be a class or tuple of classes
+  None cannot be used for instance or class checks (reportArgumentType)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=143,col=28::Second argument to "isinstance" must be a class or tuple of classes%0A  None cannot be used for instance or class checks (reportArgumentType)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:169:32 - error: "Encoding" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=169,col=32::"Encoding" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py:170:30 - error: "PublicFormat" is not a known attribute of "None" (reportOptionalMemberAccess)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/provenance.py,line=170,col=30::"PublicFormat" is not a known attribute of "None" (reportOptionalMemberAccess)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/upload.py:127:51 - error: No parameter named "type" (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/upload.py,line=127,col=51::No parameter named "type" (reportCallIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/upload.py:162:34 - error: Cannot access attribute "_context" for class "_PinnedHTTPSConnection*"
+  Attribute "_context" is unknown (reportAttributeAccessIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/assurance/upload.py,line=162,col=34::Cannot access attribute "_context" for class "_PinnedHTTPSConnection*"%0A  Attribute "_context" is unknown (reportAttributeAccessIssue)
+::error::32 errors
+32 errors, 728 warnings, 0 notes
