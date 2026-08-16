@@ -103,7 +103,7 @@ def test_frozen_cline_plugin_persists_signed_executable_command(tmp_path: Path, 
     manifest = install_cline_plugin(context)
     source = Path(str(manifest["managed_plugin_path"])).read_text(encoding="utf-8")
 
-    assert f'const GUARD_CLI = ["{executable}", "hook"];' in source
+    assert f"const GUARD_CLI = {json.dumps([str(executable), 'hook'])};" in source
     identity = manifest["guard_cli_identity"]
     assert isinstance(identity, dict)
     assert identity["runtime"] == "frozen-core"
