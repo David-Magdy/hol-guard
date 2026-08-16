@@ -74,9 +74,10 @@ def _trusted_desktop_hook_proxy(python_executable: str) -> str | None:
         return None
     if not os.access(resolved, os.X_OK):
         return None
-    if os.name != "nt":
-        if metadata.st_uid not in {os.getuid(), 0} or stat.S_IMODE(metadata.st_mode) & 0o022:
-            return None
+    if os.name != "nt" and (
+        metadata.st_uid not in {os.getuid(), 0} or stat.S_IMODE(metadata.st_mode) & 0o022
+    ):
+        return None
 
     core = Path(python_executable)
     if sys.platform == "darwin":
@@ -98,13 +99,15 @@ def _trusted_desktop_hook_proxy(python_executable: str) -> str | None:
 
     if sys.platform.startswith("linux"):
         appimage = os.environ.get("APPIMAGE")
-        if not appimage:
-            return None
-        try:
-            trusted_appimage = Path(appimage).resolve(strict=True)
-        except OSError:
-            return None
-        return str(resolved) if resolved == trusted_appimage else None
+        if appimage:
+            try:
+                trusted_appimage = Path(appimage).resolve(strict=True)
+            except OSError:
+                return None
+            return str(resolved) if resolved == trusted_appimage else None
+        if os.environ.get("HOL_GUARD_DESKTOP_E2E_ALLOW_ADHOC_SIGNATURE") == "1":
+            return str(resolved)
+        return None
     return None
 
 
