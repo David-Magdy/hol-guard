@@ -1,0 +1,90 @@
+name: Apply release 3 code-quality hardening
+
+on:
+  push:
+    branches:
+      - refactor/release-3-code-quality-hardening
+    paths:
+      - .github/workflows/apply-code-quality-hardening.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-release-3-code-quality-hardening
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: >-
+      github.repository == 'hashgraph-online/hol-guard' &&
+      github.ref == 'refs/heads/refactor/release-3-code-quality-hardening'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: refactor/release-3-code-quality-hardening
+          fetch-depth: 0
+      - name: Apply reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/code-quality-payload/part-* > /tmp/code-quality.patch.xz.b64
+          test "$(wc -c < /tmp/code-quality.patch.xz.b64)" -eq 75452
+          echo "a2bbdda7fb0c6b41166952069c2636ac564b74bb37bab2dce798a180ba17968b  /tmp/code-quality.patch.xz.b64" | sha256sum --check --strict
+          base64 --decode /tmp/code-quality.patch.xz.b64 > /tmp/code-quality.patch.xz
+          echo "7429c0d0b9df248b43a863ea699e3f62af754e3f0d9379be221443b95ecfe34f  /tmp/code-quality.patch.xz" | sha256sum --check --strict
+          xz --decompress --stdout /tmp/code-quality.patch.xz > /tmp/code-quality.patch
+          echo "45c3c57dbf6b5040607fb9f7f884583a8a24cb5a441d3782b9ca4714ec5f7aaf  /tmp/code-quality.patch" | sha256sum --check --strict
+          git apply --check /tmp/code-quality.patch
+          git apply /tmp/code-quality.patch
+          rm -f \
+            .github/rust-required-gzip-b64/part-000 \
+            .github/rust-required-gzip-b64/segment-001-005 \
+            .github/rust-required-gzip-b64/segment-006-010 \
+            .github/rust-required-patch/part-00 \
+            .github/workflows/code-quality-audit-export.yml \
+            .github/workflows/daemon-edge-cleanup-shepherd.yml \
+            .github/workflows/daemon-edge-final-tree-shepherd.yml \
+            .github/workflows/daemon-edge-source-fix-shepherd.yml \
+            .github/workflows/tmp-apply-rust-daemon-edge-hardening.yml \
+            .github/workflows/tmp-coordinate-rust-daemon-edge-hardening-v2.yml \
+            .github/workflows/tmp-coordinate-rust-daemon-edge-hardening.yml \
+            .github/workflows/tmp-expedite-rust-daemon-edge-hardening.yml \
+            .github/workflows/tmp-finalize-rust-daemon-edge-hardening-v2.yml \
+            .github/workflows/tmp-finalize-rust-daemon-edge-hardening.yml \
+            .github/workflows/tmp-import-pr2372-regression-assets-v2.yml \
+            .github/workflows/tmp-import-pr2372-regression-assets.yml \
+            .github/workflows/tmp-recover-rust-daemon-edge-hardening-v2.yml \
+            .github/workflows/tmp-recover-rust-daemon-edge-hardening.yml \
+            .github/workflows/tmp-rust-required-latest-source.yml \
+            .github/workflows/tmp-shepherd-rust-daemon-edge-hardening.yml \
+            scripts/ci/apply_daemon_edge_hardening.py
+          rmdir .github/rust-required-gzip-b64 .github/rust-required-patch 2>/dev/null || true
+          rm -rf .github/code-quality-payload
+          rm -f .github/workflows/apply-code-quality-hardening.yml
+          git diff --check
+      - name: Compile changed Python
+        run: |
+          python -m compileall -q src scripts/ci \
+            tests/test_code_quality_audit.py \
+            tests/test_guard_durable_io.py \
+            tests/test_guard_managed_install_context.py \
+            tests/test_guard_node_semver.py \
+            tests/test_guard_private_file_io.py
+      - name: Verify audit baseline
+        run: |
+          PYTHONPATH=scripts/ci python scripts/ci/code_quality_audit.py \
+            --root . \
+            --baseline ci/code-quality-baseline.json
+      - name: Commit finalized tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "refactor: harden release 3 code quality"
+          git push origin HEAD:refactor/release-3-code-quality-hardening
