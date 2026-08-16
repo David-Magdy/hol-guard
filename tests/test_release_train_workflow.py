@@ -222,25 +222,38 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
         assert any(step.get("with", {}).get("name") == "distributions-native" for step in steps)
         assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in steps)
         assert any(step.get("run") == "sha256sum --check distribution-sha256-native.txt" for step in steps)
+
+    for job_name in ("publish-alpha-testpypi", "publish-main-testpypi"):
+        steps = jobs[job_name]["steps"]
         assert any(
             step.get("name") == "Keep only the Guard release distribution" and "plugin_scanner" in step.get("run", "")
             for step in steps
         )
-        publish_step = next(step for step in steps if str(step.get("uses", "")).startswith("pypa/"))
-        assert publish_step["with"]["packages-dir"] == "upload-dist/"
     release_alpha_steps = jobs["release-alpha"]["steps"]
     assert any(step.get("with", {}).get("name") == "distributions-native" for step in release_alpha_steps)
     assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in release_alpha_steps)
     assert any(
         "sha256sum --check distribution-sha256-native.txt" in step.get("run", "") for step in release_alpha_steps
     )
-    for job_name in ("publish-main-testpypi", "publish-main-pypi"):
+    for job_name in ("publish-main-testpypi",):
         steps = jobs[job_name]["steps"]
         assert any(step.get("run") == "sha256sum --check distribution-sha256.txt" for step in steps)
         assert any(
             step.get("name") == "Keep only the Guard release distribution" and "plugin_scanner" in step.get("run", "")
             for step in steps
         )
+
+    public_hashes = {
+        "publish-alpha-pypi": "sha256sum --check distribution-sha256-native.txt",
+        "publish-main-pypi": "sha256sum --check distribution-sha256.txt",
+    }
+    for job_name in ("publish-alpha-pypi", "publish-main-pypi"):
+        steps = jobs[job_name]["steps"]
+        assert any(step.get("run") == public_hashes[job_name] for step in steps)
+        prepare_step = next(step for step in steps if step.get("name") == "Prepare project-specific distributions")
+        assert "dist-hol-guard" in prepare_step["run"]
+        assert "dist-plugin-scanner" in prepare_step["run"]
+        assert not any(step.get("name") == "Keep only the Guard release distribution" for step in steps)
 
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "skip-existing" not in workflow_text and "pytest" not in workflow_text
@@ -375,35 +388,44 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert 'for registry in ("pypi.org", "test.pypi.org")' not in workflow_text
 
-    alpha_steps = jobs["publish-alpha-pypi"]["steps"]
-    alpha_plan = next(step for step in alpha_steps if step.get("name") == "Plan PyPI release upload")
-    alpha_publish = next(step for step in alpha_steps if str(step.get("uses", "")).startswith("pypa/"))
-    alpha_cleanup = next(step for step in alpha_steps if step.get("name") == "Remove generated upload attestations")
-    alpha_verify = next(step for step in alpha_steps if step.get("name") == "Download and verify exact PyPI artifacts")
-    assert "plan-upload --registry pypi" in alpha_plan["run"]
-    assert '--source-sha "$SOURCE_SHA"' in alpha_plan["run"]
-    assert alpha_publish["if"] == "steps.pypi.outputs.upload == 'true'"
-    assert alpha_publish["with"]["packages-dir"] == "upload-dist/"
-    assert alpha_cleanup["run"] == "rm -f dist/*.publish.attestation upload-dist/*.publish.attestation"
-    assert alpha_steps.index(alpha_publish) < alpha_steps.index(alpha_cleanup) < alpha_steps.index(alpha_verify)
-    assert "--download-dir verified-pypi" in alpha_verify["run"]
-    assert "verify-published --registry pypi" in alpha_verify["run"]
-    assert 'status" == "exact"' in alpha_verify["run"]
-    assert 'status" != "absent"' in alpha_verify["run"]
-    assert "for attempt in {1..60}" in alpha_verify["run"]
-    assert 'attempt" == "60"' in alpha_verify["run"]
-    assert '== "hol-guard $VERSION"' in alpha_verify["run"]
+    for job_name in ("publish-alpha-pypi", "publish-main-pypi"):
+        steps = jobs[job_name]["steps"]
+        inspect_step = next(step for step in steps if step.get("name") == "Inspect PyPI release state")
+        publish_steps = [step for step in steps if str(step.get("uses", "")).startswith("pypa/")]
+        cleanup_step = next(step for step in steps if step.get("name") == "Remove generated upload attestations")
+        verify_step = next(step for step in steps if step.get("name") == "Download and verify exact PyPI artifacts")
+        assert "--project hol-guard" in inspect_step["run"]
+        assert "--project plugin-scanner" in inspect_step["run"]
+        assert len(publish_steps) == 2
+        assert {step["if"] for step in publish_steps} == {
+            "steps.pypi.outputs.hol_guard_upload == 'true'",
+            "steps.pypi.outputs.plugin_scanner_upload == 'true'",
+        }
+        assert {step["with"]["packages-dir"] for step in publish_steps} == {
+            "dist-hol-guard/",
+            "dist-plugin-scanner/",
+        }
+        assert "dist-hol-guard/*.publish.attestation" in cleanup_step["run"]
+        assert "dist-plugin-scanner/*.publish.attestation" in cleanup_step["run"]
+        assert all(steps.index(step) < steps.index(cleanup_step) for step in publish_steps)
+        assert steps.index(cleanup_step) < steps.index(verify_step)
+        assert "--download-dir verified-pypi" in verify_step["run"]
+        assert "--project hol-guard" in verify_step["run"]
+        assert "--project plugin-scanner" in verify_step["run"]
+        assert 'guard_status" == "exact"' in verify_step["run"]
+        assert 'scanner_status" == "exact"' in verify_step["run"]
+        assert "for attempt in {1..60}" in verify_step["run"]
+        assert 'attempt" == "60"' in verify_step["run"]
+        assert '== "hol-guard $VERSION"' in verify_step["run"]
+        assert '== "plugin-scanner $VERSION"' in verify_step["run"]
 
-    main_steps = jobs["publish-main-pypi"]["steps"]
-    main_inspect = next(step for step in main_steps if step.get("name") == "Inspect PyPI release state")
-    main_publish = next(step for step in main_steps if str(step.get("uses", "")).startswith("pypa/"))
-    main_cleanup = next(step for step in main_steps if step.get("name") == "Remove generated upload attestations")
-    main_verify = next(step for step in main_steps if step.get("name") == "Download and verify exact PyPI artifacts")
-    assert "verify-release --registry pypi" in main_inspect["run"]
-    assert main_publish["if"] == "steps.pypi.outputs.upload == 'true'"
-    assert main_cleanup["run"] == "rm -f dist/*.publish.attestation"
-    assert main_steps.index(main_publish) < main_steps.index(main_cleanup) < main_steps.index(main_verify)
-    assert "--download-dir verified-pypi" in main_verify["run"]
+    alpha_verify = next(
+        step
+        for step in jobs["publish-alpha-pypi"]["steps"]
+        if step.get("name") == "Download and verify exact PyPI artifacts"
+    )
+    assert "verify-published --registry pypi" in alpha_verify["run"]
+    assert '--source-sha "$SOURCE_SHA"' in alpha_verify["run"]
 
 
 def test_release_tags_are_bound_to_the_exact_published_source() -> None:
@@ -502,7 +524,10 @@ def test_release_merged_same_repo_pr_publishes_alpha_when_push_is_missing() -> N
 
     assert "closed" in workflow[True]["pull_request"]["types"]
     assert "github.event.pull_request.merge_commit_sha" in workflow_text
-    assert "hol-guard-publish-${{ github.event.pull_request.merged && format('refs/heads/{0}', github.event.pull_request.base.ref) || github.ref }}" in workflow_text
+    assert (
+        "hol-guard-publish-${{ github.event.pull_request.merged && "
+        "format('refs/heads/{0}', github.event.pull_request.base.ref) || github.ref }}" in workflow_text
+    )
     for job_name in (
         "reserve-alpha-tag",
         "publish-alpha-testpypi",
