@@ -88,6 +88,72 @@ jobs:
           rmdir .github/rust-required-gzip-b64 .github/rust-required-patch 2>/dev/null || true
           rm -rf .github/code-quality-payload
           rm -f .github/workflows/apply-code-quality-hardening.yml
+
+          rm -rf ci/code-quality-workflow-payload
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+          payload_root = root / "ci" / "code-quality-workflow-payload"
+          files_root = payload_root / "files"
+          files_root.mkdir(parents=True, exist_ok=True)
+
+          raw = subprocess.check_output(
+              [
+                  "git",
+                  "ls-files",
+                  "--modified",
+                  "--deleted",
+                  "--others",
+                  "--exclude-standard",
+                  "-z",
+                  "--",
+                  ".github/workflows",
+              ]
+          )
+          paths = sorted(
+              {
+                  item.decode("utf-8")
+                  for item in raw.split(b"\0")
+                  if item
+              }
+          )
+          records: list[dict[str, object]] = []
+          for relative in paths:
+              source = root / relative
+              if source.is_file():
+                  data = source.read_bytes()
+                  payload_name = hashlib.sha256(relative.encode("utf-8")).hexdigest() + ".txt"
+                  payload_path = files_root / payload_name
+                  payload_path.write_bytes(data)
+                  records.append(
+                      {
+                          "path": relative,
+                          "operation": "upsert",
+                          "payload": payload_path.relative_to(root).as_posix(),
+                          "bytes": len(data),
+                          "sha256": hashlib.sha256(data).hexdigest(),
+                      }
+                  )
+              else:
+                  records.append({"path": relative, "operation": "delete"})
+
+          if not records:
+              raise SystemExit("expected at least one workflow change")
+          (payload_root / "manifest.json").write_text(
+              json.dumps({"version": 1, "files": records}, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          git restore --source=HEAD --staged --worktree -- .github/workflows
+          git clean -f -- .github/workflows
           git diff --check
       - name: Compile changed Python
         run: |
@@ -101,30 +167,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          set +e
-          output=$(PYTHONPATH=scripts/ci python scripts/ci/code_quality_audit.py \
+          PYTHONPATH=scripts/ci python scripts/ci/code_quality_audit.py \
             --root . \
-            --baseline ci/code-quality-baseline.json 2>&1)
-          status=$?
-          set -e
-          printf '%s\n' "$output"
-          if (( status != 0 )); then
-            printf '%s\n' "$output" > .github/code-quality-audit-diagnostics.txt
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -f .github/code-quality-audit-diagnostics.txt
-            git commit -m "chore(audit): capture code-quality ratchet diagnostics"
-            git push origin HEAD:refactor/release-3-code-quality-hardening
-            exit "$status"
-          fi
-          rm -f .github/code-quality-audit-diagnostics.txt
-      - name: Commit finalized tree
+            --baseline ci/code-quality-baseline.json
+      - name: Commit finalized non-workflow tree
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
+          if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
+            echo "workflow changes escaped staging boundary" >&2
+            exit 1
+          fi
           git diff --cached --check
           git commit -m "refactor: harden release 3 code quality"
           git push origin HEAD:refactor/release-3-code-quality-hardening
