@@ -81,6 +81,10 @@ function testResponsiveLayoutContract(): void {
     new URL("./settings/settings-section-shell.tsx", import.meta.url),
     "utf8",
   );
+  const shellNavigationCss = readFileSync(
+    new URL("./shell-navigation.css", import.meta.url),
+    "utf8",
+  );
   const responsiveCss = readFileSync(
     new URL("./responsive-layout.css", import.meta.url),
     "utf8",
@@ -105,16 +109,19 @@ function testResponsiveLayoutContract(): void {
     "Protection cards should preserve a readable minimum width",
   );
   assert(
-    responsiveCss.includes("(min-width: 64rem) and (max-width: 79.999rem)"),
-    "Intermediate desktop widths should use the compact shell",
+    shellNavigationCss.includes("@media (min-width: 48rem)")
+      && shellNavigationCss.includes("padding-left: var(--guard-shell-rail-width)")
+      && shellNavigationCss.includes("@media (min-width: 80rem)"),
+    "Intermediate desktop widths should use a persistent compact rail before the expanded sidebar",
   );
   assert(
     responsiveCss.includes('[aria-label="Save settings"]'),
     "Short or narrow windows should keep the save bar from covering form content",
   );
   assert(
-    mainSource.includes('import "./responsive-layout.css"'),
-    "The responsive stylesheet should be included in the dashboard bundle",
+    mainSource.includes('import "./shell-navigation.css"')
+      && mainSource.includes('import "./responsive-layout.css"'),
+    "The shell and workspace responsive stylesheets should be included in the dashboard bundle",
   );
 }
 
