@@ -164,7 +164,12 @@ def test_testpypi_uses_protected_trusted_publishing() -> None:
     job = workflow()["jobs"]["publish-alpha-testpypi"]
     assert job["environment"] == "testpypi"
     assert job["permissions"]["id-token"] == "write"
-    assert any(str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish@") for step in job["steps"])
+    publish = next(step for step in job["steps"] if step.get("id") == "publish")
+    assert str(publish["uses"]).startswith("pypa/gh-action-pypi-publish@")
+    assert publish["continue-on-error"] is True
+
+    verify = next(step for step in job["steps"] if step.get("name") == "Verify published TestPyPI bytes and CLI")
+    assert verify["if"] == "steps.state.outputs.upload != 'true' || steps.publish.outcome == 'success'"
 
 
 def test_pypi_uses_protected_trusted_publishing() -> None:

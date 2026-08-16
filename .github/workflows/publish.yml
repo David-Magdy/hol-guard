@@ -311,11 +311,17 @@ jobs:
           status=$(jq -r '.status' <<< "$result")
           [[ "$status" == "absent" || "$status" == "exact" ]]
           [[ "$status" == "absent" ]] && echo "upload=true" >> "$GITHUB_OUTPUT" || echo "upload=false" >> "$GITHUB_OUTPUT"
-      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
+      - id: publish
+        continue-on-error: true
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         if: steps.state.outputs.upload == 'true'
         with:
           repository-url: https://test.pypi.org/legacy/
+      - name: Report unavailable TestPyPI canary
+        if: steps.state.outputs.upload == 'true' && steps.publish.outcome == 'failure'
+        run: echo "::warning::TestPyPI upload unavailable; continuing with immutable build hashes and independent PyPI verification"
       - name: Verify published TestPyPI bytes and CLI
+        if: steps.state.outputs.upload != 'true' || steps.publish.outcome == 'success'
         env:
           VERSION: ${{ needs.build.outputs.version }}
         run: |
@@ -354,7 +360,7 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: distribution-sha256
-      - name: Verify immutable TestPyPI-proven bytes
+      - name: Verify immutable build bytes
         run: sha256sum --check distribution-sha256.txt
       - name: Revalidate source and alpha reservation
         env:
