@@ -6,6 +6,7 @@ on:
       - ops/beta20-public-macos-build
 
 permissions:
+  actions: read
   contents: read
   id-token: write
   attestations: write
@@ -19,7 +20,6 @@ env:
   RUSTUP_TOOLCHAIN: 1.89.0
   GUARD_DAEMON_PORT: 24781
   SOURCE_BRIDGE_SHA256: b914da531434eaabf4fccbb695294d1b74f52268c15a2d39fc6a1d456c6c1cec
-  SOURCE_BRIDGE_URL: "https://sdmntpreastus.oaiusercontent.com/files/00000000-afdc-81f9-9b0f-a2f54600f7cb/raw?se=2026-08-17T16%3A55%3A26Z&sp=r&sv=2026-02-06&sr=b&scid=fe33bb65-3570-572c-9060-e1e0dc51da92&skoid=de71a0d5-fb02-4fce-be69-9296aced242b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-17T14%3A18%3A10Z&ske=2026-08-18T14%3A18%3A10Z&sks=b&skv=2026-02-06&sig=Q%2BTTlCABxXwGa2vqGwVxPicENTQIr67HEC%2Bx4zOiI50%3D"
 
 jobs:
   build:
@@ -32,6 +32,8 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      SOURCE_BRIDGE_LOCAL_PATH: ${{ runner.temp }}/source-bridge-artifact/beta20-source-bridge.zip
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out immutable bridge automation
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -39,6 +41,17 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Download stable encrypted source bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source-bridge-artifact"
+          gh run download 32049006535 --repo "$GITHUB_REPOSITORY" \
+            --name beta20-source-bridge-public \
+            --dir "$RUNNER_TEMP/source-bridge-artifact"
+          test -f "$SOURCE_BRIDGE_LOCAL_PATH"
+          test "$(shasum -a 256 "$SOURCE_BRIDGE_LOCAL_PATH" | awk '{print $1}')" = "$SOURCE_BRIDGE_SHA256"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
