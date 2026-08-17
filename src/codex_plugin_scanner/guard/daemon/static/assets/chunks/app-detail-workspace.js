@@ -1,4 +1,4 @@
-import { r as reactExports, j as jsxRuntimeExports, aJ as fetchApprovalPage, aK as fetchPolicy, s as guardActionDisposition, p as protectionHealthFor, aG as HiMiniArrowLeft, c as HiMiniChevronRight, i as harnessDisplayName, n as GuardHero, R as ProofStrip, aL as HiMiniHome, L as HiMiniBolt, a3 as HiMiniAdjustmentsHorizontal, S as SectionLabel, A as ActionButton, q as HiMiniShieldCheck, t as formatRelativeTime, K as HiMiniExclamationTriangle, aM as guardActionPresentation, M as Badge, aN as DEFAULT_FILTER_STATE, aO as filterEvidence, aP as sortEvidence, aQ as computeMetrics, aR as CommandActivityWorkspace, k as EmptyState, aS as EvidenceFilterBar, aT as EvidenceInsightStrip, aU as EvidenceActionList, aV as EvidenceActionDetail, I as useFocusTrap, aW as policyIdentityKey, C as HiMiniCloud, aX as HiMiniChartBar, aq as Tag, m as HiMiniCheckCircle, U as HiMiniXCircle, aY as runHarnessAction, aZ as GuardHarnessActionError, a_ as HiMiniRocketLaunch, au as HiMiniArrowPath, a$ as HiMiniTrash, b0 as clearLabelForScope, b1 as formatHarnessCommand } from "../guard-dashboard.js";
+import { r as reactExports, j as jsxRuntimeExports, aK as fetchApprovalPage, aL as fetchPolicy, t as guardActionDisposition, k as protectionHealthFor, p as protectionPresentationState, aH as HiMiniArrowLeft, c as HiMiniChevronRight, i as harnessDisplayName, o as GuardHero, T as ProofStrip, aM as HiMiniHome, M as HiMiniBolt, a4 as HiMiniAdjustmentsHorizontal, S as SectionLabel, A as ActionButton, s as HiMiniShieldCheck, v as formatRelativeTime, L as HiMiniExclamationTriangle, aN as guardActionPresentation, N as Badge, aO as DEFAULT_FILTER_STATE, aP as filterEvidence, aQ as sortEvidence, aR as computeMetrics, aS as CommandActivityWorkspace, l as EmptyState, aT as EvidenceFilterBar, aU as EvidenceInsightStrip, aV as EvidenceActionList, aW as EvidenceActionDetail, J as useFocusTrap, aX as policyIdentityKey, F as HiMiniCloud, aY as HiMiniChartBar, ar as Tag, n as HiMiniCheckCircle, V as HiMiniXCircle, aZ as runHarnessAction, a_ as GuardHarnessActionError, a$ as HiMiniRocketLaunch, av as HiMiniArrowPath, b0 as HiMiniTrash, b1 as clearLabelForScope, b2 as formatHarnessCommand } from "../guard-dashboard.js";
 import { a as appSetupTarget } from "./harness-setup-target.js";
 function ActivityModeButton(props) {
   const active = props.mode === props.value;
@@ -83,6 +83,7 @@ function resolveHeroHeadline(status, harness, isObserved, protectionState, limit
     return `${harnessDisplayName(harness)} is limited`;
   }
   if (status === "active" && protectionState === "protected") return `${harnessDisplayName(harness)} is protected`;
+  if (status === "active" && protectionState === "checking") return `Checking ${harnessDisplayName(harness)} protection`;
   if (status === "active" && protectionState === "partial") return `${harnessDisplayName(harness)} is partially protected`;
   if (status === "active") return `${harnessDisplayName(harness)} protection is degraded`;
   if (status === "needs_setup") return `${harnessDisplayName(harness)} needs setup`;
@@ -92,6 +93,7 @@ function resolveHeroHeadline(status, harness, isObserved, protectionState, limit
 function resolveHeroSubheadline(status, isObserved, protectionState, honestySentence) {
   if (status === "active" && honestySentence) return honestySentence;
   if (status === "active" && protectionState === "protected") return "All required protection checks have current proof.";
+  if (status === "active" && protectionState === "checking") return "Guard is confirming local protection. This takes a moment.";
   if (status === "active" && protectionState === "partial") return "Core protection passes, but decision-stream evidence is incomplete.";
   if (status === "active") return "One or more required protection checks failed or remain unproven.";
   if (status === "needs_setup") return "Finish setup so Guard can protect this app.";
@@ -106,7 +108,7 @@ function resolveHeroCta(opts) {
       " pending"
     ] });
   }
-  if (opts.status === "needs_setup" || opts.status === "active" && opts.protectionState !== "protected") {
+  if (opts.status === "needs_setup" || opts.status === "active" && opts.protectionState !== "protected" && opts.protectionState !== "checking") {
     return /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: opts.onGoSettings, "data-primary": "true", children: "Open Settings" });
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: opts.onGoActivity, "data-primary": "true", children: "View Activity" });
@@ -214,7 +216,7 @@ function AppDetailWorkspace(props) {
   const policyError = harnessPolicy.kind === "error" ? harnessPolicy.message : null;
   const status = isActive ? "active" : install !== void 0 ? "needs_setup" : isObserved ? "observed" : "unknown";
   const appProtection = protectionHealthFor(runtime, harness);
-  const protectionState = appProtection.state;
+  const protectionState = protectionPresentationState(appProtection);
   const capability = runtime.protection_capabilities?.find((item) => item.harness === harness);
   const limited = capability?.limited === true;
   const heroStatus = resolveHeroStatus(status, protectionState);
