@@ -333,7 +333,7 @@ def _unverified_git_fetch_request(
     )
     if not any(_segment_invokes_git_fetch(segment.tokens) for segment in context.segments):
         return None
-    # Pass the user home so git -C can target a repo under that home from a sibling workspace.
+    # Home lets git -C target a repo under that home from a sibling workspace.
     if cwd is not None and is_low_risk_standalone_git_routine(context, home_dir=home_dir):
         return None
     if context.complete and all(
@@ -348,9 +348,9 @@ def _unverified_git_fetch_request(
         command_text=command_text,
         action_class="unverified Git remote refresh",
         reason=(
-            "Git fetch needs a repository-bound origin Guard can verify. Run it from that "
-            "repository, or use git -C with a path under your home directory, a named origin, "
-            "and no force/prune/URL remotes."
+            "Git fetch needs a repository-bound origin Guard can verify. "
+            "Run it from that repository, or use git -C with a path under your "
+            "home directory, a named origin, and no force/prune/URL remotes."
         ),
     )
 
