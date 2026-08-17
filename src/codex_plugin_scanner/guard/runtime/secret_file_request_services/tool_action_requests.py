@@ -337,8 +337,7 @@ def _unverified_git_fetch_request(
     if cwd is not None and is_low_risk_standalone_git_routine(context, home_dir=home_dir):
         return None
     if context.complete and all(
-        not _segment_invokes_git_fetch(segment.tokens)
-        or is_low_risk_git_inspection_segment(segment, home_dir=home_dir)
+        not _segment_invokes_git_fetch(segment.tokens) or is_low_risk_git_inspection_segment(segment, home_dir=home_dir)
         for segment in context.segments
     ):
         return None
