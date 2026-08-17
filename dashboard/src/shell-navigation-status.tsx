@@ -7,7 +7,11 @@ export function LocalGuardStatusCopy(props: {
   onNavigate: (pathname: string) => void;
 }) {
   if (props.queuedCount <= 0) {
-    return <p>No local approvals are waiting.</p>;
+    return (
+      <div className="guard-shell-status-copy">
+        <p>No local approvals are waiting.</p>
+      </div>
+    );
   }
 
   return (
@@ -18,7 +22,7 @@ export function LocalGuardStatusCopy(props: {
       <a
         href={shellHref("/inbox")}
         className="guard-shell-status-action"
-        onClick={(event) => navigateFromAnchor(event, "/inbox", props)}
+        onClick={(event) => navigateFromAnchor(event, "/inbox", { onNavigate: props.onNavigate })}
       >
         Open Inbox
         <HiMiniArrowRight aria-hidden="true" />

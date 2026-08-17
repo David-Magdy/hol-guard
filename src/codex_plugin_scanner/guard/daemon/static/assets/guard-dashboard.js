@@ -19985,7 +19985,7 @@ function NavigationLink(props) {
 }
 function LocalGuardStatusCopy(props) {
   if (props.queuedCount <= 0) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No local approvals are waiting." });
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-shell-status-copy", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No local approvals are waiting." }) });
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-status-copy", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
@@ -19999,7 +19999,7 @@ function LocalGuardStatusCopy(props) {
       {
         href: shellHref("/inbox"),
         className: "guard-shell-status-action",
-        onClick: (event) => navigateFromAnchor(event, "/inbox", props),
+        onClick: (event) => navigateFromAnchor(event, "/inbox", { onNavigate: props.onNavigate }),
         children: [
           "Open Inbox",
           /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowRight, { "aria-hidden": "true" })

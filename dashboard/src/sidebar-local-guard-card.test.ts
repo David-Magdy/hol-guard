@@ -22,17 +22,17 @@ const primitivesSource = source("approval-center-primitives.tsx");
 const mainSource = source("main.tsx");
 
 assert(
-  statusSource.includes("a Guard decision.") && statusSource.includes("Open Inbox"),
-  "status copy keeps the queue sentence and a compact Inbox action",
+  statusSource.includes("No local approvals are waiting.") &&
+    statusSource.includes('className="guard-shell-status-copy"'),
+  "empty and queued status copy share the compact type wrapper",
 );
 assert(
   !statusSource.includes("Open Inbox to review."),
   "status copy must not wrap the whole sentence as the action label",
 );
 assert(
-  statusSource.includes('className="guard-shell-status-action"') &&
-    statusSource.includes('href={shellHref("/inbox")}'),
-  "Inbox action is a dedicated compact control",
+  statusSource.includes('navigateFromAnchor(event, "/inbox", { onNavigate: props.onNavigate })'),
+  "Inbox action uses the shared SPA navigation contract",
 );
 assert(
   statusCss.includes("text-decoration: none") &&
