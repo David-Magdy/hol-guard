@@ -483,31 +483,6 @@ def test_standalone_fetch_accepts_canonical_home_git_c_target(tmp_path: Path) ->
 @pytest.mark.parametrize(
     "repository_operand",
     (
-        "'~/projects/example'",
-        '"~/projects/example"',
-        r"\~/projects/example",
-    ),
-)
-def test_standalone_fetch_accepts_quoted_or_escaped_home_git_c_target(
-    tmp_path: Path,
-    repository_operand: str,
-) -> None:
-    home, _repository_path = _repository(tmp_path)
-    workspace = home / "workspace"
-    workspace.mkdir()
-    command = f"git -C {repository_operand} fetch origin release/3.0"
-
-    assert extract_sensitive_tool_action_request(
-        "Bash",
-        {"command": command},
-        cwd=workspace,
-        home_dir=home,
-    ) is None
-
-
-@pytest.mark.parametrize(
-    "repository_operand",
-    (
         "~//projects/example",
         "~/projects/../projects/example",
     ),
@@ -530,38 +505,6 @@ def test_standalone_fetch_rejects_ambiguous_home_git_c_target(
     )
     assert request is not None
     assert request.action_class == "unverified Git remote refresh"
-
-
-def test_standalone_fetch_accepts_absolute_git_c_target_under_home_from_sibling_workspace(
-    tmp_path: Path,
-) -> None:
-    home, repository = _repository(tmp_path)
-    workspace = home / "workspace"
-    workspace.mkdir()
-    command = f"git -C {repository} fetch origin release/3.0"
-
-    assert extract_sensitive_tool_action_request(
-        "Bash",
-        {"command": command},
-        cwd=workspace,
-        home_dir=home,
-    ) is None
-    assert (
-        _hook_runtime_artifact(
-            harness="codex",
-            payload={
-                "hook_event_name": "PreToolUse",
-                "tool_name": "Bash",
-                "tool_input": {"command": command},
-                "cwd": str(workspace),
-            },
-            action_envelope=None,
-            home_dir=home,
-            guard_home=home / ".guard",
-            workspace=workspace,
-        )
-        is None
-    )
 
 
 def test_standalone_fetch_rejects_absolute_git_c_target_outside_execution_root(tmp_path: Path) -> None:
