@@ -98,11 +98,27 @@ jobs:
           )
           if apply_pair not in scripts[0]:
               raise SystemExit("deep patch application commands not found")
-          scripts[0] = scripts[0].replace(
-              apply_pair,
-              'git apply --3way --index "${RUNNER_TEMP}/deep-filtered.patch"\n',
-              1,
-          )
+          conflict_aware_apply = r'''set +e
+git apply --3way --index "${RUNNER_TEMP}/deep-filtered.patch"
+apply_status=$?
+set -e
+if (( apply_status != 0 )); then
+  mapfile -t patch_conflicts < <(git diff --name-only --diff-filter=U | sort)
+  expected_patch_conflicts=(
+    "tests/test_guard_mdm_cloud_control.py"
+    "tests/test_mcp_registry_manifest.py"
+  )
+  if [ "${patch_conflicts[*]}" != "${expected_patch_conflicts[*]}" ]; then
+    printf 'Unexpected deep patch conflicts:\n' >&2
+    printf '%s\n' "${patch_conflicts[@]}" >&2
+    exit 1
+  fi
+  git checkout --theirs -- "${expected_patch_conflicts[@]}"
+  git add -- "${expected_patch_conflicts[@]}"
+  test -z "$(git diff --name-only --diff-filter=U)"
+fi
+'''
+          scripts[0] = scripts[0].replace(apply_pair, conflict_aware_apply, 1)
 
           runner_temp = Path(os.environ["RUNNER_TEMP"])
           environment = os.environ.copy()
