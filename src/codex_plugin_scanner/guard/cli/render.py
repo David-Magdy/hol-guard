@@ -1776,6 +1776,9 @@ def _render_update(console: Console, payload: dict[str, object]) -> None:
         latest_version = version_check.get("latest_version")
         if isinstance(latest_version, str) and latest_version.strip():
             body.add_row("Latest PyPI version", latest_version.strip())
+        reserved_alpha = version_check.get("reserved_alpha_version")
+        if isinstance(reserved_alpha, str) and reserved_alpha.strip():
+            body.add_row("Reserved GitHub alpha", reserved_alpha.strip())
     if payload.get("resulting_version"):
         body.add_row("Resulting version", str(payload.get("resulting_version")))
     if payload.get("editable_install") is not None:
