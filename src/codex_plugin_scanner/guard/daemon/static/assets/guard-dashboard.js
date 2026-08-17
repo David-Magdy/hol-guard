@@ -19983,6 +19983,31 @@ function NavigationLink(props) {
     }
   );
 }
+function LocalGuardStatusCopy(props) {
+  if (props.queuedCount <= 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No local approvals are waiting." });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-status-copy", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+      props.queuedCount,
+      " local ",
+      props.queuedCount === 1 ? "action needs" : "actions need",
+      " a Guard decision."
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "a",
+      {
+        href: shellHref("/inbox"),
+        className: "guard-shell-status-action",
+        onClick: (event) => navigateFromAnchor(event, "/inbox", props),
+        children: [
+          "Open Inbox",
+          /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowRight, { "aria-hidden": "true" })
+        ]
+      }
+    )
+  ] });
+}
 function focusableElements(container2) {
   const selector = [
     "a[href]",
@@ -20160,7 +20185,7 @@ function NavigationDrawer(props) {
                 "aria-labelledby": "guard-navigation-local-status",
                 children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "guard-navigation-local-status", children: "Local Guard" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: props.queuedCount > 0 ? `${props.queuedCount} ${props.queuedCount === 1 ? "action is" : "actions are"} waiting for review.` : "No local approvals are waiting." }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(LocalGuardStatusCopy, { queuedCount: props.queuedCount, onNavigate: handleNavigate }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx(
                     GuardUpdatePanel,
                     {
@@ -20375,7 +20400,7 @@ function PersistentSidebar(props) {
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Local Guard" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: props.queuedCount > 0 ? "Review" : "Clear" })
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: props.queuedCount > 0 ? `${props.queuedCount} local ${props.queuedCount === 1 ? "action needs" : "actions need"} a decision.` : "No local approvals are waiting." }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(LocalGuardStatusCopy, { queuedCount: props.queuedCount, onNavigate: props.onNavigate }),
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 GuardUpdatePanel,
                 {

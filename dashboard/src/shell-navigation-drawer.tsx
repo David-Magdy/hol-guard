@@ -12,6 +12,7 @@ import { CloudUserMenu } from "./cloud-user-menu";
 import { GuardUpdatePanel } from "./guard-update-panel";
 import { GITHUB_ISSUE_BUTTON_LABEL, GITHUB_ISSUE_LINK } from "./github-issue-link";
 import { NavigationLink, navigateFromAnchor, shellHref } from "./shell-navigation-link";
+import { LocalGuardStatusCopy } from "./shell-navigation-status";
 import {
   NAVIGATION_GROUPS,
   SHELL_NAV_ITEMS,
@@ -206,11 +207,7 @@ export function NavigationDrawer(
             aria-labelledby="guard-navigation-local-status"
           >
             <h3 id="guard-navigation-local-status">Local Guard</h3>
-            <p>
-              {props.queuedCount > 0
-                ? `${props.queuedCount} ${props.queuedCount === 1 ? "action is" : "actions are"} waiting for review.`
-                : "No local approvals are waiting."}
-            </p>
+            <LocalGuardStatusCopy queuedCount={props.queuedCount} onNavigate={handleNavigate} />
             <GuardUpdatePanel
               guardVersion={props.guardVersion}
               updateStatus={props.updateStatus}
