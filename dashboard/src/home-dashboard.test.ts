@@ -11,6 +11,7 @@ import {
   deriveHomeState,
   redactHomeArtifactLabel,
   resolveCloudUpsellVisible,
+  resolveHomeQueuedCount,
   resolveNewAppDiscoveries,
   STREAK_MILESTONE_MESSAGES,
 } from "./home-dashboard";
@@ -503,3 +504,33 @@ assert(
   Object.values(STREAK_MILESTONE_MESSAGES).every((message) => !message.includes("!")),
   "GR186: streak milestone copy should stay calm, not gamified"
 );
+
+const checkingHomeState = deriveHomeState({
+  hasActiveInstalls: true,
+  hasObservedHarnesses: true,
+  queuedCount: 0,
+  watchedAppsCount: 2,
+  protectionState: "checking",
+});
+assert(
+  checkingHomeState.heroStatus === "checking" &&
+    checkingHomeState.headline === "Checking protection" &&
+    !checkingHomeState.headline.toLowerCase().includes("degraded"),
+  "unproven protection must not render as degraded while checks are still settling"
+);
+
+const pendingOverDegraded = deriveHomeState({
+  hasActiveInstalls: true,
+  hasObservedHarnesses: true,
+  queuedCount: 12,
+  watchedAppsCount: 2,
+  protectionState: "degraded",
+});
+assert(
+  pendingOverDegraded.heroStatus === "needs_review" &&
+    pendingOverDegraded.headline === "12 actions need review",
+  "home must prefer the live queue over a degraded protection badge"
+);
+assert(resolveHomeQueuedCount({ pendingCount: 12474, requestCount: 0 }) === 12474, "runtime pending count wins when the home queue payload is empty");
+assert(resolveHomeQueuedCount({ pendingCount: 0, requestCount: 5 }) === 5, "ready queue items still surface when the snapshot count is stale");
+assert(resolveHomeQueuedCount({ pendingCount: null, requestCount: null }) === 0, "missing counts stay at zero");

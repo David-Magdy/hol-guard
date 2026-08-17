@@ -16,6 +16,7 @@ import {
   HiMiniCheckCircle,
   HiMiniArrowRight,
   HiMiniExclamationTriangle,
+  HiMiniArrowPath,
   HiMiniChevronDown,
   HiMiniChevronUp,
   HiMiniChevronLeft,
@@ -775,7 +776,7 @@ function TrustCard(props: { title: string; body: string }) {
 }
 
 export function GuardHero(props: {
-  status: "clear" | "needs_review" | "setup_gap" | "partial" | "degraded" | "neutral";
+  status: "clear" | "needs_review" | "setup_gap" | "partial" | "degraded" | "neutral" | "checking";
   headline: string;
   subheadline: string;
   cta?: ReactNode;
@@ -792,12 +793,19 @@ export function GuardHero(props: {
   let HeroIcon = HiMiniShieldCheck;
   let iconColorClass = "text-brand-green";
   let iconBgClass = "bg-brand-green/10";
+  let iconSpinClass = "";
 
   if (props.status === "needs_review") {
     statusBadge = <Badge tone="attention">Needs your choice</Badge>;
     HeroIcon = HiMiniExclamationTriangle;
     iconColorClass = "text-brand-attention";
     iconBgClass = "bg-brand-attention/10";
+  } else if (props.status === "checking") {
+    statusBadge = <Badge tone="info">Checking</Badge>;
+    HeroIcon = HiMiniArrowPath;
+    iconColorClass = "text-brand-blue";
+    iconBgClass = "bg-brand-blue/10";
+    iconSpinClass = "animate-spin";
   } else if (props.status === "degraded") {
     statusBadge = <Badge tone="attention">Degraded</Badge>;
     HeroIcon = HiMiniInformationCircle;
@@ -834,7 +842,7 @@ export function GuardHero(props: {
         <div className="max-w-3xl">
           <div className="flex items-start gap-3">
             <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${iconBgClass}`}>
-              <HeroIcon className={`h-4 w-4 ${iconColorClass}`} aria-hidden="true" />
+              <HeroIcon className={`h-4 w-4 ${iconColorClass} ${iconSpinClass}`.trim()} aria-hidden="true" />
             </span>
             <div>
               <h2 className="text-xl font-semibold tracking-tight text-brand-dark sm:text-2xl">{props.headline}</h2>

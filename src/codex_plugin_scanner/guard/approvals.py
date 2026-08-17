@@ -1462,6 +1462,21 @@ def attach_primary_approval_link(
         payload["primary_approval_url"] = review_url
 
 
+_UNPROVEN_HOOK_REASONS = frozenset({"guard_cursor_cli_attestation_unavailable"})
+
+
+def _recorded_hook_verification(value: object) -> bool | None:
+    """Return proven hook state, or None when current proof is still unavailable."""
+
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, Mapping):
+        return None
+    if value.get("reason") in _UNPROVEN_HOOK_REASONS or value.get("integrity_status") == "attestation-unavailable":
+        return None
+    return value.get("protection_active") is True
+
+
 def _live_hook_verification(
     managed_installs: Sequence[Mapping[str, object]],
     store: GuardStore,
@@ -1480,12 +1495,18 @@ def _live_hook_verification(
             if harness == "codex":
                 from .adapters.codex import codex_native_hook_state
 
-                verified[harness] = codex_native_hook_state(context).get("protection_active") is True
+                proven = _recorded_hook_verification(codex_native_hook_state(context))
+                if proven is None:
+                    continue
+                verified[harness] = proven
                 continue
             if harness == "cursor":
                 from .adapters.cursor_hooks import cursor_native_hook_state
 
-                verified[harness] = cursor_native_hook_state(context).get("protection_active") is True
+                proven = _recorded_hook_verification(cursor_native_hook_state(context))
+                if proven is None:
+                    continue
+                verified[harness] = proven
                 continue
             if harness == "grok":
                 from .cli.install_commands import grok_hooks_protection_ready

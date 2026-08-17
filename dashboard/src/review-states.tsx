@@ -21,7 +21,7 @@ import type {
 } from "./guard-types";
 import { normalizeGuardAction } from "./guard-action";
 import { LoggedActionPanel } from "./logged-action-panel";
-import { protectionHealthFor, unavailableProtectionHealth } from "./protection-health";
+import { protectionHealthFor, protectionPresentationState } from "./protection-health";
 
 const PROTECTION_APPEARANCE = {
   protected: {
@@ -102,27 +102,48 @@ function ReviewCodexResumePanel({ resume, onRetry }: ReviewCodexResumePanelProps
 }
 
 export function ReviewEmptyState({ runtime, resolutionMessage, codexResume, onRetryResume }: { runtime: GuardRuntimeSnapshot | null; resolutionMessage: string | null; codexResume: GuardCodexResumeResult | null; onRetryResume?: () => void }) {
-  const protectionHealth = runtime ? protectionHealthFor(runtime) : unavailableProtectionHealth();
+  if (runtime === null) {
+    return (
+      <div className="space-y-4" aria-busy="true" aria-live="polite">
+        <div className="guard-skeleton h-36 w-full" />
+        <div className="guard-skeleton h-16 w-full" />
+        <div className="guard-skeleton h-48 w-full" />
+      </div>
+    );
+  }
+
+  const protectionHealth = protectionHealthFor(runtime);
+  const presentation = protectionPresentationState(protectionHealth);
   const protectedAppsCount = protectionHealth.apps.filter((app) => app.state === "protected").length;
-  const heroStatus = protectionHealth.state === "protected" ? "clear" : protectionHealth.state;
+  const heroStatus = presentation === "protected" ? "clear" : presentation;
+  const appearanceState = presentation === "checking" ? "partial" : protectionHealth.state;
   const {
     Icon: ProtectionIcon,
     cardClass: healthCardClass,
     iconClass: healthIconClass,
-  } = PROTECTION_APPEARANCE[protectionHealth.state];
+  } = PROTECTION_APPEARANCE[appearanceState];
+  const protectionLabel = presentation === "checking" ? "Checking" : protectionHealth.label;
+  const protectionDetail =
+    presentation === "checking"
+      ? "Guard is confirming local protection. This takes a moment."
+      : protectionHealth.detail;
 
   return (
     <div className="space-y-6">
       <GuardHero
         status={heroStatus}
-        headline="Nothing to review"
-        subheadline={`No actions need your decision right now. ${protectionHealth.detail}`}
+        headline={presentation === "checking" ? "Checking protection" : "Nothing to review"}
+        subheadline={
+          presentation === "checking"
+            ? protectionDetail
+            : `No actions need your decision right now. ${protectionDetail}`
+        }
       />
 
       <ProofStrip
         items={[
           { label: "Queue", value: "All clear", tone: "green" },
-          { label: "Protection", value: protectionHealth.label, tone: protectionHealth.state === "protected" ? "green" : "slate" },
+          { label: "Protection", value: protectionLabel, tone: protectionHealth.state === "protected" ? "green" : "slate" },
           { label: "Apps protected", value: protectedAppsCount, tone: protectedAppsCount > 0 ? "green" : "slate" },
         ]}
       />
@@ -145,9 +166,9 @@ export function ReviewEmptyState({ runtime, resolutionMessage, codexResume, onRe
               <ProtectionIcon className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
-              <SectionLabel>{protectionHealth.label}</SectionLabel>
+              <SectionLabel>{protectionLabel}</SectionLabel>
               <p className="mt-2 text-sm text-muted-foreground">
-                {protectionHealth.detail} When something needs review, it will appear here.
+                {protectionDetail} When something needs review, it will appear here.
               </p>
             </div>
           </div>
