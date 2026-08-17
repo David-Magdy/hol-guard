@@ -483,11 +483,33 @@ def test_standalone_fetch_accepts_canonical_home_git_c_target(tmp_path: Path) ->
 @pytest.mark.parametrize(
     "repository_operand",
     (
-        "~//projects/example",
-        "~/projects/../projects/example",
         "'~/projects/example'",
         '"~/projects/example"',
         r"\~/projects/example",
+    ),
+)
+def test_standalone_fetch_accepts_quoted_or_escaped_home_git_c_target(
+    tmp_path: Path,
+    repository_operand: str,
+) -> None:
+    home, _repository_path = _repository(tmp_path)
+    workspace = home / "workspace"
+    workspace.mkdir()
+    command = f"git -C {repository_operand} fetch origin release/3.0"
+
+    assert extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": command},
+        cwd=workspace,
+        home_dir=home,
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "repository_operand",
+    (
+        "~//projects/example",
+        "~/projects/../projects/example",
     ),
 )
 def test_standalone_fetch_rejects_ambiguous_home_git_c_target(
