@@ -2502,6 +2502,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         local_cli_paths = {
             "/v1/local-clis/preview",
             "/v1/local-clis/apply",
+            "/v1/local-clis/recognize",
         }
         if parsed.path in extension_control_paths | local_cli_paths and not self._header_token_is_valid():
             self._write_unauthorized(extra_headers=self._cors_headers_for_request())
@@ -2604,6 +2605,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             try:
                 if parsed.path.endswith("/preview"):
                     response = self._daemon_server().local_cli_api.preview(payload)
+                elif parsed.path.endswith("/recognize"):
+                    response = self._daemon_server().local_cli_api.recognize(payload)
                 else:
                     response = self._daemon_server().local_cli_api.apply(payload)
             except LocalCliApiError as error:
@@ -7188,6 +7191,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "/v1/local-clis",
             "/v1/local-clis/preview",
             "/v1/local-clis/apply",
+            "/v1/local-clis/recognize",
             "/v1/harnesses",
             "/v1/notifications/setup",
             "/v1/policy",

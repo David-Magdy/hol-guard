@@ -16276,7 +16276,7 @@ async function fetchExtensionControlApi(input, init) {
   return fetchWithGuardAuth(input, init);
 }
 async function fetchLocalCliApi(input, init) {
-  const approvedPath = typeof input === "string" && /^\/v1\/local-clis(?:\/(?:preview|apply))?$/.test(input);
+  const approvedPath = typeof input === "string" && /^\/v1\/local-clis(?:\/(?:preview|apply|recognize))?$/.test(input);
   if (!approvedPath) {
     throw new Error("Invalid local CLI API path");
   }
@@ -31070,11 +31070,11 @@ export {
   HiMiniCog6Tooth as al,
   approvalGateCooldownLabel as am,
   fetchLocalCliApi as an,
-  HiMiniArrowLeft as ao,
-  HiMiniPlus as ap,
-  buildApprovalProofCredentials as aq,
-  isApprovalProofSubmitDisabled as ar,
-  ApprovalProofFieldInputs as as,
+  buildApprovalProofCredentials as ao,
+  isApprovalProofSubmitDisabled as ap,
+  ApprovalProofFieldInputs as aq,
+  HiMiniArrowLeft as ar,
+  HiMiniPlus as as,
   fetchExtensionControlApi as at,
   HiMiniArrowPath as au,
   HiMiniInformationCircle as av,
