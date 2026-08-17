@@ -32,7 +32,6 @@ jobs:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      SOURCE_BRIDGE_LOCAL_PATH: ${{ runner.temp }}/source-bridge-artifact/beta20-source-bridge.zip
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out immutable bridge automation
@@ -46,12 +45,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/source-bridge-artifact"
+          bridge_dir="$RUNNER_TEMP/source-bridge-artifact"
+          bridge_path="$bridge_dir/beta20-source-bridge.zip"
+          mkdir -p "$bridge_dir"
           gh run download 32049006535 --repo "$GITHUB_REPOSITORY" \
             --name beta20-source-bridge-public \
-            --dir "$RUNNER_TEMP/source-bridge-artifact"
-          test -f "$SOURCE_BRIDGE_LOCAL_PATH"
-          test "$(shasum -a 256 "$SOURCE_BRIDGE_LOCAL_PATH" | awk '{print $1}')" = "$SOURCE_BRIDGE_SHA256"
+            --dir "$bridge_dir"
+          test -f "$bridge_path"
+          test "$(shasum -a 256 "$bridge_path" | awk '{print $1}')" = "$SOURCE_BRIDGE_SHA256"
+          printf 'SOURCE_BRIDGE_LOCAL_PATH=%s\n' "$bridge_path" >> "$GITHUB_ENV"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
