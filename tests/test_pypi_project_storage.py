@@ -82,22 +82,3 @@ def test_already_current_message_explains_unpublished_reserved_alpha() -> None:
     ]
     assert select_reserved_alpha_version(refs, latest_pypi="3.0.0a171") == "3.0.0a184"
     assert select_reserved_alpha_version(refs, latest_pypi="3.0.0a184") is None
-
-
-def test_select_upload_artifacts_can_keep_only_the_pure_wheel() -> None:
-    native_path = ROOT / "scripts" / "verify_native_runtime_release.py"
-    native_spec = importlib.util.spec_from_file_location("verify_native_runtime_release", native_path)
-    assert native_spec is not None and native_spec.loader is not None
-    native = importlib.util.module_from_spec(native_spec)
-    sys.modules[native_spec.name] = native
-    native_spec.loader.exec_module(native)
-
-    selected = native.select_upload_artifacts(
-        {
-            "hol_guard-3.0.0a180-py3-none-any.whl": "aaa",
-            "hol_guard-3.0.0a180.tar.gz": "bbb",
-        },
-        version="3.0.0a180",
-        artifact_set="pure",
-    )
-    assert selected == {"hol_guard-3.0.0a180-py3-none-any.whl": "aaa"}

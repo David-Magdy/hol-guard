@@ -401,6 +401,18 @@ def test_published_release_requires_exact_complete_set(
         )
 
 
+def test_select_upload_artifacts_keeps_only_the_pure_wheel() -> None:
+    selected = release.select_upload_artifacts(
+        {
+            f"hol_guard-{VERSION}-py3-none-any.whl": "aaa",
+            f"hol_guard-{VERSION}.tar.gz": "bbb",
+        },
+        version=VERSION,
+        artifact_set="pure",
+    )
+    assert selected == {f"hol_guard-{VERSION}-py3-none-any.whl": "aaa"}
+
+
 def test_published_pure_set_matches_only_the_any_wheel(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
