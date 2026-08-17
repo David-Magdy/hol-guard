@@ -141,6 +141,9 @@ def prepare_grok_hook_payload(payload: Mapping[str, object]) -> dict[str, object
     canonical_tool = _canonical_grok_tool_name(tool_name)
     canonical_tool, mapped_input = _unwrap_dispatcher_tool(canonical_tool, mapped_input)
     if isinstance(canonical_tool, str):
+        remapped = _canonical_grok_tool_name(canonical_tool)
+        if remapped is not None:
+            canonical_tool = remapped
         canonical_tool = _apply_qualified_mcp_tool(normalized, canonical_tool)
         normalized["tool_name"] = canonical_tool
     if mapped_input is not None:
