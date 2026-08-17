@@ -56,6 +56,7 @@ from .models import (
     PolicyDecision,
 )
 from .package_execution_context import package_execution_context_from_scanner_evidence
+from .protection_capabilities import protection_capability_payloads
 from .redaction import redact_text
 from .risk import artifact_risk_signals, artifact_risk_summary
 from .runtime.approval_context import parse_approval_context_token
@@ -1571,6 +1572,7 @@ def build_runtime_snapshot(
         **cloud_context,
         "trust_status": trust_status,
         "protection_health": protection_health,
+        "protection_capabilities": protection_capability_payloads(),
     }
 
 
