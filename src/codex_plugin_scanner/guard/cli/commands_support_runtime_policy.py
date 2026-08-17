@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import importlib
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -614,6 +614,14 @@ def _runtime_hook_effective_policy_config(config: GuardConfig) -> dict[str, obje
         "managed_policy_hash": config.managed_policy_hash,
         "managed_policy_status": config.managed_policy_status,
         "mode": config.mode,
+        **(
+            {
+                "protection_posture": config.protection_posture,
+                "protection_posture_explicit": True,
+            }
+            if config.protection_posture_explicit
+            else {}
+        ),
         "new_network_domain_action": config.new_network_domain_action,
         "publisher_actions": dict(config.publisher_actions or {}),
         "risk_actions": dict(config.risk_actions or {}),
@@ -792,6 +800,67 @@ def _runtime_artifact_exact_match_context(artifact: GuardArtifact) -> str | None
         raw_command_text=raw_command_text if isinstance(raw_command_text, str) else None,
         wrapper_chain=normalized_wrapper_chain,
     )
+
+
+def _apply_explicit_posture_action(
+    config: GuardConfig,
+    artifact: GuardArtifact,
+    risk_class: str,
+    action: str | None,
+) -> GuardAction:
+    from ..protection_posture import apply_posture_confidence
+
+    resolved = coerce_guard_action(action) or "require-reapproval"
+    confidence = _artifact_risk_confidence(artifact)
+    return apply_posture_confidence(
+        posture=config.protection_posture,
+        explicit=config.protection_posture_explicit,
+        risk_class=risk_class,
+        action=resolved,
+        confidence=confidence,
+        persistence_writes_launch_agent=_artifact_writes_launch_agent(artifact),
+        injection_disables_guard=_prompt_requires_hard_block(artifact),
+        skill_is_known_bad=_artifact_skill_is_known_bad(artifact),
+    )
+
+
+def _artifact_risk_confidence(artifact: GuardArtifact) -> object:
+    confidence = artifact.metadata.get("risk_confidence")
+    if confidence is None:
+        confidence = artifact.metadata.get("confidence")
+    if isinstance(confidence, str) and confidence.strip():
+        return confidence
+    signals = artifact.metadata.get("risk_signals")
+    if not isinstance(signals, Sequence) or isinstance(signals, (str, bytes)):
+        return confidence
+    for signal in signals:
+        if not isinstance(signal, Mapping):
+            continue
+        signal_confidence = signal.get("confidence")
+        if isinstance(signal_confidence, str) and signal_confidence.strip():
+            return signal_confidence
+    return confidence
+
+
+def _artifact_skill_is_known_bad(artifact: GuardArtifact) -> bool:
+    if artifact.metadata.get("known_bad_skill") is True:
+        return True
+    if artifact.metadata.get("skill_is_known_bad") is True:
+        return True
+    intel = artifact.metadata.get("threat_intel")
+    return isinstance(intel, Mapping) and intel.get("known_bad") is True
+
+
+def _artifact_writes_launch_agent(artifact: GuardArtifact) -> bool:
+    if artifact.metadata.get("persistence_writes_launch_agent") is True:
+        return True
+    action_class = artifact.metadata.get("action_class")
+    if not isinstance(action_class, str):
+        return False
+    lowered = action_class.lower()
+    return any(token in lowered for token in ("launch agent", "login item", "launchctl", "cron", "systemd", "launchd"))
+
+
 def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact, harness: str) -> GuardAction:
     if _prompt_requires_hard_block(artifact):
         return "block"
@@ -836,7 +905,11 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
             or resolve_risk_action(config, risk_class, harness=canonical_harness)
             for risk_class in risk_classes
         ]
-        resolved_actions = [action for action in risk_actions if coerce_guard_action(action) is not None]
+        resolved_actions = [
+            _apply_explicit_posture_action(config, artifact, risk_class, action)
+            for risk_class, action in zip(risk_classes, risk_actions, strict=True)
+            if coerce_guard_action(action) is not None
+        ]
         if resolved_actions:
             return with_config_policy(most_restrictive_guard_action(*resolved_actions))
     if explicit_permission_allow:
@@ -847,7 +920,11 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
     ):
         return with_config_policy(guard_default_action)
     risk_actions = [resolve_risk_action(config, risk_class, harness=canonical_harness) for risk_class in risk_classes]
-    resolved_actions = [action for action in risk_actions if coerce_guard_action(action) is not None]
+    resolved_actions = [
+        _apply_explicit_posture_action(config, artifact, risk_class, action)
+        for risk_class, action in zip(risk_classes, risk_actions, strict=True)
+        if coerce_guard_action(action) is not None
+    ]
     if resolved_actions:
         resolved = most_restrictive_guard_action(*resolved_actions)
         resolved_with_default = (
