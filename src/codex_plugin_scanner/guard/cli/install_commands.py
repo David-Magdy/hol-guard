@@ -346,7 +346,91 @@ def _grok_pretool_is_catchall(pretool_hook: Path) -> bool:
     if not isinstance(nested, list) or len(nested) != 1 or not isinstance(nested[0], dict):
         return False
     command = nested[0].get("command")
-    return nested[0].get("type") == "command" and isinstance(command, str) and bool(command.strip())
+    return nested[0].get("type") == "command" and isinstance(command, str) and _grok_hook_command_is_guard(command)
+
+
+def _grok_hook_command_is_guard(command: str) -> bool:
+    lowered = command.lower()
+    tokens = lowered.replace("=", " ").replace(",", " ").split()
+    if not tokens:
+        return False
+    first = tokens[0].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    if first in {"echo", "true", "false", "printf", ":"}:
+        return False
+    return "hook" in lowered and (
+        "hol-guard" in tokens
+        or any(token.endswith("/hol-guard") or token.endswith("\\hol-guard") for token in tokens)
+        or "__guard-bounded-hook" in lowered
+        or "bounded_cli_hook_bridge" in lowered
+        or "codex_plugin_scanner.guard" in lowered
+    )
+
+
+def _grok_prompt_hook_is_observe(prompt_hook: Path) -> bool:
+    if not prompt_hook.is_file():
+        return False
+    try:
+        payload = json.loads(prompt_hook.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    required = ("UserPromptSubmit", "SubagentStart", "SessionStart")
+    return all(_grok_event_has_command_hook(hooks.get(event_name)) for event_name in required)
+
+
+def _grok_event_has_command_hook(entries: object) -> bool:
+    if not isinstance(entries, list) or not entries:
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        nested = entry.get("hooks")
+        if not isinstance(nested, list):
+            continue
+        for hook_entry in nested:
+            if not isinstance(hook_entry, dict) or hook_entry.get("type") != "command":
+                continue
+            command = hook_entry.get("command")
+            if isinstance(command, str) and _grok_hook_command_is_guard(command):
+                return True
+    return False
+
+
+def _grok_managed_config_is_active(managed_text: str) -> bool:
+    from ..adapters.grok_config import GUARD_MANAGED_BEGIN, GUARD_MANAGED_END
+
+    start = managed_text.find(GUARD_MANAGED_BEGIN)
+    stop = managed_text.find(GUARD_MANAGED_END)
+    if start < 0 or stop <= start:
+        return False
+    for line in managed_text[start:stop].splitlines():
+        active = line.split("#", 1)[0].strip()
+        if "Read(**/.grok/auth/**)" in active:
+            return True
+    return False
+
+
+def grok_hooks_protection_ready(context: HarnessContext) -> bool:
+    """Return whether live Grok hook files and managed permission rules are active."""
+
+    checks = _grok_protection_checks(context)
+    warnings = checks.get("warnings")
+    warning_items = warnings if isinstance(warnings, list) else []
+    hook_warnings = [
+        warning
+        for warning in warning_items
+        if isinstance(warning, str) and "shim" not in warning.lower() and "launcher" not in warning.lower()
+    ]
+    return (
+        checks.get("pretool_catchall_installed") is True
+        and checks.get("prompt_hook_installed") is True
+        and checks.get("managed_config_installed") is True
+        and not hook_warnings
+    )
 
 
 def _grok_protection_checks(context: HarnessContext) -> dict[str, object]:
@@ -364,8 +448,13 @@ def _grok_protection_checks(context: HarnessContext) -> dict[str, object]:
         warnings.append(
             "Grok Guard pre-tool hook still uses a stale per-tool matcher list. Re-run `hol-guard apps repair grok`."
         )
+    elif not _grok_prompt_hook_is_observe(prompt_hook):
+        warnings.append(
+            "Grok Guard observe hooks are missing prompt, session, or subagent events. "
+            "Re-run `hol-guard apps repair grok`."
+        )
     managed_text = managed_config.read_text(encoding="utf-8") if managed_config.is_file() else ""
-    if not managed_config.is_file() or "BEGIN HOL GUARD MANAGED GROK" not in managed_text:
+    if not managed_config.is_file() or not _grok_managed_config_is_active(managed_text):
         warnings.append(
             "Grok managed permission rules are missing from ~/.grok/managed_config.toml. "
             "Re-run `hol-guard apps connect grok`."
