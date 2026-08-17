@@ -101,6 +101,10 @@ def _self_test() -> None:
 
         scripts = root / "scripts" / "ci"
         scripts.mkdir(parents=True)
+        (scripts / "apply_daemon_edge_hardening.py").write_text(
+            "raise SystemExit('retired')\n",
+            encoding="utf-8",
+        )
         (scripts / "apply_future_rust_patch.py").write_text(
             "raise SystemExit('retired')\n",
             encoding="utf-8",
@@ -111,6 +115,7 @@ def _self_test() -> None:
             ".github/workflows/closed-branch.yml",
             ".github/workflows/daemon-edge-cleanup-shepherd.yml",
             ".github/workflows/tmp-apply-rust.yml",
+            "scripts/ci/apply_daemon_edge_hardening.py",
             "scripts/ci/apply_future_rust_patch.py",
         ]
         actual = find_residue(root)
