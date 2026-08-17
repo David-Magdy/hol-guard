@@ -402,7 +402,8 @@ Current strategy:
 - `grok`
   installs a catch-all Guard `PreToolUse` hook plus observe-only prompt and subagent hooks in `~/.grok/hooks/`,
   writes permission deny rules and backup hooks in `~/.grok/managed_config.toml`, blocks tool calls with Grok-native
-  stdout JSON `{"decision":"deny"}` plus approval-center copy, never reads `~/.grok/auth`, and treats
+  stdout JSON `{"decision":"deny"}` plus approval-center copy, waits on that PreToolUse hook until
+  the request is approved and then returns allow so Grok resumes the same tool call, never reads `~/.grok/auth`, and treats
   `--always-approve` or `bypassPermissions` as degraded protection when detected. Guard launches only a trusted
   absolute Grok executable; for a custom install root, select it once with
   `hol-guard run grok --grok-executable /absolute/path/to/grok`. After upgrading an existing Grok install, run
@@ -468,7 +469,7 @@ When Guard blocks a launch, it opens a persistent approval link in the terminal 
    - Codex resumed, Guard sent the exact blocked command context back into the same session, so watch the same chat for the next HOL Guard message.
    - Guard could not find the Codex session to resume, return to Codex manually and follow the saved approval or block guidance.
 
-   For harnesses without resume support, Guard still saves the decision and shows the manual next step. No page reload is required.
+   Grok PreToolUse hooks wait for that decision and then resume the original tool call when it is approved. For harnesses without resume support, Guard still saves the decision and shows the manual next step. No page reload is required.
 
 To inspect a pending request's details or get the approval URL, pass the request-id to the `approve` command with `--dry-run`, or visit the approval center URL shown in the block message directly.
 

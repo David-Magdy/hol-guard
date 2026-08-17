@@ -25,6 +25,7 @@ from .bounded_cli_hook_bridge import bounded_cli_hook_command
 from .grok_config import (
     GROK_CONFIG_FILE,
     GROK_DIR,
+    GROK_HOOK_INTERNAL_TIMEOUT_SECONDS,
     GROK_HOOKS_DIR,
     GROK_MANAGED_CONFIG_FILE,
     GROK_PROJECT_SURFACE_RELATIVES,
@@ -53,7 +54,7 @@ from .grok_executable import (
 )
 
 _GROK_HOME_ENV_VAR = "GROK_HOME"
-_GUARD_HOOK_INTERNAL_TIMEOUT_SECONDS = 25
+_GUARD_HOOK_INTERNAL_TIMEOUT_SECONDS = GROK_HOOK_INTERNAL_TIMEOUT_SECONDS
 
 
 class GrokHarnessAdapter(HarnessAdapter):

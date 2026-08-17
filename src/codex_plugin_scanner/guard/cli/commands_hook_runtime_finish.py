@@ -247,13 +247,13 @@ def _finalize_runtime_artifact_hook(
                 output_stream=output_stream,
             )
         elif _canonical_harness_name(args.harness) == "grok":
-            from ..adapters.grok_hooks import emit_grok_hook_response
-
+            from ..adapters.grok_hooks import emit_grok_hook_response, grok_hook_process_exit
             emit_grok_hook_response(
-                policy_action=policy_action,
-                reason=native_block_reason,
+                policy_action=policy_action, event_name=event_name,
+                reason=native_block_reason, approval_payload=response_payload,
                 output_stream=output_stream,
             )
+            return grok_hook_process_exit(policy_action)
         elif _canonical_harness_name(args.harness) in {"pi", "omp"}:
             from ..adapters.pi_hooks import emit_pi_hook_response
 
@@ -327,11 +327,11 @@ def _finalize_runtime_artifact_hook(
                 native_reason=runtime_reason,
             )
         if canonical_harness == "grok":
-            from ..adapters.grok_hooks import emit_grok_hook_response
+            from ..adapters.grok_hooks import emit_grok_hook_response, grok_hook_process_exit
 
             emit_grok_hook_response(
-                policy_action=policy_action,
-                reason=runtime_reason,
+                policy_action=policy_action, event_name=event_name,
+                reason=runtime_reason, approval_payload=response_payload,
                 output_stream=output_stream,
             )
             _record_harness_usage_for_hook(
@@ -340,7 +340,7 @@ def _finalize_runtime_artifact_hook(
                 payload=payload,
                 policy_action=policy_action,
             )
-            return 0 if policy_action not in {"review", "require-reapproval", "sandbox-required", "block"} else 2
+            return grok_hook_process_exit(policy_action)
         if canonical_harness in {"pi", "omp"}:
             from ..adapters.pi_hooks import emit_pi_hook_response
 

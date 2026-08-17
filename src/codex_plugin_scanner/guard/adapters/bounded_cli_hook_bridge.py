@@ -405,6 +405,8 @@ def _try_daemon_hook(
     Returns None on any auth/transport/malformed-response failure so the caller
     falls back to the isolated CLI path (fail-closed).
     """
+    if harness.strip().lower() == "grok" and _event_name(input_text) == "PreToolUse":
+        return None
 
     endpoint = _daemon_hook_endpoint(guard_home, harness)
     if endpoint is None:
@@ -504,8 +506,6 @@ def run_bounded_cli_hook(config: Mapping[str, object], *, input_text: str) -> in
             package_root,
             cli_args,
         )
-    # Fast path: serve an already-validated hook through the running daemon (~50ms)
-    # instead of paying a fresh interpreter + full CLI import (~1s).
     daemon_result = _try_daemon_hook(
         guard_home=guard_home,
         harness=harness,
