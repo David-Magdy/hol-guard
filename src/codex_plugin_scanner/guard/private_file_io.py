@@ -23,9 +23,7 @@ def private_regular_file_is_valid(
         metadata = path.lstat()
     except OSError:
         return False
-    if parent_metadata is not None and not _private_directory_metadata_is_valid(
-        parent_metadata
-    ):
+    if parent_metadata is not None and not _private_directory_metadata_is_valid(parent_metadata):
         return False
     return _private_file_metadata_is_valid(metadata)
 
@@ -45,18 +43,12 @@ def read_private_regular_bytes(
         path_before = path.lstat()
     except OSError:
         return None
-    if parent_before is not None and not _private_directory_metadata_is_valid(
-        parent_before
-    ):
+    if parent_before is not None and not _private_directory_metadata_is_valid(parent_before):
         return None
     if not _private_file_metadata_is_valid(path_before):
         return None
 
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError:
@@ -158,13 +150,13 @@ def _stable_directory_metadata(
     before: os.stat_result,
     after: os.stat_result,
 ) -> bool:
-    return (
-        _private_directory_metadata_is_valid(after)
-        and _same_file(before, after)
-        and before.st_mode == after.st_mode
-        and before.st_mtime_ns == after.st_mtime_ns
-        and before.st_ctime_ns == after.st_ctime_ns
-    )
+    """Confirm the parent directory was not replaced or made non-private.
+
+    Sibling writes update directory mtime/ctime, so those timestamps are not
+    part of the identity check.
+    """
+
+    return _private_directory_metadata_is_valid(after) and _same_file(before, after) and before.st_mode == after.st_mode
 
 
 __all__ = [

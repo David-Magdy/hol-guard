@@ -14,19 +14,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines,
         title="Python functions at least 100 lines",
         headers=("Lines", "Complexity", "Function"),
-        rows=(
-            (item["lines"], item["complexity"], f"`{item['identity']}`")
-            for item in report["long_functions"]
-        ),
+        rows=((item["lines"], item["complexity"], f"`{item['identity']}`") for item in report["long_functions"]),
     )
     _append_function_table(
         lines,
         title="Python functions at complexity 30+",
         headers=("Complexity", "Lines", "Function"),
-        rows=(
-            (item["complexity"], item["lines"], f"`{item['identity']}`")
-            for item in report["complex_functions"]
-        ),
+        rows=((item["complexity"], item["lines"], f"`{item['identity']}`") for item in report["complex_functions"]),
     )
     _append_silent_handlers(lines, report["silent_broad_exception_handlers"])
     if report["forbidden_residue"]:
@@ -78,10 +72,7 @@ def _append_oversized_files(lines: list[str], items: list[dict[str, Any]]) -> No
         ]
     )
     lines.extend(
-        (
-            f"| {item['lines']} | {item['category']} | "
-            f"{'yes' if item['generated'] else 'no'} | `{item['path']}` |"
-        )
+        (f"| {item['lines']} | {item['category']} | {'yes' if item['generated'] else 'no'} | `{item['path']}` |")
         for item in items
     )
 
@@ -89,10 +80,7 @@ def _append_oversized_files(lines: list[str], items: list[dict[str, Any]]) -> No
 def _append_duplicate_groups(lines: list[str], groups: list[dict[str, Any]]) -> None:
     lines.extend(["", "## Exact Python function-copy groups", ""])
     for index, group in enumerate(groups, start=1):
-        lines.append(
-            f"### Group {index}: {group['lines']} lines, "
-            f"{len(group['instances'])} instances"
-        )
+        lines.append(f"### Group {index}: {group['lines']} lines, {len(group['instances'])} instances")
         lines.append("")
         for item in group["instances"]:
             lines.append(f"- `{item['path']}:{item['line']}` `{item['qualname']}`")
@@ -117,8 +105,7 @@ def _append_function_table(
         ]
     )
     lines.extend(
-        f"| {first_value} | {second_value} | {third_value} |"
-        for first_value, second_value, third_value in rows
+        f"| {first_value} | {second_value} | {third_value} |" for first_value, second_value, third_value in rows
     )
 
 
@@ -138,8 +125,7 @@ def _append_silent_handlers(lines: list[str], items: list[dict[str, Any]]) -> No
         ]
     )
     lines.extend(
-        f"| `{item['exception']}` | `{item['path']}:{item['line']}` | `{item['qualname']}` |"
-        for item in items
+        f"| `{item['exception']}` | `{item['path']}:{item['line']}` | `{item['qualname']}` |" for item in items
     )
 
 

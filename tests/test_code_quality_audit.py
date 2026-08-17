@@ -107,9 +107,7 @@ def guarded() -> None:
     )
 
     assert any(item.qualname.startswith("<lambda>@") for item in functions)
-    assert [item.exception for item in handlers] == [
-        "builtins.Exception,package.ValueError"
-    ]
+    assert [item.exception for item in handlers] == ["builtins.Exception,package.ValueError"]
 
 
 def test_audit_excludes_plain_venv_and_detects_nonstandard_tests(
@@ -155,10 +153,7 @@ def test_ratchet_rejects_growth_and_new_duplicate_group(tmp_path: Path) -> None:
     )
 
     assert any("Oversized file grew" in failure for failure in failures)
-    assert any(
-        "Duplicate function group introduced or changed" in failure
-        for failure in failures
-    )
+    assert any("Duplicate function group introduced or changed" in failure for failure in failures)
 
 
 def test_duplicate_group_reintroduction_requires_a_new_baseline(
@@ -171,9 +166,7 @@ def test_duplicate_group_reintroduction_requires_a_new_baseline(
     second = package / "second.py"
     first.write_text(_function_source("first"), encoding="utf-8")
     second.write_text(_function_source("second"), encoding="utf-8")
-    original_baseline = audit.baseline_from_report(
-        audit.audit_repository(tmp_path)
-    )
+    original_baseline = audit.baseline_from_report(audit.audit_repository(tmp_path))
 
     second.unlink()
     reduced_report = audit.audit_repository(tmp_path)
@@ -204,13 +197,7 @@ def test_silent_handler_reintroduction_requires_a_new_baseline(
     package.mkdir(parents=True)
     first = package / "first.py"
     second = package / "second.py"
-    handler = (
-        "def {name}() -> None:\n"
-        "    try:\n"
-        "        raise RuntimeError\n"
-        "    except Exception:\n"
-        "        pass\n"
-    )
+    handler = "def {name}() -> None:\n    try:\n        raise RuntimeError\n    except Exception:\n        pass\n"
     first.write_text(handler.format(name="first"), encoding="utf-8")
     second.write_text(handler.format(name="second"), encoding="utf-8")
 
@@ -243,9 +230,5 @@ def test_ratchet_rejects_one_shot_delivery_residue(tmp_path: Path) -> None:
         audit.baseline_from_report(report),
     )
 
-    assert report["forbidden_residue"] == [
-        ".github/workflows/tmp-push-fix.yml"
-    ]
-    assert failures == [
-        "Forbidden one-shot delivery residue: .github/workflows/tmp-push-fix.yml"
-    ]
+    assert report["forbidden_residue"] == [".github/workflows/tmp-push-fix.yml"]
+    assert failures == ["Forbidden one-shot delivery residue: .github/workflows/tmp-push-fix.yml"]

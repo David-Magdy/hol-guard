@@ -176,9 +176,7 @@ class _FunctionCollector(ast.NodeVisitor):
         for handler in handler_visitor.handlers:
             exception = _exception_name(handler.type)
             if exception == "bare" or _contains_broad_exception(exception):
-                self.handlers.append(
-                    SilentHandler(self.path, qualname, handler.lineno, exception)
-                )
+                self.handlers.append(SilentHandler(self.path, qualname, handler.lineno, exception))
 
 
 def _function_digest(
@@ -231,8 +229,7 @@ def _silent_handler(handler: ast.ExceptHandler) -> bool:
         if isinstance(statement, (ast.Pass, ast.Continue, ast.Break)):
             continue
         if isinstance(statement, ast.Return) and (
-            statement.value is None
-            or (isinstance(statement.value, ast.Constant) and statement.value.value is None)
+            statement.value is None or (isinstance(statement.value, ast.Constant) and statement.value.value is None)
         ):
             continue
         return False
@@ -253,10 +250,7 @@ def _exception_name(node: ast.expr | None) -> str:
 
 
 def _contains_broad_exception(exception: str) -> bool:
-    return any(
-        item.rsplit(".", 1)[-1] in {"BaseException", "Exception"}
-        for item in exception.split(",")
-    )
+    return any(item.rsplit(".", 1)[-1] in {"BaseException", "Exception"} for item in exception.split(","))
 
 
 __all__ = ["FunctionMetric", "SilentHandler", "collect_python_metrics"]

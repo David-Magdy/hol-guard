@@ -189,7 +189,7 @@ def test_inventory_snapshot_can_include_cisco_openclaw_inventory_runs(tmp_path: 
             ),
         )
 
-    monkeypatch.setattr("codex_plugin_scanner.guard.adapters.openclaw.run_cisco_inventory_scans", fake_cisco_runs)
+    monkeypatch.setattr("codex_plugin_scanner.guard.inventory_cisco.run_cisco_inventory_scans", fake_cisco_runs)
 
     snapshot = OpenClawHarnessAdapter().inventory_snapshot(
         context,

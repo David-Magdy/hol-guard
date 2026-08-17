@@ -11,7 +11,7 @@ import pytest
 from codex_plugin_scanner.cli import main
 from codex_plugin_scanner.guard.adapters import codex as codex_adapter
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
-from codex_plugin_scanner.guard.codex_config import dump_toml
+from codex_plugin_scanner.guard.codex_config import dump_toml, read_toml_payload
 from codex_plugin_scanner.guard.codex_hook_inventory import (
     CODEX_HOOK_INVENTORY_MALFORMED_GROUP,
     CODEX_HOOK_INVENTORY_UNKNOWN_HANDLER,
@@ -264,7 +264,7 @@ def test_disabled_unmanaged_entry_and_metadata_only_event_are_preserved_without_
         HarnessContext(home_dir=home_dir, workspace_dir=workspace_dir, guard_home=home_dir)
     )
 
-    installed = codex_adapter.tomllib.loads((home_dir / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    installed = read_toml_payload(home_dir / ".codex" / "config.toml")
     assert hooks_path.exists() is False
     assert installed["hooks"]["FutureAgentEvent"] == [
         {**_command_group(), "enabled": False},
