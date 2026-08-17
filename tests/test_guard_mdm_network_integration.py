@@ -9,11 +9,11 @@ import socketserver
 import ssl
 import threading
 import urllib.error
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from cryptography import x509
@@ -29,12 +29,12 @@ from codex_plugin_scanner.guard.mdm.network import diagnose_endpoint, managed_re
 class _OriginHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def do_HEAD(self) -> None:  # noqa: N802
+    def do_HEAD(self) -> None:
         self.send_response(200)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         payload = b"guard-network-ok"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
@@ -92,7 +92,7 @@ class _ProxyHandler(socketserver.StreamRequestHandler):
         state.last_authorization = headers.get("proxy-authorization")
         if state.expected_authorization is not None and state.last_authorization != state.expected_authorization:
             self.wfile.write(
-                b'HTTP/1.1 407 Proxy Authentication Required\r\n'
+                b"HTTP/1.1 407 Proxy Authentication Required\r\n"
                 b'Proxy-Authenticate: Basic realm="guard-test"\r\n'
                 b"Content-Length: 0\r\n\r\n"
             )
@@ -182,9 +182,7 @@ def _write_certificates(tmp_path: Path) -> tuple[Path, Path, Path]:
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=1))
         .add_extension(
-            x509.SubjectAlternativeName(
-                [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
-            ),
+            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
             critical=False,
         )
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
@@ -309,7 +307,7 @@ def test_authenticated_proxy_uses_keyring_without_secret_in_public_state(
 ) -> None:
     username = "synthetic-user"
     password = "synthetic-password"
-    authorization = "Basic " + base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    authorization = "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
     network_lab.proxy_state.expected_authorization = authorization
     monkeypatch.setenv("NO_PROXY", "*")
     monkeypatch.setenv("no_proxy", "*")

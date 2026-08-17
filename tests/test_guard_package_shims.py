@@ -26,9 +26,7 @@ from codex_plugin_scanner.guard import local_supply_chain as local_supply_chain_
 from codex_plugin_scanner.guard import shims as guard_shims_module
 from codex_plugin_scanner.guard import store as guard_store_module
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
-from codex_plugin_scanner.guard.approvals import apply_approval_resolution
 from codex_plugin_scanner.guard.cli import commands as guard_commands_module
-from codex_plugin_scanner.guard.cli.commands_dispatch_local import _package_shim_approval_matches_fresh_request
 from codex_plugin_scanner.guard.models import PolicyDecision
 from codex_plugin_scanner.guard.package_shim_gate import (
     package_shim_command_requires_external_archive_binding,

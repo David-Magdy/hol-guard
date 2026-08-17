@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 from pathlib import Path
 
-tomllib = importlib.import_module("tomllib" if __import__("sys").version_info >= (3, 11) else "tomli")
+from .codex_config import read_toml_payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,15 +15,7 @@ class CodexSkillConfigRule:
     path: str | None = None
 
 
-def _read_toml(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    try:
-        with path.open("rb") as handle:
-            payload = tomllib.load(handle)
-        return payload if isinstance(payload, dict) else {}
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
+_read_toml = read_toml_payload
 
 
 def _normalize_rule_entry(entry: object, *, base_dir: Path) -> CodexSkillConfigRule | None:

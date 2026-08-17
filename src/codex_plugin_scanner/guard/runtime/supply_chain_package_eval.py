@@ -4106,7 +4106,7 @@ def _poetry_lock_target_versions(
     )
 
 
-def _poetry_lock_direct_versions(text: str, direct_manifest_names: set[str]) -> dict[str, str]:
+def _toml_lock_direct_versions(text: str, direct_manifest_names: set[str]) -> dict[str, str]:
     try:
         payload = tomllib.loads(text or "")
     except tomllib.TOMLDecodeError:
@@ -4125,6 +4125,10 @@ def _poetry_lock_direct_versions(text: str, direct_manifest_names: set[str]) -> 
             continue
         direct_versions[normalized_name] = version
     return direct_versions
+
+
+_poetry_lock_direct_versions = _toml_lock_direct_versions
+_uv_lock_direct_versions = _toml_lock_direct_versions
 
 
 def _uv_lock_target_versions(
@@ -4136,27 +4140,6 @@ def _uv_lock_target_versions(
         targets,
         _uv_lock_direct_versions(text, direct_manifest_names),
     )
-
-
-def _uv_lock_direct_versions(text: str, direct_manifest_names: set[str]) -> dict[str, str]:
-    try:
-        payload = tomllib.loads(text or "")
-    except tomllib.TOMLDecodeError:
-        return {}
-    packages = payload.get("package")
-    direct_versions: dict[str, str] = {}
-    if not isinstance(packages, list):
-        return direct_versions
-    for package in packages:
-        if not isinstance(package, dict):
-            continue
-        name = _optional_string(package.get("name"))
-        version = _optional_string(package.get("version"))
-        normalized_name = _normalize_package_name("pypi", name) if name is not None else None
-        if normalized_name is None or version is None or normalized_name not in direct_manifest_names:
-            continue
-        direct_versions[normalized_name] = version
-    return direct_versions
 
 
 def _pipfile_lock_target_versions(

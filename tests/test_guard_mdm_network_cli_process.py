@@ -8,7 +8,6 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-
 ROOT = Path(__file__).parents[1]
 
 
@@ -22,9 +21,7 @@ def test_network_diagnose_process_is_prompt_free_json_and_redacts_endpoint_secre
     environment = os.environ.copy()
     source_path = str(ROOT / "src")
     environment["PYTHONPATH"] = (
-        source_path
-        if not environment.get("PYTHONPATH")
-        else source_path + os.pathsep + environment["PYTHONPATH"]
+        source_path if not environment.get("PYTHONPATH") else source_path + os.pathsep + environment["PYTHONPATH"]
     )
 
     completed = subprocess.run(

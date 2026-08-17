@@ -66,8 +66,33 @@ jobs:
           uv run --no-sync python scripts/ci/test_duplicate_candidates.py \
             --output test-duplicate-candidates.json
           cat test-duplicate-candidates.json
-      - run: uv run --no-sync python -m ruff check src/
-      - run: uv run --no-sync python -m ruff format --check src/
+      - name: Enforce structural code-quality debt ratchet
+        run: |
+          uv run --no-sync python scripts/ci/code_quality_audit.py \
+            --root . \
+            --baseline ci/code-quality-baseline.json \
+            --json-output code-quality-audit.json
+          cat code-quality-audit.json
+      - name: Lint production and code-quality audit sources
+        run: |
+          uv run --no-sync python -m ruff check \
+            src/ \
+            scripts/ci/code_quality_*.py \
+            tests/test_code_quality_audit.py \
+            tests/test_guard_durable_io.py \
+            tests/test_guard_managed_install_context.py \
+            tests/test_guard_node_semver.py \
+            tests/test_guard_private_file_io.py
+      - name: Check formatting for production and code-quality audit sources
+        run: |
+          uv run --no-sync python -m ruff format --check \
+            src/ \
+            scripts/ci/code_quality_*.py \
+            tests/test_code_quality_audit.py \
+            tests/test_guard_durable_io.py \
+            tests/test_guard_managed_install_context.py \
+            tests/test_guard_node_semver.py \
+            tests/test_guard_private_file_io.py
       - run: uv run --no-sync basedpyright --level error
       - name: Dead-code scan (L329)
         run: uv run --no-sync python -m ruff check src/codex_plugin_scanner/guard/ --select=F401,F811,F841

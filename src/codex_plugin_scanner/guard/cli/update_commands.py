@@ -47,6 +47,7 @@ from ..runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from ..runtime.extension_control_authority import AuthorityHealth
 from ..store import GuardStore
 from .install_commands import apply_managed_install
+from .managed_install_context import managed_install_context as _repair_context_from_managed_install
 from .update_artifact import (
     TrustedWheelArtifact,
     UpdateArtifactError,
@@ -2399,7 +2400,7 @@ def _migrate_legacy_omp_install(
             repair_workspace or workspace,
             now,
         )
-    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         return None, f"Could not migrate verified Oh My Pi protection during update: {error}"
     migrated = payload.get("managed_install")
     if not isinstance(migrated, dict):
@@ -2443,7 +2444,7 @@ def _repair_pi_family_install(
             repair_workspace or workspace,
             now,
         )
-    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         return None, f"Could not refresh {display_name} protection during update: {error}"
     repaired = payload.get("managed_install")
     if not isinstance(repaired, dict):
@@ -2511,7 +2512,7 @@ def _repair_cursor_install(
     try:
         repair_context, repair_workspace = _repair_context_from_managed_install(context, managed_install)
         hook_state = cursor_native_hook_state(repair_context)
-    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         return None, f"Could not inspect Cursor protection during update: {error}"
     if hook_state["protection_active"] is True:
         return None, None
@@ -2546,7 +2547,10 @@ def _refresh_opencode_pretool_plugin(
         return None
     if managed_install is None or not bool(managed_install.get("active")):
         return None
-    repair_context, _ = _repair_context_from_managed_install(context, managed_install)
+    try:
+        repair_context, _ = _repair_context_from_managed_install(context, managed_install)
+    except ValueError as error:
+        return f"Could not inspect OpenCode pretool plugin during update: {error}"
     global_path = global_plugin_path(repair_context)
     managed_path = managed_plugin_path(repair_context)
     try:
@@ -2567,33 +2571,6 @@ def _refresh_opencode_pretool_plugin(
     return "Refreshed the OpenCode pretool plugin during update. Restart OpenCode to load it."
 
 
-def _repair_context_from_managed_install(
-    context: HarnessContext,
-    managed_install: dict[str, object],
-) -> tuple[HarnessContext, str | None]:
-    managed_workspace = managed_install.get("workspace")
-    if isinstance(managed_workspace, str) and managed_workspace.strip():
-        workspace_path = Path(managed_workspace).expanduser().resolve()
-        return (
-            HarnessContext(
-                home_dir=context.home_dir,
-                workspace_dir=workspace_path,
-                guard_home=context.guard_home,
-                home_override_explicit=context.home_override_explicit,
-            ),
-            str(workspace_path),
-        )
-    return (
-        HarnessContext(
-            home_dir=context.home_dir,
-            workspace_dir=None,
-            guard_home=context.guard_home,
-            home_override_explicit=context.home_override_explicit,
-        ),
-        None,
-    )
-
-
 def _repair_codex_install(
     *,
     context: HarnessContext,
@@ -2601,7 +2578,10 @@ def _repair_codex_install(
     workspace: str | None,
     now: str,
 ) -> tuple[dict[str, object] | None, str | None]:
-    repair_target = _codex_repair_target(context, store)
+    try:
+        repair_target = _codex_repair_target(context, store)
+    except ValueError as error:
+        return None, f"Could not inspect Codex protection during update: {error}"
     if repair_target is None:
         return None, None
     repair_context, repair_workspace = repair_target
@@ -2625,7 +2605,7 @@ def _repair_codex_install(
             repair_workspace,
             now,
         )
-    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         return None, f"Could not repair Codex protection during update: {error}"
     try:
         repaired_state = codex_native_hook_state(repair_context)

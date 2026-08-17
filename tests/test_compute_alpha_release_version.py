@@ -29,10 +29,9 @@ def test_computes_the_next_alpha_across_all_registry_sources(existing: list[str]
         ("3.1", ["3.1.0a2"], "3.1.0a3"),
     ],
 )
-def test_computes_the_next_alpha_for_3x_release_trains(
-    release_train: str, existing: list[str], expected: str
-) -> None:
+def test_computes_the_next_alpha_for_3x_release_trains(release_train: str, existing: list[str], expected: str) -> None:
     assert compute_alpha_release_version(release_train, existing) == expected
+
 
 @pytest.mark.parametrize("release_train", ["2", "2.2.0", "not-a-train"])
 def test_rejects_unsupported_or_noncanonical_release_train(release_train: str) -> None:

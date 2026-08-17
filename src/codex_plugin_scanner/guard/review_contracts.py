@@ -30,6 +30,7 @@ from .policy_bundle_trusted_keys import (
     safe_load_policy_bundle_verification_keys,
     signing_key_is_current,
 )
+from .stable_json import stable_json_serialize
 
 _LOCAL_REVIEW_REQUEST_CONTRACT_VERSION = "guard.local-review-request.v1"
 _REMOTE_APPROVAL_CONTRACT_VERSION = "guard.remote-approval.v1"
@@ -64,19 +65,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _stable_serialize(value: object) -> str:
-    if isinstance(value, list):
-        return f"[{','.join(_stable_serialize(item) for item in value)}]"
-    if isinstance(value, dict):
-        return (
-            "{"
-            + ",".join(
-                f"{json.dumps(key, separators=(',', ':'), ensure_ascii=False)}:{_stable_serialize(value[key])}"
-                for key in sorted(value)
-            )
-            + "}"
-        )
-    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+_stable_serialize = stable_json_serialize
 
 
 def _sha256_hex(value: str) -> str:

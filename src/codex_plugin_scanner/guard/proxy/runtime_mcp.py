@@ -71,6 +71,7 @@ from ..runtime.signals import RiskSeverityLabel, RiskSignalV2
 from ..runtime.supply_chain_package_eval import evaluate_package_request_artifact
 from ..runtime.surface_server import GuardSurfaceRuntime
 from ..store import GuardStore
+from ..tool_decision_evidence import tool_decision_scanner_evidence as _tool_decision_scanner_evidence
 from ._env import _build_scrubbed_env
 from .stdio import (
     ProxyIoTimeoutError,
@@ -233,33 +234,6 @@ def _guard_action_normalization_evidence(
         "original_type": normalization.original_type,
         "normalized_action": normalization.action,
     }
-
-
-def _tool_decision_scanner_evidence(decision: ToolCallDecision) -> tuple[dict[str, object], ...]:
-    evidence: list[dict[str, object]] = []
-    policy_action = resolve_tool_call_policy_action(decision)
-    if decision.normalization_reason_code is not None:
-        evidence.append(
-            {
-                "source": "guard_action_normalizer",
-                "input_source": "stored_tool_policy",
-                "reason_code": decision.normalization_reason_code,
-                "original_action": decision.original_action,
-                "normalized_action": policy_action,
-            }
-        )
-    if decision.approval_reuse_reason_code is not None:
-        evidence.append(
-            {
-                "source": "approval_reuse",
-                "status": decision.approval_reuse_status,
-                "reason_code": decision.approval_reuse_reason_code,
-                "current_action": decision.current_action,
-                "saved_action": decision.saved_action,
-                "effective_action": policy_action,
-            }
-        )
-    return tuple(evidence)
 
 
 def _tool_decision_after_runtime_allow(decision: ToolCallDecision, *, source: str) -> ToolCallDecision:

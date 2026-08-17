@@ -18,11 +18,7 @@ def _durations(nodes: list[str], *, seconds: float = 1.0) -> dict[str, float]:
 
 
 def test_affinity_plan_covers_every_node_once_and_is_deterministic() -> None:
-    nodes = [
-        f"tests/test_{file_index}.py::test_{test_index}"
-        for file_index in range(8)
-        for test_index in range(8)
-    ]
+    nodes = [f"tests/test_{file_index}.py::test_{test_index}" for file_index in range(8) for test_index in range(8)]
     durations = _durations(nodes)
 
     first, first_loads = build_affinity_node_shards(nodes, 4, durations)

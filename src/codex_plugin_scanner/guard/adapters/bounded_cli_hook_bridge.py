@@ -7,8 +7,6 @@ to an isolated subprocess (~1s) when the daemon is unreachable.
 from __future__ import annotations
 
 import json
-import os
-import stat
 import sys
 import urllib.error
 import urllib.request
@@ -22,6 +20,7 @@ from ..codex_hook_launch_runtime import (
     isolated_hook_environment,
     run_isolated_hook_process,
 )
+from ..private_file_io import read_private_regular_text
 
 _MAX_HOOK_INPUT_BYTES = 1_000_000
 _MAX_HOOK_RESPONSE_BYTES = 1_000_000
@@ -247,48 +246,28 @@ def _emit_failure(*, harness: str, input_text: str, reason: str = _FAILURE_REASO
     return returncode
 
 
-def _private_daemon_file_is_valid(path: Path) -> bool:
-    """Mirror daemon/manager._private_daemon_file_is_valid without importing it."""
-
-    try:
-        parent_metadata = path.parent.lstat()
-        metadata = path.lstat()
-    except OSError:
-        return False
-    if not stat.S_ISDIR(parent_metadata.st_mode):
-        return False
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        return False
-    if os.name == "nt":
-        return True
-    return (
-        parent_metadata.st_uid == os.getuid()
-        and metadata.st_uid == os.getuid()
-        and not stat.S_IMODE(parent_metadata.st_mode) & 0o077
-        and not stat.S_IMODE(metadata.st_mode) & 0o077
-    )
-
-
 def _read_daemon_auth_token(guard_home: Path) -> str | None:
-    token_path = guard_home / "daemon-auth-token"
-    if not _private_daemon_file_is_valid(token_path):
-        return None
-    try:
-        token = token_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
+    token = read_private_regular_text(
+        guard_home / "daemon-auth-token",
+        max_bytes=4096,
+        require_private_parent=True,
+    )
     return token or None
 
 
 def _daemon_hook_endpoint(guard_home: Path, harness: str) -> str | None:
     """Return the loopback hook URL from authenticated daemon state, or None."""
 
-    state_path = guard_home / "daemon-state.json"
-    if not _private_daemon_file_is_valid(state_path):
+    raw_state = read_private_regular_text(
+        guard_home / "daemon-state.json",
+        max_bytes=64 * 1024,
+        require_private_parent=True,
+    )
+    if raw_state is None:
         return None
     try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        state = json.loads(raw_state)
+    except json.JSONDecodeError:
         return None
     if not isinstance(state, dict):
         return None

@@ -89,9 +89,7 @@ def test_signing_identity_is_imported_before_pyinstaller_build() -> None:
 def test_final_verification_checks_reused_and_new_embedded_team_identity() -> None:
     steps = _publish_steps()
     verify = next(
-        step
-        for step in steps
-        if step.get("name") == "Verify exact Apple identity, notarization, and Core contract"
+        step for step in steps if step.get("name") == "Verify exact Apple identity, notarization, and Core contract"
     )
     run = verify["run"]
     assert isinstance(run, str)

@@ -27,23 +27,18 @@ def test_repository_network_capability_manifest_is_truthful() -> None:
     manifest_path = repository_manifest_path(_REPOSITORY_ROOT)
     payload = dict(load_reachability_manifest(manifest_path))
 
-    assert validate_reachability_manifest(
-        payload,
-        repository_root=_REPOSITORY_ROOT,
-    ) == ()
-    assert {
-        str(item["id"]) for item in _capabilities(payload)
-    } == REQUIRED_CAPABILITY_IDS
+    assert (
+        validate_reachability_manifest(
+            payload,
+            repository_root=_REPOSITORY_ROOT,
+        )
+        == ()
+    )
+    assert {str(item["id"]) for item in _capabilities(payload)} == REQUIRED_CAPABILITY_IDS
 
 
 def test_advertised_network_capability_requires_installed_behavior_links() -> None:
-    payload = copy.deepcopy(
-        dict(
-            load_reachability_manifest(
-                repository_manifest_path(_REPOSITORY_ROOT)
-            )
-        )
-    )
+    payload = copy.deepcopy(dict(load_reachability_manifest(repository_manifest_path(_REPOSITORY_ROOT))))
     capability = _capabilities(payload)[0]
     capability["advertised"] = True
     capability["state"] = "active"
@@ -68,13 +63,9 @@ def test_default_network_status_is_host_specific_and_unavailable_without_probe()
     macos_status = build_network_status(platform_name="darwin")
 
     assert linux_status["host_platform"] == "linux"
-    assert {backend["platform"] for backend in _backends(linux_status)} == {
-        "linux"
-    }
+    assert {backend["platform"] for backend in _backends(linux_status)} == {"linux"}
     assert macos_status["host_platform"] == "macos"
-    assert {backend["platform"] for backend in _backends(macos_status)} == {
-        "macos"
-    }
+    assert {backend["platform"] for backend in _backends(macos_status)} == {"macos"}
     for status in (linux_status, macos_status):
         assert status["effective_grade"] == "unavailable"
         assert status["independently_observed_grade"] == "unavailable"
@@ -84,9 +75,7 @@ def test_default_network_status_is_host_specific_and_unavailable_without_probe()
         assert all(backend["verified"] is False for backend in _backends(status))
         assert all(backend["active"] is False for backend in _backends(status))
         assert all(backend["observed"] is False for backend in _backends(status))
-        assert all(
-            backend["production_ready"] is False for backend in _backends(status)
-        )
+        assert all(backend["production_ready"] is False for backend in _backends(status))
 
 
 def test_unknown_host_does_not_foreground_foreign_network_backends() -> None:

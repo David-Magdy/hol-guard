@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 from ..mcp_tool_calls import resolve_tool_call_policy_action
 from ..models import GuardAction
 from ..runtime.command_activity_contract import ActivityApprovalReuseStatus
+from ..tool_decision_evidence import tool_decision_scanner_evidence as _copilot_tool_decision_scanner_evidence
 from ._commands_shared import *
 from .commands_parser_helpers import *
 from .commands_support_command_activity import (
@@ -70,35 +71,6 @@ def _record_copilot_pre_activity(
         cwd=runtime_workspace,
         home_dir=context.home_dir,
     )
-
-
-def _copilot_tool_decision_scanner_evidence(
-    decision: ToolCallDecision,
-) -> tuple[dict[str, object], ...]:
-    evidence: list[dict[str, object]] = []
-    policy_action = resolve_tool_call_policy_action(decision)
-    if decision.normalization_reason_code is not None:
-        evidence.append(
-            {
-                "source": "guard_action_normalizer",
-                "input_source": "stored_tool_policy",
-                "reason_code": decision.normalization_reason_code,
-                "original_action": decision.original_action,
-                "normalized_action": policy_action,
-            }
-        )
-    if decision.approval_reuse_reason_code is not None:
-        evidence.append(
-            {
-                "source": "approval_reuse",
-                "status": decision.approval_reuse_status,
-                "reason_code": decision.approval_reuse_reason_code,
-                "current_action": decision.current_action,
-                "saved_action": decision.saved_action,
-                "effective_action": policy_action,
-            }
-        )
-    return tuple(evidence)
 
 
 def _copilot_approval_reuse_evidence(

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from .contracts import MachinePaths
+from .windows_support import windows_directory
 
 AclState = Literal["healthy", "absent", "tampered", "unsupported", "unknown"]
 
@@ -240,14 +241,7 @@ def _verify_macos_surface(
         return AclSurfaceResult(surface.name, "unknown", "ownership_acl_probe_failed")
 
 
-def _windows_directory() -> str:
-    import ctypes
-
-    buffer = ctypes.create_unicode_buffer(32_768)
-    length = int(ctypes.windll.kernel32.GetSystemWindowsDirectoryW(buffer, len(buffer)))
-    if length == 0 or length >= len(buffer):
-        raise OSError("windows_system_directory_unavailable")
-    return ntpath.normpath(str(buffer.value))
+_windows_directory = windows_directory
 
 
 def _windows_filesystem_chain(path: str) -> tuple[str, ...]:

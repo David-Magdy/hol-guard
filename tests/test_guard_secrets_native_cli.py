@@ -120,9 +120,7 @@ def test_native_staged_scan_fails_on_findings_without_printing_secret(tmp_path: 
     (tmp_path / "config.env").write_text(f"GITHUB_TOKEN={secret}\n", encoding="utf-8")
     _git(tmp_path, "add", "config.env")
 
-    exit_code, output, error = _run_native(
-        ["secrets", "scan", str(tmp_path), "--staged", "--fail-on-findings"]
-    )
+    exit_code, output, error = _run_native(["secrets", "scan", str(tmp_path), "--staged", "--fail-on-findings"])
 
     assert exit_code == 3
     assert error == ""

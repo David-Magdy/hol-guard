@@ -42,6 +42,9 @@ from .runtime.approval_context import (
     resolved_runtime_launch_argv,
     runtime_launch_identity_is_reusable,
 )
+from .runtime.approval_context import (
+    saved_allow_context_validation_reason as package_saved_allow_validation_reason,
+)
 from .runtime.approval_reuse import (
     APPROVAL_REUSE_CLAIM_FAILED,
     APPROVAL_REUSE_CONTEXT_CHANGED_AFTER_CLAIM,
@@ -2340,24 +2343,6 @@ def _is_legacy_package_local_approval(decision: dict[str, object], *, store: Any
         and request.get("artifact_id") == decision.get("artifact_id")
         and request.get("artifact_hash") == decision.get("artifact_hash")
     )
-
-
-def package_saved_allow_validation_reason(
-    decision: dict[str, object],
-    *,
-    artifact_hash: str,
-) -> str | None:
-    """Validate that local saved package ``allow`` evidence is exact.
-
-    Broad policy scopes are matches for lookup only, not proof that this exact
-    package request was previously reviewed. Every stored ``allow``—regardless
-    of scope or source—must bind the current package/context digest before it
-    can satisfy review.
-    """
-
-    if decision.get("action") != "allow":
-        return None
-    return approval_context_tokens_validation_reason(decision.get("artifact_hash"), artifact_hash)
 
 
 def _package_evaluation_with_current_policy_action(

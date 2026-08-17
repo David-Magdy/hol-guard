@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import shlex
-import shutil
 from pathlib import Path
 
 from ..env_wrapper import parse_env_wrapper
+from ..executable_resolution import which_for_execution_cwd
 from ..shell_execution_context import ShellExecutionContext, validate_shell_execution_segment
 from .constants_core import (
     _DOCKER_ALWAYS_SENSITIVE_SUBCOMMANDS,
@@ -37,15 +36,7 @@ from .shell_tokenization import (
     _split_shell_parts,
 )
 
-
-def _which_for_execution_cwd(command: str, *, cwd: Path) -> str | None:
-    path_entries: list[str] = []
-    for entry in os.environ.get("PATH", os.defpath).split(os.pathsep):
-        candidate = Path(entry or ".").expanduser()
-        if not candidate.is_absolute():
-            candidate = cwd / candidate
-        path_entries.append(str(candidate))
-    return shutil.which(command, path=os.pathsep.join(path_entries))
+_which_for_execution_cwd = which_for_execution_cwd
 
 
 def _docker_sensitive_tool_action_request(

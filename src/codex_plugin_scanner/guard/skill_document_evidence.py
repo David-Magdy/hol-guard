@@ -10,6 +10,8 @@ import stat
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .path_security import path_has_symlink_component
+
 MAX_SKILL_DOCUMENT_BYTES = 256 * 1024
 _ANALYSIS_VERSION = "1"
 _HEADING_RE = re.compile(r"^#{1,6}\s+\S")
@@ -196,19 +198,7 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     return True
 
 
-def _has_symlink_component(path: Path, *, allowed_root: Path) -> bool:
-    try:
-        relative = path.relative_to(allowed_root)
-    except ValueError:
-        return True
-    current = allowed_root
-    if current.is_symlink():
-        return True
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            return True
-    return False
+_has_symlink_component = path_has_symlink_component
 
 
 def _has_frontmatter(lines: list[str]) -> bool:

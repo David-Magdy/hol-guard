@@ -2,22 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ..path_support import resolves_within_root
+from ._json_support import load_json_object
 from .base import iter_safe_recursive_files
 from .types import Ecosystem, NormalizedPackage, PackageCandidate
 
-
-def _load_json(path: Path) -> dict[str, object]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(payload, dict):
-            return payload
-    except (json.JSONDecodeError, OSError):
-        pass
-    return {}
+_load_json = load_json_object
 
 
 class ClaudeAdapter:

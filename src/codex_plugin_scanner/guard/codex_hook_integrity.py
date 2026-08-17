@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from .codex_hook_file_integrity import CodexHookIntegrityError, canonical_path
+from .durable_io import fsync_directory as _fsync_directory
 from .local_authority_integrity import (
     LOCAL_AUTHORITY_INTEGRITY_MAC_ALGORITHM,
     sign_local_authority_payload,
@@ -399,19 +400,6 @@ def _validate_private_regular_file(path: Path, *, reason_prefix: str, label: str
             f"{reason_prefix}_permissions_unsafe",
             f"The {label} permissions are not owner-only.",
         )
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    descriptor = os.open(path, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 __all__ = [

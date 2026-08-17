@@ -20,6 +20,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from ..durable_io import fsync_directory as _fsync_directory
 from .continuity import (
     InstallationContinuityRecord,
     _atomic_write,
@@ -90,25 +91,6 @@ def _read_bounded(path: Path, *, maximum: int, acl_reason: str, invalid_reason: 
         if len(payload) != before.st_size or before_identity != after_identity:
             raise OSError(invalid_reason)
         return payload
-    finally:
-        os.close(descriptor)
-
-
-def _fsync_directory(path: Path) -> None:
-    if os.name == "nt":
-        return
-    try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    except OSError as exc:
-        if exc.errno in {errno.EINVAL, errno.ENOTSUP}:
-            return
-        raise
-    try:
-        try:
-            os.fsync(descriptor)
-        except OSError as exc:
-            if exc.errno not in {errno.EINVAL, errno.ENOTSUP}:
-                raise
     finally:
         os.close(descriptor)
 

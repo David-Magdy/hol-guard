@@ -15,7 +15,6 @@ from cryptography.x509.oid import NameOID
 from codex_plugin_scanner.guard.mdm.contracts import ManagedNetworkPolicy
 from codex_plugin_scanner.guard.mdm.network import managed_ssl_context
 
-
 ROOT = Path(__file__).parents[1]
 GUARD_SOURCE = ROOT / "src" / "codex_plugin_scanner" / "guard"
 
@@ -62,9 +61,7 @@ def test_shell_ca_overrides_are_ignored_but_managed_ca_is_additive(
     unmanaged_context = managed_ssl_context(ManagedNetworkPolicy(proxy_mode="none"))
     assert fingerprint not in _trusted_fingerprints(unmanaged_context)
 
-    approved_context = managed_ssl_context(
-        ManagedNetworkPolicy(proxy_mode="none", ca_bundle_path=str(ambient_bundle))
-    )
+    approved_context = managed_ssl_context(ManagedNetworkPolicy(proxy_mode="none", ca_bundle_path=str(ambient_bundle)))
     assert fingerprint in _trusted_fingerprints(approved_context)
     assert approved_context.check_hostname is True
 
@@ -79,7 +76,11 @@ def test_guard_runtime_contains_no_tls_verification_bypass() -> None:
                 if isinstance(function, ast.Attribute) and function.attr == "_create_unverified_context":
                     violations.append(f"{path}: unverified SSL context")
                 for keyword in node.keywords:
-                    if keyword.arg == "verify" and isinstance(keyword.value, ast.Constant) and keyword.value.value is False:
+                    if (
+                        keyword.arg == "verify"
+                        and isinstance(keyword.value, ast.Constant)
+                        and keyword.value.value is False
+                    ):
                         violations.append(f"{path}: verify=False")
             elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -91,10 +92,6 @@ def test_guard_runtime_contains_no_tls_verification_bypass() -> None:
                         violations.append(f"{path}: check_hostname=False")
                     if target.attr == "verify" and isinstance(value, ast.Constant) and value.value is False:
                         violations.append(f"{path}: verify=False")
-                    if (
-                        target.attr == "verify_mode"
-                        and isinstance(value, ast.Attribute)
-                        and value.attr == "CERT_NONE"
-                    ):
+                    if target.attr == "verify_mode" and isinstance(value, ast.Attribute) and value.attr == "CERT_NONE":
                         violations.append(f"{path}: CERT_NONE")
     assert violations == []

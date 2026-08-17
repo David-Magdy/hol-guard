@@ -7,6 +7,8 @@ import sqlite3
 from collections.abc import Mapping
 from datetime import datetime, timezone
 
+from .value_coercion import coerce_non_negative_int
+
 CONNECT_STATE_VERSION = "guard-connect-state.v1"
 CONNECT_STATE_STATUS_VALUES = {"waiting", "connected", "retry_required", "expired"}
 CONNECT_STATE_MILESTONE_VALUES = {
@@ -190,17 +192,7 @@ def build_connect_state_response(
     return response
 
 
-def _coerce_non_negative_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return max(0, value)
-    if isinstance(value, str) and value.strip():
-        try:
-            return max(0, int(value.strip()))
-        except ValueError:
-            return 0
-    return 0
+_coerce_non_negative_int = coerce_non_negative_int
 
 
 def _build_connect_state_payload(row: sqlite3.Row) -> dict[str, object]:

@@ -27,6 +27,7 @@ from .mcp_servers import (
     proxy_process_env,
     skipped_stdio_server_names,
 )
+from .state_files import load_backup_payload
 
 
 class CursorHarnessAdapter(HarnessAdapter):
@@ -477,14 +478,4 @@ class CursorHarnessAdapter(HarnessAdapter):
         digest = sha256(target.encode("utf-8")).hexdigest()[:12]
         return context.guard_home / "managed" / "cursor" / f"{digest}.state.json"
 
-    @staticmethod
-    def _backup_payload(backup_path: Path) -> dict[str, str | bool | None]:
-        try:
-            payload = json.loads(backup_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {"readable": False, "existed": False, "content": None}
-        if not isinstance(payload, dict):
-            return {"readable": False, "existed": False, "content": None}
-        existed = payload.get("existed") is True
-        content = payload.get("content")
-        return {"readable": True, "existed": existed, "content": content if isinstance(content, str) else None}
+    _backup_payload = staticmethod(load_backup_payload)

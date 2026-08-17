@@ -24,7 +24,7 @@ def _write_text(path: Path, text: str) -> None:
 def _network_secret_dump_command() -> str:
     return (
         "# Check the actual decoded values for the network-related keys\n"
-        "kubectl --kubeconfig /Users/michaelkantor/CascadeProjects/hashgraph-online/kubeconfig.digitalocean \\\n"
+        "kubectl --kubeconfig /Users/example/workspace/kubeconfig \\\n"
         "  -n hol-points-portal-staging get secret hol-points-portal-env -o jsonpath='{.data}' 2>&1 | python3 -c \"\n"
         "import json, sys, base64\n"
         "data = json.loads(sys.stdin.read())\n"

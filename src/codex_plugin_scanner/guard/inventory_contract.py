@@ -17,6 +17,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..path_support import resolves_within_root
 from ..version import __version__
+from .path_security import path_has_symlink_component
 from .skill_directory_identity import validated_complete_skill_directory_hash
 
 InventoryItemKind = Literal[
@@ -1467,19 +1468,7 @@ def _primary_artifact_content_hash(
     return f"sha256:{digest.hexdigest()}"
 
 
-def _path_has_symlink_component(path: Path, *, allowed_root: Path) -> bool:
-    try:
-        relative = path.relative_to(allowed_root)
-    except ValueError:
-        return True
-    current = allowed_root
-    if current.is_symlink():
-        return True
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            return True
-    return False
+_path_has_symlink_component = path_has_symlink_component
 
 
 def _canonical_inventory_content_hash(value: str) -> str:

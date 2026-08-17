@@ -187,10 +187,7 @@ def test_normalizes_billing_trial_paused_and_outage_separately() -> None:
     assert expired is not None and expired.category == "trial"
     assert paused is not None and paused.category == "sync_paused"
     assert outage is not None and outage.category == "cloud_error"
-    assert all(
-        error.local_protection_affected is False
-        for error in (past_due, expired, paused, outage)
-    )
+    assert all(error.local_protection_affected is False for error in (past_due, expired, paused, outage))
     assert "Local protection" in guard_cloud_status_copy(past_due)
     assert "Local protection" in guard_cloud_status_copy(expired)
     assert "Local protection" in guard_cloud_status_copy(paused)

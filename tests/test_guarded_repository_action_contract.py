@@ -11,12 +11,12 @@ WORKFLOW = ROOT / ".github" / "workflows" / "guarded-repository.yml"
 def test_composite_action_defaults_portal_registration_off() -> None:
     text = ACTION.read_text(encoding="utf-8")
 
-    assert 'register_verification:' in text
+    assert "register_verification:" in text
     assert 'default: "false"' in text
-    assert 'uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d' in text
-    assert 'subject-path: ${{ steps.evidence.outputs.evidence_path }}' in text
-    assert 'ACTIONS_ID_TOKEN_REQUEST_URL' in text
-    assert 'ACTIONS_ID_TOKEN_REQUEST_TOKEN' in text
+    assert "uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d" in text
+    assert "subject-path: ${{ steps.evidence.outputs.evidence_path }}" in text
+    assert "ACTIONS_ID_TOKEN_REQUEST_URL" in text
+    assert "ACTIONS_ID_TOKEN_REQUEST_TOKEN" in text
     assert 'default: "https://hol.org/api/guard/repository-attestations"' in text
 
 

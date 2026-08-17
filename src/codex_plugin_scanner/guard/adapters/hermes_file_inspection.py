@@ -14,6 +14,7 @@ from typing import Literal
 
 import yaml  # type: ignore[import-untyped]
 
+from ..file_identity import full_stat_identity
 from ..windows_paths import open_windows_locked_regular_descriptor
 
 HERMES_PREVIEW_BYTES = 64 * 1024
@@ -383,17 +384,7 @@ def _resolves_within(path: Path, root: Path) -> bool:
     return True
 
 
-def _stat_key(metadata: os.stat_result) -> tuple[int, ...]:
-    return (
-        int(metadata.st_dev),
-        int(metadata.st_ino),
-        int(metadata.st_mode),
-        int(metadata.st_nlink),
-        int(metadata.st_size),
-        int(getattr(metadata, "st_mtime_ns", int(metadata.st_mtime * 1_000_000_000))),
-        int(getattr(metadata, "st_ctime_ns", int(metadata.st_ctime * 1_000_000_000))),
-        int(getattr(metadata, "st_file_attributes", 0)),
-    )
+_stat_key = full_stat_identity
 
 
 __all__ = [

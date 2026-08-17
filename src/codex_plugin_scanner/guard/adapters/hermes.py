@@ -16,8 +16,6 @@ from typing import Any
 import yaml as _yaml  # type: ignore[import-untyped]
 
 from ..aibom_detection import enrich_mcp_server_metadata
-from ..inventory_cisco import run_cisco_inventory_scans
-from ..inventory_contract import GuardAgentInventorySnapshot, inventory_snapshot_from_detection
 from ..models import GuardArtifact, HarnessDetection
 from ..shims import install_guard_shim, remove_guard_shim
 from ..skill_directory_identity import (
@@ -427,31 +425,6 @@ class HermesHarnessAdapter(HarnessAdapter):
             artifacts=tuple(artifacts),
             config_paths=tuple(found_paths),
             warnings=tuple(dict.fromkeys(warnings)),
-        )
-
-    def inventory_snapshot(
-        self,
-        context: HarnessContext,
-        *,
-        generated_at: str,
-        cisco_mcp_scan: str = "off",
-        cisco_skill_scan: str = "off",
-        cisco_timeout_seconds: float | None = None,
-    ) -> GuardAgentInventorySnapshot:
-        detection = self.detect(context)
-        return inventory_snapshot_from_detection(
-            detection,
-            generated_at=generated_at,
-            home_dir=context.home_dir,
-            workspace_dir=context.workspace_dir,
-            cisco_runs=run_cisco_inventory_scans(
-                harness=self.harness,
-                context=context,
-                detection=detection,
-                mcp_mode=cisco_mcp_scan,
-                skill_mode=cisco_skill_scan,
-                timeout_seconds=cisco_timeout_seconds,
-            ),
         )
 
     # ------------------------------------------------------------------

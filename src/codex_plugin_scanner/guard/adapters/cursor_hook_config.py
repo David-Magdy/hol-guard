@@ -9,6 +9,8 @@ from hashlib import sha256
 from pathlib import Path
 
 from .base import HarnessContext
+from .hook_payloads import inline_hooks_payload
+from .state_files import load_backup_payload
 
 HOOK_SCRIPT_NAME = "hol-guard-cursor-hook.py"
 _BLOCKING_MANAGED_HOOK_EVENTS = (
@@ -102,18 +104,7 @@ def _managed_hooks_payload(payload: dict[str, object]) -> dict[str, object]:
     return normalized
 
 
-def _inline_hooks(payload: dict[str, object]) -> dict[str, object]:
-    hooks = payload.get("hooks")
-    if isinstance(hooks, dict):
-        normalized = {
-            str(hook_name): list(entries) if isinstance(entries, list) else entries
-            for hook_name, entries in hooks.items()
-        }
-        payload["hooks"] = normalized
-        return normalized
-    normalized: dict[str, object] = {}
-    payload["hooks"] = normalized
-    return normalized
+_inline_hooks = inline_hooks_payload
 
 
 def _json_object(path: Path, *, recover_missing: bool) -> dict[str, object]:
@@ -140,16 +131,7 @@ def _hooks_state_path(target_path: Path, context: HarnessContext) -> Path:
     return context.guard_home / "managed" / "cursor" / f"hooks-{digest}.state.json"
 
 
-def _backup_payload(backup_path: Path) -> dict[str, str | bool | None]:
-    try:
-        payload = json.loads(backup_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"readable": False, "existed": False, "content": None}
-    if not isinstance(payload, dict):
-        return {"readable": False, "existed": False, "content": None}
-    existed = payload.get("existed") is True
-    content = payload.get("content")
-    return {"readable": True, "existed": existed, "content": content if isinstance(content, str) else None}
+_backup_payload = load_backup_payload
 
 
 def _make_executable(path: Path) -> None:

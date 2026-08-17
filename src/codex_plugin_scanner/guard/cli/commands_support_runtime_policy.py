@@ -10,6 +10,8 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
+from ..runtime.data_flow_sink import data_flow_sink_type
+
 if TYPE_CHECKING:
     from ._commands_shared import _HOOK_DAEMON_UNREACHABLE_REASON_MARKER, _now
     from .commands_support_prompts import _prompt_request_classes, _prompt_requires_hard_block
@@ -1012,17 +1014,7 @@ def _runtime_data_flow_summary(signals: tuple[RiskSignalV2, ...]) -> str:
         return f"This command sends local secret to {sink_type}. Guard kept raw secret contents out of the evidence."
     return f"This command sends local secret to {sink_type}."
 
-def _runtime_data_flow_sink_type(signals: tuple[RiskSignalV2, ...]) -> str:
-    signal_ids = {signal.signal_id for signal in signals}
-    if any(signal.category == "network" for signal in signals):
-        return "network host"
-    if "data-flow:clipboard-secret" in signal_ids:
-        return "clipboard"
-    if "data-flow:world-readable-temp-secret" in signal_ids:
-        return "world-readable temp file"
-    if "data-flow:git-remote-token" in signal_ids:
-        return "git remote configuration"
-    return "external sink"
+_runtime_data_flow_sink_type = data_flow_sink_type
 
 def _runtime_artifact_risk_classes(artifact: GuardArtifact) -> list[str]:
     risk_classes: list[str] = []

@@ -20,6 +20,7 @@ from typing import final
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 
+from ..file_identity import content_stat_identity
 from .update_subprocess import FilesystemIdentity, UpdateSubprocessError
 
 _MAX_WHEEL_BYTES = 512 * 1024 * 1024
@@ -1240,15 +1241,7 @@ def _is_metadata_entry(filename: str) -> bool:
     )
 
 
-def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
-        metadata.st_mode,
-    )
+_stat_identity = content_stat_identity
 
 
 def _metadata_is_reparse(metadata: os.stat_result) -> bool:

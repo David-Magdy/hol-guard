@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import time
@@ -12,6 +11,12 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Final
 
+from .contained_execution_common import (
+    canonical_existing_directory as _canonical_directory,
+)
+from .contained_execution_common import (
+    containment_binding_digest as _binding_digest,
+)
 from .containment_contract import ContainmentInput
 from .secret_sensitivity import classify_secret_path
 
@@ -221,23 +226,9 @@ def _check_discovery_budget(started_at: float, visited_entries: int) -> None:
         raise ValueError("workspace discovery time budget exceeded")
 
 
-def _canonical_directory(path: Path) -> Path:
-    if path.is_symlink() or not path.is_dir():
-        raise ValueError("workspace must be an existing canonical directory")
-    canonical = path.resolve(strict=True)
-    if canonical != Path(os.path.normpath(str(path))):
-        raise ValueError("workspace cannot contain aliases")
-    return canonical
-
-
 def _directory_identity(path: Path) -> tuple[int, int]:
     metadata = path.stat(follow_symlinks=False)
     return metadata.st_dev, metadata.st_ino
-
-
-def _binding_digest(payload: dict[str, object]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-    return hashlib.sha256(len(encoded).to_bytes(8, "big") + encoded).hexdigest()
 
 
 __all__ = ("complete_workspace_snapshot", "reject_external_node_modules")

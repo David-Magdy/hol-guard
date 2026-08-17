@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from functools import partial
+
+from .artifact_identity import artifact_family_key
+
 # ruff: noqa: F401,I001
 
 import base64
@@ -1331,19 +1335,10 @@ def _validate_scoped_policy_artifact_target(scope: str, artifact_id: str | None)
         raise ValueError(msg)
 
 
-def _artifact_family_key(artifact_id: str | None) -> str | None:
-    if artifact_id is None or not artifact_id.strip():
-        return None
-    if artifact_id.startswith("family:"):
-        family = artifact_id.removeprefix("family:").strip().lower()
-        return artifact_id if family in _SCOPED_HARNESS_FAMILIES else None
-    parts = artifact_id.split(":")
-    if len(parts) < 3:
-        return None
-    family = parts[2].strip().lower()
-    if family not in _SCOPED_HARNESS_FAMILIES:
-        return None
-    return f"family:{family}"
+_artifact_family_key = partial(
+    artifact_family_key,
+    allowed_families=_SCOPED_HARNESS_FAMILIES,
+)
 
 
 def _runtime_scoped_exact_match_key(

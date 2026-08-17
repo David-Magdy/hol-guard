@@ -7,8 +7,9 @@ import hmac
 import json
 import os
 import secrets
-import stat
 from pathlib import Path
+
+from ..private_file_io import read_private_regular_text
 
 DAEMON_DISCOVERY_PROTOCOL_VERSION = 1
 DAEMON_DISCOVERY_CHALLENGE_TTL_SECONDS = 5
@@ -23,23 +24,8 @@ def daemon_discovery_key_path(guard_home: Path) -> Path:
     return guard_home / DAEMON_DISCOVERY_KEY_FILE
 
 
-def _private_file_text(path: Path) -> str | None:
-    try:
-        metadata = path.lstat()
-    except OSError:
-        return None
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        return None
-    if os.name != "nt" and (metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) & 0o077):
-        return None
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-
-
 def load_daemon_discovery_key(guard_home: Path) -> str | None:
-    encoded = _private_file_text(daemon_discovery_key_path(guard_home))
+    encoded = read_private_regular_text(daemon_discovery_key_path(guard_home), max_bytes=256)
     if encoded is None or len(encoded) != _DISCOVERY_KEY_BYTES * 2:
         return None
     try:
@@ -125,7 +111,7 @@ def load_authenticated_daemon_state(guard_home: Path) -> dict[str, object] | Non
     discovery_key = load_daemon_discovery_key(guard_home)
     if discovery_key is None:
         return None
-    raw = _private_file_text(guard_home / "daemon-state.json")
+    raw = read_private_regular_text(guard_home / "daemon-state.json", max_bytes=64 * 1024)
     if raw is None:
         return None
     try:

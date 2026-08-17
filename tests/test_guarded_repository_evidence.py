@@ -33,7 +33,10 @@ def test_evidence_is_deterministic_and_sanitized() -> None:
     evidence = _evidence()
     rendered = guarded_repository_evidence_json(evidence)
 
-    assert guarded_repository_evidence_sha256(evidence) == "b730be19205f36f9a8fdcad6d2f65b8c1fb746790338a53f255fa88c8fb01f0c"
+    assert (
+        guarded_repository_evidence_sha256(evidence)
+        == "b730be19205f36f9a8fdcad6d2f65b8c1fb746790338a53f255fa88c8fb01f0c"
+    )
     assert evidence.claim == CLAIM
     assert evidence.runtime_coverage_claimed is False
     assert evidence.sensitive_content_included is False
