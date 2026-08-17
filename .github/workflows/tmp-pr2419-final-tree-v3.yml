@@ -92,6 +92,18 @@ jobs:
                   raise SystemExit("generated-baseline patch filter marker not found")
           scripts[0] = "".join(build_lines)
 
+          apply_pair = (
+              'git apply --check "${RUNNER_TEMP}/deep-filtered.patch"\n'
+              'git apply --index "${RUNNER_TEMP}/deep-filtered.patch"\n'
+          )
+          if apply_pair not in scripts[0]:
+              raise SystemExit("deep patch application commands not found")
+          scripts[0] = scripts[0].replace(
+              apply_pair,
+              'git apply --3way --index "${RUNNER_TEMP}/deep-filtered.patch"\n',
+              1,
+          )
+
           runner_temp = Path(os.environ["RUNNER_TEMP"])
           environment = os.environ.copy()
           for index, (name, script) in enumerate(zip(wanted, scripts, strict=True), start=1):
