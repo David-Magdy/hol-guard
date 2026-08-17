@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -257,9 +258,7 @@ def is_suggestable_custom_tool(*, name: str, kind: LocalCliKind) -> bool:
     normalized = _normalize_tool_name(name)
     if is_common_shell_utility(normalized) or is_reserved_tool_name(normalized):
         return False
-    if kind == "script" and normalized.startswith("test_") and normalized.endswith(".py"):
-        return False
-    return True
+    return not (kind == "script" and normalized.startswith("test_") and normalized.endswith(".py"))
 
 
 def recognize_operator_cli(
@@ -435,11 +434,12 @@ def _recognition_candidates(command_text: str, *, cwd: Path, home_dir: Path) -> 
     except OSError:
         return tuple(candidates)
     if resolved.is_file():
+        quoted = shlex.quote(str(resolved))
         launcher = _SCRIPT_LAUNCHERS.get(resolved.suffix.lower())
         if launcher is not None:
-            candidates.append(f"{launcher} {resolved}")
+            candidates.append(f"{launcher} {quoted}")
         else:
-            candidates.append(str(resolved))
+            candidates.append(quoted)
     return tuple(dict.fromkeys(candidates))
 
 
