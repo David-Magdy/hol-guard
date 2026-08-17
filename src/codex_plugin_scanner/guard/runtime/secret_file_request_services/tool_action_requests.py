@@ -23,6 +23,7 @@ from .docker_requests import (
     _docker_sensitive_tool_action_request,
     _shell_execution_context_validation_reason,
 )
+from .environment_secret_dump import environment_secret_dump_request
 from .pytest_config_safety import _shell_args_without_trailing_redirections
 from .request_artifacts import _candidate_command_texts, _shell_normalized_tool_name
 from .request_models import ToolActionRequestMatch, _normalize_tool_name
@@ -187,6 +188,26 @@ def extract_sensitive_tool_action_request(
                     wrapper_chain=wrapper_chain,
                 )
             return kubernetes_secret_request
+        env_dump_request = environment_secret_dump_request(
+            tool_name=requested_tool_name,
+            normalized_tool_name=effective_tool_name,
+            command_text=command_text,
+            cwd=cwd,
+            home_dir=home_dir,
+        )
+        if env_dump_request is not None:
+            env_dump_request = _request_with_shell_execution_context(
+                env_dump_request,
+                command_text=command_text,
+                cwd=cwd,
+            )
+            if wrapper_chain:
+                env_dump_request = _request_with_wrapper_context(
+                    env_dump_request,
+                    raw_command_text=raw_command_text,
+                    wrapper_chain=wrapper_chain,
+                )
+            return env_dump_request
         destructive_execution_context = model_shell_execution_context(
             command_text,
             cwd=cwd,
