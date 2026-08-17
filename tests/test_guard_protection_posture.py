@@ -245,6 +245,36 @@ def test_watch_auto_revert_hours_round_trip(tmp_path: Path) -> None:
     assert loaded.watch_auto_revert_hours == 48
 
 
+def test_watch_auto_reverts_after_entered_timestamp(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from codex_plugin_scanner.guard.config import maybe_auto_revert_watch
+
+    guard_home = tmp_path / ".hol-guard"
+    loaded = update_guard_settings(guard_home, {"protection_posture": "watch", "watch_auto_revert_hours": 24})
+    assert loaded.protection_posture == "watch"
+    assert loaded.watch_entered_at is not None
+    later = datetime.now(timezone.utc) + timedelta(hours=25)
+    reverted = maybe_auto_revert_watch(guard_home, now=later)
+    assert reverted.protection_posture == "protected"
+    assert reverted.mode == "enforce"
+
+
+def test_watch_auto_revert_accepts_naive_entered_at(tmp_path: Path) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from codex_plugin_scanner.guard.config import maybe_auto_revert_watch, watch_should_auto_revert
+
+    guard_home = tmp_path / ".hol-guard"
+    loaded = update_guard_settings(guard_home, {"protection_posture": "watch", "watch_auto_revert_hours": 24})
+    naive = loaded.watch_entered_at.replace("+00:00", "") if loaded.watch_entered_at else "2020-01-01T00:00:00"
+    naive_config = replace(loaded, watch_entered_at=naive)
+    later = datetime.now(timezone.utc) + timedelta(hours=25)
+    assert watch_should_auto_revert(naive_config, now=later) is True
+    reverted = maybe_auto_revert_watch(guard_home, now=later)
+    assert reverted.protection_posture == "protected"
+
+
 def test_explicit_protected_survives_mode_lock_overlay(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
@@ -316,3 +346,32 @@ def test_runtime_policy_reads_signal_confidence_from_artifact_metadata(tmp_path:
     )
     action = _apply_explicit_posture_action(config, artifact, "credential_exfiltration", "require-reapproval")
     assert action == "block"
+
+
+def test_managed_mode_lock_overrides_watch_payload() -> None:
+    from codex_plugin_scanner.guard.mdm.contracts import MDM_POLICY_SCHEMA_VERSION, ManagedPolicy
+    from codex_plugin_scanner.guard.mdm.policy import apply_managed_policy
+
+    policy = ManagedPolicy(
+        schema_version=MDM_POLICY_SCHEMA_VERSION,
+        settings={"mode": "enforce"},
+        locked_settings=frozenset({"mode"}),
+    )
+    composed = apply_managed_policy(
+        {"mode": "observe", "protection_posture": "watch", "security_level": "balanced"},
+        policy,
+    )
+    assert composed["mode"] == "enforce"
+
+
+def test_managed_watch_auto_revert_lock_keeps_hours() -> None:
+    from codex_plugin_scanner.guard.mdm.contracts import MDM_POLICY_SCHEMA_VERSION, ManagedPolicy
+    from codex_plugin_scanner.guard.mdm.policy import apply_managed_policy
+
+    policy = ManagedPolicy(
+        schema_version=MDM_POLICY_SCHEMA_VERSION,
+        settings={"watch_auto_revert_hours": 24},
+        locked_settings=frozenset({"watch_auto_revert_hours"}),
+    )
+    composed = apply_managed_policy({"watch_auto_revert_hours": 0}, policy)
+    assert composed["watch_auto_revert_hours"] == 24

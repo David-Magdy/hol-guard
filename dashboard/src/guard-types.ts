@@ -593,6 +593,8 @@ export type GuardRuntimeSnapshot = {
   cloud_command_capability?: GuardCloudCommandCapability;
   operator_health?: GuardOperatorHealth;
   security_level?: "balanced" | "strict" | "custom";
+  protection_posture?: "protected" | "extra_careful" | "watch";
+  protection_capabilities?: GuardProtectionCapability[];
   supply_chain?: SupplyChainSnapshot;
 };
 
@@ -885,6 +887,9 @@ export type GuardApprovalGatePublicConfig = {
 
 export type GuardSettings = {
   mode: "observe" | "prompt" | "enforce";
+  protection_posture?: "protected" | "extra_careful" | "watch";
+  protection_posture_explicit?: boolean;
+  watch_auto_revert_hours?: number;
   security_level: "relaxed" | "gentle" | "balanced" | "strict" | "custom";
   default_action: string;
   unknown_publisher_action: string;
@@ -904,6 +909,19 @@ export type GuardSettings = {
   billing: boolean;
   update_channel?: "stable" | "alpha";
   approval_gate?: GuardApprovalGatePublicConfig;
+  managed_locked_settings?: string[];
+};
+
+export type GuardProtectionCapability = {
+  harness: string;
+  display_name: string;
+  can_pre_block: boolean;
+  can_ask_inline: boolean;
+  has_native_remember: boolean;
+  fail_open_on_hook_failure: boolean;
+  can_pre_block_limited: boolean;
+  honesty_sentence: string;
+  limited: boolean;
 };
 
 export type GuardProtectionCapability = {
