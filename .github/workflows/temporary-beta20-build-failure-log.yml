@@ -1,0 +1,80 @@
+name: Temporary Beta 20 build failure log
+
+on:
+  push:
+    branches:
+      - ops/beta20-build-failure-log
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Collect exact failed log context
+        shell: bash
+        run: |
+          set -uo pipefail
+          gh run view 32047544448 --repo "$GITHUB_REPOSITORY" --log-failed > full.log 2> error.log || true
+          python3 - <<'PY'
+          from pathlib import Path
+
+          text = Path("full.log").read_text(errors="replace") if Path("full.log").exists() else ""
+          lines = text.splitlines()
+          indices = []
+          keywords = (
+              "##[error]",
+              "process completed with exit code",
+              "curl:",
+              "openssl",
+              "hmac",
+              "manifest",
+              "source bridge",
+              "source.tar.gz",
+              "decrypt",
+              "expected",
+              "failed",
+              "error:",
+              "traceback",
+          )
+          for index, line in enumerate(lines):
+              lower = line.lower()
+              if any(keyword.lower() in lower for keyword in keywords):
+                  indices.append(index)
+          selected = []
+          if indices:
+              for index in indices:
+                  selected.extend(lines[max(0, index - 8):min(len(lines), index + 18)])
+          else:
+              selected = lines[-500:]
+          seen = set()
+          result = []
+          for line in selected:
+              if line in seen:
+                  continue
+              seen.add(line)
+              result.append(line)
+          Path("failed-context.log").write_text("\n".join(result[-900:]) + "\n")
+          PY
+          cp error.log retrieval-error.log
+
+      - name: Upload compact failure evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: beta20-public-build-failure-context
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            failed-context.log
+            retrieval-error.log
+
+      - name: Remove temporary branch
+        if: always()
+        shell: bash
+        run: |
+          gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/ops%2Fbeta20-build-failure-log" || true
