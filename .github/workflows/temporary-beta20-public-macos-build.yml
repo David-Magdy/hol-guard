@@ -19,7 +19,7 @@ env:
   RUSTUP_TOOLCHAIN: 1.89.0
   GUARD_DAEMON_PORT: 24781
   SOURCE_BRIDGE_SHA256: b914da531434eaabf4fccbb695294d1b74f52268c15a2d39fc6a1d456c6c1cec
-  SOURCE_BRIDGE_URL: "https://sdmntprnorthcentralus.oaiusercontent.com/files/00000000-c030-822f-af14-69490d58718d/raw?se=2026-08-17T16%3A50%3A11Z&sp=r&sv=2026-02-06&sr=b&scid=8cddef2a-2c41-51ef-a14f-f6ecd0aa92c0&skoid=de71a0d5-fb02-4fce-be69-9296aced242b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-16T21%3A31%3A24Z&ske=2026-08-17T21%3A31%3A24Z&sks=b&skv=2026-02-06&sig=ESyaDF2z7AQK6VJyGvQ2%2BUhGLzaHTOzDJYjwC4RnQzY%3D"
+  SOURCE_BRIDGE_URL: "https://sdmntpreastus.oaiusercontent.com/files/00000000-afdc-81f9-9b0f-a2f54600f7cb/raw?se=2026-08-17T16%3A55%3A26Z&sp=r&sv=2026-02-06&sr=b&scid=fe33bb65-3570-572c-9060-e1e0dc51da92&skoid=de71a0d5-fb02-4fce-be69-9296aced242b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-17T14%3A18%3A10Z&ske=2026-08-18T14%3A18%3A10Z&sks=b&skv=2026-02-06&sig=Q%2BTTlCABxXwGa2vqGwVxPicENTQIr67HEC%2Bx4zOiI50%3D"
 
 jobs:
   build:
@@ -63,8 +63,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base64 --decode scripts/temporary-beta20-public-macos-build.sh.gz.b64 \
-            | gunzip > "$RUNNER_TEMP/beta20-public-macos-build.sh"
+          base64 -D -i scripts/temporary-beta20-public-macos-build.sh.gz.b64 \
+            -o "$RUNNER_TEMP/beta20-public-macos-build.sh.gz"
+          gunzip -c "$RUNNER_TEMP/beta20-public-macos-build.sh.gz" \
+            > "$RUNNER_TEMP/beta20-public-macos-build.sh"
           chmod 0700 "$RUNNER_TEMP/beta20-public-macos-build.sh"
           bash "$RUNNER_TEMP/beta20-public-macos-build.sh"
 
