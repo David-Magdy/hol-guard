@@ -484,11 +484,14 @@ export function ProtectionCenterWorkspace() {
       </div>
       <div className="mt-4">{catalogExtensions.map((extension) => <ProtectionModuleRow
         key={extension.extension_id}
+        extensionId={extension.extension_id}
         name={extension.name}
         description={extension.description}
         behavior={extensionStateLabel(state.effective, extension)}
         required={extension.required}
         managed={sourceIsManaged(state.effective, extension.extension_id)}
+        executables={extension.executables}
+        ecosystemIds={extension.ecosystem_ids}
         onOpen={() => openExtension(extension)}
       />)}</div>
     </section>
