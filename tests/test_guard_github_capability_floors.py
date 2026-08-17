@@ -55,6 +55,8 @@ _EXPECTED_FLOORS = {
             True,
         ),
         (("pr", "review", "17", "--approve"), ("content_remote",), False),
+        (("pr", "merge", "17", "--squash"), ("routine_merge_remote",), False),
+        (("pr", "merge", "17", "--squash", "--delete-branch"), ("routine_merge_remote",), False),
         (("pr", "merge", "17"), ("merge_remote",), False),
         (("pr", "merge", "17", "--delete-branch"), ("merge_remote", "delete_remote"), False),
         (("api", "repos/o/r/pulls/17/merge", "-X", "PUT"), ("merge_remote",), False),
@@ -140,6 +142,20 @@ def test_admin_merge_action_class_is_preserved_with_branch_deletion() -> None:
 )
 def test_routine_squash_merge_is_prompt_free(command: str) -> None:
     assert extract_sensitive_tool_action_request("Bash", {"command": command}) is None
+
+
+def test_routine_squash_merge_cleanup_followed_by_read_is_prompt_free() -> None:
+    match = extract_sensitive_tool_action_request(
+        "Bash",
+        {
+            "command": (
+                "gh pr merge 5134 --repo example/project --squash --delete-branch && "
+                "gh pr view 5134 --repo example/project --json state,mergedAt,mergeCommit,url"
+            )
+        },
+    )
+
+    assert match is None
 
 
 @pytest.mark.parametrize(
@@ -251,6 +267,8 @@ def test_redirection_retains_the_underlying_remote_capability(
     "command",
     (
         "gh pr review 17 --approve",
+        "gh pr merge 17",
+        "gh pr merge 17 --squash --auto",
         "gh release create v1 --notes-file notes.md",
         "gh workflow run ci.yml",
         "gh repo sync --force",

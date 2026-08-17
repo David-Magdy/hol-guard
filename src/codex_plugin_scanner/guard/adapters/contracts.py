@@ -355,13 +355,15 @@ HARNESS_CONTRACTS: tuple[HarnessProtectionContract, ...] = (
             "~/.grok/managed_config.toml",
             "~/.grok/hooks/",
         ),
-        event_surfaces=("shell", "prompt", "mcp_tool", "file_read"),
+        event_surfaces=("shell", "prompt", "mcp_tool", "file_read", "file_write"),
         native_approval=False,
         browser_fallback=True,
         resume_support=False,
         known_blind_spots=(
-            "--always-approve and bypassPermissions weaken prompt policy, but the bounded Guard hook still "
-            "returns a native deny when its local review cannot finish."
+            "Grok UserPromptSubmit hooks are observe-only, so prompt screening cannot block the model from "
+            "seeing a prompt. Enforcement is the catch-all PreToolUse hook, including subagent and MCP tools. "
+            "--always-approve and bypassPermissions weaken Grok's own prompt policy, but the Guard hook still "
+            "returns a native deny when policy blocks a tool call."
         ),
         smoke_command="hol-guard install grok --dry-run",
     ),
@@ -433,6 +435,12 @@ for _c in HARNESS_CONTRACTS:
 def contract_for(harness: str) -> HarnessProtectionContract | None:
     """Return the contract for a harness name or install alias, or None."""
     return _CONTRACT_BY_ALIAS.get(harness)
+
+
+def display_name_for(harness: str) -> str:
+    contract = contract_for(harness)
+    key = contract.harness if contract is not None else harness
+    return _DISPLAY_NAMES.get(key, key)
 
 
 def setup_contract_for(harness: str) -> HarnessSetupContract | None:

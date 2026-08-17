@@ -12,8 +12,11 @@ from pathlib import Path
 from ...models import GuardArtifact
 from ..command_decision_adapter import effect_decision_to_dict
 from ..command_evaluation import evaluate_command
+from ..command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from ..direct_vitest import direct_local_typescript_execution_context, direct_local_vitest_execution_context
-from ..extension_control_contract import ExtensionControlLayer
+from ..extension_control_contract import ControlSurface, ExtensionControlLayer
+from ..extension_control_resolver import resolve_extension_controls
+from ..extension_control_runtime import current_extension_control_snapshot
 from ..github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
 from ..github_capability_contract import GitHubCommandAssessment
 from ..github_capability_interaction import github_capability_requires_confirmation
@@ -107,6 +110,24 @@ def is_explicitly_benign_tool_action_request(
         github_assessment = classify_github_shell_capabilities(stripped_command, home_dir=home_dir)
         if github_assessment is not None and github_capability_requires_confirmation(github_assessment):
             return False
+        control_snapshot = current_extension_control_snapshot()
+        if github_assessment is not None and control_snapshot is not None:
+            permissions = tuple(
+                permission
+                for capability in github_assessment.capabilities
+                if (permission := BUILT_IN_COMMAND_EXTENSION_REGISTRY.permission_for_typed_capability(capability))
+                is not None
+            )
+            control_resolution = resolve_extension_controls(
+                control_snapshot.layers,
+                BUILT_IN_COMMAND_EXTENSION_REGISTRY,
+                extension_ids=tuple(sorted({permission.extension_id for permission in permissions})),
+                permission_ids=tuple(sorted({permission.permission_id for permission in permissions})),
+                surface=ControlSurface.COMMAND_EVALUATION,
+                authority_failure=control_snapshot.authority_failure,
+            )
+            if control_resolution.blocked:
+                return False
         if _quote_aware_direct_github_read_is_safe(stripped_command, assessment=github_assessment):
             found_benign_candidate = True
             continue
@@ -148,7 +169,7 @@ def is_explicitly_benign_tool_action_request(
         if _looks_like_safe_git_status_command(stripped_command, parts, cwd=cwd):
             found_benign_candidate = True
             continue
-        if _looks_like_safe_standalone_git_routine(stripped_command, cwd=cwd):
+        if _looks_like_safe_standalone_git_routine(stripped_command, cwd=cwd, home_dir=home_dir):
             found_benign_candidate = True
             continue
         if home_dir is not None and is_safe_git_worktree_add(

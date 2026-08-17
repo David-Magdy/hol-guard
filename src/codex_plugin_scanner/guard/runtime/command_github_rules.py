@@ -21,6 +21,7 @@ GITHUB_COMMAND_RULES: Final[tuple[CommandSafetyRule, ...]] = tuple(
         risk_classes=contract.risk_classes,
         action_classes=(cast(str, contract.action_class),),
         safer_alternatives=contract.safer_alternatives,
+        default_mode="disabled" if contract.action_floor == "allow" else "review",
         compatibility_fallback=True,
     )
     for contract in _GITHUB_CONTRACTS

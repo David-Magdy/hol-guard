@@ -41,7 +41,7 @@ import {
 import { buildWhatWouldHappen, pastDecisionVerb, PrimaryActionCard } from "./review-states";
 import type { ReviewViewModel, ReviewWorkspaceProps } from "./review-workspace";
 
-const commonScopeValues = new Set<DecisionScope>(["artifact"]);
+const commonScopeValues = new Set<DecisionScope>(["artifact", "workspace"]);
 
 function resolvedActionCopy(
   item: GuardApprovalRequest | null,
@@ -327,8 +327,14 @@ export function ReviewDecisionCard(props: {
   const persistExactAllow = item !== null && willPersistExactAction(item, "allow", allowScope, rememberExactAction);
   const persistExactBlock = item !== null && willPersistExactAction(item, "block", blockScope, watchOnlyObservation);
   let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
-  if (persistExactAllow) {
-    resolvedAllowButtonLabel = watchOnlyObservation ? "Allow next time" : "Approve and remember";
+  if (watchOnlyObservation) {
+    resolvedAllowButtonLabel = "Keep allowing";
+  } else if (persistExactAllow) {
+    resolvedAllowButtonLabel = "Approve and remember";
+  }
+  let resolvedBlockButtonLabel = blockButtonLabel(blockScope);
+  if (watchOnlyObservation || persistExactBlock) {
+    resolvedBlockButtonLabel = "Stop this next time";
   }
   return (
     <div className="space-y-5">
@@ -362,7 +368,7 @@ export function ReviewDecisionCard(props: {
             </p>
           </div>
           <Badge tone={watchOnlyObservation ? "info" : actionPresentation.tone}>
-            {watchOnlyObservation ? "Ran in Watch only" : actionPresentation.label}
+            {watchOnlyObservation ? "Would have stopped" : actionPresentation.label}
           </Badge>
         </div>
 
@@ -480,7 +486,7 @@ export function ReviewDecisionCard(props: {
             ) : (
               <span className="flex items-center gap-2">
                 <HiMiniNoSymbol className="h-4 w-4" aria-hidden="true" />
-                {persistExactBlock ? "Block next time" : blockButtonLabel(blockScope)}
+                {resolvedBlockButtonLabel}
               </span>
             )}
           </ActionButton>
@@ -545,7 +551,7 @@ export function ReviewDecisionCard(props: {
           onUseCooldownChange={handleUseCooldownChange}
           onSubmit={handleModalSubmit}
           onCancel={handleModalCancel}
-          submitLabel={pendingAction === "allow" ? resolvedAllowButtonLabel : blockButtonLabel(blockScope)}
+          submitLabel={pendingAction === "allow" ? resolvedAllowButtonLabel : resolvedBlockButtonLabel}
         />
       )}
     </div>

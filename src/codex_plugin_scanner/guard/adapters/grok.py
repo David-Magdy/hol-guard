@@ -27,7 +27,9 @@ from .grok_config import (
     GROK_DIR,
     GROK_HOOKS_DIR,
     GROK_MANAGED_CONFIG_FILE,
+    GROK_PROJECT_SURFACE_RELATIVES,
     GROK_REQUIREMENTS_FILE,
+    GROK_SURFACE_RELATIVES,
     GUARD_HOOK_PRETOOL_FILE,
     GUARD_HOOK_PROMPT_FILE,
     GUARD_MANAGED_BEGIN,
@@ -38,6 +40,7 @@ from .grok_config import (
     append_mcp_artifacts,
     append_permission_artifacts,
     build_managed_config_block,
+    build_observe_hook_json,
     build_pretool_hook_json,
     degraded_mode_warnings,
     remove_managed_block,
@@ -62,12 +65,12 @@ class GrokHarnessAdapter(HarnessAdapter):
     launcher_name = "grok"
     approval_tier = "approval-center"
     approval_summary = (
-        "Guard intercepts Grok tool calls through native PreToolUse hooks and routes blocked "
-        "actions to the local approval center."
+        "Guard intercepts every Grok tool call, including subagent and MCP tools, through a "
+        "catch-all PreToolUse hook and routes blocked actions to the local approval center."
     )
     fallback_hint = (
-        "Grok receives plain-language allow or deny responses from Guard hooks. "
-        "Use the Guard approval center when native prompting is unavailable."
+        "Grok prompt hooks are observe-only; enforcement happens on PreToolUse. "
+        "Use the Guard approval center when a tool call is denied."
     )
 
     @staticmethod
@@ -256,13 +259,13 @@ class GrokHarnessAdapter(HarnessAdapter):
                     )
                 )
 
-        for relative in ("skills", "plugins", "plugins/marketplaces", "plugins/known_marketplaces.json", "sessions"):
+        for relative in GROK_SURFACE_RELATIVES:
             candidate = grok_root / relative
             if candidate.exists():
                 append_found_path(found_paths, candidate)
 
         if project_root is not None:
-            for relative in ("skills", "plugins", "hooks"):
+            for relative in GROK_PROJECT_SURFACE_RELATIVES:
                 candidate = project_root / relative
                 if candidate.exists():
                     append_found_path(found_paths, candidate)
@@ -383,26 +386,11 @@ class GrokHarnessAdapter(HarnessAdapter):
 
         pretool_payload = build_pretool_hook_json(hook_command)
         pretool_path.write_text(json.dumps(pretool_payload, indent=2) + "\n", encoding="utf-8")
-        prompt_payload = {
-            "hooks": {
-                "UserPromptSubmit": [
-                    {
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": hook_command,
-                                "timeout": 30,
-                            }
-                        ]
-                    }
-                ]
-            }
-        }
-        prompt_path.write_text(json.dumps(prompt_payload, indent=2) + "\n", encoding="utf-8")
+        prompt_path.write_text(json.dumps(build_observe_hook_json(hook_command), indent=2) + "\n", encoding="utf-8")
 
         existing_text = managed_config_path.read_text(encoding="utf-8") if managed_config_path.is_file() else ""
         cleaned_text = remove_managed_block(existing_text)
-        managed_block = build_managed_config_block()
+        managed_block = build_managed_config_block(hook_command)
         managed_config_path.write_text(f"{cleaned_text.rstrip()}\n\n{managed_block}\n".lstrip(), encoding="utf-8")
 
         self._state_path(context).write_text(
@@ -428,8 +416,9 @@ class GrokHarnessAdapter(HarnessAdapter):
             "config_path": str(managed_config_path),
             **shim_manifest,
             "notes": [
-                "Guard hooks installed in .grok/hooks/hol-guard-*.json",
-                "Guard permission rules installed in .grok/managed_config.toml",
+                "Guard catch-all PreToolUse hook installed in .grok/hooks/hol-guard-pretooluse.json",
+                "Guard observe hooks installed for prompts, session start, and subagent start",
+                "Guard permission rules and backup hooks installed in .grok/managed_config.toml",
                 *shim_notes,
             ],
         }

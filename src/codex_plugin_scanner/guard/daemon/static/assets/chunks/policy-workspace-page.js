@@ -1,4 +1,4 @@
-import { j as jsxRuntimeExports, S as SectionLabel, w as HiMiniXMark, L as Badge, aj as Tag, b as HiMiniCommandLine, J as HiMiniExclamationTriangle, bh as scopeLabel, e as harnessDisplayName, A as ActionButton, bi as guardAwareHref, s as formatRelativeTime$1, bj as HiMiniDocumentText, l as HiMiniCheckCircle, bk as HiMiniCloudArrowUp, bl as HiMiniCheck, bm as HiMiniCodeBracket, bn as HiMiniClipboardDocument, bo as HiMiniUsers, aW as HiMiniBeaker, bp as HiMiniFolder, Z as HiMiniLockClosed, o as HiMiniShieldCheck, ap as HiMiniInformationCircle, b2 as HiMiniCloudArrowDown, b1 as HiMiniArrowTopRightOnSquare, bq as HiMiniIdentification, br as policyActionLabel, r as reactExports, bs as createCloudExceptionRequest, bt as HiMiniArrowRight, i as EmptyState, ak as HiMiniMagnifyingGlass, x as HiMiniChevronUp, y as HiMiniChevronDown, c as HiMiniChevronRight, bu as HiMiniPuzzlePiece, bv as HiMiniGlobeAlt, aU as HiMiniClock, bw as fetchCloudExceptions, bx as fetchCloudExceptionRequests, by as downloadBlob, bz as PolicyStatField, bA as PaginationControls, bB as HiMiniNoSymbol, bC as HiMiniCube, ao as HiMiniArrowPath, B as HiMiniCloud, $ as HiMiniAdjustmentsHorizontal, bD as HiMiniArrowDownTray, bE as HiMiniQueueList, au as WorkspacePageHeader, bg as __vitePreload } from "../guard-dashboard.js";
+import { j as jsxRuntimeExports, S as SectionLabel, x as HiMiniXMark, M as Badge, aq as Tag, b as HiMiniCommandLine, K as HiMiniExclamationTriangle, bu as scopeLabel, i as harnessDisplayName, A as ActionButton, bv as guardAwareHref, t as formatRelativeTime$1, bw as HiMiniDocumentText, m as HiMiniCheckCircle, bx as HiMiniCloudArrowUp, by as HiMiniCheck, bz as HiMiniCodeBracket, bA as HiMiniClipboardDocument, bB as HiMiniUsers, b7 as HiMiniBeaker, ax as HiMiniFolder, a1 as HiMiniLockClosed, q as HiMiniShieldCheck, aH as HiMiniInformationCircle, bf as HiMiniCloudArrowDown, be as HiMiniArrowTopRightOnSquare, bC as HiMiniIdentification, bD as policyActionLabel, r as reactExports, bE as createCloudExceptionRequest, bF as HiMiniArrowRight, k as EmptyState, an as HiMiniMagnifyingGlass, y as HiMiniChevronUp, z as HiMiniChevronDown, c as HiMiniChevronRight, bG as HiMiniPuzzlePiece, au as HiMiniGlobeAlt, b5 as HiMiniClock, bH as fetchCloudExceptions, bI as fetchCloudExceptionRequests, bJ as downloadBlob, bK as PolicyStatField, bL as PaginationControls, bM as HiMiniNoSymbol, av as HiMiniCube, aG as HiMiniArrowPath, C as HiMiniCloud, a3 as HiMiniAdjustmentsHorizontal, bN as HiMiniArrowDownTray, bO as HiMiniQueueList, am as WorkspacePageHeader, bt as __vitePreload } from "../guard-dashboard.js";
 const CLOUD_EXCEPTION_EXPIRING_SOON_DAYS = 7;
 function parseCloudExceptionTimestamp(value) {
   if (!value || !value.trim()) {
@@ -2124,31 +2124,31 @@ function groupPoliciesByHarness(policies) {
   return map;
 }
 function resolveSecurityModeCopy(level) {
-  if (level === "strict") {
+  if (level === "watch" || level === "observe") {
     return {
-      label: "Protect",
-      description: "Guard asks before risky actions that are not already allowed by policy, remembered rules, or Cloud exceptions.",
+      label: "Watch",
+      description: "Records what Guard would have stopped, but does not stop anything. Use only while debugging.",
       tone: "attention"
     };
   }
-  if (level === "balanced") {
+  if (level === "extra_careful" || level === "strict" || level === "paranoid") {
     return {
-      label: "Balanced (default)",
-      description: "Guard asks for secrets, destructive commands, and new network destinations. Low noise, solid coverage.",
-      tone: "green"
+      label: "Extra careful",
+      description: "Same as Protected, and also asks the first time this project talks to a new site or installs a new tool.",
+      tone: "attention"
     };
   }
-  if (level === "gentle" || level === "relaxed") {
+  if (level === "custom") {
     return {
-      label: "Low noise",
-      description: "Guard only asks for the highest-risk actions. Minimal interruptions.",
+      label: "Protected",
+      description: "Using custom rules on top of Protected.",
       tone: "slate"
     };
   }
   return {
-    label: level ?? "Custom",
-    description: "Custom policy rules apply. Review individual rules below.",
-    tone: "slate"
+    label: "Protected",
+    description: "Stops theft, wipes, and attempts to disable Guard. Asks once about new tools or first-time secret access, then remembers.",
+    tone: "green"
   };
 }
 function resolveCloudPolicyBundleCopy(snapshot) {
@@ -3016,9 +3016,11 @@ function PolicyCloudExceptionsTab({
 }
 const POLICY_SUMMARY_CARD_CLASS = "rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_20px_rgba(15,23,42,0.04)]";
 function PolicyActiveModeCard({ snapshot }) {
-  const modeCopy = resolveSecurityModeCopy(snapshot.security_level);
+  const modeCopy = resolveSecurityModeCopy(
+    snapshot.protection_posture ?? snapshot.security_level
+  );
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `${POLICY_SUMMARY_CARD_CLASS} self-start p-4`, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: "Active mode" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(SectionLabel, { children: "Protection" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex items-start gap-2.5", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-blue/10 text-brand-blue", children: /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniShieldCheck, { className: "h-4 w-4", "aria-hidden": "true" }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [

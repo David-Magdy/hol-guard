@@ -93,7 +93,7 @@ export function buildRetryAfterApprovalCopy(
       return "Saved. Guard will allow this exact action next time when the remembered option is selected.";
     }
     if (persistedExactAction) return "Saved. Guard will stop this exact action next time.";
-    return "Reviewed. Watch only already allowed this action to run; no future rule was saved.";
+    return "Reviewed. Watch already allowed this action to run; no future rule was saved.";
   }
   if (action === "allow") {
     if (persistedExactAction) {
@@ -216,7 +216,7 @@ export function buildPauseLine(item: GuardApprovalRequest): string {
     return resolutionBlockReason;
   }
   if (isWatchOnlyObservation(item)) {
-    return "Watch only let this action run. Guard recorded it because the current policy would have paused it in an enforcing mode.";
+    return "Would have stopped. Guard recorded this because Protected would have blocked it.";
   }
   if (item.changed_fields.length === 1 && item.changed_fields[0] === "first_seen") {
     return `${harnessDisplayName(item.harness)} has not run this exact action here before, so HOL Guard paused it for you to review.`;

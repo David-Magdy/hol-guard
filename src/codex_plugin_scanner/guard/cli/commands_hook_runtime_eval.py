@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import shlex
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ from ..action_lattice import (
     normalize_guard_action_result,
 )
 from ..approval_scope_support import package_request_runtime_workspace_scope
+from ..local_cli_hook import apply_local_cli_grant, observe_unlisted_cli
 from ..local_supply_chain import (
     _package_evaluation_requires_external_archive_binding,
     _package_policy_override_evaluation,
@@ -197,6 +199,27 @@ def _runtime_external_archive_has_digest_binding_sink(
     except (OSError, RuntimeError):
         return False
     return resolved_executable == shim_path
+
+
+def _stamp_runtime_posture_metadata(artifact: object, signals: object) -> None:
+    metadata = getattr(artifact, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    if isinstance(signals, tuple) and signals:
+        metadata["risk_signals"] = [
+            {
+                "confidence": getattr(signal, "confidence", None),
+                "category": getattr(signal, "category", None),
+            }
+            for signal in signals
+        ]
+        if any(getattr(signal, "confidence", None) == "strong" for signal in signals):
+            metadata["risk_confidence"] = "strong"
+    action_class = metadata.get("action_class")
+    if isinstance(action_class, str):
+        lowered = action_class.lower()
+        if any(token in lowered for token in ("launch agent", "login item", "launchctl", "cron", "systemd", "launchd")):
+            metadata["persistence_writes_launch_agent"] = True
 
 
 def _embedded_script_evidence(command_text: str) -> list[dict[str, object]]:
@@ -412,6 +435,8 @@ def _evaluate_runtime_artifact_hook(
     requested_policy_action = (
         requested_action_normalization.original_action if requested_action_normalization is not None else None
     )
+    _stamp_runtime_posture_metadata(runtime_artifact, data_flow_signals)
+    _stamp_runtime_posture_metadata(approval_context_artifact, data_flow_signals)
     current_config_action = _resolved_guard_action(
         _runtime_artifact_policy_action(config, runtime_artifact, args.harness),
         "warn",
@@ -495,6 +520,21 @@ def _evaluate_runtime_artifact_hook(
             "data_flow_exfiltration",
             harness=policy_harness,
         )
+        from ..protection_posture import apply_posture_confidence, is_high_confidence
+
+        data_flow_confidence = (
+            "strong"
+            if any(is_high_confidence(getattr(signal, "confidence", None)) for signal in data_flow_signals)
+            else None
+        )
+        if configured_data_flow_action is not None:
+            configured_data_flow_action = apply_posture_confidence(
+                posture=config.protection_posture,
+                explicit=config.protection_posture_explicit,
+                risk_class="data_flow_exfiltration",
+                action=configured_data_flow_action,
+                confidence=data_flow_confidence,
+            )
         data_flow_action = _resolved_guard_action(configured_data_flow_action, policy_action)
         approval_context_data_flow_action = _resolved_guard_action(
             configured_data_flow_action,
@@ -623,6 +663,32 @@ def _evaluate_runtime_artifact_hook(
         current_policy_action = "allow"
         policy_action = "allow"
         approval_context_policy_action = "allow"
+    if raw_runtime_command is not None:
+        observe_unlisted_cli(
+            store=store,
+            command=raw_runtime_command,
+            cwd=runtime_workspace or Path.cwd(),
+            home_dir=context.home_dir,
+        )
+        if (
+            current_action_override is None
+            and cli_action_normalization is None
+            and payload_action_normalization is None
+            and not data_flow_signals
+            and not scanner_evidence
+            and (package_evaluation is None or package_policy_action != "block")
+        ):
+            granted = apply_local_cli_grant(
+                store=store,
+                command=raw_runtime_command,
+                cwd=runtime_workspace or Path.cwd(),
+                home_dir=context.home_dir,
+                current_action=current_policy_action,
+            )
+            if granted != current_policy_action:
+                current_policy_action = granted
+                policy_action = granted
+                approval_context_policy_action = granted
     runtime_artifact_hash = _runtime_hook_approval_context_token(
         artifact=approval_context_artifact,
         content_hash=artifact_content_hash,

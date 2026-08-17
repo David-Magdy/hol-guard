@@ -113,12 +113,12 @@ def _contract(
     example_command: str,
     family: str | None = None,
 ) -> GitHubCapabilityContract:
-    prompt_free = rule_suffix is None
+    prompt_free = _CAPABILITY_FLOOR[capability] == "allow"
     if capability == "propose_remote":
         description = "Creates a pull-request proposal without merging it or changing repository controls."
     elif capability == "routine_merge_remote":
         description = (
-            "Completes a statically bounded squash pull-request merge without privileged or destructive options."
+            "Completes a statically bounded squash pull-request merge, optionally cleaning up its merged head branch."
         )
     elif capability == "routine_review_thread_remote":
         description = "Resolves one statically bounded pull-request review thread."
@@ -144,7 +144,7 @@ def _contract(
         title=title,
         description=description,
         risk_tier="low" if prompt_free else "high",
-        risk_classes=() if prompt_free else (_LOCAL_WRITE_RISKS if local else _REMOTE_MUTATION_RISKS),
+        risk_classes=(() if rule_suffix is None else (_LOCAL_WRITE_RISKS if local else _REMOTE_MUTATION_RISKS)),
         safer_alternatives=(
             "Keep the operation read-only or limited to opening a pull-request proposal."
             if prompt_free
@@ -179,8 +179,8 @@ _CONTRACTS: Final = MappingProxyType(
             _contract(
                 "routine_merge_remote",
                 "routine-merge-remote",
-                None,
-                None,
+                "GitHub routine pull-request merge command",
+                "routine-merge",
                 "routine squash pull-request merge",
                 example_command="gh pr merge 123 --squash",
                 family="gh-pr-merge",

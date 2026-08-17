@@ -120,6 +120,10 @@ def test_dashboard_session_authorizes_new_extension_control_routes(tmp_path: Pat
         "/v1/extension-controls/history",
         "/v1/extension-controls/test",
         "/v1/extension-controls/acknowledge-degraded",
+        "/v1/local-clis",
+        "/v1/local-clis/preview",
+        "/v1/local-clis/apply",
+        "/v1/local-clis/recognize",
     ):
         assert daemon_server_module._GuardDaemonHandler._is_hosted_dashboard_api_path(
             path,

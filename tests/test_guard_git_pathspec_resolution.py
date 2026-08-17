@@ -36,11 +36,17 @@ def _git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def git_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     if shutil.which("git") is None:
         pytest.skip("Git is unavailable")
+    monkeypatch.delenv("GIT_EXTERNAL_DIFF", raising=False)
+    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
+    monkeypatch.delenv("GIT_CONFIG_PARAMETERS", raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     repository = tmp_path / "repository"
     repository.mkdir()
     _git(repository, "init", "--quiet")
     _git(repository, "config", "user.name", "Guard Fixture")
     _git(repository, "config", "user.email", "guard@example.invalid")
+    _git(repository, "config", "commit.gpgsign", "false")
     _write(repository / "src" / "app.py", "print('safe')\n")
     _write(repository / "src" / "nested" / "worker.py", "print('safe')\n")
     _write(repository / "src" / "nested" / "MODEL.PY", "print('safe')\n")
@@ -53,11 +59,6 @@ def git_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _write(repository / "src" / "app.py", "print('updated')\n")
     _git(repository, "add", "src/app.py")
     _git(repository, "commit", "--quiet", "-m", "update fixture")
-    monkeypatch.delenv("GIT_EXTERNAL_DIFF", raising=False)
-    monkeypatch.delenv("GIT_CONFIG_COUNT", raising=False)
-    monkeypatch.delenv("GIT_CONFIG_PARAMETERS", raising=False)
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     return repository
 
 

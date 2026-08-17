@@ -152,7 +152,7 @@ Guard uses the same product loop across the local daemon, the CLI, and Guard Clo
 2. **Protect** owns install, repair, remove, status, and first protected action proof. The local dashboard exposes Protect, Repair, Test, Audit, Sync, and Remove for paid Guard Cloud users with a paired daemon. Free users still see status, supported managers, education, and CLI fallback. The daemon handles these actions directly when available; the CLI commands stay visible as a fallback when the daemon is offline, unsupported, or missing a local session token.
 3. **Inbox** owns decisions that need judgment. Local approvals use the same categories and policy memory scopes that cloud review uses, so a scoped decision can be synced without changing meaning.
 4. **Evidence** owns durable proof. Receipts from daemon actions, CLI actions, and cloud sync use the same local store before any optional upload.
-5. **Settings** owns policy. Local config remains the source of truth for offline protection, while cloud sync can distribute shared policy memory when you connect a workspace.
+5. **Settings** owns policy. Local config remains the source of truth for offline protection, while cloud sync can distribute shared policy memory when you connect a workspace. The primary control is protection posture: Protected, Extra careful, or Watch. `hol-guard settings set protection protected` is the default.
 
 The important handoff is that local protection does not depend on Guard Cloud being online. Cloud adds shared history and team policy, but the daemon and CLI still block risky actions, write receipts, and preserve approval continuity on this machine.
 
@@ -400,11 +400,13 @@ Current strategy:
   calls and prompts with exit code `2` plus a JSON `permissionDecision: "deny"` response, and fails open on hook crash
   or timeout
 - `grok`
-  installs Guard-owned Grok hook JSON in `~/.grok/hooks/` and permission deny rules in `~/.grok/managed_config.toml`,
-  blocks with Grok-native stdout JSON `{"decision":"deny"}` plus approval-center copy, never reads `~/.grok/auth`, and
-  treats `--always-approve` or `bypassPermissions` as degraded protection when detected. Guard launches only a trusted
+  installs a catch-all Guard `PreToolUse` hook plus observe-only prompt and subagent hooks in `~/.grok/hooks/`,
+  writes permission deny rules and backup hooks in `~/.grok/managed_config.toml`, blocks tool calls with Grok-native
+  stdout JSON `{"decision":"deny"}` plus approval-center copy, never reads `~/.grok/auth`, and treats
+  `--always-approve` or `bypassPermissions` as degraded protection when detected. Guard launches only a trusted
   absolute Grok executable; for a custom install root, select it once with
-  `hol-guard run grok --grok-executable /absolute/path/to/grok`.
+  `hol-guard run grok --grok-executable /absolute/path/to/grok`. After upgrading an existing Grok install, run
+  `hol-guard apps repair grok` so the catch-all hook replaces the older per-tool matcher list.
 
 Guard does not claim VS Code Copilot extension-host interception in this pass. A VS Code inline tool prompt by itself is
 not proof that Guard blocked the action, because that prompt can come from VS Code's own permission surface. For Copilot,

@@ -232,8 +232,7 @@ def _silent_handler(handler: ast.ExceptHandler) -> bool:
             continue
         if isinstance(statement, ast.Return) and (
             statement.value is None
-            or isinstance(statement.value, ast.Constant)
-            and statement.value.value is None
+            or (isinstance(statement.value, ast.Constant) and statement.value.value is None)
         ):
             continue
         return False

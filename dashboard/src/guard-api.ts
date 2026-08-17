@@ -984,6 +984,16 @@ export async function fetchExtensionControlApi(input: RequestInfo, init?: Reques
   return fetchWithGuardAuth(input, init);
 }
 
+export async function fetchLocalCliApi(input: RequestInfo, init?: RequestInit): Promise<Response> {
+  const approvedPath =
+    typeof input === "string" &&
+    /^\/v1\/local-clis(?:\/(?:preview|apply|recognize))?$/.test(input);
+  if (!approvedPath) {
+    throw new Error("Invalid local CLI API path");
+  }
+  return fetchWithGuardAuth(input, init);
+}
+
 function guardAuthHeaders(): HeadersInit {
   const guardToken = readGuardToken();
   return guardToken ? { "X-Guard-Dashboard-Session": guardToken } : {};

@@ -7,9 +7,10 @@ import argparse
 import ast
 import json
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from code_quality_ast import FunctionMetric, SilentHandler, collect_python_metrics
 from code_quality_report import render_markdown

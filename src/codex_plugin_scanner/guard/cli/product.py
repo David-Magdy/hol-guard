@@ -96,8 +96,11 @@ def _build_guard_product_payload(
     managed_harnesses = sum(1 for item in harnesses if item["managed"] is True)
     runtime_state = store.get_runtime_state()
     approval_center_url = load_guard_daemon_url(context.guard_home)
+    from ..protection_posture import protection_status_fields
+
     payload: dict[str, object] = {
         "generated_at": _now(),
+        **protection_status_fields(posture=config.protection_posture, mode=config.mode),
         "guard_home": _redacted_path(context.guard_home, context.home_dir),
         "workspace": _redacted_path(context.workspace_dir, context.home_dir),
         "sync_configured": store.get_cloud_sync_profile() is not None,

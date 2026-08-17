@@ -25,7 +25,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, BinaryIO, ClassVar, TypeAlias, TypedDict, TypeGuard, cast
 from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urlparse, urlunparse
@@ -217,6 +217,7 @@ from ..store_evidence import (
 )
 from ..store_storage_maintenance import DEFAULT_GUARD_EVENT_LIMIT, DEFAULT_RECEIPT_DETAIL_LIMIT
 from ..supply_chain_repair import coordinate_supply_chain_repair
+from .bounded_http import BoundedThreadingHTTPServer
 from .command_activity_api import (
     handle_command_activity_analytics,
     handle_command_activity_diagnostics,
@@ -246,6 +247,7 @@ from .discovery import (
 from .extension_control_api import ExtensionControlApiError, ExtensionControlApiService
 from .hook_process_runner import HookProcessRunner
 from .lifecycle_journal import record_daemon_lifecycle_event
+from .local_cli_api import LocalCliApiError, LocalCliApiService
 from .manager import (
     GUARD_DAEMON_COMPATIBILITY_VERSION,
     acquire_guard_daemon_owner_lock,
@@ -474,7 +476,7 @@ class _BoundedRequestExecutor:
                 self._queue.task_done()
 
 
-class _GuardDaemonHttpServer(HTTPServer):
+class _GuardDaemonHTTPServer(BoundedThreadingHTTPServer):
     request_queue_size = _MAX_CONCURRENT_DAEMON_CONNECTIONS
 
     store: GuardStore
@@ -541,7 +543,7 @@ class _GuardDaemonHttpServer(HTTPServer):
     auth_audit_lock: threading.Lock
     auth_audit_windows: dict[_AuthAuditKey, _AuthAuditWindow]
 
-    def handle_error(self, request: object, client_address: tuple[str, int]) -> None:
+    def handle_error(self, request: Any, client_address: Any) -> None:
         """Suppress expected peer disconnects without hiding server defects."""
 
         import sys
@@ -653,15 +655,14 @@ class _GuardDaemonHttpServer(HTTPServer):
         self.runtime_hook_evidence_writer = RuntimeHookEvidenceWriter(store=store)
         self.hook_worker = HookWorker(store=store, activity_writer=self.runtime_hook_evidence_writer)
         self.extension_control_runtime = ExtensionControlRuntime(
-            store.read_extension_control_authority(
-                catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
-            )
+            store.read_extension_control_authority_for_registry(BUILT_IN_COMMAND_EXTENSION_REGISTRY)
         )
         self.extension_control_api = ExtensionControlApiService(
             store=store,
             registry=BUILT_IN_COMMAND_EXTENSION_REGISTRY,
             runtime=self.extension_control_runtime,
         )
+        self.local_cli_api = LocalCliApiService(store=store)
         self.approval_attention = ApprovalAttentionCoordinator(
             store=store,
             runtime=self.runtime,
@@ -684,13 +685,13 @@ class _GuardDaemonHttpServer(HTTPServer):
         )
 
     def refresh_extension_control_runtime(self) -> ExtensionControlRuntimeSnapshot:
-        view = self.store.read_extension_control_authority(
-            catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
-        )
+        view = self.store.read_extension_control_authority_for_registry(BUILT_IN_COMMAND_EXTENSION_REGISTRY)
         return self.extension_control_runtime.refresh(view)
 
-    def process_request(self, request: object, client_address: tuple[str, int]) -> None:
+    def process_request(self, request: Any, client_address: Any) -> None:
         request_socket = cast(socket.socket, request)
+        if not self._guard_admit_request(request_socket):
+            return
         admitted = self.connection_capacity.acquire(blocking=False)
         if not admitted:
             self._evict_oldest_unclassified_connection()
@@ -702,6 +703,7 @@ class _GuardDaemonHttpServer(HTTPServer):
             with self.request_capacity_lock:
                 self.rejected_requests += 1
             self.shutdown_request(request_socket)
+            self._guard_release_request()
             return
         with suppress(OSError):
             request_socket.settimeout(_DAEMON_REQUEST_READ_TIMEOUT_SECONDS)
@@ -744,6 +746,7 @@ class _GuardDaemonHttpServer(HTTPServer):
             self._request_capacity_for_kind(capacity_kind).release()
         if was_active:
             self.connection_capacity.release()
+            self._guard_release_request()
 
     def _register_unclassified_connection(self, request: socket.socket) -> None:
         accepted_at = time.monotonic()
@@ -1980,6 +1983,9 @@ def _repair_command_activity_persistence_health(store: GuardStore) -> None:
     store.probe_command_activity_persistence(evidence, shadow=shadow)
 
 
+_GuardDaemonHttpServer = _GuardDaemonHTTPServer
+
+
 class _GuardDaemonHandler(BaseHTTPRequestHandler):
     _MAX_BODY_BYTES = 1_000_000
     server: _GuardDaemonHttpServer  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -2076,6 +2082,12 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(history, extra_headers={"Cache-Control": "no-store"})
             return
+        if parsed.path == "/v1/local-clis":
+            self._write_json(
+                self._daemon_server().local_cli_api.list_items(),
+                extra_headers={"Cache-Control": "no-store"},
+            )
+            return
         if parsed.path == "/v1/capabilities":
             self._handle_capabilities()
             return
@@ -2145,17 +2157,22 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
 
             inventory_items = store.list_inventory()
             installed_harnesses = {str(item.get("harness", "")) for item in inventory_items}
-            contracts_index = {
-                c.harness: {
-                    "install_aliases": list(c.install_aliases),
-                    "event_surfaces": list(c.event_surfaces),
-                    "native_approval": c.native_approval,
-                    "browser_fallback": c.browser_fallback,
-                    "resume_support": c.resume_support,
-                    "known_blind_spots": c.known_blind_spots,
+            from ..protection_capabilities import capability_for
+
+            contracts_index: dict[str, dict[str, object]] = {}
+            for contract in HARNESS_CONTRACTS:
+                payload: dict[str, object] = {
+                    "install_aliases": list(contract.install_aliases),
+                    "event_surfaces": list(contract.event_surfaces),
+                    "native_approval": contract.native_approval,
+                    "browser_fallback": contract.browser_fallback,
+                    "resume_support": contract.resume_support,
+                    "known_blind_spots": contract.known_blind_spots,
                 }
-                for c in HARNESS_CONTRACTS
-            }
+                capability = capability_for(contract.harness)
+                if capability is not None:
+                    payload.update(capability.to_dict())
+                contracts_index[contract.harness] = payload
             enriched: list[dict[str, object]] = []
             for item in inventory_items:
                 harness_name = str(item.get("harness", ""))
@@ -2177,7 +2194,9 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             self._write_json(_settings_export_payload(config))
             return
         if parsed.path == "/v1/settings":
-            config = load_guard_config(store.guard_home)
+            from ..config import maybe_auto_revert_watch
+
+            config = maybe_auto_revert_watch(store.guard_home)
             self._write_json(_settings_response_payload(store.guard_home, editable_guard_settings(config)))
             return
         if parsed.path == "/v1/update/status":
@@ -2372,10 +2391,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             format_q = query.get("format", ["json"])[-1]
             with store._connect() as conn:
                 if format_q == "json":
-                    payload = export_evidence_json(conn, limit=10_000)
+                    export_body = export_evidence_json(conn, limit=10_000)
                     content_type = "application/json"
                 elif format_q == "csv":
-                    payload = export_evidence_csv(conn, limit=10_000)
+                    export_body = export_evidence_csv(conn, limit=10_000)
                     content_type = "text/csv; charset=utf-8"
                 else:
                     self._write_json({"error": "invalid_export_format"}, status=400)
@@ -2383,7 +2402,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.end_headers()
-            self.wfile.write(payload.encode("utf-8"))
+            self.wfile.write(export_body.encode("utf-8"))
             return
         if len(path_parts) == 4 and path_parts[:3] == ["v1", "artifacts", path_parts[2]] and path_parts[3] == "diff":
             query = parse_qs(parsed.query)
@@ -2483,10 +2502,15 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "/v1/extension-controls/recover-authority",
             "/v1/extension-controls/acknowledge-degraded",
         }
-        if parsed.path in extension_control_paths and not self._header_token_is_valid():
+        local_cli_paths = {
+            "/v1/local-clis/preview",
+            "/v1/local-clis/apply",
+            "/v1/local-clis/recognize",
+        }
+        if parsed.path in extension_control_paths | local_cli_paths and not self._header_token_is_valid():
             self._write_unauthorized(extra_headers=self._cors_headers_for_request())
             return
-        if parsed.path in extension_control_paths:
+        if parsed.path in extension_control_paths | local_cli_paths:
             try:
                 content_length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
@@ -2576,6 +2600,19 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 else:
                     response = self._daemon_server().extension_control_api.refresh()
             except ExtensionControlApiError as error:
+                self._write_json(error.to_payload(), status=error.status)
+                return
+            self._write_json(response, extra_headers={"Cache-Control": "no-store"})
+            return
+        if parsed.path in local_cli_paths:
+            try:
+                if parsed.path.endswith("/preview"):
+                    response = self._daemon_server().local_cli_api.preview(payload)
+                elif parsed.path.endswith("/recognize"):
+                    response = self._daemon_server().local_cli_api.recognize(payload)
+                else:
+                    response = self._daemon_server().local_cli_api.apply(payload)
+            except LocalCliApiError as error:
                 self._write_json(error.to_payload(), status=error.status)
                 return
             self._write_json(response, extra_headers={"Cache-Control": "no-store"})
@@ -7154,6 +7191,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "/v1/extension-controls/refresh",
             "/v1/extension-controls/recover-authority",
             "/v1/extension-controls/acknowledge-degraded",
+            "/v1/local-clis",
+            "/v1/local-clis/preview",
+            "/v1/local-clis/apply",
+            "/v1/local-clis/recognize",
             "/v1/harnesses",
             "/v1/notifications/setup",
             "/v1/policy",
@@ -8742,10 +8783,13 @@ def _build_resolution_copy(action: str, harness: str) -> dict[str, str]:
 
 
 def _settings_response_payload(guard_home: Path, settings: dict[str, object]) -> dict[str, object]:
+    from ..protection_capabilities import protection_capability_payloads
+
     return {
         "guard_home": str(guard_home),
         "config_path": str(guard_home / "config.toml"),
         "settings": settings,
+        "protection_capabilities": protection_capability_payloads(),
     }
 
 

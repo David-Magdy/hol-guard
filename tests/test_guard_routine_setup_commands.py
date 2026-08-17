@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 
 from codex_plugin_scanner.guard.runtime import git_execution_safety, routine_setup_commands
+from codex_plugin_scanner.guard.runtime.secret_file_request_services.benign_requests import (
+    is_explicitly_benign_tool_action_request,
+)
 
 
 def _git(repository: Path, *args: str) -> None:
@@ -26,6 +29,7 @@ def _repository(tmp_path: Path) -> Path:
     _git(repository, "config", "user.email", "6068672+kantorcodes@users.noreply.github.com")
     _git(repository, "config", "user.name", "Michael Kantor")
     _git(repository, "config", "commit.gpgsign", "false")
+    _git(repository, "config", "core.hooksPath", ".git/no-hooks")
     _git(repository, "remote", "add", "origin", "https://github.com/example/project.git")
     tracked = repository / "tracked.txt"
     tracked.write_text("tracked\n")
@@ -36,6 +40,47 @@ def _repository(tmp_path: Path) -> Path:
 
 
 def test_safe_git_worktree_add_requires_new_bounded_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    destination = tmp_path / "new-worktree"
+    monkeypatch.setattr(
+        routine_setup_commands,
+        "_safe_worktree_parent",
+        lambda _destination, *, home_dir: home_dir == tmp_path,
+    )
+
+    monkeypatch.setattr(
+        routine_setup_commands,
+        "trusted_git_binary_for_cwd",
+        lambda _cwd: Path("/usr/bin/git"),
+    )
+    monkeypatch.setattr(
+        routine_setup_commands,
+        "git_worktree_add_has_execution_free_config",
+        lambda _cwd, *, git_binary, ref: git_binary == Path("/usr/bin/git") and ref == "origin/release/2.2",
+    )
+    monkeypatch.setattr(routine_setup_commands, "_git_ref_exists", lambda *_args: True)
+    monkeypatch.setattr(routine_setup_commands, "_git_branch_exists", lambda *_args: False)
+
+    for command in (
+        f"git worktree add -b fix/routine {destination} origin/release/2.2",
+        f"git worktree add {destination} -b fix/routine origin/release/2.2",
+    ):
+        assert routine_setup_commands.is_safe_git_worktree_add(
+            command,
+            cwd=repository,
+            home_dir=tmp_path,
+        )
+    assert not routine_setup_commands.is_safe_git_worktree_add(
+        f"git worktree add -b fix/routine {destination} origin/release/2.2 && sh payload.sh",
+        cwd=repository,
+        home_dir=tmp_path,
+    )
+
+
+def test_post_destination_worktree_add_with_bounded_output_is_explicitly_benign(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -59,13 +104,108 @@ def test_safe_git_worktree_add_requires_new_bounded_destination(
     monkeypatch.setattr(routine_setup_commands, "_git_ref_exists", lambda *_args: True)
     monkeypatch.setattr(routine_setup_commands, "_git_branch_exists", lambda *_args: False)
 
-    assert routine_setup_commands.is_safe_git_worktree_add(
-        f"git worktree add -b fix/routine {destination} origin/release/2.2",
+    assert is_explicitly_benign_tool_action_request(
+        "Bash",
+        {
+            "command": (
+                f"cd {repository} && git worktree add {destination} -b fix/routine origin/release/2.2 2>&1 | tail -3"
+            )
+        },
         cwd=repository,
         home_dir=tmp_path,
     )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    (
+        "2>&1 | tail -0",
+        "2>&1 | head -3",
+        "2>&1 | tee output.txt",
+        "2>&1 | tail -3 && sh payload.sh",
+    ),
+)
+def test_worktree_add_rejects_widened_output_consumers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    suffix: str,
+) -> None:
+    repository = _repository(tmp_path)
+    destination = tmp_path / "new-worktree"
+    monkeypatch.setattr(
+        routine_setup_commands,
+        "_safe_worktree_parent",
+        lambda _destination, *, home_dir: home_dir == tmp_path,
+    )
+
     assert not routine_setup_commands.is_safe_git_worktree_add(
-        f"git worktree add -b fix/routine {destination} origin/release/2.2 && sh payload.sh",
+        f"cd {repository} && git worktree add {destination} -b fix/routine origin/release/2.2 {suffix}",
+        cwd=tmp_path,
+        home_dir=tmp_path,
+    )
+
+
+@pytest.mark.parametrize("directory", ("-", "--", "~other/repository", "~//tmp/repository", "repo*"))
+def test_worktree_add_rejects_shell_expanding_cd_operands(
+    tmp_path: Path,
+    directory: str,
+) -> None:
+    destination = tmp_path / "new-worktree"
+
+    assert not routine_setup_commands.is_safe_git_worktree_add(
+        f"cd {directory} && git worktree add {destination} -b fix/routine origin/release/2.2",
+        cwd=tmp_path,
+        home_dir=tmp_path,
+    )
+
+
+def test_worktree_add_rejects_path_shadowed_tail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path)
+    destination = tmp_path / "new-worktree"
+    shadow_bin = repository / "bin"
+    shadow_bin.mkdir()
+    shadow_tail = shadow_bin / "tail"
+    shadow_tail.write_text("#!/bin/sh\nexit 0\n")
+    shadow_tail.chmod(0o755)
+    monkeypatch.setenv("PATH", str(shadow_bin))
+
+    assert not routine_setup_commands.is_safe_git_worktree_add(
+        f"git worktree add {destination} -b fix/routine origin/release/2.2 2>&1 | tail -3",
+        cwd=repository,
+        home_dir=tmp_path,
+    )
+
+
+@pytest.mark.parametrize(
+    "command_template",
+    (
+        "git worktree add {destination} --force -b fix/routine origin/release/2.2",
+        "git worktree add {destination} -b fix/routine --force origin/release/2.2",
+        "git worktree add $DESTINATION -b fix/routine origin/release/2.2",
+        "git worktree add ~other/new-worktree -b fix/routine origin/release/2.2",
+        "git worktree add ~//tmp/new-worktree -b fix/routine origin/release/2.2",
+        "git worktree add {destination}* -b fix/routine origin/release/2.2",
+        "git worktree add {destination} -b fix/routine origin/release/2.2 && sh payload.sh",
+    ),
+)
+def test_safe_git_worktree_add_rejects_widened_post_destination_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command_template: str,
+) -> None:
+    repository = _repository(tmp_path)
+    destination = tmp_path / "new-worktree"
+    monkeypatch.setattr(
+        routine_setup_commands,
+        "_safe_worktree_parent",
+        lambda _destination, *, home_dir: home_dir == tmp_path,
+    )
+
+    assert not routine_setup_commands.is_safe_git_worktree_add(
+        command_template.format(destination=destination),
         cwd=repository,
         home_dir=tmp_path,
     )

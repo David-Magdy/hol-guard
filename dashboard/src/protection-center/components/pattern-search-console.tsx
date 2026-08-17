@@ -12,6 +12,7 @@ import { useResolvedApprovalGate } from "../../use-resolved-approval-gate";
 import { useExtensionPolicyDraft } from "../../use-extension-policy-draft";
 import { searchCommandPatterns } from "../model/protection-landing";
 import { ProtectionModuleRow } from "./protection-primitives";
+import { ExtensionBrandMark } from "./extension-brand-mark";
 
 /**
  * Search-first command-pattern console for the Extensions landing page.
@@ -110,6 +111,13 @@ export function PatternSearchConsole(props: {
           {grouped.map((group) => (
             <section key={group.extension.extension_id} aria-label={`${group.extension.name} patterns`} className="guard-pattern-family">
               <h3 className="guard-pattern-family-heading">
+                <ExtensionBrandMark
+                  extension_id={group.extension.extension_id}
+                  name={group.extension.name}
+                  executables={group.extension.executables}
+                  ecosystem_ids={group.extension.ecosystem_ids}
+                  size="sm"
+                />
                 <code>{group.extension.executables[0] ?? group.extension.extension_id}</code>
                 <span>{group.extension.name}</span>
               </h3>
@@ -133,10 +141,13 @@ export function PatternSearchConsole(props: {
               <h3 className="guard-pattern-family-heading"><span>Tools</span></h3>
               {toolMatches.map((extension) => <ProtectionModuleRow
                 key={extension.extension_id}
+                extensionId={extension.extension_id}
                 name={extension.name}
                 description={extension.description}
                 behavior={extension.executables.join(" · ")}
                 required={extension.required}
+                executables={extension.executables}
+                ecosystemIds={extension.ecosystem_ids}
                 onOpen={() => props.onOpenExtension(extension)}
               />)}
             </section>

@@ -28,13 +28,25 @@ from codex_plugin_scanner.guard.store import GuardStore
 
 
 @pytest.mark.parametrize(
-    ("command", "permission_id"),
+    ("command", "permission_id", "receipt_expected"),
     (
         (
             "gh api -X PUT repos/example/project/pulls/5115/merge -f merge_method=squash",
             "command.github.permission.merge-remote",
+            True,
         ),
-        ("git push --force origin feature", "command.git.permission.force-push"),
+        (
+            "gh pr merge 5134 --repo example/project --squash --delete-branch && "
+            "gh pr view 5134 --repo example/project --json state,mergedAt,mergeCommit,url",
+            "command.github.permission.routine-merge-remote",
+            False,
+        ),
+        (
+            'gh pr edit 5134 --repo example/project --title "fix: corrected title"',
+            "command.github.permission.content-remote",
+            True,
+        ),
+        ("git push --force origin feature", "command.git.permission.force-push", True),
     ),
 )
 def test_guard_hook_honors_explicit_extension_permission(
@@ -42,6 +54,7 @@ def test_guard_hook_honors_explicit_extension_permission(
     monkeypatch: pytest.MonkeyPatch,
     command: str,
     permission_id: str,
+    receipt_expected: bool,
 ) -> None:
     guard_home = tmp_path / "guard-home"
     workspace = tmp_path / "workspace"
@@ -66,7 +79,7 @@ def test_guard_hook_honors_explicit_extension_permission(
         catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
         layers=(layer,),
     )
-    monkeypatch.setattr(store, "read_extension_control_authority", lambda **_kwargs: authority)
+    monkeypatch.setattr(store, "read_extension_control_authority_for_registry", lambda _registry: authority)
     output = io.StringIO()
     result = commands_hook._run_guard_hook_command(
         argparse.Namespace(
@@ -97,5 +110,8 @@ def test_guard_hook_honors_explicit_extension_permission(
     assert result == 0
     assert output.getvalue() == ""
     assert store.list_approval_requests(limit=1) == []
-    receipt = store.list_receipts(limit=1)[0]
-    assert receipt["policy_decision"] == "allow"
+    receipts = store.list_receipts(limit=1)
+    if receipt_expected:
+        assert receipts[0]["policy_decision"] == "allow"
+    else:
+        assert receipts == []

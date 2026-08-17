@@ -134,6 +134,7 @@ from ..action_lattice import (
     most_restrictive_guard_action,
     normalize_guard_action_result,
 )
+from ..local_cli_hook import apply_local_cli_grant, observe_unlisted_cli
 from ..models import GuardAction, GuardArtifact, HarnessDetection
 from ..runtime.actions import _command_detail
 from ..runtime.approval_context import (
@@ -812,6 +813,30 @@ def _run_hook_generic_payload(
     if local_tool_grant is not None and local_tool_eligibility is not None:
         current_policy_action = "allow"
         policy_action = "allow"
+    if isinstance(command_text, str) and command_text.strip():
+        observe_unlisted_cli(
+            store=store,
+            command=command_text,
+            cwd=runtime_workspace or Path.cwd(),
+            home_dir=home_dir,
+        )
+        if (
+            configured_override is None
+            and configured_narrow_override is None
+            and cli_action_normalization is None
+            and (payload_action_normalization is None or ignored_payload_action_reason is not None)
+            and daemon_hint_disposition != "tightened_to_block"
+        ):
+            granted = apply_local_cli_grant(
+                store=store,
+                command=command_text,
+                cwd=runtime_workspace or Path.cwd(),
+                home_dir=home_dir,
+                current_action=current_policy_action,
+            )
+            if granted != current_policy_action:
+                current_policy_action = granted
+                policy_action = granted
     runtime_artifact_hash = _generic_hook_approval_context_token(
         action_envelope=action_envelope,
         artifact_id=artifact_id,
@@ -1249,13 +1274,16 @@ def _run_hook_generic_payload(
                 output_stream=output_stream,
             )
         elif _canonical_harness_name(args.harness) == "grok":
-            from ..adapters.grok_hooks import emit_grok_hook_response
+            from ..adapters.grok_hooks import emit_grok_hook_response, grok_hook_should_block
 
             emit_grok_hook_response(
                 policy_action=policy_action,
                 reason=block_reason,
+                event_name=hook_event_name,
                 output_stream=output_stream,
             )
+            if not grok_hook_should_block(policy_action=policy_action, event_name=hook_event_name):
+                return 0
         elif _canonical_harness_name(args.harness) in {"pi", "omp"}:
             from ..adapters.pi_hooks import emit_pi_hook_response
 
@@ -1307,14 +1335,15 @@ def _run_hook_generic_payload(
         output_stream=output_stream,
     ):
         if _canonical_harness_name(args.harness) == "grok":
-            from ..adapters.grok_hooks import emit_grok_hook_response
+            from ..adapters.grok_hooks import emit_grok_hook_response, grok_hook_should_block
 
             emit_grok_hook_response(
                 policy_action=policy_action,
                 reason=reason,
+                event_name=hook_event_name,
                 output_stream=output_stream,
             )
-            return 0 if policy_action not in {"review", "require-reapproval", "sandbox-required", "block"} else 2
+            return 0 if not grok_hook_should_block(policy_action=policy_action, event_name=hook_event_name) else 2
         if _canonical_harness_name(args.harness) in {"pi", "omp"}:
             from ..adapters.pi_hooks import emit_pi_hook_response
 

@@ -1,4 +1,4 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/chunks/home-dashboard.js","assets/chunks/home-protection-module.js","assets/chunks/harness-setup-target.js","assets/chunks/fleet-workspace.js","assets/chunks/app-catalog.js","assets/chunks/settings-workspace.js","assets/chunks/extensions-workspace.js","assets/chunks/use-resolved-approval-gate.js","assets/chunks/app-detail-workspace.js","assets/chunks/supply-chain-hub-workspace.js"])))=>i.map(i=>d[i]);
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/chunks/home-dashboard.js","assets/chunks/home-protection-module.js","assets/chunks/harness-setup-target.js","assets/chunks/fleet-workspace.js","assets/chunks/app-catalog.js","assets/chunks/settings-workspace.js","assets/chunks/extensions-workspace.js","assets/chunks/approval-proof-modal.js","assets/chunks/app-detail-workspace.js","assets/chunks/supply-chain-hub-workspace.js"])))=>i.map(i=>d[i]);
 (function polyfill() {
   const relList = document.createElement("link").relList;
   if (relList && relList.supports && relList.supports("modulepreload")) return;
@@ -12759,6 +12759,9 @@ function HiMiniQuestionMarkCircle(props) {
 function HiMiniPuzzlePiece(props) {
   return GenIcon({ "attr": { "viewBox": "0 0 20 20", "fill": "currentColor", "aria-hidden": "true" }, "child": [{ "tag": "path", "attr": { "d": "M12 4.467c0-.405.262-.75.559-1.027.276-.257.441-.584.441-.94 0-.828-.895-1.5-2-1.5s-2 .672-2 1.5c0 .362.171.694.456.953.29.265.544.6.544.994a.968.968 0 0 1-1.024.974 39.655 39.655 0 0 1-3.014-.306.75.75 0 0 0-.847.847c.14.993.242 1.999.306 3.014A.968.968 0 0 1 4.447 10c-.393 0-.729-.253-.994-.544C3.194 9.17 2.862 9 2.5 9 1.672 9 1 9.895 1 11s.672 2 1.5 2c.356 0 .683-.165.94-.441.276-.297.622-.559 1.027-.559a.997.997 0 0 1 1.004 1.03 39.747 39.747 0 0 1-.319 3.734.75.75 0 0 0 .64.842c1.05.146 2.111.252 3.184.318A.97.97 0 0 0 10 16.948c0-.394-.254-.73-.545-.995C9.171 15.693 9 15.362 9 15c0-.828.895-1.5 2-1.5s2 .672 2 1.5c0 .356-.165.683-.441.94-.297.276-.559.622-.559 1.027a.998.998 0 0 0 1.03 1.005c1.337-.05 2.659-.162 3.961-.337a.75.75 0 0 0 .644-.644c.175-1.302.288-2.624.337-3.961A.998.998 0 0 0 16.967 12c-.405 0-.75.262-1.027.559-.257.276-.584.441-.94.441-.828 0-1.5-.895-1.5-2s.672-2 1.5-2c.362 0 .694.17.953.455.265.291.601.545.995.545a.97.97 0 0 0 .976-1.024 41.159 41.159 0 0 0-.318-3.184.75.75 0 0 0-.842-.64c-1.228.164-2.473.271-3.734.319A.997.997 0 0 1 12 4.467Z" }, "child": [] }] })(props);
 }
+function HiMiniPlus(props) {
+  return GenIcon({ "attr": { "viewBox": "0 0 20 20", "fill": "currentColor", "aria-hidden": "true" }, "child": [{ "tag": "path", "attr": { "d": "M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z" }, "child": [] }] })(props);
+}
 function HiMiniPencilSquare(props) {
   return GenIcon({ "attr": { "viewBox": "0 0 20 20", "fill": "currentColor", "aria-hidden": "true" }, "child": [{ "tag": "path", "attr": { "d": "m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" }, "child": [] }, { "tag": "path", "attr": { "d": "M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" }, "child": [] }] })(props);
 }
@@ -13122,13 +13125,13 @@ function groupByCategory(receipts) {
 const DEFAULT_SCOPE_CHOICES = [
   {
     value: "artifact",
-    label: "Approve once",
+    label: "Allow just this once",
     description: "Allow only this exact action this time. Guard will ask again for anything different. Nothing is saved."
   },
   {
     value: "workspace",
-    label: "Remember for project",
-    description: "Save this decision for the current project. Future matching actions skip review here without asking again."
+    label: "Allow and remember for this project",
+    description: "Save this exact action for the current project. Matching actions skip review here until the action changes."
   },
   {
     value: "publisher",
@@ -14616,7 +14619,7 @@ function buildRetryAfterApprovalCopy(item, action, persistedExactAction = false)
       return "Saved. Guard will allow this exact action next time when the remembered option is selected.";
     }
     if (persistedExactAction) return "Saved. Guard will stop this exact action next time.";
-    return "Reviewed. Watch only already allowed this action to run; no future rule was saved.";
+    return "Reviewed. Watch already allowed this action to run; no future rule was saved.";
   }
   if (action === "allow") {
     if (persistedExactAction) {
@@ -16269,6 +16272,13 @@ async function fetchExtensionControlApi(input, init) {
   const approvedPath = typeof input === "string" && /^\/v1\/extension-controls\/(?:catalog|effective|history|preview|test|apply|refresh|recover-authority|acknowledge-degraded)$/.test(input);
   if (!approvedPath) {
     throw new Error("Invalid extension-control API path");
+  }
+  return fetchWithGuardAuth(input, init);
+}
+async function fetchLocalCliApi(input, init) {
+  const approvedPath = typeof input === "string" && /^\/v1\/local-clis(?:\/(?:preview|apply|recognize))?$/.test(input);
+  if (!approvedPath) {
+    throw new Error("Invalid local CLI API path");
   }
   return fetchWithGuardAuth(input, init);
 }
@@ -19973,6 +19983,31 @@ function NavigationLink(props) {
     }
   );
 }
+function LocalGuardStatusCopy(props) {
+  if (props.queuedCount <= 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-shell-status-copy", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No local approvals are waiting." }) });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-status-copy", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+      props.queuedCount,
+      " local ",
+      props.queuedCount === 1 ? "action needs" : "actions need",
+      " a Guard decision."
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "a",
+      {
+        href: shellHref("/inbox"),
+        className: "guard-shell-status-action",
+        onClick: (event) => navigateFromAnchor(event, "/inbox", { onNavigate: props.onNavigate }),
+        children: [
+          "Open Inbox",
+          /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowRight, { "aria-hidden": "true" })
+        ]
+      }
+    )
+  ] });
+}
 function focusableElements(container2) {
   const selector = [
     "a[href]",
@@ -20150,7 +20185,7 @@ function NavigationDrawer(props) {
                 "aria-labelledby": "guard-navigation-local-status",
                 children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { id: "guard-navigation-local-status", children: "Local Guard" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: props.queuedCount > 0 ? `${props.queuedCount} ${props.queuedCount === 1 ? "action is" : "actions are"} waiting for review.` : "No local approvals are waiting." }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(LocalGuardStatusCopy, { queuedCount: props.queuedCount, onNavigate: handleNavigate }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx(
                     GuardUpdatePanel,
                     {
@@ -20365,7 +20400,7 @@ function PersistentSidebar(props) {
                 /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Local Guard" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { children: props.queuedCount > 0 ? "Review" : "Clear" })
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: props.queuedCount > 0 ? `${props.queuedCount} local ${props.queuedCount === 1 ? "action needs" : "actions need"} a decision.` : "No local approvals are waiting." }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(LocalGuardStatusCopy, { queuedCount: props.queuedCount, onNavigate: props.onNavigate }),
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 GuardUpdatePanel,
                 {
@@ -28352,8 +28387,8 @@ function ReviewScopeControls(props) {
       }
     ),
     props.broaderScopeOptions.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "rounded-xl border border-brand-blue/15 bg-brand-blue/[0.03] p-3", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer select-none text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue", children: "Save for project or app" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs text-brand-dark/70", children: "These options save a decision that skips review for matching actions going forward. Choose the narrowest scope that fits what you meant to allow." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer select-none text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue", children: "Save for this app" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs text-brand-dark/70", children: "These options save the same action for this app. They do not grant unrelated actions." }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 grid grid-cols-1 gap-2 md:grid-cols-2", children: props.broaderScopeOptions.map((choice) => /* @__PURE__ */ jsxRuntimeExports.jsx(
         ScopeChoiceButton,
         {
@@ -28461,10 +28496,10 @@ function ScopeChoiceButton(props) {
 }
 function allowButtonLabel(scope) {
   if (scope === "artifact") {
-    return "Approve once";
+    return "Allow just this once";
   }
   if (scope === "workspace") {
-    return "Remember for project";
+    return "Allow and remember for this project";
   }
   return "Approve and remember";
 }
@@ -28635,7 +28670,7 @@ function pastDecisionVerb(decision) {
       return "blocked";
   }
 }
-const commonScopeValues = /* @__PURE__ */ new Set(["artifact"]);
+const commonScopeValues = /* @__PURE__ */ new Set(["artifact", "workspace"]);
 function resolvedActionCopy(item, action, persistedExactAction) {
   if (item !== null) return buildRetryAfterApprovalCopy(item, action, persistedExactAction);
   if (action === "allow") return "Approved: action can proceed";
@@ -28889,8 +28924,14 @@ function ReviewDecisionCard(props) {
   const persistExactAllow = item !== null && willPersistExactAction(item, "allow", allowScope, rememberExactAction);
   const persistExactBlock = item !== null && willPersistExactAction(item, "block", blockScope, watchOnlyObservation);
   let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
-  if (persistExactAllow) {
-    resolvedAllowButtonLabel = watchOnlyObservation ? "Allow next time" : "Approve and remember";
+  if (watchOnlyObservation) {
+    resolvedAllowButtonLabel = "Keep allowing";
+  } else if (persistExactAllow) {
+    resolvedAllowButtonLabel = "Approve and remember";
+  }
+  let resolvedBlockButtonLabel = blockButtonLabel(blockScope);
+  if (watchOnlyObservation || persistExactBlock) {
+    resolvedBlockButtonLabel = "Stop this next time";
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-5", children: [
     resolved && /* @__PURE__ */ jsxRuntimeExports.jsxs(
@@ -28921,7 +28962,7 @@ function ReviewDecisionCard(props) {
             harnessName
           ] })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: watchOnlyObservation ? "info" : actionPresentation.tone, children: watchOnlyObservation ? "Ran in Watch only" : actionPresentation.label })
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone: watchOnlyObservation ? "info" : actionPresentation.tone, children: watchOnlyObservation ? "Would have stopped" : actionPresentation.label })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(PrimaryActionCard, { item }),
       resolutionBlockReason !== null && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-xl border border-brand-attention/30 bg-brand-attention/[0.06] p-4", role: "alert", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
@@ -29016,7 +29057,7 @@ function ReviewDecisionCard(props) {
               "Blocking..."
             ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniNoSymbol, { className: "h-4 w-4", "aria-hidden": "true" }),
-              persistExactBlock ? "Block next time" : blockButtonLabel(blockScope)
+              resolvedBlockButtonLabel
             ] })
           }
         )
@@ -29068,10 +29109,13 @@ function ReviewDecisionCard(props) {
         onUseCooldownChange: handleUseCooldownChange,
         onSubmit: handleModalSubmit,
         onCancel: handleModalCancel,
-        submitLabel: pendingAction === "allow" ? resolvedAllowButtonLabel : blockButtonLabel(blockScope)
+        submitLabel: pendingAction === "allow" ? resolvedAllowButtonLabel : resolvedBlockButtonLabel
       }
     )
   ] });
+}
+function FaWindows(props) {
+  return GenIcon({ "attr": { "viewBox": "0 0 448 512" }, "child": [{ "tag": "path", "attr": { "d": "M0 93.7l183.6-25.3v177.4H0V93.7zm0 324.6l183.6 25.3V268.4H0v149.9zm203.8 28L448 480V268.4H203.8v177.9zm0-380.6v180.1H448V32L203.8 65.7z" }, "child": [] }] })(props);
 }
 function FaGithub(props) {
   return GenIcon({ "attr": { "viewBox": "0 0 496 512" }, "child": [{ "tag": "path", "attr": { "d": "M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z" }, "child": [] }] })(props);
@@ -29081,6 +29125,9 @@ function FaGitAlt(props) {
 }
 function FaDocker(props) {
   return GenIcon({ "attr": { "viewBox": "0 0 640 512" }, "child": [{ "tag": "path", "attr": { "d": "M349.9 236.3h-66.1v-59.4h66.1v59.4zm0-204.3h-66.1v60.7h66.1V32zm78.2 144.8H362v59.4h66.1v-59.4zm-156.3-72.1h-66.1v60.1h66.1v-60.1zm78.1 0h-66.1v60.1h66.1v-60.1zm276.8 100c-14.4-9.7-47.6-13.2-73.1-8.4-3.3-24-16.7-44.9-41.1-63.7l-14-9.3-9.3 14c-18.4 27.8-23.4 73.6-3.7 103.8-8.7 4.7-25.8 11.1-48.4 10.7H2.4c-8.7 50.8 5.8 116.8 44 162.1 37.1 43.9 92.7 66.2 165.4 66.2 157.4 0 273.9-72.5 328.4-204.2 21.4.4 67.6.1 91.3-45.2 1.5-2.5 6.6-13.2 8.5-17.1l-13.3-8.9zm-511.1-27.9h-66v59.4h66.1v-59.4zm78.1 0h-66.1v59.4h66.1v-59.4zm78.1 0h-66.1v59.4h66.1v-59.4zm-78.1-72.1h-66.1v60.1h66.1v-60.1z" }, "child": [] }] })(props);
+}
+function FaAws(props) {
+  return GenIcon({ "attr": { "viewBox": "0 0 640 512" }, "child": [{ "tag": "path", "attr": { "d": "M180.41 203.01c-.72 22.65 10.6 32.68 10.88 39.05a8.164 8.164 0 0 1-4.1 6.27l-12.8 8.96a10.66 10.66 0 0 1-5.63 1.92c-.43-.02-8.19 1.83-20.48-25.61a78.608 78.608 0 0 1-62.61 29.45c-16.28.89-60.4-9.24-58.13-56.21-1.59-38.28 34.06-62.06 70.93-60.05 7.1.02 21.6.37 46.99 6.27v-15.62c2.69-26.46-14.7-46.99-44.81-43.91-2.4.01-19.4-.5-45.84 10.11-7.36 3.38-8.3 2.82-10.75 2.82-7.41 0-4.36-21.48-2.94-24.2 5.21-6.4 35.86-18.35 65.94-18.18a76.857 76.857 0 0 1 55.69 17.28 70.285 70.285 0 0 1 17.67 52.36l-.01 69.29zM93.99 235.4c32.43-.47 46.16-19.97 49.29-30.47 2.46-10.05 2.05-16.41 2.05-27.4-9.67-2.32-23.59-4.85-39.56-4.87-15.15-1.14-42.82 5.63-41.74 32.26-1.24 16.79 11.12 31.4 29.96 30.48zm170.92 23.05c-7.86.72-11.52-4.86-12.68-10.37l-49.8-164.65c-.97-2.78-1.61-5.65-1.92-8.58a4.61 4.61 0 0 1 3.86-5.25c.24-.04-2.13 0 22.25 0 8.78-.88 11.64 6.03 12.55 10.37l35.72 140.83 33.16-140.83c.53-3.22 2.94-11.07 12.8-10.24h17.16c2.17-.18 11.11-.5 12.68 10.37l33.42 142.63L420.98 80.1c.48-2.18 2.72-11.37 12.68-10.37h19.72c.85-.13 6.15-.81 5.25 8.58-.43 1.85 3.41-10.66-52.75 169.9-1.15 5.51-4.82 11.09-12.68 10.37h-18.69c-10.94 1.15-12.51-9.66-12.68-10.75L328.67 110.7l-32.78 136.99c-.16 1.09-1.73 11.9-12.68 10.75h-18.3zm273.48 5.63c-5.88.01-33.92-.3-57.36-12.29a12.802 12.802 0 0 1-7.81-11.91v-10.75c0-8.45 6.2-6.9 8.83-5.89 10.04 4.06 16.48 7.14 28.81 9.6 36.65 7.53 52.77-2.3 56.72-4.48 13.15-7.81 14.19-25.68 5.25-34.95-10.48-8.79-15.48-9.12-53.13-21-4.64-1.29-43.7-13.61-43.79-52.36-.61-28.24 25.05-56.18 69.52-55.95 12.67-.01 46.43 4.13 55.57 15.62 1.35 2.09 2.02 4.55 1.92 7.04v10.11c0 4.44-1.62 6.66-4.87 6.66-7.71-.86-21.39-11.17-49.16-10.75-6.89-.36-39.89.91-38.41 24.97-.43 18.96 26.61 26.07 29.7 26.89 36.46 10.97 48.65 12.79 63.12 29.58 17.14 22.25 7.9 48.3 4.35 55.44-19.08 37.49-68.42 34.44-69.26 34.42zm40.2 104.86c-70.03 51.72-171.69 79.25-258.49 79.25A469.127 469.127 0 0 1 2.83 327.46c-6.53-5.89-.77-13.96 7.17-9.47a637.37 637.37 0 0 0 316.88 84.12 630.22 630.22 0 0 0 241.59-49.55c11.78-5 21.77 7.8 10.12 16.38zm29.19-33.29c-8.96-11.52-59.28-5.38-81.81-2.69-6.79.77-7.94-5.12-1.79-9.47 40.07-28.17 105.88-20.1 113.44-10.63 7.55 9.47-2.05 75.41-39.56 106.91-5.76 4.87-11.27 2.3-8.71-4.1 8.44-21.25 27.39-68.49 18.43-80.02z" }, "child": [] }] })(props);
 }
 function riskLevelFromScore(score) {
   if (score <= 2) return "high";
@@ -29178,7 +29225,7 @@ function QueueItemRow({ item, active, readState, index, onOpenRequest, selection
                   harnessDisplayName(item.harness),
                   " · ",
                   formatQueueRequestDate(item),
-                  watchOnlyObservation ? " · Watch only" : ""
+                  watchOnlyObservation ? " · Would have stopped" : ""
                 ] })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs(
@@ -29289,7 +29336,7 @@ function ReviewHeader({
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-semibold tracking-[-0.02em] text-brand-dark sm:text-2xl", children: "Review" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground", children: "Review actions Guard paused and findings recorded while Watch only was active." })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground", children: "Review paused actions and Watch findings Guard recorded as would have stopped." })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-muted-foreground", children: [
       progress,
@@ -29878,9 +29925,86 @@ function QueueConnectionError(props) {
     ] })
   ] }) });
 }
+const PROTECTION_POSTURE_COPY = {
+  protected: {
+    label: "Protected",
+    help: "Stops theft, wipes, and Guard bypass. Asks once about new tools or first-time secret access, then remembers."
+  },
+  extra_careful: {
+    label: "Extra careful",
+    help: "Same as Protected, and also asks the first time this project talks to a new site or installs a new tool."
+  },
+  watch: {
+    label: "Watch",
+    help: "Records what Guard would have stopped, but does not stop anything. Use only while debugging."
+  }
+};
+const WATCH_BANNER_COPY = "Protection is off. Guard is only recording.";
+const POSTURE_OUTCOME_COLUMNS = {
+  protected: {
+    stops: "Credential theft, Guard bypass, encoded exfil, known-bad tools",
+    asks: "First secret read, new destructive command, first package script, new MCP or skill",
+    runs: "Remembered actions, routine browsing, verified-benign work"
+  },
+  extra_careful: {
+    stops: "The same automatic stops as Protected",
+    asks: "Everything Protected asks, plus first new site, first new tool, and cloud advisories",
+    runs: "Remembered actions and verified-benign work"
+  },
+  watch: {
+    stops: "Nothing. Guard only records.",
+    asks: "Nothing. Inbox shows what would have stopped.",
+    runs: "Every action, including known-bad work"
+  }
+};
+function isProtectionPosture(value) {
+  return value === "protected" || value === "extra_careful" || value === "watch";
+}
+function deriveProtectionPosture(mode, securityLevel) {
+  if (mode === "observe") return "watch";
+  if (securityLevel === "strict" || securityLevel === "paranoid") return "extra_careful";
+  return "protected";
+}
+function WatchProtectionBanner(props) {
+  const handleTurnOn = reactExports.useCallback(() => {
+    props.onTurnProtectionOn?.();
+  }, [props.onTurnProtectionOn]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      className: "flex flex-col gap-3 rounded-xl border border-brand-attention/30 bg-brand-attention/[0.06] px-4 py-3 sm:flex-row sm:items-center sm:justify-between",
+      role: "status",
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniExclamationTriangle, { className: "mt-0.5 h-5 w-5 shrink-0 text-brand-attention", "aria-hidden": "true" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: WATCH_BANNER_COPY })
+        ] }),
+        props.onTurnProtectionOn ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: handleTurnOn,
+            className: "inline-flex min-h-11 items-center justify-center rounded-lg bg-brand-attention px-4 text-sm font-semibold text-white",
+            children: "Turn protection on"
+          }
+        ) : null
+      ]
+    }
+  );
+}
 const McpPolicyRequestPanel = reactExports.lazy(
   () => __vitePreload(() => import("./chunks/mcp-policy-request-panel.js"), true ? [] : void 0).then((m) => ({ default: m.McpPolicyRequestPanel }))
 );
+function InboxWatchBanner(props) {
+  const handleTurnOn = reactExports.useCallback(() => {
+    void updateSettings({ protection_posture: "protected" }).then(() => {
+      props.onRestored?.();
+    }).catch(() => {
+      props.onOpenSettings();
+    });
+  }, [props.onOpenSettings, props.onRestored]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(WatchProtectionBanner, { onTurnProtectionOn: handleTurnOn });
+}
 function renderInboxContent(props) {
   if (props.requests.kind === "loading") {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-4", "aria-busy": "true", "aria-live": "polite", children: [
@@ -30001,6 +30125,9 @@ function ApprovalCenterLayout(props) {
   } else {
     queuedCount = queuedItems.length;
   }
+  const handleOpenSettings = reactExports.useCallback(() => {
+    props.onNavigate("/settings");
+  }, [props.onNavigate]);
   const handleToggleSidebar = reactExports.useCallback(() => {
     setSidebarCollapsed((previous) => {
       const next = !previous;
@@ -30044,7 +30171,16 @@ function ApprovalCenterLayout(props) {
         className: "guard-shell-content flex flex-col",
         "data-sidebar-collapsed": sidebarCollapsed ? "true" : "false",
         children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("main", { id: "main-content", className: "guard-shell-main flex-1", tabIndex: -1, children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-shell-workspace", "data-view": props.view, children: renderViewContent(props) }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("main", { id: "main-content", className: "guard-shell-main flex-1", tabIndex: -1, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-shell-workspace", "data-view": props.view, children: [
+            props.view === "inbox" && props.runtime.kind === "ready" && props.runtime.snapshot.protection_posture === "watch" ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+              InboxWatchBanner,
+              {
+                onRestored: props.onGuardReconnected,
+                onOpenSettings: handleOpenSettings
+              }
+            ) }) : null,
+            renderViewContent(props)
+          ] }) }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(ShellFooter, {})
         ]
       }
@@ -30903,6 +31039,7 @@ function App() {
             onOpenInsights: handleOpenInsights,
             onOpenCommands: handleOpenCommands,
             onOpenSettings: handleOpenSettings,
+            onRefreshRuntime: refreshStateAfterAction,
             onOpenSupplyChain: handleOpenSupplyChain,
             onClearPolicies: handleClearPolicies,
             onOpenAppDetail: handleOpenAppDetail,
@@ -30979,180 +31116,190 @@ clientExports.createRoot(container).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
 );
 export {
-  HiMiniAdjustmentsHorizontal as $,
+  React as $,
   ActionButton as A,
-  HiMiniCloud as B,
-  HiMiniQuestionMarkCircle as C,
+  resolveCloudIntelCopy as B,
+  HiMiniCloud as C,
   DeviceProofCard as D,
   EvidenceInsightsShareButton as E,
-  useFocusTrap as F,
+  HiMiniQuestionMarkCircle as F,
   GuardStatMetric as G,
   HomeInsightsMetrics as H,
-  approvalProofRequiresPassword as I,
-  HiMiniExclamationTriangle as J,
-  HiMiniBolt as K,
-  Badge as L,
-  HiMiniMinusCircle as M,
-  HiMiniWrenchScrewdriver as N,
+  useFocusTrap as I,
+  approvalProofRequiresPassword as J,
+  HiMiniExclamationTriangle as K,
+  HiMiniBolt as L,
+  Badge as M,
+  HiMiniMinusCircle as N,
   OperatorHealthCard as O,
-  HiMiniExclamationCircle as P,
-  ProofStrip as Q,
-  HiMiniEye as R,
+  HiMiniWrenchScrewdriver as P,
+  HiMiniExclamationCircle as Q,
+  ProofStrip as R,
   SectionLabel as S,
-  HiMiniXCircle as T,
-  HiMiniClipboardDocumentCheck as U,
-  HiMiniClipboard as V,
-  getDefaultExportFromCjs as W,
-  React as X,
-  HiMiniKey as Y,
-  HiMiniLockClosed as Z,
-  HiMiniBellAlert as _,
+  HiMiniEye as T,
+  HiMiniXCircle as U,
+  HiMiniClipboardDocumentCheck as V,
+  WatchProtectionBanner as W,
+  HiMiniClipboard as X,
+  PROTECTION_POSTURE_COPY as Y,
+  POSTURE_OUTCOME_COLUMNS as Z,
+  getDefaultExportFromCjs as _,
   EvidenceActivityHeatmapMini as a,
-  ConnectFlowCard as a$,
-  HiMiniCircleStack as a0,
-  TabBar as a1,
-  resolveProtectionLevelCopy as a2,
-  fetchSettings as a3,
-  fetchRuntimeSnapshot as a4,
-  updateSettings as a5,
-  clearPolicy as a6,
-  clearReviewQueue as a7,
-  revokeApprovalGateCooldown as a8,
-  disableApprovalGateTotp as a9,
-  filterEvidence as aA,
-  sortEvidence as aB,
-  computeMetrics as aC,
-  CommandActivityWorkspace as aD,
-  EvidenceFilterBar as aE,
-  EvidenceInsightStrip as aF,
-  EvidenceActionList as aG,
-  EvidenceActionDetail as aH,
-  policyIdentityKey as aI,
-  HiMiniChartBar as aJ,
-  runHarnessAction as aK,
-  GuardHarnessActionError as aL,
-  HiMiniRocketLaunch as aM,
-  HiMiniTrash as aN,
-  clearLabelForScope as aO,
-  formatHarnessCommand as aP,
-  isSupplyChainAuditIncomplete as aQ,
-  isSupplyChainAuditEvidence as aR,
-  readString$1 as aS,
-  isRecord$2 as aT,
-  HiMiniClock as aU,
-  IconActionButton as aV,
-  HiMiniBeaker as aW,
-  ActivationSummary as aX,
-  ActionResultPanel as aY,
-  HiMiniBugAnt as aZ,
-  GuardModalLayer as a_,
-  importSettings as aa,
-  resetSettings as ab,
-  enrollApprovalGateTotp as ac,
-  verifyApprovalGateTotp as ad,
-  clearEvidence as ae,
-  exportDiagnostics as af,
-  repairApprovalCenter as ag,
-  exportSettings as ah,
-  setupDesktopNotifications as ai,
-  Tag as aj,
-  HiMiniMagnifyingGlass as ak,
-  HiMiniCog6Tooth as al,
-  approvalGateCooldownLabel as am,
-  fetchExtensionControlApi as an,
-  HiMiniArrowPath as ao,
-  HiMiniInformationCircle as ap,
-  isApprovalProofSubmitDisabled as aq,
-  ApprovalProofFieldInputs as ar,
-  buildApprovalProofCredentials as as,
-  HiMiniArrowLeft as at,
-  WorkspacePageHeader as au,
-  fetchApprovalPage as av,
-  fetchPolicy as aw,
-  HiMiniHome as ax,
-  guardActionPresentation as ay,
-  DEFAULT_FILTER_STATE as az,
+  clearLabelForScope as a$,
+  HiMiniKey as a0,
+  HiMiniLockClosed as a1,
+  HiMiniBellAlert as a2,
+  HiMiniAdjustmentsHorizontal as a3,
+  HiMiniCircleStack as a4,
+  TabBar as a5,
+  resolveProtectionLevelCopy as a6,
+  fetchSettings as a7,
+  fetchRuntimeSnapshot as a8,
+  clearPolicy as a9,
+  buildApprovalProofCredentials as aA,
+  isApprovalProofSubmitDisabled as aB,
+  ApprovalProofFieldInputs as aC,
+  HiMiniArrowLeft as aD,
+  HiMiniPlus as aE,
+  fetchExtensionControlApi as aF,
+  HiMiniArrowPath as aG,
+  HiMiniInformationCircle as aH,
+  fetchApprovalPage as aI,
+  fetchPolicy as aJ,
+  HiMiniHome as aK,
+  guardActionPresentation as aL,
+  DEFAULT_FILTER_STATE as aM,
+  filterEvidence as aN,
+  sortEvidence as aO,
+  computeMetrics as aP,
+  CommandActivityWorkspace as aQ,
+  EvidenceFilterBar as aR,
+  EvidenceInsightStrip as aS,
+  EvidenceActionList as aT,
+  EvidenceActionDetail as aU,
+  policyIdentityKey as aV,
+  HiMiniChartBar as aW,
+  runHarnessAction as aX,
+  GuardHarnessActionError as aY,
+  HiMiniRocketLaunch as aZ,
+  HiMiniTrash as a_,
+  clearReviewQueue as aa,
+  revokeApprovalGateCooldown as ab,
+  disableApprovalGateTotp as ac,
+  importSettings as ad,
+  resetSettings as ae,
+  enrollApprovalGateTotp as af,
+  verifyApprovalGateTotp as ag,
+  clearEvidence as ah,
+  exportDiagnostics as ai,
+  repairApprovalCenter as aj,
+  exportSettings as ak,
+  setupDesktopNotifications as al,
+  WorkspacePageHeader as am,
+  HiMiniMagnifyingGlass as an,
+  isProtectionPosture as ao,
+  deriveProtectionPosture as ap,
+  Tag as aq,
+  approvalGateCooldownLabel as ar,
+  fetchLocalCliApi as as,
+  GenIcon as at,
+  HiMiniGlobeAlt as au,
+  HiMiniCube as av,
+  HiMiniServerStack as aw,
+  HiMiniFolder as ax,
+  FaWindows as ay,
+  FaAws as az,
   HiMiniCommandLine as b,
-  ApprovalProofInline as b0,
-  HiMiniArrowTopRightOnSquare as b1,
-  HiMiniCloudArrowDown as b2,
-  fetchPackageFirewallStatus as b3,
-  runPackageAudit as b4,
-  resolveSupplyChainAuditFailure as b5,
-  runPackageSync as b6,
-  startPackageFirewallConnect as b7,
-  openPackageFirewallAuthorizeFallback as b8,
-  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b9,
-  PaginationControls as bA,
-  HiMiniNoSymbol as bB,
-  HiMiniCube as bC,
-  HiMiniArrowDownTray as bD,
-  HiMiniQueueList as bE,
-  fetchMcpPolicyRequest as bF,
-  resolveMcpPolicyRequest as bG,
-  HiMiniDocumentPlus as bH,
-  HiMiniDocumentMagnifyingGlass as bI,
-  Surface as bJ,
-  HiMiniCheckBadge as bK,
-  fetchSupplyChainBundle as bL,
-  isSupplyChainScannerEvidence as bM,
-  isBlockedGuardAction as bN,
-  HiMiniShieldExclamation as bO,
-  HiMiniComputerDesktop as bP,
-  HiMiniChevronLeft as bQ,
-  HiMiniFunnel as bR,
-  HiMiniArrowDown as bS,
-  HiMiniArrowUp as bT,
-  runAuditRemediation as bU,
-  HiMiniSignal as bV,
-  repairSupplyChainProtection as ba,
-  runPackageFirewallAction as bb,
-  parseInterceptProofSnapshot as bc,
-  activatePackageFirewallRuntime as bd,
-  EntitlementNotice as be,
-  fetchReceipts as bf,
-  __vitePreload as bg,
-  scopeLabel as bh,
-  guardAwareHref as bi,
-  HiMiniDocumentText as bj,
-  HiMiniCloudArrowUp as bk,
-  HiMiniCheck as bl,
-  HiMiniCodeBracket as bm,
-  HiMiniClipboardDocument as bn,
-  HiMiniUsers as bo,
-  HiMiniFolder as bp,
-  HiMiniIdentification as bq,
-  policyActionLabel as br,
-  createCloudExceptionRequest as bs,
-  HiMiniArrowRight as bt,
-  HiMiniPuzzlePiece as bu,
-  HiMiniGlobeAlt as bv,
-  fetchCloudExceptions as bw,
-  fetchCloudExceptionRequests as bx,
-  downloadBlob as by,
-  PolicyStatField as bz,
+  HiMiniFunnel as b$,
+  formatHarnessCommand as b0,
+  isSupplyChainAuditIncomplete as b1,
+  isSupplyChainAuditEvidence as b2,
+  readString$1 as b3,
+  isRecord$2 as b4,
+  HiMiniClock as b5,
+  IconActionButton as b6,
+  HiMiniBeaker as b7,
+  ActivationSummary as b8,
+  ActionResultPanel as b9,
+  HiMiniClipboardDocument as bA,
+  HiMiniUsers as bB,
+  HiMiniIdentification as bC,
+  policyActionLabel as bD,
+  createCloudExceptionRequest as bE,
+  HiMiniArrowRight as bF,
+  HiMiniPuzzlePiece as bG,
+  fetchCloudExceptions as bH,
+  fetchCloudExceptionRequests as bI,
+  downloadBlob as bJ,
+  PolicyStatField as bK,
+  PaginationControls as bL,
+  HiMiniNoSymbol as bM,
+  HiMiniArrowDownTray as bN,
+  HiMiniQueueList as bO,
+  fetchMcpPolicyRequest as bP,
+  resolveMcpPolicyRequest as bQ,
+  HiMiniDocumentPlus as bR,
+  HiMiniDocumentMagnifyingGlass as bS,
+  Surface as bT,
+  HiMiniCheckBadge as bU,
+  fetchSupplyChainBundle as bV,
+  isSupplyChainScannerEvidence as bW,
+  isBlockedGuardAction as bX,
+  HiMiniShieldExclamation as bY,
+  HiMiniComputerDesktop as bZ,
+  HiMiniChevronLeft as b_,
+  HiMiniBugAnt as ba,
+  GuardModalLayer as bb,
+  ConnectFlowCard as bc,
+  ApprovalProofInline as bd,
+  HiMiniArrowTopRightOnSquare as be,
+  HiMiniCloudArrowDown as bf,
+  fetchPackageFirewallStatus as bg,
+  runPackageAudit as bh,
+  resolveSupplyChainAuditFailure as bi,
+  runPackageSync as bj,
+  startPackageFirewallConnect as bk,
+  openPackageFirewallAuthorizeFallback as bl,
+  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as bm,
+  repairSupplyChainProtection as bn,
+  runPackageFirewallAction as bo,
+  parseInterceptProofSnapshot as bp,
+  activatePackageFirewallRuntime as bq,
+  EntitlementNotice as br,
+  fetchReceipts as bs,
+  __vitePreload as bt,
+  scopeLabel as bu,
+  guardAwareHref as bv,
+  HiMiniDocumentText as bw,
+  HiMiniCloudArrowUp as bx,
+  HiMiniCheck as by,
+  HiMiniCodeBracket as bz,
   HiMiniChevronRight as c,
+  HiMiniArrowDown as c0,
+  HiMiniArrowUp as c1,
+  runAuditRemediation as c2,
+  HiMiniSignal as c3,
   createCommandActivityClient as d,
-  harnessDisplayName as e,
+  updateSettings as e,
   fetchCommandActivityApi as f,
   getHeatmapLevel as g,
   homeCommandActivityModel as h,
-  EmptyState as i,
+  harnessDisplayName as i,
   jsxRuntimeExports as j,
-  EvidenceInsightsShareModal as k,
-  HiMiniCheckCircle as l,
-  GuardHero as m,
-  formatNumber as n,
-  HiMiniShieldCheck as o,
+  EmptyState as k,
+  EvidenceInsightsShareModal as l,
+  HiMiniCheckCircle as m,
+  GuardHero as n,
+  formatNumber as o,
   protectionHealthFor as p,
-  guardActionDisposition as q,
+  HiMiniShieldCheck as q,
   reactExports as r,
-  formatRelativeTime as s,
-  guardActionActivityCopy as t,
+  guardActionDisposition as s,
+  formatRelativeTime as t,
   useReceiptAnalytics as u,
-  HiMiniSparkles as v,
-  HiMiniXMark as w,
-  HiMiniChevronUp as x,
-  HiMiniChevronDown as y,
-  resolveCloudIntelCopy as z
+  guardActionActivityCopy as v,
+  HiMiniSparkles as w,
+  HiMiniXMark as x,
+  HiMiniChevronUp as y,
+  HiMiniChevronDown as z
 };

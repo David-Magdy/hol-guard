@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import {
   resolveEnvelopeDisplayText,
@@ -321,7 +323,7 @@ const watchOnlyRequest: GuardApprovalRequest = {
 };
 assert(isWatchOnlyObservation(watchOnlyRequest), "Watch-only findings are identified from trusted queue evidence");
 assert(
-  buildPauseLine(watchOnlyRequest).startsWith("Watch only let this action run."),
+  buildPauseLine(watchOnlyRequest).startsWith("Would have stopped."),
   "Watch-only findings never claim the action was paused",
 );
 assert(
@@ -349,7 +351,10 @@ const watchOnlyDecisionMarkup = renderToStaticMarkup(
   }),
 );
 assert(
-  watchOnlyDecisionMarkup.includes("Watch-only finding") && watchOnlyDecisionMarkup.includes("Ran in Watch only"),
+  watchOnlyDecisionMarkup.includes("Watch-only finding")
+    && watchOnlyDecisionMarkup.includes("Would have stopped")
+    && watchOnlyDecisionMarkup.includes("Keep allowing")
+    && watchOnlyDecisionMarkup.includes("Stop this next time"),
   "Watch-only decision card renders its observation state without crashing",
 );
 
@@ -467,5 +472,9 @@ assert(
   }) === "http://127.0.0.1:4781/requests/cursor-share-req",
   "T498: resolveApprovalShareUrl prefers request_id and canonical /requests/ route"
 );
+
+const layoutSource = readFileSync(fileURLToPath(import.meta.url).replace(/\.test\.ts$/, ".tsx"), "utf8");
+assert(layoutSource.includes("WatchProtectionBanner"), "inbox shows the Watch protection-off banner");
+assert(layoutSource.includes('view === "inbox"'), "Watch banner is scoped to the approval inbox");
 
 console.log("approval-center-layout.test.ts: all tests passed");

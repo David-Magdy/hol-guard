@@ -341,9 +341,7 @@ def _authority_blocks_downgrade(
     except InvalidVersion:
         return False
     authority_store = store or GuardStore(guard_home)
-    authority = authority_store.read_extension_control_authority(
-        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
-    )
+    authority = authority_store.read_extension_control_authority_for_registry(BUILT_IN_COMMAND_EXTENSION_REGISTRY)
     return authority.health is not AuthorityHealth.UNENROLLED
 
 
@@ -1585,6 +1583,20 @@ def _is_desktop_managed_runtime() -> bool:
     return _is_frozen_runtime() and os.environ.get("HOL_GUARD_DESKTOP") == "1"
 
 
+def _runtime_package_path() -> Path:
+    return Path(__file__).resolve()
+
+
+def _runtime_installer_kind() -> str | None:
+    for parent in _runtime_package_path().parents:
+        normalized_parent = parent.as_posix().lower()
+        if "/pipx/venvs/" in normalized_parent and (parent / "pipx_metadata.json").is_file():
+            return "pipx"
+        if "/uv/tools/" in normalized_parent and (parent / "pyvenv.cfg").is_file():
+            return "uv"
+    return None
+
+
 def _installer_kind() -> str:
     prefix_path = Path(sys.prefix).resolve()
     normalized_prefix = prefix_path.as_posix().lower()
@@ -1594,7 +1606,7 @@ def _installer_kind() -> str:
         return "pipx"
     if "/pipx/venvs/" in normalized_prefix:
         return "pipx"
-    return "pip"
+    return _runtime_installer_kind() or "pip"
 
 
 def _should_upgrade_from_pypi(

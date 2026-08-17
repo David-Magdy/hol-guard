@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import importlib
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from ..runtime.data_flow_sink import data_flow_sink_type
@@ -616,6 +616,14 @@ def _runtime_hook_effective_policy_config(config: GuardConfig) -> dict[str, obje
         "managed_policy_hash": config.managed_policy_hash,
         "managed_policy_status": config.managed_policy_status,
         "mode": config.mode,
+        **(
+            {
+                "protection_posture": config.protection_posture,
+                "protection_posture_explicit": True,
+            }
+            if config.protection_posture_explicit
+            else {}
+        ),
         "new_network_domain_action": config.new_network_domain_action,
         "publisher_actions": dict(config.publisher_actions or {}),
         "risk_actions": dict(config.risk_actions or {}),
@@ -794,6 +802,76 @@ def _runtime_artifact_exact_match_context(artifact: GuardArtifact) -> str | None
         raw_command_text=raw_command_text if isinstance(raw_command_text, str) else None,
         wrapper_chain=normalized_wrapper_chain,
     )
+
+
+def _apply_explicit_posture_action(
+    config: GuardConfig,
+    artifact: GuardArtifact,
+    risk_class: str,
+    action: str | None,
+) -> GuardAction:
+    from ..protection_posture import apply_posture_confidence
+
+    resolved = coerce_guard_action(action) or "require-reapproval"
+    confidence = _artifact_risk_confidence(artifact)
+    next_action = apply_posture_confidence(
+        posture=config.protection_posture,
+        explicit=config.protection_posture_explicit,
+        risk_class=risk_class,
+        action=resolved,
+        confidence=confidence,
+        persistence_writes_launch_agent=_artifact_writes_launch_agent(artifact),
+        injection_disables_guard=_prompt_requires_hard_block(artifact),
+        skill_is_known_bad=_artifact_skill_is_known_bad(artifact),
+    )
+    if next_action == "block" and resolved != "block":
+        from ..protection_events import record_protection_event
+
+        record_protection_event(
+            config.guard_home,
+            "guard.protection.auto_stop",
+            {"risk_class": risk_class, "confidence": str(confidence or "")},
+        )
+    return next_action
+
+
+def _artifact_risk_confidence(artifact: GuardArtifact) -> object:
+    confidence = artifact.metadata.get("risk_confidence")
+    if confidence is None:
+        confidence = artifact.metadata.get("confidence")
+    if isinstance(confidence, str) and confidence.strip():
+        return confidence
+    signals = artifact.metadata.get("risk_signals")
+    if not isinstance(signals, Sequence) or isinstance(signals, (str, bytes)):
+        return confidence
+    for signal in signals:
+        if not isinstance(signal, Mapping):
+            continue
+        signal_confidence = signal.get("confidence")
+        if isinstance(signal_confidence, str) and signal_confidence.strip():
+            return signal_confidence
+    return confidence
+
+
+def _artifact_skill_is_known_bad(artifact: GuardArtifact) -> bool:
+    if artifact.metadata.get("known_bad_skill") is True:
+        return True
+    if artifact.metadata.get("skill_is_known_bad") is True:
+        return True
+    intel = artifact.metadata.get("threat_intel")
+    return isinstance(intel, Mapping) and intel.get("known_bad") is True
+
+
+def _artifact_writes_launch_agent(artifact: GuardArtifact) -> bool:
+    if artifact.metadata.get("persistence_writes_launch_agent") is True:
+        return True
+    action_class = artifact.metadata.get("action_class")
+    if not isinstance(action_class, str):
+        return False
+    lowered = action_class.lower()
+    return any(token in lowered for token in ("launch agent", "login item", "launchctl", "cron", "systemd", "launchd"))
+
+
 def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact, harness: str) -> GuardAction:
     if _prompt_requires_hard_block(artifact):
         return "block"
@@ -838,7 +916,11 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
             or resolve_risk_action(config, risk_class, harness=canonical_harness)
             for risk_class in risk_classes
         ]
-        resolved_actions = [action for action in risk_actions if coerce_guard_action(action) is not None]
+        resolved_actions = [
+            _apply_explicit_posture_action(config, artifact, risk_class, action)
+            for risk_class, action in zip(risk_classes, risk_actions, strict=True)
+            if coerce_guard_action(action) is not None
+        ]
         if resolved_actions:
             return with_config_policy(most_restrictive_guard_action(*resolved_actions))
     if explicit_permission_allow:
@@ -849,7 +931,11 @@ def _runtime_artifact_policy_action(config: GuardConfig, artifact: GuardArtifact
     ):
         return with_config_policy(guard_default_action)
     risk_actions = [resolve_risk_action(config, risk_class, harness=canonical_harness) for risk_class in risk_classes]
-    resolved_actions = [action for action in risk_actions if coerce_guard_action(action) is not None]
+    resolved_actions = [
+        _apply_explicit_posture_action(config, artifact, risk_class, action)
+        for risk_class, action in zip(risk_classes, risk_actions, strict=True)
+        if coerce_guard_action(action) is not None
+    ]
     if resolved_actions:
         resolved = most_restrictive_guard_action(*resolved_actions)
         resolved_with_default = (
@@ -971,44 +1057,36 @@ def _guard_settings_payload(config: GuardConfig) -> dict[str, object]:
         "settings": editable_guard_settings(config),
     }
 
-_PRESET_DESCRIPTIONS: dict[str, str] = {
-    "gentle": (
-        "Warn-only mode. All risky actions surface as warnings so you stay informed "
-        "without blocking any agent workflows."
-    ),
-    "balanced": (
-        "Default preset. High-severity actions (secret reads, exfiltration) require "
-        "re-approval; network egress is warned."
-    ),
-    "strict": (
-        "Elevated protection. Data-flow exfiltration is blocked; all other high-risk "
-        "actions require explicit re-approval."
-    ),
-    "paranoid": (
-        "Maximum protection. Every risk class is blocked outright. "
-        "Recommended for high-security or air-gapped environments."
-    ),
-    "custom": "Fully custom action map. Each risk class uses the action you configured explicitly.",
-}
 
 def _guard_settings_explain_payload(config: GuardConfig) -> dict[str, object]:
-    preset = config.security_level
-    description = _PRESET_DESCRIPTIONS.get(preset, f"Unknown preset '{preset}'.")
+    from ..protection_posture import (
+        posture_help,
+        posture_label,
+        protection_status_fields,
+    )
+
     effective = editable_guard_settings(config).get("risk_actions") or {}
+    status = protection_status_fields(posture=config.protection_posture, mode=config.mode)
     return {
         "generated_at": _now(),
-        "preset": preset,
-        "description": description,
+        "protection_posture": config.protection_posture,
+        "label": posture_label(config.protection_posture),
+        "description": posture_help(config.protection_posture),
+        "security_level": config.security_level,
+        "protection_off": status["protection_off"],
         "effective_risk_actions": effective,
     }
 
+
 def _guard_settings_doctor_payload(config: GuardConfig) -> dict[str, object]:
+    from ..protection_posture import protection_status_fields
+
     issues: list[dict[str, str]] = []
-    if config.mode == "observe":
+    if config.protection_posture == "watch" or config.mode == "observe":
         issues.append(
             {
                 "severity": "warning",
-                "message": "Guard is in observe mode. No actions will be blocked or reviewed.",
+                "message": "Protection is off. Guard is only recording.",
             }
         )
     if config.security_level not in VALID_SECURITY_LEVELS:
@@ -1033,7 +1111,9 @@ def _guard_settings_doctor_payload(config: GuardConfig) -> dict[str, object]:
         "generated_at": _now(),
         "issues": issues,
         "healthy": len(issues) == 0,
+        **protection_status_fields(posture=config.protection_posture, mode=config.mode),
     }
+
 
 def _guard_cli_settings_payload(config: GuardConfig) -> dict[str, object]:
     payload = _guard_settings_payload(config)
@@ -1106,7 +1186,7 @@ def _runtime_detector_perf_payload(config: GuardConfig) -> list[dict[str, object
     ]
 
 __all__ = [
-    "_PRESET_DESCRIPTIONS", "_approval_center_routed_message", "_approval_delivery_payload",
+    "_approval_center_routed_message", "_approval_delivery_payload",
     "_claude_notification_tool_display_name", "_claude_notification_tool_name", "_ensure_terminal_punctuation",
     "_guard_cli_settings_payload", "_guard_settings_doctor_payload", "_guard_settings_explain_payload",
     "_guard_settings_payload", "_is_cloud_inbox_url", "_localize_decision_v2_review_copy",
