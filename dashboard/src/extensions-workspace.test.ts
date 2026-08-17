@@ -208,6 +208,14 @@ assert.equal(isCurrentExtensionPolicyDraft(4, 5), false, "stale async completion
 const policyDetailSource = readFileSync(new URL("./extension-control-center-detail.tsx", import.meta.url), "utf8");
 const policyPanelSource = readFileSync(new URL("./extension-policy-panel.tsx", import.meta.url), "utf8");
 const policyDraftSource = readFileSync(new URL("./use-extension-policy-draft.ts", import.meta.url), "utf8");
+const workspaceHostSource = readFileSync(new URL("./protection-center/protection-center-workspace.tsx", import.meta.url), "utf8");
+const extensionNavigationSource = readFileSync(new URL("./protection-center/extension-navigation.ts", import.meta.url), "utf8");
+assert.match(workspaceHostSource, /data-testid="extensions-workspace"/);
+assert.match(workspaceHostSource, /pushExtensionHistory/);
+assert.match(workspaceHostSource, /replaceExtensionHistory/);
+assert.match(extensionNavigationSource, /guardAwareHref/);
+assert.match(extensionNavigationSource, /export function pushExtensionHistory/);
+assert.match(extensionNavigationSource, /export function replaceExtensionHistory/);
 assert.match(policyDetailSource, /id="extension-policy-tabpanel"[\s\S]*role="tabpanel"[\s\S]*aria-labelledby="extension-tab-policy"/);
 assert.match(policyDraftSource, /isCurrentExtensionPolicyDraft\(generation, draftGeneration\.current\)\) handleApiError/);
 assert.match(policyDraftSource, /isCurrentExtensionPolicyDraft\(generation, draftGeneration\.current\)[\s\S]*Guard could not rebase this draft/);

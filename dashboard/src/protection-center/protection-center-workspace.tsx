@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  HiMiniArrowPath,
-  HiMiniClipboard,
-  HiMiniClipboardDocumentCheck,
-  HiMiniExclamationTriangle,
-  HiMiniShieldCheck,
-  HiMiniXMark,
-} from "react-icons/hi2";
+import { HiMiniXMark } from "react-icons/hi2";
 
 import {
   ApprovalProofFieldInputs,
@@ -17,18 +10,11 @@ import {
   canonicalExtensionId,
   DEFAULT_EXTENSION_DETAIL_URL_STATE,
   extensionDetailHref,
-  extensionStateLabel,
   readExtensionDetailUrlState,
   type ExtensionDetailUrlState,
 } from "../extension-control-center-model";
 import { parseProtectionRoute, localCliHref, type ProtectionRoute } from "../local-cli-links";
-import {
-  AddCustomExtensionButton,
-  AddCustomExtensionDialog,
-  CustomExtensionsSection,
-  LocalCliDetail,
-  useLocalCliCatalog,
-} from "./local-clis-panel";
+import { LocalCliDetail, useLocalCliCatalog } from "./local-clis-panel";
 import {
   acknowledgeDegradedExtensionControlAuthority,
   applyExtensionMutation,
@@ -45,20 +31,17 @@ import {
 import type { GuardApprovalGatePublicConfig } from "../guard-types";
 import { useModalDialog } from "../use-modal-dialog";
 import { useResolvedApprovalGate } from "../use-resolved-approval-gate";
-import { PROTECTION_TERMS, protectionCenterLoadError } from "./copy/protection-copy";
-import { PatternSearchConsole } from "./components/pattern-search-console";
+import { protectionCenterLoadError } from "./copy/protection-copy";
 import { ProtectionAuthorityNotice } from "./components/protection-authority-notice";
+import { ExtensionsOverview } from "./extensions-overview";
+import { pushExtensionHistory, replaceExtensionHistory } from "./extension-navigation";
 import { ProtectionModuleDetail } from "./protection-module-detail";
 import {
-  EXTENSION_PANEL_CLASS,
-} from "./protection-surface";
-import {
-  InlineError,
-  ProtectionModuleRow,
-  ProtectionStatusHero,
-} from "./components/protection-primitives";
+  ExtensionsLoadError,
+  ExtensionsLoadingState,
+  ExtensionsNotFound,
+} from "./protection-workspace-states";
 import { deriveProtectionStatus } from "./model/protection-presentation";
-import { WorkspacePageHeader } from "../workspace-page-header";
 
 type LoadState =
   | { kind: "loading" }
@@ -171,6 +154,12 @@ export function ReviewModal(props: {
   const requested = "globalLockdown" in props.change
     ? props.change.globalLockdown ? "Active" : "Off"
     : props.change.enabled ? "Allowed within Guard safety rules" : "Blocked";
+  const handlePassword = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setPassword(event.target.value);
+  }, []);
+  const handleTotp = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setTotp(event.target.value);
+  }, []);
   const handleSubmit = useCallback((event: React.FormEvent) => {
     event.preventDefault();
     props.onConfirm(buildApprovalProofCredentials(props.approvalGate, { approvalPassword: password, approvalTotpCode: totp }));
@@ -198,7 +187,13 @@ export function ReviewModal(props: {
         </div>
         <p className="mt-4 text-sm leading-6 text-brand-dark">Guard's built-in minimum safety rules and organization policy remain active. This change does not disable detection.</p>
         <div className="mt-5">
-          <ApprovalProofFieldInputs approvalGate={props.approvalGate} approvalPassword={password} approvalTotpCode={totp} onApprovalPasswordChange={(event) => setPassword(event.target.value)} onApprovalTotpCodeChange={(event) => setTotp(event.target.value)} />
+          <ApprovalProofFieldInputs
+            approvalGate={props.approvalGate}
+            approvalPassword={password}
+            approvalTotpCode={totp}
+            onApprovalPasswordChange={handlePassword}
+            onApprovalTotpCodeChange={handleTotp}
+          />
         </div>
         {props.error ? <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{props.error}</p> : null}
         <div className="mt-6 flex justify-end gap-3">
@@ -208,10 +203,6 @@ export function ReviewModal(props: {
       </form>
     </div>
   );
-}
-
-function sourceIsManaged(effective: EffectiveExtensionControls, extensionId: string): boolean {
-  return effective.layers.some((layer) => layer.kind === "signed-cloud" && layer.controls.some((control) => control.target_kind === "extension" && control.target_id === extensionId));
 }
 
 export function ProtectionCenterWorkspace() {
@@ -225,6 +216,7 @@ export function ProtectionCenterWorkspace() {
   const [recoveryStatus, setRecoveryStatus] = useState<string | null>(null);
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const aliasRedirected = useRef<string | null>(null);
+  const overviewKeepAlive = useRef(false);
   const localClis = useLocalCliCatalog();
   const [addingCustom, setAddingCustom] = useState(false);
 
@@ -264,27 +256,25 @@ export function ProtectionCenterWorkspace() {
     const key = `${routeState.route.extensionId}->${canonicalSelected}`;
     if (aliasRedirected.current === key) return;
     aliasRedirected.current = key;
-    const href = extensionDetailHref(canonicalSelected, routeState.detail);
-    window.history.replaceState({}, "", href);
+    replaceExtensionHistory(extensionDetailHref(canonicalSelected, routeState.detail));
     setRouteState({ route: { kind: "detail", extensionId: canonicalSelected }, detail: routeState.detail });
   }, [canonicalSelected, routeState, state]);
 
   const openExtension = useCallback((extension: ExtensionCatalogItem) => {
-    const href = extensionDetailHref(extension.extension_id, DEFAULT_EXTENSION_DETAIL_URL_STATE);
-    window.history.pushState({}, "", href);
+    pushExtensionHistory(extensionDetailHref(extension.extension_id, DEFAULT_EXTENSION_DETAIL_URL_STATE));
     setRouteState({ route: { kind: "detail", extensionId: extension.extension_id }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
 
   const closeExtension = useCallback(() => {
-    window.history.pushState({}, "", "/extensions");
+    pushExtensionHistory("/extensions");
     setRouteState({ route: { kind: "overview" }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
 
   const openLocalCliDetail = useCallback((cliId: string) => {
     setAddingCustom(false);
-    window.history.pushState({}, "", localCliHref(cliId));
+    pushExtensionHistory(localCliHref(cliId));
     setRouteState({ route: { kind: "local-cli", cliId }, detail: DEFAULT_EXTENSION_DETAIL_URL_STATE });
     window.scrollTo({ top: 0, behavior: "auto" });
   }, []);
@@ -298,13 +288,15 @@ export function ProtectionCenterWorkspace() {
   const retryLocalClis = useCallback(() => {
     void localClis.load();
   }, [localClis.load]);
-
-  const updateDetailState = useCallback((next: ExtensionDetailUrlState) => {
-    if (!canonicalSelected) return;
-    const href = extensionDetailHref(canonicalSelected, next);
-    window.history.pushState({}, "", href);
-    setRouteState({ route: { kind: "detail", extensionId: canonicalSelected }, detail: next });
-  }, [canonicalSelected]);
+  const retryLoad = useCallback(() => {
+    void load();
+  }, [load]);
+  const refreshProtection = useCallback(async () => {
+    await load();
+  }, [load]);
+  const handleCancelPending = useCallback(() => {
+    if (!busy) setPending(null);
+  }, [busy]);
 
   const requestChange = useCallback((change: ProtectionPendingChange) => {
     setMutationError(null);
@@ -312,6 +304,10 @@ export function ProtectionCenterWorkspace() {
       .then(() => setPending(change))
       .catch(() => setMutationError("Guard could not load local approval settings. Check the local connection and try again."));
   }, [resolveApprovalGate]);
+
+  const handleRequestExtensionChange = useCallback((extension: ExtensionCatalogItem, enabled: boolean) => {
+    requestChange({ extension: { extension_id: extension.extension_id, name: extension.name }, enabled });
+  }, [requestChange]);
 
   const confirm = useCallback(async (credentials: { approval_password?: string; approval_totp_code?: string }) => {
     if (state.kind !== "ready" || !pending) return;
@@ -353,10 +349,6 @@ export function ProtectionCenterWorkspace() {
       }
       if (state.kind === "ready") setState({ ...state, effective });
     } catch (error) {
-      // The authority state can change underneath the attempt (a repair that
-      // rebuilt authority but failed its verification response, or a repair
-      // that finished in another tab). Reload the truth before deciding what
-      // to tell the operator so the page never disagrees with the daemon.
       const fresh = await load();
       const wanted = kind === "acknowledge" ? "degraded-acknowledged" : "protected";
       if (fresh && fresh.health === wanted) {
@@ -365,8 +357,6 @@ export function ProtectionCenterWorkspace() {
           ? "The limited state is acknowledged. Guard remains fail-safe until trusted protection can be restored."
           : "Local protection repaired and verified.");
       } else if (fresh && startHealth !== null && fresh.health !== startHealth) {
-        // The state moved on during the attempt; the original error describes
-        // a view that no longer exists. Show the transition, not the stale error.
         setRecoveryError(null);
         setRecoveryStatus("The protection state changed during the attempt. This page now shows the latest status.");
       } else {
@@ -378,8 +368,21 @@ export function ProtectionCenterWorkspace() {
     }
   }, [load, state]);
 
-  // Resolve the approval gate once the authority needs attention so the
-  // notice's proof modal opens with the right password/TOTP shape.
+  const handleAuthorityAction = useCallback((
+    kind: "repair" | "acknowledge",
+    credentials: { approval_password?: string; approval_totp_code?: string },
+  ) => {
+    void runAuthorityAction(kind, credentials);
+  }, [runAuthorityAction]);
+
+  const handleCheckAgain = useCallback(() => {
+    void load();
+    setRecoveryError(null);
+    void resolveApprovalGate({ failClosed: true }).catch(() => {
+      setRecoveryError("Guard could not load the local approval settings yet. Check the connection and try again, or run `hol-guard command controls recover-authority` in your terminal.");
+    });
+  }, [load, resolveApprovalGate]);
+
   const authorityNeedsAttention = state.kind === "ready" && state.effective.health !== "protected";
   useEffect(() => {
     if (!authorityNeedsAttention) return;
@@ -388,122 +391,117 @@ export function ProtectionCenterWorkspace() {
     });
   }, [authorityNeedsAttention, resolveApprovalGate]);
 
-  if (state.kind === "loading") return <div className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" aria-label="Loading Extensions" /></div>;
-  if (state.kind === "error") {
-    const loadError = protectionCenterLoadError(state.message);
-    return <div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`}><h1 className="text-xl font-semibold text-red-950">{loadError.title}</h1><p role="alert" className="mt-2 text-sm text-red-800">{loadError.detail}</p><p className="mt-3 text-xs font-medium text-red-900">Local protection continues on this device.</p><button type="button" onClick={load} className="mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white">Try again</button></div></div>;
+  const showOverview = state.kind === "ready" && routeState.route.kind === "overview";
+  if (showOverview) {
+    overviewKeepAlive.current = true;
   }
+  const keepOverviewMounted = state.kind === "ready" && (showOverview || overviewKeepAlive.current);
+  const localCliRoute = routeState.route.kind === "local-cli" ? routeState.route : null;
+  const selectedLocalCli = localCliRoute
+    ? localClis.data?.items.find((item) => item.cli_id === localCliRoute.cliId) ?? null
+    : null;
+  const showLocalCli = localCliRoute !== null;
+  const showDetail = routeState.route.kind === "detail" && selectedExtension !== null;
+  const showNotFound = routeState.route.kind === "invalid"
+    || (routeState.route.kind === "detail" && selectedExtension === null && state.kind === "ready")
+    || (showLocalCli && localClis.data !== null && selectedLocalCli === null);
 
-  const authorityNotice = state.kind === "ready" ? <ProtectionAuthorityNotice
-    effective={state.effective}
-    busy={recoveryBusy}
-    error={recoveryError}
-    status={recoveryStatus}
-    approvalGate={resolvedApprovalGate}
-    onAction={(kind, credentials) => { void runAuthorityAction(kind, credentials); }}
-    onCheckAgain={() => {
-      void load();
-      // Re-resolve the approval gate too so a failed load does not leave the
-      // action disabled until a full page reload.
-      setRecoveryError(null);
-      void resolveApprovalGate({ failClosed: true }).catch(() => {
-        setRecoveryError("Guard could not load the local approval settings yet. Check the connection and try again, or run `hol-guard command controls recover-authority` in your terminal.");
-      });
-    }}
-  /> : null;
-
-  if (routeState.route.kind === "local-cli") {
-    if (!localClis.data) {
-      if (localClis.error) {
-        return <div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-danger`}><h1 className="text-xl font-semibold text-red-950">Custom extension unavailable</h1><p role="alert" className="mt-2 text-sm text-red-800">{localClis.error}</p><button type="button" onClick={retryLocalClis} className="mt-4 min-h-11 rounded-xl bg-red-800 px-4 text-sm font-semibold text-white">Try again</button></div></div>;
-      }
-      return <div className="grid min-h-[60vh] place-items-center" aria-busy="true"><HiMiniArrowPath className="size-7 animate-spin text-brand-blue motion-reduce:animate-none" aria-label="Loading custom extension" /></div>;
-    }
-    const selectedLocalCli = localClis.data.items.find((item) => item.cli_id === routeState.route.cliId) ?? null;
-    if (!selectedLocalCli) {
-      return <><div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`}><h1 className="font-semibold text-amber-950">Custom extension not found</h1><p className="mt-2 text-sm text-amber-900">This link does not match a CLI Guard has seen on this device.</p><button type="button" onClick={closeExtension} className="mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Back to Extensions</button></div></div>{authorityNotice}</>;
-    }
-    return (
-      <LocalCliDetail
-        item={selectedLocalCli}
-        revision={localClis.data.revision}
-        onBack={closeExtension}
-        onRefresh={localClis.load}
-      />
-    );
-  }
-
-  if (routeState.route.kind === "detail" && selectedExtension) {
-    return <>{authorityNotice}{recoveryStatus && state.effective.health === "protected" ? <p role="status" className="mb-3 text-sm font-medium text-emerald-800">{recoveryStatus}</p> : null}<ProtectionModuleDetail extension={selectedExtension} effective={state.effective} catalogDigest={state.catalog.catalog_digest} onBack={closeExtension} onRefresh={load} onRequestExtensionChange={(extension, enabled) => requestChange({ extension: { extension_id: extension.extension_id, name: extension.name }, enabled })} />{pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}</>;
-  }
-
-  if (routeState.route.kind === "detail" || routeState.route.kind === "invalid") {
-    return <><div className="mx-auto max-w-4xl"><div className={`${EXTENSION_PANEL_CLASS} guard-extensions-tone-attention`}><h1 className="font-semibold text-amber-950">Extension not found</h1><p className="mt-2 text-sm text-amber-900">This link does not match an extension in the current Guard catalog.</p><button type="button" onClick={closeExtension} className="mt-4 min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white">Back to Extensions</button></div></div>{authorityNotice}</>;
-  }
-
-  const status = deriveProtectionStatus(state.effective);
-  const healthBroken = state.effective.health !== "protected";
-
-  const handlePrimaryStatusAction = () => {
-    // Authority repair actions live in the authority notice below; the status
-    // line keeps only the lockdown review action.
+  const handlePrimaryStatusAction = useCallback(() => {
     requestChange({ globalLockdown: false });
-  };
+  }, [requestChange]);
 
-  return <div className="w-full">
-    <WorkspacePageHeader
-      eyebrow="On this device"
-      title={PROTECTION_TERMS.pageTitle}
-      description="Pick a tool to see the commands Guard watches and change how they're handled."
-    />
-    <div className="mt-6">
-      <ProtectionStatusHero status={status} onPrimaryAction={status.primaryAction === "review-lockdown" ? handlePrimaryStatusAction : undefined} />
-      {recoveryStatus && !healthBroken ? <p role="status" className="mt-3 text-sm font-medium text-emerald-800">{recoveryStatus}</p> : null}
+  const loadError = state.kind === "error" ? protectionCenterLoadError(state.message) : null;
+  const status = state.kind === "ready" ? deriveProtectionStatus(state.effective) : null;
+  const healthBroken = state.kind === "ready" && state.effective.health !== "protected";
+
+  return (
+    <div className="w-full" data-testid="extensions-workspace">
+      {state.kind === "loading" ? <ExtensionsLoadingState label="Loading Extensions" /> : null}
+      {state.kind === "error" && loadError ? (
+        <ExtensionsLoadError title={loadError.title} detail={loadError.detail} onRetry={retryLoad} />
+      ) : null}
+      {state.kind === "ready" && healthBroken ? (
+        <ProtectionAuthorityNotice
+          effective={state.effective}
+          busy={recoveryBusy}
+          error={recoveryError}
+          status={recoveryStatus}
+          approvalGate={resolvedApprovalGate}
+          onAction={handleAuthorityAction}
+          onCheckAgain={handleCheckAgain}
+        />
+      ) : null}
+      {state.kind === "ready" && recoveryStatus && !healthBroken && !showOverview ? (
+        <p role="status" className="mb-3 text-sm font-medium text-emerald-800">{recoveryStatus}</p>
+      ) : null}
+      {keepOverviewMounted && state.kind === "ready" && status ? (
+        <ExtensionsOverview
+          catalogExtensions={catalogExtensions}
+          effective={state.effective}
+          localCliItems={localClis.data?.items ?? []}
+          localCliRevision={localClis.data?.revision ?? 0}
+          mutationError={mutationError && !pending ? mutationError : null}
+          recoveryStatus={recoveryStatus}
+          healthBroken={healthBroken}
+          status={status}
+          addingCustom={addingCustom && showOverview}
+          active={showOverview}
+          onPrimaryStatusAction={handlePrimaryStatusAction}
+          onRefresh={refreshProtection}
+          onOpenExtension={openExtension}
+          onOpenLocalCli={openLocalCliDetail}
+          onAddCustom={openAddCustom}
+          onCloseAddCustom={closeAddCustom}
+          onCustomExtensionAdded={handleCustomExtensionAdded}
+        />
+      ) : null}
+      {showLocalCli && localClis.error && !localClis.data ? (
+        <ExtensionsLoadError
+          title="Custom extension unavailable"
+          detail={localClis.error}
+          onRetry={retryLocalClis}
+        />
+      ) : null}
+      {showLocalCli && !localClis.data && !localClis.error ? (
+        <ExtensionsLoadingState label="Loading custom extension" />
+      ) : null}
+      {showLocalCli && selectedLocalCli && localClis.data ? (
+        <LocalCliDetail
+          item={selectedLocalCli}
+          revision={localClis.data.revision}
+          onBack={closeExtension}
+          onRefresh={localClis.load}
+        />
+      ) : null}
+      {showDetail && selectedExtension && state.kind === "ready" ? (
+        <ProtectionModuleDetail
+          extension={selectedExtension}
+          effective={state.effective}
+          catalogDigest={state.catalog.catalog_digest}
+          onBack={closeExtension}
+          onRefresh={refreshProtection}
+          onRequestExtensionChange={handleRequestExtensionChange}
+        />
+      ) : null}
+      {showNotFound ? (
+        <ExtensionsNotFound
+          title={showLocalCli ? "Custom extension not found" : "Extension not found"}
+          detail={showLocalCli
+            ? "This link does not match a CLI Guard has seen on this device."
+            : "This link does not match an extension in the current Guard catalog."}
+          onBack={closeExtension}
+        />
+      ) : null}
+      {pending ? (
+        <ReviewModal
+          change={pending}
+          busy={busy}
+          error={mutationError}
+          approvalGate={resolvedApprovalGate}
+          onCancel={handleCancelPending}
+          onConfirm={confirm}
+        />
+      ) : null}
     </div>
-    {healthBroken ? authorityNotice : null}
-    {mutationError && !pending ? <div className="mt-4"><InlineError message={mutationError} /></div> : null}
-
-    <PatternSearchConsole catalog={catalogExtensions} effective={state.effective} onRefresh={load} onOpenExtension={openExtension} />
-
-    <CustomExtensionsSection
-      items={localClis.data?.items ?? []}
-      onOpen={openLocalCliDetail}
-      onAdd={openAddCustom}
-    />
-
-    <section className="mt-10" aria-labelledby="all-tools-heading">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h2 id="all-tools-heading" className="text-xl font-semibold tracking-tight text-brand-dark">All tools</h2>
-          <p className="mt-1 text-sm text-slate-500">Every built-in tool Guard can watch on this device. Open one to adjust its command patterns.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <AddCustomExtensionButton onClick={openAddCustom} />
-          <span className="text-sm text-brand-dark/70">{catalogExtensions.length} tools</span>
-        </div>
-      </div>
-      <div className="mt-4">{catalogExtensions.map((extension) => <ProtectionModuleRow
-        key={extension.extension_id}
-        extensionId={extension.extension_id}
-        name={extension.name}
-        description={extension.description}
-        behavior={extensionStateLabel(state.effective, extension)}
-        required={extension.required}
-        managed={sourceIsManaged(state.effective, extension.extension_id)}
-        executables={extension.executables}
-        ecosystemIds={extension.ecosystem_ids}
-        onOpen={() => openExtension(extension)}
-      />)}</div>
-    </section>
-
-    {addingCustom ? (
-      <AddCustomExtensionDialog
-        items={localClis.data?.items ?? []}
-        revision={localClis.data?.revision ?? 0}
-        onClose={closeAddCustom}
-        onAdded={handleCustomExtensionAdded}
-      />
-    ) : null}
-    {pending ? <ReviewModal change={pending} busy={busy} error={mutationError} approvalGate={resolvedApprovalGate} onCancel={() => { if (!busy) setPending(null); }} onConfirm={confirm} /> : null}
-  </div>;
+  );
 }

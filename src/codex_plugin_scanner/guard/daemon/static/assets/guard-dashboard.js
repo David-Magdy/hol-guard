@@ -19314,6 +19314,28 @@ function AlphaChannelDialog({
   ] });
 }
 var reactDomExports = requireReactDom();
+const GUARD_OVERLAY_ROOT_ID = "guard-overlay-root";
+function ensureGuardOverlayRoot() {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const existing = document.getElementById(GUARD_OVERLAY_ROOT_ID);
+  if (existing instanceof HTMLElement) {
+    return existing;
+  }
+  const host = document.createElement("div");
+  host.id = GUARD_OVERLAY_ROOT_ID;
+  const dashboardRoot = document.getElementById("guard-dashboard-root");
+  const parent = dashboardRoot?.parentElement ?? document.body;
+  if (dashboardRoot?.parentElement === parent && dashboardRoot.nextSibling) {
+    parent.insertBefore(host, dashboardRoot.nextSibling);
+  } else if (dashboardRoot?.parentElement === parent) {
+    parent.appendChild(host);
+  } else {
+    parent.appendChild(host);
+  }
+  return host;
+}
 function getFocusableElements(container2) {
   const selector = [
     "button:not([disabled])",
@@ -19374,13 +19396,14 @@ function GuardModalLayer({
   onClose,
   panelClassName = "w-full max-w-2xl"
 }) {
-  const [mounted, setMounted] = reactExports.useState(false);
+  const [overlayRoot, setOverlayRoot] = reactExports.useState(null);
   const panelRef = reactExports.useRef(null);
   const onCloseRef = reactExports.useRef(onClose);
   onCloseRef.current = onClose;
+  const mounted = overlayRoot !== null;
   useFocusTrap(mounted, panelRef);
   reactExports.useEffect(() => {
-    setMounted(true);
+    setOverlayRoot(ensureGuardOverlayRoot());
   }, []);
   reactExports.useEffect(() => {
     if (!mounted) return;
@@ -19414,7 +19437,7 @@ function GuardModalLayer({
       onClose();
     }
   };
-  if (!mounted) {
+  if (overlayRoot === null) {
     return null;
   }
   return reactDomExports.createPortal(
@@ -19437,7 +19460,7 @@ function GuardModalLayer({
         )
       }
     ),
-    document.body
+    overlayRoot
   );
 }
 const UPDATE_STATUS_POLL_MS = 6e4;
@@ -30354,6 +30377,17 @@ function navigate(pathname) {
   window.history.pushState({}, "", guardAwareHref(pathname));
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
+function focusVisibleDashboardSearch() {
+  const candidates = document.querySelectorAll(
+    'input[type="search"], input[role="searchbox"]'
+  );
+  for (const input of candidates) {
+    if (input.closest("[hidden], [inert]")) continue;
+    input.focus();
+    return true;
+  }
+  return false;
+}
 function parseRequestId(pathname) {
   if (pathname.startsWith("/requests/")) {
     return pathname.slice("/requests/".length);
@@ -30511,9 +30545,9 @@ function App() {
         setHelpOpen((open) => !open);
       }
       if (event.key === "/") {
-        event.preventDefault();
-        const searchInput = document.querySelector('input[type="search"]');
-        searchInput?.focus();
+        if (focusVisibleDashboardSearch()) {
+          event.preventDefault();
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -31090,7 +31124,7 @@ function App() {
           }
         ) }) : null,
         appDetailContent: /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { onReset: handleGoHome, children: /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Suspense, { fallback: /* @__PURE__ */ jsxRuntimeExports.jsx(LazyFallback, {}), children: appDetailContent }) }),
-        extensionsContent: /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Suspense, { fallback: /* @__PURE__ */ jsxRuntimeExports.jsx(LazyFallback, {}), children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionsWorkspace, {}) }),
+        extensionsContent: /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { onReset: handleGoHome, children: /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Suspense, { fallback: /* @__PURE__ */ jsxRuntimeExports.jsx(LazyFallback, {}), children: /* @__PURE__ */ jsxRuntimeExports.jsx(ExtensionsWorkspace, {}) }) }),
         settingsContent: /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Suspense, { fallback: /* @__PURE__ */ jsxRuntimeExports.jsx(LazyFallback, {}), children: /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsWorkspace, { onApprovalGateChange: setApprovalGate }) }),
         supplyChainHubContent: runtime.kind === "ready" ? /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Suspense, { fallback: /* @__PURE__ */ jsxRuntimeExports.jsx(LazyFallback, {}), children: /* @__PURE__ */ jsxRuntimeExports.jsx(
           SupplyChainHubWorkspace,
@@ -31161,7 +31195,7 @@ export {
   POSTURE_OUTCOME_COLUMNS as Z,
   getDefaultExportFromCjs as _,
   EvidenceActivityHeatmapMini as a,
-  clearLabelForScope as a$,
+  HiMiniTrash as a$,
   HiMiniKey as a0,
   HiMiniLockClosed as a1,
   HiMiniBellAlert as a2,
@@ -31178,27 +31212,27 @@ export {
   HiMiniArrowLeft as aD,
   HiMiniPlus as aE,
   fetchExtensionControlApi as aF,
-  HiMiniArrowPath as aG,
-  HiMiniInformationCircle as aH,
-  fetchApprovalPage as aI,
-  fetchPolicy as aJ,
-  HiMiniHome as aK,
-  guardActionPresentation as aL,
-  DEFAULT_FILTER_STATE as aM,
-  filterEvidence as aN,
-  sortEvidence as aO,
-  computeMetrics as aP,
-  CommandActivityWorkspace as aQ,
-  EvidenceFilterBar as aR,
-  EvidenceInsightStrip as aS,
-  EvidenceActionList as aT,
-  EvidenceActionDetail as aU,
-  policyIdentityKey as aV,
-  HiMiniChartBar as aW,
-  runHarnessAction as aX,
-  GuardHarnessActionError as aY,
-  HiMiniRocketLaunch as aZ,
-  HiMiniTrash as a_,
+  HiMiniInformationCircle as aG,
+  HiMiniArrowPath as aH,
+  guardAwareHref as aI,
+  fetchApprovalPage as aJ,
+  fetchPolicy as aK,
+  HiMiniHome as aL,
+  guardActionPresentation as aM,
+  DEFAULT_FILTER_STATE as aN,
+  filterEvidence as aO,
+  sortEvidence as aP,
+  computeMetrics as aQ,
+  CommandActivityWorkspace as aR,
+  EvidenceFilterBar as aS,
+  EvidenceInsightStrip as aT,
+  EvidenceActionList as aU,
+  EvidenceActionDetail as aV,
+  policyIdentityKey as aW,
+  HiMiniChartBar as aX,
+  runHarnessAction as aY,
+  GuardHarnessActionError as aZ,
+  HiMiniRocketLaunch as a_,
   clearReviewQueue as aa,
   revokeApprovalGateCooldown as ab,
   disableApprovalGateTotp as ac,
@@ -31227,16 +31261,16 @@ export {
   FaAws as az,
   HiMiniCommandLine as b,
   HiMiniFunnel as b$,
-  formatHarnessCommand as b0,
-  isSupplyChainAuditIncomplete as b1,
-  isSupplyChainAuditEvidence as b2,
-  readString$1 as b3,
-  isRecord$2 as b4,
-  HiMiniClock as b5,
-  IconActionButton as b6,
-  HiMiniBeaker as b7,
-  ActivationSummary as b8,
-  ActionResultPanel as b9,
+  clearLabelForScope as b0,
+  formatHarnessCommand as b1,
+  isSupplyChainAuditIncomplete as b2,
+  isSupplyChainAuditEvidence as b3,
+  readString$1 as b4,
+  isRecord$2 as b5,
+  HiMiniClock as b6,
+  IconActionButton as b7,
+  HiMiniBeaker as b8,
+  ActivationSummary as b9,
   HiMiniClipboardDocument as bA,
   HiMiniUsers as bB,
   HiMiniIdentification as bC,
@@ -31264,28 +31298,28 @@ export {
   HiMiniShieldExclamation as bY,
   HiMiniComputerDesktop as bZ,
   HiMiniChevronLeft as b_,
-  HiMiniBugAnt as ba,
-  GuardModalLayer as bb,
-  ConnectFlowCard as bc,
-  ApprovalProofInline as bd,
-  HiMiniArrowTopRightOnSquare as be,
-  HiMiniCloudArrowDown as bf,
-  fetchPackageFirewallStatus as bg,
-  runPackageAudit as bh,
-  resolveSupplyChainAuditFailure as bi,
-  runPackageSync as bj,
-  startPackageFirewallConnect as bk,
-  openPackageFirewallAuthorizeFallback as bl,
-  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as bm,
-  repairSupplyChainProtection as bn,
-  runPackageFirewallAction as bo,
-  parseInterceptProofSnapshot as bp,
-  activatePackageFirewallRuntime as bq,
-  EntitlementNotice as br,
-  fetchReceipts as bs,
-  __vitePreload as bt,
-  scopeLabel as bu,
-  guardAwareHref as bv,
+  ActionResultPanel as ba,
+  HiMiniBugAnt as bb,
+  GuardModalLayer as bc,
+  ConnectFlowCard as bd,
+  ApprovalProofInline as be,
+  HiMiniArrowTopRightOnSquare as bf,
+  HiMiniCloudArrowDown as bg,
+  fetchPackageFirewallStatus as bh,
+  runPackageAudit as bi,
+  resolveSupplyChainAuditFailure as bj,
+  runPackageSync as bk,
+  startPackageFirewallConnect as bl,
+  openPackageFirewallAuthorizeFallback as bm,
+  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as bn,
+  repairSupplyChainProtection as bo,
+  runPackageFirewallAction as bp,
+  parseInterceptProofSnapshot as bq,
+  activatePackageFirewallRuntime as br,
+  EntitlementNotice as bs,
+  fetchReceipts as bt,
+  __vitePreload as bu,
+  scopeLabel as bv,
   HiMiniDocumentText as bw,
   HiMiniCloudArrowUp as bx,
   HiMiniCheck as by,
