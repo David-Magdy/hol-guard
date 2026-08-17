@@ -12,10 +12,50 @@ _GROK_TOOL_ALIASES: dict[str, str] = {
     "read_file": "Read",
     "search_replace": "Edit",
     "write": "Edit",
+    "write_file": "Edit",
+    "multi_edit": "Edit",
+    "multiedit": "Edit",
     "grep": "Grep",
+    "glob": "Grep",
+    "list_dir": "Read",
+    "listdir": "Read",
     "web_fetch": "WebFetch",
     "web_search": "WebFetch",
+    "open_page": "WebFetch",
+    "open_page_with_find": "WebFetch",
+    "spawn_subagent": "Task",
+    "task": "Task",
+    "use_tool": "MCPTool",
+    "callmcptool": "MCPTool",
 }
+
+_GROK_EVENT_NAMES: dict[str, str] = {
+    "pretooluse": "PreToolUse",
+    "userpromptsubmit": "UserPromptSubmit",
+    "posttooluse": "PostToolUse",
+    "posttoolusefailure": "PostToolUse",
+    "sessionstart": "SessionStart",
+    "sessionend": "SessionEnd",
+    "stop": "Stop",
+    "subagentstart": "SubagentStart",
+    "subagentstop": "SubagentStop",
+    "subagentend": "SubagentStop",
+    "permissiondenied": "PermissionDenied",
+}
+
+# Grok treats these events as observe-only. A deny JSON is ignored, so Guard
+# must not claim they are an enforcement boundary.
+_OBSERVE_ONLY_EVENTS = frozenset(
+    {
+        "UserPromptSubmit",
+        "SessionStart",
+        "SessionEnd",
+        "SubagentStart",
+        "SubagentStop",
+        "PostToolUse",
+        "PermissionDenied",
+    }
+)
 
 
 def _raw_hook_event_name(payload: Mapping[str, object]) -> str:
@@ -28,22 +68,60 @@ def _raw_hook_event_name(payload: Mapping[str, object]) -> str:
 
 def _canonical_grok_event_name(raw_event: str) -> str:
     normalized = raw_event.replace("_", "").replace("-", "").lower()
-    mapping = {
-        "pretooluse": "PreToolUse",
-        "userpromptsubmit": "UserPromptSubmit",
-        "posttooluse": "PostToolUse",
-        "sessionstart": "SessionStart",
-        "stop": "Stop",
-    }
-    return mapping.get(normalized, raw_event or "PreToolUse")
+    return _GROK_EVENT_NAMES.get(normalized, raw_event or "PreToolUse")
+
+
+def _is_observe_only_event(event_name: str | None) -> bool:
+    if not isinstance(event_name, str) or not event_name.strip():
+        return False
+    return _canonical_grok_event_name(event_name.strip()) in _OBSERVE_ONLY_EVENTS
 
 
 def _canonical_grok_tool_name(raw_tool: object | None) -> str | None:
     if not isinstance(raw_tool, str) or not raw_tool.strip():
         return None
     stripped = raw_tool.strip()
-    lowered = stripped.lower()
-    return _GROK_TOOL_ALIASES.get(lowered, stripped)
+    return _GROK_TOOL_ALIASES.get(stripped.lower(), stripped)
+
+
+def _mapping_value(value: object) -> Mapping[str, object] | None:
+    return value if isinstance(value, Mapping) else None
+
+
+def _native_mcp_envelope(tool_input: Mapping[str, object]) -> bool:
+    server = tool_input.get("server")
+    tool = tool_input.get("tool")
+    return isinstance(server, str) and bool(server.strip()) and isinstance(tool, str) and bool(tool.strip())
+
+
+def _unwrap_dispatcher_tool(
+    tool_name: str | None,
+    tool_input: Mapping[str, object] | None,
+) -> tuple[str | None, Mapping[str, object] | None]:
+    if tool_name != "MCPTool" or tool_input is None:
+        return tool_name, tool_input
+    # Grok's native MCP payload keeps the method name in `tool` next to `server`.
+    # That is not a dispatcher wrapper and must stay MCPTool.
+    if _native_mcp_envelope(tool_input):
+        return tool_name, tool_input
+    for key in ("tool_name", "toolName", "name", "tool"):
+        inner = tool_input.get(key)
+        if isinstance(inner, str) and inner.strip() and inner.strip() != "MCPTool":
+            inner_input = _mapping_value(tool_input.get("arguments") or tool_input.get("toolInput"))
+            return inner.strip(), inner_input or tool_input
+    return tool_name, tool_input
+
+
+def _apply_qualified_mcp_tool(normalized: dict[str, object], tool_name: str) -> str:
+    if "__" not in tool_name or tool_name.lower() in _GROK_TOOL_ALIASES:
+        return tool_name
+    server, tool = tool_name.split("__", 1)
+    if not server or not tool:
+        return tool_name
+    normalized["mcp_server"] = server
+    normalized["mcp_tool"] = tool
+    normalized["original_tool_name"] = tool_name
+    return "MCPTool"
 
 
 def prepare_grok_hook_payload(payload: Mapping[str, object]) -> dict[str, object]:
@@ -56,13 +134,22 @@ def prepare_grok_hook_payload(payload: Mapping[str, object]) -> dict[str, object
     tool_name = normalized.get("tool_name")
     if tool_name is None:
         tool_name = normalized.get("toolName")
-    canonical_tool = _canonical_grok_tool_name(tool_name)
-    if canonical_tool is not None:
-        normalized["tool_name"] = canonical_tool
     tool_input = normalized.get("tool_input")
     if tool_input is None:
         tool_input = normalized.get("toolInput")
-    if tool_input is not None:
+    mapped_input = _mapping_value(tool_input)
+    canonical_tool = _canonical_grok_tool_name(tool_name)
+    canonical_tool, mapped_input = _unwrap_dispatcher_tool(canonical_tool, mapped_input)
+    if isinstance(canonical_tool, str):
+        canonical_tool = _apply_qualified_mcp_tool(normalized, canonical_tool)
+        normalized["tool_name"] = canonical_tool
+    if mapped_input is not None:
+        if canonical_tool == "MCPTool" and _native_mcp_envelope(mapped_input):
+            normalized.setdefault("mcp_server", str(mapped_input["server"]).strip())
+            normalized.setdefault("mcp_tool", str(mapped_input["tool"]).strip())
+        normalized["tool_input"] = dict(mapped_input)
+        tool_input = mapped_input
+    elif tool_input is not None:
         normalized["tool_input"] = tool_input
     session_id = normalized.get("session_id")
     if session_id is None and isinstance(normalized.get("sessionId"), str):
@@ -72,15 +159,37 @@ def prepare_grok_hook_payload(payload: Mapping[str, object]) -> dict[str, object
         normalized["workspace_root"] = normalized["workspaceRoot"]
     if workspace_root is None and isinstance(normalized.get("cwd"), str):
         normalized["workspace_root"] = normalized["cwd"]
+    if isinstance(normalized.get("permissionMode"), str) and "permission_mode" not in normalized:
+        normalized["permission_mode"] = normalized["permissionMode"]
+    if isinstance(normalized.get("subagentType"), str) and "subagent_type" not in normalized:
+        normalized["subagent_type"] = normalized["subagentType"]
     prompt = normalized.get("prompt")
     if prompt is None and isinstance(normalized.get("userPrompt"), str):
         normalized["prompt"] = normalized["userPrompt"]
+    if (
+        prompt is None
+        and canonical_tool == "Task"
+        and isinstance(tool_input, Mapping)
+        and isinstance(tool_input.get("prompt"), str)
+    ):
+        normalized["prompt"] = tool_input["prompt"]
+    if canonical_tool == "Task" and isinstance(tool_input, Mapping):
+        subagent_type = tool_input.get("subagent_type") or tool_input.get("subagentType")
+        if isinstance(subagent_type, str) and subagent_type.strip():
+            normalized["subagent_type"] = subagent_type.strip()
     return normalized
 
 
-def grok_hook_response_from_guard(*, policy_action: str, reason: str) -> dict[str, object]:
-    """Translate Guard policy action into Grok PreToolUse stdout JSON."""
+def grok_hook_response_from_guard(
+    *,
+    policy_action: str,
+    reason: str,
+    event_name: str | None = None,
+) -> dict[str, object]:
+    """Translate Guard policy action into Grok hook stdout JSON."""
 
+    if _is_observe_only_event(event_name):
+        return {"decision": "allow"}
     if policy_action in {"review", "require-reapproval", "sandbox-required", "block"}:
         cleaned_reason = _dedupe_grok_block_reason(reason.strip() if isinstance(reason, str) else "")
         return {
@@ -107,15 +216,22 @@ def emit_grok_hook_response(
     *,
     policy_action: str,
     reason: str,
+    event_name: str | None = None,
     output_stream: TextIO | None = None,
 ) -> None:
-    payload = grok_hook_response_from_guard(policy_action=policy_action, reason=reason)
+    payload = grok_hook_response_from_guard(
+        policy_action=policy_action,
+        reason=reason,
+        event_name=event_name,
+    )
     stream = output_stream if output_stream is not None else sys.stdout
     stream.write(json.dumps(payload, separators=(",", ":")) + "\n")
     stream.flush()
 
 
-def grok_hook_should_block(*, policy_action: str) -> bool:
+def grok_hook_should_block(*, policy_action: str, event_name: str | None = None) -> bool:
+    if _is_observe_only_event(event_name):
+        return False
     return policy_action in {"review", "require-reapproval", "sandbox-required", "block"}
 
 
