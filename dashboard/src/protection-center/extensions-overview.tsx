@@ -1,0 +1,142 @@
+import { useCallback } from "react";
+
+import {
+  extensionStateLabel,
+} from "../extension-control-center-model";
+import type { EffectiveExtensionControls, ExtensionCatalogItem } from "../extension-controls-api";
+import type { LocalCliItem } from "../local-cli-api";
+import { WorkspacePageHeader } from "../workspace-page-header";
+import {
+  AddCustomExtensionButton,
+  AddCustomExtensionDialog,
+  CustomExtensionsSection,
+} from "./local-clis-panel";
+import { PatternSearchConsole } from "./components/pattern-search-console";
+import {
+  InlineError,
+  ProtectionModuleRow,
+  ProtectionStatusHero,
+} from "./components/protection-primitives";
+import { PROTECTION_TERMS } from "./copy/protection-copy";
+import type { ProtectionStatusView } from "./model/protection-presentation";
+
+function sourceIsManaged(effective: EffectiveExtensionControls, extensionId: string): boolean {
+  return effective.layers.some((layer) =>
+    layer.kind === "signed-cloud"
+    && layer.controls.some((control) =>
+      control.target_kind === "extension" && control.target_id === extensionId
+    ));
+}
+
+function CatalogExtensionRow(props: {
+  extension: ExtensionCatalogItem;
+  effective: EffectiveExtensionControls;
+  onOpen: (extension: ExtensionCatalogItem) => void;
+}) {
+  const handleOpen = useCallback(() => {
+    props.onOpen(props.extension);
+  }, [props]);
+  return (
+    <ProtectionModuleRow
+      extensionId={props.extension.extension_id}
+      name={props.extension.name}
+      description={props.extension.description}
+      behavior={extensionStateLabel(props.effective, props.extension)}
+      required={props.extension.required}
+      managed={sourceIsManaged(props.effective, props.extension.extension_id)}
+      executables={props.extension.executables}
+      ecosystemIds={props.extension.ecosystem_ids}
+      onOpen={handleOpen}
+    />
+  );
+}
+
+export function ExtensionsOverview(props: {
+  catalogExtensions: ExtensionCatalogItem[];
+  effective: EffectiveExtensionControls;
+  localCliItems: LocalCliItem[];
+  localCliRevision: number;
+  mutationError: string | null;
+  recoveryStatus: string | null;
+  healthBroken: boolean;
+  status: ProtectionStatusView;
+  addingCustom: boolean;
+  active: boolean;
+  onPrimaryStatusAction?: () => void;
+  onRefresh: () => Promise<void> | void;
+  onOpenExtension: (extension: ExtensionCatalogItem) => void;
+  onOpenLocalCli: (cliId: string) => void;
+  onAddCustom: () => void;
+  onCloseAddCustom: () => void;
+  onCustomExtensionAdded: (cliId: string) => void;
+}) {
+  return (
+    <div hidden={!props.active} inert={!props.active || undefined}>
+      <WorkspacePageHeader
+        eyebrow="On this device"
+        title={PROTECTION_TERMS.pageTitle}
+        description="Pick a tool to see the commands Guard watches and change how they're handled."
+      />
+      <div className="mt-6">
+        <ProtectionStatusHero
+          status={props.status}
+          onPrimaryAction={props.status.primaryAction === "review-lockdown" ? props.onPrimaryStatusAction : undefined}
+        />
+        {props.recoveryStatus && !props.healthBroken ? (
+          <p role="status" className="mt-3 text-sm font-medium text-emerald-800">{props.recoveryStatus}</p>
+        ) : null}
+      </div>
+      {props.mutationError ? (
+        <div className="mt-4">
+          <InlineError message={props.mutationError} />
+        </div>
+      ) : null}
+
+      <PatternSearchConsole
+        catalog={props.catalogExtensions}
+        effective={props.effective}
+        active={props.active}
+        onRefresh={props.onRefresh}
+        onOpenExtension={props.onOpenExtension}
+      />
+
+      <CustomExtensionsSection
+        items={props.localCliItems}
+        onOpen={props.onOpenLocalCli}
+        onAdd={props.onAddCustom}
+      />
+
+      <section className="mt-10" aria-labelledby="all-tools-heading">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 id="all-tools-heading" className="text-xl font-semibold tracking-tight text-brand-dark">All tools</h2>
+            <p className="mt-1 text-sm text-slate-500">Every built-in tool Guard can watch on this device. Open one to adjust its command patterns.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <AddCustomExtensionButton onClick={props.onAddCustom} />
+            <span className="text-sm text-brand-dark/70">{props.catalogExtensions.length} tools</span>
+          </div>
+        </div>
+        <div className="mt-4">
+          {props.catalogExtensions.map((extension) => (
+            <CatalogExtensionRow
+              key={extension.extension_id}
+              extension={extension}
+              effective={props.effective}
+              onOpen={props.onOpenExtension}
+            />
+          ))}
+        </div>
+      </section>
+
+      {props.addingCustom ? (
+        <AddCustomExtensionDialog
+          items={props.localCliItems}
+          revision={props.localCliRevision}
+          onClose={props.onCloseAddCustom}
+          onAdded={props.onCustomExtensionAdded}
+        />
+      ) : null}
+    </div>
+  );
+}

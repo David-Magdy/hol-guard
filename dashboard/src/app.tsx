@@ -129,6 +129,18 @@ function navigate(pathname: string): void {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+function focusVisibleDashboardSearch(): boolean {
+  const candidates = document.querySelectorAll<HTMLInputElement>(
+    'input[type="search"], input[role="searchbox"]',
+  );
+  for (const input of candidates) {
+    if (input.closest("[hidden], [inert]")) continue;
+    input.focus();
+    return true;
+  }
+  return false;
+}
+
 function parseRequestId(pathname: string): string | null {
   if (pathname.startsWith("/requests/")) {
     return pathname.slice("/requests/".length);
@@ -305,9 +317,9 @@ export function App() {
         setHelpOpen((open) => !open);
       }
       if (event.key === "/") {
-        event.preventDefault();
-        const searchInput = document.querySelector('input[type="search"]') as HTMLInputElement | null;
-        searchInput?.focus();
+        if (focusVisibleDashboardSearch()) {
+          event.preventDefault();
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -972,9 +984,11 @@ export function App() {
         </ErrorBoundary>
       }
       extensionsContent={
-        <Suspense fallback={<LazyFallback />}>
-          <ExtensionsWorkspace />
-        </Suspense>
+        <ErrorBoundary onReset={handleGoHome}>
+          <Suspense fallback={<LazyFallback />}>
+            <ExtensionsWorkspace />
+          </Suspense>
+        </ErrorBoundary>
       }
       settingsContent={
         <Suspense fallback={<LazyFallback />}>

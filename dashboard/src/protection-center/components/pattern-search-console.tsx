@@ -28,10 +28,12 @@ export function PatternSearchConsole(props: {
   effective: EffectiveExtensionControls;
   onRefresh: () => Promise<void> | void;
   onOpenExtension: (extension: ExtensionCatalogItem) => void;
+  active?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchActive = props.active ?? true;
   const draft = useExtensionPolicyDraft({ effective: props.effective, onRefresh: props.onRefresh });
   const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
   const {
@@ -41,6 +43,7 @@ export function PatternSearchConsole(props: {
   } = draft;
 
   useEffect(() => {
+    if (!searchActive) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "/" || event.defaultPrevented) return;
       const target = event.target as HTMLElement | null;
@@ -50,7 +53,7 @@ export function PatternSearchConsole(props: {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [searchActive]);
 
   const matches = useMemo(() => searchCommandPatterns(props.catalog, query), [props.catalog, query]);
   const toolMatches = useMemo(() => {
@@ -92,7 +95,9 @@ export function PatternSearchConsole(props: {
       <HiMiniMagnifyingGlass className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-brand-dark/55" aria-hidden="true" />
       <input
         ref={inputRef}
-        type="search"
+        type="text"
+        role="searchbox"
+        enterKeyHint="search"
         value={query}
         onFocus={() => setFocused(true)}
         onChange={(event) => setQuery(event.target.value.slice(0, 160))}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { ensureGuardOverlayRoot } from "./guard-overlay-root";
 import { useFocusTrap } from "./use-focus-trap";
 
 interface GuardModalLayerProps {
@@ -15,15 +16,16 @@ export function GuardModalLayer({
   onClose,
   panelClassName = "w-full max-w-2xl",
 }: GuardModalLayerProps) {
-  const [mounted, setMounted] = useState(false);
+  const [overlayRoot, setOverlayRoot] = useState<HTMLElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const mounted = overlayRoot !== null;
 
   useFocusTrap(mounted, panelRef);
 
   useEffect(() => {
-    setMounted(true);
+    setOverlayRoot(ensureGuardOverlayRoot());
   }, []);
 
   useEffect(() => {
@@ -61,7 +63,7 @@ export function GuardModalLayer({
     }
   };
 
-  if (!mounted) {
+  if (overlayRoot === null) {
     return null;
   }
 
@@ -81,6 +83,6 @@ export function GuardModalLayer({
         {children}
       </div>
     </div>,
-    document.body,
+    overlayRoot,
   );
 }
