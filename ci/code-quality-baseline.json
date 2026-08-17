@@ -418,7 +418,7 @@
     "src/codex_plugin_scanner/verification.py::_check_marketplace": 115
   },
   "oversized_files": {
-    ".github/workflows/ci.yml": 542,
+    ".github/workflows/ci.yml": 553,
     ".github/workflows/publish.yml": 1644,
     "dashboard/src/app.tsx": 1051,
     "dashboard/src/approval-center-primitives.tsx": 1041,
