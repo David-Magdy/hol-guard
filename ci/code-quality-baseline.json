@@ -418,8 +418,8 @@
     "src/codex_plugin_scanner/verification.py::_check_marketplace": 115
   },
   "oversized_files": {
-    ".github/workflows/ci.yml": 542,
-    ".github/workflows/publish.yml": 1639,
+    ".github/workflows/ci.yml": 553,
+    ".github/workflows/publish.yml": 1644,
     "dashboard/src/app.tsx": 1051,
     "dashboard/src/approval-center-primitives.tsx": 1041,
     "dashboard/src/approval-center-utils.ts": 901,
@@ -510,9 +510,9 @@
     "src/codex_plugin_scanner/guard/cli/connect_flow.py": 1455,
     "src/codex_plugin_scanner/guard/cli/install_commands.py": 635,
     "src/codex_plugin_scanner/guard/cli/product.py": 636,
-    "src/codex_plugin_scanner/guard/cli/render.py": 2907,
+    "src/codex_plugin_scanner/guard/cli/render.py": 2914,
     "src/codex_plugin_scanner/guard/cli/update_artifact.py": 1279,
-    "src/codex_plugin_scanner/guard/cli/update_commands.py": 2803,
+    "src/codex_plugin_scanner/guard/cli/update_commands.py": 2893,
     "src/codex_plugin_scanner/guard/cli/update_subprocess.py": 2154,
     "src/codex_plugin_scanner/guard/codex_app_server.py": 627,
     "src/codex_plugin_scanner/guard/config.py": 1392,
@@ -731,7 +731,7 @@
     "tests/test_policy_bundle_trust_regressions.py": 686,
     "tests/test_policy_bundle_v2.py": 534,
     "tests/test_policy_document_io.py": 679,
-    "tests/test_release_train_workflow.py": 559,
+    "tests/test_release_train_workflow.py": 568,
     "tests/test_verify_release_registry.py": 567
   },
   "schema_version": 2,

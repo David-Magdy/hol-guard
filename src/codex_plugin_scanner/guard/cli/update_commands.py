@@ -18,6 +18,7 @@ import sysconfig
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import ParseResult, urlparse
@@ -104,6 +105,7 @@ _PYPI_AUTH_STATUS_RE = re.compile(
 _PYPI_PROPAGATION_RETRY_DELAY_SECONDS = 2.0
 _PYPI_PROPAGATION_RETRY_LIMIT = 1
 _PYPI_JSON_URL = "https://pypi.org/pypi/hol-guard/json"
+_GITHUB_ALPHA_REFS_URL = "https://api.github.com/repos/hashgraph-online/hol-guard/git/matching-refs/tags/alpha/v"
 _PYPI_TIMEOUT_SECONDS = 3.0
 _PYPI_RESPONSE_LIMIT_BYTES = 8 * 1024 * 1024
 _PYPI_READ_CHUNK_BYTES = 64 * 1024
@@ -598,7 +600,7 @@ def run_guard_update(
             payload["status"] = "current"
             payload["changed"] = False
             payload["resulting_version"] = current_version
-            payload["message"] = "HOL Guard is already current."
+            payload["message"] = already_current_update_message(version_check)
             if trusted_wheel is not None:
                 trusted_wheel.cleanup()
             return payload, 0
@@ -616,7 +618,7 @@ def run_guard_update(
         payload["status"] = "current"
         payload["changed"] = False
         payload["resulting_version"] = current_version
-        payload["message"] = "HOL Guard is already current."
+        payload["message"] = already_current_update_message(version_check)
         # Skip force-reinstall/upgrade noise when PyPI already reports current.
         package_shims, package_shim_note = _refresh_package_shims_after_update(
             context=context,
@@ -1226,7 +1228,7 @@ def _success_message(
             return f"{message} Run: {retry_command}"
         return message
     if status == "current":
-        return "HOL Guard is already current."
+        return already_current_update_message(version_check if isinstance(version_check, dict) else None)
     if status == "updated" and current_version == resulting_version:
         return "HOL Guard source was repaired successfully."
     if (
@@ -1333,6 +1335,7 @@ def _version_check_payload(
             "required_python": _format_python_requirements(required_python_requirements),
             "runtime_python": runtime_python,
         }
+    reserved_alpha = _newest_reserved_alpha_version(latest_pypi=latest_version) if include_alpha else None
     return {
         "source": "pypi",
         **({"release_channel": "alpha"} if include_alpha else {}),
@@ -1340,6 +1343,7 @@ def _version_check_payload(
         "current_version": current_version,
         "latest_version": latest_version,
         "update_available": update_available,
+        **({"reserved_alpha_version": reserved_alpha} if reserved_alpha else {}),
     }
 
 
@@ -1407,6 +1411,92 @@ def _latest_alpha_version_from_pypi(current_version: str) -> str | None:
     if not candidates:
         return None
     return max(candidates, key=lambda candidate: candidate[0])[1]
+
+
+def already_current_update_message(version_check: Mapping[str, object] | None) -> str:
+    if not version_check:
+        return "HOL Guard is already current."
+    latest = version_check.get("latest_version")
+    reserved = version_check.get("reserved_alpha_version")
+    if (
+        isinstance(latest, str)
+        and latest.strip()
+        and isinstance(reserved, str)
+        and reserved.strip()
+        and _is_newer_version(reserved.strip(), latest.strip()) is True
+    ):
+        return (
+            f"HOL Guard is already current on PyPI ({latest.strip()}). "
+            f"GitHub reserved {reserved.strip()}, but that alpha is not published yet."
+        )
+    return "HOL Guard is already current."
+
+
+def select_reserved_alpha_version(refs: object, *, latest_pypi: str | None) -> str | None:
+    """Return the newest reserved alpha on the same series as the live PyPI alpha."""
+
+    if not isinstance(refs, list):
+        return None
+    latest_base: str | None = None
+    latest_text = latest_pypi.strip() if isinstance(latest_pypi, str) else ""
+    if latest_text:
+        try:
+            latest_base = Version(latest_text).base_version
+        except InvalidVersion:
+            latest_base = None
+    candidates: list[tuple[Version, str]] = []
+    for item in refs:
+        if not isinstance(item, dict):
+            continue
+        ref = item.get("ref")
+        if not isinstance(ref, str) or not ref.startswith("refs/tags/alpha/v"):
+            continue
+        version_text = ref.removeprefix("refs/tags/alpha/v")
+        try:
+            parsed_version = Version(version_text)
+        except InvalidVersion:
+            continue
+        if parsed_version.pre is None or parsed_version.pre[0] != "a":
+            continue
+        if latest_base is not None and parsed_version.base_version != latest_base:
+            continue
+        candidates.append((parsed_version, version_text))
+    if not candidates:
+        return None
+    newest = max(candidates, key=lambda candidate: candidate[0])[1]
+    if latest_text and _is_newer_version(newest, latest_text) is not True:
+        return None
+    return newest
+
+
+def _newest_reserved_alpha_version(*, latest_pypi: str | None) -> str | None:
+    request = urllib.request.Request(
+        _GITHUB_ALPHA_REFS_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "hol-guard-update",
+        },
+    )
+    deadline = time.monotonic() + _PYPI_TIMEOUT_SECONDS
+    try:
+        with managed_urlopen(
+            request,
+            timeout=_PYPI_TIMEOUT_SECONDS,
+            policy=_version_network_policy.get(),
+        ) as response:
+            raw_payload = _read_bounded_pypi_response(response, deadline=deadline)
+            payload = json.loads(raw_payload.decode("utf-8"))
+    except (
+        ManagedNetworkError,
+        OSError,
+        TimeoutError,
+        urllib.error.URLError,
+        http.client.IncompleteRead,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+    ):
+        return None
+    return select_reserved_alpha_version(payload, latest_pypi=latest_pypi)
 
 
 def _read_bounded_pypi_response(response: object, *, deadline: float) -> bytes:

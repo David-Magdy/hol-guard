@@ -431,6 +431,7 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
     alpha_publishers = [step for step in alpha_steps if str(step.get("uses", "")).startswith("pypa/")]
     alpha_cleanup = next(step for step in alpha_steps if step.get("name") == "Remove generated upload attestations")
     assert "plan-upload --registry pypi" in alpha_inspect["run"]
+    assert "--artifact-set pure" in alpha_inspect["run"]
     assert "--project plugin-scanner" in alpha_inspect["run"]
     assert {step["with"]["packages-dir"] for step in alpha_publishers} == {
         "upload-dist-hol-guard/",
@@ -443,9 +444,17 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
         for step in jobs["publish-alpha-pypi"]["steps"]
         if step.get("name") == "Download and verify exact PyPI artifacts"
     )
+    assert "inspect-release --registry pypi --project hol-guard" in alpha_verify["run"]
+    assert "verify-release --registry pypi --project plugin-scanner" in alpha_verify["run"]
     assert "verify-published --registry pypi" in alpha_verify["run"]
+    assert "--artifact-set pure" in alpha_verify["run"]
     assert '--source-sha "$SOURCE_SHA"' in alpha_verify["run"]
-    assert 'select(endswith("-py3-none-any.whl"))' in alpha_verify["run"]
+    assert "dist-hol-guard/*-py3-none-any.whl" in alpha_verify["run"]
+    alpha_quota = next(
+        step for step in alpha_steps if step.get("name") == "Refuse PyPI upload when the project is over quota"
+    )
+    assert "scripts/pypi_project_storage.py --fail-if-over-limit" in alpha_quota["run"]
+    assert "packaging==25.0" in alpha_quota["run"]
 
 
 def test_release_tags_are_bound_to_the_exact_published_source() -> None:

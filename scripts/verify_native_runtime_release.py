@@ -330,6 +330,20 @@ def _copy_exclusive(source: Path, target: Path) -> None:
         raise NativeReleaseError(f"Native upload artifact could not be copied: {target.name}") from exc
 
 
+def select_upload_artifacts(local: Mapping[str, str], *, version: str, artifact_set: str) -> dict[str, str]:
+    """Return the registry subset that this publication is allowed to upload."""
+
+    if artifact_set == "full":
+        return dict(local)
+    if artifact_set != "pure":
+        raise NativeReleaseError("Unsupported Guard registry artifact set")
+    wheel = f"hol_guard-{_canonical_version(version).replace('-', '_')}-py3-none-any.whl"
+    digest = local.get(wheel)
+    if digest is None:
+        raise NativeReleaseError("Guard pure wheel is missing from the local release set")
+    return {wheel: digest}
+
+
 def plan_upload(
     registry: Registry,
     *,
@@ -337,11 +351,16 @@ def plan_upload(
     source_sha: str,
     dist_dir: Path,
     output_dir: Path,
+    artifact_set: str = "full",
 ) -> tuple[str, ...]:
-    local = local_guard_hashes(
-        dist_dir,
+    local = select_upload_artifacts(
+        local_guard_hashes(
+            dist_dir,
+            version=version,
+            source_sha=source_sha,
+        ),
         version=version,
-        source_sha=source_sha,
+        artifact_set=artifact_set,
     )
     inspection = _inspection(registry, version)
     remote = inspection.digests if inspection.exists else {}
@@ -370,11 +389,16 @@ def assert_published_exact(
     version: str,
     source_sha: str,
     dist_dir: Path,
+    artifact_set: str = "full",
 ) -> None:
-    local = local_guard_hashes(
-        dist_dir,
+    local = select_upload_artifacts(
+        local_guard_hashes(
+            dist_dir,
+            version=version,
+            source_sha=source_sha,
+        ),
         version=version,
-        source_sha=source_sha,
+        artifact_set=artifact_set,
     )
     inspection = _inspection(registry, version)
     if not inspection.exists:
@@ -412,6 +436,12 @@ def _parser() -> argparse.ArgumentParser:
             sub.add_argument("--dist-dir", type=Path, required=True)
         if name == "plan-upload":
             sub.add_argument("--output-dir", type=Path, required=True)
+        if name in {"plan-upload", "verify-published"}:
+            sub.add_argument(
+                "--artifact-set",
+                choices=("full", "pure"),
+                default="full",
+            )
     return parser
 
 
@@ -438,6 +468,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source_sha=args.source_sha,
                 dist_dir=args.dist_dir,
                 output_dir=args.output_dir,
+                artifact_set=str(args.artifact_set),
             )
             result = {"status": "planned", "files": list(planned)}
         elif args.command == "verify-published":
@@ -446,6 +477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 version=args.version,
                 source_sha=args.source_sha,
                 dist_dir=args.dist_dir,
+                artifact_set=str(args.artifact_set),
             )
             result = {"status": "exact", "version": args.version}
         else:
