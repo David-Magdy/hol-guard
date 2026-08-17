@@ -1,0 +1,82 @@
+name: Temporary Beta 20 public hosted macOS build
+
+on:
+  push:
+    branches:
+      - ops/beta20-public-macos-build
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+env:
+  EXPECTED_SHA: 1ff65abd6363315e388bd06592ef6a88ffaccd84
+  DESKTOP_VERSION: 0.1.0-beta.20
+  CORE_VERSION: 3.0.0a144
+  CORE_SHA: 4009343861ec3f7ea6db6246899826e2bd17ef5e
+  RELEASE_TARGET: aarch64-apple-darwin
+  RUSTUP_TOOLCHAIN: 1.89.0
+  GUARD_DAEMON_PORT: 24781
+  SOURCE_BRIDGE_SHA256: b914da531434eaabf4fccbb695294d1b74f52268c15a2d39fc6a1d456c6c1cec
+  SOURCE_BRIDGE_URL: "https://sdmntprnorthcentralus.oaiusercontent.com/files/00000000-c030-822f-af14-69490d58718d/raw?se=2026-08-17T16%3A50%3A11Z&sp=r&sv=2026-02-06&sr=b&scid=8cddef2a-2c41-51ef-a14f-f6ecd0aa92c0&skoid=de71a0d5-fb02-4fce-be69-9296aced242b&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-08-16T21%3A31%3A24Z&ske=2026-08-17T21%3A31%3A24Z&sks=b&skv=2026-02-06&sig=ESyaDF2z7AQK6VJyGvQ2%2BUhGLzaHTOzDJYjwC4RnQzY%3D"
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 120
+    environment: core-alpha-desktop
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Check out immutable bridge automation
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.14
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Set up Rust 1.89 for Apple silicon
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.89.0
+          components: clippy, rustfmt
+          targets: aarch64-apple-darwin
+
+      - name: Decode and run authenticated private-source build
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode scripts/temporary-beta20-public-macos-build.sh.gz.b64 \
+            | gunzip > "$RUNNER_TEMP/beta20-public-macos-build.sh"
+          chmod 0700 "$RUNNER_TEMP/beta20-public-macos-build.sh"
+          bash "$RUNNER_TEMP/beta20-public-macos-build.sh"
+
+      - name: Attest exact macOS outputs on GitHub-hosted Apple silicon
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: desktop-source/hol-guard-desktop/bridge-output/*
+
+      - name: Upload exact macOS outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: beta20-public-macos-output
+          if-no-files-found: error
+          retention-days: 3
+          path: desktop-source/hol-guard-desktop/bridge-output
