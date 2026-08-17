@@ -16,6 +16,7 @@ import { GuardUpdatePanel } from "./guard-update-panel";
 import { GITHUB_ISSUE_BUTTON_LABEL, GITHUB_ISSUE_LINK } from "./github-issue-link";
 import { NavigationDrawer } from "./shell-navigation-drawer";
 import { NavigationLink, navigateFromAnchor, shellHref } from "./shell-navigation-link";
+import { LocalGuardStatusCopy } from "./shell-navigation-status";
 import {
   isMobilePrimaryView,
   mobilePrimaryNavigationItems,
@@ -214,11 +215,7 @@ function PersistentSidebar(
               <span>Local Guard</span>
               <strong>{props.queuedCount > 0 ? "Review" : "Clear"}</strong>
             </div>
-            <p>
-              {props.queuedCount > 0
-                ? `${props.queuedCount} local ${props.queuedCount === 1 ? "action needs" : "actions need"} a decision.`
-                : "No local approvals are waiting."}
-            </p>
+            <LocalGuardStatusCopy queuedCount={props.queuedCount} onNavigate={props.onNavigate} />
             <GuardUpdatePanel
               guardVersion={props.guardVersion}
               updateStatus={props.updateStatus}

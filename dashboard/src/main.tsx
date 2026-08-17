@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./app";
 import "./styles.css";
 import "./shell-navigation.css";
+import "./shell-navigation-status.css";
 import "./responsive-layout.css";
 
 const container = document.getElementById("guard-dashboard-root");
