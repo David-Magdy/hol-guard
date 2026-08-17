@@ -172,9 +172,13 @@ class StoreLocalCliMixin:
 def _with_suggestable(item: dict[str, object]) -> dict[str, object]:
     kind = item.get("kind")
     name = item.get("name")
-    item["suggestable"] = isinstance(kind, str) and isinstance(name, str) and is_suggestable_custom_tool(
-        name=name,
-        kind="script" if kind == "script" else "executable",
+    item["suggestable"] = (
+        isinstance(kind, str)
+        and isinstance(name, str)
+        and is_suggestable_custom_tool(
+            name=name,
+            kind="script" if kind == "script" else "executable",
+        )
     )
     return item
 
