@@ -80,7 +80,18 @@ assert(
   markup.includes('data-navigation-item="settings"') && markup.includes('aria-current="page"'),
   "The active destination remains visible while the window changes size",
 );
-assert(markup.includes("99+"), "Inbox badges survive every shell presentation");
+assert(
+  markup.includes("104 local actions need a Guard decision.") &&
+    markup.includes("Open Inbox") &&
+    markup.includes("guard-shell-status-action"),
+  "Local Guard status keeps compact body copy and a short Inbox action",
+);
+assert(
+  !markup.includes("Open Inbox to review.") &&
+    !markup.includes("underline underline-offset") &&
+    !markup.includes("guard-quiet-link"),
+  "Queue status copy is not a wrapping underlined paragraph",
+);
 assert(
   markup.includes('aria-label="Primary Guard sections"') &&
     markup.includes('aria-label="More Guard sections"'),
