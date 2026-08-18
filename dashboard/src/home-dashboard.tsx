@@ -139,6 +139,7 @@ export function HomeWorkspace(props: {
   onOpenInbox: () => void;
   onOpenFleet: () => void;
   onOpenEvidence: () => void;
+  onOpenTodayEvidence: () => void;
   onOpenInsights?: () => void;
   onOpenCommands: () => void;
   onOpenSettings: () => void;
@@ -386,6 +387,9 @@ export function HomeWorkspace(props: {
                   ))}
                 </div>
               )}
+              <ActionButton className="mt-4" variant="secondary" onClick={props.onOpenTodayEvidence}>
+                Review today&apos;s activity
+              </ActionButton>
             </CollapsibleCard>
           )}
         </section>

@@ -18127,6 +18127,7 @@ async function resolveRequestWithQueueResult(input) {
       reason: input.reason || void 0,
       ...input.scope_contract_version !== void 0 ? { scope_contract_version: input.scope_contract_version } : {},
       ...input.scope_contract_digest !== void 0 ? { scope_contract_digest: input.scope_contract_digest } : {},
+      ...input.persist_policy !== void 0 ? { persist_policy: input.persist_policy } : {},
       ...input.mcp_grant_target !== void 0 ? { mcp_grant_target: input.mcp_grant_target } : {},
       ...input.mcp_grant_duration !== void 0 ? { mcp_grant_duration: input.mcp_grant_duration } : {},
       ...input.local_tool_grant_target !== void 0 ? { local_tool_grant_target: input.local_tool_grant_target } : {},
@@ -30507,6 +30508,7 @@ function parseRequestId(pathname) {
   return null;
 }
 const PROTECT_ROUTE = "/protect";
+const TODAY_EVIDENCE_ROUTE = "/evidence?time=today";
 function viewTitle(view) {
   if (view === "home") return "Home";
   if (view === "inbox") return "Inbox";
@@ -30832,6 +30834,7 @@ function App() {
   const handleOpenInbox = reactExports.useCallback(() => navigate("/inbox"), []);
   const handleOpenFleet = reactExports.useCallback(() => navigate(PROTECT_ROUTE), []);
   const handleOpenEvidence = reactExports.useCallback(() => navigate("/evidence"), []);
+  const handleOpenTodayEvidence = reactExports.useCallback(() => navigate(TODAY_EVIDENCE_ROUTE), []);
   const handleOpenInsights = reactExports.useCallback(() => navigate("/evidence?view=insights"), [navigate]);
   const handleOpenCommands = reactExports.useCallback(() => navigate("/evidence?view=commands"), [navigate]);
   const handleOpenSettings = reactExports.useCallback((pathname2 = "/settings") => navigate(pathname2), []);
@@ -31189,6 +31192,7 @@ function App() {
             onOpenInbox: handleOpenInbox,
             onOpenFleet: handleOpenFleet,
             onOpenEvidence: handleOpenEvidence,
+            onOpenTodayEvidence: handleOpenTodayEvidence,
             onOpenInsights: handleOpenInsights,
             onOpenCommands: handleOpenCommands,
             onOpenSettings: handleOpenSettings,
