@@ -29,7 +29,7 @@ import { EvidenceInsightsHomePreview } from "./evidence/evidence-insights-home-p
 import { EvidenceInsightsShareModal } from "./evidence/evidence-insights-share-modal";
 import { useReceiptAnalytics } from "./evidence/use-receipt-analytics";
 import { HomeCommandActivityCard } from "./command-activity/command-activity-home-card";
-import { protectionHealthFor, protectionPresentationState } from "./protection-health";
+import { protectionHealthFor, unavailableProtectionHealth, useProtectionPresentationState } from "./protection-health";
 import { WatchProtectionBanner } from "./watch-protection-banner";
 import { updateSettings } from "./guard-api";
 import { guardActionActivityCopy, guardActionDisposition } from "./guard-action";
@@ -251,9 +251,9 @@ export function HomeWorkspace(props: {
     : [];
   const clearHarnesses = activeInstalls.length > 0 ? activeInstalls.map((i: GuardManagedInstall) => i.harness) : observedHarnesses;
   const watchedAppsCount = activeInstalls.length > 0 ? activeInstalls.length : observedHarnesses.length;
-  const protectionState = snapshot
-    ? protectionPresentationState(protectionHealthFor(snapshot))
-    : "checking";
+  const protectionState = useProtectionPresentationState(
+    snapshot ? protectionHealthFor(snapshot) : unavailableProtectionHealth(),
+  );
 
   const state = useMemo(
     () =>

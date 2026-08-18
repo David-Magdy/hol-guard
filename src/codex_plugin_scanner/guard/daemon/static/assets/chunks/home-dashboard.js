@@ -1,4 +1,4 @@
-import { g as getHeatmapLevel, j as jsxRuntimeExports, S as SectionLabel, E as EvidenceInsightsShareButton, G as GuardStatMetric, H as HomeInsightsMetrics, a as EvidenceActivityHeatmapMini, r as reactExports, h as homeCommandActivityModel, b as HiMiniCommandLine, c as HiMiniChevronRight, d as createCommandActivityClient, f as fetchCommandActivityApi, u as useReceiptAnalytics, e as updateSettings, i as harnessDisplayName, p as protectionPresentationState, k as protectionHealthFor, l as EmptyState, A as ActionButton, W as WatchProtectionBanner, m as EvidenceInsightsShareModal, n as HiMiniCheckCircle, o as GuardHero, O as OperatorHealthCard, q as formatNumber, s as HiMiniShieldCheck, D as DeviceProofCard, t as guardActionDisposition, v as formatRelativeTime, w as guardActionActivityCopy, x as HiMiniSparkles, y as HiMiniXMark, z as HiMiniChevronUp, B as HiMiniChevronDown, C as resolveCloudIntelCopy, F as HiMiniCloud, I as HiMiniQuestionMarkCircle, J as useFocusTrap, K as approvalProofRequiresPassword, L as HiMiniExclamationTriangle, M as HiMiniBolt, N as Badge, P as HiMiniMinusCircle } from "../guard-dashboard.js";
+import { g as getHeatmapLevel, j as jsxRuntimeExports, S as SectionLabel, E as EvidenceInsightsShareButton, G as GuardStatMetric, H as HomeInsightsMetrics, a as EvidenceActivityHeatmapMini, r as reactExports, h as homeCommandActivityModel, b as HiMiniCommandLine, c as HiMiniChevronRight, d as createCommandActivityClient, f as fetchCommandActivityApi, u as useReceiptAnalytics, e as updateSettings, i as harnessDisplayName, k as useProtectionPresentationState, p as protectionHealthFor, l as unavailableProtectionHealth, m as EmptyState, A as ActionButton, W as WatchProtectionBanner, n as EvidenceInsightsShareModal, o as HiMiniCheckCircle, q as GuardHero, O as OperatorHealthCard, s as formatNumber, t as HiMiniShieldCheck, D as DeviceProofCard, v as guardActionDisposition, w as formatRelativeTime, x as guardActionActivityCopy, y as HiMiniSparkles, z as HiMiniXMark, B as HiMiniChevronUp, C as HiMiniChevronDown, F as resolveCloudIntelCopy, I as HiMiniCloud, J as HiMiniQuestionMarkCircle, K as useFocusTrap, L as approvalProofRequiresPassword, M as HiMiniExclamationTriangle, N as HiMiniBolt, P as Badge, Q as HiMiniMinusCircle } from "../guard-dashboard.js";
 import { H as HomeProtectionModule } from "./home-protection-module.js";
 import { i as isConnectableAppHarness } from "./harness-setup-target.js";
 function HomeInsightsSkeleton() {
@@ -254,7 +254,9 @@ function HomeWorkspace(props) {
   ).sort() : [];
   const clearHarnesses = activeInstalls.length > 0 ? activeInstalls.map((i) => i.harness) : observedHarnesses;
   const watchedAppsCount = activeInstalls.length > 0 ? activeInstalls.length : observedHarnesses.length;
-  const protectionState = snapshot ? protectionPresentationState(protectionHealthFor(snapshot)) : "checking";
+  const protectionState = useProtectionPresentationState(
+    snapshot ? protectionHealthFor(snapshot) : unavailableProtectionHealth()
+  );
   const state = reactExports.useMemo(
     () => deriveHomeState({
       hasActiveInstalls: activeInstalls.length > 0,

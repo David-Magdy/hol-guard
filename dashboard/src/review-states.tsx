@@ -21,7 +21,7 @@ import type {
 } from "./guard-types";
 import { normalizeGuardAction } from "./guard-action";
 import { LoggedActionPanel } from "./logged-action-panel";
-import { protectionHealthFor, protectionPresentationState } from "./protection-health";
+import { protectionHealthFor, unavailableProtectionHealth, useProtectionPresentationState } from "./protection-health";
 
 const PROTECTION_APPEARANCE = {
   protected: {
@@ -102,6 +102,8 @@ function ReviewCodexResumePanel({ resume, onRetry }: ReviewCodexResumePanelProps
 }
 
 export function ReviewEmptyState({ runtime, resolutionMessage, codexResume, onRetryResume }: { runtime: GuardRuntimeSnapshot | null; resolutionMessage: string | null; codexResume: GuardCodexResumeResult | null; onRetryResume?: () => void }) {
+  const protectionHealth = runtime === null ? unavailableProtectionHealth() : protectionHealthFor(runtime);
+  const presentation = useProtectionPresentationState(protectionHealth);
   if (runtime === null) {
     return (
       <div className="space-y-4" aria-busy="true" aria-live="polite">
@@ -112,8 +114,6 @@ export function ReviewEmptyState({ runtime, resolutionMessage, codexResume, onRe
     );
   }
 
-  const protectionHealth = protectionHealthFor(runtime);
-  const presentation = protectionPresentationState(protectionHealth);
   const protectedAppsCount = protectionHealth.apps.filter((app) => app.state === "protected").length;
   const heroStatus = presentation === "protected" ? "clear" : presentation;
   const appearanceState = presentation === "checking" ? "partial" : protectionHealth.state;
