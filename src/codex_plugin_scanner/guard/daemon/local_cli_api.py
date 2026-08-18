@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..adapters.harness_mcp_discovery import (
+    DiscoveredHarnessMcpServer,
     apply_source_labels,
     discover_harness_mcp_servers,
     discovered_server_for_observation,
@@ -66,7 +67,7 @@ class LocalCliApiError(Exception):
 class LocalCliApiService:
     def __init__(self, *, store: GuardStore) -> None:
         self._store = store
-        self._discovery_cache: tuple[float, object] | None = None
+        self._discovery_cache: tuple[float, tuple[DiscoveredHarnessMcpServer, ...]] | None = None
 
     def list_items(self) -> dict[str, object]:
         labels = self._observe_harness_mcp_servers()
@@ -168,12 +169,15 @@ class LocalCliApiService:
         except (OSError, RuntimeError, TypeError, ValueError):
             return {}
 
-    def _discovered_servers(self):
+    def _discovered_servers(self) -> tuple[DiscoveredHarnessMcpServer, ...]:
         now = time.monotonic()
         cached = self._discovery_cache
         if cached is not None and now - cached[0] < _DISCOVERY_TTL_SECONDS:
             return cached[1]
-        servers = discover_harness_mcp_servers(home_dir=Path.home(), guard_home=self._store.guard_home)
+        try:
+            servers = discover_harness_mcp_servers(home_dir=Path.home(), guard_home=self._store.guard_home)
+        except (OSError, RuntimeError, TypeError, ValueError, KeyError, UnicodeError):
+            return ()
         self._discovery_cache = (now, servers)
         return servers
 

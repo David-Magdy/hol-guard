@@ -152,9 +152,10 @@ class StoreLocalMcpMixin:
         command: str | None = None,
         args_hash: str | None = None,
     ) -> dict[str, object] | None:
-        server_identity_hash = _normalized_identity_hash(server_identity_hash)
-        if server_identity_hash is None:
+        hash_value = _normalized_identity_hash(server_identity_hash)
+        if hash_value is None:
             return None
+        server_identity_hash = hash_value
         with self._connect() as connection:
             ensure_local_cli_schema(connection)
             observation = connection.execute(

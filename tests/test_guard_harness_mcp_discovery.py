@@ -8,7 +8,7 @@ from codex_plugin_scanner.guard.adapters.harness_mcp_discovery import (
     discover_harness_mcp_servers,
     persist_discovered_harness_mcp_servers,
 )
-from codex_plugin_scanner.guard.daemon.local_cli_api import LocalCliApiService
+from codex_plugin_scanner.guard.daemon.local_cli_api import LocalCliApiError, LocalCliApiService
 from codex_plugin_scanner.guard.local_cli_trust import utc_now
 from codex_plugin_scanner.guard.models import GuardArtifact, HarnessDetection
 from codex_plugin_scanner.guard.runtime.local_cli_commands import LocalCliCommand
@@ -354,6 +354,26 @@ def test_recognize_cli_id_uses_live_launch_command(tmp_path: Path, monkeypatch) 
     item = recognized["item"]
     assert isinstance(item, dict)
     assert "sk-live-secret" not in str(item["example_label"])
+
+
+def test_recognize_cli_id_survives_discovery_failure(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.local_cli_api.Path.home",
+        staticmethod(lambda: home),
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.local_cli_api.discover_harness_mcp_servers",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("detect failed")),
+    )
+    service = LocalCliApiService(store=GuardStore(home))
+    try:
+        service.recognize({"command": "python3 missing.py", "cli_id": "local-cli.mcp-aaaaaaaa"})
+    except LocalCliApiError as exc:
+        assert exc.code
+    else:
+        raise AssertionError("expected recognition to fail closed without crashing")
 
 
 def test_list_items_survives_discovery_failure(tmp_path: Path, monkeypatch) -> None:
