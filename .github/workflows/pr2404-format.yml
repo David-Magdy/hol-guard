@@ -1,0 +1,102 @@
+name: Format PR 2404
+
+on:
+  push:
+    branches:
+      - fix/mdm-end-to-end-verification
+    paths:
+      - .github/workflows/pr2404-format.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr2404-format
+  cancel-in-progress: false
+
+jobs:
+  format-and-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: fix/mdm-end-to-end-verification
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+          save-cache: false
+
+      - name: Install locked development environment
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Apply repository formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --no-sync ruff format \
+            scripts/mdm/cloud-lab/lab_server.py \
+            scripts/mdm/cloud-lab/lab_store_policy.py \
+            scripts/mdm/cloud-lab/orchestrator_initial_remediation.py \
+            scripts/mdm/cloud-lab/orchestrator_initial_resilience.py \
+            scripts/mdm/cloud-lab/orchestrator_initial_rollout.py \
+            scripts/mdm/run-cloud-integration-lab.py
+          uv run --no-sync ruff check \
+            src/codex_plugin_scanner/guard/mdm/cloud_control.py \
+            scripts/mdm/cloud-lab \
+            scripts/mdm/run-cloud-integration-lab.py \
+            tests/test_guard_mdm_cloud_control.py \
+            tests/test_guard_mdm_cloud_hardening.py \
+            tests/test_guard_mdm_cloud_lab_registration.py \
+            tests/test_guard_mdm_cloud_lab_integration.py
+          uv run --no-sync ruff format --check \
+            src/codex_plugin_scanner/guard/mdm/cloud_control.py \
+            scripts/mdm/cloud-lab \
+            scripts/mdm/run-cloud-integration-lab.py \
+            tests/test_guard_mdm_cloud_control.py \
+            tests/test_guard_mdm_cloud_hardening.py \
+            tests/test_guard_mdm_cloud_lab_registration.py \
+            tests/test_guard_mdm_cloud_lab_integration.py
+
+      - name: Verify focused tests and code-quality ratchet
+        run: |
+          uv run --no-sync pytest -q \
+            tests/test_guard_mdm_cloud_control.py \
+            tests/test_guard_mdm_cloud_hardening.py \
+            tests/test_guard_mdm_cloud_schemas.py \
+            tests/test_guard_mdm_cloud_lab_registration.py \
+            tests/test_guard_mdm_cloud_lab_integration.py
+          uv run --no-sync python scripts/ci/code_quality_audit.py \
+            --root . \
+            --baseline ci/code-quality-baseline.json
+
+      - name: Commit formatted sources and remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/pr2404-format.yml
+          git add -A
+          git diff --cached --check
+          test -z "$(git diff --name-only --diff-filter=U)"
+          forbidden="$(git diff --cached --name-only --diff-filter=ACMR | grep -Ei '(^|/)(prd|todo|takeaway[-_ ]?prompt)\.md$|[-_](prd|todo)\.md$|takeaway[-_ ]?prompt\.md$' || true)"
+          if [ -n "$forbidden" ]; then
+            printf 'Planning documents must not be committed:\n%s\n' "$forbidden"
+            exit 1
+          fi
+          git commit -s -m "style(mdm): apply repository formatting"
+          git push origin HEAD:fix/mdm-end-to-end-verification
