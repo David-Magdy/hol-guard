@@ -103,6 +103,14 @@ assert(degradedWithApps.status === "degraded", "active installs cannot imply pro
 assert(degradedWithApps.headline === "App protection is degraded", "degraded fleet copy is explicit");
 assert(pairedActiveNoApps.status === "setup_gap", "F5: paired_active no apps status should be setup_gap");
 
+const checkingWithApps = resolveFleetHeroCopy("paired_active", 2, "checking", urls);
+assert(checkingWithApps.status === "checking", "unproven fleet health must not look degraded");
+assert(checkingWithApps.headline === "Checking app protection", "checking fleet copy is explicit");
+assert(
+  !checkingWithApps.headline.toLowerCase().includes("degraded"),
+  "checking fleet copy must not use degraded language",
+);
+
 const targetedRepairs = repairHarnessesFor(
   [
     { harness: "codex", active: true },

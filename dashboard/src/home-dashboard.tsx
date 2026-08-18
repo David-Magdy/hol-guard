@@ -29,7 +29,7 @@ import { EvidenceInsightsHomePreview } from "./evidence/evidence-insights-home-p
 import { EvidenceInsightsShareModal } from "./evidence/evidence-insights-share-modal";
 import { useReceiptAnalytics } from "./evidence/use-receipt-analytics";
 import { HomeCommandActivityCard } from "./command-activity/command-activity-home-card";
-import { protectionHealthFor } from "./protection-health";
+import { protectionHealthFor, protectionPresentationState } from "./protection-health";
 import { WatchProtectionBanner } from "./watch-protection-banner";
 import { updateSettings } from "./guard-api";
 import { guardActionActivityCopy, guardActionDisposition } from "./guard-action";
@@ -233,7 +233,10 @@ export function HomeWorkspace(props: {
   }, [clearPassword, clearTotpCode, props.clearConfirm, props.onConfirmClear, showToast]);
 
   const snapshot = props.runtime.kind === "ready" ? props.runtime.snapshot : null;
-  const queuedCount = props.requests.kind === "ready" ? props.requests.items.length : 0;
+  const queuedCount = resolveHomeQueuedCount({
+    pendingCount: snapshot?.pending_count ?? null,
+    requestCount: props.requests.kind === "ready" ? props.requests.items.length : null,
+  });
   const policyItems = props.policies.kind === "ready" ? props.policies.items : [];
   const managedInstalls = (snapshot?.managed_installs ?? []).filter((item: GuardManagedInstall) => isConnectableAppHarness(item.harness));
   const activeInstalls = managedInstalls.filter((item: GuardManagedInstall) => item.active);
@@ -248,7 +251,9 @@ export function HomeWorkspace(props: {
     : [];
   const clearHarnesses = activeInstalls.length > 0 ? activeInstalls.map((i: GuardManagedInstall) => i.harness) : observedHarnesses;
   const watchedAppsCount = activeInstalls.length > 0 ? activeInstalls.length : observedHarnesses.length;
-  const protectionState = snapshot ? protectionHealthFor(snapshot).state : "degraded";
+  const protectionState = snapshot
+    ? protectionPresentationState(protectionHealthFor(snapshot))
+    : "checking";
 
   const state = useMemo(
     () =>
@@ -555,14 +560,21 @@ function ClearConfirmDialog(props: {
   );
 }
 
+export function resolveHomeQueuedCount(input: {
+  pendingCount: number | null;
+  requestCount: number | null;
+}): number {
+  return Math.max(input.pendingCount ?? 0, input.requestCount ?? 0);
+}
+
 export function deriveHomeState(input: {
   hasActiveInstalls: boolean;
   hasObservedHarnesses: boolean;
   queuedCount: number;
   watchedAppsCount: number;
-  protectionState: GuardProtectionState;
+  protectionState: GuardProtectionState | "checking";
 }): {
-  heroStatus: "clear" | "needs_review" | "setup_gap" | "partial" | "degraded";
+  heroStatus: "clear" | "needs_review" | "setup_gap" | "partial" | "degraded" | "checking";
   headline: string;
   subheadline: string;
   ctaLabel: string;
@@ -595,6 +607,16 @@ export function deriveHomeState(input: {
       heroStatus: "setup_gap",
       headline: "Finish setup",
       subheadline: "Guard detected apps but they need setup to be fully protected.",
+      ctaLabel: "Open Protect",
+      ctaTarget: "protect",
+    };
+  }
+
+  if (protectionState === "checking") {
+    return {
+      heroStatus: "checking",
+      headline: "Checking protection",
+      subheadline: "Guard is confirming local protection. This takes a moment.",
       ctaLabel: "Open Protect",
       ctaTarget: "protect",
     };

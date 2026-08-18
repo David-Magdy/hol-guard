@@ -1,4 +1,4 @@
-import { r as reactExports, j as jsxRuntimeExports, P as HiMiniWrenchScrewdriver, A as ActionButton, m as HiMiniCheckCircle, z as HiMiniChevronDown, Q as HiMiniExclamationCircle, i as harnessDisplayName, p as protectionHealthFor, n as GuardHero, R as ProofStrip, S as SectionLabel, k as EmptyState, c as HiMiniChevronRight, T as HiMiniEye, U as HiMiniXCircle, V as HiMiniClipboardDocumentCheck, X as HiMiniClipboard } from "../guard-dashboard.js";
+import { r as reactExports, j as jsxRuntimeExports, Q as HiMiniWrenchScrewdriver, A as ActionButton, n as HiMiniCheckCircle, B as HiMiniChevronDown, R as HiMiniExclamationCircle, i as harnessDisplayName, k as protectionHealthFor, p as protectionPresentationState, o as GuardHero, T as ProofStrip, S as SectionLabel, l as EmptyState, c as HiMiniChevronRight, U as HiMiniEye, V as HiMiniXCircle, X as HiMiniClipboardDocumentCheck, Y as HiMiniClipboard } from "../guard-dashboard.js";
 import { S as SUPPORTED_APPS_BRIEF, A as APP_STATUS_LABELS } from "./app-catalog.js";
 import { i as isConnectableAppHarness } from "./harness-setup-target.js";
 const PROTECTION_CHECK_ACTIONS = {
@@ -205,6 +205,17 @@ function FleetProtectionRecovery(props) {
 const SUPPORTED_APPS_COPY = SUPPORTED_APPS_BRIEF;
 function resolveFleetHeroCopy(cloudState, activeInstallCount, protectionState, urls) {
   const hasApps = activeInstallCount > 0;
+  if (hasApps && protectionState === "checking") {
+    return {
+      status: "checking",
+      headline: "Checking app protection",
+      subheadline: "Guard is confirming local protection. This takes a moment.",
+      primaryCtaLabel: "Open Protect",
+      primaryCtaHref: urls.fleet_url,
+      secondaryCtaLabel: "Open Home",
+      secondaryCtaHref: urls.dashboard_url
+    };
+  }
   if (hasApps && protectionState !== "protected") {
     return {
       status: protectionState,
@@ -374,7 +385,7 @@ function FleetWorkspace(props) {
   const heroCopy = resolveFleetHeroCopy(
     props.runtime.cloud_state,
     activeInstalls.length,
-    protectionHealth.state,
+    protectionPresentationState(protectionHealth),
     {
       fleet_url: props.runtime.fleet_url,
       dashboard_url: props.runtime.dashboard_url,
@@ -403,7 +414,7 @@ function FleetWorkspace(props) {
         ]
       }
     ),
-    protectionHealth.state !== "protected" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    protectionPresentationState(protectionHealth) !== "checking" && protectionHealth.state !== "protected" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       FleetProtectionRecovery,
       {
         cloudPolicy: {

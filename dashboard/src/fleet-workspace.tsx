@@ -24,7 +24,7 @@ import {
   APP_STATUS_LABELS,
 } from "./apps/app-catalog";
 import { isConnectableAppHarness } from "./apps/harness-setup-target";
-import { protectionHealthFor } from "./protection-health";
+import { protectionHealthFor, protectionPresentationState } from "./protection-health";
 import {
   FleetProtectionRecovery,
 } from "./fleet-protection-recovery";
@@ -60,7 +60,7 @@ type FleetHeroUrls = {
 };
 
 export type FleetHeroCopy = {
-  status: "clear" | "setup_gap" | "partial" | "degraded";
+  status: "clear" | "setup_gap" | "partial" | "degraded" | "checking";
   headline: string;
   subheadline: string;
   primaryCtaLabel: string;
@@ -74,10 +74,21 @@ const SUPPORTED_APPS_COPY = SUPPORTED_APPS_BRIEF;
 export function resolveFleetHeroCopy(
   cloudState: "local_only" | "paired_waiting" | "paired_active",
   activeInstallCount: number,
-  protectionState: GuardProtectionState,
+  protectionState: GuardProtectionState | "checking",
   urls: FleetHeroUrls
 ): FleetHeroCopy {
   const hasApps = activeInstallCount > 0;
+  if (hasApps && protectionState === "checking") {
+    return {
+      status: "checking",
+      headline: "Checking app protection",
+      subheadline: "Guard is confirming local protection. This takes a moment.",
+      primaryCtaLabel: "Open Protect",
+      primaryCtaHref: urls.fleet_url,
+      secondaryCtaLabel: "Open Home",
+      secondaryCtaHref: urls.dashboard_url,
+    };
+  }
   if (hasApps && protectionState !== "protected") {
     return {
       status: protectionState,
@@ -289,7 +300,7 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
   const heroCopy = resolveFleetHeroCopy(
     props.runtime.cloud_state,
     activeInstalls.length,
-    protectionHealth.state,
+    protectionPresentationState(protectionHealth),
     {
       fleet_url: props.runtime.fleet_url,
       dashboard_url: props.runtime.dashboard_url,
@@ -326,7 +337,7 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
         ]}
       />
 
-      {protectionHealth.state !== "protected" ? (
+      {protectionPresentationState(protectionHealth) !== "checking" && protectionHealth.state !== "protected" ? (
         <FleetProtectionRecovery
           cloudPolicy={{
             cloudState: props.runtime.cloud_state,

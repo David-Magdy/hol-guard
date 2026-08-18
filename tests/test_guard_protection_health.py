@@ -4,10 +4,14 @@ import hashlib
 import itertools
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import cast
+
+import pytest
 
 from codex_plugin_scanner.guard import approvals as approvals_module
 from codex_plugin_scanner.guard.models import GuardRuntimeState
+from codex_plugin_scanner.guard.store import GuardStore
 from codex_plugin_scanner.guard.runtime.containment_contract import ContainmentBackend
 from codex_plugin_scanner.guard.runtime.containment_health import (
     CONTAINMENT_POLICY_CONTRACT_DIGEST,
@@ -177,6 +181,27 @@ def test_canonical_managed_install_supersedes_legacy_alias() -> None:
     assert approvals_module._canonical_managed_installs_for_health(active_alias) == [
         {"harness": "claude-code", "active": True, "manifest": {"alias": True}}
     ]
+
+
+def test_cursor_attestation_unavailable_is_unproven_not_inactive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    installs = [{"harness": "cursor", "active": True, "manifest": {}}]
+
+    def unavailable(_context: object) -> dict[str, object]:
+        return {
+            "protection_active": False,
+            "integrity_status": "attestation-unavailable",
+            "reason": "guard_cursor_cli_attestation_unavailable",
+        }
+
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.adapters.cursor_hooks.cursor_native_hook_state",
+        unavailable,
+    )
+    assert approvals_module._live_hook_verification(installs, store) == {}
 
 
 def test_report_distinguishes_failed_and_unproven_facts() -> None:

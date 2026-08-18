@@ -23,6 +23,8 @@ export const PROTECTION_CHECK_IDS = [
 const CORE_CHECK_IDS = PROTECTION_CHECK_IDS.filter((checkId) => checkId !== "decision_stream");
 const STABLE_ID = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
 
+export type ProtectionPresentationState = GuardProtectionState | "checking";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -94,6 +96,17 @@ export function unavailableProtectionHealth(): GuardProtectionHealth {
     ...healthFromChecks(fallbackChecks()),
     apps: [],
   };
+}
+
+export function protectionPresentationState(
+  health: Pick<GuardProtectionHealth, "state" | "checks">,
+): ProtectionPresentationState {
+  const byId = new Map(health.checks.map((check) => [check.check_id, check.status]));
+  const coreUnknown = CORE_CHECK_IDS.every((checkId) => byId.get(checkId) === "unknown");
+  if (coreUnknown && !health.checks.some((check) => check.status === "fail")) {
+    return "checking";
+  }
+  return health.state;
 }
 
 function normalizeApp(value: unknown): GuardProtectionAppHealth | null {

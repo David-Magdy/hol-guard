@@ -6,7 +6,9 @@ import {
   PROTECTION_CHECK_IDS,
   protectionHeadlineFor,
   protectionHealthFor,
+  protectionPresentationState,
   remainingProtectionRepairParts,
+  unavailableProtectionHealth,
 } from "./protection-health";
 import type { GuardProtectionCheck, GuardRuntimeSnapshot } from "./guard-types";
 
@@ -113,10 +115,25 @@ assert.equal(
   "setup",
 );
 
+assert.equal(protectionPresentationState(unavailableProtectionHealth()), "checking");
+assert.equal(protectionPresentationState(normalizeProtectionHealth(payload(decisionFailure))), "degraded");
+assert.equal(protectionPresentationState(protectedHealth), "protected");
+const unprovenCore = checks();
+unprovenCore[PROTECTION_CHECK_IDS.indexOf("harness_hooks")] = {
+  check_id: "harness_hooks",
+  status: "unknown",
+  reason_code: "hook_verification_unavailable",
+};
+assert.equal(
+  protectionPresentationState(normalizeProtectionHealth(payload(unprovenCore))),
+  "degraded",
+);
+
 const appSource = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
 const appDetailSource = readFileSync(new URL("./apps/app-detail-workspace.tsx", import.meta.url), "utf8");
 const fleetSource = readFileSync(new URL("./fleet-workspace.tsx", import.meta.url), "utf8");
 const reviewStatesSource = readFileSync(new URL("./review-states.tsx", import.meta.url), "utf8");
+const homeSource = readFileSync(new URL("./home-dashboard.tsx", import.meta.url), "utf8");
 assert.match(appSource, /const handleRepairProtection = useCallback/);
 assert.match(appSource, /onRepairProtection=\{handleRepairProtection\}/);
 assert.match(appSource, /remainingProtectionRepairParts\(remainingHealth\)/);
@@ -183,6 +200,13 @@ assert.deepEqual(remainingProtectionRepairParts(hookFailureHealth), {
 });
 assert.match(appDetailSource, /Install state" value=\{active \? "Installed"/);
 assert.match(appDetailSource, /protectionHealthFor\(runtime, harness\)/);
+assert.match(appDetailSource, /protectionPresentationState\(appProtection\)/);
 assert.match(fleetSource, /resolveAppStatus\(install, appProtection,/);
 assert.match(fleetSource, /hookCheck\?\.status === "fail"/);
 assert.match(reviewStatesSource, /protectedAppsCount = protectionHealth\.apps\.filter/);
+assert.match(reviewStatesSource, /if \(runtime === null\)/);
+assert.match(reviewStatesSource, /guard-skeleton/);
+assert.match(homeSource, /snapshot\?\.pending_count/);
+assert.match(homeSource, /resolveHomeQueuedCount/);
+assert.match(homeSource, /protectionPresentationState/);
+assert.doesNotMatch(homeSource, /protectionHealthFor\(snapshot\)\.state : "degraded"/);
