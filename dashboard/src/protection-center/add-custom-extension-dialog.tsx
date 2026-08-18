@@ -11,7 +11,8 @@ import {
   LocalCliApiError,
   previewLocalCliMutation,
   recognizeLocalCli,
-  suggestedCustomExtensions,
+  suggestedHarnessExtensions,
+  suggestedSeenExtensions,
   type LocalCliCommandState,
   type LocalCliItem,
   type LocalCliState,
@@ -42,7 +43,8 @@ export function AddCustomExtensionDialog(props: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useModalDialog<HTMLFormElement>(props.onClose, !busy);
-  const suggestions = suggestedCustomExtensions(props.items).slice(0, 6);
+  const harnessSuggestions = suggestedHarnessExtensions(props.items).slice(0, 8);
+  const seenSuggestions = suggestedSeenExtensions(props.items).slice(0, 4);
 
   useEffect(() => {
     void resolveApprovalGate({ failClosed: true }).catch(() => {
@@ -64,19 +66,11 @@ export function AddCustomExtensionDialog(props: {
   const handleTotp = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setTotp(event.target.value);
   }, []);
-  const selectSuggestion = useCallback((item: LocalCliItem) => {
-    setCommand(item.example_label);
-    setRecognized(item);
-    setCommands(item.commands);
-    setSummary(suggestionSummary(item));
-    setPending(null);
-    setError(null);
-  }, []);
-  const findTool = useCallback(async () => {
+  const runRecognize = useCallback(async (commandText: string) => {
     setBusy(true);
     setError(null);
     try {
-      const result = await recognizeLocalCli(command);
+      const result = await recognizeLocalCli(commandText);
       setRecognized(result.item);
       setCommands(result.item.commands);
       setSummary(result.summary);
@@ -88,7 +82,25 @@ export function AddCustomExtensionDialog(props: {
     } finally {
       setBusy(false);
     }
-  }, [command]);
+  }, []);
+  const selectSuggestion = useCallback((item: LocalCliItem) => {
+    setCommand(item.example_label);
+    setPending(null);
+    setError(null);
+    if (item.surface === "mcp" && item.commands.length === 0) {
+      setRecognized(null);
+      setCommands([]);
+      setSummary(null);
+      void runRecognize(item.example_label);
+      return;
+    }
+    setRecognized(item);
+    setCommands(item.commands);
+    setSummary(suggestionSummary(item));
+  }, [runRecognize]);
+  const findTool = useCallback(async () => {
+    await runRecognize(command);
+  }, [command, runRecognize]);
   const requestAllow = useCallback(() => setPending("allowed"), []);
   const requestBlock = useCallback(() => setPending("blocked"), []);
   const handleSubmit = useCallback(async (event: FormEvent) => {
@@ -157,7 +169,7 @@ export function AddCustomExtensionDialog(props: {
       >
         <h2 id="add-custom-extension-title" className="text-xl font-semibold text-brand-dark">Add a custom extension</h2>
         <p className="mt-2 text-sm leading-6 text-brand-dark/80">
-          Paste a local command or an MCP server launch command. Guard lists commands from --help, or tools from a stdio MCP server, then you set Recommended, Allow, or Block.
+          Paste a local command or an MCP server launch command, or pick a server Guard found in your apps. Guard lists commands from --help, or tools from a stdio MCP server, then you set Recommended, Allow, or Block.
         </p>
         <label htmlFor="custom-extension-command" className="mt-5 block text-sm font-semibold text-brand-dark">Command</label>
         <input
@@ -215,17 +227,11 @@ export function AddCustomExtensionDialog(props: {
             />
           </div>
         ) : null}
-        {suggestions.length > 0 && recognized === null ? (
-          <div className="mt-5">
-            <p className="text-sm font-semibold text-brand-dark">Seen on this device</p>
-            <ul className="mt-2 divide-y divide-slate-200">
-              {suggestions.map((item) => (
-                <li key={item.cli_id}>
-                  <SuggestionButton item={item} onSelect={selectSuggestion} />
-                </li>
-              ))}
-            </ul>
-          </div>
+        {recognized === null ? (
+          <>
+            <SuggestionGroup heading="From your apps" items={harnessSuggestions} onSelect={selectSuggestion} />
+            <SuggestionGroup heading="Seen on this device" items={seenSuggestions} onSelect={selectSuggestion} />
+          </>
         ) : null}
         {error ? <div className="mt-4"><InlineError message={error} /></div> : null}
         <div className="mt-6 flex justify-end gap-3">
@@ -270,13 +276,38 @@ function suggestionSummary(item: LocalCliItem): string {
   return `Find this tool to read ${item.name} --help and load its commands.`;
 }
 
+function SuggestionGroup(props: {
+  heading: string;
+  items: LocalCliItem[];
+  onSelect: (item: LocalCliItem) => void;
+}) {
+  if (props.items.length === 0) return null;
+  return (
+    <div className="mt-5">
+      <p className="text-sm font-semibold text-brand-dark">{props.heading}</p>
+      <ul className="mt-2 divide-y divide-slate-200">
+        {props.items.map((item) => (
+          <li key={item.cli_id}>
+            <SuggestionButton item={item} onSelect={props.onSelect} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function SuggestionButton(props: { item: LocalCliItem; onSelect: (item: LocalCliItem) => void }) {
   const handleSelect = useCallback(() => {
     props.onSelect(props.item);
   }, [props]);
   return (
     <button type="button" onClick={handleSelect} className="flex min-h-11 w-full items-baseline justify-between gap-3 py-2 text-left">
-      <span className="truncate text-sm font-semibold text-brand-dark">{props.item.name}</span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-semibold text-brand-dark">{props.item.name}</span>
+        {props.item.source_label ? (
+          <span className="block truncate text-xs text-brand-dark/60">{props.item.source_label}</span>
+        ) : null}
+      </span>
       <span className="truncate font-mono text-xs text-brand-dark/60">{props.item.example_label}</span>
     </button>
   );

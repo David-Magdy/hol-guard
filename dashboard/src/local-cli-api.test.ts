@@ -6,6 +6,8 @@ import {
   normalizeLocalCliItem,
   normalizeLocalCliList,
   suggestedCustomExtensions,
+  suggestedHarnessExtensions,
+  suggestedSeenExtensions,
 } from "./local-cli-api";
 import { parseProtectionRoute, localCliHref } from "./local-cli-links";
 
@@ -41,6 +43,7 @@ assert.equal(item.name, "cwv.py");
 assert.equal(item.state, "allowed");
 assert.equal(item.surface, "cli");
 assert.equal(item.server_identity_hash, null);
+assert.equal(item.source_label, null);
 assert.equal(item.commands[0]?.command_id, "root");
 
 const mcpItem = normalizeLocalCliItem({
@@ -65,6 +68,10 @@ const mcpItem = normalizeLocalCliItem({
 });
 assert.equal(mcpItem.surface, "mcp");
 assert.equal(mcpItem.server_identity_hash, "b".repeat(64));
+assert.equal(
+  normalizeLocalCliItem({ ...mcpItem, source_label: "Codex, Claude Code" }).source_label,
+  "Codex, Claude Code",
+);
 assert.equal(isLocalCliId(mcpItem.cli_id), true);
 assert.equal(
   normalizeLocalCliItem({ ...mcpItem, server_identity_hash: "not-a-hash" }).server_identity_hash,
@@ -116,6 +123,15 @@ const grepItem = normalizeLocalCliItem({
 const mixed = [item, blockedItem, unsetItem, grepItem];
 assert.deepEqual(addedCustomExtensions(mixed).map((entry) => entry.state), ["allowed", "blocked"]);
 assert.deepEqual(suggestedCustomExtensions(mixed).map((entry) => entry.name), ["unset-tool"]);
+const harnessUnset = normalizeLocalCliItem({
+  ...unsetItem,
+  cli_id: "local-cli.mcp-abcdef12",
+  name: "github",
+  surface: "mcp",
+  source_label: "Codex",
+});
+assert.deepEqual(suggestedHarnessExtensions([unsetItem, harnessUnset]).map((entry) => entry.name), ["github"]);
+assert.deepEqual(suggestedSeenExtensions([unsetItem, harnessUnset]).map((entry) => entry.name), ["unset-tool"]);
 
 const fallbackCloud = normalizeLocalCliList({
   schema_version: "guard.daemon.local-clis.v1",

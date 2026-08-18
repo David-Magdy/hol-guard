@@ -1,0 +1,179 @@
+"""Read configured stdio MCP servers from detected harnesses."""
+
+from __future__ import annotations
+
+import os
+import shlex
+import subprocess
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+from ..models import HarnessDetection
+from ..runtime.local_cli_identity import UnlistedCliIdentity
+from ..runtime.mcp_protection import McpServerIdentity
+from .contracts import display_name_for
+from .mcp_servers import ManagedMcpServer, managed_stdio_servers
+
+MAX_DISCOVERED_MCP_SERVERS = 40
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredHarnessMcpServer:
+    """One stdio MCP server found in a harness config."""
+
+    identity: UnlistedCliIdentity
+    server_identity: McpServerIdentity
+    source_label: str
+
+
+def discover_harness_mcp_servers(
+    *,
+    home_dir: Path,
+    guard_home: Path,
+    workspace_dir: Path | None = None,
+    detections: Sequence[HarnessDetection] | None = None,
+) -> tuple[DiscoveredHarnessMcpServer, ...]:
+    """Return unique stdio MCP servers from harness configs. Does not probe."""
+
+    loaded = detections if detections is not None else _safe_detections(home_dir, guard_home, workspace_dir)
+    groups: dict[tuple[str, str], _DiscoveryGroup] = {}
+    for detection in loaded:
+        for server in managed_stdio_servers(detection):
+            built = _identity_for(server)
+            if built is None:
+                continue
+            identity, server_identity = built
+            key = (server_identity.command, server_identity.args_hash)
+            label = display_name_for(server.harness)
+            current = groups.get(key)
+            if current is None:
+                groups[key] = _DiscoveryGroup(
+                    identity=identity,
+                    server_identity=server_identity,
+                    labels=[label],
+                    env_key_count=len(server_identity.env_keys),
+                )
+                continue
+            if label not in current.labels:
+                current.labels.append(label)
+            if len(server_identity.env_keys) > current.env_key_count:
+                current.identity = identity
+                current.server_identity = server_identity
+                current.env_key_count = len(server_identity.env_keys)
+    ranked = sorted(
+        groups.values(),
+        key=lambda group: (
+            _join_labels(group.labels).lower(),
+            group.identity.name.lower(),
+            group.server_identity.command,
+            group.server_identity.args_hash,
+        ),
+    )
+    return tuple(
+        DiscoveredHarnessMcpServer(
+            identity=group.identity,
+            server_identity=group.server_identity,
+            source_label=_join_labels(group.labels),
+        )
+        for group in ranked[:MAX_DISCOVERED_MCP_SERVERS]
+    )
+
+
+def persist_discovered_harness_mcp_servers(
+    store: object,
+    servers: Sequence[DiscoveredHarnessMcpServer],
+    *,
+    seen_at: str,
+) -> dict[str, str]:
+    """Persist observations and return cli_id to source_label."""
+
+    ensure = getattr(store, "ensure_local_mcp_observation", None)
+    if not callable(ensure):
+        return {}
+    labels: dict[str, str] = {}
+    for server in servers:
+        cli_id = ensure(
+            server.identity,
+            seen_at=seen_at,
+            server_identity_hash=server.server_identity.identity_hash,
+            server_command=server.server_identity.command,
+            server_args_hash=server.server_identity.args_hash,
+        )
+        if isinstance(cli_id, str) and cli_id:
+            labels[cli_id] = server.source_label
+    return labels
+
+
+def apply_source_labels(items: list[dict[str, object]], labels: dict[str, str]) -> list[dict[str, object]]:
+    """Overlay harness source labels onto listed custom extensions."""
+
+    for item in items:
+        cli_id = item.get("cli_id")
+        if not isinstance(cli_id, str):
+            continue
+        label = labels.get(cli_id)
+        if label:
+            item["source_label"] = label
+    return items
+
+
+@dataclass
+class _DiscoveryGroup:
+    identity: UnlistedCliIdentity
+    server_identity: McpServerIdentity
+    labels: list[str]
+    env_key_count: int
+
+
+def _safe_detections(home_dir: Path, guard_home: Path, workspace_dir: Path | None) -> list[HarnessDetection]:
+    from . import list_adapters
+    from .base import HarnessContext
+
+    context = HarnessContext(home_dir=home_dir, workspace_dir=workspace_dir, guard_home=guard_home)
+    detections: list[HarnessDetection] = []
+    for adapter in list_adapters():
+        try:
+            detections.append(adapter.detect(context))
+        except (OSError, RuntimeError, TypeError, ValueError, KeyError, UnicodeError):
+            continue
+    return detections
+
+
+def _identity_for(server: ManagedMcpServer) -> tuple[UnlistedCliIdentity, McpServerIdentity] | None:
+    server_identity = server.identity
+    if server_identity is None or not server.command.strip():
+        return None
+    name = server.name.strip() or server_identity.package_name or Path(server.command).name or "mcp-server"
+    return (
+        UnlistedCliIdentity(
+            cli_id=f"local-cli.mcp-{server_identity.identity_hash[:8]}",
+            name=name[:120],
+            kind="executable",
+            identity_hash=server_identity.identity_hash,
+            example_label=_launch_label(server.command, server.args),
+        ),
+        server_identity,
+    )
+
+
+def _join_labels(labels: Sequence[str]) -> str:
+    unique = list(dict.fromkeys(label for label in labels if label.strip()))
+    if len(unique) <= 3:
+        return ", ".join(unique)
+    return f"{unique[0]}, {unique[1]}, and {len(unique) - 2} more"
+
+
+def _launch_label(command: str, args: tuple[str, ...]) -> str:
+    tokens = [_redact_token(command), *(_redact_token(argument) for argument in args)]
+    if os.name == "nt":
+        return subprocess.list2cmdline(tokens)[:160]
+    return shlex.join(tokens)[:160]
+
+
+def _redact_token(value: str) -> str:
+    lower = value.lower()
+    if any(token in lower for token in ("apikey=", "api_key=", "api-key=", "token=", "secret=")):
+        key, _, _ = value.partition("=")
+        return f"{key}=*****"
+    return value

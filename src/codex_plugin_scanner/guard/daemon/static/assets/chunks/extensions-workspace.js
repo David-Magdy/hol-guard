@@ -224,6 +224,12 @@ function addedCustomExtensions(items) {
 function suggestedCustomExtensions(items) {
   return items.filter((item) => item.state === "unset" && item.suggestable);
 }
+function suggestedHarnessExtensions(items) {
+  return suggestedCustomExtensions(items).filter((item) => item.source_label !== null);
+}
+function suggestedSeenExtensions(items) {
+  return suggestedCustomExtensions(items).filter((item) => item.source_label === null);
+}
 function normalizeLocalCliItem(value) {
   if (!isRecord(value)) throw new Error("Invalid local CLI item");
   const cliId = requiredString(value.cli_id, "id");
@@ -247,6 +253,7 @@ function normalizeLocalCliItem(value) {
     help_status: normalizeHelpStatus(value.help_status),
     surface: value.surface === "mcp" ? "mcp" : "cli",
     server_identity_hash: normalizeIdentityHash(value.server_identity_hash),
+    source_label: optionalSourceLabel(value.source_label),
     state,
     stale: value.stale === true,
     grant_revision: value.grant_revision === null || value.grant_revision === void 0 ? null : requiredInt(value.grant_revision, "grant revision"),
@@ -263,6 +270,11 @@ function normalizeIdentityHash(value) {
   if (value === null || value === void 0 || value === "") return null;
   if (typeof value !== "string" || !SHA256_PATTERN.test(value)) return null;
   return value;
+}
+function optionalSourceLabel(value) {
+  if (value === null || value === void 0 || value === "") return null;
+  if (typeof value !== "string") return null;
+  return value.trim().slice(0, 120) || null;
 }
 function normalizeLocalCliCommand(value) {
   if (!isRecord(value)) throw new Error("Invalid local CLI command");
@@ -2583,7 +2595,8 @@ function AddCustomExtensionDialog(props) {
   const [busy, setBusy] = reactExports.useState(false);
   const [error, setError] = reactExports.useState(null);
   const dialogRef = useModalDialog(props.onClose, !busy);
-  const suggestions = suggestedCustomExtensions(props.items).slice(0, 6);
+  const harnessSuggestions = suggestedHarnessExtensions(props.items).slice(0, 8);
+  const seenSuggestions = suggestedSeenExtensions(props.items).slice(0, 4);
   reactExports.useEffect(() => {
     void resolveApprovalGate({ failClosed: true }).catch(() => {
       setError("Guard could not load local approval settings yet.");
@@ -2603,19 +2616,11 @@ function AddCustomExtensionDialog(props) {
   const handleTotp = reactExports.useCallback((event) => {
     setTotp(event.target.value);
   }, []);
-  const selectSuggestion = reactExports.useCallback((item) => {
-    setCommand(item.example_label);
-    setRecognized(item);
-    setCommands(item.commands);
-    setSummary(suggestionSummary(item));
-    setPending(null);
-    setError(null);
-  }, []);
-  const findTool = reactExports.useCallback(async () => {
+  const runRecognize = reactExports.useCallback(async (commandText) => {
     setBusy(true);
     setError(null);
     try {
-      const result = await recognizeLocalCli(command);
+      const result = await recognizeLocalCli(commandText);
       setRecognized(result.item);
       setCommands(result.item.commands);
       setSummary(result.summary);
@@ -2627,7 +2632,25 @@ function AddCustomExtensionDialog(props) {
     } finally {
       setBusy(false);
     }
-  }, [command]);
+  }, []);
+  const selectSuggestion = reactExports.useCallback((item) => {
+    setCommand(item.example_label);
+    setPending(null);
+    setError(null);
+    if (item.surface === "mcp" && item.commands.length === 0) {
+      setRecognized(null);
+      setCommands([]);
+      setSummary(null);
+      void runRecognize(item.example_label);
+      return;
+    }
+    setRecognized(item);
+    setCommands(item.commands);
+    setSummary(suggestionSummary(item));
+  }, [runRecognize]);
+  const findTool = reactExports.useCallback(async () => {
+    await runRecognize(command);
+  }, [command, runRecognize]);
   const requestAllow = reactExports.useCallback(() => setPending("allowed"), []);
   const requestBlock = reactExports.useCallback(() => setPending("blocked"), []);
   const handleSubmit = reactExports.useCallback(async (event) => {
@@ -2691,7 +2714,7 @@ function AddCustomExtensionDialog(props) {
       className: "w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none",
       children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "add-custom-extension-title", className: "text-xl font-semibold text-brand-dark", children: "Add a custom extension" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-brand-dark/80", children: "Paste a local command or an MCP server launch command. Guard lists commands from --help, or tools from a stdio MCP server, then you set Recommended, Allow, or Block." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-brand-dark/80", children: "Paste a local command or an MCP server launch command, or pick a server Guard found in your apps. Guard lists commands from --help, or tools from a stdio MCP server, then you set Recommended, Allow, or Block." }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "custom-extension-command", className: "mt-5 block text-sm font-semibold text-brand-dark", children: "Command" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "input",
@@ -2747,9 +2770,9 @@ function AddCustomExtensionDialog(props) {
             onApprovalTotpCodeChange: handleTotp
           }
         ) }) : null,
-        suggestions.length > 0 && recognized === null ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: "Seen on this device" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 divide-y divide-slate-200", children: suggestions.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: /* @__PURE__ */ jsxRuntimeExports.jsx(SuggestionButton, { item, onSelect: selectSuggestion }) }, item.cli_id)) })
+        recognized === null ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SuggestionGroup, { heading: "From your apps", items: harnessSuggestions, onSelect: selectSuggestion }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SuggestionGroup, { heading: "Seen on this device", items: seenSuggestions, onSelect: selectSuggestion })
         ] }) : null,
         error ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: error }) }) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 flex justify-end gap-3", children: [
@@ -2785,12 +2808,22 @@ function suggestionSummary(item) {
   }
   return `Find this tool to read ${item.name} --help and load its commands.`;
 }
+function SuggestionGroup(props) {
+  if (props.items.length === 0) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-brand-dark", children: props.heading }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 divide-y divide-slate-200", children: props.items.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: /* @__PURE__ */ jsxRuntimeExports.jsx(SuggestionButton, { item, onSelect: props.onSelect }) }, item.cli_id)) })
+  ] });
+}
 function SuggestionButton(props) {
   const handleSelect = reactExports.useCallback(() => {
     props.onSelect(props.item);
   }, [props]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: handleSelect, className: "flex min-h-11 w-full items-baseline justify-between gap-3 py-2 text-left", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-sm font-semibold text-brand-dark", children: props.item.name }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "min-w-0", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block truncate text-sm font-semibold text-brand-dark", children: props.item.name }),
+      props.item.source_label ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block truncate text-xs text-brand-dark/60", children: props.item.source_label }) : null
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate font-mono text-xs text-brand-dark/60", children: props.item.example_label })
   ] });
 }
@@ -2831,7 +2864,7 @@ function CustomExtensionsSection(props) {
         "Add custom extension"
       ] })
     ] }),
-    added.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 text-sm leading-6 text-brand-dark/75", children: "None yet. Add one by pasting the command you want Guard to watch." }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: added.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(CustomExtensionRow, { item, onOpen: props.onOpen }, item.cli_id)) })
+    added.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-4 text-sm leading-6 text-brand-dark/75", children: "None yet. Add one by pasting the command, or pick an MCP server Guard found in your apps." }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4", children: added.map((item) => /* @__PURE__ */ jsxRuntimeExports.jsx(CustomExtensionRow, { item, onOpen: props.onOpen }, item.cli_id)) })
   ] });
 }
 function AddCustomExtensionButton(props) {
@@ -2849,7 +2882,7 @@ function CustomExtensionRow(props) {
     {
       extensionId: props.item.cli_id,
       name: props.item.name,
-      description: props.item.example_label,
+      description: props.item.source_label ? `${props.item.example_label} · ${props.item.source_label}` : props.item.example_label,
       behavior: customExtensionStateLabel(props.item),
       custom: true,
       executables: [props.item.name],
