@@ -15451,9 +15451,12 @@ function unavailableProtectionHealth() {
   };
 }
 function protectionPresentationState(health) {
+  if (health.checks.some((check) => check.status === "fail")) {
+    return health.state;
+  }
   const byId = new Map(health.checks.map((check) => [check.check_id, check.status]));
-  const coreUnknown = CORE_CHECK_IDS.every((checkId) => byId.get(checkId) === "unknown");
-  if (coreUnknown && !health.checks.some((check) => check.status === "fail")) {
+  const coreStillProving = CORE_CHECK_IDS.some((checkId) => byId.get(checkId) !== "pass");
+  if (coreStillProving) {
     return "checking";
   }
   return health.state;
