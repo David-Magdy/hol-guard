@@ -61,6 +61,7 @@ _CONTROL_CONTEXT_LABELS = {
 }
 _EXECUTION_CONTEXT_HMAC_KEY = os.urandom(32)
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
+_ENV_REFERENCE_RE = re.compile(r"\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))")
 _LOCAL_EXECUTION_COMMANDS = frozenset({"bunx", "npx"})
 _PACKAGE_COMMAND_NAMES = frozenset(
     {
@@ -1442,10 +1443,10 @@ def _effective_execution_context(
     initial_cwd_source: str | None = None,
     environment: Mapping[str, str] | None = None,
 ) -> tuple[str | None, str, Path, str]:
-    inherited_environment = environment if environment is not None else os.environ
+    supplied_environment = environment if environment is not None else os.environ
     effective_cwd = (initial_cwd or workspace or Path.cwd()).expanduser().resolve()
     cwd_source = initial_cwd_source or ("workspace" if workspace is not None else "process")
-    effective_path = inherited_environment.get("PATH")
+    effective_path = supplied_environment.get("PATH")
     path_source = "inherited" if effective_path is not None else "inherited_unset"
     index, effective_path, path_source = _consume_path_assignments(
         raw_segment,
@@ -1453,6 +1454,7 @@ def _effective_execution_context(
         effective_path,
         path_source,
         direct_source="inline",
+        environment=supplied_environment,
     )
     if index >= len(raw_segment):
         return _path_for_resolution(effective_path, effective_cwd), path_source, effective_cwd, cwd_source
@@ -1476,6 +1478,7 @@ def _effective_execution_context(
             effective_path,
             path_source,
             direct_source="inline",
+            environment=supplied_environment,
         )
         if index >= len(raw_segment):
             return _path_for_resolution(effective_path, effective_cwd), path_source, effective_cwd, cwd_source
@@ -1483,7 +1486,7 @@ def _effective_execution_context(
     if command_name != "env":
         return _path_for_resolution(effective_path, effective_cwd), path_source, effective_cwd, cwd_source
 
-    inherited_environment = dict(inherited_environment)
+    inherited_environment = dict(supplied_environment)
     if effective_path is None:
         inherited_environment.pop("PATH", None)
     else:
@@ -1501,10 +1504,18 @@ def _effective_execution_context(
         None,
     )
     if parsed_env.option_effects.search_path is not None:
-        effective_path = _expanded_path_assignment(parsed_env.option_effects.search_path, effective_path)
+        effective_path = _expanded_path_assignment(
+            parsed_env.option_effects.search_path,
+            effective_path,
+            environment=inherited_environment,
+        )
         path_source = "env_search_path" if effective_path is not None else "env_search_path_unresolved"
     elif path_assignment is not None:
-        effective_path = _expanded_path_assignment(path_assignment, effective_path)
+        effective_path = _expanded_path_assignment(
+            path_assignment,
+            effective_path,
+            environment=inherited_environment,
+        )
         path_source = "env" if effective_path is not None else "env_unresolved"
     elif parsed_env.option_effects.ignore_environment or path_was_unset:
         effective_path = os.defpath
@@ -1528,12 +1539,13 @@ def _consume_path_assignments(
     current_source: str,
     *,
     direct_source: str,
+    environment: Mapping[str, str],
 ) -> tuple[int, str | None, str]:
     path_source = current_source
     while index < len(tokens) and _ENV_ASSIGNMENT_RE.match(tokens[index]):
         name, _, value = tokens[index].partition("=")
         if name == "PATH":
-            current_path = _expanded_path_assignment(value, current_path)
+            current_path = _expanded_path_assignment(value, current_path, environment=environment)
             path_source = direct_source if current_path is not None else f"{direct_source}_unresolved"
         index += 1
     return index, current_path, path_source
@@ -1564,9 +1576,20 @@ def _updated_effective_cwd(current_cwd: Path, value: str) -> tuple[Path, str]:
         return current_cwd, "env_chdir_unresolved"
 
 
-def _expanded_path_assignment(value: str, current_path: str | None) -> str | None:
-    expanded = value.replace("${PATH}", current_path or "").replace("$PATH", current_path or "")
-    expanded = os.path.expandvars(expanded)
+def _expanded_path_assignment(
+    value: str,
+    current_path: str | None,
+    *,
+    environment: Mapping[str, str],
+) -> str | None:
+    expansion_environment = dict(environment)
+    expansion_environment["PATH"] = current_path or ""
+
+    def replace_reference(match: re.Match[str]) -> str:
+        name = match.group("braced") or match.group("plain")
+        return expansion_environment.get(name, match.group(0))
+
+    expanded = _ENV_REFERENCE_RE.sub(replace_reference, value)
     if "$" in expanded or "\x00" in expanded:
         return None
     return expanded
