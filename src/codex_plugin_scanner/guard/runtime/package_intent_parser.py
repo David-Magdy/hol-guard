@@ -10,7 +10,7 @@ import re
 import shlex
 import shutil
 import stat
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -139,6 +139,7 @@ def parse_package_intent(
     workspace: Path | None = None,
     home_dir: Path | None = None,
     canonical_command: CanonicalCommand | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> PackageIntent | None:
     handlers = {
         "npm": _parse_npm_intent,
@@ -175,7 +176,12 @@ def parse_package_intent(
         "helm": _parse_helm_intent,
     }
     intents: list[PackageIntent] = []
-    for segment in _normalized_command_segments(command_text, workspace=workspace, home_dir=home_dir):
+    for segment in _normalized_command_segments(
+        command_text,
+        workspace=workspace,
+        home_dir=home_dir,
+        environment=environment,
+    ):
         if not segment.tokens:
             continue
         command_name = _command_name(segment.tokens[0])
@@ -1191,7 +1197,9 @@ def _normalized_command_segments(
     *,
     workspace: Path | None = None,
     home_dir: Path | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[_CommandSegment, ...]:
+    inherited_environment = environment if environment is not None else os.environ
     execution_context = model_shell_execution_context(
         command_text,
         cwd=workspace,
@@ -1241,6 +1249,7 @@ def _normalized_command_segments(
                 workspace=workspace,
                 initial_cwd=modeled_cwd,
                 initial_cwd_source=context_segment.cwd_source,
+                environment=inherited_environment,
             )
         context_complete = validation_reason is None and context_segment.complete
         segments.append(
@@ -1431,10 +1440,12 @@ def _effective_execution_context(
     workspace: Path | None,
     initial_cwd: Path | None = None,
     initial_cwd_source: str | None = None,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[str | None, str, Path, str]:
+    inherited_environment = environment if environment is not None else os.environ
     effective_cwd = (initial_cwd or workspace or Path.cwd()).expanduser().resolve()
     cwd_source = initial_cwd_source or ("workspace" if workspace is not None else "process")
-    effective_path = os.environ.get("PATH")
+    effective_path = inherited_environment.get("PATH")
     path_source = "inherited" if effective_path is not None else "inherited_unset"
     index, effective_path, path_source = _consume_path_assignments(
         raw_segment,
@@ -1472,7 +1483,7 @@ def _effective_execution_context(
     if command_name != "env":
         return _path_for_resolution(effective_path, effective_cwd), path_source, effective_cwd, cwd_source
 
-    inherited_environment = dict(os.environ)
+    inherited_environment = dict(inherited_environment)
     if effective_path is None:
         inherited_environment.pop("PATH", None)
     else:
