@@ -152,10 +152,8 @@ class StoreLocalMcpMixin:
         command: str | None = None,
         args_hash: str | None = None,
     ) -> dict[str, object] | None:
-        if not isinstance(server_identity_hash, str) or len(server_identity_hash) != 64:
-            return None
-        server_identity_hash = server_identity_hash.lower()
-        if any(character not in "0123456789abcdef" for character in server_identity_hash):
+        server_identity_hash = _normalized_identity_hash(server_identity_hash)
+        if server_identity_hash is None:
             return None
         with self._connect() as connection:
             ensure_local_cli_schema(connection)

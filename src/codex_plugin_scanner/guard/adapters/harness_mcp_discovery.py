@@ -110,25 +110,25 @@ def persist_discovered_harness_mcp_servers(
     return labels
 
 
-def launch_command_for_observation(
+def discovered_server_for_observation(
     servers: Sequence[DiscoveredHarnessMcpServer],
     *,
     cli_id: str | None = None,
     server_command: str | None = None,
     args_hash: str | None = None,
-) -> str | None:
-    """Return the live launch command for a stored observation. Does not persist."""
+) -> DiscoveredHarnessMcpServer | None:
+    """Return the live discovered server for a stored observation. Does not persist."""
 
     for server in servers:
         if cli_id and server.identity.cli_id == cli_id:
-            return server.launch_command
+            return server
         if (
             server_command
             and args_hash
             and server.server_identity.command == server_command
             and server.server_identity.args_hash == args_hash
         ):
-            return server.launch_command
+            return server
     return None
 
 

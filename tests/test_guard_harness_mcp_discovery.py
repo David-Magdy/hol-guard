@@ -349,8 +349,11 @@ def test_recognize_cli_id_uses_live_launch_command(tmp_path: Path, monkeypatch) 
     listed_item = listed["items"][0]
     assert isinstance(listed_item, dict)
     assert "sk-live-secret" not in str(listed_item["example_label"])
-    service.recognize({"command": str(listed_item["example_label"]), "cli_id": str(listed_item["cli_id"])})
+    recognized = service.recognize({"command": str(listed_item["example_label"]), "cli_id": str(listed_item["cli_id"])})
     assert "sk-live-secret" in captured["command"]
+    item = recognized["item"]
+    assert isinstance(item, dict)
+    assert "sk-live-secret" not in str(item["example_label"])
 
 
 def test_list_items_survives_discovery_failure(tmp_path: Path, monkeypatch) -> None:

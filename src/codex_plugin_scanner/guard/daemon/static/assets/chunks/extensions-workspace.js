@@ -2598,6 +2598,7 @@ function AddCustomExtensionDialog(props) {
   const [busy, setBusy] = reactExports.useState(false);
   const [error, setError] = reactExports.useState(null);
   const dialogRef = useModalDialog(props.onClose, !busy);
+  const recognizeGeneration = reactExports.useRef(0);
   const harnessSuggestions = suggestedHarnessExtensions(props.items).slice(0, 8);
   const seenSuggestions = suggestedSeenExtensions(props.items).slice(0, 4);
   reactExports.useEffect(() => {
@@ -2606,6 +2607,7 @@ function AddCustomExtensionDialog(props) {
     });
   }, [resolveApprovalGate]);
   const handleCommand = reactExports.useCallback((event) => {
+    recognizeGeneration.current += 1;
     setCommand(event.target.value);
     setRecognized(null);
     setCommands([]);
@@ -2620,20 +2622,24 @@ function AddCustomExtensionDialog(props) {
     setTotp(event.target.value);
   }, []);
   const runRecognize = reactExports.useCallback(async (commandText, cliId) => {
+    const generation = recognizeGeneration.current + 1;
+    recognizeGeneration.current = generation;
     setBusy(true);
     setError(null);
     try {
       const result = await recognizeLocalCli(commandText, cliId ? { cliId } : void 0);
+      if (recognizeGeneration.current !== generation) return;
       setRecognized(result.item);
       setCommands(result.item.commands);
       setSummary(result.summary);
       setPending(null);
     } catch (caught) {
+      if (recognizeGeneration.current !== generation) return;
       setRecognized(null);
       setSummary(null);
       setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not identify that command.");
     } finally {
-      setBusy(false);
+      if (recognizeGeneration.current === generation) setBusy(false);
     }
   }, []);
   const selectSuggestion = reactExports.useCallback((item) => {

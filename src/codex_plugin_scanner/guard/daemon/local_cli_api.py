@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..adapters.harness_mcp_discovery import (
     apply_source_labels,
     discover_harness_mcp_servers,
-    launch_command_for_observation,
+    discovered_server_for_observation,
     persist_discovered_harness_mcp_servers,
 )
 from ..approval_gate import (
@@ -37,6 +38,7 @@ from ..runtime.local_cli_identity import (
     recognize_operator_cli,
 )
 from ..runtime.local_mcp_probe import (
+    is_package_mcp_launcher,
     is_strict_package_mcp_launcher,
     looks_like_mcp_launch,
     mcp_launch_tokens,
@@ -48,6 +50,7 @@ if TYPE_CHECKING:
 
 _LOCAL_CLI_API_SCHEMA = "guard.daemon.local-clis.v1"
 _VALID_STATES = frozenset({"allowed", "blocked", "unset"})
+_DISCOVERY_TTL_SECONDS = 30.0
 
 
 class LocalCliApiError(Exception):
@@ -63,6 +66,7 @@ class LocalCliApiError(Exception):
 class LocalCliApiService:
     def __init__(self, *, store: GuardStore) -> None:
         self._store = store
+        self._discovery_cache: tuple[float, object] | None = None
 
     def list_items(self) -> dict[str, object]:
         labels = self._observe_harness_mcp_servers()
@@ -84,8 +88,14 @@ class LocalCliApiService:
     def recognize(self, payload: dict[str, object]) -> dict[str, object]:
         command = self._required_string(payload, "command")
         home_dir = Path.home()
-        _ = self._observe_harness_mcp_servers()
-        live_command = self._live_mcp_launch_command(payload)
+        live_command = None
+        cli_id = payload.get("cli_id")
+        tokens = mcp_launch_tokens(command, cwd=home_dir, home_dir=home_dir)
+        if isinstance(cli_id, str) and is_local_cli_id(cli_id):
+            _ = self._observe_harness_mcp_servers()
+            live_command = self._live_mcp_launch_command(payload)
+        elif tokens is not None and is_package_mcp_launcher(tokens):
+            _ = self._observe_harness_mcp_servers()
         mcp_item = self._recognize_mcp(live_command or command, home_dir)
         if mcp_item is not None:
             return mcp_item
@@ -152,29 +162,35 @@ class LocalCliApiService:
         try:
             return persist_discovered_harness_mcp_servers(
                 self._store,
-                discover_harness_mcp_servers(home_dir=Path.home(), guard_home=self._store.guard_home),
+                self._discovered_servers(),
                 seen_at=utc_now(),
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             return {}
 
+    def _discovered_servers(self):
+        now = time.monotonic()
+        cached = self._discovery_cache
+        if cached is not None and now - cached[0] < _DISCOVERY_TTL_SECONDS:
+            return cached[1]
+        servers = discover_harness_mcp_servers(home_dir=Path.home(), guard_home=self._store.guard_home)
+        self._discovery_cache = (now, servers)
+        return servers
+
     def _live_mcp_launch_command(self, payload: dict[str, object]) -> str | None:
         cli_id = payload.get("cli_id")
         if not isinstance(cli_id, str) or not is_local_cli_id(cli_id):
             return None
-        try:
-            servers = discover_harness_mcp_servers(home_dir=Path.home(), guard_home=self._store.guard_home)
-        except (OSError, RuntimeError, TypeError, ValueError):
-            return None
         existing = self._store.find_local_mcp_observation(cli_id=cli_id)
         server_command = existing.get("server_command") if isinstance(existing, dict) else None
         args_hash = existing.get("server_args_hash") if isinstance(existing, dict) else None
-        return launch_command_for_observation(
-            servers,
+        server = discovered_server_for_observation(
+            self._discovered_servers(),
             cli_id=cli_id,
             server_command=server_command if isinstance(server_command, str) else None,
             args_hash=args_hash if isinstance(args_hash, str) else None,
         )
+        return None if server is None else server.launch_command
 
     def _recognize_payload(
         self,
@@ -338,12 +354,15 @@ def _bound_mcp_observation(
     if not isinstance(cli_id, str) or not isinstance(stored_hash, str):
         return probed_identity, str(identity_hash), str(command), str(args_hash)
     name = existing.get("name")
+    stored_label = existing.get("example_label")
     identity = UnlistedCliIdentity(
         cli_id=cli_id,
         name=name if isinstance(name, str) and name.strip() else probed_identity.name,
         kind="executable",
         identity_hash=stored_hash,
-        example_label=probed_identity.example_label,
+        example_label=stored_label
+        if isinstance(stored_label, str) and stored_label.strip()
+        else probed_identity.example_label,
     )
     return (
         identity,
