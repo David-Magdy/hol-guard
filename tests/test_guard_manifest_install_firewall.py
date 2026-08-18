@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
@@ -238,6 +240,57 @@ def test_build_package_protect_payload_reuses_unchanged_exact_review_approval(
     assert retry_rc == 0
     assert retry_payload["verdict"]["action"] == "allow"
     assert retry_payload["executed"] is False
+    assert retry_payload["supply_chain_evaluation"]["reasons"][0]["code"] == "saved_package_approval"
+
+
+def test_saved_package_approval_survives_guard_shim_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        local_supply_chain_module,
+        "evaluate_package_request_artifact",
+        lambda **_kwargs: _review_package_evaluation(),
+    )
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    home = tmp_path / "home"
+    shim_dir = home / ".hol-guard" / "package-shims" / "bin"
+    manager_dir = tmp_path / "manager-bin"
+    shim_dir.mkdir(parents=True)
+    manager_dir.mkdir()
+    shim = shim_dir / "npm"
+    manager = manager_dir / "npm"
+    shim.write_text("#!/bin/sh\n# generated wrapper v1\n", encoding="utf-8")
+    manager.write_text("#!/bin/sh\n# real manager\n", encoding="utf-8")
+    shim.chmod(0o755)
+    manager.chmod(0o755)
+    manifest = shim_dir.parent / "manifest.json"
+    manifest.write_text(
+        json.dumps({"content_hashes": {"npm": hashlib.sha256(shim.read_bytes()).hexdigest()}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{manager_dir}")
+    store = GuardStore(tmp_path / "guard-home")
+    config = _package_policy_config(guard_home=store.guard_home, workspace_dir=workspace_dir)
+    _seed_exact_package_review_allow(store=store, workspace_dir=workspace_dir, config=config)
+
+    shim.write_text("#!/bin/sh\n# generated wrapper v2\n", encoding="utf-8")
+    shim.chmod(0o755)
+    manifest.write_text(
+        json.dumps({"content_hashes": {"npm": hashlib.sha256(shim.read_bytes()).hexdigest()}}),
+        encoding="utf-8",
+    )
+    retry_payload, retry_rc = _build_review_package_payload(
+        store=store,
+        workspace_dir=workspace_dir,
+        config=config,
+        now="2026-07-17T00:01:00Z",
+    )
+
+    assert retry_rc == 0
+    assert retry_payload["verdict"]["action"] == "allow"
     assert retry_payload["supply_chain_evaluation"]["reasons"][0]["code"] == "saved_package_approval"
 
 

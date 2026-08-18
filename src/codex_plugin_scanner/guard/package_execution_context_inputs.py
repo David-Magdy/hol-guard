@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
 import os
 import shutil
 import stat
@@ -209,6 +211,13 @@ def executable_material(
     else:
         resolved = shutil.which(requested, path=environment.get("PATH"))
         candidate = Path(resolved).resolve() if resolved is not None else None
+    if candidate is not None:
+        candidate = _underlying_manager_candidate(
+            candidate,
+            manager=manager,
+            environment=environment,
+            files=files,
+        )
     if candidate is None:
         return {"manager": manager, "requested": Path(requested).name, "status": "unavailable"}, (
             "package_manager_executable_unavailable"
@@ -219,7 +228,7 @@ def executable_material(
         return {"manager": manager, "requested": Path(requested).name, "status": error.reason}, error.reason
     location = _canonical_executable_location(candidate, workspace=workspace, repository_root=repository_root)
     launch_identity = build_runtime_launch_identity(
-        requested,
+        str(candidate),
         args=arguments,
         structured_command=True,
         direct_executable=True,
@@ -255,6 +264,53 @@ def executable_material(
         material["status"] = "package_manager_launch_identity_unavailable"
         return material, "package_manager_launch_identity_unavailable"
     return material, None
+
+
+def _underlying_manager_candidate(
+    candidate: Path,
+    *,
+    manager: str,
+    environment: Mapping[str, str],
+    files: ContextFiles,
+) -> Path | None:
+    """Resolve past Guard's trusted wrapper to the package manager it protects."""
+
+    home_value = environment.get("HOME")
+    if not home_value:
+        return candidate
+    trusted_shim_dir = Path(home_value).expanduser().resolve() / ".hol-guard" / "package-shims" / "bin"
+    try:
+        candidate.relative_to(trusted_shim_dir)
+    except ValueError:
+        return candidate
+    if candidate.parent != trusted_shim_dir or candidate.name != manager:
+        return candidate
+    manifest_path = trusted_shim_dir.parent / "manifest.json"
+    try:
+        manifest = json.loads(files.read(manifest_path, maximum_bytes=_MAX_CONFIG_FILE_BYTES))
+        expected_hash = manifest.get("content_hashes", {}).get(manager)
+        candidate_hash = hashlib.sha256(files.read(candidate, maximum_bytes=_MAX_CONFIG_FILE_BYTES)).hexdigest()
+    except (ContextUnavailableError, AttributeError, json.JSONDecodeError, OSError):
+        return candidate
+    if not isinstance(expected_hash, str) or not hmac.compare_digest(expected_hash, candidate_hash):
+        return candidate
+    for path_entry in environment.get("PATH", "").split(os.pathsep):
+        if not path_entry:
+            continue
+        directory = Path(path_entry).expanduser().resolve()
+        if directory == trusted_shim_dir:
+            continue
+        underlying = directory / manager
+        if not underlying.is_file() or not os.access(underlying, os.X_OK):
+            continue
+        try:
+            resolved = underlying.resolve(strict=True)
+        except OSError:
+            continue
+        if resolved.parent.name == "bin" and resolved.parent.parent.name == "package-shims":
+            continue
+        return resolved
+    return None
 
 
 def _canonical_executable_location(candidate: Path, *, workspace: Path, repository_root: Path | None) -> str:
