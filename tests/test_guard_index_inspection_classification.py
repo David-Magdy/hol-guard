@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from codex_plugin_scanner.guard.runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from codex_plugin_scanner.guard.runtime.command_inspection import inspect_command
 from codex_plugin_scanner.guard.runtime.secret_file_requests import (
@@ -68,6 +69,7 @@ def _is_benign(command: str, *, home: Path, repository: Path) -> bool:
     "command",
     (
         "git diff --cached --check",
+        "git diff --staged --check",
         'git diff --cached --check; echo "CHECK_EXIT=$?"',
         "git diff --cached -- . ':!pnpm-lock.yaml' ':!package-lock.json'",
         "git diff --cached -- . ':!pnpm-lock.yaml' ':!package-lock.json' | rg -n unique-token-alpha",
@@ -148,3 +150,65 @@ def test_verified_cached_check_stays_unmatched_in_inspection(tmp_path: Path) -> 
     assert payload["classification"]["explicitly_benign"] is True
     assert payload["status"] == "no_match"
     assert payload["extensions"] == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "git --git-dir=other-repo diff --cached --check",
+        "git --work-tree=other-repo diff --cached --check",
+        "git --bare diff --cached --check",
+        "git --paginate diff --cached --check",
+        "git -Cother-repo diff --cached --check",
+        "git --no-pager -C other-repo diff --cached --check",
+        "git -C other-repo --bare diff --cached --check",
+        "git diff --cached --output=fetch.patch",
+        "git diff --cached -- . ':!pnpm-lock.yaml' ':!package-lock.json' | rg -n $FLAGS",
+    ),
+)
+def test_unproven_cached_diff_variants_are_owned(tmp_path: Path, command: str) -> None:
+    home, repository = _repository(tmp_path)
+
+    assert not _is_benign(command, home=home, repository=repository)
+    request = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": command},
+        cwd=repository,
+        home_dir=home,
+    )
+    assert request is not None
+    assert request.action_class == "git index inspection"
+
+
+@pytest.mark.parametrize("command", ("git diff -- --cached", "git diff -- --staged"))
+def test_pathspec_index_flag_names_are_not_owned(tmp_path: Path, command: str) -> None:
+    home, repository = _repository(tmp_path)
+    payload = inspect_command(command, cwd=repository, home_dir=home)
+
+    assert payload["status"] == "no_match"
+    assert payload["classification"]["action_class"] is None
+    assert (
+        extract_sensitive_tool_action_request(
+            "Bash",
+            {"command": command},
+            cwd=repository,
+            home_dir=home,
+        )
+        is None
+    )
+
+
+def test_ripgrep_config_path_is_owned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home, repository = _repository(tmp_path)
+    monkeypatch.setenv("RIPGREP_CONFIG_PATH", "other-config")
+    command = "git diff --cached -- . ':!pnpm-lock.yaml' ':!package-lock.json' | rg -n unique-token-alpha"
+
+    assert not _is_benign(command, home=home, repository=repository)
+    request = extract_sensitive_tool_action_request(
+        "Bash",
+        {"command": command},
+        cwd=repository,
+        home_dir=home,
+    )
+    assert request is not None
+    assert request.action_class == "git index inspection"

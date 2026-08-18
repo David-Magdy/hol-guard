@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Final, Literal
@@ -20,22 +21,22 @@ _ALLOWED_CONTROLS: Final = frozenset({"&&", "||", "|", ";", "\n"})
 _RG_BOOLEAN_FLAGS: Final = frozenset({"--ignore-case", "--line-number", "--no-config", "-i", "-in", "-n", "-ni"})
 _GIT_GLOBAL_FLAG_OPTIONS: Final = frozenset(
     {
-        "--bare",
         "--literal-pathspecs",
         "--no-advice",
         "--no-lazy-fetch",
         "--no-optional-locks",
         "--no-pager",
         "--no-replace-objects",
-        "--paginate",
-        "-P",
-        "-p",
     }
 )
 _GIT_GLOBAL_VALUE_OPTIONS: Final = frozenset(
     {"--config-env", "--exec-path", "--git-dir", "--namespace", "--super-prefix", "--work-tree", "-C", "-c"}
 )
 _EXECUTION_ROUTING_OPTIONS: Final = frozenset({"-c", "--config-env", "--exec-path"})
+_REPOSITORY_SELECTOR_OPTIONS: Final = frozenset(
+    {"--bare", "--git-dir", "--namespace", "--paginate", "--super-prefix", "--work-tree", "-P", "-p"}
+)
+_INDEX_DIFF_FLAGS: Final = frozenset({"--cached", "--staged"})
 _CACHED_DIFF_KIND = Literal["owned", "routed"]
 _MAX_SEGMENTS: Final = 32
 
@@ -60,15 +61,19 @@ def _static_echo_arg_is_safe(arg: str) -> bool:
 def _index_scan_rg_args_are_safe(args: tuple[str, ...]) -> bool:
     """Accept stdin-only ripgrep with one inline pattern after a cached diff."""
 
+    if os.environ.get("RIPGREP_CONFIG_PATH") and "--no-config" not in args:
+        return False
     saw_pattern = False
     for arg in args:
+        if arg.startswith("RIPGREP_CONFIG_PATH="):
+            return False
         if arg in _RG_BOOLEAN_FLAGS:
             continue
         if not arg or arg.startswith("-"):
             return False
         if saw_pattern:
             return False
-        if any(marker in arg for marker in ("$(", "`", "<(", ">(", "\x00")):
+        if "$" in arg or any(marker in arg for marker in ("$(", "`", "<(", ">(", "\x00")):
             return False
         saw_pattern = True
     return saw_pattern
@@ -124,7 +129,8 @@ def cached_diff_kind(tokens: tuple[str, ...]) -> _CACHED_DIFF_KIND | None:
         if token != "diff":
             return None
         operands = args[index + 1 :]
-        if "--cached" not in operands:
+        options = operands[: operands.index("--")] if "--" in operands else operands
+        if not _INDEX_DIFF_FLAGS.intersection(options):
             return None
         return "routed" if routed else "owned"
     return None
@@ -236,6 +242,8 @@ def _context_is_low_risk_git_index_inspection(
         if command_name == "rg":
             if _flow_controls(segment.control_before) != ("|",) or not previous_was_cached_diff:
                 return False
+            if any(token.startswith("RIPGREP_CONFIG_PATH=") for token in segment.tokens) and "--no-config" not in args:
+                return False
             if not _index_scan_rg_args_are_safe(args):
                 return False
             previous_was_cached_diff = False
@@ -273,7 +281,9 @@ def owned_git_index_inspection_action_class(
     return "git index inspection"
 
 
-_SAFE_CACHED_DIFF_FLAGS: Final = frozenset({"--cached", "--check", "--stat", "--name-only", "--name-status", "HEAD"})
+_SAFE_CACHED_DIFF_FLAGS: Final = frozenset(
+    {"--cached", "--check", "--name-only", "--name-status", "--staged", "--stat", "HEAD"}
+)
 
 
 def _safe_exclude_pathspec(value: str) -> bool:
@@ -286,12 +296,16 @@ def _safe_exclude_pathspec(value: str) -> bool:
 
 
 def _cached_diff_operands_are_safe(args: tuple[str, ...]) -> bool:
-    if "--cached" not in args or len(args) > 20:
+    if len(args) > 20:
         return False
     if "--" not in args:
-        return all(arg in _SAFE_CACHED_DIFF_FLAGS or arg == "--cached" for arg in args)
+        return bool(_INDEX_DIFF_FLAGS.intersection(args)) and all(
+            arg in _SAFE_CACHED_DIFF_FLAGS or arg == "--cached" for arg in args
+        )
     separator = args.index("--")
     revisions = args[:separator]
+    if not _INDEX_DIFF_FLAGS.intersection(revisions):
+        return False
     paths = args[separator + 1 :]
     if not paths or len(paths) > 16:
         return False
@@ -311,13 +325,48 @@ def _proof_cached_diff_tokens(tokens: tuple[str, ...]) -> tuple[str, ...]:
     return (*prefix, "diff", "--cached", "--check")
 
 
+def _args_have_repository_selector(args: tuple[str, ...]) -> bool:
+    index = 0
+    while index < len(args):
+        token = args[index]
+        option_name = token.partition("=")[0]
+        if token == "-C" or token.startswith("-C") or option_name in _REPOSITORY_SELECTOR_OPTIONS:
+            return True
+        if token in _GIT_GLOBAL_FLAG_OPTIONS:
+            index += 1
+            continue
+        if option_name in _GIT_GLOBAL_VALUE_OPTIONS:
+            index += 1 if "=" in token else 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return False
+    return False
+
+
+def _has_unproven_repository_selector(tokens: tuple[str, ...]) -> bool:
+    stripped = executable_tokens(tokens)
+    if not stripped:
+        return True
+    command_name, command_index = _shell_segment_primary_command(list(stripped))
+    if command_name != "git" or command_index is None:
+        return True
+    args = stripped[command_index + 1 :]
+    if args[:1] == ("-C",):
+        if len(args) < 2 or not args[1] or args[1].startswith("-"):
+            return True
+        return _args_have_repository_selector(args[2:])
+    return _args_have_repository_selector(args)
+
+
 def _git_cached_diff_segment_is_safe(
     segment: ShellExecutionSegment,
     tokens: tuple[str, ...],
     *,
     home_dir: Path | None,
 ) -> bool:
-    if not _tokens_are_cached_diff(tokens):
+    if not _tokens_are_cached_diff(tokens) or _has_unproven_repository_selector(tokens):
         return False
     operands = git_diff_operands(tokens)
     if operands is None or not _cached_diff_operands_are_safe(operands):
