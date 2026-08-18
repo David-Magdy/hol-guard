@@ -154,10 +154,7 @@ def _record_typed_actions(
         }
     recorder.add(
         "every fixed remediation action executes and is evidence-verified",
-        all(
-            isinstance(value, dict) and value.get("status") == "succeeded"
-            for value in typed_results.values()
-        ),
+        all(isinstance(value, dict) and value.get("status") == "succeeded" for value in typed_results.values()),
         typed_results,
     )
 
@@ -188,15 +185,9 @@ def _record_audit_and_identity_integrity(
         },
     )
     health_identities = {
-        (item.get("workspace"), item.get("device"), item.get("sequence"))
-        for item in health
-        if isinstance(item, dict)
+        (item.get("workspace"), item.get("device"), item.get("sequence")) for item in health if isinstance(item, dict)
     }
-    acknowledgement_ids = {
-        item.get("request_id")
-        for item in acknowledgements
-        if isinstance(item, dict)
-    }
+    acknowledgement_ids = {item.get("request_id") for item in acknowledgements if isinstance(item, dict)}
     recorder.add(
         "all health sequences and acknowledgement identities are unique",
         isinstance(health, list)
@@ -205,11 +196,7 @@ def _record_audit_and_identity_integrity(
         and len(acknowledgement_ids) == len(acknowledgements),
         {
             "healthCount": len(health) if isinstance(health, list) else None,
-            "ackCount": (
-                len(acknowledgements)
-                if isinstance(acknowledgements, list)
-                else None
-            ),
+            "ackCount": (len(acknowledgements) if isinstance(acknowledgements, list) else None),
         },
     )
 
@@ -231,8 +218,7 @@ def _queue_restart_checkpoint(
     queued = _sync(devices["device-c"])
     recorder.add(
         "restart checkpoint leaves durable endpoint evidence queued",
-        queued.get("outboxDepth", 0) > 0
-        and queued.get("revision") == queued_publish.get("revision"),
+        queued.get("outboxDepth", 0) > 0 and queued.get("revision") == queued_publish.get("revision"),
         queued,
     )
 

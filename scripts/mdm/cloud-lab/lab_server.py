@@ -66,11 +66,7 @@ class CloudHandler(BaseHTTPRequestHandler):
         if path == "/admin/state" and self.command == "GET":
             query = parse_qs(query_string, strict_parsing=False)
             workspace_values = query.get("workspaceId", [])
-            workspace_id = (
-                _safe_identifier(workspace_values[0], "workspace")
-                if workspace_values
-                else None
-            )
+            workspace_id = _safe_identifier(workspace_values[0], "workspace") if workspace_values else None
             self.reply(200, self.store.state(workspace_id))
             return
         raise ContractError("not_found", 404)

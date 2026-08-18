@@ -18,13 +18,7 @@ from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = ROOT / "scripts" / "mdm" / "cloud-lab" / "docker-compose.yml"
-REPORT_SCHEMA = (
-    ROOT
-    / "docs"
-    / "guard"
-    / "schemas"
-    / "mdm-cloud-lab-report-v1.schema.json"
-)
+REPORT_SCHEMA = ROOT / "docs" / "guard" / "schemas" / "mdm-cloud-lab-report-v1.schema.json"
 DEFAULT_ARTIFACTS = ROOT / "artifacts" / "mdm-cloud-lab"
 SERVICES = ("cloud", "proxy", "device-a", "device-b", "device-c", "device-d")
 
@@ -82,10 +76,7 @@ def _validate_report(report_path: Path) -> dict[str, object]:
     steps = report.get("steps")
     if not isinstance(steps, list) or len(steps) < 50:
         raise RuntimeError("MDM Cloud lab report did not cover the full matrix")
-    if any(
-        not isinstance(step, dict) or step.get("passed") is not True
-        for step in steps
-    ):
+    if any(not isinstance(step, dict) or step.get("passed") is not True for step in steps):
         raise RuntimeError("MDM Cloud lab report contains a failed assertion")
     native = report.get("nativeCertification")
     if not isinstance(native, dict) or native.get("outcome") != "not-evaluated":
@@ -206,11 +197,7 @@ def _print_dry_run(
     commands: dict[str, list[str]],
     artifacts: Path,
 ) -> None:
-    payload = {
-        key: command
-        for key, command in commands.items()
-        if key != "base"
-    }
+    payload = {key: command for key, command in commands.items() if key != "base"}
     payload["artifacts"] = str(artifacts)
     print(json.dumps(payload, sort_keys=True))
 

@@ -49,20 +49,15 @@ def _collect_identities(
         identities[name] = identity
         recorder.add(
             f"{name} exposes only its public enrollment identity",
-            status == 200
-            and identity.get("deviceId") == name
-            and isinstance(identity.get("publicKeyPem"), str),
+            status == 200 and identity.get("deviceId") == name and isinstance(identity.get("publicKeyPem"), str),
             {"status": status, "keyId": identity.get("keyId")},
         )
     valid_key_ids = [
-        key_id
-        for identity in identities.values()
-        if isinstance((key_id := identity.get("keyId")), str) and key_id
+        key_id for identity in identities.values() if isinstance((key_id := identity.get("keyId")), str) and key_id
     ]
     recorder.add(
         "all managed devices have distinct machine keys",
-        len(valid_key_ids) == len(devices)
-        and len(set(valid_key_ids)) == len(devices),
+        len(valid_key_ids) == len(devices) and len(set(valid_key_ids)) == len(devices),
         sorted(valid_key_ids),
     )
     return identities
@@ -89,9 +84,7 @@ def _record_enrollment_abuse_rejection(
     )
     recorder.add(
         "one-time enrollment token replay is rejected",
-        replay_status == 401
-        and isinstance(replay_body, dict)
-        and replay_body.get("error") == "enrollment_denied",
+        replay_status == 401 and isinstance(replay_body, dict) and replay_body.get("error") == "enrollment_denied",
         {"status": replay_status, "body": replay_body},
     )
     clone_status, _, clone_body = http_request(
@@ -124,9 +117,7 @@ def _record_admin_request_guards(
     denied_status, _, denied = http_request("GET", cloud + "/admin/state")
     recorder.add(
         "Cloud administrative state requires explicit authorization",
-        denied_status == 401
-        and isinstance(denied, dict)
-        and denied.get("error") == "admin_denied",
+        denied_status == 401 and isinstance(denied, dict) and denied.get("error") == "admin_denied",
         {"status": denied_status, "body": denied},
     )
     duplicate_body = b'{"workspaceId":"one","workspaceId":"two"}'
@@ -192,27 +183,16 @@ def _record_baseline_and_tenant_isolation(
         response = _sync(devices[name])
         recorder.add(
             f"{name} applies its workspace baseline",
-            response.get("httpStatus") == 200
-            and response.get("revision") == 1
-            and response.get("error") is None,
+            response.get("httpStatus") == 200 and response.get("revision") == 1 and response.get("error") is None,
             response,
         )
     alpha_state = _state(cloud, admin, ALPHA)
     beta_state = _state(cloud, admin, BETA)
-    alpha_devices = {
-        item.get("device")
-        for item in alpha_state.get("devices", [])
-        if isinstance(item, dict)
-    }
-    beta_devices = {
-        item.get("device")
-        for item in beta_state.get("devices", [])
-        if isinstance(item, dict)
-    }
+    alpha_devices = {item.get("device") for item in alpha_state.get("devices", []) if isinstance(item, dict)}
+    beta_devices = {item.get("device") for item in beta_state.get("devices", []) if isinstance(item, dict)}
     recorder.add(
         "workspace-scoped Cloud projection isolates tenants",
-        alpha_devices == {"device-a", "device-b", "device-c"}
-        and beta_devices == {"device-d"},
+        alpha_devices == {"device-a", "device-b", "device-c"} and beta_devices == {"device-d"},
         {
             "alphaDevices": sorted(item for item in alpha_devices if isinstance(item, str)),
             "betaDevices": sorted(item for item in beta_devices if isinstance(item, str)),
@@ -227,8 +207,7 @@ def _record_baseline_and_tenant_isolation(
     )
     recorder.add(
         "cross-workspace policy targeting is rejected",
-        wrong_tenant_publish.get("httpStatus") == 404
-        and wrong_tenant_publish.get("error") == "publish_device_unknown",
+        wrong_tenant_publish.get("httpStatus") == 404 and wrong_tenant_publish.get("error") == "publish_device_unknown",
         wrong_tenant_publish,
     )
 
@@ -253,9 +232,7 @@ def _record_revision_and_canary_behavior(
     non_canary = _sync(devices["device-b"])
     recorder.add(
         "canary policy advances only the selected device",
-        canary.get("revision") == 3
-        and canary_sync.get("revision") == 3
-        and non_canary.get("revision") == 1,
+        canary.get("revision") == 3 and canary_sync.get("revision") == 3 and non_canary.get("revision") == 1,
         {"canary": canary_sync, "nonCanary": non_canary},
     )
     revision = canary_sync.get("revision")

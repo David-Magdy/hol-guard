@@ -186,8 +186,7 @@ def _record_etag_replay_and_rollback(
     rollback_sync = _sync(devices["device-a"])
     recorder.add(
         "authorized rollback remains a newer signed revision",
-        rollback_sync.get("revision") == rollback.get("revision")
-        and rollback_sync.get("error") is None,
+        rollback_sync.get("revision") == rollback.get("revision") and rollback_sync.get("error") is None,
         {"publish": rollback, "sync": rollback_sync},
     )
 

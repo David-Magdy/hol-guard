@@ -39,9 +39,7 @@ def _validate_publication(
         raise ContractError("publish_invalid")
     if not isinstance(rollback, bool):
         raise ContractError("publish_invalid")
-    if rollback and (
-        not isinstance(rollback_reason, str) or not rollback_reason.strip() or len(rollback_reason) > 512
-    ):
+    if rollback and (not isinstance(rollback_reason, str) or not rollback_reason.strip() or len(rollback_reason) > 512):
         raise ContractError("publish_invalid")
     if not rollback and rollback_reason is not None:
         raise ContractError("publish_invalid")
