@@ -1,4 +1,4 @@
-import { r as reactExports, a8 as fetchSettings, az as buildApprovalProofCredentials, ax as isApprovalProofSubmitDisabled, j as jsxRuntimeExports, S as SectionLabel, ay as ApprovalProofFieldInputs, A as ActionButton } from "../guard-dashboard.js";
+import { r as reactExports, a9 as fetchSettings, aA as buildApprovalProofCredentials, ay as isApprovalProofSubmitDisabled, j as jsxRuntimeExports, S as SectionLabel, az as ApprovalProofFieldInputs, A as ActionButton } from "../guard-dashboard.js";
 async function fetchResolvedApprovalGate(fetcher = fetchSettings) {
   const payload = await fetcher();
   return payload.settings.approval_gate ?? null;
