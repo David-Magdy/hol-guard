@@ -4,7 +4,7 @@ Extensions already cover built-in tools such as Git, npm, and cloud CLIs. Agents
 
 On the Extensions page, choose **Add custom extension** and paste the command for your tool. For a local script or binary, paste something like `python3 <skill-root>/scripts/cwv.py --by url`. Guard binds to that exact file, runs `--help`, and lists the commands it finds.
 
-For an MCP server, paste the same stdio launch command the harness uses, for example `npx -y @modelcontextprotocol/server-github` or `uvx mcp-server-git`. Guard starts that command as a stdio MCP client, lists the tools, then stops the process. You then set **Recommended**, **Allow**, or **Block** on each command or tool, the same way built-in tools work.
+For an MCP server, paste the same stdio launch command the harness uses, for example `npx -y @modelcontextprotocol/server-github` or `uvx mcp-server-git`. Guard also lists stdio MCP servers already configured in your apps under **From your apps**. Choosing one starts that command as a stdio MCP client, lists the tools, then stops the process. You then set **Recommended**, **Allow**, or **Block** on each command or tool, the same way built-in tools work. Guard does not allow tools or start servers until you choose one.
 
 Shell utilities such as `ls` and `grep` are not custom extensions. Built-in catalog tools such as Git stay in All tools.
 

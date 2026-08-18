@@ -44,6 +44,7 @@ const legacyAllowed: LocalCliItem = {
   help_status: null,
   surface: "cli",
   server_identity_hash: null,
+  source_label: null,
   state: "allowed",
   stale: false,
   grant_revision: 1,

@@ -72,7 +72,7 @@ export function CustomExtensionsSection(props: {
         </button>
       </div>
       {added.length === 0 ? (
-        <p className="mt-4 text-sm leading-6 text-brand-dark/75">None yet. Add one by pasting the command you want Guard to watch.</p>
+        <p className="mt-4 text-sm leading-6 text-brand-dark/75">None yet. Add one by pasting the command, or pick an MCP server Guard found in your apps.</p>
       ) : (
         <div className="mt-4">
           {added.map((item) => (
@@ -101,7 +101,7 @@ function CustomExtensionRow(props: { item: LocalCliItem; onOpen: (cliId: string)
     <ProtectionModuleRow
       extensionId={props.item.cli_id}
       name={props.item.name}
-      description={props.item.example_label}
+      description={props.item.source_label ? `${props.item.example_label} · ${props.item.source_label}` : props.item.example_label}
       behavior={customExtensionStateLabel(props.item)}
       custom
       executables={[props.item.name]}
