@@ -264,7 +264,9 @@ def test_saved_package_approval_survives_guard_shim_repair(
     manager.write_text("#!/bin/sh\n# real manager\n", encoding="utf-8")
     shim.chmod(0o755)
     manager.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{manager_dir}")
+    relative_shim_dir = os.path.relpath(shim_dir, workspace_dir)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", f"{relative_shim_dir}{os.pathsep}{manager_dir}")
     config = _package_policy_config(guard_home=store.guard_home, workspace_dir=workspace_dir)
     _seed_exact_package_review_allow(store=store, workspace_dir=workspace_dir, config=config)
 
@@ -292,6 +294,13 @@ def test_saved_package_approval_survives_guard_shim_repair(
 
     assert changed_rc == 2
     assert changed_payload["verdict"]["action"] == "review"
+
+    with pytest.raises(ValueError, match="PATH could not be verified"):
+        local_supply_chain_module._package_manager_launch_environment(
+            {"PATH": "invalid\0path"},
+            guard_home=store.guard_home,
+            launch_cwd=workspace_dir,
+        )
 
 
 def test_recomputed_package_protect_hash_includes_the_same_final_launch_identity(
