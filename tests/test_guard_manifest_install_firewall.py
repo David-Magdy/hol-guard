@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sqlite3
@@ -254,8 +253,8 @@ def test_saved_package_approval_survives_guard_shim_repair(
     )
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()
-    home = tmp_path / "home"
-    shim_dir = home / ".hol-guard" / "package-shims" / "bin"
+    store = GuardStore(tmp_path / "guard-home")
+    shim_dir = store.guard_home / "package-shims" / "bin"
     manager_dir = tmp_path / "manager-bin"
     shim_dir.mkdir(parents=True)
     manager_dir.mkdir()
@@ -265,23 +264,12 @@ def test_saved_package_approval_survives_guard_shim_repair(
     manager.write_text("#!/bin/sh\n# real manager\n", encoding="utf-8")
     shim.chmod(0o755)
     manager.chmod(0o755)
-    manifest = shim_dir.parent / "manifest.json"
-    manifest.write_text(
-        json.dumps({"content_hashes": {"npm": hashlib.sha256(shim.read_bytes()).hexdigest()}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("PATH", f"{shim_dir}{os.pathsep}{manager_dir}")
-    store = GuardStore(tmp_path / "guard-home")
     config = _package_policy_config(guard_home=store.guard_home, workspace_dir=workspace_dir)
     _seed_exact_package_review_allow(store=store, workspace_dir=workspace_dir, config=config)
 
     shim.write_text("#!/bin/sh\n# generated wrapper v2\n", encoding="utf-8")
     shim.chmod(0o755)
-    manifest.write_text(
-        json.dumps({"content_hashes": {"npm": hashlib.sha256(shim.read_bytes()).hexdigest()}}),
-        encoding="utf-8",
-    )
     retry_payload, retry_rc = _build_review_package_payload(
         store=store,
         workspace_dir=workspace_dir,
@@ -292,6 +280,18 @@ def test_saved_package_approval_survives_guard_shim_repair(
     assert retry_rc == 0
     assert retry_payload["verdict"]["action"] == "allow"
     assert retry_payload["supply_chain_evaluation"]["reasons"][0]["code"] == "saved_package_approval"
+
+    manager.write_text("#!/bin/sh\n# changed real manager\n", encoding="utf-8")
+    manager.chmod(0o755)
+    changed_payload, changed_rc = _build_review_package_payload(
+        store=store,
+        workspace_dir=workspace_dir,
+        config=config,
+        now="2026-07-17T00:02:00Z",
+    )
+
+    assert changed_rc == 2
+    assert changed_payload["verdict"]["action"] == "review"
 
 
 def test_recomputed_package_protect_hash_includes_the_same_final_launch_identity(

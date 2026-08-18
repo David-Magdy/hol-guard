@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -269,50 +268,6 @@ def test_lockfile_executable_and_proxy_environment_each_rekey_context(tmp_path: 
         proxy_changed,
         "environment_policy",
     )
-
-
-def test_guard_package_shim_regeneration_does_not_rekey_real_manager(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    _write_repository(workspace)
-    _write_package_files(workspace)
-    home = tmp_path / "home"
-    shim_dir = home / ".hol-guard" / "package-shims" / "bin"
-    manager_dir = tmp_path / "manager-bin"
-    shim_dir.mkdir(parents=True)
-    manager_dir.mkdir()
-    shim = shim_dir / "pnpm"
-    manager = manager_dir / "pnpm"
-    shim.write_text("#!/bin/sh\n# generated wrapper v1\n", encoding="utf-8")
-    manager.write_text("#!/bin/sh\n# real manager\n", encoding="utf-8")
-    shim.chmod(0o755)
-    manager.chmod(0o755)
-    manifest = shim_dir.parent / "manifest.json"
-    manifest.write_text(
-        json.dumps({"content_hashes": {"pnpm": hashlib.sha256(shim.read_bytes()).hexdigest()}}),
-        encoding="utf-8",
-    )
-    environment = {
-        "HOME": str(home),
-        "PATH": os.pathsep.join((str(shim_dir), str(manager_dir))),
-    }
-
-    before = _context(workspace, _artifact(), environment)
-    shim.write_text("#!/bin/sh\n# generated wrapper v2\n", encoding="utf-8")
-    shim.chmod(0o755)
-    after_untrusted_wrapper_change = _context(workspace, _artifact(), environment)
-    manifest.write_text(
-        json.dumps({"content_hashes": {"pnpm": hashlib.sha256(shim.read_bytes()).hexdigest()}}),
-        encoding="utf-8",
-    )
-    after_wrapper_repair = _context(workspace, _artifact(), environment)
-    manager.write_text("#!/bin/sh\n# changed real manager\n", encoding="utf-8")
-    manager.chmod(0o755)
-    after_manager_change = _context(workspace, _artifact(), environment)
-
-    component = "package_manager_executable"
-    assert _component_digest(before, component) != _component_digest(after_untrusted_wrapper_change, component)
-    assert _component_digest(before, component) == _component_digest(after_wrapper_repair, component)
-    assert _component_digest(before, component) != _component_digest(after_manager_change, component)
 
 
 def test_script_backed_manager_binds_env_selected_interpreter_content_and_path(tmp_path: Path) -> None:
