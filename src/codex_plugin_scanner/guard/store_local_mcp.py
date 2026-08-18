@@ -24,12 +24,14 @@ class StoreLocalMcpMixin:
     def find_local_mcp_observation(
         self,
         *,
+        cli_id: str | None = None,
         server_identity_hash: str | None = None,
         command: str | None = None,
         args_hash: str | None = None,
     ) -> dict[str, object] | None:
         hash_value = _normalized_identity_hash(server_identity_hash)
-        if hash_value is None and (not command or not args_hash):
+        lookup_cli_id = cli_id if isinstance(cli_id, str) and is_local_cli_id(cli_id) else None
+        if hash_value is None and (not command or not args_hash) and lookup_cli_id is None:
             return None
         with self._connect() as connection:
             ensure_local_cli_schema(connection)
@@ -40,7 +42,8 @@ class StoreLocalMcpMixin:
                 from local_cli_observation
                 where surface = 'mcp'
                   and (
-                    (? is not null and (server_identity_hash = ? or identity_hash = ?))
+                    (? is not null and cli_id = ?)
+                    or (? is not null and (server_identity_hash = ? or identity_hash = ?))
                     or (
                       ? is not null and ? is not null
                       and server_command = ? and server_args_hash = ?
@@ -50,6 +53,8 @@ class StoreLocalMcpMixin:
                 limit 1
                 """,
                 (
+                    lookup_cli_id,
+                    lookup_cli_id,
                     hash_value,
                     hash_value,
                     hash_value,
@@ -59,24 +64,7 @@ class StoreLocalMcpMixin:
                     args_hash,
                 ),
             ).fetchone()
-        if row is None:
-            return None
-        values = _row_values(row, 9)
-        cli_id = values[0]
-        identity_hash = values[1]
-        if not isinstance(cli_id, str) or not isinstance(identity_hash, str):
-            return None
-        return {
-            "cli_id": cli_id,
-            "identity_hash": identity_hash,
-            "kind": values[2],
-            "name": values[3],
-            "interpreter_name": values[4],
-            "example_label": values[5],
-            "server_identity_hash": values[6],
-            "server_command": values[7],
-            "server_args_hash": values[8],
-        }
+        return _observation_from_values(row)
 
     def ensure_local_mcp_observation(
         self,
@@ -99,31 +87,42 @@ class StoreLocalMcpMixin:
         with self._connect() as connection:
             ensure_local_cli_schema(connection)
             if existing is None:
-                try:
-                    _ = connection.execute(
+                inserted = _insert_mcp_observation(
+                    connection,
+                    identity,
+                    seen_at=seen_at,
+                    server_identity_hash=server_identity_hash,
+                    server_command=server_command,
+                    server_args_hash=server_args_hash,
+                )
+                if inserted is not None:
+                    return inserted
+                existing = _observation_from_values(
+                    connection.execute(
                         """
-                        insert into local_cli_observation (
-                            cli_id, identity_hash, kind, name, interpreter_name, example_label,
-                            observed_count, last_seen_at, source_path, help_status, surface,
-                            server_identity_hash, server_command, server_args_hash
-                        ) values (?, ?, ?, ?, ?, ?, 1, ?, null, null, 'mcp', ?, ?, ?)
+                        select cli_id, identity_hash, kind, name, interpreter_name, example_label,
+                               server_identity_hash, server_command, server_args_hash
+                        from local_cli_observation
+                        where cli_id = ?
                         """,
-                        (
-                            identity.cli_id,
-                            identity.identity_hash,
-                            identity.kind,
-                            identity.name,
-                            identity.interpreter_name,
-                            identity.example_label,
-                            seen_at,
-                            server_identity_hash,
-                            server_command,
-                            server_args_hash,
-                        ),
+                        (identity.cli_id,),
+                    ).fetchone()
+                )
+                if existing is None:
+                    return identity.cli_id
+                if not _same_mcp_observation(existing, identity, server_command, server_args_hash):
+                    retry = _insert_mcp_observation(
+                        connection,
+                        identity,
+                        seen_at=seen_at,
+                        server_identity_hash=server_identity_hash,
+                        server_command=server_command,
+                        server_args_hash=server_args_hash,
+                        cli_id=_collision_cli_id(identity.identity_hash),
                     )
-                    return identity.cli_id
-                except sqlite3.IntegrityError:
-                    return identity.cli_id
+                    if retry is not None:
+                        return retry
+                    return str(existing["cli_id"])
             cli_id = str(existing["cli_id"])
             _ = connection.execute(
                 """
@@ -215,3 +214,79 @@ def _normalized_identity_hash(value: str | None) -> str | None:
     if any(character not in "0123456789abcdef" for character in lowered):
         return None
     return lowered
+
+
+def _observation_from_values(row: object | None) -> dict[str, object] | None:
+    if row is None:
+        return None
+    values = _row_values(row, 9)
+    cli_id = values[0]
+    identity_hash = values[1]
+    if not isinstance(cli_id, str) or not isinstance(identity_hash, str):
+        return None
+    return {
+        "cli_id": cli_id,
+        "identity_hash": identity_hash,
+        "kind": values[2],
+        "name": values[3],
+        "interpreter_name": values[4],
+        "example_label": values[5],
+        "server_identity_hash": values[6],
+        "server_command": values[7],
+        "server_args_hash": values[8],
+    }
+
+
+def _same_mcp_observation(
+    existing: dict[str, object],
+    identity: UnlistedCliIdentity,
+    server_command: str,
+    server_args_hash: str,
+) -> bool:
+    if existing.get("identity_hash") == identity.identity_hash:
+        return True
+    return existing.get("server_command") == server_command and existing.get("server_args_hash") == server_args_hash
+
+
+def _collision_cli_id(identity_hash: str) -> str:
+    return f"local-cli.mcp-{identity_hash[:12]}"
+
+
+def _insert_mcp_observation(
+    connection: sqlite3.Connection,
+    identity: UnlistedCliIdentity,
+    *,
+    seen_at: str,
+    server_identity_hash: str,
+    server_command: str,
+    server_args_hash: str,
+    cli_id: str | None = None,
+) -> str | None:
+    target_id = cli_id or identity.cli_id
+    if not is_local_cli_id(target_id):
+        return None
+    try:
+        _ = connection.execute(
+            """
+            insert into local_cli_observation (
+                cli_id, identity_hash, kind, name, interpreter_name, example_label,
+                observed_count, last_seen_at, source_path, help_status, surface,
+                server_identity_hash, server_command, server_args_hash
+            ) values (?, ?, ?, ?, ?, ?, 1, ?, null, null, 'mcp', ?, ?, ?)
+            """,
+            (
+                target_id,
+                identity.identity_hash,
+                identity.kind,
+                identity.name,
+                identity.interpreter_name,
+                identity.example_label,
+                seen_at,
+                server_identity_hash,
+                server_command,
+                server_args_hash,
+            ),
+        )
+    except sqlite3.IntegrityError:
+        return None
+    return target_id

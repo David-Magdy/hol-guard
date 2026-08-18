@@ -334,11 +334,14 @@ async function previewLocalCliMutation(payload) {
   if (!isRecord(body)) throw new Error("Invalid local CLI preview");
   return { summary: requiredString(body.summary, "summary") };
 }
-async function recognizeLocalCli(command) {
+async function recognizeLocalCli(command, options) {
   const body = await readJson(await fetchLocalCliApi("/v1/local-clis/recognize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command })
+    body: JSON.stringify({
+      command,
+      ...options?.cliId ? { cli_id: options.cliId } : {}
+    })
   }));
   if (!isRecord(body)) throw new Error("Invalid local CLI recognition");
   const item = normalizeLocalCliItem(body.item);
@@ -2616,11 +2619,11 @@ function AddCustomExtensionDialog(props) {
   const handleTotp = reactExports.useCallback((event) => {
     setTotp(event.target.value);
   }, []);
-  const runRecognize = reactExports.useCallback(async (commandText) => {
+  const runRecognize = reactExports.useCallback(async (commandText, cliId) => {
     setBusy(true);
     setError(null);
     try {
-      const result = await recognizeLocalCli(commandText);
+      const result = await recognizeLocalCli(commandText, cliId ? { cliId } : void 0);
       setRecognized(result.item);
       setCommands(result.item.commands);
       setSummary(result.summary);
@@ -2641,7 +2644,7 @@ function AddCustomExtensionDialog(props) {
       setRecognized(null);
       setCommands([]);
       setSummary(null);
-      void runRecognize(item.example_label);
+      void runRecognize(item.example_label, item.cli_id);
       return;
     }
     setRecognized(item);

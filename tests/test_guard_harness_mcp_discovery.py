@@ -12,6 +12,7 @@ from codex_plugin_scanner.guard.daemon.local_cli_api import LocalCliApiService
 from codex_plugin_scanner.guard.local_cli_trust import utc_now
 from codex_plugin_scanner.guard.models import GuardArtifact, HarnessDetection
 from codex_plugin_scanner.guard.runtime.local_cli_commands import LocalCliCommand
+from codex_plugin_scanner.guard.runtime.local_cli_identity import UnlistedCliIdentity
 from codex_plugin_scanner.guard.runtime.local_mcp_probe import McpProbeResult
 from codex_plugin_scanner.guard.runtime.mcp_protection import build_mcp_server_identity
 from codex_plugin_scanner.guard.store import GuardStore
@@ -85,6 +86,30 @@ def test_discover_groups_same_launch_across_harnesses() -> None:
     assert discovered[0].source_label == "Codex, Claude Code"
     assert discovered[0].server_identity.env_keys == ("GITHUB_TOKEN",)
     assert "secret" not in discovered[0].identity.example_label
+
+
+def test_discover_redacts_secret_argv_tokens() -> None:
+    detections = (
+        _detection(
+            "codex",
+            _artifact(
+                harness="codex",
+                name="github",
+                command="npx",
+                args=("-y", "@modelcontextprotocol/server-github", "--token", "sk-live-secret"),
+            ),
+        ),
+    )
+    discovered = discover_harness_mcp_servers(
+        home_dir=Path("."),
+        guard_home=Path("."),
+        detections=detections,
+    )
+    assert len(discovered) == 1
+    assert "sk-live-secret" not in discovered[0].identity.example_label
+    assert "--token" in discovered[0].identity.example_label
+    assert "*****" in discovered[0].identity.example_label
+    assert "sk-live-secret" in discovered[0].launch_command
 
 
 def test_discover_skips_guard_proxy_and_caps_results() -> None:
@@ -259,7 +284,12 @@ def test_recognize_reuses_harness_identity(tmp_path: Path, monkeypatch) -> None:
     assert isinstance(listed_items, list)
     listed_item = listed_items[0]
     assert isinstance(listed_item, dict)
-    result = service.recognize({"command": "npx -y @modelcontextprotocol/server-github"})
+    result = service.recognize(
+        {
+            "command": str(listed_item["example_label"]),
+            "cli_id": str(listed_item["cli_id"]),
+        }
+    )
     item = result["item"]
     assert isinstance(item, dict)
     assert item["cli_id"] == listed_item["cli_id"]
@@ -269,6 +299,58 @@ def test_recognize_reuses_harness_identity(tmp_path: Path, monkeypatch) -> None:
     ids = [entry["command_id"] for entry in item["commands"]]
     assert "get_file" in ids
     assert len(store.list_local_cli_items()) == 1
+
+
+def test_recognize_cli_id_uses_live_launch_command(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.local_cli_api.Path.home",
+        staticmethod(lambda: home),
+    )
+    args = ("-y", "pkg", "--token", "sk-live-secret")
+    detection = _detection(
+        "codex",
+        _artifact(harness="codex", name="secret-server", command="npx", args=args),
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.local_cli_api.discover_harness_mcp_servers",
+        lambda **_kwargs: discover_harness_mcp_servers(
+            home_dir=home,
+            guard_home=home,
+            detections=(detection,),
+        ),
+    )
+    captured: dict[str, str] = {}
+
+    def _probe(command: str, **_kwargs):
+        captured["command"] = command
+        identity = build_mcp_server_identity(config_path="", command="npx", args=args, transport="stdio")
+        return McpProbeResult(
+            identity=UnlistedCliIdentity(
+                cli_id=f"local-cli.mcp-{identity.identity_hash[:8]}",
+                name="secret-server",
+                kind="executable",
+                identity_hash=identity.identity_hash,
+                example_label=command,
+            ),
+            server_identity=identity,
+            tools=(LocalCliCommand("other", "Other tools", "server …", "other"),),
+            status="ok",
+            argv=("npx", *args),
+        )
+
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.local_cli_api.probe_stdio_mcp_server",
+        _probe,
+    )
+    service = LocalCliApiService(store=GuardStore(home))
+    listed = service.list_items()
+    listed_item = listed["items"][0]
+    assert isinstance(listed_item, dict)
+    assert "sk-live-secret" not in str(listed_item["example_label"])
+    service.recognize({"command": str(listed_item["example_label"]), "cli_id": str(listed_item["cli_id"])})
+    assert "sk-live-secret" in captured["command"]
 
 
 def test_list_items_survives_discovery_failure(tmp_path: Path, monkeypatch) -> None:
@@ -285,6 +367,43 @@ def test_list_items_survives_discovery_failure(tmp_path: Path, monkeypatch) -> N
     service = LocalCliApiService(store=GuardStore(home))
     payload = service.list_items()
     assert payload["items"] == []
+
+
+def test_cli_id_collision_keeps_both_servers(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    first = UnlistedCliIdentity(
+        cli_id="local-cli.mcp-aaaaaaaa",
+        name="one",
+        kind="executable",
+        identity_hash="a" * 64,
+        example_label="npx one",
+    )
+    second = UnlistedCliIdentity(
+        cli_id="local-cli.mcp-aaaaaaaa",
+        name="two",
+        kind="executable",
+        identity_hash="b" * 64,
+        example_label="npx two",
+    )
+    first_id = store.ensure_local_mcp_observation(
+        first,
+        seen_at=utc_now(),
+        server_identity_hash="a" * 64,
+        server_command="npx",
+        server_args_hash="1" * 64,
+    )
+    second_id = store.ensure_local_mcp_observation(
+        second,
+        seen_at=utc_now(),
+        server_identity_hash="b" * 64,
+        server_command="uvx",
+        server_args_hash="2" * 64,
+    )
+    assert first_id == "local-cli.mcp-aaaaaaaa"
+    assert second_id != first_id
+    assert second_id.startswith("local-cli.mcp-")
+    names = {item["name"] for item in store.list_local_cli_items()}
+    assert names == {"one", "two"}
 
 
 def test_persist_and_overlay_labels(tmp_path: Path) -> None:

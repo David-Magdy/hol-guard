@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from ..adapters.harness_mcp_discovery import (
     apply_source_labels,
     discover_harness_mcp_servers,
+    launch_command_for_observation,
     persist_discovered_harness_mcp_servers,
 )
 from ..approval_gate import (
@@ -84,7 +85,8 @@ class LocalCliApiService:
         command = self._required_string(payload, "command")
         home_dir = Path.home()
         _ = self._observe_harness_mcp_servers()
-        mcp_item = self._recognize_mcp(command, home_dir)
+        live_command = self._live_mcp_launch_command(payload)
+        mcp_item = self._recognize_mcp(live_command or command, home_dir)
         if mcp_item is not None:
             return mcp_item
         identity, code, message = recognize_operator_cli(command, cwd=home_dir, home_dir=home_dir)
@@ -155,6 +157,24 @@ class LocalCliApiService:
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             return {}
+
+    def _live_mcp_launch_command(self, payload: dict[str, object]) -> str | None:
+        cli_id = payload.get("cli_id")
+        if not isinstance(cli_id, str) or not is_local_cli_id(cli_id):
+            return None
+        try:
+            servers = discover_harness_mcp_servers(home_dir=Path.home(), guard_home=self._store.guard_home)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return None
+        existing = self._store.find_local_mcp_observation(cli_id=cli_id)
+        server_command = existing.get("server_command") if isinstance(existing, dict) else None
+        args_hash = existing.get("server_args_hash") if isinstance(existing, dict) else None
+        return launch_command_for_observation(
+            servers,
+            cli_id=cli_id,
+            server_command=server_command if isinstance(server_command, str) else None,
+            args_hash=args_hash if isinstance(args_hash, str) else None,
+        )
 
     def _recognize_payload(
         self,

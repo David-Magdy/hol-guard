@@ -66,11 +66,11 @@ export function AddCustomExtensionDialog(props: {
   const handleTotp = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setTotp(event.target.value);
   }, []);
-  const runRecognize = useCallback(async (commandText: string) => {
+  const runRecognize = useCallback(async (commandText: string, cliId?: string) => {
     setBusy(true);
     setError(null);
     try {
-      const result = await recognizeLocalCli(commandText);
+      const result = await recognizeLocalCli(commandText, cliId ? { cliId } : undefined);
       setRecognized(result.item);
       setCommands(result.item.commands);
       setSummary(result.summary);
@@ -91,7 +91,7 @@ export function AddCustomExtensionDialog(props: {
       setRecognized(null);
       setCommands([]);
       setSummary(null);
-      void runRecognize(item.example_label);
+      void runRecognize(item.example_label, item.cli_id);
       return;
     }
     setRecognized(item);

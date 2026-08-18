@@ -25,6 +25,7 @@ class DiscoveredHarnessMcpServer:
     identity: UnlistedCliIdentity
     server_identity: McpServerIdentity
     source_label: str
+    launch_command: str
 
 
 def discover_harness_mcp_servers(
@@ -47,10 +48,12 @@ def discover_harness_mcp_servers(
             key = (server_identity.command, server_identity.args_hash)
             label = display_name_for(server.harness)
             current = groups.get(key)
+            launch_command = _raw_launch_label(server.command, server.args)
             if current is None:
                 groups[key] = _DiscoveryGroup(
                     identity=identity,
                     server_identity=server_identity,
+                    launch_command=launch_command,
                     labels=[label],
                     env_key_count=len(server_identity.env_keys),
                 )
@@ -60,6 +63,7 @@ def discover_harness_mcp_servers(
             if len(server_identity.env_keys) > current.env_key_count:
                 current.identity = identity
                 current.server_identity = server_identity
+                current.launch_command = launch_command
                 current.env_key_count = len(server_identity.env_keys)
     ranked = sorted(
         groups.values(),
@@ -75,6 +79,7 @@ def discover_harness_mcp_servers(
             identity=group.identity,
             server_identity=group.server_identity,
             source_label=_join_labels(group.labels),
+            launch_command=group.launch_command,
         )
         for group in ranked[:MAX_DISCOVERED_MCP_SERVERS]
     )
@@ -105,6 +110,28 @@ def persist_discovered_harness_mcp_servers(
     return labels
 
 
+def launch_command_for_observation(
+    servers: Sequence[DiscoveredHarnessMcpServer],
+    *,
+    cli_id: str | None = None,
+    server_command: str | None = None,
+    args_hash: str | None = None,
+) -> str | None:
+    """Return the live launch command for a stored observation. Does not persist."""
+
+    for server in servers:
+        if cli_id and server.identity.cli_id == cli_id:
+            return server.launch_command
+        if (
+            server_command
+            and args_hash
+            and server.server_identity.command == server_command
+            and server.server_identity.args_hash == args_hash
+        ):
+            return server.launch_command
+    return None
+
+
 def apply_source_labels(items: list[dict[str, object]], labels: dict[str, str]) -> list[dict[str, object]]:
     """Overlay harness source labels onto listed custom extensions."""
 
@@ -122,6 +149,7 @@ def apply_source_labels(items: list[dict[str, object]], labels: dict[str, str]) 
 class _DiscoveryGroup:
     identity: UnlistedCliIdentity
     server_identity: McpServerIdentity
+    launch_command: str
     labels: list[str]
     env_key_count: int
 
@@ -165,15 +193,67 @@ def _join_labels(labels: Sequence[str]) -> str:
 
 
 def _launch_label(command: str, args: tuple[str, ...]) -> str:
-    tokens = [_redact_token(command), *(_redact_token(argument) for argument in args)]
+    return _join_tokens(_redact_launch_tokens((command, *args)))
+
+
+def _raw_launch_label(command: str, args: tuple[str, ...]) -> str:
+    return _join_tokens((command, *args))
+
+
+def _join_tokens(tokens: Sequence[str]) -> str:
+    values = list(tokens)
     if os.name == "nt":
-        return subprocess.list2cmdline(tokens)[:160]
-    return shlex.join(tokens)[:160]
+        return subprocess.list2cmdline(values)[:160]
+    return shlex.join(values)[:160]
 
 
-def _redact_token(value: str) -> str:
+_SECRET_FLAG_NAMES = frozenset(
+    {
+        "access-token",
+        "api-key",
+        "apikey",
+        "auth",
+        "authorization",
+        "bearer",
+        "client-secret",
+        "password",
+        "passwd",
+        "secret",
+        "token",
+    }
+)
+
+
+def _redact_launch_tokens(tokens: Sequence[str]) -> list[str]:
+    redacted: list[str] = []
+    hide_next = False
+    for token in tokens:
+        if hide_next:
+            redacted.append("*****")
+            hide_next = False
+            continue
+        key, separator, _value = token.partition("=")
+        if separator and _is_secret_flag(key):
+            redacted.append(f"{key}=*****")
+            continue
+        if token.startswith("-") and _is_secret_flag(token):
+            redacted.append(token)
+            hide_next = True
+            continue
+        redacted.append(_redact_embedded_assignment(token))
+    return redacted
+
+
+def _redact_embedded_assignment(value: str) -> str:
     lower = value.lower()
     if any(token in lower for token in ("apikey=", "api_key=", "api-key=", "token=", "secret=")):
-        key, _, _ = value.partition("=")
-        return f"{key}=*****"
+        key, separator, _rest = value.partition("=")
+        return f"{key}{separator}*****" if separator else value
     return value
+
+
+def _is_secret_flag(value: str) -> bool:
+    name = value.strip().lstrip("-").lower().replace("_", "-")
+    if name in _SECRET_FLAG_NAMES:
+        return True
+    return name.endswith("-token") or name.endswith("-secret") or name.endswith("-password")

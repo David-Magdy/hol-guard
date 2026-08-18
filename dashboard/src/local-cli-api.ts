@@ -231,7 +231,10 @@ export async function previewLocalCliMutation(payload: LocalCliMutationPayload):
   return { summary: requiredString(body.summary, "summary") };
 }
 
-export async function recognizeLocalCli(command: string): Promise<{
+export async function recognizeLocalCli(
+  command: string,
+  options?: { cliId?: string },
+): Promise<{
   item: LocalCliItem;
   summary: string;
   revision: number;
@@ -240,7 +243,10 @@ export async function recognizeLocalCli(command: string): Promise<{
   const body = await readJson(await fetchLocalCliApi("/v1/local-clis/recognize", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command }),
+    body: JSON.stringify({
+      command,
+      ...(options?.cliId ? { cli_id: options.cliId } : {}),
+    }),
   }));
   if (!isRecord(body)) throw new Error("Invalid local CLI recognition");
   const item = normalizeLocalCliItem(body.item);
