@@ -19,7 +19,14 @@ from codex_plugin_scanner.guard.runtime.extension_control_limits import (
 
 ROOT = Path(__file__).resolve().parents[1]
 LIMITS_PATH = ROOT / "contracts" / "managed-controls" / "v1" / "limits.json"
-API_PATH = ROOT / "src" / "codex_plugin_scanner" / "guard" / "daemon" / "extension_control_api.py"
+API_PATH = (
+    ROOT
+    / "src"
+    / "codex_plugin_scanner"
+    / "guard"
+    / "daemon"
+    / "extension_control_api.py"
+)
 NAVIGATION_PATH = ROOT / "dashboard" / "src" / "shell-navigation-model.ts"
 RULES_PAGE_PATH = ROOT / "dashboard" / "src" / "policy-workspace-page.tsx"
 
@@ -38,9 +45,9 @@ def test_per_layer_control_boundary_accepts_limit_and_below(count: int) -> None:
 
 
 def test_per_layer_control_boundary_rejects_limit_plus_one() -> None:
-    assert extension_control_limit_violation(layer_sizes=(MAX_CONTROLS_PER_LAYER + 1,)) is (
-        ExtensionControlLimitViolation.PER_LAYER
-    )
+    assert extension_control_limit_violation(
+        layer_sizes=(MAX_CONTROLS_PER_LAYER + 1,)
+    ) is ExtensionControlLimitViolation.PER_LAYER
 
 
 @pytest.mark.parametrize("layer_count", [MAX_CONTROL_LAYERS - 1, MAX_CONTROL_LAYERS])
@@ -49,9 +56,9 @@ def test_layer_boundary_accepts_limit_and_below(layer_count: int) -> None:
 
 
 def test_layer_boundary_rejects_limit_plus_one() -> None:
-    assert extension_control_limit_violation(layer_sizes=(0,) * (MAX_CONTROL_LAYERS + 1)) is (
-        ExtensionControlLimitViolation.LAYERS
-    )
+    assert extension_control_limit_violation(
+        layer_sizes=(0,) * (MAX_CONTROL_LAYERS + 1)
+    ) is ExtensionControlLimitViolation.LAYERS
 
 
 def test_total_control_boundary_is_consistent() -> None:
@@ -62,12 +69,32 @@ def test_total_control_boundary_is_consistent() -> None:
 
 
 @pytest.mark.parametrize(
-    (field, accepted, rejected, violation),
+    ("field", "accepted", "rejected", "violation"),
     [
-        ("extension_id_count", MAX_RESOLUTION_IDS, MAX_RESOLUTION_IDS + 1, ExtensionControlLimitViolation.RESOLUTION_IDS),
-        ("permission_id_count", MAX_RESOLUTION_IDS, MAX_RESOLUTION_IDS + 1, ExtensionControlLimitViolation.RESOLUTION_IDS),
-        ("observation_count", MAX_OBSERVATIONS, MAX_OBSERVATIONS + 1, ExtensionControlLimitViolation.OBSERVATIONS),
-        ("max_input_length", MAX_INPUT_TEXT_LENGTH, MAX_INPUT_TEXT_LENGTH + 1, ExtensionControlLimitViolation.INPUT_TEXT),
+        (
+            "extension_id_count",
+            MAX_RESOLUTION_IDS,
+            MAX_RESOLUTION_IDS + 1,
+            ExtensionControlLimitViolation.RESOLUTION_IDS,
+        ),
+        (
+            "permission_id_count",
+            MAX_RESOLUTION_IDS,
+            MAX_RESOLUTION_IDS + 1,
+            ExtensionControlLimitViolation.RESOLUTION_IDS,
+        ),
+        (
+            "observation_count",
+            MAX_OBSERVATIONS,
+            MAX_OBSERVATIONS + 1,
+            ExtensionControlLimitViolation.OBSERVATIONS,
+        ),
+        (
+            "max_input_length",
+            MAX_INPUT_TEXT_LENGTH,
+            MAX_INPUT_TEXT_LENGTH + 1,
+            ExtensionControlLimitViolation.INPUT_TEXT,
+        ),
     ],
 )
 def test_resolution_boundaries(
@@ -93,7 +120,10 @@ def test_accessible_product_language_matches_visible_navigation() -> None:
     navigation = NAVIGATION_PATH.read_text(encoding="utf-8")
     rules_page = RULES_PAGE_PATH.read_text(encoding="utf-8")
     assert 'label: "Rules & exceptions"' in navigation
-    assert 'description: "Remembered decisions, Guard Cloud rules, and exceptions"' in navigation
+    assert (
+        'description: "Remembered decisions, Guard Cloud rules, and exceptions"'
+        in navigation
+    )
     assert 'label: "Extensions"' in navigation
     assert 'eyebrow="Rules & exceptions"' in rules_page
     assert 'href: "/policy"' in navigation
