@@ -59,13 +59,13 @@ Existing `/policy`, `/guard/policy`, policy APIs, `GuardPolicy` types, canonical
 
 ### Shared contract and drift prevention
 
-Both repositories contain byte-identical copies of:
+Both repositories maintain byte-identical copies of:
 
 - `docs/guard/adr/0011-extension-first-managed-controls.md`
 - `docs/guard/managed-controls-glossary.md`
 - `contracts/managed-controls/v1/product-decision.json`
 
-Repository tests and CI compare these files so product and enforcement decisions cannot drift silently.
+HOL Guard tests validate the local shape and semantics. The Guard Cloud release workflow owns the cross-repository byte comparison against `hol-guard` `release/3.0`. The paired release is conformant only when that workflow is present and green after both paired pull requests land. Until then, cross-repository conformance is pending rather than assumed.
 
 ## Consequences
 
