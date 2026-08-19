@@ -19,7 +19,7 @@
     "local_setting": "A device-specific Extension or permission preference that can preserve or strengthen protection but cannot weaken a managed restriction or required floor.",
     "managed_restriction": "A signed workspace restriction that can disable an Extension, disable a permission, or activate global lockdown and cannot be weakened locally.",
     "permission": "A stable, independently configurable capability inside an Extension. Permissions own the detector rules needed to recognize that capability.",
-    "remembered_rule": "A contextual local decision remembered from an approval. It is not an Extension setting and cannot bypass a managed restriction or immutable floor."
+    "remembered_rule": "A contextual local decision remembered from an approval. It is not an Extension setting and cannot bypass a managed restriction or required floor."
   },
   "enforcement": {
     "cloud_must_not_redefine_detector_matchers": true,
