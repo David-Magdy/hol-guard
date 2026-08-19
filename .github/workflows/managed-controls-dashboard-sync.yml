@@ -29,7 +29,7 @@ jobs:
                   ('if (view === "policy") return "Policy";', 'if (view === "policy") return "Rules & exceptions";'),
               ],
               Path('dashboard/src/scrg171-172.test.ts'): [
-                  ('rulesTab?.textContent?.includes("Policy") === true', 'rulesTab?.textContent?.includes("Remembered decisions") === true'),
+                  ('viewTitle("policy") === "Policy"', 'viewTitle("policy") === "Rules & exceptions"'),
               ],
           }
           for path, changes in replacements.items():
