@@ -892,12 +892,15 @@ Plugins that pass the scanner with a high score are candidates for listing in th
 ## Resources
 
 - [HOL Plugin Registry](https://hol.org/registry/plugins)
+- [HOL Plugin Security dataset on Hugging Face](https://huggingface.co/datasets/HashgraphOnline/hol-plugin-security)
 - [HOL Standards Documentation](https://hol.org/docs/standards)
 - [OpenAI Codex Plugin Documentation](https://developers.openai.com/codex/plugins)
 - [Model Context Protocol Documentation](https://modelcontextprotocol.io)
 - [Cisco AI Skill Scanner](https://pypi.org/project/cisco-ai-skill-scanner/)
 - [Cisco AI MCP Scanner](https://pypi.org/project/cisco-ai-mcp-scanner/)
 - [HOL GitHub Organization](https://github.com/hashgraph-online)
+
+A scan is not a safety guarantee. Runtime benchmark fixtures in the dataset are modeled, not live attacks. The dataset's ~205 scored plugins are the plugin catalog, not the Registry Broker agent catalog. Hashgraph Online's org-wide GitHub star total is not a star count for this repository.
 
 ## License
 
