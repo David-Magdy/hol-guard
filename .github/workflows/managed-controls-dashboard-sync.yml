@@ -60,4 +60,6 @@ jobs:
             exit 0
           fi
           git commit -m 'chore: sync managed controls dashboard bundle'
+          git fetch origin "${GITHUB_HEAD_REF}"
+          git rebase "origin/${GITHUB_HEAD_REF}"
           git push origin "HEAD:${GITHUB_HEAD_REF}"
