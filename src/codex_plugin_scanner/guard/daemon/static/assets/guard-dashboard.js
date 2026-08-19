@@ -19973,9 +19973,9 @@ const SHELL_NAV_ITEMS = [
   },
   {
     href: "/policy",
-    label: "Policy",
-    shortLabel: "Policy",
-    description: "Saved decisions and local controls",
+    label: "Rules & exceptions",
+    shortLabel: "Rules",
+    description: "Remembered decisions, Guard Cloud rules, and exceptions",
     view: "policy",
     group: "manage",
     icon: HiMiniClipboardDocumentList
@@ -19984,7 +19984,7 @@ const SHELL_NAV_ITEMS = [
     href: "/extensions",
     label: "Extensions",
     shortLabel: "Extensions",
-    description: "Managed extensions and integrations",
+    description: "Tools and capabilities protected on this device",
     view: "extensions",
     group: "manage",
     icon: HiMiniPuzzlePiece
@@ -30483,7 +30483,7 @@ function viewTitle(view) {
   if (view === "settings") return "Settings";
   if (view === "supply-chain") return "Supply Chain";
   if (view === "audit") return "Audit";
-  if (view === "policy") return "Policy";
+  if (view === "policy") return "Rules & exceptions";
   if (view === "feed-health") return "Feed Health";
   if (view === "about") return "About";
   if (view === "extensions") return "Extensions";
