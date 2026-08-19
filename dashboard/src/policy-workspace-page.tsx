@@ -59,9 +59,9 @@ export function PolicyWorkspacePage(props: {
   return (
     <div className="space-y-6">
       <WorkspacePageHeader
-        eyebrow="Policy"
-        title="Remembered rules and exceptions"
-        description="Inspect remembered outcomes, cloud exceptions, and the order Guard uses to decide. Configure protection behavior in Settings."
+        eyebrow="Rules & exceptions"
+        title="Remembered decisions and exceptions"
+        description="Review decisions remembered on this device, contextual rules synced from Guard Cloud, exceptions, and the order Guard uses to decide. Configure tools and capability posture in Extensions."
         actions={
           activeView === "exceptions" ? (
             <PolicyExceptionsToolbar
