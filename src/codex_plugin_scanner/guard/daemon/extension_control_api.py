@@ -30,6 +30,13 @@ from ..runtime.extension_control_contract import (
     ExtensionControl,
     ExtensionControlLayer,
 )
+from ..runtime.extension_control_limits import (
+    MAX_CONTROL_LAYERS,
+    MAX_CONTROLS_PER_LAYER,
+    MAX_CONTROLS_TOTAL,
+    MAX_OBSERVATIONS,
+    advertised_extension_control_limits,
+)
 from ..runtime.extension_control_proof import (
     ExtensionControlMutation,
     ExtensionControlProof,
@@ -48,9 +55,6 @@ if TYPE_CHECKING:
 _EXTENSION_CONTROL_API_SCHEMA = "guard.daemon.extension-controls.v1"
 _MAX_PENDING_PROOFS = 128
 _MAX_APPLIED_MUTATIONS = 128
-_MAX_CONTROLS = 4096
-_MAX_LAYERS = 2
-_MAX_OBSERVATIONS = 2048
 _MAX_EVENT_TARGETS = 512
 _MAX_EVENT_RULE_IDS = 1024
 
@@ -86,15 +90,16 @@ class ExtensionControlApiService:
         self._applied_mutations: OrderedDict[str, _AppliedMutation] = OrderedDict()
 
     def catalog(self) -> dict[str, object]:
+        limits = advertised_extension_control_limits()
         return {
             "schema_version": _EXTENSION_CONTROL_API_SCHEMA,
             "control_schema_version": CONTROL_SCHEMA_VERSION,
             "catalog_digest": self._registry.catalog_digest,
             "extensions": [extension.to_dict() for extension in self._registry.extensions],
             "limits": {
-                "max_body_bytes": 1_000_000,
-                "max_controls": _MAX_CONTROLS,
-                "max_observations": _MAX_OBSERVATIONS,
+                **limits,
+                "max_body_bytes": limits["max_catalog_payload_bytes"],
+                "max_controls": limits["max_controls_total"],
             },
         }
 
@@ -372,9 +377,6 @@ class ExtensionControlApiService:
                 permission = self._registry.permission(target_id)
                 immutable = permission is not None and not permission.configurable
             if immutable and current_states.get((control.target.kind, target_id)) != control.state:
-                # Preserve unchanged legacy authority, but do not permit creation or
-                # modification of immutable controls. Omitting a legacy immutable
-                # control remains allowed because that restores canonical behavior.
                 raise ExtensionControlApiError(403, error_code)
 
     def _mutation_from_payload(self, payload: dict[str, object]) -> ExtensionControlMutation:
@@ -384,12 +386,14 @@ class ExtensionControlApiService:
             raise ExtensionControlApiError(400, "invalid_previous_revision")
         if not isinstance(raw_layers, list):
             raise ExtensionControlApiError(400, "invalid_layers")
-        if len(raw_layers) > _MAX_LAYERS:
+        if len(raw_layers) > MAX_CONTROL_LAYERS:
             raise ExtensionControlApiError(400, "layer_limit_exceeded")
         try:
             layers = layers_from_json(json.dumps(raw_layers, separators=(",", ":")))
             layers = self._canonicalize_extension_ids(layers)
-            if sum(len(layer.controls) for layer in layers) > _MAX_CONTROLS:
+            if any(len(layer.controls) > MAX_CONTROLS_PER_LAYER for layer in layers):
+                raise ExtensionControlApiError(400, "layer_control_limit_exceeded")
+            if sum(len(layer.controls) for layer in layers) > MAX_CONTROLS_TOTAL:
                 raise ExtensionControlApiError(400, "control_limit_exceeded")
             mutation = ExtensionControlMutation(
                 previous_revision=previous_revision,
