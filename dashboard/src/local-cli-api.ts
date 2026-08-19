@@ -33,6 +33,7 @@ export type LocalCliItem = {
   grant_revision: number | null;
   authority_revision: number;
   suggestable: boolean;
+  suggestion_score: number;
   commands: LocalCliCommand[];
 };
 
@@ -109,7 +110,44 @@ export function suggestedHarnessExtensions(items: readonly LocalCliItem[]): Loca
 }
 
 export function suggestedSeenExtensions(items: readonly LocalCliItem[]): LocalCliItem[] {
-  return suggestedCustomExtensions(items).filter((item) => item.source_label === null);
+  return suggestedCustomExtensions(items)
+    .filter((item) => item.source_label === null)
+    .slice()
+    .sort(compareSeenSuggestions);
+}
+
+export function filterExtensionSuggestions(
+  items: readonly LocalCliItem[],
+  query: string,
+): LocalCliItem[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [...items];
+  return items.filter((item) => suggestionMatchesQuery(item, needle));
+}
+
+export function seenSuggestionMeta(item: LocalCliItem): string {
+  if (item.observed_count <= 0) {
+    return item.kind === "script" ? "Script" : "Tool";
+  }
+  if (item.observed_count === 1) return "Seen once";
+  return `Seen ${item.observed_count} times`;
+}
+
+function compareSeenSuggestions(left: LocalCliItem, right: LocalCliItem): number {
+  if (right.suggestion_score !== left.suggestion_score) {
+    return right.suggestion_score - left.suggestion_score;
+  }
+  if (right.observed_count !== left.observed_count) {
+    return right.observed_count - left.observed_count;
+  }
+  const recency = (right.last_seen_at ?? "").localeCompare(left.last_seen_at ?? "");
+  if (recency !== 0) return recency;
+  return left.name.localeCompare(right.name);
+}
+
+function suggestionMatchesQuery(item: LocalCliItem, needle: string): boolean {
+  const haystacks = [item.name, item.example_label, item.source_label ?? ""];
+  return haystacks.some((value) => value.toLowerCase().includes(needle));
 }
 
 export function normalizeLocalCliItem(value: unknown): LocalCliItem {
@@ -143,6 +181,7 @@ export function normalizeLocalCliItem(value: unknown): LocalCliItem {
       : requiredInt(value.grant_revision, "grant revision"),
     authority_revision: requiredInt(value.authority_revision, "revision"),
     suggestable: value.suggestable === true,
+    suggestion_score: optionalScore(value.suggestion_score),
     commands: Array.isArray(value.commands) ? value.commands.map(normalizeLocalCliCommand) : [],
   };
 }
@@ -155,6 +194,14 @@ function normalizeHelpStatus(value: unknown): LocalCliItem["help_status"] {
 function normalizeIdentityHash(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string" || !SHA256_PATTERN.test(value)) return null;
+  return value;
+}
+
+function optionalScore(value: unknown): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new Error("Invalid local CLI suggestion score");
+  }
   return value;
 }
 
