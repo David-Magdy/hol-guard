@@ -1,21 +1,26 @@
 name: Managed controls dashboard sync
 
 on:
-  push:
+  pull_request:
+    branches:
+      - release/3.0
     paths:
       - '.github/workflows/managed-controls-dashboard-sync.yml'
+      - 'dashboard/src/**'
 
 permissions:
   contents: write
 
 jobs:
   sync-dashboard:
-    if: startsWith(github.ref_name, 'managed-controls/')
+    if: github.actor != 'github-actions[bot]' && startsWith(github.head_ref, 'managed-controls/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - name: Apply reviewed vocabulary fixes
-        shell: python
+        shell: python {0}
         run: |
           from pathlib import Path
 
@@ -30,9 +35,10 @@ jobs:
           for path, changes in replacements.items():
               value = path.read_text(encoding='utf-8')
               for old, new in changes:
-                  if old not in value:
+                  if old in value:
+                      value = value.replace(old, new, 1)
+                  elif new not in value:
                       raise SystemExit(f'missing expected text in {path}: {old}')
-                  value = value.replace(old, new, 1)
               path.write_text(value, encoding='utf-8')
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
@@ -54,4 +60,4 @@ jobs:
             exit 0
           fi
           git commit -m 'chore: sync managed controls dashboard bundle'
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
