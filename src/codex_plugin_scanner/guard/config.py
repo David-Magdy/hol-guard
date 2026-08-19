@@ -669,9 +669,7 @@ def update_guard_settings(
         ]
         if weakened:
             raise ValueError(f"Managed policy locks prevent weakening: {', '.join(sorted(weakened))}")
-    locally_persisted_sync = current.get("sync") is True
-    enabling_cloud_sync = next_payload.get("sync") is True and not locally_persisted_sync
-    if enabling_cloud_sync and not cloud_sync_entitled:
+    if next_payload.get("sync") is True and current.get("sync") is not True and not cloud_sync_entitled:
         raise ValueError("Cloud sync requires a paid team plan.")
     _write_guard_config(guard_home / "config.toml", next_payload)
     updated = load_guard_config(guard_home)
