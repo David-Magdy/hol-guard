@@ -989,7 +989,6 @@ class TestGuardSurfaceServer:
         workspace_dir = tmp_path / "workspace"
         workspace_dir.mkdir(parents=True, exist_ok=True)
         store = GuardStore(home_dir)
-        # This test owns response-shape coverage; latency budgets have dedicated tests.
         monkeypatch.setattr(daemon_server_module, "_RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS", 8.0)
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
