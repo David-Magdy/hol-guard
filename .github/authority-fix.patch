@@ -1,0 +1,274 @@
+--- a/src/codex_plugin_scanner/guard/store_base.py
++++ b/src/codex_plugin_scanner/guard/store_base.py
+@@ -18,6 +18,7 @@
+ import sqlite3
+ import subprocess
+ import sys
++import threading
+ import time
+ from collections.abc import Iterator, Mapping, Sequence
+ from contextlib import contextmanager, suppress
+@@ -343,6 +344,8 @@
+ _SYSTEM_KEYRING_AVAILABILITY_CACHE_FILE = "system-keyring-availability.json"
+ _SYSTEM_KEYRING_AVAILABILITY_CACHE_TTL_SECONDS = 86_400.0
+ _POLICY_INTEGRITY_MIGRATION_ELIGIBLE_STATUSES = frozenset({"missing_integrity", "unknown_key"})
++_ENCRYPTED_SECRET_INIT_LOCKS_GUARD = threading.Lock()
++_ENCRYPTED_SECRET_INIT_LOCKS: dict[str, threading.Lock] = {}
+ 
+ 
+ def _oauth_sync_url_from_issuer(issuer: str) -> str:
+@@ -862,9 +865,32 @@
+         # Owner-only directory access is required for encrypted secret material.
+         # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
+         os.chmod(self.base_dir, 0o700)
+-        if not self.key_path.exists():
+-            self._atomic_write_bytes(self.key_path, Fernet.generate_key(), 0o600)
+-        self._fernet = Fernet(self._load_fernet_key())
++        lock_key = os.path.realpath(os.fspath(self.key_path))
++        with _ENCRYPTED_SECRET_INIT_LOCKS_GUARD:
++            thread_lock = _ENCRYPTED_SECRET_INIT_LOCKS.setdefault(lock_key, threading.Lock())
++        with thread_lock:
++            if self._fernet is not None:
++                return
++            lock_path = self.base_dir / ".key-init.lock"
++            with lock_path.open("a+b") as lock_handle:
++                os.chmod(lock_path, 0o600)
++                deadline = time.monotonic() + 30.0
++                while True:
++                    try:
++                        _acquire_advisory_file_lock(lock_handle)
++                        break
++                    except BlockingIOError:
++                        if time.monotonic() >= deadline:
++                            raise RuntimeError("timed out initializing encrypted Guard secrets") from None
++                        time.sleep(0.01)
++                try:
++                    if not self.key_path.exists():
++                        self._atomic_write_bytes(self.key_path, Fernet.generate_key(), 0o600)
++                    key = self._load_fernet_key()
++                    os.chmod(self.key_path, 0o600)
++                    self._fernet = Fernet(key)
++                finally:
++                    _release_advisory_file_lock(lock_handle)
+ 
+     def set_secret(self, secret_id: str, value: str) -> None:
+         self._ensure_ready()
+@@ -905,9 +931,7 @@
+     def _load_fernet_key(self) -> bytes:
+         existing = self.key_path.read_bytes().strip()
+         if not existing:
+-            key = Fernet.generate_key()
+-            self._atomic_write_bytes(self.key_path, key, 0o600)
+-            return key
++            raise RuntimeError("encrypted Guard secret key is empty")
+         try:
+             decoded = base64.urlsafe_b64decode(existing)
+         except (ValueError, TypeError):
+@@ -922,9 +946,7 @@
+             upgraded = base64.urlsafe_b64encode(existing)
+             self._atomic_write_bytes(self.key_path, upgraded, 0o600)
+             return upgraded
+-        key = Fernet.generate_key()
+-        self._atomic_write_bytes(self.key_path, key, 0o600)
+-        return key
++        raise RuntimeError("encrypted Guard secret key is invalid")
+ 
+     def _atomic_write_bytes(self, path: Path, payload: bytes, mode: int) -> None:
+         path.parent.mkdir(parents=True, exist_ok=True)
+--- a/src/codex_plugin_scanner/guard/store_extension_control_authority_support.py
++++ b/src/codex_plugin_scanner/guard/store_extension_control_authority_support.py
+@@ -77,20 +77,19 @@
+     def _secret_store(self) -> SecretStore:
+         current = self._extension_control_authority_secret_store
+         if current is None:
+-            if sys.platform == "darwin":
+-                fallback = EncryptedFileSecretStore(cast(Path, self.guard_home))
+-                if bool(getattr(self, "_allow_system_keyring", False)):
+-                    current = MigratingFallbackSecretStore(
+-                        SystemKeyringSecretStore(service_name="hol-guard.extension-control-authority"),
+-                        fallback,
+-                    )
+-                else:
+-                    current = fallback
++            fallback = EncryptedFileSecretStore(cast(Path, self.guard_home))
++            system = SystemKeyringSecretStore(service_name="hol-guard.extension-control-authority")
++            if sys.platform == "darwin" and not bool(getattr(self, "_allow_system_keyring", False)):
++                # Passive macOS reads must never trigger Keychain UI. Explicit account
++                # actions opt in to the migrating wrapper below.
++                current = fallback
+             else:
+-                current = SystemKeyringSecretStore(service_name="hol-guard.extension-control-authority")
++                # Persist every new authority secret in Guard's owner-only vault while
++                # retaining the OS keyring as a best-effort legacy source. This makes
++                # daemon, hook, and terminal processes converge on one prompt-free copy
++                # instead of flapping when a session keyring is temporarily unavailable.
++                current = MigratingFallbackSecretStore(system, fallback)
+             self._extension_control_authority_secret_store = current
+-        if isinstance(current, SystemKeyringSecretStore) and not current._is_available():
+-            raise RuntimeError("extension control credential store unavailable")
+         return current
+ 
+     def legacy_extension_control_authority_secret_migration_required(self) -> bool:
+--- a/tests/test_guard_extension_control_authority.py
++++ b/tests/test_guard_extension_control_authority.py
+@@ -44,7 +44,11 @@
+     issue_extension_control_proof,
+ )
+ from codex_plugin_scanner.guard.store import GuardStore
+-from codex_plugin_scanner.guard.store_base import EncryptedFileSecretStore, SystemKeyringSecretStore
++from codex_plugin_scanner.guard.store_base import (
++    EncryptedFileSecretStore,
++    MigratingFallbackSecretStore,
++    SystemKeyringSecretStore,
++)
+ 
+ _PASSWORD = "correct horse battery staple"
+ 
+@@ -732,19 +736,74 @@
+         _commit(store)
+ 
+ 
+-def test_unavailable_system_keyring_never_silently_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
++def test_unavailable_system_keyring_uses_owner_only_vault(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+     monkeypatch.setattr(sys, "platform", "linux")
+     monkeypatch.setattr(
+         SystemKeyringSecretStore,
+-        "_is_available",
+-        classmethod(lambda cls: False),
++        "get_secret",
++        lambda _self, _secret_id: (_ for _ in ()).throw(RuntimeError("keyring unavailable")),
++    )
++    monkeypatch.setattr(
++        SystemKeyringSecretStore,
++        "set_secret",
++        lambda _self, _secret_id, _value: (_ for _ in ()).throw(RuntimeError("keyring unavailable")),
+     )
+     store = GuardStore(tmp_path, prime_policy_integrity=False)
++    update_settings(
++        tmp_path,
++        {
++            "enabled": True,
++            "new_password": _PASSWORD,
++            "confirm_password": _PASSWORD,
++            "cooldown_seconds": 0,
++        },
++    )
+ 
+-    view = store.read_extension_control_authority(catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest)
++    assert isinstance(store._secret_store(), MigratingFallbackSecretStore)
++    assert _enroll(store).health is AuthorityHealth.PROTECTED
++
++    restarted = GuardStore(tmp_path, prime_policy_integrity=False)
++    view = restarted.read_extension_control_authority(
++        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
++    )
++    assert view.health is AuthorityHealth.PROTECTED
++    secrets_dir = tmp_path / "secrets"
++    if os.name != "nt":
++        assert secrets_dir.stat().st_mode & 0o777 == 0o700
++        assert all(path.stat().st_mode & 0o777 == 0o600 for path in secrets_dir.iterdir() if path.is_file())
+ 
+-    assert view.health is AuthorityHealth.DEGRADED_UNACKNOWLEDGED
+-    assert view.layers_for(ControlSurface.COMMAND_EVALUATION)[0].global_lockdown is True
++
++def test_linux_legacy_keyring_authority_migrates_then_survives_keyring_loss(
++    tmp_path: Path,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    monkeypatch.setattr(sys, "platform", "linux")
++    legacy_secrets = MemorySecretStore()
++    legacy_store = _store(tmp_path, legacy_secrets)
++    assert legacy_store.read_extension_control_authority(
++        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
++    ).health is AuthorityHealth.PROTECTED
++    monkeypatch.setattr(
++        SystemKeyringSecretStore,
++        "get_secret",
++        lambda _self, secret_id: legacy_secrets.get_secret(secret_id),
++    )
++    monkeypatch.setattr(SystemKeyringSecretStore, "set_secret", lambda _self, _secret_id, _value: None)
++
++    migrated = GuardStore(tmp_path, prime_policy_integrity=False)
++    assert migrated.read_extension_control_authority(
++        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
++    ).health is AuthorityHealth.PROTECTED
++
++    monkeypatch.setattr(
++        SystemKeyringSecretStore,
++        "get_secret",
++        lambda _self, _secret_id: (_ for _ in ()).throw(RuntimeError("session keyring disappeared")),
++    )
++    restarted = GuardStore(tmp_path, prime_policy_integrity=False)
++    assert restarted.read_extension_control_authority(
++        catalog_digest=BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
++    ).health is AuthorityHealth.PROTECTED
+ 
+ 
+ def test_macos_extension_authority_default_never_probes_keychain(
+--- /dev/null
++++ b/tests/test_guard_encrypted_secret_store_stability.py
+@@ -0,0 +1,64 @@
++from __future__ import annotations
++
++import threading
++import time
++from pathlib import Path
++
++import pytest
++
++from codex_plugin_scanner.guard.store_base import EncryptedFileSecretStore
++
++
++def test_concurrent_first_use_creates_one_key_and_preserves_both_writes(
++    tmp_path: Path,
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    stores = (EncryptedFileSecretStore(tmp_path), EncryptedFileSecretStore(tmp_path))
++    original = EncryptedFileSecretStore._atomic_write_bytes
++    key_writes = 0
++    counter_lock = threading.Lock()
++    start = threading.Barrier(3)
++
++    def delayed_write(self: EncryptedFileSecretStore, path: Path, payload: bytes, mode: int) -> None:
++        nonlocal key_writes
++        if path == self.key_path:
++            with counter_lock:
++                key_writes += 1
++            time.sleep(0.05)
++        original(self, path, payload, mode)
++
++    monkeypatch.setattr(EncryptedFileSecretStore, "_atomic_write_bytes", delayed_write)
++    errors: list[BaseException] = []
++
++    def writer(index: int) -> None:
++        try:
++            start.wait()
++            stores[index].set_secret(f"secret-{index}", f"value-{index}")
++        except BaseException as exc:  # pragma: no cover - asserted below
++            errors.append(exc)
++
++    threads = [threading.Thread(target=writer, args=(index,)) for index in range(2)]
++    for thread in threads:
++        thread.start()
++    start.wait()
++    for thread in threads:
++        thread.join(timeout=5)
++
++    assert errors == []
++    assert key_writes == 1
++    reopened = EncryptedFileSecretStore(tmp_path)
++    assert reopened.get_secret("secret-0") == "value-0"
++    assert reopened.get_secret("secret-1") == "value-1"
++
++
++def test_invalid_existing_vault_key_fails_closed_without_rotation(tmp_path: Path) -> None:
++    secrets_dir = tmp_path / "secrets"
++    secrets_dir.mkdir(parents=True)
++    key_path = secrets_dir / "key.bin"
++    key_path.write_bytes(b"")
++
++    store = EncryptedFileSecretStore(tmp_path)
++    with pytest.raises(RuntimeError, match="key is empty"):
++        store.set_secret("authority", "value")
++
++    assert key_path.read_bytes() == b""
