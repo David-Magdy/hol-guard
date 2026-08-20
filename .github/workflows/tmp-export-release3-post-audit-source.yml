@@ -1,6 +1,12 @@
 name: Temporary export release 3 post-audit source
 
 on:
+  pull_request:
+    branches:
+      - release/3.0
+    types: [opened, reopened, synchronize]
+    paths:
+      - .github/workflows/tmp-export-release3-post-audit-source.yml
   push:
     branches:
       - chore/release-3-post-audit-cleanup-20260819
