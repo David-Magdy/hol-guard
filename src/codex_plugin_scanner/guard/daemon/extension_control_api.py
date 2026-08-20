@@ -31,10 +31,10 @@ from ..runtime.extension_control_contract import (
     ExtensionControlLayer,
 )
 from ..runtime.extension_control_limits import (
+    MAX_CATALOG_PAYLOAD_BYTES,
     MAX_CONTROL_LAYERS,
     MAX_CONTROLS_PER_LAYER,
     MAX_CONTROLS_TOTAL,
-    MAX_OBSERVATIONS,
     advertised_extension_control_limits,
 )
 from ..runtime.extension_control_proof import (
@@ -91,7 +91,7 @@ class ExtensionControlApiService:
 
     def catalog(self) -> dict[str, object]:
         limits = advertised_extension_control_limits()
-        return {
+        payload: dict[str, object] = {
             "schema_version": _EXTENSION_CONTROL_API_SCHEMA,
             "control_schema_version": CONTROL_SCHEMA_VERSION,
             "catalog_digest": self._registry.catalog_digest,
@@ -102,6 +102,15 @@ class ExtensionControlApiService:
                 "max_controls": limits["max_controls_total"],
             },
         }
+        serialized = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode()
+        if len(serialized) > MAX_CATALOG_PAYLOAD_BYTES:
+            raise ExtensionControlApiError(413, "catalog_payload_limit_exceeded")
+        return payload
 
     def effective(self) -> dict[str, object]:
         snapshot = self._runtime.current()
