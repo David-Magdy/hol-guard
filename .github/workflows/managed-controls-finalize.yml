@@ -6,24 +6,24 @@ on:
       - release/3.0
     paths:
       - '.github/workflows/managed-controls-finalize.yml'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   finalize:
-    if: github.head_ref == 'managed-controls/batch-02-actions-limits-clean'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'managed-controls/batch-02-actions-limits-clean'
+    runs-on: ubuntu-24.04
     steps:
-      - name: Check out feature branch
+      - name: Check out remediation branch
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           ref: managed-controls/batch-02-actions-limits-clean
           fetch-depth: 0
 
-      - name: Apply final review fixes
-        shell: python {0}
+      - name: Apply review and quality remediation
+        shell: python
         run: |
           from pathlib import Path
 
@@ -36,155 +36,381 @@ jobs:
               path.write_text(value.replace(old, new, 1), encoding="utf-8")
 
           api = Path("src/codex_plugin_scanner/guard/daemon/extension_control_api.py")
-          replace_once(
-              api,
-              (
-                  '        serialized = json.dumps(\n'
-                  '            payload,\n'
-                  '            sort_keys=True,\n'
-                  '            separators=(",", ":"),\n'
-                  '            ensure_ascii=True,\n'
-                  '        ).encode()\n'
-              ),
-              '        serialized = json.dumps(payload).encode("utf-8")\n',
+          value = api.read_text(encoding="utf-8")
+          start = value.index("    def catalog(self) -> dict[str, object]:\n")
+          end = value.index("    def effective(self) -> dict[str, object]:\n", start)
+          value = (
+              value[:start]
+              + "    def catalog(self) -> dict[str, object]:\n"
+              + "        return build_extension_control_catalog(self._registry, schema_version=_EXTENSION_CONTROL_API_SCHEMA)\n\n"
+              + value[end:]
           )
+          value = value.replace(
+              "from ..runtime.extension_control_limits import (\n"
+              "    MAX_CATALOG_PAYLOAD_BYTES,\n"
+              "    MAX_CONTROL_LAYERS,\n"
+              "    MAX_CONTROLS_PER_LAYER,\n"
+              "    MAX_CONTROLS_TOTAL,\n"
+              "    advertised_extension_control_limits,\n"
+              ")\n",
+              "from ..runtime.extension_control_limits import (\n"
+              "    MAX_CONTROL_LAYERS,\n"
+              "    MAX_CONTROLS_PER_LAYER,\n"
+              "    MAX_CONTROLS_TOTAL,\n"
+              ")\n",
+              1,
+          )
+          import_anchor = "from .extension_control_errors import ExtensionControlApiError\n"
+          import_line = "from .extension_control_catalog import build_extension_control_catalog\n"
+          if import_line not in value:
+              value = value.replace(import_anchor, import_line + import_anchor, 1)
+          api.write_text(value, encoding="utf-8")
+
+          Path("src/codex_plugin_scanner/guard/daemon/extension_control_catalog.py").write_text(
+              ''''Wire-compatible, bounded extension-control catalog projection.'
+
+          from __future__ import annotations
+
+          import json
+
+          from ..runtime.command_extensions import CommandSafetyExtensionRegistry
+          from ..runtime.extension_control_contract import CONTROL_SCHEMA_VERSION
+          from ..runtime.extension_control_limits import (
+              MAX_CATALOG_PAYLOAD_BYTES,
+              advertised_extension_control_limits,
+          )
+          from .extension_control_errors import ExtensionControlApiError
+
+
+          def build_extension_control_catalog(
+              registry: CommandSafetyExtensionRegistry,
+              *,
+              schema_version: str,
+          ) -> dict[str, object]:
+              'Return a catalog whose measured bytes match the daemon JSON wire format.'
+
+              limits = advertised_extension_control_limits()
+              payload: dict[str, object] = {
+                  "schema_version": schema_version,
+                  "control_schema_version": CONTROL_SCHEMA_VERSION,
+                  "catalog_digest": registry.catalog_digest,
+                  "extensions": [extension.to_dict() for extension in registry.extensions],
+                  "limits": {
+                      **limits,
+                      "max_body_bytes": limits["max_catalog_payload_bytes"],
+                      "max_controls": limits["max_controls_total"],
+                  },
+              }
+              if len(json.dumps(payload).encode("utf-8")) > MAX_CATALOG_PAYLOAD_BYTES:
+                  raise ExtensionControlApiError(413, "catalog_payload_limit_exceeded")
+              return payload
+          '''.replace("\n          ", "\n").lstrip(),
+              encoding="utf-8",
+          )
+
+          command_extensions = Path(
+              "src/codex_plugin_scanner/guard/runtime/command_extensions.py"
+          )
+          helper_anchor = "\n\n@final\nclass CommandSafetyExtensionRegistry:"
+          helpers = '''
+
+          def _validated_ordered_extensions(
+              extensions: tuple[CommandSafetyExtension, ...],
+          ) -> tuple[CommandSafetyExtension, ...]:
+              ordered = tuple(sorted(extensions, key=lambda extension: extension.extension_id))
+              if len(ordered) > MAX_CATALOG_EXTENSIONS:
+                  raise ValueError("Command safety extension registry exceeds catalog extension limit")
+              for extension in ordered:
+                  _validate_extension(extension)
+                  if len(extension.permissions) > MAX_PERMISSIONS_PER_EXTENSION:
+                      raise ValueError(
+                          f"Command safety extension {extension.extension_id} exceeds permission limit"
+                      )
+              return ordered
+
+
+          def _catalog_digest(extensions: tuple[CommandSafetyExtension, ...]) -> str:
+              payload = json.dumps(
+                  [extension.to_dict() for extension in extensions],
+                  sort_keys=True,
+                  separators=(",", ":"),
+                  ensure_ascii=True,
+              ).encode()
+              if len(payload) > MAX_CATALOG_PAYLOAD_BYTES:
+                  raise ValueError("Command safety extension catalog exceeds payload limit")
+              return hashlib.sha256(payload).hexdigest()
+          '''.replace("\n          ", "\n")
+          value = command_extensions.read_text(encoding="utf-8")
+          if "def _validated_ordered_extensions(" not in value:
+              value = value.replace(helper_anchor, helpers + helper_anchor, 1)
+          old_start = '''    def __init__(self, extensions: tuple[CommandSafetyExtension, ...]) -> None:
+              ordered = tuple(sorted(extensions, key=lambda extension: extension.extension_id))
+              if len(ordered) > MAX_CATALOG_EXTENSIONS:
+                  raise ValueError("Command safety extension registry exceeds catalog extension limit")
+              by_id: dict[str, CommandSafetyExtension] = {}
+          '''.replace("\n          ", "\n")
+          new_start = '''    def __init__(self, extensions: tuple[CommandSafetyExtension, ...]) -> None:
+              ordered = _validated_ordered_extensions(extensions)
+              by_id: dict[str, CommandSafetyExtension] = {}
+          '''.replace("\n          ", "\n")
+          if new_start not in value:
+              if old_start not in value:
+                  raise SystemExit("missing registry initializer start")
+              value = value.replace(old_start, new_start, 1)
+          old_loop = '''        for extension in ordered:
+              _validate_extension(extension)
+              if len(extension.permissions) > MAX_PERMISSIONS_PER_EXTENSION:
+                  raise ValueError(
+                      f"Command safety extension {extension.extension_id} exceeds permission limit"
+                  )
+              if extension.extension_id in by_id:
+          '''.replace("\n          ", "\n")
+          new_loop = '''        for extension in ordered:
+              if extension.extension_id in by_id:
+          '''.replace("\n          ", "\n")
+          if new_loop not in value:
+              if old_loop not in value:
+                  raise SystemExit("missing registry validation loop")
+              value = value.replace(old_loop, new_loop, 1)
+          old_digest = '''        catalog_payload = json.dumps(
+              [extension.to_dict() for extension in ordered],
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=True,
+          ).encode()
+          if len(catalog_payload) > MAX_CATALOG_PAYLOAD_BYTES:
+              raise ValueError("Command safety extension catalog exceeds payload limit")
+          catalog_digest = hashlib.sha256(catalog_payload).hexdigest()
+          '''.replace("\n          ", "\n")
+          if "        catalog_digest = _catalog_digest(ordered)\n" not in value:
+              if old_digest not in value:
+                  raise SystemExit("missing registry catalog digest block")
+              value = value.replace(old_digest, "        catalog_digest = _catalog_digest(ordered)\n", 1)
+          command_extensions.write_text(value, encoding="utf-8")
 
           server = Path("src/codex_plugin_scanner/guard/daemon/server.py")
           replace_once(
               server,
-              (
-                  '        if parsed.path == "/v1/extension-controls/catalog":\n'
-                  '            self._write_json(\n'
-                  '                self._daemon_server().extension_control_api.catalog(),\n'
-                  '                extra_headers={"Cache-Control": "no-store"},\n'
-                  '            )\n'
-                  '            return\n'
-              ),
-              (
-                  '        if parsed.path == "/v1/extension-controls/catalog":\n'
-                  '            try:\n'
-                  '                catalog = self._daemon_server().extension_control_api.catalog()\n'
-                  '            except ExtensionControlApiError as error:\n'
-                  '                self._write_json(error.to_payload(), status=error.status)\n'
-                  '                return\n'
-                  '            self._write_json(catalog, extra_headers={"Cache-Control": "no-store"})\n'
-                  '            return\n'
-              ),
+              '''        if parsed.path == "/v1/extension-controls/catalog":
+              self._write_json(
+                  self._daemon_server().extension_control_api.catalog(),
+                  extra_headers={"Cache-Control": "no-store"},
+              )
+              return
+          '''.replace("\n          ", "\n"),
+              '''        if parsed.path == "/v1/extension-controls/catalog":
+              try:
+                  catalog = self._daemon_server().extension_control_api.catalog()
+              except ExtensionControlApiError as error:
+                  self._write_json(error.to_payload(), status=error.status)
+                  return
+              self._write_json(catalog, extra_headers={"Cache-Control": "no-store"})
+              return
+          '''.replace("\n          ", "\n"),
           )
 
           limit_tests = Path("tests/test_managed_controls_limits.py")
-          replace_once(
-              limit_tests,
-              (
-                  'def _catalog_extension(index: int) -> CommandSafetyExtension:\n'
-                  '    return CommandSafetyExtension(\n'
-                  '        extension_id=f"command.limit{index}",\n'
-                  '        version="1.0.0",\n'
-                  '        name=f"Limit {index}",\n'
-                  '        description="Bounded catalog fixture.",\n'
-                  '        action_classes=(),\n'
-                  '        risk_classes=("supply_chain",),\n'
-                  '        safer_alternatives=("Review the requested capability.",),\n'
-                  '        delegated_protection="package-firewall",\n'
-                  '        ecosystem_ids=(f"limit{index}",),\n'
-                  '        executables=(f"limit{index}",),\n'
-                  '        reference_urls=("https://example.com/managed-controls-limit-fixture",),\n'
-                  '    )\n'
-              ),
-              (
-                  'def _catalog_extension(index: int) -> CommandSafetyExtension:\n'
-                  '    extension = CommandSafetyExtension(\n'
-                  '        extension_id=f"command.limit{index}",\n'
-                  '        version="1.0.0",\n'
-                  '        name=f"Limit {index}",\n'
-                  '        description="Bounded catalog fixture.",\n'
-                  '        action_classes=(),\n'
-                  '        risk_classes=("supply_chain",),\n'
-                  '        safer_alternatives=("Review the requested capability.",),\n'
-                  '        delegated_protection="package-firewall",\n'
-                  '        ecosystem_ids=(f"limit{index}",),\n'
-                  '        executables=(f"limit{index}",),\n'
-                  '        reference_urls=("https://example.com/managed-controls-limit-fixture",),\n'
-                  '    )\n'
-                  '    return replace(\n'
-                  '        extension,\n'
-                  '        permissions=(\n'
-                  '            replace(\n'
-                  '                extension.permissions[0],\n'
-                  '                example_command=f"limit{index} scan",\n'
-                  '                typed_capabilities=(f"limit.capability.{index}",),\n'
-                  '            ),\n'
-                  '        ),\n'
-                  '    )\n'
-              ),
+          value = limit_tests.read_text(encoding="utf-8")
+          start = value.index("def _catalog_extension(index: int) -> CommandSafetyExtension:\n")
+          end = value.index("\n\ndef _extension_with_permissions", start)
+          value = (
+              value[:start]
+              + '''def _catalog_extension(index: int) -> CommandSafetyExtension:
+              extension = CommandSafetyExtension(
+                  extension_id=f"command.limit{index}",
+                  version="1.0.0",
+                  name=f"Limit {index}",
+                  description="Bounded catalog fixture.",
+                  action_classes=(),
+                  risk_classes=("supply_chain",),
+                  safer_alternatives=("Review the requested capability.",),
+                  delegated_protection="package-firewall",
+                  ecosystem_ids=(f"limit{index}",),
+                  executables=(f"limit{index}",),
+                  reference_urls=("https://example.com/managed-controls-limit-fixture",),
+              )
+              return replace(
+                  extension,
+                  permissions=(
+                      replace(
+                          extension.permissions[0],
+                          example_command=f"limit{index} scan",
+                          typed_capabilities=(f"limit.capability.{index}",),
+                      ),
+                  ),
+              )
+          '''.replace("\n              ", "\n")
+              + value[end:]
           )
+          limit_tests.write_text(value, encoding="utf-8")
 
           api_tests = Path("tests/test_guard_extension_control_api.py")
-          replace_once(
-              api_tests,
-              (
-                  '    assert catalog["limits"] == {\n'
-                  '        **limits,\n'
-                  '        "max_body_bytes": limits["max_catalog_payload_bytes"],\n'
-                  '        "max_controls": limits["max_controls_total"],\n'
-                  '    }\n'
-              ),
-              (
-                  '    assert catalog["limits"] == {\n'
-                  '        **limits,\n'
-                  '        "max_body_bytes": limits["max_catalog_payload_bytes"],\n'
-                  '        "max_controls": limits["max_controls_total"],\n'
-                  '    }\n'
-                  '    assert (\n'
-                  '        len(json.dumps(catalog).encode("utf-8"))\n'
-                  '        <= limits["max_catalog_payload_bytes"]\n'
-                  '    )\n'
-              ),
+          value = api_tests.read_text(encoding="utf-8")
+          marker = "\ndef test_http_routes_authenticate_before_reading_sensitive_post_body"
+          if marker in value:
+              value = value[: value.index(marker)].rstrip() + "\n"
+              api_tests.write_text(value, encoding="utf-8")
+
+          Path("tests/test_guard_extension_control_http.py").write_text(
+              r'''from __future__ import annotations
+
+          import base64
+          import hashlib
+          import hmac
+          import http.client
+          import json
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          import pytest
+
+          from codex_plugin_scanner.guard.daemon import GuardDaemonServer
+          from codex_plugin_scanner.guard.daemon.client import (
+              GuardDaemonRequestError,
+              GuardSurfaceDaemonClient,
           )
-          replace_once(
-              api_tests,
-              'def test_http_routes_authenticate_before_reading_sensitive_post_body(tmp_path: Path) -> None:\n',
-              (
-                  'def test_http_routes_authenticate_before_reading_sensitive_post_body(\n'
-                  '    tmp_path: Path,\n'
-                  '    monkeypatch: pytest.MonkeyPatch,\n'
-                  ') -> None:\n'
-              ),
+          from codex_plugin_scanner.guard.daemon.extension_control_api import ExtensionControlApiError
+          from codex_plugin_scanner.guard.daemon.manager import load_guard_daemon_auth_token
+          from codex_plugin_scanner.guard.local_dashboard_session import (
+              LOCAL_DASHBOARD_SESSION_AUDIENCE,
           )
-          replace_once(
-              api_tests,
-              (
-                  '        with urllib.request.urlopen(authenticated, timeout=2) as response:\n'
-                  '            assert response.status == 200\n'
-                  '            assert json.loads(response.read())["catalog_digest"] == (\n'
-                  '                BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest\n'
-                  '            )\n\n'
-                  '        connection.putrequest("POST", "/v1/extension-controls/apply")\n'
-              ),
-              (
-                  '        with urllib.request.urlopen(authenticated, timeout=2) as response:\n'
-                  '            assert response.status == 200\n'
-                  '            assert json.loads(response.read())["catalog_digest"] == (\n'
-                  '                BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest\n'
-                  '            )\n\n'
-                  '        def oversized_catalog() -> dict[str, object]:\n'
-                  '            raise ExtensionControlApiError(\n'
-                  '                413, "catalog_payload_limit_exceeded"\n'
-                  '            )\n\n'
-                  '        with monkeypatch.context() as patch:\n'
-                  '            patch.setattr(\n'
-                  '                daemon._server.extension_control_api,\n'
-                  '                "catalog",\n'
-                  '                oversized_catalog,\n'
-                  '            )\n'
-                  '            with pytest.raises(urllib.error.HTTPError) as too_large:\n'
-                  '                urllib.request.urlopen(authenticated, timeout=2)\n'
-                  '            assert too_large.value.code == 413\n'
-                  '            assert json.loads(too_large.value.read()) == {\n'
-                  '                "error": "catalog_payload_limit_exceeded",\n'
-                  '            }\n\n'
-                  '        connection.putrequest("POST", "/v1/extension-controls/apply")\n'
-              ),
+          from codex_plugin_scanner.guard.runtime.command_extensions import (
+              BUILT_IN_COMMAND_EXTENSION_REGISTRY,
+          )
+          from codex_plugin_scanner.guard.store import GuardStore
+
+
+          def _mutation_payload(*, revision: int = 4) -> dict[str, object]:
+              return {
+                  "previous_revision": revision,
+                  "catalog_digest": BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+                  "layers": [],
+                  "actor_id": "local-admin",
+                  "idempotency_key": "mutation-1",
+                  "nonce": "nonce-1",
+              }
+
+
+          def _dashboard_token(auth_token: str) -> str:
+              payload_json = json.dumps(
+                  {
+                      "aud": LOCAL_DASHBOARD_SESSION_AUDIENCE,
+                      "version": "guard-local-daemon-session.v1",
+                      "expires_at": datetime(2099, 1, 1, tzinfo=timezone.utc).isoformat(),
+                      "surface": "approval-center",
+                  },
+                  separators=(",", ":"),
+              )
+              payload = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip("=")
+              signature = hmac.new(auth_token.encode(), payload.encode(), hashlib.sha256).digest()
+              encoded_signature = base64.urlsafe_b64encode(signature).decode().rstrip("=")
+              return f"{payload}.{encoded_signature}"
+
+
+          def test_http_routes_authenticate_and_map_catalog_limit_errors(
+              tmp_path: Path,
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              store = GuardStore(tmp_path / "guard-home")
+              daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+              daemon.start()
+              connection = http.client.HTTPConnection("127.0.0.1", daemon.port, timeout=2)
+              try:
+                  request = urllib.request.Request(
+                      f"http://127.0.0.1:{daemon.port}/v1/extension-controls/catalog",
+                      method="GET",
+                  )
+                  with pytest.raises(urllib.error.HTTPError) as unauthorized:
+                      urllib.request.urlopen(request, timeout=2)
+                  assert unauthorized.value.code == 401
+
+                  auth_token = load_guard_daemon_auth_token(store.guard_home)
+                  assert auth_token is not None
+                  authenticated = urllib.request.Request(
+                      f"http://127.0.0.1:{daemon.port}/v1/extension-controls/catalog",
+                      method="GET",
+                      headers={"X-Guard-Dashboard-Session": _dashboard_token(auth_token)},
+                  )
+                  with urllib.request.urlopen(authenticated, timeout=2) as response:
+                      assert response.status == 200
+                      payload = json.loads(response.read())
+                      assert payload["catalog_digest"] == (
+                          BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
+                      )
+                      assert len(json.dumps(payload).encode("utf-8")) <= payload["limits"][
+                          "max_catalog_payload_bytes"
+                      ]
+
+                  def oversized_catalog() -> dict[str, object]:
+                      raise ExtensionControlApiError(
+                          413,
+                          "catalog_payload_limit_exceeded",
+                      )
+
+                  with monkeypatch.context() as patch:
+                      patch.setattr(
+                          daemon._server.extension_control_api,
+                          "catalog",
+                          oversized_catalog,
+                      )
+                      with pytest.raises(urllib.error.HTTPError) as too_large:
+                          urllib.request.urlopen(authenticated, timeout=2)
+                      assert too_large.value.code == 413
+                      assert json.loads(too_large.value.read()) == {
+                          "error": "catalog_payload_limit_exceeded",
+                      }
+
+                  connection.putrequest("POST", "/v1/extension-controls/apply")
+                  connection.putheader("Content-Type", "application/json")
+                  connection.putheader("Content-Length", "1000000")
+                  connection.endheaders()
+                  response = connection.getresponse()
+                  assert response.status == 401
+                  response.read()
+                  connection.close()
+
+                  connection = http.client.HTTPConnection(
+                      "127.0.0.1",
+                      daemon.port,
+                      timeout=2,
+                  )
+                  connection.putrequest("POST", "/v1/extension-controls/apply")
+                  connection.putheader("X-Guard-Token", auth_token)
+                  connection.putheader("Content-Type", "application/json")
+                  connection.putheader("Content-Length", "1000001")
+                  connection.endheaders()
+                  response = connection.getresponse()
+                  client = GuardSurfaceDaemonClient(
+                      f"http://127.0.0.1:{daemon.port}",
+                      auth_token,
+                  )
+                  refreshed = client.refresh_extension_controls()
+                  assert refreshed["health"] == "unenrolled"
+                  with pytest.raises(GuardDaemonRequestError) as not_recoverable:
+                      client.recover_extension_control_authority(
+                          {"session_nonce": "nonce"}
+                      )
+                  assert not_recoverable.value.status == 409
+                  assert not_recoverable.value.code == "authority_not_recoverable"
+                  with pytest.raises(GuardDaemonRequestError) as not_degraded:
+                      client.acknowledge_degraded_extension_controls({})
+                  assert not_degraded.value.status == 409
+                  assert not_degraded.value.code == "authority_not_degraded"
+                  with pytest.raises(GuardDaemonRequestError) as unavailable:
+                      client.preview_extension_controls(_mutation_payload(revision=0))
+                  assert unavailable.value.status == 423
+                  assert unavailable.value.code == "authority_unavailable"
+                  assert unavailable.value.recovery_action == (
+                      "enroll_or_repair_authority"
+                  )
+                  assert response.status == 413
+              finally:
+                  connection.close()
+                  daemon.stop()
+          '''.replace("\n          ", "\n").lstrip(),
+              encoding="utf-8",
           )
 
       - name: Set up Python
@@ -198,36 +424,77 @@ jobs:
           version: '0.9.26'
           enable-cache: true
 
-      - name: Install dependencies
-        run: uv sync --frozen --extra dev --python 3.12
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.3.14'
 
-      - name: Format focused Python files
+      - name: Install dependencies
+        run: |
+          uv sync --frozen --extra dev --python 3.12
+          cd dashboard
+          bun install --frozen-lockfile
+
+      - name: Format and lint remediation
         run: |
           uv run --no-sync ruff format \
             src/codex_plugin_scanner/guard/daemon/extension_control_api.py \
-            src/codex_plugin_scanner/guard/daemon/server.py \
-            tests/test_managed_controls_limits.py \
-            tests/test_guard_extension_control_api.py
-
-      - name: Run focused Python verification
-        run: >-
-          uv run --no-sync pytest
-          tests/test_managed_controls_limits.py
-          tests/test_guard_extension_control_api.py
-          tests/test_guard_extension_control_catalog_detail.py
-          --tb=short
-
-      - name: Check focused Python quality
-        run: |
-          uv run --no-sync ruff check \
-            src/codex_plugin_scanner/guard/daemon/extension_control_api.py \
+            src/codex_plugin_scanner/guard/daemon/extension_control_catalog.py \
             src/codex_plugin_scanner/guard/daemon/server.py \
             src/codex_plugin_scanner/guard/runtime/command_extensions.py \
-            src/codex_plugin_scanner/guard/runtime/extension_control_limits.py \
-            src/codex_plugin_scanner/guard/runtime/extension_control_resolver.py \
             tests/test_managed_controls_limits.py \
             tests/test_guard_extension_control_api.py \
-            tests/test_guard_extension_control_catalog_detail.py
+            tests/test_guard_extension_control_http.py
+          uv run --no-sync ruff check --fix \
+            src/codex_plugin_scanner/guard/daemon/extension_control_api.py \
+            src/codex_plugin_scanner/guard/daemon/extension_control_catalog.py \
+            src/codex_plugin_scanner/guard/daemon/server.py \
+            src/codex_plugin_scanner/guard/runtime/command_extensions.py \
+            tests/test_managed_controls_limits.py \
+            tests/test_guard_extension_control_api.py \
+            tests/test_guard_extension_control_http.py
+          uv run --no-sync ruff format \
+            src/codex_plugin_scanner/guard/daemon/extension_control_api.py \
+            src/codex_plugin_scanner/guard/daemon/extension_control_catalog.py \
+            src/codex_plugin_scanner/guard/daemon/server.py \
+            src/codex_plugin_scanner/guard/runtime/command_extensions.py \
+            tests/test_managed_controls_limits.py \
+            tests/test_guard_extension_control_api.py \
+            tests/test_guard_extension_control_http.py
+
+      - name: Regenerate dashboard assets
+        run: |
+          cd dashboard
+          bun run test
+          bun run build
+
+      - name: Refresh source-bound evidence
+        run: uv run --no-sync python tests/guard_command_decision_diff.py --write
+
+      - name: Run focused verification
+        run: |
+          uv run --no-sync pytest \
+            tests/test_managed_controls_limits.py \
+            tests/test_guard_extension_control_api.py \
+            tests/test_guard_extension_control_http.py \
+            tests/test_guard_extension_control_catalog_detail.py \
+            --tb=short
+          uv run --no-sync python tests/guard_command_decision_diff.py --check
+
+      - name: Enforce structural quality
+        run: |
+          uv run --no-sync python scripts/ci/code_quality_audit.py \
+            --root . \
+            --baseline ci/code-quality-baseline.json \
+            --json-output code-quality-audit.json
+          uv run --no-sync ruff check \
+            src/codex_plugin_scanner/guard/daemon/extension_control_api.py \
+            src/codex_plugin_scanner/guard/daemon/extension_control_catalog.py \
+            src/codex_plugin_scanner/guard/daemon/server.py \
+            src/codex_plugin_scanner/guard/runtime/command_extensions.py \
+            tests/test_managed_controls_limits.py \
+            tests/test_guard_extension_control_api.py \
+            tests/test_guard_extension_control_http.py
 
       - name: Refresh reviewed test-suite ratchet
         run: |
@@ -255,11 +522,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm .github/workflows/managed-controls-finalize.yml
-          git add \
-            ci/test-suite-ratchet-baseline.json \
-            src/codex_plugin_scanner/guard/daemon/extension_control_api.py \
-            src/codex_plugin_scanner/guard/daemon/server.py \
-            tests/test_managed_controls_limits.py \
-            tests/test_guard_extension_control_api.py
+          git add -A
+          git diff --cached --check
           git commit -m "fix: complete Managed Controls review remediation"
           git push origin HEAD:managed-controls/batch-02-actions-limits-clean
