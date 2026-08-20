@@ -18,7 +18,6 @@ Security contract:
 
 from __future__ import annotations
 
-import os
 import threading
 import urllib.parse
 from dataclasses import dataclass
@@ -29,7 +28,11 @@ if TYPE_CHECKING:
     from codex_plugin_scanner.guard.config import GuardConfig
     from codex_plugin_scanner.guard.store import GuardStore
 
-from .daemon.manager import ensure_guard_daemon, load_guard_daemon_auth_token
+from .daemon.manager import (
+    desktop_preflight_requested,
+    ensure_guard_daemon,
+    load_guard_daemon_auth_token,
+)
 from .local_dashboard_session import build_local_dashboard_session_token
 from .runtime.surface_server import GuardSurfaceRuntime
 from .secret_redaction import sanitize_secret
@@ -77,7 +80,7 @@ _last_result: DashboardLaunchResult | None = None
 def desktop_bootstrap_is_preflight() -> bool:
     """True when Desktop is validating a candidate Core without starting a daemon."""
 
-    return os.environ.get("HOL_GUARD_DESKTOP_PREFLIGHT", "").strip().lower() in {"1", "true", "yes"}
+    return desktop_preflight_requested()
 
 
 def build_desktop_dashboard_session_url(*, guard_home: Path) -> str:

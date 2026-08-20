@@ -209,7 +209,7 @@ def test_schedule_guard_daemon_ensure_is_reserved_and_nonblocking(
         home_dir=tmp_path,
     )
 
-    assert url == ""
+    assert url == daemon_manager_module.guard_daemon_url_for_home(guard_home)
     assert len(spawned) == 1
     command, kwargs = spawned[0]
     assert command[-9:] == [
@@ -246,7 +246,9 @@ def test_schedule_guard_daemon_ensure_suppresses_duplicate_reservation(
         lambda *_args, **_kwargs: pytest.fail("reserved wake must not spawn another helper"),
     )
 
-    assert daemon_manager_module.schedule_guard_daemon_ensure(guard_home) == ""
+    assert daemon_manager_module.schedule_guard_daemon_ensure(
+        guard_home
+    ) == daemon_manager_module.guard_daemon_url_for_home(guard_home)
 
 
 def test_schedule_guard_daemon_ensure_clears_reservation_after_spawn_failure(
@@ -289,7 +291,9 @@ def test_schedule_guard_daemon_ensure_contains_reservation_failure(
         lambda _home: (_ for _ in ()).throw(OSError("state unavailable")),
     )
 
-    assert daemon_manager_module.schedule_guard_daemon_ensure(guard_home) == ""
+    assert daemon_manager_module.schedule_guard_daemon_ensure(
+        guard_home
+    ) == daemon_manager_module.guard_daemon_url_for_home(guard_home)
 
 
 def test_schedule_guard_daemon_ensure_contains_spawn_and_cleanup_failure(
@@ -317,7 +321,7 @@ def test_schedule_guard_daemon_ensure_contains_spawn_and_cleanup_failure(
     assert daemon_manager_module.schedule_guard_daemon_ensure(
         guard_home,
         home_dir=tmp_path,
-    ) == ""
+    ) == daemon_manager_module.guard_daemon_url_for_home(guard_home)
 
 
 def test_schedule_guard_daemon_ensure_contains_home_validation_failure(
@@ -342,7 +346,7 @@ def test_schedule_guard_daemon_ensure_contains_home_validation_failure(
     assert daemon_manager_module.schedule_guard_daemon_ensure(
         guard_home,
         home_dir=missing_home,
-    ) == ""
+    ) == daemon_manager_module.guard_daemon_url_for_home(guard_home)
     assert cleared == [(guard_home, "wake-token")]
 
 
@@ -1326,6 +1330,11 @@ def test_runtime_fingerprint_ignores_mtime_and_tracks_content(tmp_path, monkeypa
     target = package / "runtime.py"
     target.write_text("x = 1\n", encoding="utf-8")
     monkeypatch.setattr(daemon_manager_module, "_current_guard_daemon_source_root", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_runtime_fingerprint_cache_path",
+        lambda _source_root: tmp_path / "fp-cache" / "runtime-fingerprint-cache.json",
+    )
     daemon_manager_module._runtime_fingerprint_cache = None
     try:
         first = daemon_manager_module._current_guard_daemon_runtime_fingerprint()
@@ -1337,6 +1346,39 @@ def test_runtime_fingerprint_ignores_mtime_and_tracks_content(tmp_path, monkeypa
         daemon_manager_module._runtime_fingerprint_cache = None
         third = daemon_manager_module._current_guard_daemon_runtime_fingerprint()
         assert third != first
+    finally:
+        daemon_manager_module._runtime_fingerprint_cache = None
+
+
+def test_runtime_fingerprint_reuses_content_hash_when_tree_signature_matches(tmp_path, monkeypatch):
+    package = tmp_path / "codex_plugin_scanner" / "guard" / "daemon"
+    package.mkdir(parents=True)
+    target = package / "runtime.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    cache_path = tmp_path / "fp-cache" / "runtime-fingerprint-cache.json"
+    monkeypatch.setattr(daemon_manager_module, "_current_guard_daemon_source_root", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        daemon_manager_module,
+        "_runtime_fingerprint_cache_path",
+        lambda _source_root: cache_path,
+    )
+    daemon_manager_module._runtime_fingerprint_cache = None
+    opened_python: list[Path] = []
+    real_open = Path.open
+
+    def counting_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.suffix == ".py":
+            opened_python.append(self)
+        return real_open(self, *args, **kwargs)
+
+    try:
+        first = daemon_manager_module._current_guard_daemon_runtime_fingerprint()
+        daemon_manager_module._runtime_fingerprint_cache = None
+        monkeypatch.setattr(Path, "open", counting_open)
+        second = daemon_manager_module._current_guard_daemon_runtime_fingerprint()
+        assert first == second
+        assert opened_python == []
+        assert cache_path.is_file()
     finally:
         daemon_manager_module._runtime_fingerprint_cache = None
 
