@@ -1,0 +1,28 @@
+name: Investigation source snapshot
+
+on:
+  push:
+    branches:
+      - fix/extension-control-authority-stability
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Create source archive
+        run: tar --exclude=.git -czf /tmp/hol-guard-source.tar.gz .
+      - name: Upload source archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hol-guard-source-current
+          path: /tmp/hol-guard-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
