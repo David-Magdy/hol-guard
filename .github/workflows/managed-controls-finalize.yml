@@ -6,11 +6,6 @@ on:
       - release/3.0
     paths:
       - '.github/workflows/managed-controls-finalize.yml'
-  push:
-    branches:
-      - managed-controls/batch-02-actions-limits-clean
-    paths:
-      - '.github/workflows/managed-controls-finalize.yml'
   workflow_dispatch:
 
 permissions:
@@ -18,18 +13,18 @@ permissions:
 
 jobs:
   restore:
-    if: github.event_name != 'pull_request' || github.head_ref == 'managed-controls/batch-02-actions-limits-clean'
+    if: github.head_ref == 'managed-controls/batch-02-actions-limits-clean'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out branch
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           ref: managed-controls/batch-02-actions-limits-clean
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Restore and repair final remediation workflow
         run: |
-          git show HEAD^:.github/workflows/managed-controls-finalize.yml > /tmp/managed-controls-finalize.yml
+          git show 966e076e4cb38ae873c6d47d31d60351dc0be87b:.github/workflows/managed-controls-finalize.yml > /tmp/managed-controls-finalize.yml
           python - <<'PY'
           from pathlib import Path
 
