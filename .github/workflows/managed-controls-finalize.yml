@@ -1,6 +1,11 @@
 name: Bootstrap managed controls remediation
 
 on:
+  pull_request:
+    branches:
+      - release/3.0
+    paths:
+      - '.github/workflows/managed-controls-finalize.yml'
   push:
     branches:
       - managed-controls/batch-02-actions-limits-clean
@@ -13,6 +18,7 @@ permissions:
 
 jobs:
   restore:
+    if: github.event_name != 'pull_request' || github.head_ref == 'managed-controls/batch-02-actions-limits-clean'
     runs-on: ubuntu-24.04
     steps:
       - name: Check out branch
