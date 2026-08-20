@@ -159,7 +159,7 @@ export function viewTitle(view: AppView): string {
   if (view === "settings") return "Settings";
   if (view === "supply-chain") return "Supply Chain";
   if (view === "audit") return "Audit";
-  if (view === "policy") return "Policy";
+  if (view === "policy") return "Rules & exceptions";
   if (view === "feed-health") return "Feed Health";
   if (view === "about") return "About";
   if (view === "extensions") return "Extensions";
