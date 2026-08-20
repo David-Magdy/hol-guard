@@ -515,7 +515,7 @@ def load_guard_config(
     return GuardConfig(
         guard_home=guard_home,
         workspace=workspace,
-        mode=loaded_mode,
+        mode=("observe" if loaded_posture == "watch" else loaded_mode),
         protection_posture=loaded_posture,
         protection_posture_explicit=posture_explicit,
         watch_auto_revert_hours=coerce_watch_auto_revert_hours(merged.get("watch_auto_revert_hours")),
