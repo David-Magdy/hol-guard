@@ -1,9 +1,9 @@
 name: Managed controls batch 02 review remediation
 
 on:
-  push:
+  pull_request:
     branches:
-      - managed-controls/batch-02-actions-limits-clean
+      - release/3.0
     paths:
       - '.github/workflows/managed-controls-batch-02-remediate.yml'
 
@@ -12,12 +12,13 @@ permissions:
 
 jobs:
   remediate:
+    if: github.actor != 'github-actions[bot]' && github.head_ref == 'managed-controls/batch-02-actions-limits-clean'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
-          ref: managed-controls/batch-02-actions-limits-clean
+          ref: ${{ github.event.pull_request.head.ref }}
       - name: Apply bounded catalog and dashboard fixes
         shell: python {0}
         run: |
@@ -246,4 +247,6 @@ jobs:
             exit 0
           fi
           git commit -m 'fix: enforce bounded extension catalog contract'
-          git push origin HEAD:managed-controls/batch-02-actions-limits-clean
+          git fetch origin "${GITHUB_HEAD_REF}"
+          git rebase "origin/${GITHUB_HEAD_REF}"
+          git push origin HEAD:${GITHUB_HEAD_REF}
