@@ -18,6 +18,7 @@ Security contract:
 
 from __future__ import annotations
 
+import os
 import threading
 import urllib.parse
 from dataclasses import dataclass
@@ -73,6 +74,12 @@ _in_flight = False
 _last_result: DashboardLaunchResult | None = None
 
 
+def desktop_bootstrap_is_preflight() -> bool:
+    """True when Desktop is validating a candidate Core without starting a daemon."""
+
+    return os.environ.get("HOL_GUARD_DESKTOP_PREFLIGHT", "").strip().lower() in {"1", "true", "yes"}
+
+
 def build_desktop_dashboard_session_url(*, guard_home: Path) -> str:
     """Return a short-lived canonical dashboard URL for trusted Desktop embedding.
 
@@ -83,6 +90,8 @@ def build_desktop_dashboard_session_url(*, guard_home: Path) -> str:
     remain non-frameable.
     """
 
+    if desktop_bootstrap_is_preflight():
+        raise RuntimeError("Desktop preflight does not start a local daemon")
     approval_center_url = ensure_guard_daemon(guard_home)
     auth_token = load_guard_daemon_auth_token(guard_home)
     if auth_token is None:

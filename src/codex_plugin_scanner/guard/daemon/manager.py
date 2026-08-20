@@ -100,6 +100,7 @@ _GUARD_DAEMON_ENV_KEYS = frozenset(
         "APPDATA",
         "COMSPEC",
         "HOME",
+        "HOL_GUARD_DESKTOP",
         "LANG",
         "LC_ALL",
         "LC_CTYPE",
@@ -190,8 +191,6 @@ def _daemon_launcher_env(
     )
     if getattr(sys, "frozen", False) is True:
         env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-        if os.environ.get("HOL_GUARD_DESKTOP") == "1":
-            env["HOL_GUARD_DESKTOP"] = "1"
     if os.name == "nt":
         env["USERPROFILE"] = str(trusted_home)
     if guard_home is not None and not _guard_home_is_ephemeral(guard_home):
@@ -326,6 +325,16 @@ def _guard_daemon_launch_command(
     )
 
 
+def _desktop_preflight_requested() -> bool:
+    return os.environ.get("HOL_GUARD_DESKTOP_PREFLIGHT", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _default_guard_daemon_start_timeout() -> float:
+    if os.environ.get("HOL_GUARD_DESKTOP", "").strip() == "1":
+        return GUARD_DAEMON_POST_UPDATE_START_TIMEOUT_SECONDS
+    return GUARD_DAEMON_START_TIMEOUT_SECONDS
+
+
 def ensure_guard_daemon(
     guard_home: Path,
     *,
@@ -334,7 +343,9 @@ def ensure_guard_daemon(
     preferred_port: int | None = None,
     allow_windows_job_breakaway: bool = False,
 ) -> str:
-    timeout = GUARD_DAEMON_START_TIMEOUT_SECONDS if start_timeout is None else start_timeout
+    if _desktop_preflight_requested():
+        raise RuntimeError("Guard daemon start is disabled during Desktop preflight.")
+    timeout = _default_guard_daemon_start_timeout() if start_timeout is None else start_timeout
     start_deadline = time.monotonic() + max(0.0, timeout)
     launch_cwd = _trusted_daemon_home(home_dir)
     _schedule_stale_ephemeral_guard_daemon_reap(exclude_guard_home=guard_home)
@@ -887,16 +898,17 @@ def schedule_guard_daemon_ensure(
 ) -> str:
     """Reserve one detached daemon ensure without delaying a hook response."""
 
+    if _desktop_preflight_requested():
+        return load_guard_daemon_url(guard_home) or ""
     existing_url = load_guard_daemon_url(guard_home)
     if existing_url is not None:
         return existing_url
-    fallback_url = guard_daemon_url_for_home(guard_home)
     try:
         wake_token = _claim_guard_daemon_wake_reservation(guard_home)
     except (OSError, RuntimeError, ValueError):
-        return fallback_url
+        return ""
     if wake_token is None:
-        return fallback_url
+        return ""
     try:
         trusted_home = _trusted_daemon_home(home_dir)
         command = _isolated_python_module_command(
@@ -938,7 +950,7 @@ def schedule_guard_daemon_ensure(
     except (OSError, RuntimeError, subprocess.SubprocessError, ValueError):
         with suppress(OSError, RuntimeError, ValueError):
             clear_guard_daemon_wake_reservation(guard_home, token=wake_token)
-    return fallback_url
+    return ""
 
 
 def load_guard_daemon_url(guard_home: Path) -> str | None:
@@ -2505,9 +2517,6 @@ def _guard_daemon_state_matches_current_runtime(payload: dict[str, object]) -> b
     compatibility_version = payload.get("compatibility_version")
     if compatibility_version != GUARD_DAEMON_COMPATIBILITY_VERSION:
         return False
-    source_root = payload.get("source_root")
-    if not isinstance(source_root, str) or source_root != _current_guard_daemon_source_root():
-        return False
     runtime_fingerprint = payload.get("runtime_fingerprint")
     return isinstance(runtime_fingerprint, str) and runtime_fingerprint == _current_guard_daemon_runtime_fingerprint()
 
@@ -2534,8 +2543,13 @@ def _current_guard_daemon_runtime_fingerprint() -> str:
         except OSError:
             continue
         digest.update(str(path.relative_to(source_root)).encode("utf-8"))
-        digest.update(str(stat_result.st_mtime_ns).encode("utf-8"))
         digest.update(str(stat_result.st_size).encode("utf-8"))
+        try:
+            with path.open("rb") as handle:
+                while chunk := handle.read(65536):
+                    digest.update(chunk)
+        except OSError:
+            continue
     _runtime_fingerprint_cache = digest.hexdigest()
     return _runtime_fingerprint_cache
 
@@ -2548,10 +2562,7 @@ def current_guard_daemon_runtime_fingerprint() -> str:
 
 def _guard_daemon_start_in_progress(guard_home: Path) -> bool:
     payload = _load_state(guard_home)
-    if not isinstance(payload, dict):
-        return False
-    compatibility_version = payload.get("compatibility_version")
-    if compatibility_version != GUARD_DAEMON_COMPATIBILITY_VERSION:
+    if not isinstance(payload, dict) or not _guard_daemon_state_matches_current_runtime(payload):
         return False
     pid = payload.get("pid")
     return isinstance(pid, int) and pid > 0 and _guard_daemon_pid_is_running(pid)
