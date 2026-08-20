@@ -55,13 +55,15 @@ class DeepSeekHarnessAdapter:
         client = dsh.get("client") if isinstance(dsh, dict) else None
         if isinstance(client, str) and client.strip():
             components["clients"] = (client,)
+        name = manifest.get("name")
+        version = manifest.get("version")
         return NormalizedPackage(
             ecosystem=Ecosystem.DEEPSEEK_HARNESS,
             package_kind=candidate.package_kind,
             root_path=candidate.root_path,
             manifest_path=candidate.manifest_path,
-            name=manifest.get("name") if isinstance(manifest.get("name"), str) else None,
-            version=manifest.get("version") if isinstance(manifest.get("version"), str) else None,
+            name=name if isinstance(name, str) else None,
+            version=version if isinstance(version, str) else None,
             metadata={
                 key: value
                 for key in ("description", "license", "homepage")
