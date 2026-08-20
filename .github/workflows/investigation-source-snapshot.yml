@@ -19,11 +19,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
       - name: Create source archive
-        run: tar --exclude=.git -czf hol-guard-source.tar.gz .
+        run: tar --exclude=.git -czf /tmp/hol-guard-source.tar.gz .
       - name: Upload source archive
         uses: actions/upload-artifact@v4
         with:
           name: hol-guard-source
-          path: hol-guard-source.tar.gz
+          path: /tmp/hol-guard-source.tar.gz
           if-no-files-found: error
           retention-days: 1
