@@ -35,19 +35,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rev-parse HEAD > release-head.txt
+          git rev-parse HEAD > "$RUNNER_TEMP/release-head.txt"
           tar \
             --exclude=.git \
             --exclude=.venv \
             --exclude=dashboard/node_modules \
             --exclude='**/__pycache__' \
-            -czf release-3-source.tar.gz .
+            -czf "$RUNNER_TEMP/release-3-source.tar.gz" .
       - name: Upload source archive
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-3-post-audit-source
           path: |
-            release-3-source.tar.gz
-            release-head.txt
+            ${{ runner.temp }}/release-3-source.tar.gz
+            ${{ runner.temp }}/release-head.txt
           if-no-files-found: error
           retention-days: 1
