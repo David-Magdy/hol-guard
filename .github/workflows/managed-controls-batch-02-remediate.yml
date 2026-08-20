@@ -1,0 +1,249 @@
+name: Managed controls batch 02 review remediation
+
+on:
+  push:
+    branches:
+      - managed-controls/batch-02-actions-limits-clean
+    paths:
+      - '.github/workflows/managed-controls-batch-02-remediate.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: managed-controls/batch-02-actions-limits-clean
+      - name: Apply bounded catalog and dashboard fixes
+        shell: python {0}
+        run: |
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              value = path.read_text(encoding='utf-8')
+              if new in value:
+                  return
+              if old not in value:
+                  raise SystemExit(f'missing expected text in {path}: {old[:120]!r}')
+              path.write_text(value.replace(old, new, 1), encoding='utf-8')
+
+          command_extensions = Path('src/codex_plugin_scanner/guard/runtime/command_extensions.py')
+          replace_once(
+              command_extensions,
+              'from .command_rules import CommandSafetyRule, matcher_index_hints\n',
+              'from .command_rules import CommandSafetyRule, matcher_index_hints\n'
+              'from .extension_control_limits import (\n'
+              '    MAX_CATALOG_EXTENSIONS,\n'
+              '    MAX_CATALOG_PAYLOAD_BYTES,\n'
+              '    MAX_PERMISSIONS_PER_EXTENSION,\n'
+              ')\n',
+          )
+          replace_once(
+              command_extensions,
+              '        ordered = tuple(sorted(extensions, key=lambda extension: extension.extension_id))\n',
+              '        ordered = tuple(sorted(extensions, key=lambda extension: extension.extension_id))\n'
+              '        if len(ordered) > MAX_CATALOG_EXTENSIONS:\n'
+              '            raise ValueError("Command safety extension registry exceeds catalog extension limit")\n',
+          )
+          replace_once(
+              command_extensions,
+              '        for extension in ordered:\n            _validate_extension(extension)\n',
+              '        for extension in ordered:\n'
+              '            _validate_extension(extension)\n'
+              '            if len(extension.permissions) > MAX_PERMISSIONS_PER_EXTENSION:\n'
+              '                raise ValueError(\n'
+              '                    f"Command safety extension {extension.extension_id} exceeds permission limit"\n'
+              '                )\n',
+          )
+          replace_once(
+              command_extensions,
+              '        catalog_digest = hashlib.sha256(catalog_payload).hexdigest()\n',
+              '        if len(catalog_payload) > MAX_CATALOG_PAYLOAD_BYTES:\n'
+              '            raise ValueError("Command safety extension catalog exceeds payload limit")\n'
+              '        catalog_digest = hashlib.sha256(catalog_payload).hexdigest()\n',
+          )
+
+          api = Path('src/codex_plugin_scanner/guard/daemon/extension_control_api.py')
+          replace_once(
+              api,
+              'from ..runtime.extension_control_limits import (\n'
+              '    MAX_CONTROL_LAYERS,\n'
+              '    MAX_CONTROLS_PER_LAYER,\n'
+              '    MAX_CONTROLS_TOTAL,\n'
+              '    MAX_OBSERVATIONS,\n'
+              '    advertised_extension_control_limits,\n'
+              ')\n',
+              'from ..runtime.extension_control_limits import (\n'
+              '    MAX_CATALOG_PAYLOAD_BYTES,\n'
+              '    MAX_CONTROL_LAYERS,\n'
+              '    MAX_CONTROLS_PER_LAYER,\n'
+              '    MAX_CONTROLS_TOTAL,\n'
+              '    advertised_extension_control_limits,\n'
+              ')\n',
+          )
+          replace_once(
+              api,
+              '    def catalog(self) -> dict[str, object]:\n'
+              '        limits = advertised_extension_control_limits()\n'
+              '        return {\n'
+              '            "schema_version": _EXTENSION_CONTROL_API_SCHEMA,\n'
+              '            "control_schema_version": CONTROL_SCHEMA_VERSION,\n'
+              '            "catalog_digest": self._registry.catalog_digest,\n'
+              '            "extensions": [extension.to_dict() for extension in self._registry.extensions],\n'
+              '            "limits": {\n'
+              '                **limits,\n'
+              '                "max_body_bytes": limits["max_catalog_payload_bytes"],\n'
+              '                "max_controls": limits["max_controls_total"],\n'
+              '            },\n'
+              '        }\n',
+              '    def catalog(self) -> dict[str, object]:\n'
+              '        limits = advertised_extension_control_limits()\n'
+              '        payload: dict[str, object] = {\n'
+              '            "schema_version": _EXTENSION_CONTROL_API_SCHEMA,\n'
+              '            "control_schema_version": CONTROL_SCHEMA_VERSION,\n'
+              '            "catalog_digest": self._registry.catalog_digest,\n'
+              '            "extensions": [extension.to_dict() for extension in self._registry.extensions],\n'
+              '            "limits": {\n'
+              '                **limits,\n'
+              '                "max_body_bytes": limits["max_catalog_payload_bytes"],\n'
+              '                "max_controls": limits["max_controls_total"],\n'
+              '            },\n'
+              '        }\n'
+              '        serialized = json.dumps(\n'
+              '            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True\n'
+              '        ).encode()\n'
+              '        if len(serialized) > MAX_CATALOG_PAYLOAD_BYTES:\n'
+              '            raise ExtensionControlApiError(413, "catalog_payload_limit_exceeded")\n'
+              '        return payload\n',
+          )
+
+          api_test = Path('tests/test_guard_extension_control_api.py')
+          replace_once(
+              api_test,
+              'from codex_plugin_scanner.guard.runtime.extension_control_proof import ExtensionControlProof\n',
+              'from codex_plugin_scanner.guard.runtime.extension_control_limits import (\n'
+              '    advertised_extension_control_limits,\n'
+              ')\n'
+              'from codex_plugin_scanner.guard.runtime.extension_control_proof import ExtensionControlProof\n',
+          )
+          replace_once(
+              api_test,
+              '    assert catalog["limits"] == {\n'
+              '        "max_body_bytes": 1_000_000,\n'
+              '        "max_controls": 4096,\n'
+              '        "max_observations": 2048,\n'
+              '    }\n',
+              '    limits = advertised_extension_control_limits()\n'
+              '    assert catalog["limits"] == {\n'
+              '        **limits,\n'
+              '        "max_body_bytes": limits["max_catalog_payload_bytes"],\n'
+              '        "max_controls": limits["max_controls_total"],\n'
+              '    }\n',
+          )
+
+          normalizer = Path('dashboard/src/extension-controls-normalize.ts')
+          replace_once(
+              normalizer,
+              'export const EXTENSION_CLIENT_LIMITS = Object.freeze({\n'
+              '  extensions: 256,\n'
+              '  rulesPerExtension: 1024,\n'
+              '  permissionsPerExtension: 1024,\n'
+              '  relationshipIds: 1024,\n'
+              '  controls: 4096,\n'
+              '  layers: 16,\n',
+              'export const EXTENSION_CLIENT_LIMITS = Object.freeze({\n'
+              '  extensions: 512,\n'
+              '  rulesPerExtension: 1024,\n'
+              '  permissionsPerExtension: 512,\n'
+              '  relationshipIds: 1024,\n'
+              '  controls: 1024,\n'
+              '  layers: 2,\n',
+          )
+
+          normalizer_test = Path('dashboard/src/extension-controls-normalize.test.ts')
+          replace_once(
+              normalizer_test,
+              'const oversized = catalog();\n'
+              'oversized.extensions = Array.from({ length: EXTENSION_CLIENT_LIMITS.extensions + 1 }, () => catalog().extensions[0]!);\n'
+              'assert.throws(() => normalizeExtensionCatalog(oversized), /exceeds/);\n',
+              'function catalogWithExtensionCount(count: number) {\n'
+              '  const payload = catalog();\n'
+              '  payload.extensions = Array.from({ length: count }, (_, index) => {\n'
+              '    const extensionId = `command.limit${index}`;\n'
+              '    const ruleId = `${extensionId}.rule`;\n'
+              '    const permissionId = `${extensionId}.permission.capability`;\n'
+              '    return {\n'
+              '      ...catalog().extensions[0]!,\n'
+              '      extension_id: extensionId,\n'
+              '      aliases: [],\n'
+              '      rules: [rule(ruleId)],\n'
+              '      permissions: [{\n'
+              '        ...permission(permissionId),\n'
+              '        extension_id: extensionId,\n'
+              '        rule_ids: [ruleId],\n'
+              '      }],\n'
+              '    };\n'
+              '  });\n'
+              '  return payload;\n'
+              '}\n'
+              'assert.equal(normalizeExtensionCatalog(catalogWithExtensionCount(511)).extensions.length, 511);\n'
+              'assert.equal(normalizeExtensionCatalog(catalogWithExtensionCount(512)).extensions.length, 512);\n'
+              'assert.throws(() => normalizeExtensionCatalog(catalogWithExtensionCount(513)), /exceeds 512 items/);\n',
+          )
+
+          limits_test = Path('tests/test_managed_controls_limits.py')
+          value = limits_test.read_text(encoding='utf-8')
+          if 'test_registry_extension_count_boundaries' not in value:
+              value = value.replace(
+                  'import json\nfrom pathlib import Path\n',
+                  'import json\nfrom dataclasses import replace\nfrom pathlib import Path\n',
+                  1,
+              )
+              value = value.replace(
+                  'from codex_plugin_scanner.guard.runtime.extension_control_limits import (\n',
+                  'from codex_plugin_scanner.guard.runtime.command_extensions import (\n'
+                  '    CommandSafetyExtension,\n'
+                  '    CommandSafetyExtensionRegistry,\n'
+                  ')\n'
+                  'from codex_plugin_scanner.guard.runtime.extension_control_limits import (\n',
+                  1,
+              )
+              value += '''\n\ndef _catalog_extension(index: int) -> CommandSafetyExtension:\n    return CommandSafetyExtension(\n        extension_id=f"command.limit{index}",\n        version="1.0.0",\n        name=f"Limit {index}",\n        description="Bounded catalog fixture.",\n        action_classes=(),\n        risk_classes=("supply_chain",),\n        safer_alternatives=("Review the requested capability.",),\n        delegated_protection="package-firewall",\n    )\n\n\n@pytest.mark.parametrize("count", [511, 512])\ndef test_registry_extension_count_boundaries_accept_limit_and_below(count: int) -> None:\n    registry = CommandSafetyExtensionRegistry(tuple(_catalog_extension(index) for index in range(count)))\n    assert len(registry.extensions) == count\n\n\ndef test_registry_extension_count_boundary_rejects_limit_plus_one() -> None:\n    with pytest.raises(ValueError, match="catalog extension limit"):\n        CommandSafetyExtensionRegistry(tuple(_catalog_extension(index) for index in range(513)))\n\n\ndef _extension_with_permissions(count: int) -> CommandSafetyExtension:\n    extension = _catalog_extension(9999)\n    template = extension.permissions[0]\n    permissions = tuple(\n        replace(\n            template,\n            permission_id=f"{extension.extension_id}.permission.p{index}",\n            typed_capabilities=(),\n        )\n        for index in range(count)\n    )\n    return replace(extension, permissions=permissions)\n\n\n@pytest.mark.parametrize("count", [511, 512])\ndef test_registry_permission_count_boundaries_accept_limit_and_below(count: int) -> None:\n    registry = CommandSafetyExtensionRegistry((_extension_with_permissions(count),))\n    assert len(registry.extensions[0].permissions) == count\n\n\ndef test_registry_permission_count_boundary_rejects_limit_plus_one() -> None:\n    with pytest.raises(ValueError, match="permission limit"):\n        CommandSafetyExtensionRegistry((_extension_with_permissions(513),))\n\n\ndef test_dashboard_catalog_limit_matches_shared_fixture() -> None:\n    fixture = json.loads(LIMITS_PATH.read_text(encoding="utf-8"))\n    source = (ROOT / "dashboard" / "src" / "extension-controls-normalize.ts").read_text(encoding="utf-8")\n    assert f"extensions: {fixture['max_catalog_extensions']}" in source\n    assert f"permissionsPerExtension: {fixture['max_permissions_per_extension']}" in source\n    assert f"controls: {fixture['max_controls_total']}" in source\n    assert f"layers: {fixture['max_control_layers']}" in source\n'''
+              limits_test.write_text(value, encoding='utf-8')
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: '0.9.26'
+          enable-cache: true
+      - name: Run focused Python verification
+        run: |
+          uv sync --frozen --extra dev --python 3.12
+          uv run --no-sync pytest tests/test_managed_controls_limits.py tests/test_guard_extension_control_api.py tests/test_guard_extension_control_catalog_detail.py --tb=short
+          uv run --no-sync ruff check src/codex_plugin_scanner/guard/runtime/command_extensions.py src/codex_plugin_scanner/guard/daemon/extension_control_api.py tests/test_managed_controls_limits.py tests/test_guard_extension_control_api.py tests/test_guard_extension_control_catalog_detail.py
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.3.14'
+      - name: Run focused dashboard verification
+        working-directory: dashboard
+        run: |
+          bun install --frozen-lockfile
+          bunx tsx src/extension-controls-normalize.test.ts
+          bun run build
+      - name: Commit review remediation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/codex_plugin_scanner/guard/runtime/command_extensions.py src/codex_plugin_scanner/guard/daemon/extension_control_api.py tests/test_guard_extension_control_api.py tests/test_managed_controls_limits.py dashboard/src/extension-controls-normalize.ts dashboard/src/extension-controls-normalize.test.ts src/codex_plugin_scanner/guard/daemon/static
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'fix: enforce bounded extension catalog contract'
+          git push origin HEAD:managed-controls/batch-02-actions-limits-clean
