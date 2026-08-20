@@ -1,12 +1,6 @@
-name: Temporary apply release 3 post-audit cleanup
+name: Temporary export release 3 post-audit source
 
 on:
-  pull_request:
-    branches:
-      - release/3.0
-    types: [opened, reopened, synchronize]
-    paths:
-      - .github/workflows/tmp-export-release3-post-audit-source.yml
   push:
     branches:
       - chore/release-3-post-audit-cleanup-20260819
@@ -15,88 +9,39 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-3-post-audit-cleanup-apply
+  group: release-3-post-audit-source-export
   cancel-in-progress: true
 
 jobs:
-  apply-validate-commit:
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+  export:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
-          ref: chore/release-3-post-audit-cleanup-20260819
-          fetch-depth: 0
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+          ref: release/3.0
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Archive exact release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > release-head.txt
+          tar \
+            --exclude=.git \
+            --exclude=.venv \
+            --exclude=dashboard/node_modules \
+            --exclude='**/__pycache__' \
+            -czf release-3-source.tar.gz .
+      - name: Upload source archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
-        with:
-          version: "0.9.26"
-          enable-cache: true
-          cache-dependency-glob: |
-            pyproject.toml
-            uv.lock
-      - name: Apply reviewed cleanup patch and remove delivery machinery
-        shell: bash
-        run: |
-          set -euo pipefail
-          base64 --decode .github/post-audit-patch/pr-a.b64 | gzip --decompress > "$RUNNER_TEMP/pr-a.patch"
-          git apply --index "$RUNNER_TEMP/pr-a.patch"
-          rm -f .github/workflows/tmp-export-release3-post-audit-source.yml
-          rm -f .github/post-audit-patch/pr-a.b64
-          rmdir .github/post-audit-patch 2>/dev/null || true
-          git add -A
-          git diff --cached --check
-      - name: Install locked development environment
-        shell: bash
-        run: uv sync --frozen --extra dev --python 3.12
-      - name: Validate formatting, typing, audit, evidence, and tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv run --no-sync ruff check \
-            scripts/ci/code_quality_ast.py \
-            scripts/ci/code_quality_audit.py \
-            scripts/ci/code_quality_report.py \
-            scripts/ci/workflow_hygiene.py \
-            tests/test_code_quality_audit.py
-          uv run --no-sync ruff format --check \
-            scripts/ci/code_quality_ast.py \
-            scripts/ci/code_quality_audit.py \
-            scripts/ci/code_quality_report.py \
-            scripts/ci/workflow_hygiene.py \
-            tests/test_code_quality_audit.py
-          uv run --no-sync basedpyright --level error
-          uv run --no-sync python -m compileall -q src scripts tests
-          uv run --no-sync pytest -q tests/test_code_quality_audit.py --tb=short
-          uv run --no-sync python scripts/ci/code_quality_audit.py \
-            --root . \
-            --baseline ci/code-quality-baseline.json \
-            --json-output "$RUNNER_TEMP/code-quality-audit.json"
-          cp tests/fixtures/guard-command-corpus/decision-diff-report.json "$RUNNER_TEMP/decision-diff-before.json"
-          uv run --no-sync python tests/guard_command_decision_diff.py --write
-          cmp "$RUNNER_TEMP/decision-diff-before.json" tests/fixtures/guard-command-corpus/decision-diff-report.json
-          uv run --no-sync python tests/guard_command_decision_diff.py --check
-          uv run --no-sync python scripts/ci/test_inventory.py --output "$RUNNER_TEMP/test-inventory.json"
-          uv run --no-sync python scripts/ci/test_suite_ratchet.py \
-            --baseline ci/test-suite-ratchet-baseline.json \
-            --inventory "$RUNNER_TEMP/test-inventory.json"
-          git diff --check
-          git diff --exit-code -- tests/fixtures/guard-command-corpus/decision-diff-report.json
-      - name: Commit exact validated tree
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "Michael Kantor"
-          git config user.email "6068672+kantorcodes@users.noreply.github.com"
-          git add -A
-          git diff --cached --check
-          test -n "$(git status --short)"
-          git commit -s -m "chore(release-3): remove post-audit residue and harden hygiene gates"
-          git pull --rebase origin chore/release-3-post-audit-cleanup-20260819
-          git push origin HEAD:chore/release-3-post-audit-cleanup-20260819
+          name: release-3-post-audit-source
+          path: |
+            release-3-source.tar.gz
+            release-head.txt
+          if-no-files-found: error
+          retention-days: 1
