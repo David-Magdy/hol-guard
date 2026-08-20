@@ -293,12 +293,13 @@ def validate_dsh_package(package: NormalizedPackage) -> DshValidation:
     raw_patch = bundle.get("patch") if isinstance(bundle, dict) else None
     patch = raw_patch.strip() if isinstance(raw_patch, str) else None
     patch_target = package.root_path / patch if patch else None
-    patch_ok = (
-        patch_target is not None
-        and is_safe_relative_path(package.root_path, patch, require_exists=True)
-        and patch_target.is_file()
-        and not patch_target.is_symlink()
-    )
+    patch_ok = False
+    if patch is not None and patch_target is not None:
+        patch_ok = (
+            is_safe_relative_path(package.root_path, patch, require_exists=True)
+            and patch_target.is_file()
+            and not patch_target.is_symlink()
+        )
 
     runtime_path = _runtime_path(manifest)
     runtime_target = package.root_path / runtime_path if runtime_path is not None else None
