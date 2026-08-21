@@ -6,7 +6,7 @@ from datetime import datetime
 
 from .managed_controls_policy_fields import (
     ManagedControlsPolicyError,
-    _is_mapping,
+    is_mapping,
     parse_managed_controls_policy_fields,
 )
 from .policy_bundle_trusted_keys import PolicyBundleVerificationKey
@@ -35,7 +35,7 @@ def validated_managed_controls_policy_bundle_v2_payload(
     if validated is None:
         return None, None, reason
     payload = validated.get("payload")
-    if not _is_mapping(payload):
+    if not is_mapping(payload):
         return None, None, "invalid_policy_document"
     try:
         parsed = parse_managed_controls_policy_fields(
