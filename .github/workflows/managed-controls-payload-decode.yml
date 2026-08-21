@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           cat .managed-controls-payload/part* | base64 --decode > payload.zst
-          zstd --decompress payload.zst --output payload.decoded
+          zstd --decompress payload.zst -o payload.decoded
           file payload.decoded | tee payload-type.txt
           sha256sum payload.zst payload.decoded | tee payload-sha256.txt
           if tar -tf payload.decoded >/tmp/payload-list.txt 2>/dev/null; then
