@@ -45,6 +45,11 @@ from ..runtime.local_mcp_probe import (
     mcp_launch_tokens,
     probe_stdio_mcp_server,
 )
+from ..runtime.package_json_scripts import (
+    looks_like_package_script_paste,
+    observe_workspace_package_scripts,
+    recognize_package_json_scripts,
+)
 
 if TYPE_CHECKING:
     from ..store import GuardStore
@@ -71,6 +76,7 @@ class LocalCliApiService:
 
     def list_items(self) -> dict[str, object]:
         labels = self._observe_harness_mcp_servers()
+        observe_workspace_package_scripts(self._store, home_dir=Path.home())
         items = apply_source_labels(self._store.list_local_cli_items(), labels)
         revision = self._store.read_local_cli_revision()
         return {
@@ -100,10 +106,29 @@ class LocalCliApiService:
         mcp_item = self._recognize_mcp(live_command or command, home_dir)
         if mcp_item is not None:
             return mcp_item
-        identity, code, message = recognize_operator_cli(command, cwd=home_dir, home_dir=home_dir)
+        operator_cwd = _operator_cwd(payload, home_dir=home_dir)
+        package_scripts = recognize_package_json_scripts(command, cwd=operator_cwd, home_dir=home_dir)
+        if package_scripts is not None:
+            identity = package_scripts.identity
+            self._store.record_local_cli_observation(
+                identity,
+                seen_at=utc_now(),
+                source_path="user-tool",
+                help_status="ok",
+                surface="package-scripts",
+            )
+            self._store.replace_local_cli_commands(identity.cli_id, package_scripts.commands)
+            return self._recognize_payload(identity.cli_id, identity.to_dict(), "ok", package_scripts.summary)
+        identity, code, message = recognize_operator_cli(command, cwd=operator_cwd, home_dir=home_dir)
+        if identity is None and looks_like_package_script_paste(command):
+            raise LocalCliApiError(
+                400,
+                "missing_package_json",
+                "Guard could not find package.json. Paste a project folder, package.json, or npm --prefix <dir> run.",
+            )
         if identity is None:
             raise LocalCliApiError(400, code, message)
-        commands, help_status, source_path = _discover_from_command(command, identity, home_dir)
+        commands, help_status, source_path = _discover_from_command(command, identity, operator_cwd, home_dir)
         self._store.record_local_cli_observation(
             identity,
             seen_at=utc_now(),
@@ -426,14 +451,33 @@ def _recognize_summary(name: str, help_status: str, command_count: int) -> str:
     )
 
 
+def _operator_cwd(payload: dict[str, object], *, home_dir: Path) -> Path:
+    raw = payload.get("cwd")
+    if isinstance(raw, str) and raw.strip():
+        candidate = Path(raw.strip()).expanduser()
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = None
+        if resolved is not None and resolved.is_dir():
+            return resolved
+    from ..runtime.package_json_scripts import find_nearest_package_json
+
+    process_cwd = Path.cwd()
+    if process_cwd.is_dir() and find_nearest_package_json(process_cwd, home_dir=home_dir) is not None:
+        return process_cwd
+    return home_dir
+
+
 def _discover_from_command(
     command: str,
     identity: UnlistedCliIdentity,
+    cwd: Path,
     home_dir: Path,
 ) -> tuple[tuple[LocalCliCommand, ...], str, str | None]:
     source_path: str | None = None
-    for candidate in local_cli_recognition_candidates(command, cwd=home_dir, home_dir=home_dir):
-        invocation = help_invocation_for_command(candidate, cwd=home_dir, home_dir=home_dir)
+    for candidate in local_cli_recognition_candidates(command, cwd=cwd, home_dir=home_dir):
+        invocation = help_invocation_for_command(candidate, cwd=cwd, home_dir=home_dir)
         if invocation is None:
             continue
         matched, argv = invocation
