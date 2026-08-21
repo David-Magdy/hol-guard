@@ -6,6 +6,11 @@ on:
       - managed-controls/batch-02-actions-limits-clean
     paths:
       - .github/workflows/managed-controls-source-snapshot.yml
+  pull_request:
+    branches:
+      - release/3.0
+    paths:
+      - .github/workflows/managed-controls-source-snapshot.yml
   workflow_dispatch:
 
 permissions:
