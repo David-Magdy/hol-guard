@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/extension-control-authority-stability
+      - managed-controls/batch-02-actions-limits-clean
   pull_request:
     branches:
       - release/3.0
@@ -43,5 +44,27 @@ jobs:
         with:
           name: hol-guard-release-3.0
           path: /tmp/hol-guard-release-3.0.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  guard-cloud:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out Guard Cloud source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          repository: hashgraph-online/points-portal
+          ref: managed-controls/full-implementation
+          fetch-depth: 0
+          persist-credentials: false
+          path: points-portal
+      - name: Create Guard Cloud source archive
+        run: tar --exclude=.git --exclude=node_modules --exclude=.next -czf /tmp/points-portal-source.tar.gz points-portal
+      - name: Upload Guard Cloud source archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: points-portal-source
+          path: /tmp/points-portal-source.tar.gz
           if-no-files-found: error
           retention-days: 1
