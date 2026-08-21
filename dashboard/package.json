@@ -4,7 +4,6 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "postinstall": "cd .. && uv run --no-sync python scripts/managed_controls_finalize_bootstrap.py",
     "test:operator-health": "bun src/operator-health.test.tsx",
     "build": "vite build",
     "pretest": "bun src/operator-health.test.tsx && tsx src/guard-daemon-origin.test.ts && tsx src/supply-chain-fix-all.test.tsx && tsx src/supply-chain-issues.test.ts && tsx src/scsr-phase09e-posture-banners.test.ts && tsx src/guard-action.test.ts && tsx src/authoritative-action-surfaces.test.tsx && tsx src/protection-health.test.ts && tsx src/protection-center/protection-landing.test.tsx",
