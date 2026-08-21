@@ -6,8 +6,6 @@ import re
 from dataclasses import dataclass
 from typing import Final, TypeGuard, cast
 
-from .policy_bundle_trusted_keys import PolicyBundleVerificationKey
-from .policy_bundle_v2 import validated_policy_bundle_v2_payload
 from .runtime.command_extensions import CommandSafetyExtensionRegistry
 from .runtime.extension_control_contract import (
     CONTROL_SCHEMA_VERSION,
@@ -288,46 +286,7 @@ def _parse_rule_targets(
     )
 
 
-def parse_managed_controls_policy_fields(
-    document: dict[str, object],
-    *,
-    registry: CommandSafetyExtensionRegistry,
-    negotiated_capabilities: frozenset[str],
-    package_firewall_supported: bool = False,
-) -> ParsedManagedControlsPolicy:
-    """Parse and materialize signed namespaced fields without changing legacy v2 behavior."""
-
-    controls_value = document.get(HOL_EXTENSION_CONTROLS_FIELD)
-    spec = _mapping(document.get("spec"), code="invalid_policy_document", label="GuardPolicy spec")
-    rules = spec.get("rules")
-    targets_present = isinstance(rules, list) and any(
-        _is_mapping(rule) and HOL_EXTENSION_TARGETS_FIELD in rule for rule in rules
-    )
-    controls_present = controls_value is not None
-    if not controls_present and not targets_present:
-        return ParsedManagedControlsPolicy(None, None, (), False, (), ())
-
-    _require_capabilities(
-        negotiated_capabilities,
-        controls_present=controls_present,
-        targets_present=targets_present,
-    )
-    rule_targets, delegated_rule_targets = _parse_rule_targets(
-        document,
-        registry,
-        package_firewall_supported=package_firewall_supported,
-    )
-
-    if not controls_present:
-        return ParsedManagedControlsPolicy(
-            None,
-            None,
-            (),
-            False,
-            rule_targets,
-            delegated_rule_targets,
-        )
-
+def _controls_header(controls_value: object) -> tuple[str, bool, list[object]]:
     controls_field = _mapping(
         controls_value,
         code="invalid_extension_controls",
@@ -357,128 +316,172 @@ def parse_managed_controls_policy_fields(
         raise ManagedControlsPolicyError(
             "invalid_authority", "Global lockdown requires managed-restrictive authority."
         )
-    controls_value_list = controls_field.get("controls")
-    if not isinstance(controls_value_list, list):
+    controls = controls_field.get("controls")
+    if not isinstance(controls, list):
         raise ManagedControlsPolicyError("invalid_shape", "Extension controls must be an array.")
-    if len(controls_value_list) > MAX_CONTROLS_PER_LAYER:
+    if len(controls) > MAX_CONTROLS_PER_LAYER:
         raise ManagedControlsPolicyError(
             "control_limit_exceeded", "Extension control layer exceeds the supported limit."
         )
+    return str(authority_mode), global_lockdown, controls
 
+
+def _append_control_projection(
+    raw_control: object,
+    *,
+    authority_mode: str,
+    registry: CommandSafetyExtensionRegistry,
+    package_firewall_supported: bool,
+    states_by_target: dict[ControlTarget, ControlState],
+    generic_controls: list[ExtensionControl],
+    managed_controls: list[ExtensionControl],
+    delegated_controls: set[DelegatedExtensionTarget],
+) -> None:
+    control, extension = _parse_control(raw_control, registry)
+    previous = states_by_target.get(control.target)
+    if previous is not None:
+        reason = "duplicate_target" if previous is control.state else "conflicting_target"
+        raise ManagedControlsPolicyError(
+            reason, "Duplicate or conflicting Extension controls are not allowed."
+        )
+    states_by_target[control.target] = control.state
+    if authority_mode == "managed-restrictive" and control.state is not ControlState.DISABLED:
+        raise ManagedControlsPolicyError(
+            "managed_restrictive_broadening",
+            "Managed-restrictive controls cannot enable a capability.",
+        )
+    if extension.delegated_protection is not None:
+        if not package_firewall_supported:
+            raise ManagedControlsPolicyError(
+                "unsupported_delegated_protection",
+                "Package Firewall is required for this control target.",
+            )
+        delegated_controls.add(DelegatedExtensionTarget(control.target))
+        return
+    if authority_mode == "managed-restrictive":
+        managed_controls.append(control)
+        return
+    if control.state is ControlState.ENABLED:
+        if control.target.kind is not ControlTargetKind.PERMISSION:
+            raise ManagedControlsPolicyError(
+                "shared_enable_requires_permission",
+                "Shared Cloud enablement must target one configurable permission.",
+            )
+        permission = registry.permission(control.target.target_id)
+        if permission is None or not permission.configurable:
+            raise ManagedControlsPolicyError(
+                "immutable_floor",
+                "Shared Cloud enablement cannot weaken an immutable permission floor.",
+            )
+    if control.target.kind is ControlTargetKind.EXTENSION and control.state is ControlState.DISABLED:
+        extension_value = registry.get(control.target.target_id)
+        if extension_value is not None and extension_value.required:
+            raise ManagedControlsPolicyError(
+                "immutable_floor",
+                "A required Extension cannot be disabled by shared Cloud posture.",
+            )
+    generic_controls.append(control)
+
+
+def _parse_controls_projection(
+    controls_value: object,
+    *,
+    registry: CommandSafetyExtensionRegistry,
+    package_firewall_supported: bool,
+    delegated_rule_targets: tuple[DelegatedExtensionTarget, ...],
+) -> tuple[
+    str,
+    ExtensionControlLayer | None,
+    tuple[ExtensionControl, ...],
+    bool,
+    tuple[DelegatedExtensionTarget, ...],
+]:
+    authority_mode, global_lockdown, raw_controls = _controls_header(controls_value)
     generic_controls: list[ExtensionControl] = []
     managed_controls: list[ExtensionControl] = []
     delegated_controls: set[DelegatedExtensionTarget] = set(delegated_rule_targets)
     states_by_target: dict[ControlTarget, ControlState] = {}
-    for raw_control in controls_value_list:
-        control, extension = _parse_control(raw_control, registry)
-        previous = states_by_target.get(control.target)
-        if previous is not None:
-            reason = "duplicate_target" if previous is control.state else "conflicting_target"
-            raise ManagedControlsPolicyError(
-                reason, "Duplicate or conflicting Extension controls are not allowed."
-            )
-        states_by_target[control.target] = control.state
-        if authority_mode == "managed-restrictive" and control.state is not ControlState.DISABLED:
-            raise ManagedControlsPolicyError(
-                "managed_restrictive_broadening",
-                "Managed-restrictive controls cannot enable a capability.",
-            )
-        if extension.delegated_protection is not None:
-            if not package_firewall_supported:
-                raise ManagedControlsPolicyError(
-                    "unsupported_delegated_protection",
-                    "Package Firewall is required for this control target.",
-                )
-            delegated_controls.add(DelegatedExtensionTarget(control.target))
-            continue
-        if authority_mode == "managed-restrictive":
-            managed_controls.append(control)
-            continue
-        if control.state is ControlState.ENABLED:
-            if control.target.kind is not ControlTargetKind.PERMISSION:
-                raise ManagedControlsPolicyError(
-                    "shared_enable_requires_permission",
-                    "Shared Cloud enablement must target one configurable permission.",
-                )
-            permission = registry.permission(control.target.target_id)
-            if permission is None or not permission.configurable:
-                raise ManagedControlsPolicyError(
-                    "immutable_floor",
-                    "Shared Cloud enablement cannot weaken an immutable permission floor.",
-                )
-        if control.target.kind is ControlTargetKind.EXTENSION and control.state is ControlState.DISABLED:
-            extension_value = registry.get(control.target.target_id)
-            if extension_value is not None and extension_value.required:
-                raise ManagedControlsPolicyError(
-                    "immutable_floor",
-                    "A required Extension cannot be disabled by shared Cloud posture.",
-                )
-        generic_controls.append(control)
-
+    for raw_control in raw_controls:
+        _append_control_projection(
+            raw_control,
+            authority_mode=authority_mode,
+            registry=registry,
+            package_firewall_supported=package_firewall_supported,
+            states_by_target=states_by_target,
+            generic_controls=generic_controls,
+            managed_controls=managed_controls,
+            delegated_controls=delegated_controls,
+        )
+    order = lambda item: (item.target.kind.value, item.target.target_id)
     signed_cloud_layer = (
         ExtensionControlLayer(
             schema_version=CONTROL_SCHEMA_VERSION,
             kind=ControlLayerKind.SIGNED_CLOUD,
             catalog_digest=registry.catalog_digest,
             global_lockdown=False,
-            controls=tuple(
-                sorted(
-                    generic_controls,
-                    key=lambda item: (item.target.kind.value, item.target.target_id),
-                )
-            ),
+            controls=tuple(sorted(generic_controls, key=order)),
         )
         if authority_mode in _SHARED_AUTHORITY_MODES
         else None
     )
-    return ParsedManagedControlsPolicy(
-        str(authority_mode),
+    return (
+        authority_mode,
         signed_cloud_layer,
-        tuple(
-            sorted(
-                managed_controls,
-                key=lambda item: (item.target.kind.value, item.target.target_id),
-            )
-        ),
+        tuple(sorted(managed_controls, key=order)),
         global_lockdown,
-        rule_targets,
-        tuple(
-            sorted(
-                delegated_controls,
-                key=lambda item: (item.target.kind.value, item.target.target_id),
-            )
-        ),
+        tuple(sorted(delegated_controls, key=order)),
     )
 
 
-def validated_managed_controls_policy_bundle_v2_payload(
-    policy_bundle: dict[str, object],
+def parse_managed_controls_policy_fields(
+    document: dict[str, object],
     *,
     registry: CommandSafetyExtensionRegistry,
     negotiated_capabilities: frozenset[str],
-    trusted_verification_keys: tuple[PolicyBundleVerificationKey, ...] = (),
-    anchored_verification_keys: tuple[PolicyBundleVerificationKey, ...] = (),
     package_firewall_supported: bool = False,
-):
-    """Validate the signed envelope first, then parse negotiated Extension semantics."""
+) -> ParsedManagedControlsPolicy:
+    """Parse and materialize signed namespaced fields without changing legacy v2 behavior."""
 
-    validated, reason = validated_policy_bundle_v2_payload(
-        policy_bundle,
-        trusted_verification_keys=trusted_verification_keys,
-        anchored_verification_keys=anchored_verification_keys,
+    controls_value = document.get(HOL_EXTENSION_CONTROLS_FIELD)
+    spec = _mapping(document.get("spec"), code="invalid_policy_document", label="GuardPolicy spec")
+    rules = spec.get("rules")
+    targets_present = isinstance(rules, list) and any(
+        _is_mapping(rule) and HOL_EXTENSION_TARGETS_FIELD in rule for rule in rules
     )
-    if validated is None:
-        return None, None, reason
-    payload = validated.get("payload")
-    if not _is_mapping(payload):
-        return None, None, "invalid_policy_document"
-    try:
-        parsed = parse_managed_controls_policy_fields(
-            payload,
-            registry=registry,
-            negotiated_capabilities=negotiated_capabilities,
-            package_firewall_supported=package_firewall_supported,
+    controls_present = controls_value is not None
+    if not controls_present and not targets_present:
+        return ParsedManagedControlsPolicy(None, None, (), False, (), ())
+    _require_capabilities(
+        negotiated_capabilities,
+        controls_present=controls_present,
+        targets_present=targets_present,
+    )
+    rule_targets, delegated_rule_targets = _parse_rule_targets(
+        document,
+        registry,
+        package_firewall_supported=package_firewall_supported,
+    )
+    if not controls_present:
+        return ParsedManagedControlsPolicy(
+            None, None, (), False, rule_targets, delegated_rule_targets
         )
-    except ManagedControlsPolicyError as error:
-        return None, None, error.code
-    return validated, parsed, None
+    (
+        authority_mode,
+        signed_cloud_layer,
+        managed_controls,
+        global_lockdown,
+        delegated_targets,
+    ) = _parse_controls_projection(
+        controls_value,
+        registry=registry,
+        package_firewall_supported=package_firewall_supported,
+        delegated_rule_targets=delegated_rule_targets,
+    )
+    return ParsedManagedControlsPolicy(
+        authority_mode,
+        signed_cloud_layer,
+        managed_controls,
+        global_lockdown,
+        rule_targets,
+        delegated_targets,
+    )
