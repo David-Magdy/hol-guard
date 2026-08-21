@@ -191,7 +191,7 @@ def identity_for_package_json(manifest_path: Path, *, runner: str) -> UnlistedCl
     identity_hash = hashlib.sha256(
         json.dumps(
             {
-                "kind": "package-scripts",
+                "kind": _PACKAGE_SCRIPT_SURFACE,
                 "content_sha256": digest,
                 "path_fingerprint": path_fingerprint,
             },
@@ -296,31 +296,6 @@ def find_nearest_package_json(start: Path, *, home_dir: Path | None = None) -> P
             return None
         current = parent
     return None
-
-
-def observe_workspace_package_scripts(store: object, *, home_dir: Path) -> None:
-    """Offer package.json scripts from the Guard process working directory."""
-
-    from ..local_cli_trust import utc_now
-
-    recorder = getattr(store, "record_local_cli_observation", None)
-    replace_commands = getattr(store, "replace_local_cli_commands", None)
-    if not callable(recorder) or not callable(replace_commands):
-        return
-    cwd = Path.cwd()
-    if not cwd.is_dir():
-        return
-    discovery = recognize_package_json_scripts("npm run", cwd=cwd, home_dir=home_dir)
-    if discovery is None:
-        return
-    recorder(
-        discovery.identity,
-        seen_at=utc_now(),
-        source_path="user-tool",
-        help_status="ok",
-        surface=_PACKAGE_SCRIPT_SURFACE,
-    )
-    replace_commands(discovery.identity.cli_id, discovery.commands)
 
 
 def looks_like_package_script_paste(command_text: str) -> bool:
