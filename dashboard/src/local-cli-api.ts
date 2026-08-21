@@ -145,6 +145,39 @@ export function filterExtensionSuggestions(
   return items.filter((item) => suggestionMatchesQuery(item, needle));
 }
 
+export function preferredPackageScriptExtension(items: readonly LocalCliItem[]): LocalCliItem | null {
+  return suggestedPackageScriptExtensions(items).find((item) => item.commands.length > 0) ?? null;
+}
+
+export function looksLikeProjectRelocatePaste(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (/(^|\/)package\.json$/i.test(trimmed)) return true;
+  if (!trimmed.includes(" ") && (trimmed.includes("/") || trimmed.includes("\\") || trimmed === ".")) {
+    return true;
+  }
+  return /\s(--prefix|-C|--dir|--cwd|--workspace-dir)(=|\s)/i.test(trimmed);
+}
+
+export function filterPackageScriptCommands(
+  commands: readonly LocalCliCommand[],
+  query: string,
+): LocalCliCommand[] {
+  const needle = packageScriptFilterNeedle(query);
+  if (!needle) return [...commands];
+  return commands.filter((command) => commandMatchesQuery(command, needle));
+}
+
+export function commandMatchesQuery(command: LocalCliCommand, needle: string): boolean {
+  return [command.name, command.usage, command.description].some((value) => value.toLowerCase().includes(needle));
+}
+
+function packageScriptFilterNeedle(query: string): string {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return "";
+  return trimmed.replace(/^(npm|pnpm|yarn|bun)(?:\.cmd)?(?:\s+run(?:-script)?)?\s*/, "").trim();
+}
+
 export function seenSuggestionMeta(item: LocalCliItem): string {
   if (item.observed_count <= 0) {
     return item.kind === "script" ? "Script" : "Tool";
@@ -166,8 +199,13 @@ function compareSeenSuggestions(left: LocalCliItem, right: LocalCliItem): number
 }
 
 function suggestionMatchesQuery(item: LocalCliItem, needle: string): boolean {
+  const compact = packageScriptFilterNeedle(needle) || needle;
   const haystacks = [item.name, item.example_label, item.source_label ?? ""];
-  return haystacks.some((value) => value.toLowerCase().includes(needle));
+  if (haystacks.some((value) => value.toLowerCase().includes(needle) || value.toLowerCase().includes(compact))) {
+    return true;
+  }
+  if (item.surface !== "package-scripts") return false;
+  return item.commands.some((command) => commandMatchesQuery(command, compact));
 }
 
 export function normalizeLocalCliItem(value: unknown): LocalCliItem {

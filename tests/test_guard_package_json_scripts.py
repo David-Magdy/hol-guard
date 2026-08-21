@@ -229,3 +229,86 @@ def test_allowed_nested_script_grant_matches_live_command(tmp_path: Path) -> Non
         )
         == "review"
     )
+
+
+def test_hook_remembers_real_package_json_path(tmp_path: Path) -> None:
+    project = _write_package(tmp_path / "app", scripts={"guard:audit": "tsx audit.ts"})
+    home = tmp_path / "home"
+    home.mkdir()
+    store = GuardStore(home)
+    observe_unlisted_cli(
+        store=store,
+        command="pnpm run guard:audit",
+        cwd=project,
+        home_dir=home,
+    )
+    stored = store.list_local_cli_items()[0]
+    assert stored["surface"] == "package-scripts"
+    assert stored["source_path"] == str((project / "package.json").resolve())
+
+
+def test_list_items_redacts_remembered_package_paths(tmp_path: Path) -> None:
+    project = _write_package(tmp_path / "ads-app", scripts={"guard:reddit-targeting:audit": "tsx audit.ts"})
+    home = tmp_path / "home"
+    home.mkdir()
+    service = LocalCliApiService(store=GuardStore(home))
+    _ = service.recognize({"command": "pnpm run", "cwd": str(project)})
+    payload = service.list_items()
+    items = payload["items"]
+    assert isinstance(items, list)
+    package_items = [item for item in items if isinstance(item, dict) and item.get("surface") == "package-scripts"]
+    listed = next(item for item in package_items if item.get("source_label") == "ads-app")
+    assert listed["source_path"] == "user-tool"
+    assert listed["source_label"] == "ads-app"
+    serialized = str(payload)
+    assert str(project) not in serialized
+    assert "package.json" not in str(listed["source_path"])
+    names = {str(command["name"]) for command in listed["commands"] if isinstance(command, dict)}
+    assert "guard:reddit-targeting:audit" in names
+
+
+def test_recognize_uses_remembered_project_without_prefix(tmp_path: Path) -> None:
+    project = _write_package(
+        tmp_path / "app",
+        scripts={"guard:reddit-targeting:audit": "tsx audit.ts", "build": "vite build"},
+    )
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    service = LocalCliApiService(store=GuardStore(home))
+    first = service.recognize({"command": "pnpm run", "cwd": str(project)})
+    second = service.recognize({"command": "npm run guard:reddit-targeting:audit", "cwd": str(empty)})
+    first_item = first["item"]
+    second_item = second["item"]
+    assert isinstance(first_item, dict)
+    assert isinstance(second_item, dict)
+    assert first_item["cli_id"] == second_item["cli_id"]
+    assert second_item["source_path"] == "user-tool"
+    names = {str(command["name"]) for command in second_item["commands"] if isinstance(command, dict)}
+    assert "guard:reddit-targeting:audit" in names
+
+
+def test_refresh_includes_workspace_packages(tmp_path: Path) -> None:
+    root = tmp_path / "mono"
+    nested = root / "packages" / "ads"
+    nested.mkdir(parents=True)
+    (root / "package.json").write_text(
+        '{"name":"mono","private":true,"workspaces":["packages/*"],"scripts":{"lint":"echo lint"}}\n',
+        encoding="utf-8",
+    )
+    _write_package(nested, scripts={"guard:reddit-targeting:audit": "tsx audit.ts"}, name="ads")
+    home = tmp_path / "home"
+    home.mkdir()
+    service = LocalCliApiService(store=GuardStore(home))
+    _ = service.recognize({"command": "pnpm run", "cwd": str(root)})
+    payload = service.list_items()
+    items = payload["items"]
+    assert isinstance(items, list)
+    labels = {
+        str(item.get("source_label") or item.get("name"))
+        for item in items
+        if isinstance(item, dict) and item.get("surface") == "package-scripts"
+    }
+    assert "mono" in labels
+    assert "ads" in labels
