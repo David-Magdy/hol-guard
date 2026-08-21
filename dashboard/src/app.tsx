@@ -21,6 +21,7 @@ import {
   repairProtectionCheck,
   runHarnessAction,
   resolveRequestWithQueueResult,
+  GuardRequestResolutionError,
   retryResume,
 } from "./guard-api";
 import { ApprovalCenterLayout, type BulkGateCredentials } from "./approval-center-layout";
@@ -658,7 +659,19 @@ export function App() {
     resolutionInFlight.current = true;
     const queuedItemsSnapshot = requests.kind === "ready" ? requests.items : [];
     try {
-      const result = await resolveRequestWithQueueResult(payload);
+      const result = await resolveRequestWithQueueResult(payload).catch(async (error: unknown) => {
+        if (
+          error instanceof GuardRequestResolutionError &&
+          error.status === 409 &&
+          error.payload?.["error"] === "stale_scope_contract"
+        ) {
+          await refreshStateAfterAction();
+          throw new Error(
+            "This request changed while you were reviewing it. Guard refreshed the current action and scopes; review them, then retry.",
+          );
+        }
+        throw error;
+      });
       const nextId = selectNextAfterResolution(result, queuedItemsSnapshot);
       const resume = result.codex_resume ?? null;
       setCodexResume(resume);

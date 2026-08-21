@@ -10,6 +10,19 @@ export type ApprovalScopeChoice = {
   description: string;
 };
 
+export function approvalDecisionSubjectKey(item: GuardApprovalRequest): string {
+  return JSON.stringify([
+    item.request_id,
+    item.harness,
+    item.artifact_id ?? null,
+    item.artifact_type ?? null,
+    item.artifact_hash ?? null,
+    item.action_identity ?? null,
+    item.raw_command_text ?? null,
+    item.workspace ?? null,
+  ]);
+}
+
 export const DEFAULT_SCOPE_CHOICES: ApprovalScopeChoice[] = [
   {
     value: "artifact",

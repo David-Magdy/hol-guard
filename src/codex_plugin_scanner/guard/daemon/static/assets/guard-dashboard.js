@@ -516,7 +516,7 @@ var hasRequiredScheduler_production;
 function requireScheduler_production() {
   if (hasRequiredScheduler_production) return scheduler_production;
   hasRequiredScheduler_production = 1;
-  (function(exports) {
+  (function(exports$1) {
     function push(heap, node) {
       var index = heap.length;
       heap.push(node);
@@ -550,15 +550,15 @@ function requireScheduler_production() {
       var diff = a.sortIndex - b.sortIndex;
       return 0 !== diff ? diff : a.id - b.id;
     }
-    exports.unstable_now = void 0;
+    exports$1.unstable_now = void 0;
     if ("object" === typeof performance && "function" === typeof performance.now) {
       var localPerformance = performance;
-      exports.unstable_now = function() {
+      exports$1.unstable_now = function() {
         return localPerformance.now();
       };
     } else {
       var localDate = Date, initialTime = localDate.now();
-      exports.unstable_now = function() {
+      exports$1.unstable_now = function() {
         return localDate.now() - initialTime;
       };
     }
@@ -585,12 +585,12 @@ function requireScheduler_production() {
     }
     var isMessageLoopRunning = false, taskTimeoutID = -1, frameInterval = 5, startTime = -1;
     function shouldYieldToHost() {
-      return needsPaint ? true : exports.unstable_now() - startTime < frameInterval ? false : true;
+      return needsPaint ? true : exports$1.unstable_now() - startTime < frameInterval ? false : true;
     }
     function performWorkUntilDeadline() {
       needsPaint = false;
       if (isMessageLoopRunning) {
-        var currentTime = exports.unstable_now();
+        var currentTime = exports$1.unstable_now();
         startTime = currentTime;
         var hasMoreWork = true;
         try {
@@ -610,7 +610,7 @@ function requireScheduler_production() {
                     var continuationCallback = callback(
                       currentTask.expirationTime <= currentTime
                     );
-                    currentTime = exports.unstable_now();
+                    currentTime = exports$1.unstable_now();
                     if ("function" === typeof continuationCallback) {
                       currentTask.callback = continuationCallback;
                       advanceTimers(currentTime);
@@ -660,27 +660,27 @@ function requireScheduler_production() {
       };
     function requestHostTimeout(callback, ms) {
       taskTimeoutID = localSetTimeout(function() {
-        callback(exports.unstable_now());
+        callback(exports$1.unstable_now());
       }, ms);
     }
-    exports.unstable_IdlePriority = 5;
-    exports.unstable_ImmediatePriority = 1;
-    exports.unstable_LowPriority = 4;
-    exports.unstable_NormalPriority = 3;
-    exports.unstable_Profiling = null;
-    exports.unstable_UserBlockingPriority = 2;
-    exports.unstable_cancelCallback = function(task) {
+    exports$1.unstable_IdlePriority = 5;
+    exports$1.unstable_ImmediatePriority = 1;
+    exports$1.unstable_LowPriority = 4;
+    exports$1.unstable_NormalPriority = 3;
+    exports$1.unstable_Profiling = null;
+    exports$1.unstable_UserBlockingPriority = 2;
+    exports$1.unstable_cancelCallback = function(task) {
       task.callback = null;
     };
-    exports.unstable_forceFrameRate = function(fps) {
+    exports$1.unstable_forceFrameRate = function(fps) {
       0 > fps || 125 < fps ? console.error(
         "forceFrameRate takes a positive int between 0 and 125, forcing frame rates higher than 125 fps is not supported"
       ) : frameInterval = 0 < fps ? Math.floor(1e3 / fps) : 5;
     };
-    exports.unstable_getCurrentPriorityLevel = function() {
+    exports$1.unstable_getCurrentPriorityLevel = function() {
       return currentPriorityLevel;
     };
-    exports.unstable_next = function(eventHandler) {
+    exports$1.unstable_next = function(eventHandler) {
       switch (currentPriorityLevel) {
         case 1:
         case 2:
@@ -698,10 +698,10 @@ function requireScheduler_production() {
         currentPriorityLevel = previousPriorityLevel;
       }
     };
-    exports.unstable_requestPaint = function() {
+    exports$1.unstable_requestPaint = function() {
       needsPaint = true;
     };
-    exports.unstable_runWithPriority = function(priorityLevel, eventHandler) {
+    exports$1.unstable_runWithPriority = function(priorityLevel, eventHandler) {
       switch (priorityLevel) {
         case 1:
         case 2:
@@ -720,8 +720,8 @@ function requireScheduler_production() {
         currentPriorityLevel = previousPriorityLevel;
       }
     };
-    exports.unstable_scheduleCallback = function(priorityLevel, callback, options) {
-      var currentTime = exports.unstable_now();
+    exports$1.unstable_scheduleCallback = function(priorityLevel, callback, options) {
+      var currentTime = exports$1.unstable_now();
       "object" === typeof options && null !== options ? (options = options.delay, options = "number" === typeof options && 0 < options ? currentTime + options : currentTime) : options = currentTime;
       switch (priorityLevel) {
         case 1:
@@ -751,8 +751,8 @@ function requireScheduler_production() {
       options > currentTime ? (priorityLevel.sortIndex = options, push(timerQueue, priorityLevel), null === peek(taskQueue) && priorityLevel === peek(timerQueue) && (isHostTimeoutScheduled ? (localClearTimeout(taskTimeoutID), taskTimeoutID = -1) : isHostTimeoutScheduled = true, requestHostTimeout(handleTimeout, options - currentTime))) : (priorityLevel.sortIndex = timeout, push(taskQueue, priorityLevel), isHostCallbackScheduled || isPerformingWork || (isHostCallbackScheduled = true, isMessageLoopRunning || (isMessageLoopRunning = true, schedulePerformWorkUntilDeadline())));
       return priorityLevel;
     };
-    exports.unstable_shouldYield = shouldYieldToHost;
-    exports.unstable_wrapCallback = function(callback) {
+    exports$1.unstable_shouldYield = shouldYieldToHost;
+    exports$1.unstable_wrapCallback = function(callback) {
       var parentPriorityLevel = currentPriorityLevel;
       return function() {
         var previousPriorityLevel = currentPriorityLevel;
@@ -13119,6 +13119,18 @@ function groupByCategory(receipts) {
   }
   return map;
 }
+function approvalDecisionSubjectKey(item) {
+  return JSON.stringify([
+    item.request_id,
+    item.harness,
+    item.artifact_id ?? null,
+    item.artifact_type ?? null,
+    item.artifact_hash ?? null,
+    item.action_identity ?? null,
+    item.raw_command_text ?? null,
+    item.workspace ?? null
+  ]);
+}
 const DEFAULT_SCOPE_CHOICES = [
   {
     value: "artifact",
@@ -15981,6 +15993,18 @@ async function requestErrorMessage(response, fallback) {
   }
   return fallback;
 }
+class GuardRequestResolutionError extends Error {
+  status;
+  payload;
+  constructor(status, payload, fallback) {
+    const error = typeof payload?.["error"] === "string" ? payload["error"] : null;
+    const message = typeof payload?.["message"] === "string" ? payload["message"] : null;
+    super(message?.trim() || (error?.trim() ? `${error} (${status})` : fallback));
+    this.name = "GuardRequestResolutionError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
 class GuardHarnessActionError extends Error {
   status;
   payload;
@@ -18139,7 +18163,18 @@ async function resolveRequestWithQueueResult(input) {
   });
   const response = await fetchGuardApi(path, init());
   if (!response.ok) {
-    throw new Error(await requestErrorMessage(response, `Request failed with ${response.status}`));
+    let payload2 = null;
+    try {
+      const candidate = await response.clone().json();
+      payload2 = isRecord$1(candidate) ? candidate : null;
+    } catch {
+      payload2 = null;
+    }
+    throw new GuardRequestResolutionError(
+      response.status,
+      payload2,
+      await requestErrorMessage(response, `Request failed with ${response.status}`)
+    );
   }
   const payload = await response.json();
   return normalizeQueueResolution(payload);
@@ -28927,6 +28962,7 @@ function ReviewDecisionCard(props) {
   const watchOnlyObservation = item !== null && isWatchOnlyObservation(item);
   const hasAllowScope = availableScopeChoices.length + advancedScopeOptions.length > 0;
   const decisionContractKey = item ? `${item.request_id}:${item.scope_contract_version ?? "legacy"}:${item.scope_contract_digest ?? "legacy"}` : null;
+  const decisionSubjectKey = item ? approvalDecisionSubjectKey(item) : null;
   reactExports.useEffect(() => {
     if (item) {
       setAllowScope(recommendedScopeForAction(item, "allow") ?? "artifact");
@@ -28958,7 +28994,19 @@ function ReviewDecisionCard(props) {
         setLocalToolGrantDuration("once");
       }
     }
-  }, [item?.request_id, item?.scope_contract_version, item?.scope_contract_digest]);
+  }, [decisionSubjectKey]);
+  reactExports.useEffect(() => {
+    if (!item) return;
+    setAllowScope(
+      (current) => normalizeDecisionScope(item, "allow", current) ?? recommendedScopeForAction(item, "allow") ?? "artifact"
+    );
+    setBlockScope(
+      (current) => normalizeDecisionScope(item, "block", current) ?? recommendedScopeForAction(item, "block") ?? "artifact"
+    );
+    if (item.exact_action_persistence_eligible !== true) {
+      setRememberExactAction(false);
+    }
+  }, [item, item?.scope_contract_version, item?.scope_contract_digest]);
   reactExports.useEffect(() => {
     const selection = validTemporaryMcpSelection(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration);
     if (selection.target !== mcpGrantTarget) setMcpGrantTarget(selection.target);
@@ -30970,7 +31018,15 @@ function App() {
     resolutionInFlight.current = true;
     const queuedItemsSnapshot = requests.kind === "ready" ? requests.items : [];
     try {
-      const result = await resolveRequestWithQueueResult(payload);
+      const result = await resolveRequestWithQueueResult(payload).catch(async (error) => {
+        if (error instanceof GuardRequestResolutionError && error.status === 409 && error.payload?.["error"] === "stale_scope_contract") {
+          await refreshStateAfterAction();
+          throw new Error(
+            "This request changed while you were reviewing it. Guard refreshed the current action and scopes; review them, then retry."
+          );
+        }
+        throw error;
+      });
       const nextId = selectNextAfterResolution(result, queuedItemsSnapshot);
       const resume = result.codex_resume ?? null;
       setCodexResume(resume);
@@ -31295,8 +31351,8 @@ export {
   HiMiniXCircle as U,
   HiMiniClipboardDocumentCheck as V,
   HiMiniClipboard as W,
-  getDefaultExportFromCjs as X,
-  React as Y,
+  requireReact as X,
+  getDefaultExportFromCjs as Y,
   HiMiniKey as Z,
   HiMiniLockClosed as _,
   EvidenceActivityHeatmapMini as a,

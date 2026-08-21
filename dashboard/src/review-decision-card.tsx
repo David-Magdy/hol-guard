@@ -18,8 +18,10 @@ import {
 } from "./approval-center-utils";
 import { ApprovalPasswordModal } from "./approval-center-review-cards";
 import {
+  approvalDecisionSubjectKey,
   advancedScopeChoicesForRequest,
   buildDecisionPayload,
+  normalizeDecisionScope,
   recommendedScopeForAction,
   scopeChoicesForRequest,
   standardScopeChoicesForRequest,
@@ -142,6 +144,7 @@ export function ReviewDecisionCard(props: {
   const decisionContractKey = item
     ? `${item.request_id}:${item.scope_contract_version ?? "legacy"}:${item.scope_contract_digest ?? "legacy"}`
     : null;
+  const decisionSubjectKey = item ? approvalDecisionSubjectKey(item) : null;
 
   useEffect(() => {
     if (item) {
@@ -174,7 +177,20 @@ export function ReviewDecisionCard(props: {
         setLocalToolGrantDuration("once");
       }
     }
-  }, [item?.request_id, item?.scope_contract_version, item?.scope_contract_digest]);
+  }, [decisionSubjectKey]);
+
+  useEffect(() => {
+    if (!item) return;
+    setAllowScope((current) =>
+      normalizeDecisionScope(item, "allow", current) ?? recommendedScopeForAction(item, "allow") ?? "artifact"
+    );
+    setBlockScope((current) =>
+      normalizeDecisionScope(item, "block", current) ?? recommendedScopeForAction(item, "block") ?? "artifact"
+    );
+    if (item.exact_action_persistence_eligible !== true) {
+      setRememberExactAction(false);
+    }
+  }, [item, item?.scope_contract_version, item?.scope_contract_digest]);
 
   useEffect(() => {
     const selection = validTemporaryMcpSelection(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration);

@@ -628,6 +628,99 @@ def test_codex_review_queue_retains_exact_shell_action_for_remembered_policy(
     assert pending[0]["exact_action_persistence_eligible"] is True
 
 
+def test_durable_exact_shell_approval_survives_reapproval_and_repeated_retries(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    command = f"rm {workspace / 'obsolete.py'}"
+    payload = {
+        **_generic_payload(),
+        "hook_event_name": "PreToolUse",
+        "permission_mode": "ask",
+        "tool_name": "bash",
+        "tool_input": {"command": command},
+    }
+    action_envelope = normalize_harness_payload(
+        "pi",
+        "PreToolUse",
+        payload,
+        workspace=workspace,
+        home_dir=tmp_path,
+    )
+    store = GuardStore(tmp_path / "guard-home")
+    config = GuardConfig(
+        guard_home=tmp_path / "guard-home",
+        workspace=workspace,
+        default_action="require-reapproval",
+    )
+
+    first_rc, _first_output = _run_generic_hook(
+        capsys=capsys,
+        config=config,
+        payload=payload,
+        store=store,
+        workspace=workspace,
+        harness="pi",
+        action_envelope=action_envelope,
+    )
+    assert first_rc == 2
+    pending = store.list_approval_requests(limit=10)
+    assert len(pending) == 1
+    original_request_id = str(pending[0]["request_id"])
+    approvals_module.apply_approval_resolution(
+        store=store,
+        request_id=original_request_id,
+        action="allow",
+        scope="artifact",
+        workspace=None,
+        reason="always allow exact action",
+        persist_policy=True,
+        scope_contract_version=str(pending[0]["scope_contract_version"]),
+        scope_contract_digest=str(pending[0]["scope_contract_digest"]),
+    )
+
+    for _ in range(2):
+        retry_rc, retry_output = _run_generic_hook(
+            capsys=capsys,
+            config=config,
+            payload=payload,
+            store=store,
+            workspace=workspace,
+            harness="pi",
+            action_envelope=action_envelope,
+        )
+        assert retry_rc == 0, json.dumps(retry_output, sort_keys=True)
+        assert retry_output["policy_action"] == "allow"
+    assert store.list_approval_requests(limit=10) == []
+    assert store.get_approval_request(original_request_id)["status"] == "resolved"
+
+    changed_payload = {
+        **payload,
+        "tool_input": {"command": f"rm {workspace / 'different.py'}"},
+    }
+    changed_envelope = normalize_harness_payload(
+        "pi",
+        "PreToolUse",
+        changed_payload,
+        workspace=workspace,
+        home_dir=tmp_path,
+    )
+    changed_rc, changed_output = _run_generic_hook(
+        capsys=capsys,
+        config=config,
+        payload=changed_payload,
+        store=store,
+        workspace=workspace,
+        harness="pi",
+        action_envelope=changed_envelope,
+    )
+    assert changed_rc == 2
+    assert changed_output["decision"] == "deny"
+    assert len(store.list_approval_requests(limit=10)) == 1
+
+
 def test_watch_only_exact_allow_requires_review_after_enforcement_is_enabled(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

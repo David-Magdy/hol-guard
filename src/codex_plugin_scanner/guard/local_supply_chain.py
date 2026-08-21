@@ -39,6 +39,7 @@ from .runtime.approval_context import (
     approval_context_tokens_validation_reason,
     build_approval_context_token,
     build_runtime_launch_identity,
+    parse_approval_context_token,
     resolved_runtime_launch_argv,
     runtime_launch_identity_is_reusable,
 )
@@ -2235,12 +2236,14 @@ def _resolve_stored_package_policy_override(
     fresh_local_approval = isinstance(decision, dict) and (
         _is_fresh_artifact_approval(decision) or legacy_local_approval
     )
+    durable_exact_approval = isinstance(decision, dict) and _is_durable_exact_artifact_approval(decision)
     reuse = evaluate_approval_reuse(
         effective_current_action,
         action,
         saved_decision_present=True,
         validation_reason=validation_reason,
         fresh_local_approval=fresh_local_approval,
+        durable_exact_approval=durable_exact_approval,
     )
     claim_disposition: _PackageApprovalClaimDisposition | None = None
     disposition_resolver = getattr(store, "approval_reuse_claim_disposition", None)
@@ -2339,6 +2342,19 @@ def _is_fresh_artifact_approval(decision: dict[str, object]) -> bool:
         and decision.get("source") == "approval-gate"
         and decision.get("scope") == "artifact"
         and isinstance(decision.get("expires_at"), str)
+    )
+
+
+def _is_durable_exact_artifact_approval(decision: dict[str, object]) -> bool:
+    decision_id = decision.get("decision_id")
+    return (
+        isinstance(decision_id, int)
+        and not isinstance(decision_id, bool)
+        and decision.get("action") == "allow"
+        and decision.get("source") == "approval-gate"
+        and decision.get("scope") == "artifact"
+        and decision.get("expires_at") is None
+        and parse_approval_context_token(decision.get("artifact_hash")) is not None
     )
 
 
