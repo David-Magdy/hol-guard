@@ -102,13 +102,8 @@ class ExtensionControlApiService:
                 "max_controls": limits["max_controls_total"],
             },
         }
-        serialized = json.dumps(
-            payload,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-        ).encode()
-        if len(serialized) > MAX_CATALOG_PAYLOAD_BYTES:
+        wire_body = json.dumps(payload).encode("utf-8")
+        if len(wire_body) > MAX_CATALOG_PAYLOAD_BYTES:
             raise ExtensionControlApiError(413, "catalog_payload_limit_exceeded")
         return payload
 

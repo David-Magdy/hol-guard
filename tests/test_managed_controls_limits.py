@@ -26,14 +26,7 @@ from codex_plugin_scanner.guard.runtime.extension_control_limits import (
 
 ROOT = Path(__file__).resolve().parents[1]
 LIMITS_PATH = ROOT / "contracts" / "managed-controls" / "v1" / "limits.json"
-API_PATH = (
-    ROOT
-    / "src"
-    / "codex_plugin_scanner"
-    / "guard"
-    / "daemon"
-    / "extension_control_api.py"
-)
+API_PATH = ROOT / "src" / "codex_plugin_scanner" / "guard" / "daemon" / "extension_control_api.py"
 NAVIGATION_PATH = ROOT / "dashboard" / "src" / "shell-navigation-model.ts"
 RULES_PAGE_PATH = ROOT / "dashboard" / "src" / "policy-workspace-page.tsx"
 DASHBOARD_LIMITS_PATH = ROOT / "dashboard" / "src" / "extension-controls-normalize.ts"
@@ -42,9 +35,7 @@ DASHBOARD_LIMITS_PATH = ROOT / "dashboard" / "src" / "extension-controls-normali
 def test_shared_limits_fixture_matches_runtime_constants() -> None:
     fixture = json.loads(LIMITS_PATH.read_text(encoding="utf-8"))
     assert fixture == advertised_extension_control_limits()
-    assert fixture["max_controls_total"] == (
-        fixture["max_control_layers"] * fixture["max_controls_per_layer"]
-    )
+    assert fixture["max_controls_total"] == (fixture["max_control_layers"] * fixture["max_controls_per_layer"])
 
 
 @pytest.mark.parametrize("count", [MAX_CONTROLS_PER_LAYER - 1, MAX_CONTROLS_PER_LAYER])
@@ -53,9 +44,10 @@ def test_per_layer_control_boundary_accepts_limit_and_below(count: int) -> None:
 
 
 def test_per_layer_control_boundary_rejects_limit_plus_one() -> None:
-    assert extension_control_limit_violation(
-        layer_sizes=(MAX_CONTROLS_PER_LAYER + 1,)
-    ) is ExtensionControlLimitViolation.PER_LAYER
+    assert (
+        extension_control_limit_violation(layer_sizes=(MAX_CONTROLS_PER_LAYER + 1,))
+        is ExtensionControlLimitViolation.PER_LAYER
+    )
 
 
 @pytest.mark.parametrize("layer_count", [MAX_CONTROL_LAYERS - 1, MAX_CONTROL_LAYERS])
@@ -64,16 +56,15 @@ def test_layer_boundary_accepts_limit_and_below(layer_count: int) -> None:
 
 
 def test_layer_boundary_rejects_limit_plus_one() -> None:
-    assert extension_control_limit_violation(
-        layer_sizes=(0,) * (MAX_CONTROL_LAYERS + 1)
-    ) is ExtensionControlLimitViolation.LAYERS
+    assert (
+        extension_control_limit_violation(layer_sizes=(0,) * (MAX_CONTROL_LAYERS + 1))
+        is ExtensionControlLimitViolation.LAYERS
+    )
 
 
 def test_total_control_boundary_is_consistent() -> None:
     assert MAX_CONTROLS_TOTAL == MAX_CONTROL_LAYERS * MAX_CONTROLS_PER_LAYER
-    assert extension_control_limit_violation(
-        layer_sizes=(MAX_CONTROLS_PER_LAYER, MAX_CONTROLS_PER_LAYER)
-    ) is None
+    assert extension_control_limit_violation(layer_sizes=(MAX_CONTROLS_PER_LAYER, MAX_CONTROLS_PER_LAYER)) is None
 
 
 @pytest.mark.parametrize(
@@ -118,7 +109,7 @@ def test_resolution_boundaries(
 
 
 def _catalog_extension(index: int) -> CommandSafetyExtension:
-    return CommandSafetyExtension(
+    extension = CommandSafetyExtension(
         extension_id=f"command.limit{index}",
         version="1.0.0",
         name=f"Limit {index}",
@@ -131,6 +122,15 @@ def _catalog_extension(index: int) -> CommandSafetyExtension:
         executables=(f"limit{index}",),
         reference_urls=("https://example.com/managed-controls-limit-fixture",),
     )
+    return replace(
+        extension,
+        permissions=(
+            replace(
+                extension.permissions[0],
+                example_command=f"limit{index} scan",
+            ),
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -138,17 +138,13 @@ def _catalog_extension(index: int) -> CommandSafetyExtension:
     [MAX_CATALOG_EXTENSIONS - 1, MAX_CATALOG_EXTENSIONS],
 )
 def test_registry_extension_count_boundaries_accept_limit_and_below(count: int) -> None:
-    registry = CommandSafetyExtensionRegistry(
-        tuple(_catalog_extension(index) for index in range(count))
-    )
+    registry = CommandSafetyExtensionRegistry(tuple(_catalog_extension(index) for index in range(count)))
     assert len(registry.extensions) == count
 
 
 def test_registry_extension_count_boundary_rejects_limit_plus_one() -> None:
     with pytest.raises(ValueError, match="catalog extension limit"):
-        CommandSafetyExtensionRegistry(
-            tuple(_catalog_extension(index) for index in range(MAX_CATALOG_EXTENSIONS + 1))
-        )
+        CommandSafetyExtensionRegistry(tuple(_catalog_extension(index) for index in range(MAX_CATALOG_EXTENSIONS + 1)))
 
 
 def _extension_with_permissions(count: int) -> CommandSafetyExtension:
@@ -176,9 +172,7 @@ def test_registry_permission_count_boundaries_accept_limit_and_below(count: int)
 
 def test_registry_permission_count_boundary_rejects_limit_plus_one() -> None:
     with pytest.raises(ValueError, match="permission limit"):
-        CommandSafetyExtensionRegistry(
-            (_extension_with_permissions(MAX_PERMISSIONS_PER_EXTENSION + 1),)
-        )
+        CommandSafetyExtensionRegistry((_extension_with_permissions(MAX_PERMISSIONS_PER_EXTENSION + 1),))
 
 
 def test_daemon_api_uses_shared_limits_and_no_longer_advertises_4096_controls() -> None:
@@ -202,10 +196,7 @@ def test_accessible_product_language_matches_visible_navigation() -> None:
     navigation = NAVIGATION_PATH.read_text(encoding="utf-8")
     rules_page = RULES_PAGE_PATH.read_text(encoding="utf-8")
     assert 'label: "Rules & exceptions"' in navigation
-    assert (
-        'description: "Remembered decisions, Guard Cloud rules, and exceptions"'
-        in navigation
-    )
+    assert 'description: "Remembered decisions, Guard Cloud rules, and exceptions"' in navigation
     assert 'label: "Extensions"' in navigation
     assert 'eyebrow="Rules & exceptions"' in rules_page
     assert 'href: "/policy"' in navigation
