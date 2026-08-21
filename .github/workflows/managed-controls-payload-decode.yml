@@ -6,6 +6,11 @@ on:
       - managed-controls/full-implementation
     paths:
       - '.github/workflows/managed-controls-payload-decode.yml'
+  pull_request:
+    branches:
+      - release/3.0
+    paths:
+      - '.github/workflows/managed-controls-payload-decode.yml'
   workflow_dispatch:
 
 permissions:
