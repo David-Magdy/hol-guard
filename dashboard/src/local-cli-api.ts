@@ -145,6 +145,60 @@ export function filterExtensionSuggestions(
   return items.filter((item) => suggestionMatchesQuery(item, needle));
 }
 
+export function preferredPackageScriptExtension(items: readonly LocalCliItem[]): LocalCliItem | null {
+  return suggestedPackageScriptExtensions(items).find((item) => item.commands.length > 0) ?? null;
+}
+
+export function looksLikeProjectRelocatePaste(value: string): boolean {
+  const trimmed = unwrapPathPaste(value);
+  if (!trimmed) return false;
+  if (/(^|[\\/])package\.json$/i.test(trimmed)) return true;
+  if (/\s(--prefix|-C|--dir|--cwd|--workspace-dir)(=|\s)/i.test(trimmed)) return true;
+  if (/^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith("/") || trimmed.startsWith("~/") || trimmed === ".") {
+    return true;
+  }
+  return !trimmed.includes(" ") && (trimmed.includes("/") || trimmed.includes("\\"));
+}
+
+export function keepsPackageScriptCatalog(
+  query: string,
+  commands: readonly LocalCliCommand[],
+): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return true;
+  if (looksLikeProjectRelocatePaste(trimmed)) return false;
+  if (looksLikePackageScriptPaste(trimmed)) return true;
+  const needle = packageScriptFilterNeedle(trimmed) || trimmed.toLowerCase();
+  return commands.some((command) => commandMatchesQuery(command, needle));
+}
+
+export function filterPackageScriptCommands(
+  commands: readonly LocalCliCommand[],
+  query: string,
+): LocalCliCommand[] {
+  const needle = packageScriptFilterNeedle(query);
+  if (!needle) return [...commands];
+  return commands.filter((command) => commandMatchesQuery(command, needle));
+}
+
+export function commandMatchesQuery(command: LocalCliCommand, needle: string): boolean {
+  return [command.name, command.usage, command.description].some((value) => value.toLowerCase().includes(needle));
+}
+
+function packageScriptFilterNeedle(query: string): string {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return "";
+  return trimmed.replace(/^(npm|pnpm|yarn|bun)(?:\.cmd)?(?:\s+run(?:-script)?)?\s*/, "").trim();
+}
+
+function unwrapPathPaste(value: string): string {
+  const trimmed = value.trim();
+  if ((trimmed.startsWith("'") && trimmed.endsWith("'")) || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 export function seenSuggestionMeta(item: LocalCliItem): string {
   if (item.observed_count <= 0) {
     return item.kind === "script" ? "Script" : "Tool";
@@ -166,8 +220,13 @@ function compareSeenSuggestions(left: LocalCliItem, right: LocalCliItem): number
 }
 
 function suggestionMatchesQuery(item: LocalCliItem, needle: string): boolean {
+  const compact = packageScriptFilterNeedle(needle) || needle;
   const haystacks = [item.name, item.example_label, item.source_label ?? ""];
-  return haystacks.some((value) => value.toLowerCase().includes(needle));
+  if (haystacks.some((value) => value.toLowerCase().includes(needle) || value.toLowerCase().includes(compact))) {
+    return true;
+  }
+  if (item.surface !== "package-scripts") return false;
+  return item.commands.some((command) => commandMatchesQuery(command, compact));
 }
 
 export function normalizeLocalCliItem(value: unknown): LocalCliItem {

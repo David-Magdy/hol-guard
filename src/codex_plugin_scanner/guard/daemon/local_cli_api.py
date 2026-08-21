@@ -45,11 +45,13 @@ from ..runtime.local_mcp_probe import (
     mcp_launch_tokens,
     probe_stdio_mcp_server,
 )
-from ..runtime.package_json_scripts import (
-    looks_like_package_script_paste,
-    observe_workspace_package_scripts,
-    recognize_package_json_scripts,
+from ..runtime.package_json_script_memory import (
+    operator_working_directory,
+    public_local_cli_item,
+    recognize_operator_package_scripts,
+    refresh_package_script_catalogs,
 )
+from ..runtime.package_json_scripts import looks_like_package_script_paste
 
 if TYPE_CHECKING:
     from ..store import GuardStore
@@ -76,8 +78,7 @@ class LocalCliApiService:
 
     def list_items(self) -> dict[str, object]:
         labels = self._observe_harness_mcp_servers()
-        observe_workspace_package_scripts(self._store, home_dir=Path.home())
-        items = apply_source_labels(self._store.list_local_cli_items(), labels)
+        items = apply_source_labels(refresh_package_script_catalogs(self._store, home_dir=Path.home()), labels)
         revision = self._store.read_local_cli_revision()
         return {
             "schema_version": _LOCAL_CLI_API_SCHEMA,
@@ -106,14 +107,19 @@ class LocalCliApiService:
         mcp_item = self._recognize_mcp(live_command or command, home_dir)
         if mcp_item is not None:
             return mcp_item
-        operator_cwd = _operator_cwd(payload, home_dir=home_dir)
-        package_scripts = recognize_package_json_scripts(command, cwd=operator_cwd, home_dir=home_dir)
+        operator_cwd = operator_working_directory(payload, home_dir=home_dir)
+        package_scripts = recognize_operator_package_scripts(
+            command,
+            cwd=operator_cwd,
+            home_dir=home_dir,
+            store=self._store,
+        )
         if package_scripts is not None:
             identity = package_scripts.identity
             self._store.record_local_cli_observation(
                 identity,
                 seen_at=utc_now(),
-                source_path="user-tool",
+                source_path=identity.source_path,
                 help_status="ok",
                 surface="package-scripts",
             )
@@ -235,7 +241,7 @@ class LocalCliApiService:
         return {
             "schema_version": _LOCAL_CLI_API_SCHEMA,
             "revision": self._store.read_local_cli_revision(),
-            "item": listed or fallback,
+            "item": public_local_cli_item(listed or fallback),
             "help_status": help_status,
             "summary": summary,
         }
@@ -449,24 +455,6 @@ def _recognize_summary(name: str, help_status: str, command_count: int) -> str:
         f"Guard could not read {name} --help. You can still add the tool. "
         "Commands stay on Recommended until --help works."
     )
-
-
-def _operator_cwd(payload: dict[str, object], *, home_dir: Path) -> Path:
-    raw = payload.get("cwd")
-    if isinstance(raw, str) and raw.strip():
-        candidate = Path(raw.strip()).expanduser()
-        try:
-            resolved = candidate.resolve()
-        except OSError:
-            resolved = None
-        if resolved is not None and resolved.is_dir():
-            return resolved
-    from ..runtime.package_json_scripts import find_nearest_package_json
-
-    process_cwd = Path.cwd()
-    if process_cwd.is_dir() and find_nearest_package_json(process_cwd, home_dir=home_dir) is not None:
-        return process_cwd
-    return home_dir
 
 
 def _discover_from_command(
