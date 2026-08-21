@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,8 @@ from codex_plugin_scanner.guard.managed_controls_policy_bundle import (
 )
 from codex_plugin_scanner.guard.managed_controls_policy_fields import (
     EXTENSION_CONTROL_LAYER_CAPABILITY,
+    HOL_EXTENSION_CONTROLS_FIELD,
+    HOL_EXTENSION_TARGETS_FIELD,
     MANAGED_CONTROLS_ATOMIC_APPLY_CAPABILITY,
     POLICY_EXTENSION_TARGETS_CAPABILITY,
     ManagedControlsPolicyError,
@@ -33,6 +36,9 @@ from codex_plugin_scanner.guard.runtime.extension_control_contract import (
     ControlLayerKind,
     ControlState,
     ControlTargetKind,
+)
+from codex_plugin_scanner.guard.runtime.extension_control_limits import (
+    MAX_CONTROL_SET_RULES,
 )
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -193,6 +199,45 @@ def test_duplicates_conflicts_and_limits_fail_before_projection() -> None:
     assert _code(document) == "target_limit_exceeded"
 
 
+def test_explicit_null_extension_fields_fail_closed() -> None:
+    document = _document()
+    document[HOL_EXTENSION_CONTROLS_FIELD] = None
+    assert _code(document) == "invalid_extension_controls"
+
+    document = _document()
+    document["spec"]["rules"][0][HOL_EXTENSION_TARGETS_FIELD] = None
+    assert _code(document) == "invalid_extension_targets"
+
+
+def test_targeted_rule_count_limit_is_enforced() -> None:
+    document = _document()
+    seed = document["spec"]["rules"][0]
+    document["spec"]["rules"] = [
+        {
+            **copy.deepcopy(seed),
+            "id": f"managed-rule-{index}",
+            HOL_EXTENSION_TARGETS_FIELD: {
+                "schemaVersion": "guard.policy-extension-targets.v1",
+                "extensionIds": [],
+                "permissionIds": [],
+            },
+        }
+        for index in range(MAX_CONTROL_SET_RULES + 1)
+    ]
+    assert _code(document) == "rule_limit_exceeded"
+
+
+def test_permission_only_target_validates_its_catalog_owner() -> None:
+    document = _document()
+    targets = document["spec"]["rules"][0][HOL_EXTENSION_TARGETS_FIELD]
+    targets["extensionIds"] = []
+    parsed = _parse(document)
+    assert parsed.rule_targets[0].extension_ids == ()
+    assert parsed.rule_targets[0].permission_ids == (
+        "command.git.permission.force-push",
+    )
+
+
 def test_managed_restrictive_is_disable_or_lockdown_only() -> None:
     document = _document()
     document["x-hol-extension-controls"]["controls"][0]["state"] = "enabled"
@@ -205,10 +250,14 @@ def test_managed_restrictive_is_disable_or_lockdown_only() -> None:
 
 def test_delegated_targets_require_package_firewall_and_do_not_double_materialize() -> None:
     delegated = next(
-        extension
-        for extension in BUILT_IN_COMMAND_EXTENSION_REGISTRY.extensions
-        if extension.delegated_protection == "package-firewall"
+        (
+            extension
+            for extension in BUILT_IN_COMMAND_EXTENSION_REGISTRY.extensions
+            if extension.delegated_protection == "package-firewall"
+        ),
+        None,
     )
+    assert delegated is not None, "built-in registry must include Package Firewall delegation"
     permission = delegated.permissions[0]
     document = _document()
     document["spec"]["rules"][0].pop("x-hol-extension-targets")
@@ -296,6 +345,7 @@ def test_shared_signature_vector_validates_before_projection() -> None:
         negotiated_capabilities=_CAPABILITIES,
         trusted_verification_keys=(public_key,),
         anchored_verification_keys=(public_key,),
+        now=datetime(2026, 8, 22, tzinfo=timezone.utc),
     )
     assert reason is None and validated is not None and parsed is not None
     assert parsed.has_extension_semantics

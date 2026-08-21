@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from .managed_controls_policy_fields import (
     ManagedControlsPolicyError,
     _is_mapping,
@@ -20,6 +22,7 @@ def validated_managed_controls_policy_bundle_v2_payload(
     trusted_verification_keys: tuple[PolicyBundleVerificationKey, ...] = (),
     anchored_verification_keys: tuple[PolicyBundleVerificationKey, ...] = (),
     package_firewall_supported: bool = False,
+    now: datetime | None = None,
 ):
     """Validate the signed envelope first, then parse negotiated Extension semantics."""
 
@@ -27,6 +30,7 @@ def validated_managed_controls_policy_bundle_v2_payload(
         policy_bundle,
         trusted_verification_keys=trusted_verification_keys,
         anchored_verification_keys=anchored_verification_keys,
+        now=now,
     )
     if validated is None:
         return None, None, reason
@@ -42,4 +46,6 @@ def validated_managed_controls_policy_bundle_v2_payload(
         )
     except ManagedControlsPolicyError as error:
         return None, None, error.code
+    except ValueError:
+        return None, None, "invalid_extension_semantics"
     return validated, parsed, None
