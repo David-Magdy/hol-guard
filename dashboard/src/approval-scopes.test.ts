@@ -1,4 +1,5 @@
 import {
+  approvalDecisionContractKey,
   approvalDecisionSubjectKey,
   ADVANCED_SCOPE_VALUES,
   advancedScopeChoicesForRequest,
@@ -314,6 +315,15 @@ assert(
   approvalDecisionSubjectKey({ ...BASE_REQUEST, raw_command_text: "rm changed-target" }) !==
     approvalDecisionSubjectKey(BASE_REQUEST),
   "T-AS-24: changed command text resets approval choices",
+);
+assert(
+  approvalDecisionContractKey(refreshedContractRequest) !== approvalDecisionContractKey(BASE_REQUEST),
+  "T-AS-25: refreshed contracts invalidate approval proof captured by an open modal",
+);
+assert(
+  approvalDecisionContractKey({ ...BASE_REQUEST, raw_command_text: "rm changed-target" }) !==
+    approvalDecisionContractKey(BASE_REQUEST),
+  "T-AS-26: changed action subjects invalidate approval proof captured by an open modal",
 );
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";

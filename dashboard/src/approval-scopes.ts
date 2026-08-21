@@ -23,6 +23,14 @@ export function approvalDecisionSubjectKey(item: GuardApprovalRequest): string {
   ]);
 }
 
+export function approvalDecisionContractKey(item: GuardApprovalRequest): string {
+  return JSON.stringify([
+    approvalDecisionSubjectKey(item),
+    item.scope_contract_version ?? "legacy",
+    item.scope_contract_digest ?? "legacy",
+  ]);
+}
+
 export const DEFAULT_SCOPE_CHOICES: ApprovalScopeChoice[] = [
   {
     value: "artifact",
