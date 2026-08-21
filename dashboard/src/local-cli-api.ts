@@ -150,13 +150,26 @@ export function preferredPackageScriptExtension(items: readonly LocalCliItem[]):
 }
 
 export function looksLikeProjectRelocatePaste(value: string): boolean {
-  const trimmed = value.trim();
+  const trimmed = unwrapPathPaste(value);
   if (!trimmed) return false;
-  if (/(^|\/)package\.json$/i.test(trimmed)) return true;
-  if (!trimmed.includes(" ") && (trimmed.includes("/") || trimmed.includes("\\") || trimmed === ".")) {
+  if (/(^|[\\/])package\.json$/i.test(trimmed)) return true;
+  if (/\s(--prefix|-C|--dir|--cwd|--workspace-dir)(=|\s)/i.test(trimmed)) return true;
+  if (/^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith("/") || trimmed.startsWith("~/") || trimmed === ".") {
     return true;
   }
-  return /\s(--prefix|-C|--dir|--cwd|--workspace-dir)(=|\s)/i.test(trimmed);
+  return !trimmed.includes(" ") && (trimmed.includes("/") || trimmed.includes("\\"));
+}
+
+export function keepsPackageScriptCatalog(
+  query: string,
+  commands: readonly LocalCliCommand[],
+): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return true;
+  if (looksLikeProjectRelocatePaste(trimmed)) return false;
+  if (looksLikePackageScriptPaste(trimmed)) return true;
+  const needle = packageScriptFilterNeedle(trimmed) || trimmed.toLowerCase();
+  return commands.some((command) => commandMatchesQuery(command, needle));
 }
 
 export function filterPackageScriptCommands(
@@ -176,6 +189,14 @@ function packageScriptFilterNeedle(query: string): string {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return "";
   return trimmed.replace(/^(npm|pnpm|yarn|bun)(?:\.cmd)?(?:\s+run(?:-script)?)?\s*/, "").trim();
+}
+
+function unwrapPathPaste(value: string): string {
+  const trimmed = value.trim();
+  if ((trimmed.startsWith("'") && trimmed.endsWith("'")) || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
 }
 
 export function seenSuggestionMeta(item: LocalCliItem): string {

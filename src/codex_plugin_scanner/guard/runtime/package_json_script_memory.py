@@ -55,18 +55,23 @@ def refresh_package_script_catalogs(store: object, *, home_dir: Path) -> list[di
 
     from ..local_cli_trust import utc_now
 
-    lister = getattr(store, "list_local_cli_items", None)
-    items = list(lister()) if callable(lister) else []
-    known_paths = {
-        str(item.get("cli_id")): item.get("source_path") if isinstance(item.get("source_path"), str) else None
-        for item in items
-        if isinstance(item.get("cli_id"), str)
-    }
+    items = _listed_items(store)
+    known: dict[str, tuple[str | None, str | None]] = {}
+    for item in items:
+        cli_id = item.get("cli_id")
+        if not isinstance(cli_id, str):
+            continue
+        raw_path = item.get("source_path")
+        raw_hash = item.get("identity_hash")
+        known[cli_id] = (
+            raw_path if isinstance(raw_path, str) else None,
+            raw_hash if isinstance(raw_hash, str) else None,
+        )
     seen_at = utc_now()
     for root in _catalog_roots(items):
-        _publish_root(store, root, home_dir=home_dir, seen_at=seen_at, known_paths=known_paths)
-    refreshed = list(lister()) if callable(lister) else items
-    return [public_local_cli_item(item) for item in refreshed]
+        _publish_root(store, root, home_dir=home_dir, seen_at=seen_at, known=known)
+    refreshed = _listed_items(store)
+    return [public_local_cli_item(item) for item in refreshed if _package_item_available(item)]
 
 
 def recognize_operator_package_scripts(
@@ -76,26 +81,49 @@ def recognize_operator_package_scripts(
     home_dir: Path,
     store: object,
 ) -> PackageJsonScriptsDiscovery | None:
-    """Return the cwd catalog, or the remembered project that matches this paste."""
+    """Return the cwd catalog, or the unique remembered project that matches this paste."""
 
     found = recognize_package_json_scripts(command_text, cwd=cwd, home_dir=home_dir)
     if found is not None or not looks_like_package_script_paste(command_text):
         return found
-    lister = getattr(store, "list_local_cli_items", None)
-    items = list(lister()) if callable(lister) else []
-    hits = []
-    for root in _catalog_roots(items, include_cwd=False):
+    hits: list[PackageJsonScriptsDiscovery] = []
+    for root in _catalog_roots(_listed_items(store), include_cwd=False):
         remembered = recognize_package_json_scripts(command_text, cwd=root, home_dir=home_dir)
         if remembered is not None:
             hits.append(remembered)
-    if not hits:
-        return None
     named = [
         hit
         for hit in hits
         if hit.focused_script and any(command.name == hit.focused_script for command in hit.commands)
     ]
-    return named[0] if named else hits[0]
+    pool = named or hits
+    if len({hit.identity.cli_id for hit in pool}) != 1:
+        return None
+    return pool[0]
+
+
+def _listed_items(store: object) -> list[dict[str, object]]:
+    lister = getattr(store, "list_local_cli_items", None)
+    if not callable(lister):
+        return []
+    raw = lister()
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _package_item_available(item: dict[str, object]) -> bool:
+    if item.get("surface") != _SURFACE:
+        return True
+    raw = item.get("source_path")
+    if not isinstance(raw, str) or raw in _PATH_CLASS_TOKENS:
+        return True
+    path = Path(raw)
+    manifest = path if path.name == "package.json" else path / "package.json"
+    try:
+        return manifest.is_file()
+    except OSError:
+        return False
 
 
 def _publish_root(
@@ -104,7 +132,7 @@ def _publish_root(
     *,
     home_dir: Path,
     seen_at: str,
-    known_paths: dict[str, object],
+    known: dict[str, tuple[str | None, str | None]],
 ) -> None:
     discovery = recognize_package_json_scripts("npm run", cwd=root, home_dir=home_dir)
     if discovery is None:
@@ -112,8 +140,12 @@ def _publish_root(
     replace_commands = getattr(store, "replace_local_cli_commands", None)
     if callable(replace_commands):
         replace_commands(discovery.identity.cli_id, discovery.commands)
-    stored_path = known_paths.get(discovery.identity.cli_id)
-    if discovery.identity.cli_id in known_paths and stored_path not in {None, *_PATH_CLASS_TOKENS}:
+    stored = known.get(discovery.identity.cli_id)
+    if (
+        stored is not None
+        and stored[0] not in {None, *_PATH_CLASS_TOKENS}
+        and stored[1] == discovery.identity.identity_hash
+    ):
         return
     recorder = getattr(store, "record_local_cli_observation", None)
     if not callable(recorder):
@@ -125,7 +157,7 @@ def _publish_root(
         help_status="ok",
         surface=_SURFACE,
     )
-    known_paths[discovery.identity.cli_id] = discovery.identity.source_path
+    known[discovery.identity.cli_id] = (discovery.identity.source_path, discovery.identity.identity_hash)
 
 
 def _catalog_roots(items: list[dict[str, object]], *, include_cwd: bool = True) -> list[Path]:

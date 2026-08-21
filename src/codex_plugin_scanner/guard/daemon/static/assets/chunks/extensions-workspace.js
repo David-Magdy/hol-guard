@@ -263,13 +263,22 @@ function preferredPackageScriptExtension(items) {
   return suggestedPackageScriptExtensions(items).find((item) => item.commands.length > 0) ?? null;
 }
 function looksLikeProjectRelocatePaste(value) {
-  const trimmed = value.trim();
+  const trimmed = unwrapPathPaste(value);
   if (!trimmed) return false;
-  if (/(^|\/)package\.json$/i.test(trimmed)) return true;
-  if (!trimmed.includes(" ") && (trimmed.includes("/") || trimmed.includes("\\") || trimmed === ".")) {
+  if (/(^|[\\/])package\.json$/i.test(trimmed)) return true;
+  if (/\s(--prefix|-C|--dir|--cwd|--workspace-dir)(=|\s)/i.test(trimmed)) return true;
+  if (/^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith("/") || trimmed.startsWith("~/") || trimmed === ".") {
     return true;
   }
-  return /\s(--prefix|-C|--dir|--cwd|--workspace-dir)(=|\s)/i.test(trimmed);
+  return !trimmed.includes(" ") && (trimmed.includes("/") || trimmed.includes("\\"));
+}
+function keepsPackageScriptCatalog(query, commands) {
+  const trimmed = query.trim();
+  if (!trimmed) return true;
+  if (looksLikeProjectRelocatePaste(trimmed)) return false;
+  if (looksLikePackageScriptPaste(trimmed)) return true;
+  const needle = packageScriptFilterNeedle(trimmed) || trimmed.toLowerCase();
+  return commands.some((command) => commandMatchesQuery(command, needle));
 }
 function filterPackageScriptCommands(commands, query) {
   const needle = packageScriptFilterNeedle(query);
@@ -283,6 +292,13 @@ function packageScriptFilterNeedle(query) {
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return "";
   return trimmed.replace(/^(npm|pnpm|yarn|bun)(?:\.cmd)?(?:\s+run(?:-script)?)?\s*/, "").trim();
+}
+function unwrapPathPaste(value) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("'") && trimmed.endsWith("'") || trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
 }
 function seenSuggestionMeta(item) {
   if (item.observed_count <= 0) {
@@ -2887,7 +2903,7 @@ function AddCustomExtensionDialog(props) {
   }, [resolveApprovalGate]);
   const handleCommand = reactExports.useCallback((event) => {
     const value = event.target.value;
-    const keepCatalog = recognized?.surface === "package-scripts" && !looksLikeProjectRelocatePaste(value);
+    const keepCatalog = recognized?.surface === "package-scripts" && keepsPackageScriptCatalog(value, commands);
     setCommand(value);
     setError(null);
     if (keepCatalog) return;
@@ -2898,7 +2914,7 @@ function AddCustomExtensionDialog(props) {
     setCommands([]);
     setSummary(null);
     setPending(null);
-  }, [recognized]);
+  }, [commands, recognized]);
   const handlePassword = reactExports.useCallback((event) => {
     setPassword(event.target.value);
   }, []);

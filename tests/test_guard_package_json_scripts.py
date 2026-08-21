@@ -312,3 +312,64 @@ def test_refresh_includes_workspace_packages(tmp_path: Path) -> None:
     }
     assert "mono" in labels
     assert "ads" in labels
+
+
+def test_remembered_script_requires_a_unique_project(tmp_path: Path) -> None:
+    from codex_plugin_scanner.guard.daemon.local_cli_api import LocalCliApiError
+
+    first = _write_package(tmp_path / "one", scripts={"build": "echo one"}, name="one")
+    second = _write_package(tmp_path / "two", scripts={"build": "echo two"}, name="two")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    service = LocalCliApiService(store=GuardStore(home))
+    _ = service.recognize({"command": "pnpm run", "cwd": str(first)})
+    _ = service.recognize({"command": "pnpm run", "cwd": str(second)})
+    try:
+        service.recognize({"command": "npm run build", "cwd": str(empty)})
+    except LocalCliApiError as exc:
+        assert exc.code == "missing_package_json"
+    else:
+        raise AssertionError("expected missing_package_json for an ambiguous script")
+
+
+def test_refresh_updates_identity_hash_when_scripts_change(tmp_path: Path) -> None:
+    project = _write_package(tmp_path / "app", scripts={"build": "echo first"})
+    home = tmp_path / "home"
+    home.mkdir()
+    store = GuardStore(home)
+    service = LocalCliApiService(store=store)
+    first = service.recognize({"command": "pnpm run", "cwd": str(project)})
+    item = first["item"]
+    assert isinstance(item, dict)
+    original_hash = str(item["identity_hash"])
+    (project / "package.json").write_text(
+        _package_json(name="app", scripts={"build": "echo first", "guard:audit": "echo audit"}),
+        encoding="utf-8",
+    )
+    payload = service.list_items()
+    listed = next(
+        entry
+        for entry in payload["items"]
+        if isinstance(entry, dict) and entry.get("surface") == "package-scripts" and entry.get("source_label") == "app"
+    )
+    assert str(listed["identity_hash"]) != original_hash
+    names = {str(command["name"]) for command in listed["commands"] if isinstance(command, dict)}
+    assert "guard:audit" in names
+
+
+def test_missing_package_json_is_hidden_from_public_list(tmp_path: Path) -> None:
+    project = _write_package(tmp_path / "gone", scripts={"build": "echo gone"})
+    home = tmp_path / "home"
+    home.mkdir()
+    service = LocalCliApiService(store=GuardStore(home))
+    _ = service.recognize({"command": "pnpm run", "cwd": str(project)})
+    (project / "package.json").unlink()
+    payload = service.list_items()
+    labels = {
+        str(item.get("source_label"))
+        for item in payload["items"]
+        if isinstance(item, dict) and item.get("surface") == "package-scripts"
+    }
+    assert "gone" not in labels

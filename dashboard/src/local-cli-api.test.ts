@@ -12,6 +12,7 @@ import {
   suggestedCustomExtensions,
   looksLikePackageScriptPaste,
   looksLikeProjectRelocatePaste,
+  keepsPackageScriptCatalog,
   suggestedHarnessExtensions,
   suggestedPackageScriptExtensions,
   suggestedSeenExtensions,
@@ -241,6 +242,11 @@ assert.deepEqual(
 assert.equal(preferredPackageScriptExtension([unsetItem, packageScripts])?.name, "demo-app");
 assert.equal(looksLikeProjectRelocatePaste("npm --prefix ./apps/web run"), true);
 assert.equal(looksLikeProjectRelocatePaste("guard:audit"), false);
+assert.equal(looksLikeProjectRelocatePaste("/proj/My App"), true);
+assert.equal(looksLikeProjectRelocatePaste("C:\\\\My App\\\\package.json"), true);
+assert.equal(keepsPackageScriptCatalog("guard:reddit", packageScripts.commands), true);
+assert.equal(keepsPackageScriptCatalog("my-cli", packageScripts.commands), false);
+assert.equal(keepsPackageScriptCatalog("npx -y @scope/mcp-server", packageScripts.commands), false);
 assert.equal(seenSuggestionMeta(frequentTool), "Seen 4 times");
 assert.equal(seenSuggestionMeta(rareTool), "Seen once");
 

@@ -13,7 +13,7 @@ import {
   LocalCliApiError,
   previewLocalCliMutation,
   looksLikePackageScriptPaste,
-  looksLikeProjectRelocatePaste,
+  keepsPackageScriptCatalog,
   preferredPackageScriptExtension,
   recognizeLocalCli,
   suggestedHarnessExtensions,
@@ -88,7 +88,7 @@ export function AddCustomExtensionDialog(props: {
 
   const handleCommand = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value;
-    const keepCatalog = recognized?.surface === "package-scripts" && !looksLikeProjectRelocatePaste(value);
+    const keepCatalog = recognized?.surface === "package-scripts" && keepsPackageScriptCatalog(value, commands);
     setCommand(value);
     setError(null);
     if (keepCatalog) return;
@@ -99,7 +99,7 @@ export function AddCustomExtensionDialog(props: {
     setCommands([]);
     setSummary(null);
     setPending(null);
-  }, [recognized]);
+  }, [commands, recognized]);
   const handlePassword = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setPassword(event.target.value);
   }, []);
