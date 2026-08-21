@@ -683,7 +683,9 @@ export function App() {
         ) {
           await refreshStaleScopeContractSelection({
             requestId: activeRequestId,
-            refreshQueue: refreshStateAfterAction,
+            refreshQueue: async () => {
+              await refreshStateAfterAction();
+            },
             loadSelectedDetail: loadDetail,
             applySelectedDetail: setDetail,
           });

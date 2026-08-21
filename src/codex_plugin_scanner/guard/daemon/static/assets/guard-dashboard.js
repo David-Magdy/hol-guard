@@ -29013,7 +29013,7 @@ function ReviewDecisionCard(props) {
     if (item.exact_action_persistence_eligible !== true) {
       setRememberExactAction(false);
     }
-  }, [item, item?.scope_contract_version, item?.scope_contract_digest]);
+  }, [decisionContractKey]);
   reactExports.useEffect(() => {
     const selection = validTemporaryMcpSelection(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration);
     if (selection.target !== mcpGrantTarget) setMcpGrantTarget(selection.target);
@@ -31039,7 +31039,9 @@ function App() {
         if (error instanceof GuardRequestResolutionError && error.status === 409 && error.payload?.["error"] === "stale_scope_contract") {
           await refreshStaleScopeContractSelection({
             requestId: activeRequestId,
-            refreshQueue: refreshStateAfterAction,
+            refreshQueue: async () => {
+              await refreshStateAfterAction();
+            },
             loadSelectedDetail: loadDetail,
             applySelectedDetail: setDetail
           });

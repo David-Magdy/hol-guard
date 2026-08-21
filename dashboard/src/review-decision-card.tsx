@@ -189,7 +189,7 @@ export function ReviewDecisionCard(props: {
     if (item.exact_action_persistence_eligible !== true) {
       setRememberExactAction(false);
     }
-  }, [item, item?.scope_contract_version, item?.scope_contract_digest]);
+  }, [decisionContractKey]);
 
   useEffect(() => {
     const selection = validTemporaryMcpSelection(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration);
