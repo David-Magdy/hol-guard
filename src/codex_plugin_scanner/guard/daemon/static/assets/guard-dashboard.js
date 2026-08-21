@@ -13119,6 +13119,25 @@ function groupByCategory(receipts) {
   }
   return map;
 }
+function approvalDecisionSubjectKey(item) {
+  return JSON.stringify([
+    item.request_id,
+    item.harness,
+    item.artifact_id ?? null,
+    item.artifact_type ?? null,
+    item.artifact_hash ?? null,
+    item.action_identity ?? null,
+    item.raw_command_text ?? null,
+    item.workspace ?? null
+  ]);
+}
+function approvalDecisionContractKey(item) {
+  return JSON.stringify([
+    approvalDecisionSubjectKey(item),
+    item.scope_contract_version ?? "legacy",
+    item.scope_contract_digest ?? "legacy"
+  ]);
+}
 const DEFAULT_SCOPE_CHOICES = [
   {
     value: "artifact",
@@ -15981,6 +16000,18 @@ async function requestErrorMessage(response, fallback) {
   }
   return fallback;
 }
+class GuardRequestResolutionError extends Error {
+  status;
+  payload;
+  constructor(status, payload, fallback) {
+    const error = typeof payload?.["error"] === "string" ? payload["error"] : null;
+    const message = typeof payload?.["message"] === "string" ? payload["message"] : null;
+    super(message?.trim() || (error?.trim() ? `${error} (${status})` : fallback));
+    this.name = "GuardRequestResolutionError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
 class GuardHarnessActionError extends Error {
   status;
   payload;
@@ -18139,7 +18170,18 @@ async function resolveRequestWithQueueResult(input) {
   });
   const response = await fetchGuardApi(path, init());
   if (!response.ok) {
-    throw new Error(await requestErrorMessage(response, `Request failed with ${response.status}`));
+    let payload2 = null;
+    try {
+      const candidate = await response.clone().json();
+      payload2 = isRecord$1(candidate) ? candidate : null;
+    } catch {
+      payload2 = null;
+    }
+    throw new GuardRequestResolutionError(
+      response.status,
+      payload2,
+      await requestErrorMessage(response, `Request failed with ${response.status}`)
+    );
   }
   const payload = await response.json();
   return normalizeQueueResolution(payload);
@@ -28926,7 +28968,8 @@ function ReviewDecisionCard(props) {
   );
   const watchOnlyObservation = item !== null && isWatchOnlyObservation(item);
   const hasAllowScope = availableScopeChoices.length + advancedScopeOptions.length > 0;
-  const decisionContractKey = item ? `${item.request_id}:${item.scope_contract_version ?? "legacy"}:${item.scope_contract_digest ?? "legacy"}` : null;
+  const decisionContractKey = item ? approvalDecisionContractKey(item) : null;
+  const decisionSubjectKey = item ? approvalDecisionSubjectKey(item) : null;
   reactExports.useEffect(() => {
     if (item) {
       setAllowScope(recommendedScopeForAction(item, "allow") ?? "artifact");
@@ -28958,7 +29001,19 @@ function ReviewDecisionCard(props) {
         setLocalToolGrantDuration("once");
       }
     }
-  }, [item?.request_id, item?.scope_contract_version, item?.scope_contract_digest]);
+  }, [decisionSubjectKey]);
+  reactExports.useEffect(() => {
+    if (!item) return;
+    setAllowScope(
+      (current) => normalizeDecisionScope(item, "allow", current) ?? recommendedScopeForAction(item, "allow") ?? "artifact"
+    );
+    setBlockScope(
+      (current) => normalizeDecisionScope(item, "block", current) ?? recommendedScopeForAction(item, "block") ?? "artifact"
+    );
+    if (item.exact_action_persistence_eligible !== true) {
+      setRememberExactAction(false);
+    }
+  }, [decisionContractKey]);
   reactExports.useEffect(() => {
     const selection = validTemporaryMcpSelection(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration);
     if (selection.target !== mcpGrantTarget) setMcpGrantTarget(selection.target);
@@ -30589,6 +30644,16 @@ async function loadDetail(requestId) {
     };
   }
 }
+async function refreshStaleScopeContractSelection({
+  requestId,
+  refreshQueue,
+  loadSelectedDetail,
+  applySelectedDetail
+}) {
+  await refreshQueue();
+  if (requestId === null) return;
+  applySelectedDetail(await loadSelectedDetail(requestId));
+}
 function shouldFetchArtifactDiff(artifactType) {
   return (/* @__PURE__ */ new Set(["mcp_server", "skill", "skill_file"])).has(artifactType);
 }
@@ -30970,7 +31035,22 @@ function App() {
     resolutionInFlight.current = true;
     const queuedItemsSnapshot = requests.kind === "ready" ? requests.items : [];
     try {
-      const result = await resolveRequestWithQueueResult(payload);
+      const result = await resolveRequestWithQueueResult(payload).catch(async (error) => {
+        if (error instanceof GuardRequestResolutionError && error.status === 409 && error.payload?.["error"] === "stale_scope_contract") {
+          await refreshStaleScopeContractSelection({
+            requestId: activeRequestId,
+            refreshQueue: async () => {
+              await refreshStateAfterAction();
+            },
+            loadSelectedDetail: loadDetail,
+            applySelectedDetail: setDetail
+          });
+          throw new Error(
+            "This request changed while you were reviewing it. Guard refreshed the current action and scopes; review them, then retry."
+          );
+        }
+        throw error;
+      });
       const nextId = selectNextAfterResolution(result, queuedItemsSnapshot);
       const resume = result.codex_resume ?? null;
       setCodexResume(resume);
@@ -30986,7 +31066,7 @@ function App() {
     } finally {
       resolutionInFlight.current = false;
     }
-  }, [requests, refreshStateAfterAction, setResolutionMessage]);
+  }, [activeRequestId, requests, refreshStateAfterAction, setResolutionMessage]);
   const handleRetryResume = reactExports.useCallback(async () => {
     if (resolvedRequestId === null) return;
     const updated = await retryResume(resolvedRequestId);

@@ -1,4 +1,12 @@
-import { parseAppDetail, PROTECT_ROUTE, resolveView, shouldFetchArtifactDiff, TODAY_EVIDENCE_ROUTE, viewTitle } from "./app";
+import {
+  parseAppDetail,
+  PROTECT_ROUTE,
+  refreshStaleScopeContractSelection,
+  resolveView,
+  shouldFetchArtifactDiff,
+  TODAY_EVIDENCE_ROUTE,
+  viewTitle,
+} from "./app";
 import { harnessDisplayName, isDisplayableHarness, normalizeHarnessFilter, normalizeHarnessSlug } from "./approval-center-utils";
 import { appSetupTarget, isConnectableAppHarness } from "./apps/harness-setup-target";
 
@@ -28,6 +36,25 @@ assert(viewTitle("about") === "About", "about view title is About");
 assert(!shouldFetchArtifactDiff("package_request"), "package approvals do not request unsupported artifact diffs");
 assert(shouldFetchArtifactDiff("mcp_server"), "configuration approvals continue to request artifact diffs");
 assert(!shouldFetchArtifactDiff("future_request"), "unknown approval types do not request unsupported artifact diffs");
+
+const staleRefreshEvents: string[] = [];
+await refreshStaleScopeContractSelection({
+  requestId: "request-current",
+  refreshQueue: async () => {
+    staleRefreshEvents.push("queue");
+  },
+  loadSelectedDetail: async (requestId) => {
+    staleRefreshEvents.push(`detail:${requestId}`);
+    return { requestId, scopeContractDigest: "current-digest" };
+  },
+  applySelectedDetail: (detail) => {
+    staleRefreshEvents.push(`apply:${detail.scopeContractDigest}`);
+  },
+});
+assert(
+  staleRefreshEvents.join(",") === "queue,detail:request-current,apply:current-digest",
+  "stale scope recovery reloads and applies the selected request after refreshing the queue",
+);
 
 assert(normalizeHarnessSlug(" OpenCode ") === "opencode", "normalizer trims and lowercases app slugs");
 assert(normalizeHarnessSlug("*") === null, "normalizer rejects wildcard pseudo-harness");

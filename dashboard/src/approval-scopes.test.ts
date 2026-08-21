@@ -1,4 +1,6 @@
 import {
+  approvalDecisionContractKey,
+  approvalDecisionSubjectKey,
   ADVANCED_SCOPE_VALUES,
   advancedScopeChoicesForRequest,
   buildDecisionPayload,
@@ -295,6 +297,33 @@ assert(
   standardScopeChoicesForRequest(BASE_REQUEST, "allow").map((choice) => choice.value).join(",") ===
     "artifact,workspace,harness",
   "T-AS-21: standard allow scopes expose project and app when eligible",
+);
+const refreshedContractRequest: GuardApprovalRequest = {
+  ...BASE_REQUEST,
+  scope_contract_digest: "digest-refreshed",
+};
+assert(
+  approvalDecisionSubjectKey(refreshedContractRequest) === approvalDecisionSubjectKey(BASE_REQUEST),
+  "T-AS-22: refreshing the contract does not reset a user's approval-duration choice",
+);
+assert(
+  approvalDecisionSubjectKey({ ...BASE_REQUEST, artifact_hash: "sha256-changed" }) !==
+    approvalDecisionSubjectKey(BASE_REQUEST),
+  "T-AS-23: changed action proof resets approval choices",
+);
+assert(
+  approvalDecisionSubjectKey({ ...BASE_REQUEST, raw_command_text: "rm changed-target" }) !==
+    approvalDecisionSubjectKey(BASE_REQUEST),
+  "T-AS-24: changed command text resets approval choices",
+);
+assert(
+  approvalDecisionContractKey(refreshedContractRequest) !== approvalDecisionContractKey(BASE_REQUEST),
+  "T-AS-25: refreshed contracts invalidate approval proof captured by an open modal",
+);
+assert(
+  approvalDecisionContractKey({ ...BASE_REQUEST, raw_command_text: "rm changed-target" }) !==
+    approvalDecisionContractKey(BASE_REQUEST),
+  "T-AS-26: changed action subjects invalidate approval proof captured by an open modal",
 );
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";

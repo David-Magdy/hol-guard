@@ -21,6 +21,7 @@ import {
   repairProtectionCheck,
   runHarnessAction,
   resolveRequestWithQueueResult,
+  GuardRequestResolutionError,
   retryResume,
 } from "./guard-api";
 import { ApprovalCenterLayout, type BulkGateCredentials } from "./approval-center-layout";
@@ -224,6 +225,22 @@ async function loadDetail(requestId: string): Promise<Exclude<DetailState, { kin
       message: message.length > 0 ? message : "Unable to load the approval request."
     };
   }
+}
+
+export async function refreshStaleScopeContractSelection<T>({
+  requestId,
+  refreshQueue,
+  loadSelectedDetail,
+  applySelectedDetail,
+}: {
+  requestId: string | null;
+  refreshQueue: () => Promise<void>;
+  loadSelectedDetail: (requestId: string) => Promise<T>;
+  applySelectedDetail: (detail: T) => void;
+}): Promise<void> {
+  await refreshQueue();
+  if (requestId === null) return;
+  applySelectedDetail(await loadSelectedDetail(requestId));
 }
 
 export function shouldFetchArtifactDiff(artifactType: string): boolean {
@@ -658,7 +675,26 @@ export function App() {
     resolutionInFlight.current = true;
     const queuedItemsSnapshot = requests.kind === "ready" ? requests.items : [];
     try {
-      const result = await resolveRequestWithQueueResult(payload);
+      const result = await resolveRequestWithQueueResult(payload).catch(async (error: unknown) => {
+        if (
+          error instanceof GuardRequestResolutionError &&
+          error.status === 409 &&
+          error.payload?.["error"] === "stale_scope_contract"
+        ) {
+          await refreshStaleScopeContractSelection({
+            requestId: activeRequestId,
+            refreshQueue: async () => {
+              await refreshStateAfterAction();
+            },
+            loadSelectedDetail: loadDetail,
+            applySelectedDetail: setDetail,
+          });
+          throw new Error(
+            "This request changed while you were reviewing it. Guard refreshed the current action and scopes; review them, then retry.",
+          );
+        }
+        throw error;
+      });
       const nextId = selectNextAfterResolution(result, queuedItemsSnapshot);
       const resume = result.codex_resume ?? null;
       setCodexResume(resume);
@@ -674,7 +710,7 @@ export function App() {
     } finally {
       resolutionInFlight.current = false;
     }
-  }, [requests, refreshStateAfterAction, setResolutionMessage]);
+  }, [activeRequestId, requests, refreshStateAfterAction, setResolutionMessage]);
 
   const handleRetryResume = useCallback(async () => {
     if (resolvedRequestId === null) return;

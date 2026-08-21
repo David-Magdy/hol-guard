@@ -232,6 +232,20 @@ async function requestErrorMessage(response: Response, fallback: string): Promis
   return fallback;
 }
 
+export class GuardRequestResolutionError extends Error {
+  readonly status: number;
+  readonly payload: Record<string, unknown> | null;
+
+  constructor(status: number, payload: Record<string, unknown> | null, fallback: string) {
+    const error = typeof payload?.["error"] === "string" ? payload["error"] : null;
+    const message = typeof payload?.["message"] === "string" ? payload["message"] : null;
+    super(message?.trim() || (error?.trim() ? `${error} (${status})` : fallback));
+    this.name = "GuardRequestResolutionError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
 export class GuardHarnessActionError extends Error {
   readonly status: number;
   readonly payload: GuardHarnessActionErrorPayload | null;
@@ -3053,7 +3067,18 @@ export async function resolveRequestWithQueueResult(input: GuardApprovalResoluti
   });
   const response = await fetchGuardApi(path, init());
   if (!response.ok) {
-    throw new Error(await requestErrorMessage(response, `Request failed with ${response.status}`));
+    let payload: Record<string, unknown> | null = null;
+    try {
+      const candidate: unknown = await response.clone().json();
+      payload = isRecord(candidate) ? candidate : null;
+    } catch {
+      payload = null;
+    }
+    throw new GuardRequestResolutionError(
+      response.status,
+      payload,
+      await requestErrorMessage(response, `Request failed with ${response.status}`),
+    );
   }
   const payload = (await response.json()) as QueueResolutionPayload;
   return normalizeQueueResolution(payload);
