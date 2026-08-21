@@ -32,6 +32,7 @@ from codex_plugin_scanner.guard.proxy.stdio import (
 from codex_plugin_scanner.guard.runtime.actions import GuardActionEnvelope, normalize_harness_payload
 from codex_plugin_scanner.guard.runtime.approval_context import (
     APPROVAL_CONTEXT_TOKEN_PREFIX,
+    build_approval_context_token,
     build_configured_environment_hash,
     build_runtime_launch_identity,
 )
@@ -62,6 +63,48 @@ def test_generic_hook_integrity_warning_does_not_hide_separate_valid_saved_block
     assert reuse.action == "block"
     assert reuse.saved_action == "block"
     assert reuse.reason_code == "approval_reuse_integrity_failure"
+
+
+@pytest.mark.parametrize(
+    ("source", "scope"),
+    (
+        ("manual", "artifact"),
+        ("approval-gate", "workspace"),
+    ),
+)
+def test_generic_hook_rejects_non_exact_or_non_gate_durable_allow(
+    tmp_path: Path,
+    source: str,
+    scope: str,
+) -> None:
+    approval_context = build_approval_context_token(
+        identity={"artifact_id": _GENERIC_ARTIFACT_ID, "workspace": str(tmp_path)},
+        content={"payload_digest": "sha256:test"},
+        capabilities=["tool:opaque_tool"],
+        policy={"version": "policy-v1"},
+        sandbox={"profile": "default"},
+    )
+    reuse, saved_present = _generic_hook_approval_reuse(
+        artifact_hash=approval_context,
+        artifact_id=_GENERIC_ARTIFACT_ID,
+        current_action="require-reapproval",
+        decision={
+            "action": "allow",
+            "artifact_hash": approval_context,
+            "expires_at": None,
+            "scope": scope,
+            "source": source,
+        },
+        harness=_GENERIC_HARNESS,
+        ignored_integrity=None,
+        publisher=None,
+        runtime_workspace=tmp_path,
+        store=GuardStore(tmp_path / "guard-home"),
+    )
+
+    assert saved_present is True
+    assert reuse.action == "require-reapproval"
+    assert reuse.reason_code == "approval_reuse_reapproval_required"
 
 
 def test_generic_hook_exact_decision_uses_its_own_integrity_result(

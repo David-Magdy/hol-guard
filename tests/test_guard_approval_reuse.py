@@ -198,6 +198,19 @@ def test_changed_durable_exact_allow_cannot_satisfy_reapproval() -> None:
 
 
 @pytest.mark.parametrize("current_action", ("sandbox-required", "block"))
+def test_durable_exact_allow_never_lowers_terminal_enforcement(current_action: str) -> None:
+    result = evaluate_approval_reuse(
+        current_action,
+        "allow",
+        durable_exact_approval=True,
+    )
+
+    assert result.action == current_action
+    assert result.status == "rejected"
+    assert result.should_claim is False
+
+
+@pytest.mark.parametrize("current_action", ("sandbox-required", "block"))
 def test_fresh_local_allow_never_lowers_enforcement(current_action: str) -> None:
     result = evaluate_approval_reuse(
         current_action,
