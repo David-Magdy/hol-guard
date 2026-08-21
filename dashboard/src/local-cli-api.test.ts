@@ -3,12 +3,16 @@ import assert from "node:assert/strict";
 import {
   addedCustomExtensions,
   filterExtensionSuggestions,
+  filterPackageScriptCommands,
   isLocalCliId,
   normalizeLocalCliItem,
   normalizeLocalCliList,
+  preferredPackageScriptExtension,
   seenSuggestionMeta,
   suggestedCustomExtensions,
   looksLikePackageScriptPaste,
+  looksLikeProjectRelocatePaste,
+  keepsPackageScriptCatalog,
   suggestedHarnessExtensions,
   suggestedPackageScriptExtensions,
   suggestedSeenExtensions,
@@ -142,7 +146,26 @@ const packageScripts = normalizeLocalCliItem({
   name: "demo-app",
   example_label: "pnpm run",
   surface: "package-scripts",
+  source_label: "demo-app",
   suggestable: true,
+  commands: [
+    {
+      command_id: "guard.reddit-targeting.audit",
+      name: "guard:reddit-targeting:audit",
+      usage: "pnpm run guard:reddit-targeting:audit",
+      description: "audit ads",
+      parent_id: "guard.reddit-targeting",
+      state: "inherit",
+    },
+    {
+      command_id: "build",
+      name: "build",
+      usage: "pnpm run build",
+      description: "vite build",
+      parent_id: null,
+      state: "inherit",
+    },
+  ],
 });
 assert.equal(packageScripts.surface, "package-scripts");
 assert.deepEqual(suggestedPackageScriptExtensions([unsetItem, packageScripts]).map((entry) => entry.name), ["demo-app"]);
@@ -204,6 +227,26 @@ assert.deepEqual(
   filterExtensionSuggestions([recentJunk], "rg").map((entry) => entry.name),
   ["rg"],
 );
+assert.deepEqual(
+  filterExtensionSuggestions([packageScripts], "reddit-targeting").map((entry) => entry.name),
+  ["demo-app"],
+);
+assert.deepEqual(
+  filterPackageScriptCommands(packageScripts.commands, "guard:reddit").map((entry) => entry.name),
+  ["guard:reddit-targeting:audit"],
+);
+assert.deepEqual(
+  filterPackageScriptCommands(packageScripts.commands, "npm run").map((entry) => entry.name),
+  ["guard:reddit-targeting:audit", "build"],
+);
+assert.equal(preferredPackageScriptExtension([unsetItem, packageScripts])?.name, "demo-app");
+assert.equal(looksLikeProjectRelocatePaste("npm --prefix ./apps/web run"), true);
+assert.equal(looksLikeProjectRelocatePaste("guard:audit"), false);
+assert.equal(looksLikeProjectRelocatePaste("/proj/My App"), true);
+assert.equal(looksLikeProjectRelocatePaste("C:\\\\My App\\\\package.json"), true);
+assert.equal(keepsPackageScriptCatalog("guard:reddit", packageScripts.commands), true);
+assert.equal(keepsPackageScriptCatalog("my-cli", packageScripts.commands), false);
+assert.equal(keepsPackageScriptCatalog("npx -y @scope/mcp-server", packageScripts.commands), false);
 assert.equal(seenSuggestionMeta(frequentTool), "Seen 4 times");
 assert.equal(seenSuggestionMeta(rareTool), "Seen once");
 

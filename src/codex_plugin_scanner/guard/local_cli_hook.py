@@ -28,7 +28,9 @@ def observe_unlisted_cli(
     recorder(
         identity,
         seen_at=utc_now(),
-        source_path=observation_path_class(identity.source_path),
+        source_path=(
+            identity.source_path if package_identity is not None else observation_path_class(identity.source_path)
+        ),
         surface="package-scripts" if package_identity is not None else "cli",
     )
     if package_identity is not None:
