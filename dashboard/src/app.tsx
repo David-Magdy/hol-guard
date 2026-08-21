@@ -227,6 +227,22 @@ async function loadDetail(requestId: string): Promise<Exclude<DetailState, { kin
   }
 }
 
+export async function refreshStaleScopeContractSelection<T>({
+  requestId,
+  refreshQueue,
+  loadSelectedDetail,
+  applySelectedDetail,
+}: {
+  requestId: string | null;
+  refreshQueue: () => Promise<void>;
+  loadSelectedDetail: (requestId: string) => Promise<T>;
+  applySelectedDetail: (detail: T) => void;
+}): Promise<void> {
+  await refreshQueue();
+  if (requestId === null) return;
+  applySelectedDetail(await loadSelectedDetail(requestId));
+}
+
 export function shouldFetchArtifactDiff(artifactType: string): boolean {
   return new Set(["mcp_server", "skill", "skill_file"]).has(artifactType);
 }
@@ -665,7 +681,12 @@ export function App() {
           error.status === 409 &&
           error.payload?.["error"] === "stale_scope_contract"
         ) {
-          await refreshStateAfterAction();
+          await refreshStaleScopeContractSelection({
+            requestId: activeRequestId,
+            refreshQueue: refreshStateAfterAction,
+            loadSelectedDetail: loadDetail,
+            applySelectedDetail: setDetail,
+          });
           throw new Error(
             "This request changed while you were reviewing it. Guard refreshed the current action and scopes; review them, then retry.",
           );
@@ -687,7 +708,7 @@ export function App() {
     } finally {
       resolutionInFlight.current = false;
     }
-  }, [requests, refreshStateAfterAction, setResolutionMessage]);
+  }, [activeRequestId, requests, refreshStateAfterAction, setResolutionMessage]);
 
   const handleRetryResume = useCallback(async () => {
     if (resolvedRequestId === null) return;

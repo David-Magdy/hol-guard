@@ -30637,6 +30637,16 @@ async function loadDetail(requestId) {
     };
   }
 }
+async function refreshStaleScopeContractSelection({
+  requestId,
+  refreshQueue,
+  loadSelectedDetail,
+  applySelectedDetail
+}) {
+  await refreshQueue();
+  if (requestId === null) return;
+  applySelectedDetail(await loadSelectedDetail(requestId));
+}
 function shouldFetchArtifactDiff(artifactType) {
   return (/* @__PURE__ */ new Set(["mcp_server", "skill", "skill_file"])).has(artifactType);
 }
@@ -31020,7 +31030,12 @@ function App() {
     try {
       const result = await resolveRequestWithQueueResult(payload).catch(async (error) => {
         if (error instanceof GuardRequestResolutionError && error.status === 409 && error.payload?.["error"] === "stale_scope_contract") {
-          await refreshStateAfterAction();
+          await refreshStaleScopeContractSelection({
+            requestId: activeRequestId,
+            refreshQueue: refreshStateAfterAction,
+            loadSelectedDetail: loadDetail,
+            applySelectedDetail: setDetail
+          });
           throw new Error(
             "This request changed while you were reviewing it. Guard refreshed the current action and scopes; review them, then retry."
           );
@@ -31042,7 +31057,7 @@ function App() {
     } finally {
       resolutionInFlight.current = false;
     }
-  }, [requests, refreshStateAfterAction, setResolutionMessage]);
+  }, [activeRequestId, requests, refreshStateAfterAction, setResolutionMessage]);
   const handleRetryResume = reactExports.useCallback(async () => {
     if (resolvedRequestId === null) return;
     const updated = await retryResume(resolvedRequestId);
