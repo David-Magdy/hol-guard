@@ -27,10 +27,10 @@ from .runtime.command_extensions import CommandSafetyExtensionRegistry
 from .runtime.extension_control_limits import MAX_CONTROL_SET_RULES
 
 
-def _is_mapping(value: object) -> TypeGuard[dict[str, object]]:
-    """Retain the internal compatibility helper used by bundle validation."""
+def is_mapping(value: object) -> TypeGuard[dict[str, object]]:
+    """Return whether a value is a string-keyed object."""
 
-    return _core._is_mapping(value)
+    return _core._is_mapping(value)  # noqa: SLF001
 
 
 def _mapping(value: object, *, code: str, label: str) -> dict[str, object]:
