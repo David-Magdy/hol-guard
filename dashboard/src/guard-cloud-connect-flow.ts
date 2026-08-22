@@ -1,5 +1,12 @@
 import type { GuardCloudConnectStatusResponse } from "./guard-types";
-import { fetchGuardCloudConnectStatus } from "./guard-api";
+import { fetchGuardCloudConnectStatus, startGuardCloudConnect } from "./guard-api";
+
+export class CloudRequestTimeoutError extends Error {
+  constructor() {
+    super("Guard Cloud did not respond within 5 seconds. Try again.");
+    this.name = "CloudRequestTimeoutError";
+  }
+}
 
 export async function withCloudRequestTimeout<T>(
   request: (signal: AbortSignal) => Promise<T>,
@@ -11,12 +18,32 @@ export async function withCloudRequestTimeout<T>(
   const controller = new AbortController();
   const abort = () => controller.abort();
   parentSignal?.addEventListener("abort", abort, { once: true });
-  const timeout = globalThis.setTimeout(() => controller.abort(), 5000);
+  let timedOut = false;
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 5000);
   try {
     return await request(controller.signal);
+  } catch (error: unknown) {
+    if (timedOut && !parentSignal?.aborted && error instanceof DOMException && error.name === "AbortError") {
+      throw new CloudRequestTimeoutError();
+    }
+    throw error;
   } finally {
     globalThis.clearTimeout(timeout);
     parentSignal?.removeEventListener("abort", abort);
+  }
+}
+
+export async function startOrRecoverCloudConnect(
+  signal: AbortSignal,
+): Promise<GuardCloudConnectStatusResponse> {
+  try {
+    return await withCloudRequestTimeout(startGuardCloudConnect, signal);
+  } catch (error: unknown) {
+    if (!(error instanceof CloudRequestTimeoutError)) throw error;
+    return await withCloudRequestTimeout(fetchGuardCloudConnectStatus, signal);
   }
 }
 
