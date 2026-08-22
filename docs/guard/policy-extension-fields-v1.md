@@ -24,6 +24,8 @@ x-hol-extension-targets:
   permissionIds: []
 ```
 
+A rule may target permissions without repeating their owning Extension IDs. Local resolves and validates each permission's owner from the canonical catalog. When `extensionIds` are also supplied, every permission must belong to one of those listed Extensions.
+
 The canonical capability names are `extension-control-layer.v1`, `policy-extension-targets.v1`, and `managed-controls-atomic-apply.v1`. Transitional `guard.*` aliases are accepted for compatibility but are not the advertised contract.
 
 Shared authority may materialize into the signed-Cloud layer. Local disable dominance, required Extensions, and immutable permission floors remain intact. Explicit Cloud enablement may target only configurable permissions. Managed-restrictive authority may only disable an Extension, disable a permission, or enable Emergency Lockdown.
