@@ -16,7 +16,10 @@ from .runtime.extension_control_contract import (
     ExtensionControl,
     ExtensionControlLayer,
 )
-from .runtime.extension_control_limits import MAX_CONTROLS_PER_LAYER, MAX_CONTROL_SET_TARGETS
+from .runtime.extension_control_limits import (
+    MAX_CONTROLS_PER_LAYER,
+    MAX_CONTROL_SET_TARGETS,
+)
 
 HOL_EXTENSION_CONTROLS_FIELD: Final = "x-hol-extension-controls"
 HOL_EXTENSION_TARGETS_FIELD: Final = "x-hol-extension-targets"
@@ -412,7 +415,10 @@ def _parse_controls_projection(
             managed_controls=managed_controls,
             delegated_controls=delegated_controls,
         )
-    order = lambda item: (item.target.kind.value, item.target.target_id)
+
+    def order(item: ExtensionControl | DelegatedExtensionTarget) -> tuple[str, str]:
+        return (item.target.kind.value, item.target.target_id)
+
     signed_cloud_layer = (
         ExtensionControlLayer(
             schema_version=CONTROL_SCHEMA_VERSION,
