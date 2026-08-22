@@ -1,0 +1,45 @@
+name: Managed Controls one-shot import fix
+
+on:
+  pull_request:
+    branches:
+      - release/3.0
+    paths:
+      - .github/workflows/managed-controls-one-shot-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'managed-controls/batch-13-local-parser-shared-posture'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the pull request branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
+      - name: Apply the deterministic import-order correction
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py")
+          text = path.read_text(encoding="utf-8")
+          old = """from .runtime.extension_control_limits import (\n    MAX_CONTROLS_PER_LAYER,\n    MAX_CONTROL_SET_TARGETS,\n)"""
+          new = """from .runtime.extension_control_limits import (\n    MAX_CONTROL_SET_TARGETS,\n    MAX_CONTROLS_PER_LAYER,\n)"""
+          if old not in text:
+              raise SystemExit("expected import block not found")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          Path(".github/workflows/managed-controls-one-shot-fix.yml").unlink()
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py
+          git add -u .github/workflows/managed-controls-one-shot-fix.yml
+          git commit -m "fix: sort managed controls parser imports"
+          git push origin HEAD:${{ github.head_ref }}
