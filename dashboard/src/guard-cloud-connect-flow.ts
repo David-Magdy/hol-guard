@@ -26,7 +26,9 @@ export async function withCloudRequestTimeout<T>(
   try {
     return await request(controller.signal);
   } catch (error: unknown) {
-    if (timedOut && !parentSignal?.aborted) throw new CloudRequestTimeoutError();
+    if (timedOut && !parentSignal?.aborted && error instanceof DOMException && error.name === "AbortError") {
+      throw new CloudRequestTimeoutError();
+    }
     throw error;
   } finally {
     globalThis.clearTimeout(timeout);
