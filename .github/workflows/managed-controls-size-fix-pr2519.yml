@@ -1,0 +1,42 @@
+name: Managed Controls parser compaction
+
+on:
+  push:
+    branches:
+      - managed-controls/batch-13-local-parser-shared-posture
+
+permissions:
+  contents: write
+
+jobs:
+  compact:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+      - name: Compact bounded ID validation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py")
+          text = path.read_text()
+          replacements = {
+              "_EXTENSION_ID: Final = re.compile(": "_EXT_ID: Final = re.compile(",
+              "_PERMISSION_ID: Final = re.compile(": "_PERM_ID: Final = re.compile(",
+              """    if (\n        not isinstance(value, str)\n        or len(value) > 256\n        or not _EXTENSION_ID.fullmatch(value)\n    ):""": """    if not isinstance(value, str) or len(value) > 256 or not _EXT_ID.fullmatch(value):""",
+              """    if (\n        not isinstance(value, str)\n        or len(value) > 256\n        or not _PERMISSION_ID.fullmatch(value)\n    ):""": """    if not isinstance(value, str) or len(value) > 256 or not _PERM_ID.fullmatch(value):""",
+          }
+          for old, new in replacements.items():
+              if text.count(old) != 1:
+                  raise SystemExit(f"expected exactly one occurrence: {old!r}")
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py
+          git commit -m "refactor(guard): keep Managed Controls parser within size gate"
+          git push origin HEAD:managed-controls/batch-13-local-parser-shared-posture
