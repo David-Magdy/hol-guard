@@ -2603,7 +2603,6 @@ function normalizeGuardCloudConnectStatus(value: unknown): GuardCloudConnectStat
 export async function fetchGuardCloudConnectStatus(signal?: AbortSignal): Promise<GuardCloudConnectStatusResponse> {
   return normalizeGuardCloudConnectStatus(await readJson<unknown>("/v1/cloud/connect", { signal }));
 }
-
 export async function startGuardCloudConnect(signal?: AbortSignal): Promise<GuardCloudConnectStatusResponse> {
   return normalizeGuardCloudConnectStatus(
     await readJson<unknown>("/v1/cloud/connect", {
@@ -2614,7 +2613,6 @@ export async function startGuardCloudConnect(signal?: AbortSignal): Promise<Guar
     }),
   );
 }
-
 export async function fetchLatestReceipt(
   artifactId: string,
   harness: string
