@@ -29,7 +29,9 @@ ParsedManagedControlsPolicy = _core.ParsedManagedControlsPolicy
 def is_mapping(value: object) -> TypeGuard[dict[str, object]]:
     """Return whether a value is a string-keyed object."""
 
-    return _core._is_mapping(value)
+    if not isinstance(value, dict):
+        return False
+    return all(isinstance(key, str) for key in cast(dict[object, object], value))
 
 
 def _mapping(value: object, *, code: str, label: str) -> dict[str, object]:
@@ -92,9 +94,11 @@ def parse_managed_controls_policy_fields(
     """Validate presence-sensitive fields, then use the canonical projection."""
 
     _validate_presence_sensitive_fields(document)
+    capabilities = negotiated_capabilities
+    if package_firewall_supported:
+        capabilities = capabilities | frozenset({PACKAGE_FIREWALL_CAPABILITY})
     return _core.parse_managed_controls_policy_fields(
         document,
         registry=registry,
-        negotiated_capabilities=negotiated_capabilities,
-        package_firewall_supported=package_firewall_supported,
+        capabilities=capabilities,
     )
