@@ -17,6 +17,7 @@ from .runtime.extension_control_contract import (
     ExtensionControlLayer,
 )
 from .runtime.extension_control_limits import (
+    MAX_CONTROL_SET_RULES,
     MAX_CONTROL_SET_TARGETS,
     MAX_CONTROLS_PER_LAYER,
 )
@@ -132,13 +133,21 @@ def _normalize_capabilities(value: object) -> frozenset[str]:
 
 
 def _canonical_extension_id(value: object) -> str:
-    if not isinstance(value, str) or not _EXTENSION_ID.fullmatch(value):
+    if (
+        not isinstance(value, str)
+        or len(value) > 256
+        or not _EXTENSION_ID.fullmatch(value)
+    ):
         raise ManagedControlsPolicyError("invalid_extension_id", "Extension target ID is not canonical.")
     return value
 
 
 def _canonical_permission_id(value: object) -> str:
-    if not isinstance(value, str) or not _PERMISSION_ID.fullmatch(value):
+    if (
+        not isinstance(value, str)
+        or len(value) > 256
+        or not _PERMISSION_ID.fullmatch(value)
+    ):
         raise ManagedControlsPolicyError("invalid_permission_id", "Permission target ID is not canonical.")
     return value
 
@@ -206,11 +215,18 @@ def _parse_rule_targets(
     parsed_rules: list[ExtensionRuleTargets] = []
     delegated: set[DelegatedExtensionTarget] = set()
     total_targets = 0
+    targeted_rule_count = 0
     for rule_value in rules:
         rule = _mapping(rule_value, code="invalid_policy_document", label="GuardPolicy rule")
-        field = rule.get(HOL_EXTENSION_TARGETS_FIELD)
-        if field is None:
+        if HOL_EXTENSION_TARGETS_FIELD not in rule:
             continue
+        targeted_rule_count += 1
+        if targeted_rule_count > MAX_CONTROL_SET_RULES:
+            raise ManagedControlsPolicyError(
+                "rule_limit_exceeded",
+                "Extension-targeted rules exceed the supported limit.",
+            )
+        field = rule[HOL_EXTENSION_TARGETS_FIELD]
         targets = _mapping(field, code="invalid_extension_targets", label=HOL_EXTENSION_TARGETS_FIELD)
         _exact_keys(
             targets,
@@ -359,8 +375,15 @@ def _append_control_projection(
         permission = registry.permission(control.target.target_id)
         if permission is None or not permission.configurable:
             raise ManagedControlsPolicyError(
-                "shared_enable_not_configurable",
-                "Shared Cloud enablement may target only configurable permissions.",
+                "immutable_floor",
+                "Shared Cloud enablement cannot weaken an immutable permission floor.",
+            )
+    if control.target.kind is ControlTargetKind.EXTENSION and control.state is ControlState.DISABLED:
+        extension_value = registry.get(control.target.target_id)
+        if extension_value is not None and extension_value.required:
+            raise ManagedControlsPolicyError(
+                "immutable_floor",
+                "A required Extension cannot be disabled by shared Cloud posture.",
             )
     generic_controls.append(control)
 
@@ -392,7 +415,8 @@ def _parse_control_layer(
         signed_cloud_layer = ExtensionControlLayer(
             schema_version=CONTROL_SCHEMA_VERSION,
             kind=ControlLayerKind.SIGNED_CLOUD,
-            revision=0,
+            catalog_digest=registry.catalog_digest,
+            global_lockdown=global_lockdown,
             controls=tuple(generic_controls),
         )
     return (
@@ -430,7 +454,7 @@ def parse_managed_controls_policy_fields(
     }
     if not required.issubset(negotiated):
         raise ManagedControlsPolicyError(
-            "unsupported_capability",
+            "unnegotiated_extension_semantics",
             "Managed Controls fields require the complete negotiated capability set.",
         )
     package_firewall_supported = PACKAGE_FIREWALL_CAPABILITY in negotiated
