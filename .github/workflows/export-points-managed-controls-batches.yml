@@ -6,6 +6,11 @@ on:
       - automation/points-managed-controls-export
     paths:
       - '.github/workflows/export-points-managed-controls-batches.yml'
+  pull_request:
+    branches:
+      - release/3.0
+    paths:
+      - '.github/workflows/export-points-managed-controls-batches.yml'
   workflow_dispatch:
 
 permissions:
@@ -29,6 +34,7 @@ jobs:
           git config user.name 'Managed Controls Export'
           git config user.email 'managed-controls-export@users.noreply.github.com'
           node .github/scripts/generate-managed-controls-batches.mjs
+          git fetch origin '+refs/heads/managed-controls/batch-*:refs/remotes/origin/managed-controls/batch-*'
 
       - name: Serialize exact per-batch deltas
         shell: python
@@ -43,11 +49,15 @@ jobs:
               return subprocess.check_output(['git', *args], cwd=repo, text=True).strip()
 
           batches = []
+          refs_output = git(
+              'for-each-ref',
+              '--format=%(objectname) %(refname)',
+              'refs/remotes/origin/managed-controls/',
+          )
           for batch in range(18, 36):
-              prefix = f'managed-controls/batch-{batch:02d}-'
               refs = [
                   line.split(' ', 1)[1].removeprefix('refs/remotes/origin/')
-                  for line in git('for-each-ref', '--format=%(objectname) %(refname)', 'refs/remotes/origin/managed-controls/').splitlines()
+                  for line in refs_output.splitlines()
                   if f'/batch-{batch:02d}-' in line
               ]
               if len(refs) != 1:
