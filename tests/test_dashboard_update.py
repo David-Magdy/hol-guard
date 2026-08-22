@@ -168,29 +168,36 @@ def test_frozen_desktop_status_uses_embedded_version_without_package_probe(
         "codex_plugin_scanner.guard.cli.update_commands._status_installed_distribution",
         MagicMock(side_effect=AssertionError("frozen Desktop must not probe package metadata")),
     )
-    version_check = MagicMock(side_effect=AssertionError("Desktop manages Core updates"))
+    version_check = MagicMock(
+        return_value={
+            "source": "pypi",
+            "status": "stale",
+            "current_version": "3.0.0a138",
+            "latest_version": "3.0.0a200",
+            "update_available": True,
+        }
+    )
     monkeypatch.setattr(
         "codex_plugin_scanner.guard.cli.update_commands._version_check_payload",
         version_check,
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands.desktop_core_updates_supported",
+        lambda: True,
     )
 
     payload = build_guard_update_status_payload()
 
     assert payload["installer"] == "desktop"
     assert payload["current_version"] == "3.0.0a138"
-    assert payload["latest_version"] is None
-    assert payload["auto_updatable"] is False
-    assert payload["update_available"] is False
-    assert payload["blocked_reason"] == "Updates are managed by HOL Guard Desktop."
+    assert payload["latest_version"] == "3.0.0a200"
+    assert payload["auto_updatable"] is True
+    assert payload["update_available"] is True
+    assert payload["blocked_reason"] is None
     assert "reason_code" not in payload
-    assert payload["version_check"] == {
-        "source": "pypi",
-        "status": "managed",
-        "current_version": "3.0.0a138",
-        "latest_version": None,
-        "update_available": None,
-    }
-    version_check.assert_not_called()
+    assert payload["python_update_required"] is False
+    assert payload["version_check"]["update_available"] is True
+    version_check.assert_called_once()
 
 
 def test_frozen_runtime_without_desktop_marker_keeps_installer_detection(
@@ -210,6 +217,121 @@ def test_frozen_runtime_without_desktop_marker_keeps_installer_detection(
 
     assert payload["installer"] == "pip"
     assert cast(dict[str, object], payload["binary_diagnostics"])["path_status"] != "bundled"
+
+
+def test_frozen_desktop_path_without_env_uses_desktop_installer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands._is_frozen_runtime",
+        lambda: True,
+    )
+    monkeypatch.delenv("HOL_GUARD_DESKTOP", raising=False)
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands.executable_is_desktop_core",
+        lambda _path: True,
+    )
+
+    payload = update_commands.build_guard_install_surface_payload()
+
+    assert payload["installer"] == "desktop"
+    assert cast(dict[str, object], payload["binary_diagnostics"])["path_status"] == "bundled"
+
+
+def test_frozen_desktop_status_stays_blocked_on_unsupported_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands._is_frozen_runtime",
+        lambda: True,
+    )
+    monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands.package_version.__version__",
+        "3.0.0a138",
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands.importlib.metadata.version",
+        MagicMock(side_effect=importlib.metadata.PackageNotFoundError),
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands.desktop_core_updates_supported",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands._version_check_payload",
+        lambda current_version, **_kwargs: {
+            "source": "pypi",
+            "status": "stale",
+            "current_version": current_version,
+            "latest_version": "3.0.0a200",
+            "update_available": True,
+        },
+    )
+
+    payload = build_guard_update_status_payload()
+
+    assert payload["installer"] == "desktop"
+    assert payload["auto_updatable"] is False
+    assert payload["update_available"] is False
+    assert "HOL Guard Desktop releases" in str(payload["blocked_reason"])
+
+
+def test_desktop_cli_update_applies_signed_core_feed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    new_core = tmp_path / "hol-guard"
+    new_core.write_text("core", encoding="utf-8")
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands._is_desktop_managed_runtime",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands._current_version",
+        lambda: "3.0.0a138",
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands.desktop_core_updates_supported",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands._version_check_payload",
+        lambda current_version, **_kwargs: {
+            "source": "pypi",
+            "status": "stale",
+            "current_version": current_version,
+            "latest_version": "3.0.0a200",
+            "update_available": True,
+        },
+    )
+    from codex_plugin_scanner.guard.cli.update_desktop_core import DesktopCoreApplyResult
+
+    apply = MagicMock(return_value=DesktopCoreApplyResult(executable=new_core, version="3.0.0a200", changed=True))
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands.apply_desktop_core_update",
+        apply,
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands._refresh_desktop_core_daemon",
+        lambda context, *, executable: ({"status": "restarted", "url": "http://127.0.0.1:1"}, None),
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_commands.build_trusted_update_context",
+        MagicMock(side_effect=AssertionError("desktop updates must not use pip")),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(
+        dry_run=False,
+        include_alpha=True,
+        guard_home=tmp_path / "guard-home",
+    )
+
+    assert exit_code == 0
+    assert payload["installer"] == "desktop"
+    assert payload["status"] == "updated"
+    assert payload["resulting_version"] == "3.0.0a200"
+    apply.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -799,6 +921,55 @@ def test_runner_command_avoids_module_shadowing_from_cwd(tmp_path: Path) -> None
     assert runner_script.is_file()
     assert command[1:4] == ["-I", "-S", "-c"]
     assert "-P" not in command
+
+
+def test_frozen_runner_command_uses_desktop_dashboard_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    guard_home = tmp_path / "guard-home"
+    guard_home.mkdir()
+    command = build_dashboard_update_runner_command(
+        guard_home.resolve(),
+        daemon_pid=99,
+        daemon_port=1234,
+        update_token="a" * 64,
+        include_alpha=True,
+    )
+    assert command[1:3] == ["desktop", "dashboard-update"]
+    assert "--guard-home" in command
+    assert "--alpha" in command
+    assert "-c" not in command
+    assert "-I" not in command
+
+
+def test_desktop_dashboard_update_parser_accepts_runner_args(tmp_path: Path) -> None:
+    from codex_plugin_scanner.cli import _build_parser
+
+    guard_home = tmp_path / "guard-home"
+    parser = _build_parser("hol-guard", program_mode="guard")
+    args = parser.parse_args(
+        [
+            "desktop",
+            "dashboard-update",
+            "--guard-home",
+            str(guard_home),
+            "--daemon-pid",
+            "99",
+            "--daemon-port",
+            "1234",
+            "--update-token",
+            "a" * 64,
+            "--alpha",
+        ]
+    )
+    assert args.guard_command == "desktop"
+    assert args.desktop_command == "dashboard-update"
+    assert str(args.guard_home) == str(guard_home)
+    assert args.daemon_pid == 99
+    assert args.daemon_port == 1234
+    assert args.alpha is True
 
 
 def test_runner_env_ignores_inherited_pythonpath(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

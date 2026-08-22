@@ -41,6 +41,7 @@ _DASHBOARD_UPDATE_RUNNER_ENV_KEYS = frozenset(
     {
         "APPDATA",
         "COMSPEC",
+        "HOL_GUARD_DESKTOP",
         "HOME",
         "LANG",
         "LC_ALL",
@@ -232,12 +233,29 @@ def build_dashboard_update_runner_command(
     if not update_token:
         raise ValueError("Guard dashboard update requires a non-empty reservation token.")
     resolved_home = guard_home.expanduser().resolve()
+    runner_args = [
+        "--guard-home",
+        str(resolved_home),
+        "--daemon-pid",
+        str(daemon_pid),
+        "--daemon-port",
+        str(daemon_port),
+        "--update-token",
+        update_token,
+    ]
+    if force_pypi_reinstall:
+        runner_args.append("--force-pypi-reinstall")
+    if include_alpha:
+        runner_args.append("--alpha")
+    interpreter = str(_dashboard_update_runner_interpreter())
+    if bool(getattr(sys, "frozen", False)):
+        return [interpreter, "desktop", "dashboard-update", *runner_args]
     runner_script = dashboard_update_runner_script()
     trusted_prefix = _trusted_runner_prefix(sys.prefix)
     trusted_exec_prefix = _trusted_runner_prefix(sys.exec_prefix)
     trusted_import_paths = _trusted_runner_import_paths(runner_script)
     command = [
-        str(_dashboard_update_runner_interpreter()),
+        interpreter,
         "-I",
         "-S",
         "-c",
@@ -246,23 +264,8 @@ def build_dashboard_update_runner_command(
         str(trusted_exec_prefix),
         json.dumps([str(path) for path in trusted_import_paths], separators=(",", ":")),
         str(runner_script),
+        *runner_args,
     ]
-    command.extend(
-        [
-            "--guard-home",
-            str(resolved_home),
-            "--daemon-pid",
-            str(daemon_pid),
-            "--daemon-port",
-            str(daemon_port),
-            "--update-token",
-            update_token,
-        ]
-    )
-    if force_pypi_reinstall:
-        command.append("--force-pypi-reinstall")
-    if include_alpha:
-        command.append("--alpha")
     return command
 
 
