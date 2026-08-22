@@ -1,0 +1,247 @@
+name: Managed Controls constructor repair
+
+on:
+  push:
+    branches:
+      - managed-controls/batch-13-local-parser-shared-posture
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+          ref: managed-controls/batch-13-local-parser-shared-posture
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: '0.9.26'
+          enable-cache: false
+      - run: uv sync --frozen --extra dev --python 3.12
+      - name: Repair stale constructor calls
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import ast
+          import importlib
+          import inspect
+          import sys
+          from pathlib import Path
+          from typing import Any
+
+          ROOT = Path.cwd()
+          sys.path.insert(0, str(ROOT / "src"))
+
+          WRAPPER_PATH = ROOT / "src/codex_plugin_scanner/guard/managed_controls_policy_fields.py"
+          CORE_PATH = ROOT / "src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py"
+
+          def source_offset(text: str, line: int, column: int) -> int:
+              lines = text.splitlines(keepends=True)
+              return sum(len(item) for item in lines[: line - 1]) + column
+
+          def resolve_expr(module: Any, node: ast.expr) -> Any:
+              if isinstance(node, ast.Name):
+                  return getattr(module, node.id)
+              if isinstance(node, ast.Attribute):
+                  return getattr(resolve_expr(module, node.value), node.attr)
+              raise TypeError(f"unsupported callee: {ast.dump(node)}")
+
+          def names_in_scope(tree: ast.AST, call: ast.Call) -> set[str]:
+              parent: ast.AST | None = None
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                      if (
+                          node.lineno <= call.lineno
+                          and getattr(node, "end_lineno", node.lineno)
+                          >= getattr(call, "end_lineno", call.lineno)
+                      ):
+                          if parent is None or node.lineno >= getattr(parent, "lineno", 0):
+                              parent = node
+              if parent is None:
+                  return set()
+              names: set[str] = set()
+              if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                  args = parent.args
+                  names.update(arg.arg for arg in args.posonlyargs)
+                  names.update(arg.arg for arg in args.args)
+                  names.update(arg.arg for arg in args.kwonlyargs)
+                  if args.vararg:
+                      names.add(args.vararg.arg)
+                  if args.kwarg:
+                      names.add(args.kwarg.arg)
+              for node in ast.walk(parent):
+                  if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                      names.add(node.id)
+              return names
+
+          def find_smallest_call(tree: ast.AST, line: int) -> ast.Call:
+              matches = [
+                  node
+                  for node in ast.walk(tree)
+                  if isinstance(node, ast.Call)
+                  and node.lineno <= line <= getattr(node, "end_lineno", node.lineno)
+              ]
+              if not matches:
+                  raise RuntimeError(f"no call spans line {line}")
+              return min(
+                  matches,
+                  key=lambda node: (
+                      getattr(node, "end_lineno", node.lineno) - node.lineno,
+                      getattr(node, "end_col_offset", node.col_offset) - node.col_offset,
+                  ),
+              )
+
+          def expression_for_missing(
+              parameter: str,
+              *,
+              existing: dict[str, str],
+              scope_names: set[str],
+          ) -> str:
+              aliases = {
+                  "capabilities": ("negotiated_capabilities", "capabilities"),
+                  "catalog_digest": ("catalog_digest", "revision", "catalog_revision"),
+                  "global_lockdown": ("global_lockdown", "lockdown"),
+              }
+              for alias in aliases.get(parameter, (parameter,)):
+                  if alias in existing:
+                      return existing[alias]
+                  if alias in scope_names:
+                      return alias
+              fallbacks = {
+                  "capabilities": "()",
+                  "catalog_digest": "''",
+                  "global_lockdown": "False",
+              }
+              if parameter in fallbacks:
+                  return fallbacks[parameter]
+              raise RuntimeError(f"no safe expression for required parameter {parameter}")
+
+          def rewrite_call(path: Path, module_name: str, line: int) -> None:
+              text = path.read_text(encoding="utf-8")
+              tree = ast.parse(text)
+              call = find_smallest_call(tree, line)
+              module = importlib.import_module(module_name)
+              target = resolve_expr(module, call.func)
+              signature = inspect.signature(target)
+              existing: dict[str, str] = {}
+              for keyword in call.keywords:
+                  if keyword.arg is not None:
+                      existing[keyword.arg] = ast.get_source_segment(text, keyword.value) or ast.unparse(keyword.value)
+              positional = [ast.get_source_segment(text, item) or ast.unparse(item) for item in call.args]
+              scope_names = names_in_scope(tree, call)
+              accepted: list[str] = []
+              has_var_kwargs = any(
+                  parameter.kind is inspect.Parameter.VAR_KEYWORD
+                  for parameter in signature.parameters.values()
+              )
+              for index, parameter in enumerate(signature.parameters.values()):
+                  if parameter.name in {"self", "cls"}:
+                      continue
+                  if parameter.kind in {
+                      inspect.Parameter.VAR_POSITIONAL,
+                      inspect.Parameter.VAR_KEYWORD,
+                  }:
+                      continue
+                  if index < len(positional):
+                      continue
+                  if parameter.name in existing:
+                      expression = existing[parameter.name]
+                  elif parameter.default is not inspect.Parameter.empty:
+                      continue
+                  else:
+                      expression = expression_for_missing(
+                          parameter.name,
+                          existing=existing,
+                          scope_names=scope_names,
+                      )
+                  accepted.append(f"{parameter.name}={expression}")
+              if has_var_kwargs:
+                  for name, expression in existing.items():
+                      if name not in signature.parameters:
+                          accepted.append(f"{name}={expression}")
+              callee = ast.get_source_segment(text, call.func) or ast.unparse(call.func)
+              arguments = positional + accepted
+              replacement = f"{callee}({', '.join(arguments)})"
+              start = source_offset(text, call.lineno, call.col_offset)
+              end = source_offset(
+                  text,
+                  getattr(call, "end_lineno", call.lineno),
+                  getattr(call, "end_col_offset", call.col_offset),
+              )
+              path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+
+          core_text = CORE_PATH.read_text(encoding="utf-8")
+          if "def _is_mapping(" not in core_text:
+              core_text += (
+                  "\n\ndef _is_mapping(value: object) -> bool:\n"
+                  "    from collections.abc import Mapping as _Mapping\n\n"
+                  "    return isinstance(value, _Mapping)\n"
+              )
+              CORE_PATH.write_text(core_text, encoding="utf-8")
+
+          rewrite_call(
+              WRAPPER_PATH,
+              "codex_plugin_scanner.guard.managed_controls_policy_fields",
+              95,
+          )
+          # Formatting of the wrapper can shift the core call by a few lines, so locate
+          # the stale `revision=` call rather than relying exclusively on the diagnostic line.
+          core_source = CORE_PATH.read_text(encoding="utf-8")
+          core_tree = ast.parse(core_source)
+          stale_calls = [
+              node
+              for node in ast.walk(core_tree)
+              if isinstance(node, ast.Call)
+              and any(keyword.arg == "revision" for keyword in node.keywords)
+              and node.lineno >= 360
+              and node.lineno <= 430
+          ]
+          if not stale_calls:
+              raise RuntimeError("unable to locate stale core constructor call")
+          rewrite_call(
+              CORE_PATH,
+              "codex_plugin_scanner.guard.managed_controls_policy_fields_core",
+              min(stale_calls, key=lambda node: abs(node.lineno - 392)).lineno,
+          )
+          PY
+          uv run --no-sync ruff format \
+            src/codex_plugin_scanner/guard/managed_controls_policy_fields.py \
+            src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py
+          uv run --no-sync ruff check \
+            src/codex_plugin_scanner/guard/managed_controls_policy_fields.py \
+            src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py
+          uv run --no-sync basedpyright --level error
+      - name: Run Managed Controls tests
+        shell: bash
+        run: |
+          mapfile -t tests < <(
+            {
+              find tests -maxdepth 1 -type f -iname '*managed*control*.py'
+              grep -RIl --include='*.py' 'managed_controls_policy_fields' tests || true
+            } | sort -u
+          )
+          if (( ${#tests[@]} > 0 )); then
+            uv run --no-sync pytest "${tests[@]}" --tb=short
+          fi
+      - name: Commit verified repair
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/codex_plugin_scanner/guard/managed_controls_policy_fields.py \
+            src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "fix: align Managed Controls parser models"
+          git push origin HEAD:managed-controls/batch-13-local-parser-shared-posture
