@@ -20160,8 +20160,8 @@ const ActionButton = reactExports.forwardRef(
         {
           ref,
           href: guardAwareHref(href),
-          target: href.startsWith("https://") ? "_blank" : void 0,
-          rel: href.startsWith("https://") ? "noreferrer" : void 0,
+          target: /^https?:\/\//i.test(href) ? "_blank" : void 0,
+          rel: /^https?:\/\//i.test(href) ? "noopener noreferrer" : void 0,
           onClick,
           className,
           ...anchorPropsFromButtonProps(buttonProps),
@@ -28269,7 +28269,9 @@ async function withCloudRequestTimeout(request, parentSignal) {
   try {
     return await request(controller.signal);
   } catch (error) {
-    if (timedOut && !parentSignal?.aborted) throw new CloudRequestTimeoutError();
+    if (timedOut && !parentSignal?.aborted && error instanceof DOMException && error.name === "AbortError") {
+      throw new CloudRequestTimeoutError();
+    }
     throw error;
   } finally {
     globalThis.clearTimeout(timeout);

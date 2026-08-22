@@ -106,6 +106,25 @@ function cloudConnectPendingMessage(hasAuthorizeUrl, opened) {
   }
   return "Your browser blocked the sign-in window. Open the secure sign-in link below.";
 }
+function cloudConnectButtonLabel(state, defaultLabel) {
+  if (state?.status === "working") return "Starting sign-in…";
+  if (state?.status === "success") return "Guard Cloud connected";
+  return defaultLabel;
+}
+function safeCloudConnectUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (!url.hostname || url.username || url.password) return null;
+    const loopbackHosts = ["localhost", "127.0.0.1", "[::1]"];
+    const secureRemote = url.protocol === "https:";
+    const localHttp = url.protocol === "http:" && loopbackHosts.includes(url.hostname);
+    if (!secureRemote && !localHttp) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
 function FleetProtectionRecovery(props) {
   const [repairState, setRepairState] = reactExports.useState(null);
   const [cloudConnectState, setCloudConnectState] = reactExports.useState(null);
@@ -164,17 +183,18 @@ function FleetProtectionRecovery(props) {
         return;
       }
       const flow = status.connect_flow;
-      const signInUrl = flow?.authorize_url ?? flow?.connect_url;
+      const authorizeUrl = safeCloudConnectUrl(flow?.authorize_url);
+      const signInUrl = authorizeUrl ?? safeCloudConnectUrl(flow?.connect_url);
       if (!flow || !signInUrl) {
         throw new Error(
           flow?.detail || "Guard could not generate a secure sign-in link. Try again."
         );
       }
-      const opened = flow.authorize_url ? openPackageFirewallAuthorizeFallback(flow.authorize_url, flow.browser_opened) : false;
+      const opened = authorizeUrl ? openPackageFirewallAuthorizeFallback(authorizeUrl, flow.browser_opened) : false;
       if (!isActiveCloudConnect(controller)) return;
       setCloudConnectState({
         authorizeUrl: signInUrl,
-        message: cloudConnectPendingMessage(Boolean(flow.authorize_url), opened),
+        message: cloudConnectPendingMessage(Boolean(authorizeUrl), opened),
         status: "pending"
       });
       const connectedStatus = await waitForCloudConnection(status, {
@@ -191,7 +211,7 @@ function FleetProtectionRecovery(props) {
       }
       const detail = connectedStatus.connect_flow?.detail;
       setCloudConnectState({
-        authorizeUrl: connectedStatus.connect_flow?.authorize_url ?? connectedStatus.connect_flow?.connect_url ?? signInUrl,
+        authorizeUrl: safeCloudConnectUrl(connectedStatus.connect_flow?.authorize_url) ?? safeCloudConnectUrl(connectedStatus.connect_flow?.connect_url) ?? signInUrl,
         message: connectedStatus.connect_flow?.state === "failed" ? detail || "Guard Cloud sign-in could not finish. Try again." : "Automatic checking stopped before sign-in finished. Complete sign-in, then try again.",
         status: connectedStatus.connect_flow?.state === "failed" ? "error" : "pending"
       });
@@ -251,7 +271,7 @@ function FleetProtectionRecovery(props) {
                 onClick: handleCloudConnectClick,
                 disabled: cloudConnectDisabled,
                 variant: "outline",
-                children: cloudConnectState?.status === "working" ? "Starting sign-in…" : cloudPolicyHint.actionLabel
+                children: cloudConnectButtonLabel(cloudConnectState, cloudPolicyHint.actionLabel)
               }
             ),
             cloudConnectState?.authorizeUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: cloudConnectState.authorizeUrl, variant: "quiet", children: "Open secure sign-in" }) : null,
