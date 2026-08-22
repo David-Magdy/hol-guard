@@ -41,8 +41,8 @@ _AUTHORITY_MODES: Final = frozenset({"personal-shared", "workspace-shared", "man
 _SHARED_AUTHORITY_MODES: Final = frozenset({"personal-shared", "workspace-shared"})
 _CONTROL_STATES: Final = frozenset({"enabled", "disabled"})
 _TARGET_KINDS: Final = frozenset({"extension", "permission"})
-_EXTENSION_ID: Final = re.compile(r"^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$")
-_PERMISSION_ID: Final = re.compile(r"^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*\.permission\.[a-z0-9]+(?:[.-][a-z0-9]+)*$")
+_EXT_ID: Final = re.compile(r"^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$")
+_PERM_ID: Final = re.compile(r"^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*\.permission\.[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 
 
 class ManagedControlsPolicyError(ValueError):
@@ -133,21 +133,13 @@ def _normalize_capabilities(value: object) -> frozenset[str]:
 
 
 def _canonical_extension_id(value: object) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) > 256
-        or not _EXTENSION_ID.fullmatch(value)
-    ):
+    if not isinstance(value, str) or len(value) > 256 or not _EXT_ID.fullmatch(value):
         raise ManagedControlsPolicyError("invalid_extension_id", "Extension target ID is not canonical.")
     return value
 
 
 def _canonical_permission_id(value: object) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) > 256
-        or not _PERMISSION_ID.fullmatch(value)
-    ):
+    if not isinstance(value, str) or len(value) > 256 or not _PERM_ID.fullmatch(value):
         raise ManagedControlsPolicyError("invalid_permission_id", "Permission target ID is not canonical.")
     return value
 
