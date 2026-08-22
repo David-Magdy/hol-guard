@@ -1,0 +1,14 @@
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields.py:32:18 - error: "_is_mapping" is not a known attribute of module "..managed_controls_policy_fields_core" (reportAttributeAccessIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields.py,line=32,col=18::"_is_mapping" is not a known attribute of module "..managed_controls_policy_fields_core" (reportAttributeAccessIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields.py:95:12 - error: Argument missing for parameter "capabilities" (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields.py,line=95,col=12::Argument missing for parameter "capabilities" (reportCallIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields.py:98:9 - error: No parameter named "negotiated_capabilities" (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields.py,line=98,col=9::No parameter named "negotiated_capabilities" (reportCallIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields.py:99:9 - error: No parameter named "package_firewall_supported" (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields.py,line=99,col=9::No parameter named "package_firewall_supported" (reportCallIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py:392:30 - error: Arguments missing for parameters "catalog_digest", "global_lockdown" (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py,line=392,col=30::Arguments missing for parameters "catalog_digest", "global_lockdown" (reportCallIssue)
+/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py:395:13 - error: No parameter named "revision" (reportCallIssue)
+::error file=/home/runner/work/hol-guard/hol-guard/src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py,line=395,col=13::No parameter named "revision" (reportCallIssue)
+::error::6 errors
+6 errors, 15846 warnings, 0 notes
