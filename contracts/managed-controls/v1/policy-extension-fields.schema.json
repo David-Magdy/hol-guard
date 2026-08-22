@@ -23,7 +23,7 @@
     "extensionId": {
       "type": "string",
       "maxLength": 256,
-      "pattern": "^command\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+      "pattern": "^(?!.*\\.permission\\.)command\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$"
     },
     "permissionId": {
       "type": "string",
@@ -127,6 +127,8 @@
     "extensionTargets": {
       "type": "object",
       "additionalProperties": false,
+      "description": "Each collection is bounded independently and the combined extensionIds plus permissionIds count must not exceed 1024. The aggregate invariant is enforced by both Local and Cloud contract parsers.",
+      "x-hol-maxCombinedItems": 1024,
       "required": [
         "schemaVersion",
         "extensionIds",
