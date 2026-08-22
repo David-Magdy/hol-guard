@@ -28248,38 +28248,11 @@ function buildEvidenceItems(item) {
   }
   return items;
 }
-const validationEvidencePhrases = [
-  // Queued requests can outlive the daemon version that created their copy.
-  "could not verify registry identity or package intelligence",
-  "cloud evaluation could not validate",
-  "cloud evaluation endpoint was not trusted",
-  "cloud evaluation returned http",
-  "cloud evaluation returned an invalid",
-  "cloud evaluation timed out",
-  "current package safety data was unavailable"
-];
-const authorizationEvidencePhrases = [
-  "cloud evaluation was not authorized",
-  "cloud authorization expired",
-  "cloud evaluation could not establish a trusted session",
-  "cloud sign-in is missing or stale"
-];
-const validationReasonCodes = /* @__PURE__ */ new Set([
-  "cloud_validation_error",
-  "cloud_http_error",
-  "cloud_timeout"
-]);
-function packageReviewCloudRecoveryKind(item) {
-  const packageRequest = item.artifact_type === "supply_chain" || item.artifact_type === "package_request" || item.artifact_type.endsWith("_package");
-  if (!packageRequest) return null;
-  const reasonCode = item.decision_v2_json?.package_review_cloud_reason_code;
-  if (reasonCode === "cloud_auth_error") return "authorization";
-  if (typeof reasonCode === "string" && validationReasonCodes.has(reasonCode)) return "validation";
-  const evidence = [item.risk_headline, item.risk_summary, ...item.risk_signals ?? []].filter((value) => typeof value === "string").join(" ").toLowerCase();
-  if (authorizationEvidencePhrases.some((phrase) => evidence.includes(phrase))) {
-    return "authorization";
+class CloudRequestTimeoutError extends Error {
+  constructor() {
+    super("Guard Cloud did not respond within 5 seconds. Try again.");
+    this.name = "CloudRequestTimeoutError";
   }
-  return validationEvidencePhrases.some((phrase) => evidence.includes(phrase)) ? "validation" : null;
 }
 async function withCloudRequestTimeout(request, parentSignal) {
   if (parentSignal?.aborted) {
@@ -28288,12 +28261,27 @@ async function withCloudRequestTimeout(request, parentSignal) {
   const controller = new AbortController();
   const abort = () => controller.abort();
   parentSignal?.addEventListener("abort", abort, { once: true });
-  const timeout = globalThis.setTimeout(() => controller.abort(), 5e3);
+  let timedOut = false;
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 5e3);
   try {
     return await request(controller.signal);
+  } catch (error) {
+    if (timedOut && !parentSignal?.aborted) throw new CloudRequestTimeoutError();
+    throw error;
   } finally {
     globalThis.clearTimeout(timeout);
     parentSignal?.removeEventListener("abort", abort);
+  }
+}
+async function startOrRecoverCloudConnect(signal) {
+  try {
+    return await withCloudRequestTimeout(startGuardCloudConnect, signal);
+  } catch (error) {
+    if (!(error instanceof CloudRequestTimeoutError)) throw error;
+    return await withCloudRequestTimeout(fetchGuardCloudConnectStatus, signal);
   }
 }
 function waitForPoll(delayMs, signal) {
@@ -28346,6 +28334,39 @@ async function waitForCloudConnection(initialStatus, {
     status = await withCloudRequestTimeout(fetchStatus, signal);
   }
   return status;
+}
+const validationEvidencePhrases = [
+  // Queued requests can outlive the daemon version that created their copy.
+  "could not verify registry identity or package intelligence",
+  "cloud evaluation could not validate",
+  "cloud evaluation endpoint was not trusted",
+  "cloud evaluation returned http",
+  "cloud evaluation returned an invalid",
+  "cloud evaluation timed out",
+  "current package safety data was unavailable"
+];
+const authorizationEvidencePhrases = [
+  "cloud evaluation was not authorized",
+  "cloud authorization expired",
+  "cloud evaluation could not establish a trusted session",
+  "cloud sign-in is missing or stale"
+];
+const validationReasonCodes = /* @__PURE__ */ new Set([
+  "cloud_validation_error",
+  "cloud_http_error",
+  "cloud_timeout"
+]);
+function packageReviewCloudRecoveryKind(item) {
+  const packageRequest = item.artifact_type === "supply_chain" || item.artifact_type === "package_request" || item.artifact_type.endsWith("_package");
+  if (!packageRequest) return null;
+  const reasonCode = item.decision_v2_json?.package_review_cloud_reason_code;
+  if (reasonCode === "cloud_auth_error") return "authorization";
+  if (typeof reasonCode === "string" && validationReasonCodes.has(reasonCode)) return "validation";
+  const evidence = [item.risk_headline, item.risk_summary, ...item.risk_signals ?? []].filter((value) => typeof value === "string").join(" ").toLowerCase();
+  if (authorizationEvidencePhrases.some((phrase) => evidence.includes(phrase))) {
+    return "authorization";
+  }
+  return validationEvidencePhrases.some((phrase) => evidence.includes(phrase)) ? "validation" : null;
 }
 function cloudRecoveryContent(connected, kind = "authorization") {
   if (kind === "validation") {
@@ -31351,7 +31372,7 @@ clientExports.createRoot(container).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
 );
 export {
-  HiMiniBellAlert as $,
+  getDefaultExportFromCjs as $,
   ActionButton as A,
   resolveCloudIntelCopy as B,
   HiMiniCloud as C,
@@ -31367,140 +31388,143 @@ export {
   Badge as M,
   HiMiniMinusCircle as N,
   OperatorHealthCard as O,
-  HiMiniWrenchScrewdriver as P,
-  HiMiniExclamationCircle as Q,
-  ProofStrip as R,
+  waitForAuthorizeUrl as P,
+  startOrRecoverCloudConnect as Q,
+  openPackageFirewallAuthorizeFallback as R,
   SectionLabel as S,
-  HiMiniEye as T,
-  HiMiniXCircle as U,
-  HiMiniClipboardDocumentCheck as V,
-  HiMiniClipboard as W,
-  getDefaultExportFromCjs as X,
-  React as Y,
-  HiMiniKey as Z,
-  HiMiniLockClosed as _,
+  waitForCloudConnection as T,
+  HiMiniWrenchScrewdriver as U,
+  HiMiniExclamationCircle as V,
+  ProofStrip as W,
+  HiMiniEye as X,
+  HiMiniXCircle as Y,
+  HiMiniClipboardDocumentCheck as Z,
+  HiMiniClipboard as _,
   EvidenceActivityHeatmapMini as a,
-  ApprovalProofInline as a$,
-  HiMiniAdjustmentsHorizontal as a0,
-  HiMiniCircleStack as a1,
-  TabBar as a2,
-  resolveProtectionLevelCopy as a3,
-  fetchSettings as a4,
-  fetchRuntimeSnapshot as a5,
-  updateSettings as a6,
-  clearPolicy as a7,
-  clearReviewQueue as a8,
-  revokeApprovalGateCooldown as a9,
-  EvidenceInsightStrip as aA,
-  EvidenceActionList as aB,
-  EvidenceActionDetail as aC,
-  policyIdentityKey as aD,
-  HiMiniChartBar as aE,
-  runHarnessAction as aF,
-  GuardHarnessActionError as aG,
-  HiMiniRocketLaunch as aH,
-  HiMiniArrowPath as aI,
-  HiMiniTrash as aJ,
-  clearLabelForScope as aK,
-  formatHarnessCommand as aL,
-  isSupplyChainAuditIncomplete as aM,
-  isSupplyChainAuditEvidence as aN,
-  buildApprovalProofCredentials as aO,
-  isApprovalProofSubmitDisabled as aP,
-  ApprovalProofFieldInputs as aQ,
-  readString$1 as aR,
-  isRecord$2 as aS,
-  HiMiniClock as aT,
-  IconActionButton as aU,
-  HiMiniBeaker as aV,
-  ActivationSummary as aW,
-  ActionResultPanel as aX,
-  HiMiniBugAnt as aY,
-  GuardModalLayer as aZ,
-  ConnectFlowCard as a_,
-  disableApprovalGateTotp as aa,
-  importSettings as ab,
-  resetSettings as ac,
-  enrollApprovalGateTotp as ad,
-  verifyApprovalGateTotp as ae,
-  clearEvidence as af,
-  exportDiagnostics as ag,
-  repairApprovalCenter as ah,
-  exportSettings as ai,
-  setupDesktopNotifications as aj,
-  Tag as ak,
-  HiMiniMagnifyingGlass as al,
-  HiMiniCog6Tooth as am,
-  approvalGateCooldownLabel as an,
-  fetchApprovalPage as ao,
-  fetchPolicy as ap,
-  HiMiniArrowLeft as aq,
-  HiMiniHome as ar,
-  appSetupTarget as as,
-  guardActionPresentation as at,
-  DEFAULT_FILTER_STATE as au,
-  filterEvidence as av,
-  sortEvidence as aw,
-  computeMetrics as ax,
-  CommandActivityWorkspace as ay,
-  EvidenceFilterBar as az,
+  ActionResultPanel as a$,
+  React as a0,
+  HiMiniKey as a1,
+  HiMiniLockClosed as a2,
+  HiMiniBellAlert as a3,
+  HiMiniAdjustmentsHorizontal as a4,
+  HiMiniCircleStack as a5,
+  TabBar as a6,
+  resolveProtectionLevelCopy as a7,
+  fetchSettings as a8,
+  fetchRuntimeSnapshot as a9,
+  sortEvidence as aA,
+  computeMetrics as aB,
+  CommandActivityWorkspace as aC,
+  EvidenceFilterBar as aD,
+  EvidenceInsightStrip as aE,
+  EvidenceActionList as aF,
+  EvidenceActionDetail as aG,
+  policyIdentityKey as aH,
+  HiMiniChartBar as aI,
+  runHarnessAction as aJ,
+  GuardHarnessActionError as aK,
+  HiMiniRocketLaunch as aL,
+  HiMiniArrowPath as aM,
+  HiMiniTrash as aN,
+  clearLabelForScope as aO,
+  formatHarnessCommand as aP,
+  isSupplyChainAuditIncomplete as aQ,
+  isSupplyChainAuditEvidence as aR,
+  buildApprovalProofCredentials as aS,
+  isApprovalProofSubmitDisabled as aT,
+  ApprovalProofFieldInputs as aU,
+  readString$1 as aV,
+  isRecord$2 as aW,
+  HiMiniClock as aX,
+  IconActionButton as aY,
+  HiMiniBeaker as aZ,
+  ActivationSummary as a_,
+  updateSettings as aa,
+  clearPolicy as ab,
+  clearReviewQueue as ac,
+  revokeApprovalGateCooldown as ad,
+  disableApprovalGateTotp as ae,
+  importSettings as af,
+  resetSettings as ag,
+  enrollApprovalGateTotp as ah,
+  verifyApprovalGateTotp as ai,
+  clearEvidence as aj,
+  exportDiagnostics as ak,
+  repairApprovalCenter as al,
+  exportSettings as am,
+  setupDesktopNotifications as an,
+  Tag as ao,
+  HiMiniMagnifyingGlass as ap,
+  HiMiniCog6Tooth as aq,
+  approvalGateCooldownLabel as ar,
+  fetchApprovalPage as as,
+  fetchPolicy as at,
+  HiMiniArrowLeft as au,
+  HiMiniHome as av,
+  appSetupTarget as aw,
+  guardActionPresentation as ax,
+  DEFAULT_FILTER_STATE as ay,
+  filterEvidence as az,
   HiMiniCommandLine as b,
-  HiMiniArrowTopRightOnSquare as b0,
-  HiMiniCloudArrowDown as b1,
-  fetchPackageFirewallStatus as b2,
-  runPackageAudit as b3,
-  resolveSupplyChainAuditFailure as b4,
-  runPackageSync as b5,
-  startPackageFirewallConnect as b6,
-  openPackageFirewallAuthorizeFallback as b7,
-  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as b8,
-  repairSupplyChainProtection as b9,
-  PolicyStatField as bA,
-  PaginationControls as bB,
-  HiMiniNoSymbol as bC,
-  HiMiniCube as bD,
-  HiMiniArrowDownTray as bE,
-  HiMiniQueueList as bF,
-  Surface as bG,
-  HiMiniCheckBadge as bH,
-  fetchSupplyChainBundle as bI,
-  isSupplyChainScannerEvidence as bJ,
-  isBlockedGuardAction as bK,
-  HiMiniDocumentMagnifyingGlass as bL,
-  HiMiniShieldExclamation as bM,
-  HiMiniComputerDesktop as bN,
-  HiMiniChevronLeft as bO,
-  HiMiniFunnel as bP,
-  HiMiniArrowDown as bQ,
-  HiMiniArrowUp as bR,
-  runAuditRemediation as bS,
-  HiMiniSignal as bT,
-  runPackageFirewallAction as ba,
-  parseInterceptProofSnapshot as bb,
-  activatePackageFirewallRuntime as bc,
-  EntitlementNotice as bd,
-  fetchReceipts as be,
-  WorkspacePageHeader as bf,
-  __vitePreload as bg,
-  scopeLabel as bh,
-  guardAwareHref as bi,
-  HiMiniDocumentText as bj,
-  HiMiniCloudArrowUp as bk,
-  HiMiniCheck as bl,
-  HiMiniCodeBracket as bm,
-  HiMiniClipboardDocument as bn,
-  HiMiniUsers as bo,
-  HiMiniFolder as bp,
-  HiMiniInformationCircle as bq,
-  HiMiniIdentification as br,
-  policyActionLabel as bs,
-  createCloudExceptionRequest as bt,
-  HiMiniArrowRight as bu,
-  HiMiniPuzzlePiece as bv,
-  HiMiniGlobeAlt as bw,
-  fetchCloudExceptions as bx,
-  fetchCloudExceptionRequests as by,
-  downloadBlob as bz,
+  HiMiniBugAnt as b0,
+  GuardModalLayer as b1,
+  ConnectFlowCard as b2,
+  ApprovalProofInline as b3,
+  HiMiniArrowTopRightOnSquare as b4,
+  HiMiniCloudArrowDown as b5,
+  fetchPackageFirewallStatus as b6,
+  runPackageAudit as b7,
+  resolveSupplyChainAuditFailure as b8,
+  runPackageSync as b9,
+  fetchCloudExceptions as bA,
+  fetchCloudExceptionRequests as bB,
+  downloadBlob as bC,
+  PolicyStatField as bD,
+  PaginationControls as bE,
+  HiMiniNoSymbol as bF,
+  HiMiniCube as bG,
+  HiMiniArrowDownTray as bH,
+  HiMiniQueueList as bI,
+  Surface as bJ,
+  HiMiniCheckBadge as bK,
+  fetchSupplyChainBundle as bL,
+  isSupplyChainScannerEvidence as bM,
+  isBlockedGuardAction as bN,
+  HiMiniDocumentMagnifyingGlass as bO,
+  HiMiniShieldExclamation as bP,
+  HiMiniComputerDesktop as bQ,
+  HiMiniChevronLeft as bR,
+  HiMiniFunnel as bS,
+  HiMiniArrowDown as bT,
+  HiMiniArrowUp as bU,
+  runAuditRemediation as bV,
+  HiMiniSignal as bW,
+  startPackageFirewallConnect as ba,
+  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as bb,
+  repairSupplyChainProtection as bc,
+  runPackageFirewallAction as bd,
+  parseInterceptProofSnapshot as be,
+  activatePackageFirewallRuntime as bf,
+  EntitlementNotice as bg,
+  fetchReceipts as bh,
+  WorkspacePageHeader as bi,
+  __vitePreload as bj,
+  scopeLabel as bk,
+  guardAwareHref as bl,
+  HiMiniDocumentText as bm,
+  HiMiniCloudArrowUp as bn,
+  HiMiniCheck as bo,
+  HiMiniCodeBracket as bp,
+  HiMiniClipboardDocument as bq,
+  HiMiniUsers as br,
+  HiMiniFolder as bs,
+  HiMiniInformationCircle as bt,
+  HiMiniIdentification as bu,
+  policyActionLabel as bv,
+  createCloudExceptionRequest as bw,
+  HiMiniArrowRight as bx,
+  HiMiniPuzzlePiece as by,
+  HiMiniGlobeAlt as bz,
   HiMiniChevronRight as c,
   createCommandActivityClient as d,
   harnessDisplayName as e,
