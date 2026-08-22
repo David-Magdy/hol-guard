@@ -470,7 +470,7 @@ export const ActionButton = forwardRef<HTMLButtonElement | HTMLAnchorElement, Ac
           ref={ref as Ref<HTMLAnchorElement>}
           href={guardAwareHref(href)}
           target={/^https?:\/\//i.test(href) ? "_blank" : undefined}
-          rel={/^https?:\/\//i.test(href) ? "noreferrer" : undefined}
+          rel={/^https?:\/\//i.test(href) ? "noopener noreferrer" : undefined}
           onClick={onClick}
           className={className}
           {...anchorPropsFromButtonProps(buttonProps)}
