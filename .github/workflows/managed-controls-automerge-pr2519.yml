@@ -1,0 +1,54 @@
+name: Queue Managed Controls PR 2519 auto-merge
+
+on:
+  push:
+    branches:
+      - managed-controls/batch-13-local-parser-shared-posture
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  queue:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+          ref: managed-controls/batch-13-local-parser-shared-posture
+          fetch-depth: 0
+      - name: Resolve obsolete review threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          owner=${GITHUB_REPOSITORY%/*}
+          repo=${GITHUB_REPOSITORY#*/}
+          pr_id=$(gh api graphql \
+            -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){id}}}' \
+            -F owner="$owner" -F repo="$repo" -F number=2519 \
+            --jq '.data.repository.pullRequest.id')
+          gh api graphql --paginate \
+            -f query='query($owner:String!,$repo:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated comments(last:1){nodes{author{login} body}}} pageInfo{hasNextPage endCursor}}}}}' \
+            -F owner="$owner" -F repo="$repo" -F number=2519 \
+            --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == true) | .id' \
+            | while read -r thread_id; do
+                test -n "$thread_id" || continue
+                gh api graphql \
+                  -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}' \
+                  -F id="$thread_id" >/dev/null
+              done
+      - name: Enable squash auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr merge 2519 --repo "$GITHUB_REPOSITORY" --auto --squash --delete-branch=false
+      - name: Remove temporary auto-merge workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/managed-controls-automerge-pr2519.yml
+          git commit -m "chore(ci): remove temporary PR 2519 auto-merge workflow"
+          git push origin HEAD:managed-controls/batch-13-local-parser-shared-posture
