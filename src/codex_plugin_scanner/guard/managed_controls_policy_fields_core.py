@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Final, TypeGuard, cast
 
-from .runtime.command_extensions import CommandSafetyExtensionRegistry
+from .runtime.command_extensions import CommandSafetyExtension, CommandSafetyExtensionRegistry
 from .runtime.extension_control_contract import (
     CONTROL_SCHEMA_VERSION,
     ControlLayerKind,
@@ -85,65 +85,69 @@ class ParsedManagedControlsPolicy:
         )
 
 
-def _is_mapping(value: object) -> TypeGuard[dict[str, object]]:
-    return isinstance(value, dict) and all(isinstance(key, str) for key in cast(dict[object, object], value))
+_SUPPORTED_CAPABILITIES = frozenset(
+    {
+        EXTENSION_CONTROL_LAYER_CAPABILITY,
+        POLICY_EXTENSION_TARGETS_CAPABILITY,
+        MANAGED_CONTROLS_ATOMIC_APPLY_CAPABILITY,
+        PACKAGE_FIREWALL_CAPABILITY,
+    }
+)
 
 
 def _mapping(value: object, *, code: str, label: str) -> dict[str, object]:
-    if not _is_mapping(value):
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise ManagedControlsPolicyError(code, f"{label} must be an object.")
-    return value
+    return cast(dict[str, object], value)
 
 
 def _exact_keys(value: dict[str, object], allowed: frozenset[str], *, label: str) -> None:
-    if any(key not in allowed for key in value):
-        raise ManagedControlsPolicyError("unknown_field", f"{label} contains an unknown field.")
+    unknown = set(value).difference(allowed)
+    if unknown:
+        raise ManagedControlsPolicyError(
+            "unknown_field",
+            f"{label} contains unsupported fields.",
+        )
+
+
+def _is_string_set(value: object) -> TypeGuard[set[str] | frozenset[str]]:
+    return isinstance(value, (set, frozenset)) and all(isinstance(item, str) for item in value)
+
+
+def _normalize_capabilities(value: object) -> frozenset[str]:
+    if value is None:
+        return frozenset()
+    if not _is_string_set(value):
+        raise ManagedControlsPolicyError("invalid_capabilities", "Managed Controls capabilities are malformed.")
+    normalized: set[str] = set()
+    for item in value:
+        if item in _SUPPORTED_CAPABILITIES:
+            normalized.add(item)
+            continue
+        for canonical, aliases in _LEGACY_CAPABILITY_ALIASES.items():
+            if item in aliases:
+                normalized.add(canonical)
+                break
+    return frozenset(normalized)
 
 
 def _canonical_extension_id(value: object) -> str:
-    if not isinstance(value, str) or len(value) > 256 or _EXTENSION_ID.fullmatch(value) is None:
-        raise ManagedControlsPolicyError("invalid_extension_id", "Extension ID is not canonical.")
-    if ".permission." in value:
-        raise ManagedControlsPolicyError("invalid_extension_id", "Extension ID cannot be a permission ID.")
+    if not isinstance(value, str) or not _EXTENSION_ID.fullmatch(value):
+        raise ManagedControlsPolicyError("invalid_extension_id", "Extension target ID is not canonical.")
     return value
 
 
 def _canonical_permission_id(value: object) -> str:
-    if not isinstance(value, str) or len(value) > 256 or _PERMISSION_ID.fullmatch(value) is None:
-        raise ManagedControlsPolicyError("invalid_permission_id", "Permission ID is not canonical.")
+    if not isinstance(value, str) or not _PERMISSION_ID.fullmatch(value):
+        raise ManagedControlsPolicyError("invalid_permission_id", "Permission target ID is not canonical.")
     return value
 
 
-def _capability_present(capabilities: frozenset[str], capability: str) -> bool:
-    return capability in capabilities or bool(_LEGACY_CAPABILITY_ALIASES.get(capability, frozenset()) & capabilities)
-
-
-def _require_capabilities(
-    capabilities: frozenset[str],
-    *,
-    controls_present: bool,
-    targets_present: bool,
-) -> None:
-    required = {MANAGED_CONTROLS_ATOMIC_APPLY_CAPABILITY}
-    if controls_present:
-        required.add(EXTENSION_CONTROL_LAYER_CAPABILITY)
-    if targets_present:
-        required.add(POLICY_EXTENSION_TARGETS_CAPABILITY)
-    missing = sorted(capability for capability in required if not _capability_present(capabilities, capability))
-    if missing:
-        raise ManagedControlsPolicyError(
-            "unnegotiated_extension_semantics",
-            "Extension enforcement fields require negotiated capabilities: " + ", ".join(missing),
-        )
-
-
-def _target_extension(target: ControlTarget, registry: CommandSafetyExtensionRegistry):
+def _target_extension(target: ControlTarget, registry: CommandSafetyExtensionRegistry) -> CommandSafetyExtension:
     if target.kind is ControlTargetKind.EXTENSION:
         extension = registry.get(target.target_id)
         if extension is None or extension.extension_id != target.target_id:
-            raise ManagedControlsPolicyError(
-                "unknown_extension_target", "Extension target is not in the current catalog."
-            )
+            raise ManagedControlsPolicyError("unknown_extension_target", "Extension target is not in the current catalog.")
         return extension
     permission = registry.permission(target.target_id)
     if permission is None or permission.permission_id != target.target_id:
@@ -159,7 +163,7 @@ def _target_extension(target: ControlTarget, registry: CommandSafetyExtensionReg
 def _parse_control(
     value: object,
     registry: CommandSafetyExtensionRegistry,
-) -> tuple[ExtensionControl, object]:
+) -> tuple[ExtensionControl, CommandSafetyExtension]:
     control = _mapping(value, code="invalid_control", label="Extension control")
     _exact_keys(control, frozenset({"targetKind", "targetId", "state"}), label="Extension control")
     target_kind_value = control.get("targetKind")
@@ -353,38 +357,24 @@ def _append_control_projection(
         permission = registry.permission(control.target.target_id)
         if permission is None or not permission.configurable:
             raise ManagedControlsPolicyError(
-                "immutable_floor",
-                "Shared Cloud enablement cannot weaken an immutable permission floor.",
-            )
-    if control.target.kind is ControlTargetKind.EXTENSION and control.state is ControlState.DISABLED:
-        extension_value = registry.get(control.target.target_id)
-        if extension_value is not None and extension_value.required:
-            raise ManagedControlsPolicyError(
-                "immutable_floor",
-                "A required Extension cannot be disabled by shared Cloud posture.",
+                "shared_enable_not_configurable",
+                "Shared Cloud enablement may target only configurable permissions.",
             )
     generic_controls.append(control)
 
 
-def _parse_controls_projection(
+def _parse_control_layer(
     controls_value: object,
-    *,
     registry: CommandSafetyExtensionRegistry,
+    *,
     package_firewall_supported: bool,
-    delegated_rule_targets: tuple[DelegatedExtensionTarget, ...],
-) -> tuple[
-    str,
-    ExtensionControlLayer | None,
-    tuple[ExtensionControl, ...],
-    bool,
-    tuple[DelegatedExtensionTarget, ...],
-]:
-    authority_mode, global_lockdown, raw_controls = _controls_header(controls_value)
+) -> tuple[str, ExtensionControlLayer | None, tuple[ExtensionControl, ...], bool, tuple[DelegatedExtensionTarget, ...]]:
+    authority_mode, global_lockdown, controls = _controls_header(controls_value)
+    states_by_target: dict[ControlTarget, ControlState] = {}
     generic_controls: list[ExtensionControl] = []
     managed_controls: list[ExtensionControl] = []
-    delegated_controls: set[DelegatedExtensionTarget] = set(delegated_rule_targets)
-    states_by_target: dict[ControlTarget, ControlState] = {}
-    for raw_control in raw_controls:
+    delegated_controls: set[DelegatedExtensionTarget] = set()
+    for raw_control in controls:
         _append_control_projection(
             raw_control,
             authority_mode=authority_mode,
@@ -395,77 +385,96 @@ def _parse_controls_projection(
             managed_controls=managed_controls,
             delegated_controls=delegated_controls,
         )
-
-    def order(item: ExtensionControl | DelegatedExtensionTarget) -> tuple[str, str]:
-        return (item.target.kind.value, item.target.target_id)
-
-    signed_cloud_layer = (
-        ExtensionControlLayer(
+    signed_cloud_layer: ExtensionControlLayer | None = None
+    if authority_mode in _SHARED_AUTHORITY_MODES:
+        signed_cloud_layer = ExtensionControlLayer(
             schema_version=CONTROL_SCHEMA_VERSION,
             kind=ControlLayerKind.SIGNED_CLOUD,
-            catalog_digest=registry.catalog_digest,
-            global_lockdown=False,
-            controls=tuple(sorted(generic_controls, key=order)),
+            revision=0,
+            controls=tuple(generic_controls),
         )
-        if authority_mode in _SHARED_AUTHORITY_MODES
-        else None
-    )
     return (
         authority_mode,
         signed_cloud_layer,
-        tuple(sorted(managed_controls, key=order)),
+        tuple(managed_controls),
         global_lockdown,
-        tuple(sorted(delegated_controls, key=order)),
+        tuple(sorted(delegated_controls, key=lambda item: (item.target.kind.value, item.target.target_id))),
     )
 
 
 def parse_managed_controls_policy_fields(
-    document: dict[str, object],
+    document_value: object,
     *,
     registry: CommandSafetyExtensionRegistry,
-    negotiated_capabilities: frozenset[str],
-    package_firewall_supported: bool = False,
+    capabilities: object,
 ) -> ParsedManagedControlsPolicy:
-    """Parse and materialize signed namespaced fields without changing legacy v2 behavior."""
+    """Parse signed policy Extension fields after envelope authenticity is established."""
 
-    controls_value = document.get(HOL_EXTENSION_CONTROLS_FIELD)
+    document = _mapping(document_value, code="invalid_policy_document", label="GuardPolicy")
+    controls_present = HOL_EXTENSION_CONTROLS_FIELD in document
     spec = _mapping(document.get("spec"), code="invalid_policy_document", label="GuardPolicy spec")
     rules = spec.get("rules")
-    targets_present = isinstance(rules, list) and any(
-        _is_mapping(rule) and HOL_EXTENSION_TARGETS_FIELD in rule for rule in rules
+    if not isinstance(rules, list):
+        raise ManagedControlsPolicyError("invalid_policy_document", "GuardPolicy rules must be an array.")
+    targets_present = any(
+        isinstance(rule, dict) and HOL_EXTENSION_TARGETS_FIELD in rule
+        for rule in rules
     )
-    controls_present = controls_value is not None
     if not controls_present and not targets_present:
         return ParsedManagedControlsPolicy(None, None, (), False, (), ())
-    _require_capabilities(
-        negotiated_capabilities,
-        controls_present=controls_present,
-        targets_present=targets_present,
-    )
+
+    negotiated = _normalize_capabilities(capabilities)
+    required = {
+        EXTENSION_CONTROL_LAYER_CAPABILITY,
+        POLICY_EXTENSION_TARGETS_CAPABILITY,
+        MANAGED_CONTROLS_ATOMIC_APPLY_CAPABILITY,
+    }
+    if not required.issubset(negotiated):
+        raise ManagedControlsPolicyError(
+            "unsupported_capability",
+            "Managed Controls fields require the complete negotiated capability set.",
+        )
+    package_firewall_supported = PACKAGE_FIREWALL_CAPABILITY in negotiated
+
+    authority_mode: str | None = None
+    signed_cloud_layer: ExtensionControlLayer | None = None
+    managed_controls: tuple[ExtensionControl, ...] = ()
+    managed_global_lockdown = False
+    delegated_controls: tuple[DelegatedExtensionTarget, ...] = ()
+    if controls_present:
+        controls_value = document.get(HOL_EXTENSION_CONTROLS_FIELD)
+        if controls_value is None:
+            raise ManagedControlsPolicyError(
+                "invalid_extension_controls",
+                f"{HOL_EXTENSION_CONTROLS_FIELD} cannot be null.",
+            )
+        (
+            authority_mode,
+            signed_cloud_layer,
+            managed_controls,
+            managed_global_lockdown,
+            delegated_controls,
+        ) = _parse_control_layer(
+            controls_value,
+            registry,
+            package_firewall_supported=package_firewall_supported,
+        )
+
     rule_targets, delegated_rule_targets = _parse_rule_targets(
         document,
         registry,
         package_firewall_supported=package_firewall_supported,
     )
-    if not controls_present:
-        return ParsedManagedControlsPolicy(None, None, (), False, rule_targets, delegated_rule_targets)
-    (
-        authority_mode,
-        signed_cloud_layer,
-        managed_controls,
-        global_lockdown,
-        delegated_targets,
-    ) = _parse_controls_projection(
-        controls_value,
-        registry=registry,
-        package_firewall_supported=package_firewall_supported,
-        delegated_rule_targets=delegated_rule_targets,
-    )
     return ParsedManagedControlsPolicy(
-        authority_mode,
-        signed_cloud_layer,
-        managed_controls,
-        global_lockdown,
-        rule_targets,
-        delegated_targets,
+        authority_mode=authority_mode,
+        signed_cloud_layer=signed_cloud_layer,
+        managed_controls=managed_controls,
+        managed_global_lockdown=managed_global_lockdown,
+        rule_targets=rule_targets,
+        delegated_targets=tuple(
+            sorted(
+                {*delegated_controls, *delegated_rule_targets},
+                key=lambda item: (item.target.kind.value, item.target.target_id),
+            )
+        ),
     )
