@@ -147,7 +147,9 @@ def _target_extension(target: ControlTarget, registry: CommandSafetyExtensionReg
     if target.kind is ControlTargetKind.EXTENSION:
         extension = registry.get(target.target_id)
         if extension is None or extension.extension_id != target.target_id:
-            raise ManagedControlsPolicyError("unknown_extension_target", "Extension target is not in the current catalog.")
+            raise ManagedControlsPolicyError(
+                "unknown_extension_target", "Extension target is not in the current catalog."
+            )
         return extension
     permission = registry.permission(target.target_id)
     if permission is None or permission.permission_id != target.target_id:
@@ -416,10 +418,7 @@ def parse_managed_controls_policy_fields(
     rules = spec.get("rules")
     if not isinstance(rules, list):
         raise ManagedControlsPolicyError("invalid_policy_document", "GuardPolicy rules must be an array.")
-    targets_present = any(
-        isinstance(rule, dict) and HOL_EXTENSION_TARGETS_FIELD in rule
-        for rule in rules
-    )
+    targets_present = any(isinstance(rule, dict) and HOL_EXTENSION_TARGETS_FIELD in rule for rule in rules)
     if not controls_present and not targets_present:
         return ParsedManagedControlsPolicy(None, None, (), False, (), ())
 
