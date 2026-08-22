@@ -1,6 +1,12 @@
-import { R as fetchGuardCloudConnectStatus, r as reactExports, T as startGuardCloudConnect, U as openPackageFirewallAuthorizeFallback, j as jsxRuntimeExports, V as HiMiniWrenchScrewdriver, A as ActionButton, o as HiMiniCheckCircle, C as HiMiniChevronDown, X as HiMiniExclamationCircle, i as harnessDisplayName, p as protectionHealthFor, k as useProtectionPresentationState, q as GuardHero, Y as ProofStrip, S as SectionLabel, m as EmptyState, c as HiMiniChevronRight, Z as HiMiniEye, _ as HiMiniXCircle, $ as HiMiniClipboardDocumentCheck, a0 as HiMiniClipboard } from "../guard-dashboard.js";
+import { R as startGuardCloudConnect, T as fetchGuardCloudConnectStatus, r as reactExports, U as openPackageFirewallAuthorizeFallback, j as jsxRuntimeExports, V as HiMiniWrenchScrewdriver, A as ActionButton, o as HiMiniCheckCircle, C as HiMiniChevronDown, X as HiMiniExclamationCircle, i as harnessDisplayName, p as protectionHealthFor, k as useProtectionPresentationState, q as GuardHero, Y as ProofStrip, S as SectionLabel, m as EmptyState, c as HiMiniChevronRight, Z as HiMiniEye, _ as HiMiniXCircle, $ as HiMiniClipboardDocumentCheck, a0 as HiMiniClipboard } from "../guard-dashboard.js";
 import { S as SUPPORTED_APPS_BRIEF, A as APP_STATUS_LABELS } from "./app-catalog.js";
 import { i as isConnectableAppHarness } from "./harness-setup-target.js";
+class CloudRequestTimeoutError extends Error {
+  constructor() {
+    super("Guard Cloud did not respond within 5 seconds. Try again.");
+    this.name = "CloudRequestTimeoutError";
+  }
+}
 async function withCloudRequestTimeout(request, parentSignal) {
   if (parentSignal?.aborted) {
     throw new DOMException("Cloud connection request stopped", "AbortError");
@@ -8,12 +14,29 @@ async function withCloudRequestTimeout(request, parentSignal) {
   const controller = new AbortController();
   const abort = () => controller.abort();
   parentSignal?.addEventListener("abort", abort, { once: true });
-  const timeout = globalThis.setTimeout(() => controller.abort(), 5e3);
+  let timedOut = false;
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 5e3);
   try {
     return await request(controller.signal);
+  } catch (error) {
+    if (timedOut && !parentSignal?.aborted && error instanceof DOMException && error.name === "AbortError") {
+      throw new CloudRequestTimeoutError();
+    }
+    throw error;
   } finally {
     globalThis.clearTimeout(timeout);
     parentSignal?.removeEventListener("abort", abort);
+  }
+}
+async function startOrRecoverCloudConnect(signal) {
+  try {
+    return await withCloudRequestTimeout(startGuardCloudConnect, signal);
+  } catch (error) {
+    if (!(error instanceof CloudRequestTimeoutError)) throw error;
+    return await withCloudRequestTimeout(fetchGuardCloudConnectStatus, signal);
   }
 }
 function waitForPoll(delayMs, signal) {
@@ -164,6 +187,30 @@ function repairButtonLabel(repairState) {
   if (repairState?.status === "error") return "Retry repair";
   return "Repair protection";
 }
+function cloudConnectPendingMessage(hasAuthorizeUrl, opened) {
+  if (!hasAuthorizeUrl) {
+    return "Open the secure sign-in link below. This page will update automatically.";
+  }
+  if (opened) {
+    return "Complete sign-in in the opened window. This page will update automatically.";
+  }
+  return "Your browser blocked the sign-in window. Open the secure sign-in link below.";
+}
+function cloudConnectButtonLabel(state, defaultLabel) {
+  if (state?.status === "working") return "Starting sign-in…";
+  if (state?.status === "success") return "Guard Cloud connected";
+  return defaultLabel;
+}
+function safeCloudConnectUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
 function FleetProtectionRecovery(props) {
   const [repairState, setRepairState] = reactExports.useState(null);
   const [cloudConnectState, setCloudConnectState] = reactExports.useState(null);
@@ -209,7 +256,7 @@ function FleetProtectionRecovery(props) {
     });
     try {
       const status = await waitForAuthorizeUrl(
-        await withCloudRequestTimeout(startGuardCloudConnect, controller.signal),
+        await startOrRecoverCloudConnect(controller.signal),
         controller.signal
       );
       if (!isActiveCloudConnect(controller)) return;
@@ -222,19 +269,18 @@ function FleetProtectionRecovery(props) {
         return;
       }
       const flow = status.connect_flow;
-      if (!flow?.authorize_url) {
+      const authorizeUrl = safeCloudConnectUrl(flow?.authorize_url);
+      const signInUrl = authorizeUrl ?? safeCloudConnectUrl(flow?.connect_url);
+      if (!flow || !signInUrl) {
         throw new Error(
           flow?.detail || "Guard could not generate a secure sign-in link. Try again."
         );
       }
-      const opened = openPackageFirewallAuthorizeFallback(
-        flow.authorize_url,
-        flow.browser_opened
-      );
+      const opened = authorizeUrl ? openPackageFirewallAuthorizeFallback(authorizeUrl, flow.browser_opened) : false;
       if (!isActiveCloudConnect(controller)) return;
       setCloudConnectState({
-        authorizeUrl: flow.authorize_url,
-        message: opened ? "Complete sign-in in the opened window. This page will update automatically." : "Your browser blocked the sign-in window. Open the secure sign-in link below.",
+        authorizeUrl: signInUrl,
+        message: cloudConnectPendingMessage(Boolean(authorizeUrl), opened),
         status: "pending"
       });
       const connectedStatus = await waitForCloudConnection(status, {
@@ -251,7 +297,7 @@ function FleetProtectionRecovery(props) {
       }
       const detail = connectedStatus.connect_flow?.detail;
       setCloudConnectState({
-        authorizeUrl: connectedStatus.connect_flow?.authorize_url ?? flow.authorize_url,
+        authorizeUrl: safeCloudConnectUrl(connectedStatus.connect_flow?.authorize_url) ?? safeCloudConnectUrl(connectedStatus.connect_flow?.connect_url) ?? signInUrl,
         message: connectedStatus.connect_flow?.state === "failed" ? detail || "Guard Cloud sign-in could not finish. Try again." : "Automatic checking stopped before sign-in finished. Complete sign-in, then try again.",
         status: connectedStatus.connect_flow?.state === "failed" ? "error" : "pending"
       });
@@ -275,6 +321,10 @@ function FleetProtectionRecovery(props) {
   reactExports.useEffect(() => () => cloudConnectControllerRef.current?.abort(), []);
   if (gaps.length === 0) return null;
   const working = repairState?.status === "working";
+  const cloudConnectDisabled = ["working", "success"].includes(
+    cloudConnectState?.status ?? ""
+  );
+  const cloudConnectMessageClassName = cloudConnectState?.status === "error" ? "text-sm text-red-600" : "text-sm text-slate-600";
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "section",
     {
@@ -305,20 +355,13 @@ function FleetProtectionRecovery(props) {
               ActionButton,
               {
                 onClick: handleCloudConnectClick,
-                disabled: cloudConnectState?.status === "working",
+                disabled: cloudConnectDisabled,
                 variant: "outline",
-                children: cloudConnectState?.status === "working" ? "Starting sign-in…" : cloudPolicyHint.actionLabel
+                children: cloudConnectButtonLabel(cloudConnectState, cloudPolicyHint.actionLabel)
               }
             ),
             cloudConnectState?.authorizeUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: cloudConnectState.authorizeUrl, variant: "quiet", children: "Open secure sign-in" }) : null,
-            cloudConnectState ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "p",
-              {
-                className: cloudConnectState.status === "error" ? "text-sm text-red-600" : "text-sm text-slate-600",
-                role: "status",
-                children: cloudConnectState.message
-              }
-            ) : null
+            cloudConnectState ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: cloudConnectMessageClassName, role: "status", children: cloudConnectState.message }) : null
           ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: cloudPolicyHint.href, variant: "outline", className: "mt-2", children: cloudPolicyHint.actionLabel })
         ] }) : null,
         repairState ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
