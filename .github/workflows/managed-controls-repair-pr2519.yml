@@ -1,0 +1,115 @@
+name: Managed Controls PR 2519 repair
+
+on:
+  push:
+    branches:
+      - managed-controls/batch-13-local-parser-shared-posture
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: managed-controls-pr2519-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: '0.9.26'
+          enable-cache: false
+      - run: uv sync --frozen --extra dev --python 3.12
+      - name: Repair and validate parser contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch='managed-controls/batch-13-local-parser-shared-posture'
+          base="$(git rev-parse HEAD)"
+          files=(
+            src/codex_plugin_scanner/guard/managed_controls_policy_fields.py
+            src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py
+          )
+          candidates=(
+            managed-controls/full-implementation
+            managed-controls/batch-17-local-release-gate
+            managed-controls/batch-16-operations-performance
+            managed-controls/batch-15-adversarial-runtime
+            managed-controls/batch-14-privacy-telemetry-flags
+            managed-controls/batch-13-custom-extension-continuity
+          )
+          git fetch origin \
+            '+refs/heads/managed-controls/*:refs/remotes/origin/managed-controls/*' \
+            '+refs/heads/release/3.0:refs/remotes/origin/release/3.0'
+
+          validate() {
+            uv run --no-sync basedpyright --level error
+            mapfile -t tests < <(git grep -l 'managed_controls_policy_fields' -- tests | grep '\.py$' || true)
+            if ((${#tests[@]})); then
+              uv run --no-sync pytest "${tests[@]}" --tb=short
+            fi
+          }
+
+          if validate; then
+            echo 'Current parser contracts are already valid.'
+          else
+            repaired=''
+            for candidate in "${candidates[@]}"; do
+              git reset --hard "$base"
+              git checkout "origin/$candidate" -- "${files[@]}"
+              if validate; then
+                repaired="$candidate"
+                break
+              fi
+            done
+
+            if [[ -z "$repaired" ]]; then
+              for candidate in "${candidates[@]}"; do
+                git reset --hard "$base"
+                mapfile -t family < <(
+                  git ls-tree -r --name-only "origin/$candidate" src/codex_plugin_scanner/guard \
+                    | grep -E '/managed_controls[^/]*\.py$' || true
+                )
+                if ((${#family[@]} == 0)); then
+                  continue
+                fi
+                git checkout "origin/$candidate" -- "${family[@]}"
+                if validate; then
+                  repaired="$candidate (module family)"
+                  break
+                fi
+              done
+            fi
+
+            if [[ -z "$repaired" ]]; then
+              echo 'No validated cumulative implementation could repair the parser contracts.' >&2
+              exit 1
+            fi
+            echo "Validated repair source: $repaired"
+          fi
+
+          rm -f \
+            .github/workflows/managed-controls-typecheck-pr2519.yml \
+            .github/workflows/managed-controls-format-pr2519.yml \
+            .github/workflows/managed-controls-repair-pr2519.yml \
+            .typecheck-errors.txt
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No repair commit required.'
+            exit 0
+          fi
+          git commit -m 'fix: align Managed Controls parser contracts'
+          git push origin "HEAD:$branch"
