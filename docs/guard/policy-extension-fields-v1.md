@@ -28,6 +28,6 @@ The canonical capability names are `extension-control-layer.v1`, `policy-extensi
 
 Shared authority may materialize into the signed-Cloud layer. Local disable dominance, required Extensions, and immutable permission floors remain intact. Explicit Cloud enablement may target only configurable permissions. Managed-restrictive authority may only disable an Extension, disable a permission, or enable Emergency Lockdown.
 
-Local validates schema versions, authority, target kind, canonical identity, state, limits, catalog membership, duplicates, conflicts, and delegated protection after the signed v2 envelope has passed workspace, expiry, hash, rollback, and signature verification. A policy without these fields retains existing v2 behavior. A policy with these fields is rejected rather than silently downgraded when capability support is incomplete.
+Local validates schema versions, authority, target kind, canonical identity, state, limits, catalog membership, duplicates, conflicts, and delegated protection after the signed v2 envelope has passed workspace, expiry, hash, rollback, and signature verification. Explicitly present `null` Extension fields are malformed and fail closed. A policy without these fields retains existing v2 behavior. A policy with these fields is rejected rather than silently downgraded when capability support is incomplete.
 
 Package-manager Extensions continue through Package Firewall and never become duplicate generic command controls. Local protection remains active when Cloud is disconnected or unavailable.
