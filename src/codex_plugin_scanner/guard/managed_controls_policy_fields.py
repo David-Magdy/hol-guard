@@ -29,7 +29,7 @@ ParsedManagedControlsPolicy = _core.ParsedManagedControlsPolicy
 def is_mapping(value: object) -> TypeGuard[dict[str, object]]:
     """Return whether a value is a string-keyed object."""
 
-    return _core._is_mapping(value)
+    return _core._is_mapping(value)  # noqa: SLF001
 
 
 def _mapping(value: object, *, code: str, label: str) -> dict[str, object]:
