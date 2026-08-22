@@ -41,9 +41,7 @@ _SHARED_AUTHORITY_MODES: Final = frozenset({"personal-shared", "workspace-shared
 _CONTROL_STATES: Final = frozenset({"enabled", "disabled"})
 _TARGET_KINDS: Final = frozenset({"extension", "permission"})
 _EXTENSION_ID: Final = re.compile(r"^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$")
-_PERMISSION_ID: Final = re.compile(
-    r"^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*\.permission\.[a-z0-9]+(?:[.-][a-z0-9]+)*$"
-)
+_PERMISSION_ID: Final = re.compile(r"^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*\.permission\.[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 
 
 class ManagedControlsPolicyError(ValueError):
@@ -154,9 +152,7 @@ def _target_extension(target: ControlTarget, registry: CommandSafetyExtensionReg
         )
     extension = registry.get(permission.extension_id)
     if extension is None:
-        raise ManagedControlsPolicyError(
-            "unknown_extension_target", "Permission owner is not in the current catalog."
-        )
+        raise ManagedControlsPolicyError("unknown_extension_target", "Permission owner is not in the current catalog.")
     return extension
 
 
@@ -233,9 +229,7 @@ def _parse_rule_targets(
         )
         total_targets += len(extension_ids) + len(permission_ids)
         if total_targets > MAX_CONTROL_SET_TARGETS:
-            raise ManagedControlsPolicyError(
-                "target_limit_exceeded", "Control Set targets exceed the supported limit."
-            )
+            raise ManagedControlsPolicyError("target_limit_exceeded", "Control Set targets exceed the supported limit.")
         observed_extensions: set[str] = set()
         for extension_id in extension_ids:
             extension = registry.get(extension_id)
@@ -250,9 +244,7 @@ def _parse_rule_targets(
                         "unsupported_delegated_protection",
                         "Package Firewall is required for this Extension target.",
                     )
-                delegated.add(
-                    DelegatedExtensionTarget(ControlTarget(ControlTargetKind.EXTENSION, extension_id))
-                )
+                delegated.add(DelegatedExtensionTarget(ControlTarget(ControlTargetKind.EXTENSION, extension_id)))
         for permission_id in permission_ids:
             permission = registry.permission(permission_id)
             if permission is None or permission.permission_id != permission_id:
@@ -275,14 +267,10 @@ def _parse_rule_targets(
                         "unsupported_delegated_protection",
                         "Package Firewall is required for this permission target.",
                     )
-                delegated.add(
-                    DelegatedExtensionTarget(ControlTarget(ControlTargetKind.PERMISSION, permission_id))
-                )
+                delegated.add(DelegatedExtensionTarget(ControlTarget(ControlTargetKind.PERMISSION, permission_id)))
         rule_id = rule.get("id")
         if not isinstance(rule_id, str) or not rule_id:
-            raise ManagedControlsPolicyError(
-                "invalid_policy_document", "Extension-targeted rule requires an ID."
-            )
+            raise ManagedControlsPolicyError("invalid_policy_document", "Extension-targeted rule requires an ID.")
         parsed_rules.append(ExtensionRuleTargets(rule_id, extension_ids, permission_ids))
     return tuple(parsed_rules), tuple(
         sorted(delegated, key=lambda item: (item.target.kind.value, item.target.target_id))
@@ -306,19 +294,13 @@ def _controls_header(controls_value: object) -> tuple[str, bool, list[object]]:
         )
     authority_mode = controls_field.get("authorityMode")
     if authority_mode not in _AUTHORITY_MODES:
-        raise ManagedControlsPolicyError(
-            "invalid_authority", "Managed Controls authority mode is invalid."
-        )
+        raise ManagedControlsPolicyError("invalid_authority", "Managed Controls authority mode is invalid.")
     global_lockdown_value = controls_field.get("globalLockdown")
     if global_lockdown_value not in (None, True):
-        raise ManagedControlsPolicyError(
-            "invalid_global_lockdown", "Global lockdown must be true when present."
-        )
+        raise ManagedControlsPolicyError("invalid_global_lockdown", "Global lockdown must be true when present.")
     global_lockdown = global_lockdown_value is True
     if global_lockdown and authority_mode != "managed-restrictive":
-        raise ManagedControlsPolicyError(
-            "invalid_authority", "Global lockdown requires managed-restrictive authority."
-        )
+        raise ManagedControlsPolicyError("invalid_authority", "Global lockdown requires managed-restrictive authority.")
     controls = controls_field.get("controls")
     if not isinstance(controls, list):
         raise ManagedControlsPolicyError("invalid_shape", "Extension controls must be an array.")
@@ -344,9 +326,7 @@ def _append_control_projection(
     previous = states_by_target.get(control.target)
     if previous is not None:
         reason = "duplicate_target" if previous is control.state else "conflicting_target"
-        raise ManagedControlsPolicyError(
-            reason, "Duplicate or conflicting Extension controls are not allowed."
-        )
+        raise ManagedControlsPolicyError(reason, "Duplicate or conflicting Extension controls are not allowed.")
     states_by_target[control.target] = control.state
     if authority_mode == "managed-restrictive" and control.state is not ControlState.DISABLED:
         raise ManagedControlsPolicyError(
@@ -468,9 +448,7 @@ def parse_managed_controls_policy_fields(
         package_firewall_supported=package_firewall_supported,
     )
     if not controls_present:
-        return ParsedManagedControlsPolicy(
-            None, None, (), False, rule_targets, delegated_rule_targets
-        )
+        return ParsedManagedControlsPolicy(None, None, (), False, rule_targets, delegated_rule_targets)
     (
         authority_mode,
         signed_cloud_layer,

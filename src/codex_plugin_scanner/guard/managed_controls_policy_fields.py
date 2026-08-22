@@ -33,9 +33,7 @@ def is_mapping(value: object) -> TypeGuard[dict[str, object]]:
 
 
 def _mapping(value: object, *, code: str, label: str) -> dict[str, object]:
-    if not isinstance(value, dict) or not all(
-        isinstance(key, str) for key in cast(dict[object, object], value)
-    ):
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
         raise ManagedControlsPolicyError(code, f"{label} must be an object.")
     return cast(dict[str, object], value)
 
