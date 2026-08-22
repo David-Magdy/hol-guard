@@ -1,0 +1,88 @@
+name: Export Points Managed Controls batch deltas
+
+on:
+  push:
+    branches:
+      - automation/points-managed-controls-export
+    paths:
+      - '.github/workflows/export-points-managed-controls-batches.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Generate isolated Points Portal batches
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --mirror https://github.com/hashgraph-online/points-portal.git /tmp/points-remote.git
+          git clone /tmp/points-remote.git /tmp/points
+          cd /tmp/points
+          git checkout release/3.0
+          mkdir -p .github/scripts
+          git show origin/managed-controls/program-bootstrap:.github/scripts/generate-managed-controls-batches.mjs > .github/scripts/generate-managed-controls-batches.mjs
+          git config user.name 'Managed Controls Export'
+          git config user.email 'managed-controls-export@users.noreply.github.com'
+          node .github/scripts/generate-managed-controls-batches.mjs
+
+      - name: Serialize exact per-batch deltas
+        shell: python
+        run: |
+          import base64
+          import json
+          import subprocess
+          from pathlib import Path
+
+          repo = Path('/tmp/points')
+          def git(*args: str) -> str:
+              return subprocess.check_output(['git', *args], cwd=repo, text=True).strip()
+
+          batches = []
+          for batch in range(18, 36):
+              prefix = f'managed-controls/batch-{batch:02d}-'
+              refs = [
+                  line.split(' ', 1)[1].removeprefix('refs/remotes/origin/')
+                  for line in git('for-each-ref', '--format=%(objectname) %(refname)', 'refs/remotes/origin/managed-controls/').splitlines()
+                  if f'/batch-{batch:02d}-' in line
+              ]
+              if len(refs) != 1:
+                  raise SystemExit(f'Expected one generated batch {batch}, got {refs!r}')
+              branch = refs[0]
+              head = git('rev-parse', f'origin/{branch}')
+              parent = git('rev-parse', f'{head}^')
+              changes = []
+              for line in git('diff-tree', '--no-commit-id', '--name-status', '-r', parent, head).splitlines():
+                  if not line:
+                      continue
+                  status, path = line.split('\t', 1)
+                  if status.startswith('D'):
+                      changes.append({'status': 'D', 'path': path})
+                      continue
+                  mode = git('ls-tree', head, '--', path).split()[0]
+                  raw = subprocess.check_output(['git', 'show', f'{head}:{path}'], cwd=repo)
+                  changes.append({
+                      'status': status[0],
+                      'path': path,
+                      'mode': mode,
+                      'content_base64': base64.b64encode(raw).decode('ascii'),
+                  })
+              batches.append({
+                  'batch': batch,
+                  'branch': branch,
+                  'message': git('show', '-s', '--format=%s', head),
+                  'changes': changes,
+              })
+          Path('/tmp/managed-controls-batches.json').write_text(json.dumps(batches, indent=2), encoding='utf-8')
+
+      - name: Upload batch deltas
+        uses: actions/upload-artifact@v4
+        with:
+          name: points-managed-controls-batches
+          path: /tmp/managed-controls-batches.json
+          if-no-files-found: error
+          retention-days: 1
