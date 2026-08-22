@@ -493,3 +493,9 @@ def parse_managed_controls_policy_fields(
             )
         ),
     )
+
+
+def _is_mapping(value: object) -> bool:
+    from collections.abc import Mapping as _Mapping
+
+    return isinstance(value, _Mapping)
