@@ -2500,20 +2500,19 @@ function normalizeGuardCloudConnectStatus(value: unknown): GuardCloudConnectStat
   };
 }
 
-export async function fetchGuardCloudConnectStatus(): Promise<GuardCloudConnectStatusResponse> {
-  return normalizeGuardCloudConnectStatus(await readJson<unknown>("/v1/cloud/connect"));
+export async function fetchGuardCloudConnectStatus(signal?: AbortSignal): Promise<GuardCloudConnectStatusResponse> {
+  return normalizeGuardCloudConnectStatus(await readJson<unknown>("/v1/cloud/connect", { signal }));
 }
-
-export async function startGuardCloudConnect(): Promise<GuardCloudConnectStatusResponse> {
+export async function startGuardCloudConnect(signal?: AbortSignal): Promise<GuardCloudConnectStatusResponse> {
   return normalizeGuardCloudConnectStatus(
     await readJson<unknown>("/v1/cloud/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
+      signal,
     }),
   );
 }
-
 export async function fetchLatestReceipt(
   artifactId: string,
   harness: string

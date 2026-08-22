@@ -71,6 +71,7 @@ const localCloudProof = cloudPolicyRecoveryHint({
   connectUrl: urls.connect_url,
 });
 assert(localCloudProof?.actionLabel === "Connect Guard Cloud", "local Cloud proof uses the separate connect action");
+assert(localCloudProof?.startsOAuth === true, "disconnected Cloud proof starts the local OAuth flow");
 assert(
   localCloudProof?.detail.includes("Local Guard remains active") === true,
   "missing Cloud proof must not degrade local Guard copy",
@@ -94,7 +95,8 @@ const pendingCloudProof = cloudPolicyRecoveryHint({
 });
 assert(
   pendingCloudProof?.actionLabel === "Open Guard Cloud" &&
-    pendingCloudProof.detail.includes("separate from local repair"),
+    pendingCloudProof.detail.includes("separate from local repair") &&
+    pendingCloudProof.startsOAuth === false,
   "incomplete Cloud proof remains an independent Cloud action",
 );
 
