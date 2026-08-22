@@ -1,0 +1,51 @@
+name: Managed Controls type integration repair
+
+on:
+  push:
+    branches:
+      - managed-controls/batch-13-local-parser-shared-posture
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: true
+      - name: Align runtime contract and remove diagnostics
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/codex_plugin_scanner/guard/managed_controls_policy_fields_core.py")
+          text = path.read_text()
+          old = '''        signed_cloud_layer = ExtensionControlLayer(
+              schema_version=CONTROL_SCHEMA_VERSION,
+              kind=ControlLayerKind.SIGNED_CLOUD,
+              revision=0,
+              controls=tuple(generic_controls),
+          )'''
+          new = '''        signed_cloud_layer = ExtensionControlLayer(
+              schema_version=CONTROL_SCHEMA_VERSION,
+              kind=ControlLayerKind.SIGNED_CLOUD,
+              catalog_digest=registry.catalog_digest,
+              global_lockdown=global_lockdown,
+              controls=tuple(generic_controls),
+          )'''
+          if old not in text:
+              raise SystemExit("expected ExtensionControlLayer constructor not found")
+          path.write_text(text.replace(old, new, 1))
+          PY
+          rm -f \
+            .typecheck-errors.txt \
+            .github/workflows/managed-controls-typecheck-pr2519.yml \
+            .github/workflows/managed-controls-type-fix-pr2519.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(guard): bind Managed Controls layer to catalog contract"
+          git push origin HEAD:managed-controls/batch-13-local-parser-shared-posture
