@@ -9,28 +9,27 @@ from __future__ import annotations
 from typing import TypeGuard, cast
 
 from . import managed_controls_policy_fields_core as _core
-from .managed_controls_policy_fields_core import (
-    EXTENSION_CONTROL_LAYER_CAPABILITY,
-    HOL_EXTENSION_CONTROLS_FIELD,
-    HOL_EXTENSION_CONTROLS_SCHEMA_VERSION,
-    HOL_EXTENSION_TARGETS_FIELD,
-    HOL_EXTENSION_TARGETS_SCHEMA_VERSION,
-    MANAGED_CONTROLS_ATOMIC_APPLY_CAPABILITY,
-    PACKAGE_FIREWALL_CAPABILITY,
-    POLICY_EXTENSION_TARGETS_CAPABILITY,
-    DelegatedExtensionTarget,
-    ExtensionRuleTargets,
-    ManagedControlsPolicyError,
-    ParsedManagedControlsPolicy,
-)
 from .runtime.command_extensions import CommandSafetyExtensionRegistry
 from .runtime.extension_control_limits import MAX_CONTROL_SET_RULES
+
+EXTENSION_CONTROL_LAYER_CAPABILITY = _core.EXTENSION_CONTROL_LAYER_CAPABILITY
+HOL_EXTENSION_CONTROLS_FIELD = _core.HOL_EXTENSION_CONTROLS_FIELD
+HOL_EXTENSION_CONTROLS_SCHEMA_VERSION = _core.HOL_EXTENSION_CONTROLS_SCHEMA_VERSION
+HOL_EXTENSION_TARGETS_FIELD = _core.HOL_EXTENSION_TARGETS_FIELD
+HOL_EXTENSION_TARGETS_SCHEMA_VERSION = _core.HOL_EXTENSION_TARGETS_SCHEMA_VERSION
+MANAGED_CONTROLS_ATOMIC_APPLY_CAPABILITY = _core.MANAGED_CONTROLS_ATOMIC_APPLY_CAPABILITY
+PACKAGE_FIREWALL_CAPABILITY = _core.PACKAGE_FIREWALL_CAPABILITY
+POLICY_EXTENSION_TARGETS_CAPABILITY = _core.POLICY_EXTENSION_TARGETS_CAPABILITY
+DelegatedExtensionTarget = _core.DelegatedExtensionTarget
+ExtensionRuleTargets = _core.ExtensionRuleTargets
+ManagedControlsPolicyError = _core.ManagedControlsPolicyError
+ParsedManagedControlsPolicy = _core.ParsedManagedControlsPolicy
 
 
 def is_mapping(value: object) -> TypeGuard[dict[str, object]]:
     """Return whether a value is a string-keyed object."""
 
-    return _core._is_mapping(value)  # noqa: SLF001
+    return _core._is_mapping(value)
 
 
 def _mapping(value: object, *, code: str, label: str) -> dict[str, object]:
