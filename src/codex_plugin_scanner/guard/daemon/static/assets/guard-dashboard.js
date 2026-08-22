@@ -19011,7 +19011,7 @@ const ActionButton = reactExports.forwardRef(
           ref,
           href: guardAwareHref(href),
           target: /^https?:\/\//i.test(href) ? "_blank" : void 0,
-          rel: /^https?:\/\//i.test(href) ? "noreferrer" : void 0,
+          rel: /^https?:\/\//i.test(href) ? "noopener noreferrer" : void 0,
           onClick,
           className,
           ...anchorPropsFromButtonProps(buttonProps),
