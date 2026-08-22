@@ -17,8 +17,8 @@ from .runtime.extension_control_contract import (
     ExtensionControlLayer,
 )
 from .runtime.extension_control_limits import (
-    MAX_CONTROLS_PER_LAYER,
     MAX_CONTROL_SET_TARGETS,
+    MAX_CONTROLS_PER_LAYER,
 )
 
 HOL_EXTENSION_CONTROLS_FIELD: Final = "x-hol-extension-controls"
