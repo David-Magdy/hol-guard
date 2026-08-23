@@ -58,6 +58,32 @@ def test_verified_workspace_apply_patch_allows_plugin_metadata_bundle(tmp_path: 
     assert _relaxes(patch, workspace=workspace)
 
 
+def test_verified_linked_worktree_apply_patch_uses_relaxed_default(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    repository = workspace / "project"
+    common_dir = repository / ".git"
+    git_dir = common_dir / "worktrees" / "feature"
+    worktree = tmp_path / "feature-worktree"
+    git_dir.mkdir(parents=True)
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+    (git_dir / "gitdir").write_text(f"{worktree / '.git'}\n", encoding="utf-8")
+    (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+    patch = f"*** Begin Patch\n*** Add File: {worktree}/src/example.ts\n+export const ok = true;\n*** End Patch"
+
+    assert _relaxes(patch, workspace=workspace)
+
+
+def test_unrelated_sibling_repository_apply_patch_still_requires_review(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    unrelated = tmp_path / "unrelated"
+    (unrelated / ".git").mkdir(parents=True)
+    patch = f"*** Begin Patch\n*** Add File: {unrelated}/src/example.ts\n+export const nope = true;\n*** End Patch"
+
+    assert not _relaxes(patch, workspace=workspace)
+
+
 def test_verified_workspace_apply_patch_does_not_queue_approval(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -235,6 +261,11 @@ def test_watch_only_inbox_accepts_stamped_runtime_envelope(
     assert len(pending) == 1
     assert pending[0]["action_envelope_json"]["pre_execution_result"] is None
     assert pending[0]["scanner_evidence"][-1]["authoritative_action"] == executable_action
+    assert store.count_approval_requests() == 1
+    assert store.count_approval_requests(exclude_watch_only=True) == 0
+    actionable_page = store.list_pending_approval_summaries(limit=10, exclude_watch_only=True)
+    assert actionable_page["items"] == []
+    assert actionable_page["total_pending_count"] == 0
 
 
 @pytest.mark.parametrize(

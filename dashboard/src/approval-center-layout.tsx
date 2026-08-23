@@ -235,11 +235,8 @@ export function ApprovalCenterLayout(props: LayoutProps) {
     }
   });
   const queuedItems = props.requests.kind === "ready" ? props.requests.items : [];
-  const needsFullQueue = props.view === "inbox";
   let queuedCount = 0;
-  if (needsFullQueue && props.requests.kind === "ready") {
-    queuedCount = queuedItems.length;
-  } else if (props.runtime.kind === "ready") {
+  if (props.runtime.kind === "ready") {
     queuedCount = props.runtime.snapshot.pending_count;
   } else {
     queuedCount = queuedItems.length;

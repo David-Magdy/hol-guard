@@ -22,7 +22,7 @@ from codex_plugin_scanner.guard.adapters import get_adapter
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.cli import commands as guard_commands_module
 from codex_plugin_scanner.guard.config import GuardConfig
-from codex_plugin_scanner.guard.daemon import GuardDaemonServer
+from codex_plugin_scanner.guard.daemon import GuardDaemonServer, protection_repair_retry
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager_module
 from codex_plugin_scanner.guard.daemon import server as daemon_server_module
 from codex_plugin_scanner.guard.daemon.discovery import load_authenticated_daemon_state
@@ -244,10 +244,10 @@ class TestGuardSurfaceServer:
             lambda self, *, force_refresh=False: containment_probes.append(force_refresh) or {},
         )
         monkeypatch.setattr(
-            daemon_server_module,
+            protection_repair_retry,
             "containment_health_signals",
             lambda value, **_kwargs: {
-                check_id: SimpleNamespace(status=daemon_server_module.ProtectionCheckStatus.PASS)
+                check_id: SimpleNamespace(status=protection_repair_retry.ProtectionCheckStatus.PASS)
                 for check_id in (
                     "decision_plane_compatibility",
                     "containment_compatibility",

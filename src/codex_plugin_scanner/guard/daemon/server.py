@@ -164,13 +164,11 @@ from ..runtime.command_shadow_evaluation import (
     baseline_command_shadow_proposal,
     build_command_shadow_observation,
 )
-from ..runtime.containment_health import containment_health_signals
 from ..runtime.extension_control_runtime import ExtensionControlRuntime, ExtensionControlRuntimeSnapshot
 from ..runtime.live_request_sync import LiveRequestSyncWorker, start_cloud_sync_sync_worker, stop_cloud_sync_sync_worker
 from ..runtime.local_temp_paths import trusted_temporary_root_for_path
 from ..runtime.network_status import build_network_status, project_network_supervisor_health
 from ..runtime.network_supervisor import NetworkSupervisor
-from ..runtime.protection_health import ProtectionCheckStatus
 from ..runtime.runner import (
     GuardSyncAuthorizationExpiredError,
     GuardSyncNotAvailableError,
@@ -257,6 +255,7 @@ from .manager import (
     repair_approval_center_locator,
     write_guard_daemon_state,
 )
+from .protection_repair_retry import confirmed_containment_repair_signals
 from .request_executor import BoundedRequestExecutor as _BoundedRequestExecutor
 from .runtime_heartbeat import RuntimeHeartbeatWriter
 from .runtime_hook_deadline import RuntimeHookDeadline
@@ -1344,6 +1343,7 @@ def _queue_headless_cloud_sync(
 
 def _maybe_queue_first_cloud_sync(*, store: GuardStore) -> dict[str, object] | None:
     if store.get_cloud_sync_profile() is None:
+        # Startup recovery remains best-effort so local protection never depends on Cloud availability.
         try:
             repair_guard_cloud_connect_storage(store)
         except Exception:
@@ -4933,25 +4933,11 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 elif has_active_hooks:
                     repaired_check_ids.append("harness_hooks")
                 if repaired:
-                    try:
-                        containment_health = self._containment_health_payload(force_refresh=True)
-                        refreshed_signals = containment_health_signals(
-                            containment_health,
-                            now=datetime.now(timezone.utc),
-                        )
-                        for containment_check_id in (
-                            "decision_plane_compatibility",
-                            "containment_compatibility",
-                            "sandbox",
-                        ):
-                            if refreshed_signals[containment_check_id].status is ProtectionCheckStatus.PASS:
-                                repaired_check_ids.append(containment_check_id)
-                            else:
-                                failed_check_ids.append(containment_check_id)
-                    except (OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
-                        failed_check_ids.extend(
-                            ["decision_plane_compatibility", "containment_compatibility", "sandbox"]
-                        )
+                    containment_repaired, containment_failed = confirmed_containment_repair_signals(
+                        lambda: self._containment_health_payload(force_refresh=True)
+                    )
+                    repaired_check_ids.extend(containment_repaired)
+                    failed_check_ids.extend(containment_failed)
                     try:
                         config = load_guard_config(store.guard_home)
                         _repair_command_activity_persistence_health(store)

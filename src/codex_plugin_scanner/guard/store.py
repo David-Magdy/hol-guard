@@ -15,6 +15,7 @@ from .store_base import (
     runtime_tool_action_portable_match_context,
 )
 from .store_approval_facade import StoreApprovalsMixin
+from .store_approval_queries import StoreApprovalQueriesMixin
 from .store_cloud_events import StoreCloudEventsMixin
 from .store_command_activity import StoreCommandActivityMixin
 from .store_command_activity_api import StoreCommandActivityApiMixin
@@ -74,6 +75,7 @@ class GuardStore(
     StorePolicyIntegrityAdminMixin,
     StoreCloudEventsMixin,
     StoreReceiptsRuntimeMixin,
+    StoreApprovalQueriesMixin,
     StoreApprovalsMixin,
     StoreLiveRequestOutboxMixin,
     StoreEventReceiptsMixin,

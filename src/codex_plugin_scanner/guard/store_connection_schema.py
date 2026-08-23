@@ -40,6 +40,7 @@ from .store_storage_maintenance import (
     STORAGE_QUERY_INDEX_MIGRATION_VERSION,
     storage_maintenance_schema_statements,
 )
+from .store_watch_only_approval_schema import WATCH_ONLY_APPROVAL_MIGRATION_VERSION, ensure_watch_only_approval_schema
 from .store_workflow_capabilities_schema import (
     WORKFLOW_CAPABILITY_RECEIPT_EVENT_INDEX_MIGRATION_VERSION,
     ensure_workflow_capability_schema,
@@ -159,6 +160,7 @@ _RECEIPT_WARN_ROLLUP_MIGRATION_VERSION = 16
 _REQUIRED_SCHEMA_MIGRATION_VERSIONS = (
     *range(2, STORAGE_QUERY_INDEX_MIGRATION_VERSION + 1),
     WORKFLOW_CAPABILITY_RECEIPT_EVENT_INDEX_MIGRATION_VERSION,
+    WATCH_ONLY_APPROVAL_MIGRATION_VERSION,
 )
 
 
@@ -1040,10 +1042,7 @@ class StoreConnectionSchemaMixin:
             self._ensure_approval_column(connection, "browser_intent_json", "text")
             self._ensure_approval_column(connection, "desktop_notified_at", "text")
             self._ensure_approval_column(connection, "raw_command_text", "text")
-            self._ensure_approval_column(connection, "guard_version", "text")
-            self._ensure_approval_column(connection, "first_seen_guard_version", "text")
-            self._ensure_approval_column(connection, "last_seen_guard_version", "text")
-            self._ensure_approval_column(connection, "oauth_source", "text")
+            ensure_watch_only_approval_schema(connection, schema=self)
             if not self._schema_version_applied(connection, version=3):
                 _backfill_approval_queue_columns_compat(connection)
                 self._record_schema_version(connection, version=3)
@@ -1154,6 +1153,7 @@ class StoreConnectionSchemaMixin:
                         "guard_version",
                         "first_seen_guard_version",
                         "last_seen_guard_version",
+                        "watch_only_observation",
                     }
                     return (
                         row is not None

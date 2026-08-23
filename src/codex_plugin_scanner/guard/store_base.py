@@ -78,7 +78,7 @@ from .store_approvals import (
     approval_schema_statement,
     backfill_approval_queue_columns,
 )
-from .store_approvals import (
+from .store_approval_writes import (
     add_approval_request as persist_approval_request,
 )
 from .store_approvals import (

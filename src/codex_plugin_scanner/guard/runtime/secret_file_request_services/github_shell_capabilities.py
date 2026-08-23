@@ -14,7 +14,7 @@ from ..github_shell_capabilities import classify_github_shell_capabilities as _c
 from ..interpreter_options import shell_interpreter_command_payload as _shell_interpreter_command_payload
 from .constants_core import _READ_ONLY_LOOKUP_FILTERS, _SHELL_COMMAND_STRING_INTERPRETERS
 from .constants_patterns import _SHELL_ASSIGNMENT_PATTERN, _SHELL_COMMAND_SEPARATORS, _SHELL_COMMAND_WRAPPERS
-from .read_only_filters import _read_only_lookup_filter_segment_is_safe
+from .read_only_filters import _github_output_filter_segment_is_safe
 from .request_artifacts import _normalized_shell_command_name
 from .shell_quote_tokens import (
     ShellTokenWithQuoteContext as _ShellTokenWithQuoteContext,
@@ -343,7 +343,7 @@ def _github_pipeline_companion_is_read_only(
     if command_name == "uniq":
         return args in ([], ["-c"])
     if command_name in _READ_ONLY_LOOKUP_FILTERS:
-        return _read_only_lookup_filter_segment_is_safe(command_name, args, home_dir=home_dir)
+        return _github_output_filter_segment_is_safe(command_name, args, home_dir=home_dir)
     return False
 
 

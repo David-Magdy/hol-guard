@@ -36,6 +36,7 @@ from .read_only_filters import (
     _read_only_lookup_arg_is_redirection,
     _read_only_lookup_filter_segment_is_safe,
     _read_only_lookup_head_tail_args_are_safe,
+    _read_only_lookup_may_be_primary,
     _read_only_lookup_sed_args_are_safe,
     _read_only_lookup_target_is_safe,
 )
@@ -144,11 +145,7 @@ def _compound_developer_effect_graph(
         return None
     if is_low_risk_compound_git_inspection(context):
         return _known_context_effect_graph(context, DeveloperShellEffect.LOCAL_READ)
-    typescript_context = direct_local_typescript_execution_context(
-        command_text,
-        cwd=cwd,
-        home_dir=home_dir,
-    )
+    typescript_context = direct_local_typescript_execution_context(command_text, cwd=cwd, home_dir=home_dir)
     if typescript_context is not None and typescript_context.complete:
         return _known_context_effect_graph(typescript_context, DeveloperShellEffect.SYNTAX_CHECK)
     github_assessment = classify_github_shell_capabilities(command_text, home_dir=home_dir)
@@ -215,7 +212,9 @@ def _compound_developer_effect_graph(
             effects.append(DeveloperShellSegmentEffect(index, command_name, DeveloperShellEffect.LOCAL_READ))
             continue
         if (
-            command_name in _READ_ONLY_LOOKUP_COMMANDS
+            _read_only_lookup_may_be_primary(
+                command_name in _READ_ONLY_LOOKUP_COMMANDS, segment.control_before, safe_pipe_filter
+            )
             and not (
                 command_name == "rg"
                 and not _ripgrep_config_is_disabled(args)
