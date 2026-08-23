@@ -91,7 +91,7 @@ def test_main_push_build_computes_a_registry_derived_stable_version() -> None:
     assert 'VERSION="$BASE_VERSION"' in compute_run
     assert 'elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/release/3.0" ]]' in compute_run
     assert "pull_request" in compute_run
-    assert "PR_MERGE_SHA" in compute_run
+    assert compute_run.index("PR_MERGE_SHA") < compute_run.index('elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]')
     assert 'SOURCE_SHA="$PR_MERGE_SHA"' in compute_run
     assert 'ACTUAL_REF="$TRAIN_REF"' in compute_run
     assert 'SOURCE_SHA" != "$EXPECTED_SOURCE"' in compute_run

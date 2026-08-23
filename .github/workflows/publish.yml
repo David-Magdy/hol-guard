@@ -197,18 +197,6 @@ jobs:
               VALIDATOR_ARGS+=(--existing-version "$existing_version")
             done
             VERSION=$(uv run --no-sync python scripts/validate_alpha_release.py "${VALIDATOR_ARGS[@]}")
-          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            CHANNEL="canary"
-            VERSION=$(BASE_VERSION="$BASE_VERSION" PR_NUMBER="$PR_NUMBER" GITHUB_RUN_NUMBER="$GITHUB_RUN_NUMBER" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" python - <<'PY'
-          import os
-
-          def pair(left: int, right: int) -> int:
-              total = left + right
-              return total * (total + 1) // 2 + right
-
-          print(f"{os.environ['BASE_VERSION']}.dev{pair(pair(int(os.environ['PR_NUMBER']), int(os.environ['GITHUB_RUN_NUMBER'])), int(os.environ['GITHUB_RUN_ATTEMPT']))}")
-          PY
-            )
           elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/release/3.0" ]] || [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$GITHUB_EVENT_ACTION" == "closed" && "$PR_MERGED" == "true" && "$PR_BASE_REF" == "release/3.0" && "$PR_HEAD_REPO" == "$GITHUB_REPOSITORY" && -n "$PR_MERGE_SHA" ]]; then
             if [[ "$RELEASE_PUBLISHING_ENABLED" != "true" ]]; then
               echo "Release publishing is disabled until protected environments are verified" >&2
@@ -271,6 +259,18 @@ jobs:
               VALIDATOR_ARGS+=(--existing-version "$existing_version")
             done
             VERSION=$(uv run --no-sync python scripts/validate_alpha_release.py "${VALIDATOR_ARGS[@]}")
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            CHANNEL="canary"
+            VERSION=$(BASE_VERSION="$BASE_VERSION" PR_NUMBER="$PR_NUMBER" GITHUB_RUN_NUMBER="$GITHUB_RUN_NUMBER" GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" python - <<'PY'
+          import os
+
+          def pair(left: int, right: int) -> int:
+              total = left + right
+              return total * (total + 1) // 2 + right
+
+          print(f"{os.environ['BASE_VERSION']}.dev{pair(pair(int(os.environ['PR_NUMBER']), int(os.environ['GITHUB_RUN_NUMBER'])), int(os.environ['GITHUB_RUN_ATTEMPT']))}")
+          PY
+            )
           elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
             CHANNEL="stable"
             PYPI_VERSIONS=$(uv run --no-sync python scripts/verify_release_registry.py \
