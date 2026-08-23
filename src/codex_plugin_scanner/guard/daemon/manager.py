@@ -418,13 +418,27 @@ def ensure_guard_daemon(
             remaining_start_time = start_deadline - time.monotonic()
             if remaining_start_time <= 0:
                 break
-            command = _guard_daemon_launch_command(
-                guard_home,
-                candidate_port,
-                home_dir=home_dir,
-                gate_on_stdin=os.name == "nt" and executable is None,
-                executable=executable,
-            )
+            if executable is None:
+                command = _guard_daemon_launch_command(
+                    guard_home,
+                    candidate_port,
+                    home_dir=home_dir,
+                    gate_on_stdin=os.name == "nt",
+                )
+                launcher_env = _daemon_launcher_env(home_dir=home_dir, guard_home=guard_home)
+            else:
+                command = _guard_daemon_launch_command(
+                    guard_home,
+                    candidate_port,
+                    home_dir=home_dir,
+                    gate_on_stdin=False,
+                    executable=executable,
+                )
+                launcher_env = _daemon_launcher_env(
+                    home_dir=home_dir,
+                    guard_home=guard_home,
+                    executable=executable,
+                )
             if os.name == "nt":
                 process = subprocess.Popen(
                     command,
@@ -432,7 +446,7 @@ def ensure_guard_daemon(
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     cwd=launch_cwd,
-                    env=_daemon_launcher_env(home_dir=home_dir, guard_home=guard_home, executable=executable),
+                    env=launcher_env,
                     creationflags=_windows_daemon_creation_flags(
                         allow_job_breakaway=allow_windows_job_breakaway,
                     ),
@@ -444,7 +458,7 @@ def ensure_guard_daemon(
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     cwd=launch_cwd,
-                    env=_daemon_launcher_env(home_dir=home_dir, guard_home=guard_home, executable=executable),
+                    env=launcher_env,
                     start_new_session=True,
                 )
             pending_creation_time: int | None = None
@@ -456,12 +470,19 @@ def ensure_guard_daemon(
                 )
                 _release_guard_daemon_launch_gate(process)
                 remaining_start_time = max(0.0, start_deadline - time.monotonic())
-                url = _wait_for_guard_daemon_url(
-                    guard_home,
-                    timeout=remaining_start_time,
-                    process=process,
-                    require_current_runtime=executable is None,
-                )
+                if executable is None:
+                    url = _wait_for_guard_daemon_url(
+                        guard_home,
+                        timeout=remaining_start_time,
+                        process=process,
+                    )
+                else:
+                    url = _wait_for_guard_daemon_url(
+                        guard_home,
+                        timeout=remaining_start_time,
+                        process=process,
+                        require_current_runtime=False,
+                    )
                 if url is not None:
                     if not _clear_spawned_guard_daemon_pending_launch(
                         guard_home, process=process, creation_time=pending_creation_time
@@ -500,6 +521,14 @@ def ensure_guard_daemon_after_update(
     executable: Path | None = None,
 ) -> str:
     """Restart the local daemon after a package update with a longer startup window."""
+    if executable is None:
+        return ensure_guard_daemon(
+            guard_home,
+            home_dir=home_dir,
+            start_timeout=GUARD_DAEMON_POST_UPDATE_START_TIMEOUT_SECONDS,
+            preferred_port=preferred_port,
+            allow_windows_job_breakaway=allow_windows_job_breakaway,
+        )
     return ensure_guard_daemon(
         guard_home,
         home_dir=home_dir,
@@ -2864,9 +2893,10 @@ def _wait_for_guard_daemon_url(
 ) -> str | None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        url = _live_guard_daemon_url(
-            guard_home,
-            require_current_runtime=require_current_runtime,
+        url = (
+            load_guard_daemon_url(guard_home)
+            if require_current_runtime
+            else _live_guard_daemon_url(guard_home, require_current_runtime=False)
         )
         if url is not None:
             return url
