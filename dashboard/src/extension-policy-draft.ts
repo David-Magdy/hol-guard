@@ -42,6 +42,7 @@ export function setLocalPermissionDraftState(
 ): ExtensionControlLayer[] {
   const next = cloneLayers(layers);
   let local = next.find((layer) => layer.kind === "local-admin");
+  if (!local && state === "inherit") return next;
   if (!local) {
     local = {
       schema_version: "1.0.0",
@@ -52,6 +53,9 @@ export function setLocalPermissionDraftState(
     };
     next.push(local);
   }
+  const hadPermissionControl = local.controls.some(
+    (control) => control.target_kind === "permission" && control.target_id === permissionId,
+  );
   local.controls = local.controls.filter(
     (control) => control.target_kind !== "permission" || control.target_id !== permissionId,
   );
@@ -62,9 +66,25 @@ export function setLocalPermissionDraftState(
       state: state === "allow" ? "enabled" : "disabled",
     });
   }
+  if (state === "inherit" && hadPermissionControl && !local.global_lockdown && local.controls.length === 0) {
+    const localIndex = next.indexOf(local);
+    next.splice(localIndex, 1);
+  }
   const normalized = next.map((layer) => sortedControls(layer));
   normalized.sort((left, right) => left.kind.localeCompare(right.kind));
   return normalized;
+}
+
+export function setLocalPermissionDraftStates(
+  layers: ExtensionControlLayer[],
+  catalogDigest: string,
+  permissionIds: readonly string[],
+  state: PermissionDraftState,
+): ExtensionControlLayer[] {
+  return permissionIds.reduce(
+    (next, permissionId) => setLocalPermissionDraftState(next, catalogDigest, permissionId, state),
+    layers,
+  );
 }
 
 function canonicalLayerValue(layers: ExtensionControlLayer[]): string {

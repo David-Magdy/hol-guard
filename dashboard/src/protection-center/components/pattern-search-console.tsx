@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { HiMiniArrowPath, HiMiniExclamationTriangle, HiMiniInformationCircle, HiMiniMagnifyingGlass, HiMiniShieldCheck, HiMiniXMark } from "react-icons/hi2";
+import { HiMiniArrowPath, HiMiniCheckCircle, HiMiniExclamationTriangle, HiMiniInformationCircle, HiMiniMagnifyingGlass, HiMiniNoSymbol, HiMiniShieldCheck, HiMiniSparkles, HiMiniXMark } from "react-icons/hi2";
 
 import { extensionDisplayName } from "../../extension-control-center-model";
-import type { EffectiveExtensionControls, ExtensionCatalogItem } from "../../extension-controls-api";
+import type { EffectiveExtensionControls, ExtensionCatalogItem, ExtensionPermission } from "../../extension-controls-api";
+import type { PermissionDraftState } from "../../extension-policy-draft";
 import {
   AppliedPolicyToast,
   managedPermissionState,
@@ -12,9 +13,118 @@ import {
 } from "../../extension-policy-panel";
 import { useResolvedApprovalGate } from "../../use-resolved-approval-gate";
 import { useExtensionPolicyDraft } from "../../use-extension-policy-draft";
-import { searchCommandPatterns } from "../model/protection-landing";
+import { COMMAND_PATTERN_DISPLAY_LIMIT, searchCommandPatterns } from "../model/protection-landing";
 import { ProtectionModuleRow } from "./protection-primitives";
 import { ExtensionBrandMark } from "./extension-brand-mark";
+
+type QuickApplyChoice = {
+  state: PermissionDraftState;
+  label: string;
+  detail: string;
+  icon: typeof HiMiniSparkles;
+};
+
+const QUICK_APPLY_CHOICES: readonly QuickApplyChoice[] = [
+  {
+    state: "inherit",
+    label: "Recommended",
+    detail: "Use Guard defaults for every matching capability.",
+    icon: HiMiniSparkles,
+  },
+  {
+    state: "allow",
+    label: "Allow all",
+    detail: "Allow every matching capability that organization policy permits.",
+    icon: HiMiniCheckCircle,
+  },
+  {
+    state: "block",
+    label: "Deny all",
+    detail: "Add a local block to every matching capability.",
+    icon: HiMiniNoSymbol,
+  },
+];
+
+export function quickApplyPermissionIds(
+  permissions: readonly { permission_id: string; configurable: boolean }[],
+  effective: EffectiveExtensionControls,
+  state: PermissionDraftState,
+): string[] {
+  return permissions
+    .filter((permission) => permission.configurable)
+    .filter((permission) => state !== "allow" || managedPermissionState(effective, permission.permission_id) !== "disabled")
+    .map((permission) => permission.permission_id);
+}
+
+function QuickApplyToolbar(props: {
+  permissions: readonly ExtensionPermission[];
+  effective: EffectiveExtensionControls;
+  disabled: boolean;
+  permissionState: (permissionId: string) => PermissionDraftState;
+  onApply: (permissionIds: readonly string[], state: PermissionDraftState) => void;
+}) {
+  const configurableCount = props.permissions.filter((permission) => permission.configurable).length;
+  const managedBlockCount = props.permissions.filter((permission) =>
+    permission.configurable && managedPermissionState(props.effective, permission.permission_id) === "disabled"
+  ).length;
+  let managedBlockCopy = "";
+  if (managedBlockCount) {
+    const subject = managedBlockCount === 1 ? "block stays" : "blocks stay";
+    managedBlockCopy = ` ${managedBlockCount} organization ${subject} enforced.`;
+  }
+  if (!configurableCount) return null;
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-y border-[rgba(63,65,116,0.12)] bg-[rgba(85,153,254,0.045)] px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-brand-dark">Quick apply to {configurableCount} matching {configurableCount === 1 ? "capability" : "capabilities"}</p>
+        <p className="mt-0.5 text-xs leading-5 text-brand-dark/65">
+          Changes stay in draft until you review and approve them.
+          {managedBlockCopy}
+        </p>
+      </div>
+      <div role="group" aria-label={`Quick apply to ${configurableCount} matching capabilities`} className="flex flex-wrap gap-2">
+        {QUICK_APPLY_CHOICES.map((choice) => (
+          <QuickApplyButton
+            key={choice.state}
+            choice={choice}
+            permissionIds={quickApplyPermissionIds(props.permissions, props.effective, choice.state)}
+            disabled={props.disabled}
+            permissionState={props.permissionState}
+            onApply={props.onApply}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuickApplyButton(props: {
+  choice: QuickApplyChoice;
+  permissionIds: readonly string[];
+  disabled: boolean;
+  permissionState: (permissionId: string) => PermissionDraftState;
+  onApply: (permissionIds: readonly string[], state: PermissionDraftState) => void;
+}) {
+  const active = props.permissionIds.length > 0
+    && props.permissionIds.every((permissionId) => props.permissionState(permissionId) === props.choice.state);
+  const handleClick = useCallback(() => {
+    props.onApply(props.permissionIds, props.choice.state);
+  }, [props.choice.state, props.onApply, props.permissionIds]);
+  const Icon = props.choice.icon;
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      title={props.choice.detail}
+      disabled={props.disabled || props.permissionIds.length === 0}
+      onClick={handleClick}
+      className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[rgba(63,65,116,0.18)] bg-white px-3 text-xs font-semibold text-brand-dark shadow-sm transition-colors hover:border-brand-blue hover:text-brand-blue disabled:cursor-not-allowed disabled:opacity-45 aria-pressed:border-brand-blue aria-pressed:bg-brand-blue aria-pressed:text-white"
+    >
+      <Icon className="size-4" aria-hidden="true" />
+      {props.choice.label}
+    </button>
+  );
+}
 
 /**
  * Search-first command-pattern console for the Extensions landing page.
@@ -49,7 +159,8 @@ export function PatternSearchConsole(props: {
   const {
     baseEffective, dirty, preview, previewBusy, applyBusy, reviewOpen,
     error, stale, refreshRequired, lastApplied, undoLastApplied,
-    setReviewOpen, setPermissionState, resetDraft, runPreview, apply, permissionState, changeCountFor,
+    changedPermissionCount, setReviewOpen, setPermissionState, setPermissionStates,
+    resetDraft, runPreview, apply, permissionState,
   } = draft;
 
   useEffect(() => {
@@ -65,7 +176,15 @@ export function PatternSearchConsole(props: {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [searchActive]);
 
-  const matches = useMemo(() => searchCommandPatterns(props.catalog, query), [props.catalog, query]);
+  const totalPermissionCount = useMemo(
+    () => props.catalog.reduce((total, extension) => total + extension.permissions.length, 0),
+    [props.catalog],
+  );
+  const allMatches = useMemo(
+    () => searchCommandPatterns(props.catalog, query, totalPermissionCount),
+    [props.catalog, query, totalPermissionCount],
+  );
+  const matches = useMemo(() => allMatches.slice(0, COMMAND_PATTERN_DISPLAY_LIMIT), [allMatches]);
   const toolMatches = useMemo(() => {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (!terms.length) return [];
@@ -83,8 +202,8 @@ export function PatternSearchConsole(props: {
     }
     return [...groups.values()];
   }, [matches]);
-  const involvedPermissions = useMemo(() => matches.map((match) => match.permission), [matches]);
-  const changeCount = changeCountFor(involvedPermissions.map((permission) => permission.permission_id));
+  const involvedPermissions = useMemo(() => allMatches.map((match) => match.permission), [allMatches]);
+  const changeCount = changedPermissionCount;
   const showResults = query.trim().length > 0;
 
   useEffect(() => {
@@ -135,6 +254,22 @@ export function PatternSearchConsole(props: {
     {showResults ? (
       matches.length || toolMatches.length ? (
         <div className="mt-3">
+          {matches.length ? (
+            <>
+              <QuickApplyToolbar
+                permissions={involvedPermissions}
+                effective={baseEffective}
+                disabled={refreshRequired || previewBusy || applyBusy || baseEffective.health !== "protected"}
+                permissionState={permissionState}
+                onApply={setPermissionStates}
+              />
+              {allMatches.length > matches.length ? (
+                <p role="status" className="mt-3 text-xs text-brand-dark/65">
+                  Showing {matches.length} of {allMatches.length} matching capabilities. Quick actions apply to all {allMatches.length}.
+                </p>
+              ) : null}
+            </>
+          ) : null}
           {grouped.map((group) => (
             <section key={group.extension.extension_id} aria-label={`${group.extension.name} patterns`} className="guard-pattern-family">
               <h3 className="guard-pattern-family-heading">
@@ -182,44 +317,45 @@ export function PatternSearchConsole(props: {
           {managedCount ? (
             <p className="mt-3 text-xs text-indigo-950">{managedCount} matched setting{managedCount === 1 ? "" : "s are"} managed by your organization and cannot be weakened on this device.</p>
           ) : null}
-          {dirty ? (
-            <div className="guard-review-bar">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-sm text-brand-dark">{changeCount} unsaved setting change{changeCount === 1 ? "" : "s"}.</div>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" disabled={previewBusy || applyBusy} onClick={resetDraft} className="min-h-11 rounded-xl border border-[rgba(63,65,116,0.2)] px-4 text-sm font-semibold text-brand-dark">Reset changes</button>
-                  <button type="button" disabled={previewBusy || applyBusy || baseEffective.health !== "protected" || stale} onClick={() => { void runPreview(); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-[#f4f7fb] disabled:opacity-40">
-                    {previewBusy ? <HiMiniArrowPath className="size-4 animate-spin motion-reduce:animate-none" /> : <HiMiniShieldCheck className="size-4" />}
-                    Review {changeCount} change{changeCount === 1 ? "" : "s"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-          {lastApplied ? (
-            <AppliedPolicyToast
-              revision={lastApplied.revision}
-              onUndo={() => { undoLastApplied(); }}
-              onViewHistory={() => { document.getElementById("pattern-search-heading")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
-            />
-          ) : null}
-          {error ? (
-            <div role="alert" className="mt-4 text-sm text-red-950">
-              <div className="flex items-start gap-2">
-                <HiMiniExclamationTriangle className="mt-0.5 size-5 shrink-0" />
-                <span>{error}</span>
-              </div>
-            </div>
-          ) : dirty && !preview ? (
-            <div className="mt-4 flex items-start gap-3 text-sm text-brand-dark">
-              <HiMiniInformationCircle className="mt-0.5 size-5 shrink-0" />
-              <p>Review is required before approval. Guard calculates the real outcome from current protections, dependencies, organization settings, and Emergency Lockdown before anything can change.</p>
-            </div>
-          ) : null}
         </div>
       ) : (
         <p className="mt-3 text-sm text-brand-dark/75">No command patterns or tools match this search.</p>
       )
+    ) : null}
+
+    {dirty ? (
+      <div className="guard-review-bar">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-brand-dark">{changeCount} unsaved setting change{changeCount === 1 ? "" : "s"}.</div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" disabled={previewBusy || applyBusy} onClick={resetDraft} className="min-h-11 rounded-xl border border-[rgba(63,65,116,0.2)] px-4 text-sm font-semibold text-brand-dark">Reset changes</button>
+            <button type="button" disabled={previewBusy || applyBusy || baseEffective.health !== "protected" || stale} onClick={() => { void runPreview(); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-[#f4f7fb] disabled:opacity-40">
+              {previewBusy ? <HiMiniArrowPath className="size-4 animate-spin motion-reduce:animate-none" /> : <HiMiniShieldCheck className="size-4" />}
+              Review {changeCount} change{changeCount === 1 ? "" : "s"}
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    {lastApplied ? (
+      <AppliedPolicyToast
+        revision={lastApplied.revision}
+        onUndo={() => { undoLastApplied(); }}
+        onViewHistory={() => { document.getElementById("pattern-search-heading")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+      />
+    ) : null}
+    {error ? (
+      <div role="alert" className="mt-4 text-sm text-red-950">
+        <div className="flex items-start gap-2">
+          <HiMiniExclamationTriangle className="mt-0.5 size-5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      </div>
+    ) : dirty && !preview ? (
+      <div className="mt-4 flex items-start gap-3 text-sm text-brand-dark">
+        <HiMiniInformationCircle className="mt-0.5 size-5 shrink-0" />
+        <p>Review is required before approval. Guard calculates the real outcome from current protections, dependencies, organization settings, and Emergency Lockdown before anything can change.</p>
+      </div>
     ) : null}
 
     {reviewOpen && preview ? (
