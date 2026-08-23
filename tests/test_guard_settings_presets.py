@@ -116,6 +116,13 @@ class TestPresetCliCommands:
         home_dir = tmp_path / "home"
         config_toml = (
             'security_level = "custom"\n'
+            "[harnesses]\n"
+            'pi = "review"\n'
+            'grok = "block"\n'
+            "[harnesses.codex]\n"
+            'default_action = "require-reapproval"\n'
+            "[harnesses.cursor]\n"
+            'default_action = "block"\n'
             "[risk_actions]\n"
             'local_secret_read = "allow"\n'
             "[harness_risk_actions.codex]\n"
@@ -131,6 +138,8 @@ class TestPresetCliCommands:
         assert actual == expected
         assert loaded.risk_actions == {}
         assert loaded.harness_risk_actions == {}
+        assert loaded.harness_actions == {"cursor": "block", "grok": "block"}
+        assert loaded.default_action == "warn"
 
 
 class TestCustomModeActivation:

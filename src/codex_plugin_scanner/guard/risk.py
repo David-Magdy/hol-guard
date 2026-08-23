@@ -8,6 +8,7 @@ from pathlib import PurePath
 from urllib.parse import urlsplit
 
 from .models import GuardArtifact
+from .risk_exfil import detect_exfil_intent
 from .runtime.secret_sensitivity import classify_legacy_secret_path_families
 from .runtime.signals import RiskSignalV2
 from .types import GuardSignal
@@ -61,11 +62,6 @@ _GUARD_BYPASS_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"approval_policy\s*=\s*\"never\"", "approval policy forced to never"),
     (r"\.codex/config\.toml", "direct Guard-managed configuration mutation"),
     (r"guard[_-]?bypass", "explicit Guard bypass marker"),
-)
-_EXFIL_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"\b(upload|exfiltrate|send|post|sync)\b", "exfiltration verb"),
-    (r"(gist\.github\.com|pastebin\.com|transfer\.sh|webhook)", "external sink destination"),
-    (r"scp\s+", "scp transfer intent"),
 )
 _SECRET_PATH_LABELS: tuple[tuple[str, str], ...] = (
     (".env", "local .env file"),
@@ -386,28 +382,6 @@ def detect_guard_bypass(text: str) -> list[GuardSignal]:
                     matched_text=reason,
                     explanation="contains guard bypass intent",
                     remediation="Block and require manual investigation.",
-                    rule_version=_RULE_VERSION,
-                )
-            )
-    return signals
-
-
-def detect_exfil_intent(text: str) -> list[GuardSignal]:
-    """Detect exfiltration-oriented phrasing and destinations."""
-
-    signals: list[GuardSignal] = []
-    for pattern, reason in _EXFIL_PATTERNS:
-        if re.search(pattern, text):
-            signals.append(
-                GuardSignal(
-                    signal_id=f"network:exfil:{reason.replace(' ', '-')}",
-                    family="network",
-                    severity=8,
-                    confidence=0.79,
-                    evidence_source="artifact",
-                    matched_text=reason,
-                    explanation="includes exfiltration-oriented intent",
-                    remediation="Confirm destination and data class before allowing transfer.",
                     rule_version=_RULE_VERSION,
                 )
             )
