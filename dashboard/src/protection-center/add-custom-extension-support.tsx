@@ -29,6 +29,12 @@ export function surfaceBadge(surface: LocalCliItem["surface"]): string | null {
   return null;
 }
 
+export function commandFieldLabel(surface: LocalCliItem["surface"] | null): string {
+  if (surface === "package-scripts") return "Find a script";
+  if (surface === "mcp") return "Launch command";
+  return "Command";
+}
+
 export function allowActionLabel(surface: LocalCliItem["surface"]): string {
   if (surface === "mcp") return "Allow this server";
   if (surface === "package-scripts") return "Allow these scripts";
@@ -41,9 +47,15 @@ export function blockActionLabel(surface: LocalCliItem["surface"]): string {
   return "Block this tool";
 }
 
-export function dialogIntro(hasProjects: boolean, showingCatalog: boolean): string {
-  if (showingCatalog) {
+export function dialogIntro(
+  hasProjects: boolean,
+  surface: LocalCliItem["surface"] | null,
+): string {
+  if (surface === "package-scripts") {
     return "Allow these scripts so Protect can stop asking about them. Type a nested name such as guard:audit to inspect one.";
+  }
+  if (surface === "mcp") {
+    return "Choose Recommended, Allow all, or Block all, then confirm this server.";
   }
   if (hasProjects) {
     return "Guard already found project scripts on this device. Pick a project, or paste another folder.";
@@ -67,7 +79,7 @@ export function suggestionSummary(item: LocalCliItem): string {
     return `Find this tool to list npm scripts from ${item.name}.`;
   }
   if (item.surface === "mcp" && item.commands.length > 0) {
-    return `Guard listed ${item.commands.length} tools from this MCP server. Recommended keeps the usual review. Allow or block each one.`;
+    return `${item.commands.length} tools from this server. Recommended keeps the usual review. Allow all lets them run.`;
   }
   if (item.surface === "mcp") {
     return `Find this tool to list MCP tools from ${item.name}.`;

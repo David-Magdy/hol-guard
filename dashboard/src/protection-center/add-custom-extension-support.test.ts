@@ -40,7 +40,8 @@ const packageItem: LocalCliItem = {
   ],
 };
 
-assert.match(dialogIntro(true, true), /Allow these scripts/);
+assert.match(dialogIntro(true, "package-scripts"), /Allow these scripts/);
+assert.match(dialogIntro(false, "mcp"), /Allow all/);
 assert.match(filterCountCopy(1, 8), /1 of 8 scripts match/);
 assert.match(suggestionSummary(packageItem), /1 script from ads-app/);
 assert.equal(

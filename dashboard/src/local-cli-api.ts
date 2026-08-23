@@ -205,6 +205,22 @@ export function enrollmentCommandStates(
   }));
 }
 
+export function applyBulkCommandState(
+  commands: readonly LocalCliCommand[],
+  state: LocalCliCommandState,
+  skipIds: ReadonlySet<string> = new Set(),
+): LocalCliCommand[] {
+  return commands.map((command) => (
+    skipIds.has(command.command_id) ? command : { ...command, state }
+  ));
+}
+
+export function bulkCommandState(commands: readonly LocalCliCommand[]): LocalCliCommandState | "mixed" {
+  if (commands.length === 0) return "inherit";
+  const first = commands[0]!.state;
+  return commands.every((command) => command.state === first) ? first : "mixed";
+}
+
 function commandStatesFrom(
   commands: readonly LocalCliCommand[],
 ): Array<{ command_id: string; state: LocalCliCommandState }> {

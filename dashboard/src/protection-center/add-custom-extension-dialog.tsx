@@ -8,7 +8,9 @@ import {
   isApprovalProofSubmitDisabled,
 } from "../approval-proof-inline";
 import {
+  applyBulkCommandState,
   applyLocalCliMutation,
+  bulkCommandState,
   enrollablePackageScriptCommands,
   enrollmentCommandStates,
   filterExtensionSuggestions,
@@ -30,6 +32,7 @@ import {
   addDialogSubmitLabel,
   allowActionLabel,
   blockActionLabel,
+  commandFieldLabel,
   dialogIntro,
   filterCountCopy,
   ProjectSwitcher,
@@ -37,6 +40,10 @@ import {
   suggestionSummary,
 } from "./add-custom-extension-support";
 import { CustomExtensionCommandList, withCommandState } from "./custom-extension-commands";
+import {
+  extensionPolicyRadioTabStop,
+  nextExtensionPolicyRadioIndex,
+} from "../extension-policy-panel";
 import { useResolvedApprovalGate } from "../use-resolved-approval-gate";
 import { InlineError } from "./components/protection-primitives";
 
@@ -110,7 +117,7 @@ export function AddCustomExtensionWorkspace(props: {
       setRecognized(result.item);
       setCommands(result.item.commands);
       setSummary(result.summary);
-      setPending(result.item.surface === "package-scripts" ? "allowed" : null);
+      setPending("allowed");
       setError(null);
     } catch (caught) {
       if (recognizeGeneration.current !== generation) return;
@@ -137,7 +144,7 @@ export function AddCustomExtensionWorkspace(props: {
     setRecognized(item);
     setCommands(item.commands);
     setSummary(suggestionSummary(item));
-    setPending(item.surface === "package-scripts" && item.commands.length > 0 ? "allowed" : null);
+    setPending("allowed");
     setReviewingScripts(false);
   }, [runRecognize]);
   const findTool = useCallback(async () => {
@@ -164,6 +171,14 @@ export function AddCustomExtensionWorkspace(props: {
   const requestBlock = useCallback(() => setPending("blocked"), []);
   const openScriptReview = useCallback(() => setReviewingScripts(true), []);
   const closeScriptReview = useCallback(() => setReviewingScripts(false), []);
+  const applyBulk = useCallback((state: LocalCliCommandState) => {
+    setCommands((current) => applyBulkCommandState(
+      current,
+      state,
+      recognized?.surface === "package-scripts" ? new Set(["root", "other"]) : new Set(),
+    ));
+    setPending(state === "block" ? "blocked" : "allowed");
+  }, [recognized]);
   const handleSubmit = useCallback(async (event: FormEvent) => {
     event.preventDefault();
     if (recognized === null) {
@@ -212,11 +227,14 @@ export function AddCustomExtensionWorkspace(props: {
       busy,
     );
   const showingPackageCatalog = recognized?.surface === "package-scripts";
-  const enrollable = enrollablePackageScriptCommands(commands);
+  const showingMcpCatalog = recognized?.surface === "mcp";
+  const showingCatalog = showingPackageCatalog || showingMcpCatalog;
+  const enrollable = showingPackageCatalog ? enrollablePackageScriptCommands(commands) : commands;
   const visibleCommands = showingPackageCatalog
     ? filterPackageScriptCommands(enrollable, command)
     : commands;
   const previewNames = visibleCommands.slice(0, 8).map((entry) => entry.name);
+  const bulkState = bulkCommandState(enrollable);
 
   return (
     <form
@@ -228,14 +246,14 @@ export function AddCustomExtensionWorkspace(props: {
         <HiMiniArrowLeft className="size-4" aria-hidden="true" />
         Extensions
       </button>
-      <header className="mt-4 max-w-2xl border-b border-slate-200 pb-6">
+      <header className="mt-3 max-w-2xl pb-4">
         <h1 id="add-custom-extension-title" className="text-2xl font-semibold tracking-tight text-brand-dark">Add a custom extension</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          {dialogIntro(rememberedProjects.length > 0, showingPackageCatalog === true)}
+          {dialogIntro(rememberedProjects.length > 0, recognized?.surface ?? null)}
         </p>
       </header>
-      <label htmlFor="custom-extension-command" className="mt-6 block text-sm font-semibold text-brand-dark">
-        {showingPackageCatalog ? "Find a script" : "Command"}
+      <label htmlFor="custom-extension-command" className="mt-4 block text-sm font-semibold text-brand-dark">
+        {commandFieldLabel(recognized?.surface ?? null)}
       </label>
       <input
         id="custom-extension-command"
@@ -250,27 +268,33 @@ export function AddCustomExtensionWorkspace(props: {
         <ProjectSwitcher items={rememberedProjects} currentId={recognized.cli_id} onSelect={selectSuggestion} />
       ) : null}
       {recognized ? (
-        <section className="mt-8 max-w-3xl" aria-labelledby="custom-extension-selected">
+        <section className="mt-5 max-w-3xl" aria-labelledby="custom-extension-selected">
           <h2 id="custom-extension-selected" className="text-xl font-semibold tracking-tight text-brand-dark">
             {recognized.name}
           </h2>
           <p className="mt-1 font-mono text-xs text-brand-dark/70">
             {recognized.source_label ? `${recognized.source_label} · ${recognized.example_label}` : recognized.example_label}
           </p>
-          {summary ? <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">{summary}</p> : null}
-          {showingPackageCatalog ? (
-            <PackageScriptPreview
+          {summary ? <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{summary}</p> : null}
+          {showingCatalog && enrollable.length > 0 ? (
+            <BulkPolicyPicker value={bulkState} disabled={busy} onChange={applyBulk} />
+          ) : null}
+          {showingCatalog ? (
+            <CatalogPreview
               query={command}
+              showFilterCount={showingPackageCatalog}
               previewNames={previewNames}
               visibleCount={visibleCommands.length}
               totalCount={enrollable.length}
               reviewing={reviewingScripts}
+              adjustLabel={showingMcpCatalog ? "Adjust individual tools" : "Adjust individual scripts"}
+              hideLabel="Hide individual settings"
               onOpenReview={openScriptReview}
               onCloseReview={closeScriptReview}
             />
           ) : null}
-          {(!showingPackageCatalog || reviewingScripts) && visibleCommands.length > 0 ? (
-            <div className="mt-4 overflow-auto rounded-2xl border border-slate-200 bg-white">
+          {(!showingCatalog || reviewingScripts) && visibleCommands.length > 0 ? (
+            <div className="mt-3 overflow-auto rounded-2xl border border-slate-200 bg-white">
               <CustomExtensionCommandList
                 commands={visibleCommands}
                 disabled={busy}
@@ -307,12 +331,12 @@ export function AddCustomExtensionWorkspace(props: {
           <button type="submit" disabled={submitDisabled} className="min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white disabled:opacity-60">
             {addDialogSubmitLabel({ recognized, busy, pending })}
           </button>
-          {recognized && showingPackageCatalog && pending === "allowed" ? (
+          {recognized && pending === "allowed" ? (
             <button type="button" onClick={requestBlock} className="min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark">
               {blockActionLabel(recognized.surface)}
             </button>
           ) : null}
-          {recognized && showingPackageCatalog && pending === "blocked" ? (
+          {recognized && pending === "blocked" ? (
             <button type="button" onClick={requestAllow} className="min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark">
               {allowActionLabel(recognized.surface)}
             </button>
@@ -323,18 +347,21 @@ export function AddCustomExtensionWorkspace(props: {
   );
 }
 
-function PackageScriptPreview(props: {
+function CatalogPreview(props: {
   query: string;
+  showFilterCount: boolean;
   previewNames: string[];
   visibleCount: number;
   totalCount: number;
   reviewing: boolean;
+  adjustLabel: string;
+  hideLabel: string;
   onOpenReview: () => void;
   onCloseReview: () => void;
 }) {
   return (
-    <div className="mt-5">
-      {props.query.trim() !== "" ? (
+    <div className="mt-4">
+      {props.showFilterCount && props.query.trim() !== "" ? (
         <p className="text-xs leading-5 text-brand-dark/60">{filterCountCopy(props.visibleCount, props.totalCount)}</p>
       ) : null}
       {props.previewNames.length > 0 && !props.reviewing ? (
@@ -354,10 +381,90 @@ function PackageScriptPreview(props: {
       <button
         type="button"
         onClick={props.reviewing ? props.onCloseReview : props.onOpenReview}
-        className="mt-4 min-h-11 text-sm font-semibold text-brand-blue"
+        className="mt-3 min-h-11 text-sm font-semibold text-brand-blue"
       >
-        {props.reviewing ? "Hide individual settings" : "Adjust individual scripts"}
+        {props.reviewing ? props.hideLabel : props.adjustLabel}
       </button>
     </div>
+  );
+}
+
+function BulkPolicyPicker(props: {
+  value: LocalCliCommandState | "mixed";
+  disabled: boolean;
+  onChange: (state: LocalCliCommandState) => void;
+}) {
+  const choices: Array<{ value: LocalCliCommandState; label: string }> = [
+    { value: "inherit", label: "Recommended" },
+    { value: "allow", label: "Allow all" },
+    { value: "block", label: "Block all" },
+  ];
+  const selected = props.value === "mixed" ? "inherit" : props.value;
+  const tabStopIndex = extensionPolicyRadioTabStop(choices, selected, props.disabled);
+  const chooseAdjacent = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const next = nextExtensionPolicyRadioIndex(choices, index, event.key, props.disabled);
+    if (next < 0) return;
+    event.preventDefault();
+    props.onChange(choices[next]!.value);
+    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+  };
+  return (
+    <div className="mt-4">
+      <div
+        role="radiogroup"
+        aria-label="All tools protection setting"
+        aria-describedby={props.value === "mixed" ? "bulk-policy-mixed" : undefined}
+        className="guard-segmented w-fit"
+      >
+        {choices.map((choice, index) => (
+          <BulkPolicyChoice
+            key={choice.value}
+            choice={choice}
+            checked={props.value === choice.value}
+            tabIndex={!props.disabled && index === tabStopIndex ? 0 : -1}
+            disabled={props.disabled}
+            index={index}
+            onChoose={props.onChange}
+            onAdjacent={chooseAdjacent}
+          />
+        ))}
+      </div>
+      {props.value === "mixed" ? (
+        <p id="bulk-policy-mixed" className="mt-2 text-xs leading-5 text-brand-dark/70">
+          Custom mix. Pick Recommended, Allow all, or Block all to reset every tool.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function BulkPolicyChoice(props: {
+  choice: { value: LocalCliCommandState; label: string };
+  checked: boolean;
+  tabIndex: number;
+  disabled: boolean;
+  index: number;
+  onChoose: (state: LocalCliCommandState) => void;
+  onAdjacent: (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => void;
+}) {
+  const handleClick = useCallback(() => {
+    props.onChoose(props.choice.value);
+  }, [props]);
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+    props.onAdjacent(event, props.index);
+  }, [props]);
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={props.checked}
+      tabIndex={props.tabIndex}
+      disabled={props.disabled}
+      onKeyDown={handleKeyDown}
+      onClick={handleClick}
+      className="min-h-11 px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-45"
+    >
+      {props.choice.label}
+    </button>
   );
 }
