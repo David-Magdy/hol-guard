@@ -52,6 +52,7 @@ class ExtensionControlAuthorityView:
     revision: int
     catalog_digest: str
     layers: tuple[ExtensionControlLayer, ...]
+    managed_revision: int = 0
 
     def layers_for(self, surface: ControlSurface) -> tuple[ExtensionControlLayer, ...]:
         if self.health is AuthorityHealth.PROTECTED:

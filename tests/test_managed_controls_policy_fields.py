@@ -42,9 +42,7 @@ from codex_plugin_scanner.guard.runtime.extension_control_limits import (
 )
 
 _ROOT = Path(__file__).resolve().parents[1]
-_FIXTURE = json.loads(
-    (_ROOT / "contracts/managed-controls/v1/policy-extension-fields.fixtures.json").read_text()
-)
+_FIXTURE = json.loads((_ROOT / "contracts/managed-controls/v1/policy-extension-fields.fixtures.json").read_text())
 _VECTOR = json.loads(
     (_ROOT / "contracts/managed-controls/v1/policy-bundle-v2-extension-signature-vector.json").read_text()
 )
@@ -87,24 +85,23 @@ def _code(document: dict[str, Any], **kwargs: Any) -> str:
 def test_full_capability_negotiation_parses_managed_controls_and_rule_targets() -> None:
     parsed = _parse(_document())
     assert parsed.authority_mode == "managed-restrictive"
-    assert parsed.signed_cloud_layer is None
+    assert parsed.signed_cloud_layer is not None
+    assert parsed.signed_cloud_layer.kind is ControlLayerKind.SIGNED_CLOUD
+    assert parsed.signed_cloud_layer.controls == parsed.managed_controls
     assert parsed.managed_controls[0].target.kind is ControlTargetKind.PERMISSION
     assert parsed.managed_controls[0].state is ControlState.DISABLED
     assert parsed.rule_targets[0].extension_ids == ("command.git",)
-    assert parsed.rule_targets[0].permission_ids == (
-        "command.git.permission.force-push",
-    )
+    assert parsed.rule_targets[0].permission_ids == ("command.git.permission.force-push",)
 
     for capability in _CAPABILITIES:
-        assert _code(
-            _document(), capabilities=frozenset(_CAPABILITIES - {capability})
-        ) == "unnegotiated_extension_semantics"
+        assert (
+            _code(_document(), capabilities=frozenset(_CAPABILITIES - {capability}))
+            == "unnegotiated_extension_semantics"
+        )
 
 
 def test_legacy_aliases_parse_but_policy_without_fields_needs_no_capabilities() -> None:
-    assert _parse(
-        _document(), capabilities=frozenset(_FIXTURE["legacyCapabilityAliases"])
-    ).has_extension_semantics
+    assert _parse(_document(), capabilities=frozenset(_FIXTURE["legacyCapabilityAliases"])).has_extension_semantics
     document = _document()
     document.pop("x-hol-extension-controls")
     document["spec"]["rules"][0].pop("x-hol-extension-targets")
@@ -117,10 +114,7 @@ def test_shared_posture_materializes_only_into_signed_cloud_layer() -> None:
     parsed = _parse(document)
     assert parsed.signed_cloud_layer is not None
     assert parsed.signed_cloud_layer.kind is ControlLayerKind.SIGNED_CLOUD
-    assert (
-        parsed.signed_cloud_layer.catalog_digest
-        == BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
-    )
+    assert parsed.signed_cloud_layer.catalog_digest == BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
     assert parsed.signed_cloud_layer.controls[0].state is ControlState.ENABLED
 
 
@@ -160,9 +154,7 @@ def test_shared_posture_materializes_only_into_signed_cloud_layer() -> None:
         ),
     ],
 )
-def test_malformed_namespaced_fields_fail_closed(
-    path: tuple[str | int, ...], value: object, expected: str
-) -> None:
+def test_malformed_namespaced_fields_fail_closed(path: tuple[str | int, ...], value: object, expected: str) -> None:
     document = _document()
     cursor: Any = document
     for part in path[:-1]:
@@ -187,8 +179,7 @@ def test_duplicates_conflicts_and_limits_fail_before_projection() -> None:
     document = _document()
     control = document["x-hol-extension-controls"]["controls"][0]
     document["x-hol-extension-controls"]["controls"] = [
-        {**control, "targetId": f"command.git.permission.force-push-{index}"}
-        for index in range(513)
+        {**control, "targetId": f"command.git.permission.force-push-{index}"} for index in range(513)
     ]
     assert _code(document) == "control_limit_exceeded"
 
@@ -233,9 +224,7 @@ def test_permission_only_target_validates_its_catalog_owner() -> None:
     targets["extensionIds"] = []
     parsed = _parse(document)
     assert parsed.rule_targets[0].extension_ids == ()
-    assert parsed.rule_targets[0].permission_ids == (
-        "command.git.permission.force-push",
-    )
+    assert parsed.rule_targets[0].permission_ids == ("command.git.permission.force-push",)
 
 
 def test_managed_restrictive_is_disable_or_lockdown_only() -> None:
@@ -285,15 +274,11 @@ def test_shared_enable_respects_configurability_and_required_floors() -> None:
     document["x-hol-extension-controls"] = {
         "schemaVersion": "guard.extension-controls.v1",
         "authorityMode": "workspace-shared",
-        "controls": [
-            {"targetKind": "extension", "targetId": "command.git", "state": "enabled"}
-        ],
+        "controls": [{"targetKind": "extension", "targetId": "command.git", "state": "enabled"}],
     }
     assert _code(document) == "shared_enable_requires_permission"
     immutable = next(
-        permission
-        for permission in BUILT_IN_COMMAND_EXTENSION_REGISTRY.permissions
-        if not permission.configurable
+        permission for permission in BUILT_IN_COMMAND_EXTENSION_REGISTRY.permissions if not permission.configurable
     )
     document["x-hol-extension-controls"]["controls"] = [
         {

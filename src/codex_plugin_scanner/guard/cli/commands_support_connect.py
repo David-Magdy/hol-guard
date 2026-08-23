@@ -220,7 +220,7 @@ def _finalize_guard_connect_payload(
         payload.setdefault(key, urls[key])
     if str(payload.get("status") or "") != "connected":
         return payload
-    store.clear_cloud_sync_state_for_reconnect()
+    store.clear_cloud_sync_state_for_reconnect(now=now)
     latest_state = store.record_guard_connect_pairing_completed(
         sync_url=str(urls["sync_url"]),
         allowed_origin=str(urls["allowed_origin"]),

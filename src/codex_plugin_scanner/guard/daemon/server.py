@@ -21,7 +21,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
@@ -127,6 +127,8 @@ from ..local_supply_chain import (
     resolve_supply_chain_audit_workspace_dir,
     sync_supply_chain_cloud_state,
 )
+from ..managed_controls_policy_bundle import parsed_managed_controls_from_validated_policy_bundle
+from ..managed_controls_policy_fields import ManagedControlsPolicyError, ParsedManagedControlsPolicy
 from ..models import DECISION_SCOPE_VALUES, DecisionScope, PolicyDecision, format_local_http_origin
 from ..package_firewall_action_rate_limit import PackageFirewallActionRateLimiter
 from ..package_firewall_entitlement import (
@@ -145,6 +147,7 @@ from ..policy_bundle_trusted_keys import (
     policy_bundle_keyring_payload,
     validate_synced_policy_bundle,
 )
+from ..policy_bundle_v2 import POLICY_BUNDLE_V2_CONTRACT
 from ..receipts.manager import build_receipt
 from ..review_contracts import (
     GuardReviewContractError,
@@ -164,6 +167,7 @@ from ..runtime.command_shadow_evaluation import (
     baseline_command_shadow_proposal,
     build_command_shadow_observation,
 )
+from ..runtime.extension_control_authority import ExtensionControlAuthorityError, ExtensionControlAuthorityView
 from ..runtime.extension_control_runtime import ExtensionControlRuntime, ExtensionControlRuntimeSnapshot
 from ..runtime.live_request_sync import LiveRequestSyncWorker, start_cloud_sync_sync_worker, stop_cloud_sync_sync_worker
 from ..runtime.local_temp_paths import trusted_temporary_root_for_path
@@ -176,6 +180,7 @@ from ..runtime.runner import (
     _build_policy_bundle_decisions,
     _daemon_version_supported,
     _guard_device_metadata,
+    _managed_controls_negotiated_capabilities,
     _persist_cloud_receipt_redaction_level,
     _policy_bundle_acceptance_checkpoint,
     _policy_bundle_acknowledgement_payload,
@@ -1133,16 +1138,24 @@ def _headless_action_state_payload(
 def _run_headless_cloud_sync(
     *,
     store: GuardStore,
+    managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
 ) -> dict[str, object]:
     recorded_at = _now()
     summary: dict[str, object]
 
     def _perform_sync() -> dict[str, object]:
         auth_context = _resolve_guard_sync_auth_context(store)
-        sync_payload = _sync_local_guard_cloud_proof_with_optional_auth_context(
-            store,
-            auth_context,
-        )
+        if managed_controls_publish is None:
+            sync_payload = _sync_local_guard_cloud_proof_with_optional_auth_context(
+                store,
+                auth_context,
+            )
+        else:
+            sync_payload = _sync_local_guard_cloud_proof_with_optional_auth_context(
+                store,
+                auth_context,
+                managed_controls_publish,
+            )
         supply_chain_payload = _sync_supply_chain_cloud_state_with_optional_auth_context(
             store,
             auth_context,
@@ -1295,9 +1308,37 @@ def _run_headless_cloud_sync(
     return summary
 
 
+def _run_headless_cloud_sync_with_optional_publish(
+    *,
+    store: GuardStore,
+    managed_controls_publish: Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None,
+) -> dict[str, object]:
+    try:
+        sync_parameters = inspect.signature(_run_headless_cloud_sync).parameters
+    except (TypeError, ValueError):
+        sync_parameters = {}
+    if managed_controls_publish is not None and "managed_controls_publish" in sync_parameters:
+        return _run_headless_cloud_sync(
+            store=store,
+            managed_controls_publish=managed_controls_publish,
+        )
+    return _run_headless_cloud_sync(store=store)
+
+
+def _managed_controls_publish_for(
+    server: object,
+) -> Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None:
+    runtime = getattr(server, "extension_control_runtime", None)
+    publish = getattr(runtime, "publish_after_commit", None)
+    if not callable(publish):
+        return None
+    return cast(Callable[[ExtensionControlAuthorityView, Callable[[], None]], object], publish)
+
+
 def _queue_headless_cloud_sync(
     *,
     store: GuardStore,
+    managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
 ) -> dict[str, object]:
     if store.get_cloud_sync_profile() is None:
         with suppress(Exception):
@@ -1325,7 +1366,10 @@ def _queue_headless_cloud_sync(
 
     def _run_and_finalize() -> None:
         try:
-            _run_headless_cloud_sync(store=store)
+            _run_headless_cloud_sync_with_optional_publish(
+                store=store,
+                managed_controls_publish=managed_controls_publish,
+            )
         finally:
             with _HEADLESS_CLOUD_SYNC_STATE_LOCK:
                 _HEADLESS_CLOUD_SYNC_IN_FLIGHT.discard(store_key)
@@ -1341,7 +1385,28 @@ def _queue_headless_cloud_sync(
     }
 
 
-def _maybe_queue_first_cloud_sync(*, store: GuardStore) -> dict[str, object] | None:
+def _queue_headless_cloud_sync_with_optional_publish(
+    *,
+    store: GuardStore,
+    managed_controls_publish: Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None,
+) -> dict[str, object]:
+    try:
+        queue_parameters = inspect.signature(_queue_headless_cloud_sync).parameters
+    except (TypeError, ValueError):
+        queue_parameters = {}
+    if managed_controls_publish is not None and "managed_controls_publish" in queue_parameters:
+        return _queue_headless_cloud_sync(
+            store=store,
+            managed_controls_publish=managed_controls_publish,
+        )
+    return _queue_headless_cloud_sync(store=store)
+
+
+def _maybe_queue_first_cloud_sync(
+    *,
+    store: GuardStore,
+    managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
+) -> dict[str, object] | None:
     if store.get_cloud_sync_profile() is None:
         # Startup recovery remains best-effort so local protection never depends on Cloud availability.
         try:
@@ -1366,7 +1431,10 @@ def _maybe_queue_first_cloud_sync(*, store: GuardStore) -> dict[str, object] | N
         return None
     if str(latest_state.get("milestone") or "") != "first_sync_pending":
         return None
-    return _queue_headless_cloud_sync(store=store)
+    return _queue_headless_cloud_sync_with_optional_publish(
+        store=store,
+        managed_controls_publish=managed_controls_publish,
+    )
 
 
 def _package_firewall_connect_url(store: GuardStore) -> str:
@@ -1724,13 +1792,30 @@ def _sync_supply_chain_cloud_state_with_optional_auth_context(
 def _sync_local_guard_cloud_proof_with_optional_auth_context(
     store: GuardStore,
     auth_context: dict[str, object] | None,
+    managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
 ) -> dict[str, object]:
     try:
         parameters = inspect.signature(sync_local_guard_cloud_proof).parameters
     except (TypeError, ValueError):
         parameters = {}
+    if (
+        auth_context is not None
+        and "auth_context" in parameters
+        and managed_controls_publish is not None
+        and "managed_controls_publish" in parameters
+    ):
+        return sync_local_guard_cloud_proof(
+            store,
+            auth_context=auth_context,
+            managed_controls_publish=managed_controls_publish,
+        )
     if auth_context is not None and "auth_context" in parameters:
         return sync_local_guard_cloud_proof(store, auth_context=auth_context)
+    if managed_controls_publish is not None and "managed_controls_publish" in parameters:
+        return sync_local_guard_cloud_proof(
+            store,
+            managed_controls_publish=managed_controls_publish,
+        )
     return sync_local_guard_cloud_proof(store)
 
 
@@ -1740,6 +1825,7 @@ def _finalize_daemon_guard_connect_payload(
     connect_url: str,
     payload: dict[str, object],
     now: str,
+    managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
 ) -> dict[str, object]:
     sync_auth_context = payload.pop(CONNECT_SYNC_AUTH_CONTEXT_KEY, None)
     resolved_sync_auth_context = sync_auth_context if isinstance(sync_auth_context, dict) else None
@@ -1753,7 +1839,10 @@ def _finalize_daemon_guard_connect_payload(
     payload.setdefault("fleet_url", f"{dashboard_url}/protect")
     if str(payload.get("status") or "") != "connected":
         return payload
-    store.clear_cloud_sync_state_for_reconnect()
+    store.clear_cloud_sync_state_for_reconnect(
+        now=now,
+        managed_controls_publish=managed_controls_publish,
+    )
     latest_state = store.record_guard_connect_pairing_completed(
         sync_url=sync_url,
         allowed_origin=allowed_origin,
@@ -1797,9 +1886,10 @@ def _finalize_daemon_guard_connect_payload(
         return payload
     payload["sync_attempted"] = True
     try:
-        sync_payload = sync_local_guard_cloud_proof(
+        sync_payload = _sync_local_guard_cloud_proof_with_optional_auth_context(
             store,
-            auth_context=resolved_sync_auth_context,
+            resolved_sync_auth_context,
+            managed_controls_publish,
         )
     except GuardSyncNotAvailableError as error:
         store.record_latest_guard_connect_sync_result(
@@ -2094,7 +2184,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             self._write_json({"items": store.list_guard_sessions(limit=200)})
             return
         if parsed.path == "/v1/runtime":
-            _maybe_queue_first_cloud_sync(store=store)
+            _maybe_queue_first_cloud_sync(
+                store=store,
+                managed_controls_publish=_managed_controls_publish_for(self._daemon_server()),
+            )
             config = load_guard_config(store.guard_home)
             include_receipts = self._query_bool(parsed.query, "include_receipts", default=True)
             snapshot = build_runtime_snapshot(
@@ -3262,7 +3355,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             workspace_id=self._optional_string(payload.get("workspace_id")),
             cloud_sync={"status": "pending"},
         )
-        cloud_sync = _queue_headless_cloud_sync(store=self.server.store)  # type: ignore[attr-defined]
+        cloud_sync = _queue_headless_cloud_sync_with_optional_publish(
+            store=self.server.store,
+            managed_controls_publish=_managed_controls_publish_for(self.server),
+        )
         receipt["cloud_sync"] = cloud_sync
         return 200, {
             "cloud_sync": cloud_sync,
@@ -3340,6 +3436,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         policy_memory = self._policy_memory_payload(payload.get("policy_memory"))
         policy_bundle = self._policy_memory_payload(payload.get("policy_bundle") or payload.get("policyBundle"))
         validated_policy_bundle: dict[str, object] | None = None
+        managed_controls_policy: ParsedManagedControlsPolicy | None = None
+        managed_controls_capabilities = frozenset[str]()
         applied_bundle_hash: str | None = None
         applied_bundle_version: str | None = None
         if not policy_memory and not policy_bundle:
@@ -3389,6 +3487,20 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             ):
                 self._write_json({"error": "bundle_version_downgrade"}, status=400)
                 return
+            if validated_policy_bundle.get("contractVersion") == POLICY_BUNDLE_V2_CONTRACT:
+                managed_controls_capabilities = _managed_controls_negotiated_capabilities(
+                    self.server.store,  # type: ignore[attr-defined]
+                    payload,
+                )
+                try:
+                    managed_controls_policy = parsed_managed_controls_from_validated_policy_bundle(
+                        validated_policy_bundle,
+                        registry=BUILT_IN_COMMAND_EXTENSION_REGISTRY,
+                        negotiated_capabilities=managed_controls_capabilities,
+                    )
+                except ManagedControlsPolicyError as error:
+                    self._write_json({"error": error.code}, status=400)
+                    return
             applied_at = _now()
             device_id, device_name = _guard_device_metadata(self.server.store)  # type: ignore[attr-defined]
             signed_remote_decisions = _build_policy_bundle_decisions(
@@ -3409,22 +3521,29 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 policy_bundle_ack=policy_bundle_ack,
                 device_id=device_id,
             )
-            activated = self.server.store.apply_policy_bundle_authority(  # type: ignore[attr-defined]
-                signed_remote_decisions,
-                applied_at,
-                policy_bundle=validated_policy_bundle,
-                policy_bundle_keyring=policy_bundle_keyring_payload(
-                    trusted_policy_bundle_keys,
-                    workspace_id=self.server.store.get_cloud_workspace_id(),  # type: ignore[attr-defined]
-                ),
-                cloud_exceptions=cloud_exception_items,
-                policy_bundle_ack=policy_bundle_ack,
-                policy_bundle_checkpoint=_policy_bundle_acceptance_checkpoint(validated_policy_bundle),
-                update_last_good=True,
-                policy_bundle_last_error={},
-                approval_gate_grant=approval_gate_grant,
-                remote_write_authorized=True,
-            )
+            try:
+                activated = self.server.store.apply_policy_bundle_authority(  # type: ignore[attr-defined]
+                    signed_remote_decisions,
+                    applied_at,
+                    policy_bundle=validated_policy_bundle,
+                    policy_bundle_keyring=policy_bundle_keyring_payload(
+                        trusted_policy_bundle_keys,
+                        workspace_id=self.server.store.get_cloud_workspace_id(),  # type: ignore[attr-defined]
+                    ),
+                    cloud_exceptions=cloud_exception_items,
+                    policy_bundle_ack=policy_bundle_ack,
+                    policy_bundle_checkpoint=_policy_bundle_acceptance_checkpoint(validated_policy_bundle),
+                    update_last_good=True,
+                    policy_bundle_last_error={},
+                    managed_controls_policy=managed_controls_policy,
+                    managed_controls_negotiated_capabilities=managed_controls_capabilities,
+                    managed_controls_publish=_managed_controls_publish_for(self.server),
+                    approval_gate_grant=approval_gate_grant,
+                    remote_write_authorized=True,
+                )
+            except (ExtensionControlAuthorityError, ValueError):
+                self._write_json({"error": "managed_runtime_publish_failed"}, status=503)
+                return
             if not activated:
                 self._write_json({"error": "bundle_version_downgrade"}, status=400)
                 return
@@ -3899,7 +4018,10 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "status": response_status,
         }
         if operation == "audit":
-            cloud_sync = _queue_headless_cloud_sync(store=self.server.store)  # type: ignore[attr-defined]
+            cloud_sync = _queue_headless_cloud_sync_with_optional_publish(
+                store=self.server.store,
+                managed_controls_publish=_managed_controls_publish_for(self.server),
+            )
             receipt["cloud_sync"] = cloud_sync
             response_payload["cloud_sync"] = cloud_sync
         self._write_json(response_payload)
@@ -4136,6 +4258,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                         ),
                     },
                     now=timestamp,
+                    managed_controls_publish=_managed_controls_publish_for(self.server),
                 )
                 resolved_entitlement = resolve_package_firewall_entitlement(store)
                 resolved_reason = str(resolved_entitlement.get("reason") or "")
@@ -4321,6 +4444,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                         ),
                     },
                     now=timestamp,
+                    managed_controls_publish=_managed_controls_publish_for(self.server),
                 )
                 if _guard_cloud_connect_succeeded(store):
                     _set_guard_cloud_connect_state(self.server, None)  # type: ignore[arg-type]
@@ -8498,7 +8622,10 @@ class GuardDaemonServer:
             else interval_seconds
         )
         while not self._shutdown_started.is_set():
-            summary = _run_headless_cloud_sync(store=self._server.store)
+            summary = _run_headless_cloud_sync_with_optional_publish(
+                store=self._server.store,
+                managed_controls_publish=_managed_controls_publish_for(self._server),
+            )
             status = str(summary.get("status") or "")
             wait_seconds = interval_seconds if status == "synced" else backoff_seconds
             if self._shutdown_started.wait(wait_seconds):

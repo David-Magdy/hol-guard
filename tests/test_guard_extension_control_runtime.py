@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -68,6 +69,7 @@ def test_snapshot_is_immutable_stable_and_carries_private_revision_evidence() ->
     assert first.revision == 3
     assert len(first.effective_digest) == 64
     assert first.private_evidence.revision == 3
+    assert first.private_evidence.managed_revision == 0
     assert first.private_evidence.effective_digest == first.effective_digest
     assert repr(first.private_evidence) == "ExtensionControlDecisionEvidence(<private>)"
     with pytest.raises(AttributeError):
@@ -95,6 +97,92 @@ def test_refresh_swaps_atomically_and_rejects_rollback_or_equivocation() -> None
     with pytest.raises(ValueError, match="move backwards"):
         runtime.refresh(_view(3, state=ControlState.ENABLED))
     assert runtime.refresh(_view(5, state=ControlState.ENABLED)).revision == 5
+
+
+def test_refresh_accepts_monotonic_managed_activation_without_local_revision_change() -> None:
+    initial = _view(3, state=ControlState.ENABLED)
+    runtime = ExtensionControlRuntime(initial)
+    initial_digest = runtime.current().effective_digest
+    managed = ExtensionControlAuthorityView(
+        initial.health,
+        initial.revision,
+        initial.catalog_digest,
+        initial.layers,
+        1,
+    )
+
+    refreshed = runtime.refresh(managed)
+
+    assert refreshed.revision == 3
+    assert refreshed.managed_revision == 1
+    assert refreshed.effective_digest != initial_digest
+    assert runtime.current() is refreshed
+
+
+def test_higher_local_revision_cannot_mask_managed_revision_rollback() -> None:
+    initial = ExtensionControlAuthorityView(
+        AuthorityHealth.PROTECTED,
+        4,
+        BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+        (),
+        2,
+    )
+    runtime = ExtensionControlRuntime(initial)
+
+    with pytest.raises(ValueError, match="cannot move backwards"):
+        runtime.refresh(
+            ExtensionControlAuthorityView(
+                AuthorityHealth.PROTECTED,
+                5,
+                BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest,
+                (),
+                1,
+            )
+        )
+
+
+def test_current_waits_for_commit_and_atomic_snapshot_swap() -> None:
+    initial = _view(3, state=ControlState.ENABLED)
+    runtime = ExtensionControlRuntime(initial)
+    candidate = ExtensionControlAuthorityView(
+        initial.health,
+        4,
+        initial.catalog_digest,
+        initial.layers,
+    )
+    commit_entered = threading.Event()
+    allow_commit = threading.Event()
+    reader_started = threading.Event()
+    reader_finished = threading.Event()
+    observed: list[int] = []
+
+    def commit() -> None:
+        commit_entered.set()
+        assert allow_commit.wait(timeout=1)
+
+    def publish() -> None:
+        runtime.publish_after_commit(candidate, commit)
+
+    def read_current() -> None:
+        reader_started.set()
+        observed.append(runtime.current().revision)
+        reader_finished.set()
+
+    publisher = threading.Thread(target=publish)
+    publisher.start()
+    assert commit_entered.wait(timeout=1)
+    reader = threading.Thread(target=read_current)
+    reader.start()
+    assert reader_started.wait(timeout=1)
+    assert not reader_finished.wait(timeout=0.05)
+
+    allow_commit.set()
+    publisher.join(timeout=1)
+    reader.join(timeout=1)
+
+    assert not publisher.is_alive()
+    assert not reader.is_alive()
+    assert observed == [4]
 
 
 def test_snapshot_digest_is_independent_of_layer_and_control_order() -> None:
