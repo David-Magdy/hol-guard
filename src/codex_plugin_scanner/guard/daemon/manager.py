@@ -103,6 +103,7 @@ _GUARD_DAEMON_ENV_KEYS = frozenset(
         "COMSPEC",
         "HOME",
         "HOL_GUARD_DESKTOP",
+        "HOL_GUARD_DESKTOP_VERSION",
         "LANG",
         "LC_ALL",
         "LC_CTYPE",
@@ -179,6 +180,7 @@ def _daemon_launcher_env(
     *,
     home_dir: Path | None = None,
     guard_home: Path | None = None,
+    executable: Path | None = None,
 ) -> dict[str, str]:
     """Build a minimal detached-daemon environment without Python startup hooks."""
 
@@ -191,8 +193,9 @@ def _daemon_launcher_env(
             "PYTHONSAFEPATH": "1",
         }
     )
-    if getattr(sys, "frozen", False) is True:
+    if getattr(sys, "frozen", False) is True or executable is not None:
         env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        env.setdefault("HOL_GUARD_DESKTOP", "1")
     if os.name == "nt":
         env["USERPROFILE"] = str(trusted_home)
     if guard_home is not None and not _guard_home_is_ephemeral(guard_home):
@@ -290,16 +293,17 @@ def _guard_daemon_launch_command(
     *,
     home_dir: Path | None = None,
     gate_on_stdin: bool = False,
+    executable: Path | None = None,
 ) -> list[str]:
     trusted_home = _trusted_daemon_home(home_dir)
-    if bool(getattr(sys, "frozen", False)):
-        executable = Path(sys.executable).expanduser()
-        if not executable.is_absolute() or not executable.is_file():
+    if bool(getattr(sys, "frozen", False)) or executable is not None:
+        launch = Path(executable) if executable is not None else Path(sys.executable).expanduser()
+        if not launch.is_absolute() or not launch.is_file():
             raise RuntimeError("Frozen Guard daemon requires the signed Guard executable.")
         if gate_on_stdin:
             raise RuntimeError("Frozen Guard daemon gated launch is unavailable on this platform.")
         return [
-            str(executable.resolve(strict=True)),
+            str(launch.resolve(strict=True)),
             "daemon",
             "--serve",
             "--guard-home",
@@ -344,6 +348,7 @@ def ensure_guard_daemon(
     start_timeout: float | None = None,
     preferred_port: int | None = None,
     allow_windows_job_breakaway: bool = False,
+    executable: Path | None = None,
 ) -> str:
     if desktop_preflight_requested():
         raise RuntimeError("Guard daemon start is disabled during Desktop preflight.")
@@ -352,29 +357,33 @@ def ensure_guard_daemon(
     launch_cwd = _trusted_daemon_home(home_dir)
     _schedule_stale_ephemeral_guard_daemon_reap(exclude_guard_home=guard_home)
     state_path = _state_path(guard_home)
-    existing_url = load_guard_daemon_url(guard_home)
-    if existing_url is not None:
-        existing_port = _guard_daemon_url_port(existing_url)
-        if preferred_port is None or existing_port == preferred_port:
-            _schedule_duplicate_guard_daemon_retirement(guard_home)
-            return existing_url
-    with _guard_daemon_start_lock(guard_home, deadline=start_deadline):
+    if executable is None:
         existing_url = load_guard_daemon_url(guard_home)
         if existing_url is not None:
             existing_port = _guard_daemon_url_port(existing_url)
             if preferred_port is None or existing_port == preferred_port:
                 _schedule_duplicate_guard_daemon_retirement(guard_home)
                 return existing_url
-            retire_all_guard_daemons_for_home(guard_home)
-            if not guard_daemon_retirement_is_complete(guard_home):
-                raise RuntimeError("Existing Guard daemon could not be retired safely.")
-            clear_guard_daemon_state(guard_home)
+    with _guard_daemon_start_lock(guard_home, deadline=start_deadline):
+        if executable is None:
+            existing_url = load_guard_daemon_url(guard_home)
+            if existing_url is not None:
+                existing_port = _guard_daemon_url_port(existing_url)
+                if preferred_port is None or existing_port == preferred_port:
+                    _schedule_duplicate_guard_daemon_retirement(guard_home)
+                    return existing_url
+                retire_all_guard_daemons_for_home(guard_home)
+                if not guard_daemon_retirement_is_complete(guard_home):
+                    raise RuntimeError("Existing Guard daemon could not be retired safely.")
+                clear_guard_daemon_state(guard_home)
         if state_path.is_file() and _load_authenticated_daemon_identity(guard_home) is None:
             retire_all_guard_daemons_for_home(guard_home)
             if not _daemon_lifecycle_artifact_is_exact_tombstone(state_path):
                 raise RuntimeError("Untrusted Guard daemon state could not be retired safely.")
             _remove_invalid_daemon_discovery_key(guard_home)
-        adopted_url = _adopt_existing_guard_daemon(guard_home, preferred_port=preferred_port)
+        adopted_url = (
+            None if executable is not None else _adopt_existing_guard_daemon(guard_home, preferred_port=preferred_port)
+        )
         if adopted_url is not None:
             _schedule_duplicate_guard_daemon_retirement(guard_home)
             return adopted_url
@@ -410,12 +419,27 @@ def ensure_guard_daemon(
             remaining_start_time = start_deadline - time.monotonic()
             if remaining_start_time <= 0:
                 break
-            command = _guard_daemon_launch_command(
-                guard_home,
-                candidate_port,
-                home_dir=home_dir,
-                gate_on_stdin=os.name == "nt",
-            )
+            if executable is None:
+                command = _guard_daemon_launch_command(
+                    guard_home,
+                    candidate_port,
+                    home_dir=home_dir,
+                    gate_on_stdin=os.name == "nt",
+                )
+                launcher_env = _daemon_launcher_env(home_dir=home_dir, guard_home=guard_home)
+            else:
+                command = _guard_daemon_launch_command(
+                    guard_home,
+                    candidate_port,
+                    home_dir=home_dir,
+                    gate_on_stdin=False,
+                    executable=executable,
+                )
+                launcher_env = _daemon_launcher_env(
+                    home_dir=home_dir,
+                    guard_home=guard_home,
+                    executable=executable,
+                )
             if os.name == "nt":
                 process = subprocess.Popen(
                     command,
@@ -423,7 +447,7 @@ def ensure_guard_daemon(
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     cwd=launch_cwd,
-                    env=_daemon_launcher_env(home_dir=home_dir, guard_home=guard_home),
+                    env=launcher_env,
                     creationflags=_windows_daemon_creation_flags(
                         allow_job_breakaway=allow_windows_job_breakaway,
                     ),
@@ -435,7 +459,7 @@ def ensure_guard_daemon(
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     cwd=launch_cwd,
-                    env=_daemon_launcher_env(home_dir=home_dir, guard_home=guard_home),
+                    env=launcher_env,
                     start_new_session=True,
                 )
             pending_creation_time: int | None = None
@@ -447,10 +471,11 @@ def ensure_guard_daemon(
                 )
                 _release_guard_daemon_launch_gate(process)
                 remaining_start_time = max(0.0, start_deadline - time.monotonic())
-                url = _wait_for_guard_daemon_url(
+                url = _wait_for_started_guard_daemon_url(
                     guard_home,
                     timeout=remaining_start_time,
                     process=process,
+                    executable=executable,
                 )
                 if url is not None:
                     if not _clear_spawned_guard_daemon_pending_launch(
@@ -487,14 +512,24 @@ def ensure_guard_daemon_after_update(
     home_dir: Path,
     preferred_port: int | None = None,
     allow_windows_job_breakaway: bool = False,
+    executable: Path | None = None,
 ) -> str:
     """Restart the local daemon after a package update with a longer startup window."""
+    if executable is None:
+        return ensure_guard_daemon(
+            guard_home,
+            home_dir=home_dir,
+            start_timeout=GUARD_DAEMON_POST_UPDATE_START_TIMEOUT_SECONDS,
+            preferred_port=preferred_port,
+            allow_windows_job_breakaway=allow_windows_job_breakaway,
+        )
     return ensure_guard_daemon(
         guard_home,
         home_dir=home_dir,
         start_timeout=GUARD_DAEMON_POST_UPDATE_START_TIMEOUT_SECONDS,
         preferred_port=preferred_port,
         allow_windows_job_breakaway=allow_windows_job_breakaway,
+        executable=executable,
     )
 
 
@@ -962,17 +997,31 @@ def schedule_guard_daemon_ensure(
 
 
 def load_guard_daemon_url(guard_home: Path) -> str | None:
+    return _live_guard_daemon_url(guard_home, require_current_runtime=True)
+
+
+def _live_guard_daemon_url(
+    guard_home: Path,
+    *,
+    require_current_runtime: bool = True,
+    expected_pid: int | None = None,
+) -> str | None:
     identity = _load_authenticated_daemon_identity(guard_home)
     if identity is None:
         return None
     payload, auth_token = identity
-    if not _guard_daemon_state_matches_current_runtime(payload):
+    if require_current_runtime and not _guard_daemon_state_matches_current_runtime(payload):
+        return None
+    compatibility_version = payload.get("compatibility_version")
+    if compatibility_version != GUARD_DAEMON_COMPATIBILITY_VERSION:
         return None
     port = payload.get("port")
     if not isinstance(port, int):
         return None
     pid = payload.get("pid")
     if not isinstance(pid, int) or pid <= 0 or not _guard_daemon_pid_is_running(pid):
+        return None
+    if expected_pid is not None and pid != expected_pid:
         return None
     url = f"http://127.0.0.1:{port}"
     try:
@@ -988,9 +1037,6 @@ def load_guard_daemon_url(guard_home: Path) -> str | None:
     # back to guard_home, so fall back to authenticated detailed health.
     if _daemon_healthz_details_match_guard_home(url, guard_home, auth_token=auth_token):
         return url
-    compatibility_version = payload.get("compatibility_version")
-    if compatibility_version != GUARD_DAEMON_COMPATIBILITY_VERSION:
-        return None
     return None
 
 
@@ -2832,15 +2878,47 @@ def _retire_guard_daemon_pid(
     return _wait_for_guard_daemon_pid_death(pid)
 
 
+def _wait_for_started_guard_daemon_url(
+    guard_home: Path,
+    *,
+    timeout: float,
+    process: subprocess.Popen[bytes],
+    executable: Path | None,
+) -> str | None:
+    if executable is None:
+        return _wait_for_guard_daemon_url(
+            guard_home,
+            timeout=timeout,
+            process=process,
+        )
+    return _wait_for_guard_daemon_url(
+        guard_home,
+        timeout=timeout,
+        process=process,
+        require_current_runtime=False,
+        expected_pid=process.pid,
+    )
+
+
 def _wait_for_guard_daemon_url(
     guard_home: Path,
     *,
     timeout: float,
     process: subprocess.Popen[bytes] | None = None,
+    require_current_runtime: bool = True,
+    expected_pid: int | None = None,
 ) -> str | None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        url = load_guard_daemon_url(guard_home)
+        url = (
+            load_guard_daemon_url(guard_home)
+            if require_current_runtime
+            else _live_guard_daemon_url(
+                guard_home,
+                require_current_runtime=False,
+                expected_pid=expected_pid,
+            )
+        )
         if url is not None:
             return url
         if process is not None and process.poll() is not None:

@@ -345,6 +345,28 @@ def _run_guard_desktop_command(
     output_stream: TextIO | None = None,
 ) -> int:
     del workspace, input_text
+    if getattr(args, "desktop_command", None) == "dashboard-update":
+        from ..daemon.dashboard_update_runner import main as dashboard_update_main
+
+        resolved_home = getattr(args, "guard_home", None) or guard_home
+        if resolved_home is None:
+            print("Guard dashboard update requires --guard-home.", file=sys.stderr)
+            return 2
+        argv = [
+            "--guard-home",
+            str(resolved_home),
+            "--daemon-pid",
+            str(args.daemon_pid),
+            "--daemon-port",
+            str(args.daemon_port),
+            "--update-token",
+            str(args.update_token),
+        ]
+        if bool(getattr(args, "force_pypi_reinstall", False)):
+            argv.append("--force-pypi-reinstall")
+        if bool(getattr(args, "alpha", False)):
+            argv.append("--alpha")
+        return dashboard_update_main(argv)
     if getattr(args, "desktop_command", None) != "bootstrap":
         print("Choose desktop bootstrap.", file=sys.stderr)
         return 2
