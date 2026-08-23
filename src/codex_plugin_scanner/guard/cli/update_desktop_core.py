@@ -53,6 +53,7 @@ class _ParsedCoreManifest(TypedDict):
     target: str
     sha256: str
     size: int
+    minimum_desktop_version: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +76,11 @@ def is_desktop_managed_runtime() -> bool:
 
 
 def desktop_core_updates_supported() -> bool:
-    return platform_target() is not None
+    return platform_target() == "aarch64-apple-darwin"
+
+
+def desktop_core_uses_alpha_channel(current_version: str, *, requested_alpha: bool) -> bool:
+    return requested_alpha or _version_is_prerelease(current_version)
 
 
 def platform_target() -> str | None:
@@ -83,10 +88,6 @@ def platform_target() -> str | None:
     machine = platform.machine().lower()
     if system == "darwin" and machine in {"arm64", "aarch64"}:
         return "aarch64-apple-darwin"
-    if system == "win32" and machine in {"amd64", "x86_64"}:
-        return "x86_64-pc-windows-msvc"
-    if system.startswith("linux") and machine in {"x86_64", "amd64"}:
-        return "x86_64-unknown-linux-gnu"
     return None
 
 
@@ -108,9 +109,12 @@ def apply_desktop_core_update(
             version=current_version,
             changed=False,
         )
-    channel = "alpha" if include_alpha or _version_is_prerelease(target_version) else "stable"
-    tag = f"alpha/v{normalized_target}" if channel == "alpha" else f"v{normalized_target}"
+    if not include_alpha and not _version_is_prerelease(target_version):
+        raise DesktopCoreUpdateError("desktop_core_channel_unsupported")
+    channel = "alpha"
+    tag = f"alpha/v{normalized_target}"
     artifact = f"hol-guard-core-{normalized_target}-{target}"
+
     def _default_download(url: str, limit: int) -> bytes:
         return _download_bytes(url, limit, network_policy=network_policy)
 
@@ -123,6 +127,7 @@ def apply_desktop_core_update(
         expected_artifact=artifact,
         expected_channel=channel,
     )
+    _enforce_minimum_desktop_version(manifest["minimum_desktop_version"])
     binary = downloader(_release_url(tag, artifact), _MAX_BINARY_BYTES)
     if len(binary) != manifest["size"] or _sha256_hex(binary) != manifest["sha256"]:
         raise DesktopCoreUpdateError("desktop_core_integrity_mismatch")
@@ -229,6 +234,7 @@ def _parse_manifest(
     sha256 = payload.get("sha256")
     source_commit = payload.get("sourceCommit")
     size = payload.get("size")
+    minimum_desktop_version = payload.get("minimumDesktopVersion")
     if (
         payload.get("schema") != UPDATE_SCHEMA
         or payload.get("channel") != expected_channel
@@ -244,15 +250,33 @@ def _parse_manifest(
         or type(size) is not int
         or size <= 0
         or size > _MAX_BINARY_BYTES
+        or not isinstance(minimum_desktop_version, str)
+        or not minimum_desktop_version.strip()
     ):
         raise DesktopCoreUpdateError("desktop_core_manifest_invalid")
+    try:
+        _ = Version(minimum_desktop_version.strip())
+    except InvalidVersion as error:
+        raise DesktopCoreUpdateError("desktop_core_manifest_invalid") from error
     return {
         "version": expected_version,
         "source_commit": source_commit.lower(),
         "target": expected_target,
         "sha256": sha256.lower(),
         "size": size,
+        "minimum_desktop_version": minimum_desktop_version.strip(),
     }
+
+
+def _enforce_minimum_desktop_version(minimum: str) -> None:
+    installed = os.environ.get("HOL_GUARD_DESKTOP_VERSION", "").strip()
+    if not installed:
+        return
+    try:
+        if Version(installed) < Version(minimum):
+            raise DesktopCoreUpdateError("desktop_core_desktop_too_old")
+    except InvalidVersion as error:
+        raise DesktopCoreUpdateError("desktop_core_desktop_version_invalid") from error
 
 
 def _sha256_hex(payload: bytes) -> str:
@@ -303,12 +327,27 @@ def _macos_signing_team(path: Path) -> str:
     raise DesktopCoreUpdateError("desktop_core_signature_invalid")
 
 
+def _reject_symlink(path: Path) -> None:
+    try:
+        if path.is_symlink():
+            raise DesktopCoreUpdateError("desktop_core_path_untrusted")
+    except OSError as error:
+        raise DesktopCoreUpdateError("desktop_core_path_untrusted") from error
+
+
 def _install_managed_core(staged: Path, manifest: _ParsedCoreManifest, target: str) -> Path:
     root = desktop_core_root()
-    versions = root / "versions" / manifest["version"]
-    versions.mkdir(parents=True, exist_ok=True)
-    installed = versions / _executable_name()
+    versions_root = root / "versions"
+    version_dir = versions_root / manifest["version"]
+    installed = version_dir / _executable_name()
+    current = root / "current.json"
+    for path in (root, versions_root, version_dir, installed, current):
+        _reject_symlink(path)
+    version_dir.mkdir(parents=True, exist_ok=True)
+    for path in (root, versions_root, version_dir, installed):
+        _reject_symlink(path)
     _ = shutil.copy2(staged, installed)
+    _reject_symlink(installed)
     _make_executable(installed)
     _verify_candidate(
         installed,
@@ -324,10 +363,12 @@ def _install_managed_core(staged: Path, manifest: _ParsedCoreManifest, target: s
         "sha256": manifest["sha256"],
         "installedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    current = root / "current.json"
+    _reject_symlink(current)
     temporary = current.with_name(f".current.{os.getpid()}.tmp")
+    _reject_symlink(temporary)
     _ = temporary.write_text(json.dumps(pointer, indent=2) + "\n", encoding="utf-8")
     _ = temporary.replace(current)
+    _reject_symlink(current)
     return installed
 
 
@@ -337,6 +378,7 @@ __all__ = [
     "apply_desktop_core_update",
     "desktop_core_root",
     "desktop_core_updates_supported",
+    "desktop_core_uses_alpha_channel",
     "executable_is_desktop_core",
     "is_desktop_managed_runtime",
     "is_frozen_runtime",

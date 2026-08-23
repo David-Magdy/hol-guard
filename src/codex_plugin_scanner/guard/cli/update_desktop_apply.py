@@ -1,0 +1,293 @@
+"""Apply signed Core updates for Desktop-managed HOL Guard installs."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from ..adapters.base import HarnessContext
+from ..mdm.contracts import ManagedNetworkPolicy
+from ..store import GuardStore
+from .update_desktop_core import (
+    DesktopCoreUpdateError,
+    apply_desktop_core_update,
+    desktop_core_updates_supported,
+    desktop_core_uses_alpha_channel,
+)
+
+_STABLE_CORE_FEED_MESSAGE = "Stable Core updates are not published yet. Switch the update channel to alpha."
+_DAEMON_REFRESH_FAILED = "HOL Guard was updated, but its daemon could not be restarted safely."
+
+
+def desktop_update_status_state(
+    *,
+    current_version: str,
+    requested_alpha: bool,
+) -> tuple[bool, bool, str | None]:
+    if not desktop_core_updates_supported():
+        return (
+            requested_alpha,
+            False,
+            "This platform receives Core updates with HOL Guard Desktop releases.",
+        )
+    include_alpha = desktop_core_uses_alpha_channel(current_version, requested_alpha=requested_alpha)
+    if include_alpha:
+        return True, True, None
+    return False, False, _STABLE_CORE_FEED_MESSAGE
+
+
+def run_desktop_managed_update(
+    payload: dict[str, object],
+    *,
+    dry_run: bool,
+    include_alpha: bool,
+    force_pypi_reinstall: bool,
+    requested_wheel_path: Path | None,
+    context: HarnessContext | None,
+    store: GuardStore | None,
+    workspace: str | None,
+    now: str | None,
+    network_policy: ManagedNetworkPolicy,
+    daemon_refresh_required: bool,
+) -> tuple[dict[str, object], int]:
+    blocked = _desktop_update_preflight(
+        payload,
+        include_alpha=include_alpha,
+        force_pypi_reinstall=force_pypi_reinstall,
+        requested_wheel_path=requested_wheel_path,
+    )
+    if blocked is not None:
+        return blocked
+    from . import update_commands as commands
+
+    include_alpha = payload.get("release_channel") == "alpha"
+    current_version = str(payload["current_version"])
+    version_check = commands._version_check_payload(
+        current_version,
+        source_kind="pypi",
+        network_policy=network_policy,
+        include_alpha=include_alpha,
+    )
+    payload["version_check"] = version_check
+    already_current = (
+        version_check.get("update_available") is False and str(version_check.get("status") or "") == "current"
+    )
+    latest_version = version_check.get("latest_version")
+    target_version = latest_version.strip() if isinstance(latest_version, str) and latest_version.strip() else None
+    if dry_run:
+        payload["status"] = "current" if already_current else "planned"
+        payload["changed"] = False
+        payload["resulting_version"] = current_version if already_current else target_version
+        payload["message"] = (
+            commands.already_current_update_message(version_check)
+            if already_current
+            else "Review the planned signed Core update before applying it."
+        )
+        return payload, 0
+    if already_current or target_version is None:
+        return _desktop_already_current(
+            payload,
+            current_version=current_version,
+            version_check=version_check,
+            context=context,
+            daemon_refresh_required=daemon_refresh_required,
+        )
+    return _desktop_apply_target(
+        payload,
+        current_version=current_version,
+        target_version=target_version,
+        include_alpha=include_alpha,
+        network_policy=network_policy,
+        version_check=version_check,
+        context=context,
+        store=store,
+        workspace=workspace,
+        now=now,
+        daemon_refresh_required=daemon_refresh_required,
+    )
+
+
+def refresh_desktop_core_daemon(
+    context: HarnessContext,
+    *,
+    executable: Path,
+) -> tuple[dict[str, object] | None, str | None]:
+    from ..daemon.manager import (
+        ensure_guard_daemon_after_update,
+        guard_daemon_retirement_is_complete,
+        retire_all_guard_daemons_for_home,
+    )
+
+    try:
+        retire_all_guard_daemons_for_home(context.guard_home)
+        if not guard_daemon_retirement_is_complete(context.guard_home):
+            return None, "Could not stop the running Guard daemon before launching the updated Core."
+        url = ensure_guard_daemon_after_update(
+            context.guard_home,
+            home_dir=context.home_dir,
+            executable=executable,
+        )
+    except (OSError, RuntimeError) as error:
+        return None, f"Could not restart the Guard daemon after update: {error}"
+    return {"status": "restarted", "url": url}, None
+
+
+def _desktop_update_preflight(
+    payload: dict[str, object],
+    *,
+    include_alpha: bool,
+    force_pypi_reinstall: bool,
+    requested_wheel_path: Path | None,
+) -> tuple[dict[str, object], int] | None:
+    from . import update_commands as commands
+
+    payload["upgrade_source"] = "desktop_core"
+    if force_pypi_reinstall or requested_wheel_path is not None:
+        return _blocked_desktop_payload(
+            payload,
+            "desktop_core_uses_signed_feed",
+            "This HOL Guard install updates from the signed Core feed.",
+        )
+    if not desktop_core_updates_supported():
+        return _blocked_desktop_payload(
+            payload,
+            "desktop_core_platform_unsupported",
+            "This platform receives Core updates with HOL Guard Desktop releases.",
+        )
+    current_version = commands._current_version()
+    payload["current_version"] = current_version
+    include_alpha = desktop_core_uses_alpha_channel(current_version, requested_alpha=include_alpha)
+    payload["retry_command"] = commands._safe_update_retry_command(None, include_alpha=include_alpha)
+    if not include_alpha:
+        return _blocked_desktop_payload(payload, "desktop_core_channel_unsupported", _STABLE_CORE_FEED_MESSAGE)
+    payload["release_channel"] = "alpha"
+    return None
+
+
+def _desktop_already_current(
+    payload: dict[str, object],
+    *,
+    current_version: str,
+    version_check: dict[str, object],
+    context: HarnessContext | None,
+    daemon_refresh_required: bool,
+) -> tuple[dict[str, object], int]:
+    from . import update_commands as commands
+
+    payload["status"] = "current"
+    payload["changed"] = False
+    payload["resulting_version"] = current_version
+    payload["message"] = commands.already_current_update_message(version_check)
+    if context is not None and daemon_refresh_required:
+        return _refresh_or_fail(
+            payload,
+            context=context,
+            executable=Path(sys.executable).resolve(),
+            required=True,
+        )
+    return payload, 0
+
+
+def _desktop_apply_target(
+    payload: dict[str, object],
+    *,
+    current_version: str,
+    target_version: str,
+    include_alpha: bool,
+    network_policy: ManagedNetworkPolicy,
+    version_check: dict[str, object],
+    context: HarnessContext | None,
+    store: GuardStore | None,
+    workspace: str | None,
+    now: str | None,
+    daemon_refresh_required: bool,
+) -> tuple[dict[str, object], int]:
+    from . import update_commands as commands
+
+    try:
+        applied = apply_desktop_core_update(
+            current_version=current_version,
+            target_version=target_version,
+            include_alpha=include_alpha,
+            network_policy=network_policy,
+        )
+    except DesktopCoreUpdateError as error:
+        payload.update(
+            {
+                "status": "failed",
+                "changed": False,
+                "reason_code": error.reason_code,
+                "error": str(error),
+                "message": "HOL Guard could not apply the signed Core update.",
+            }
+        )
+        return payload, 1
+    payload["resulting_version"] = applied.version
+    payload["changed"] = applied.changed
+    payload["status"] = "updated" if applied.changed else "current"
+    payload["message"] = (
+        f"HOL Guard updated to {applied.version}."
+        if applied.changed
+        else commands.already_current_update_message(version_check)
+    )
+    if context is not None and store is not None and now is not None:
+        repaired_installs, repair_notes = commands._repair_supported_harnesses_in_process(
+            context=context,
+            store=store,
+            workspace=workspace,
+            now=now,
+            dry_run=False,
+        )
+        if repair_notes:
+            payload["notes"] = [*commands._payload_notes(payload), *repair_notes]
+        if repaired_installs:
+            payload["managed_installs"] = repaired_installs
+    if context is not None and (applied.changed or daemon_refresh_required):
+        return _refresh_or_fail(
+            payload,
+            context=context,
+            executable=applied.executable,
+            required=daemon_refresh_required,
+        )
+    return payload, 0
+
+
+def _refresh_or_fail(
+    payload: dict[str, object],
+    *,
+    context: HarnessContext,
+    executable: Path,
+    required: bool,
+) -> tuple[dict[str, object], int]:
+    from . import update_commands as commands
+
+    daemon_refresh, daemon_refresh_note = refresh_desktop_core_daemon(context, executable=executable)
+    if daemon_refresh is not None:
+        payload["daemon_refresh"] = daemon_refresh
+    commands._append_payload_note(payload, daemon_refresh_note)
+    if required and not (isinstance(daemon_refresh, dict) and daemon_refresh.get("status") == "restarted"):
+        payload.update(
+            {
+                "status": "failed",
+                "reason_code": "update_daemon_refresh_failed",
+                "message": _DAEMON_REFRESH_FAILED,
+            }
+        )
+        return payload, 1
+    return payload, 0
+
+
+def _blocked_desktop_payload(
+    payload: dict[str, object],
+    reason_code: str,
+    message: str,
+) -> tuple[dict[str, object], int]:
+    payload.update(
+        {
+            "status": "blocked",
+            "changed": False,
+            "reason_code": reason_code,
+            "message": message,
+        }
+    )
+    return payload, 1

@@ -57,12 +57,8 @@ from .update_artifact import (
     recover_local_wheel_original,
     stage_trusted_wheel,
 )
-from .update_desktop_core import (
-    DesktopCoreUpdateError,
-    apply_desktop_core_update,
-    desktop_core_updates_supported,
-    executable_is_desktop_core,
-)
+from .update_desktop_apply import desktop_update_status_state, run_desktop_managed_update
+from .update_desktop_core import is_desktop_managed_runtime
 from .update_grok_repair import append_grok_repair
 from .update_install_verify import verify_installed_distribution
 from .update_subprocess import (
@@ -349,7 +345,7 @@ def run_guard_update(
     else:
         trusted_workspace = Path.cwd()
     if installer == "desktop":
-        return _run_desktop_managed_update(
+        return run_desktop_managed_update(
             payload,
             dry_run=dry_run,
             include_alpha=include_alpha,
@@ -849,174 +845,6 @@ def run_guard_update(
             )
             return finish_update((payload, 1))
     return finish_update((payload, 0))
-
-
-def _run_desktop_managed_update(
-    payload: dict[str, object],
-    *,
-    dry_run: bool,
-    include_alpha: bool,
-    force_pypi_reinstall: bool,
-    requested_wheel_path: Path | None,
-    context: HarnessContext | None,
-    store: GuardStore | None,
-    workspace: str | None,
-    now: str | None,
-    network_policy: ManagedNetworkPolicy,
-    daemon_refresh_required: bool,
-) -> tuple[dict[str, object], int]:
-    payload["upgrade_source"] = "desktop_core"
-    payload["retry_command"] = _safe_update_retry_command(None, include_alpha=include_alpha)
-    if include_alpha:
-        payload["release_channel"] = "alpha"
-    if force_pypi_reinstall or requested_wheel_path is not None:
-        payload.update(
-            {
-                "status": "blocked",
-                "changed": False,
-                "reason_code": "desktop_core_uses_signed_feed",
-                "message": "This HOL Guard install updates from the signed Core feed.",
-            }
-        )
-        return payload, 1
-    if not desktop_core_updates_supported():
-        payload.update(
-            {
-                "status": "blocked",
-                "changed": False,
-                "reason_code": "desktop_core_platform_unsupported",
-                "message": "This platform receives Core updates with HOL Guard Desktop releases.",
-            }
-        )
-        return payload, 1
-    current_version = _current_version()
-    payload["current_version"] = current_version
-    version_check = _version_check_payload(
-        current_version,
-        source_kind="pypi",
-        network_policy=network_policy,
-        include_alpha=include_alpha,
-    )
-    payload["version_check"] = version_check
-    already_current = (
-        version_check.get("update_available") is False and str(version_check.get("status") or "") == "current"
-    )
-    latest_version = version_check.get("latest_version")
-    target_version = latest_version.strip() if isinstance(latest_version, str) and latest_version.strip() else None
-    if dry_run:
-        payload["status"] = "current" if already_current else "planned"
-        payload["changed"] = False
-        payload["resulting_version"] = current_version if already_current else target_version
-        payload["message"] = (
-            already_current_update_message(version_check)
-            if already_current
-            else "Review the planned signed Core update before applying it."
-        )
-        return payload, 0
-    if already_current or target_version is None:
-        payload["status"] = "current"
-        payload["changed"] = False
-        payload["resulting_version"] = current_version
-        payload["message"] = already_current_update_message(version_check)
-        if context is not None and daemon_refresh_required:
-            daemon_refresh, daemon_refresh_note = _refresh_desktop_core_daemon(
-                context,
-                executable=Path(sys.executable).resolve(),
-            )
-            if daemon_refresh is not None:
-                payload["daemon_refresh"] = daemon_refresh
-            _append_payload_note(payload, daemon_refresh_note)
-            if not (isinstance(daemon_refresh, dict) and daemon_refresh.get("status") == "restarted"):
-                payload.update(
-                    {
-                        "status": "failed",
-                        "reason_code": "update_daemon_refresh_failed",
-                        "message": "HOL Guard was updated, but its daemon could not be restarted safely.",
-                    }
-                )
-                return payload, 1
-        return payload, 0
-    try:
-        applied = apply_desktop_core_update(
-            current_version=current_version,
-            target_version=target_version,
-            include_alpha=include_alpha,
-            network_policy=network_policy,
-        )
-    except DesktopCoreUpdateError as error:
-        payload.update(
-            {
-                "status": "failed",
-                "changed": False,
-                "reason_code": error.reason_code,
-                "error": str(error),
-                "message": "HOL Guard could not apply the signed Core update.",
-            }
-        )
-        return payload, 1
-    payload["resulting_version"] = applied.version
-    payload["changed"] = applied.changed
-    payload["status"] = "updated" if applied.changed else "current"
-    payload["message"] = (
-        f"HOL Guard updated to {applied.version}." if applied.changed else already_current_update_message(version_check)
-    )
-    if context is not None and store is not None and now is not None:
-        repaired_installs, repair_notes = _repair_supported_harnesses_in_process(
-            context=context,
-            store=store,
-            workspace=workspace,
-            now=now,
-            dry_run=False,
-        )
-        if repair_notes:
-            payload["notes"] = [*_payload_notes(payload), *repair_notes]
-        if repaired_installs:
-            payload["managed_installs"] = repaired_installs
-    if context is not None and (applied.changed or daemon_refresh_required):
-        daemon_refresh, daemon_refresh_note = _refresh_desktop_core_daemon(
-            context,
-            executable=applied.executable,
-        )
-        if daemon_refresh is not None:
-            payload["daemon_refresh"] = daemon_refresh
-        _append_payload_note(payload, daemon_refresh_note)
-        if daemon_refresh_required and not (
-            isinstance(daemon_refresh, dict) and daemon_refresh.get("status") == "restarted"
-        ):
-            payload.update(
-                {
-                    "status": "failed",
-                    "reason_code": "update_daemon_refresh_failed",
-                    "message": "HOL Guard was updated, but its daemon could not be restarted safely.",
-                }
-            )
-            return payload, 1
-    return payload, 0
-
-
-def _refresh_desktop_core_daemon(
-    context: HarnessContext,
-    *,
-    executable: Path,
-) -> tuple[dict[str, object] | None, str | None]:
-    from ..daemon.manager import (
-        ensure_guard_daemon_after_update,
-        guard_daemon_retirement_is_complete,
-        retire_all_guard_daemons_for_home,
-    )
-
-    try:
-        retire_all_guard_daemons_for_home(context.guard_home)
-        if not guard_daemon_retirement_is_complete(context.guard_home):
-            return None, "Could not stop the running Guard daemon before launching the updated Core."
-        url = ensure_guard_daemon_after_update(
-            context.guard_home,
-            home_dir=context.home_dir,
-            executable=executable,
-        )
-    except (OSError, RuntimeError) as error:
-        return None, f"Could not restart the Guard daemon after update: {error}"
-    return {"status": "restarted", "url": url}, None
 
 
 def _record_verified_local_wheel_receipt(
@@ -1795,11 +1623,7 @@ def _is_frozen_runtime() -> bool:
 
 
 def _is_desktop_managed_runtime() -> bool:
-    if not _is_frozen_runtime():
-        return False
-    if os.environ.get("HOL_GUARD_DESKTOP", "").strip() == "1":
-        return True
-    return executable_is_desktop_core(Path(sys.executable))
+    return is_desktop_managed_runtime()
 
 
 def _runtime_package_path() -> Path:
@@ -2891,9 +2715,11 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
         auto_updatable = False
         blocked_reason = "An organization-configured package source is required."
     elif installer == "desktop":
-        if not desktop_core_updates_supported():
-            auto_updatable = False
-            blocked_reason = "This platform receives Core updates with HOL Guard Desktop releases."
+        desktop_version = installed_distribution.version if installed_distribution is not None else _current_version()
+        include_alpha, auto_updatable, blocked_reason = desktop_update_status_state(
+            current_version=desktop_version,
+            requested_alpha=include_alpha,
+        )
     else:
         try:
             installed_distribution = _status_installed_distribution(
@@ -2981,7 +2807,7 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
         "python_update_required": False if installer == "desktop" else _python_runtime_blocks_update(version_check),
         "recovery_reinstall_available": recovery_reinstall_available,
         "recovery_reinstall_command": recovery_reinstall_command,
-        "release_channel": update_channel,
+        "release_channel": "alpha" if include_alpha else update_channel,
     }
     if trusted_failure_reason is not None:
         payload["reason_code"] = trusted_failure_reason

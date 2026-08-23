@@ -470,19 +470,12 @@ def ensure_guard_daemon(
                 )
                 _release_guard_daemon_launch_gate(process)
                 remaining_start_time = max(0.0, start_deadline - time.monotonic())
-                if executable is None:
-                    url = _wait_for_guard_daemon_url(
-                        guard_home,
-                        timeout=remaining_start_time,
-                        process=process,
-                    )
-                else:
-                    url = _wait_for_guard_daemon_url(
-                        guard_home,
-                        timeout=remaining_start_time,
-                        process=process,
-                        require_current_runtime=False,
-                    )
+                url = _wait_for_started_guard_daemon_url(
+                    guard_home,
+                    timeout=remaining_start_time,
+                    process=process,
+                    executable=executable,
+                )
                 if url is not None:
                     if not _clear_spawned_guard_daemon_pending_launch(
                         guard_home, process=process, creation_time=pending_creation_time
@@ -2884,19 +2877,46 @@ def _retire_guard_daemon_pid(
     return _wait_for_guard_daemon_pid_death(pid)
 
 
+def _wait_for_started_guard_daemon_url(
+    guard_home: Path,
+    *,
+    timeout: float,
+    process: subprocess.Popen[bytes],
+    executable: Path | None,
+) -> str | None:
+    if executable is None:
+        return _wait_for_guard_daemon_url(
+            guard_home,
+            timeout=timeout,
+            process=process,
+        )
+    return _wait_for_guard_daemon_url(
+        guard_home,
+        timeout=timeout,
+        process=process,
+        require_current_runtime=False,
+        expected_pid=process.pid,
+    )
+
+
 def _wait_for_guard_daemon_url(
     guard_home: Path,
     *,
     timeout: float,
     process: subprocess.Popen[bytes] | None = None,
     require_current_runtime: bool = True,
+    expected_pid: int | None = None,
 ) -> str | None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         url = (
             load_guard_daemon_url(guard_home)
             if require_current_runtime
-            else _live_guard_daemon_url(guard_home, require_current_runtime=False)
+            else _live_guard_daemon_url(
+                guard_home,
+                require_current_runtime=False,
+                expected_pid=expected_pid,
+            )
         )
         if url is not None:
             return url
