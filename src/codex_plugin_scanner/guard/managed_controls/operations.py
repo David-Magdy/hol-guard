@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 
 
-class ManagedControlsHealth(StrEnum):
+class ManagedControlsHealth(str, Enum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     RECOVERY_REQUIRED = "recovery_required"

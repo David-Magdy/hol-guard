@@ -17,7 +17,7 @@ This runbook covers the HOL Guard Local side of Extension-First Managed Controls
 11. Verify custom Extension copy remains local-only until continuity is real.
 12. Run adversarial, privacy, accessibility, and performance checks.
 
-Run:
+From the repository root, run:
 
 ```bash
 python scripts/ci/managed_controls_release_gate.py

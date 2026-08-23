@@ -14,15 +14,17 @@ from ..runtime.extension_control_limits import (
     MAX_PERMISSIONS_PER_EXTENSION,
 )
 
-_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,127}$")
+_EXTENSION_ID_PATTERN = re.compile(r"^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$")
+_PERMISSION_ID_PATTERN = re.compile(r"^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*\.permission\.[a-z0-9]+(?:[.-][a-z0-9]+)*$")
+_DELEGATED_PROTECTION_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class CatalogValidationError(ValueError):
     """Raised when a catalog cannot be trusted or represented."""
 
 
-def _identity(value: object, label: str) -> str:
-    if not isinstance(value, str) or not _ID_PATTERN.fullmatch(value):
+def _identity(value: object, label: str, pattern: re.Pattern[str]) -> str:
+    if not isinstance(value, str) or not pattern.fullmatch(value):
         raise CatalogValidationError(f"invalid {label}")
     return value
 
@@ -48,12 +50,16 @@ class CatalogPermission:
     delegated_protection: str | None = None
 
     def __post_init__(self) -> None:
-        _identity(self.permission_id, "permission id")
+        _identity(self.permission_id, "permission id", _PERMISSION_ID_PATTERN)
         _required_text(self.name, "permission name")
         _boolean(self.configurable, "permission configurable")
         _boolean(self.required, "permission required")
         if self.delegated_protection is not None:
-            _identity(self.delegated_protection, "delegated protection")
+            _identity(
+                self.delegated_protection,
+                "delegated protection",
+                _DELEGATED_PROTECTION_PATTERN,
+            )
         if self.required and self.configurable:
             raise CatalogValidationError("required permissions cannot be configurable")
 
@@ -77,7 +83,7 @@ class CatalogExtension:
     custom: bool = False
 
     def __post_init__(self) -> None:
-        _identity(self.extension_id, "extension id")
+        _identity(self.extension_id, "extension id", _EXTENSION_ID_PATTERN)
         _required_text(self.name, "extension name")
         _required_text(self.version, "extension version")
         _boolean(self.required, "extension required")
@@ -155,3 +161,10 @@ class CatalogProjection:
                     return permission
             raise CatalogValidationError("unknown permission target")
         raise CatalogValidationError("unknown extension target")
+
+    def permission_target(self, permission_id: str) -> tuple[str, CatalogPermission]:
+        for extension in self.extensions:
+            for permission in extension.permissions:
+                if permission.permission_id == permission_id:
+                    return extension.extension_id, permission
+        raise CatalogValidationError("unknown permission target")

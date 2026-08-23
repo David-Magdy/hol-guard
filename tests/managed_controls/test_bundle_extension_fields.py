@@ -22,7 +22,13 @@ def _catalog() -> CatalogProjection:
                 "command.git",
                 "Git",
                 "1",
-                (CatalogPermission("push", "Push", configurable=True),),
+                (
+                    CatalogPermission(
+                        "command.git.permission.push",
+                        "Push",
+                        configurable=True,
+                    ),
+                ),
             ),
         ),
     )
@@ -31,33 +37,34 @@ def _catalog() -> CatalogProjection:
 def test_parses_document_and_rule_extension_fields() -> None:
     parsed = parse_extension_contract(
         {
-            "spec": {
-                "x-hol-extension-controls": [
+            "x-hol-extension-controls": {
+                "schemaVersion": "guard.extension-controls.v1",
+                "authorityMode": "managed-restrictive",
+                "controls": [
                     {
-                        "extension_id": "command.git",
-                        "permission_id": "push",
-                        "authority_mode": "managed-restrictive",
-                        "effect": "block",
-                        "source_id": "control-set-1",
+                        "targetKind": "permission",
+                        "targetId": "command.git.permission.push",
+                        "state": "disabled",
                     }
                 ],
+            },
+            "spec": {
                 "rules": [
                     {
                         "id": "rule-1",
-                        "x-hol-extension-targets": [
-                            {
-                                "extension_id": "command.git",
-                                "permission_id": "push",
-                            }
-                        ],
+                        "x-hol-extension-targets": {
+                            "schemaVersion": "guard.policy-extension-targets.v1",
+                            "extensionIds": ["command.git"],
+                            "permissionIds": ["command.git.permission.push"],
+                        },
                     }
                 ],
-            }
+            },
         },
         _catalog(),
     )
-    assert parsed.controls[0].source_id == "control-set-1"
-    assert parsed.rule_targets["rule-1"][0].permission_id == "push"
+    assert parsed.controls[0].source_id == "control-0"
+    assert parsed.rule_targets["rule-1"][1].permission_id == "command.git.permission.push"
 
 
 def test_unknown_target_fails_deployment() -> None:
@@ -68,12 +75,11 @@ def test_unknown_target_fails_deployment() -> None:
                     "rules": [
                         {
                             "id": "bad",
-                            "x-hol-extension-targets": [
-                                {
-                                    "extension_id": "command.git",
-                                    "permission_id": "unknown",
-                                }
-                            ],
+                            "x-hol-extension-targets": {
+                                "schemaVersion": "guard.policy-extension-targets.v1",
+                                "extensionIds": [],
+                                "permissionIds": ["command.git.permission.unknown"],
+                            },
                         }
                     ]
                 }
@@ -85,6 +91,39 @@ def test_unknown_target_fails_deployment() -> None:
 def test_malformed_extension_collection_is_rejected() -> None:
     with pytest.raises(ManagedControlsBundleError):
         parse_extension_contract(
-            {"spec": {"x-hol-extension-controls": "not-an-array"}},
+            {
+                "x-hol-extension-controls": "not-an-object",
+                "spec": {"rules": []},
+            },
+            _catalog(),
+        )
+
+
+def test_global_lockdown_and_duplicate_rule_ids_are_strict() -> None:
+    parsed = parse_extension_contract(
+        {
+            "x-hol-extension-controls": {
+                "schemaVersion": "guard.extension-controls.v1",
+                "authorityMode": "managed-restrictive",
+                "globalLockdown": True,
+                "controls": [],
+            },
+            "spec": {"rules": []},
+        },
+        _catalog(),
+    )
+    assert parsed.controls[0].effect.value == "lockdown"
+
+    duplicate_rule = {
+        "id": "duplicate",
+        "x-hol-extension-targets": {
+            "schemaVersion": "guard.policy-extension-targets.v1",
+            "extensionIds": ["command.git"],
+            "permissionIds": [],
+        },
+    }
+    with pytest.raises(ManagedControlsBundleError):
+        parse_extension_contract(
+            {"spec": {"rules": [duplicate_rule, duplicate_rule]}},
             _catalog(),
         )

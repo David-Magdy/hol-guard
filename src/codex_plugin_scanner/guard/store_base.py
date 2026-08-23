@@ -252,6 +252,8 @@ _GUARD_CLOUD_RESET_STATE_KEYS = (
     "supply_chain_bundle_entitlement",
     "supply_chain_bundle_daemon",
     "headless_app_sync_summary",
+    "managed_controls_active",
+    "managed_controls_negotiated_capabilities",
     *_GUARD_CLOUD_COMMAND_STATE_KEYS,
 )
 

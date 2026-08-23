@@ -16,7 +16,13 @@ def _control(
     authority: AuthorityMode,
     source: str,
 ) -> ControlInstruction:
-    return ControlInstruction("command.git", "push", effect, authority, source)
+    return ControlInstruction(
+        "command.git",
+        "command.git.permission.push",
+        effect,
+        authority,
+        source,
+    )
 
 
 def test_local_block_tightens_cloud_permit() -> None:
@@ -54,4 +60,34 @@ def test_managed_authority_cannot_publish_permit() -> None:
             ControlEffect.PERMIT,
             AuthorityMode.MANAGED_RESTRICTIVE,
             "organization",
+        )
+
+
+def test_authority_rejects_string_enum_bypass_and_mixed_targets() -> None:
+    with pytest.raises(AuthorityValidationError):
+        ControlInstruction(
+            "command.git",
+            "command.git.permission.push",
+            ControlEffect.PERMIT,
+            "managed-restrictive",  # type: ignore[arg-type]
+            "organization",
+        )
+    with pytest.raises(AuthorityValidationError):
+        compose_control_instructions(
+            (
+                ControlInstruction(
+                    "command.git",
+                    "command.git.permission.push",
+                    ControlEffect.BLOCK,
+                    AuthorityMode.PERSONAL_SHARED,
+                    "first",
+                ),
+                ControlInstruction(
+                    "command.npm",
+                    "command.npm.permission.install",
+                    ControlEffect.PERMIT,
+                    AuthorityMode.PERSONAL_SHARED,
+                    "second",
+                ),
+            )
         )

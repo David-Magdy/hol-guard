@@ -16,18 +16,17 @@ from codex_plugin_scanner.guard.managed_controls.migration import (
 
 def test_unsupported_client_is_excluded_not_silently_downgraded() -> None:
     device = DeviceCompatibility(frozenset(), "catalog", 1)
-    assert (
-        evaluate_compatibility(device, required_catalog_digest="catalog")
-        is CompatibilityState.MISSING_CAPABILITY
-    )
+    assert evaluate_compatibility(device, required_catalog_digest="catalog") is CompatibilityState.MISSING_CAPABILITY
 
 
 def test_exact_catalog_is_compatible() -> None:
     device = DeviceCompatibility(MANAGED_CONTROL_CAPABILITIES, "catalog", 1)
-    assert (
-        evaluate_compatibility(device, required_catalog_digest="catalog")
-        is CompatibilityState.COMPATIBLE
-    )
+    assert evaluate_compatibility(device, required_catalog_digest="catalog") is CompatibilityState.COMPATIBLE
+
+
+def test_control_schema_must_match() -> None:
+    device = DeviceCompatibility(MANAGED_CONTROL_CAPABILITIES, "catalog", 1, 2)
+    assert evaluate_compatibility(device, required_catalog_digest="catalog") is CompatibilityState.SCHEMA_UNSUPPORTED
 
 
 def test_unmapped_legacy_rule_remains_advanced_without_data_loss() -> None:

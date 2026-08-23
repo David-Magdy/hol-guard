@@ -42,7 +42,7 @@ class RuntimeCapabilityAdvertisement:
             raise CapabilityNegotiationError("capabilities must be a collection")
         if not all(isinstance(value, str) for value in values):
             raise CapabilityNegotiationError("capabilities must contain strings")
-        capabilities = frozenset(values)
+        capabilities = frozenset(value for value in values if isinstance(value, str))
         return cls(
             capabilities=capabilities,
             catalog_schema_version=_positive_schema_version(
@@ -58,10 +58,12 @@ class RuntimeCapabilityAdvertisement:
     def require(self, required: frozenset[str]) -> None:
         missing = sorted(required - self.capabilities)
         if missing:
-            raise CapabilityNegotiationError(
-                f"runtime is missing required capabilities: {', '.join(missing)}"
-            )
+            raise CapabilityNegotiationError(f"runtime is missing required capabilities: {', '.join(missing)}")
 
     @property
     def supports_managed_controls(self) -> bool:
-        return MANAGED_CONTROL_CAPABILITIES <= self.capabilities
+        return (
+            self.capabilities >= MANAGED_CONTROL_CAPABILITIES
+            and self.catalog_schema_version == 1
+            and self.extension_control_schema_version == 1
+        )

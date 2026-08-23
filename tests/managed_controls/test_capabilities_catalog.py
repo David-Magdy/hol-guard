@@ -16,7 +16,11 @@ from codex_plugin_scanner.guard.managed_controls.catalog import (
 
 
 def _catalog() -> CatalogProjection:
-    permission = CatalogPermission("push", "Push", configurable=True)
+    permission = CatalogPermission(
+        "command.git.permission.push",
+        "Push",
+        configurable=True,
+    )
     extension = CatalogExtension("command.git", "Git", "1", (permission,))
     return CatalogProjection(1, (extension,))
 
@@ -26,15 +30,11 @@ def test_requires_all_four_capabilities() -> None:
     assert advertisement.supports_managed_controls
     advertisement.require(MANAGED_CONTROL_CAPABILITIES)
     with pytest.raises(CapabilityNegotiationError):
-        RuntimeCapabilityAdvertisement(frozenset()).require(
-            MANAGED_CONTROL_CAPABILITIES
-        )
+        RuntimeCapabilityAdvertisement(frozenset()).require(MANAGED_CONTROL_CAPABILITIES)
 
 
 def test_capability_advertisement_deduplicates_strings() -> None:
-    advertisement = RuntimeCapabilityAdvertisement.from_values(
-        ["extension-catalog.v1", "extension-catalog.v1"]
-    )
+    advertisement = RuntimeCapabilityAdvertisement.from_values(["extension-catalog.v1", "extension-catalog.v1"])
     assert advertisement.capabilities == frozenset({"extension-catalog.v1"})
 
 
@@ -63,13 +63,24 @@ def test_invalid_capability_advertisement_fails_closed(
 def test_catalog_identity_and_digest_are_deterministic() -> None:
     catalog = _catalog()
     assert len(catalog.digest) == 64
-    assert catalog.permission("command.git", "push").configurable
+    assert catalog.permission(
+        "command.git",
+        "command.git.permission.push",
+    ).configurable
     assert catalog.digest == _catalog().digest
 
 
 def test_catalog_digest_canonicalizes_permission_order() -> None:
-    first = CatalogPermission("clone", "Clone", configurable=True)
-    second = CatalogPermission("push", "Push", configurable=True)
+    first = CatalogPermission(
+        "command.git.permission.clone",
+        "Clone",
+        configurable=True,
+    )
+    second = CatalogPermission(
+        "command.git.permission.push",
+        "Push",
+        configurable=True,
+    )
     forward = CatalogProjection(
         1,
         (CatalogExtension("command.git", "Git", "1", (first, second)),),
@@ -86,7 +97,11 @@ def test_catalog_digest_canonicalizes_permission_order() -> None:
     "factory",
     [
         lambda: CatalogPermission(1, "Push", configurable=True),
-        lambda: CatalogPermission("push", None, configurable=True),
+        lambda: CatalogPermission(
+            "command.git.permission.push",
+            None,
+            configurable=True,
+        ),
         lambda: CatalogExtension("command.git", None, "1", ()),
         lambda: CatalogExtension("command.git", "Git", None, ()),
     ],
@@ -100,4 +115,7 @@ def test_unknown_targets_fail_instead_of_disappearing() -> None:
     with pytest.raises(CatalogValidationError, match="unknown permission"):
         _catalog().permission("command.git", "missing")
     with pytest.raises(CatalogValidationError, match="unknown extension"):
-        _catalog().permission("command.missing", "push")
+        _catalog().permission(
+            "command.missing",
+            "command.missing.permission.push",
+        )

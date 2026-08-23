@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 
 
-class CatalogIdentityState(StrEnum):
+class CatalogIdentityState(str, Enum):
     EXACT = "exact"
     VERSION_DIFFERENT = "version_different"
     MISSING = "missing"

@@ -11,6 +11,7 @@ from codex_plugin_scanner.guard.managed_controls.atomic_apply import (
     AppliedManagedControls,
     AtomicApplyError,
     AtomicManagedControlsStore,
+    PreparedProjection,
 )
 from codex_plugin_scanner.guard.managed_controls.authority import (
     AuthorityMode,
@@ -37,7 +38,13 @@ def _catalog() -> CatalogProjection:
                 "command.git",
                 "Git",
                 "1",
-                (CatalogPermission("push", "Push", configurable=True),),
+                (
+                    CatalogPermission(
+                        "command.git.permission.push",
+                        "Push",
+                        configurable=True,
+                    ),
+                ),
             ),
         ),
     )
@@ -73,12 +80,11 @@ def test_unknown_target_is_never_silently_dropped() -> None:
                     "rules": [
                         {
                             "id": "unknown",
-                            "x-hol-extension-targets": [
-                                {
-                                    "extension_id": "command.git",
-                                    "permission_id": "missing",
-                                }
-                            ],
+                            "x-hol-extension-targets": {
+                                "schemaVersion": "guard.policy-extension-targets.v1",
+                                "extensionIds": [],
+                                "permissionIds": ["command.git.permission.missing"],
+                            },
                         }
                     ]
                 }
@@ -94,7 +100,10 @@ def test_partial_apply_and_revision_rollback_fail_closed() -> None:
         store.apply(
             AppliedManagedControls(3, "new", "catalog", "new-effective", {}),
             validate=lambda _: None,
-            compile_projection=lambda _: (_ for _ in ()).throw(ValueError("boom")),
+            compile_projection=lambda _: PreparedProjection(
+                lambda: (_ for _ in ()).throw(ValueError("boom")),
+                lambda: None,
+            ),
         )
     assert store.current == original
 

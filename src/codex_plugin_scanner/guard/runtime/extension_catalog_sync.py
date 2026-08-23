@@ -17,10 +17,10 @@ from .extension_control_limits import (
 
 EXTENSION_CATALOG_SCHEMA_VERSION = "guard.extension-catalog.v1"
 MANAGED_CONTROLS_RUNTIME_CAPABILITIES = (
-    "guard.extension-catalog.v1",
-    "guard.managed-controls-atomic-apply.v1",
-    "guard.managed-extension-controls.v1",
-    "guard.policy-extension-targets.v1",
+    "extension-catalog.v1",
+    "extension-control-layer.v1",
+    "policy-extension-targets.v1",
+    "managed-controls-atomic-apply.v1",
 )
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -86,27 +86,54 @@ class ManagedControlsRuntimePostureWire(TypedDict):
 
 
 class PermissionLike(Protocol):
-    permission_id: str
-    label: str
-    configurable: bool
-    risk_tier: str
-    typed_capabilities: tuple[str, ...]
+    @property
+    def permission_id(self) -> str: ...
+
+    @property
+    def label(self) -> str: ...
+
+    @property
+    def configurable(self) -> bool: ...
+
+    @property
+    def risk_tier(self) -> str: ...
+
+    @property
+    def typed_capabilities(self) -> tuple[str, ...]: ...
 
 
 class ExtensionLike(Protocol):
-    extension_id: str
-    version: str
-    name: str
-    source: str
-    executables: tuple[str, ...]
-    ecosystem_ids: tuple[str, ...]
-    risk_classes: tuple[str, ...]
-    delegated_protection: str | None
-    permissions: tuple[PermissionLike, ...]
+    @property
+    def extension_id(self) -> str: ...
+
+    @property
+    def version(self) -> str: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def source(self) -> str: ...
+
+    @property
+    def executables(self) -> tuple[str, ...]: ...
+
+    @property
+    def ecosystem_ids(self) -> tuple[str, ...]: ...
+
+    @property
+    def risk_classes(self) -> tuple[str, ...]: ...
+
+    @property
+    def delegated_protection(self) -> str | None: ...
+
+    @property
+    def permissions(self) -> tuple[PermissionLike, ...]: ...
 
 
 class RegistryLike(Protocol):
-    extensions: tuple[ExtensionLike, ...]
+    @property
+    def extensions(self) -> tuple[ExtensionLike, ...]: ...
 
 
 def _code_unit_sorted(values: Iterable[str]) -> list[str]:
@@ -231,9 +258,7 @@ def build_managed_controls_runtime_posture(
         raise ValueError("catalog_digest must be a lowercase SHA-256 digest")
     if extension_authority_revision is not None and extension_authority_revision < 0:
         raise ValueError("extension_authority_revision cannot be negative")
-    if effective_projection_digest is not None and _SHA256.fullmatch(
-        effective_projection_digest
-    ) is None:
+    if effective_projection_digest is not None and _SHA256.fullmatch(effective_projection_digest) is None:
         raise ValueError("effective_projection_digest must be a lowercase SHA-256 digest")
     return {
         "extensionCatalogDigest": catalog_digest,

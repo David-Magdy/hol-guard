@@ -402,15 +402,14 @@ def _parse_control_layer(
             managed_controls=managed_controls,
             delegated_controls=delegated_controls,
         )
-    signed_cloud_layer: ExtensionControlLayer | None = None
-    if authority_mode in _SHARED_AUTHORITY_MODES:
-        signed_cloud_layer = ExtensionControlLayer(
-            schema_version=CONTROL_SCHEMA_VERSION,
-            kind=ControlLayerKind.SIGNED_CLOUD,
-            catalog_digest=registry.catalog_digest,
-            global_lockdown=global_lockdown,
-            controls=tuple(generic_controls),
-        )
+    projected_controls = generic_controls if authority_mode in _SHARED_AUTHORITY_MODES else managed_controls
+    signed_cloud_layer = ExtensionControlLayer(
+        schema_version=CONTROL_SCHEMA_VERSION,
+        kind=ControlLayerKind.SIGNED_CLOUD,
+        catalog_digest=registry.catalog_digest,
+        global_lockdown=global_lockdown,
+        controls=tuple(projected_controls),
+    )
     return (
         authority_mode,
         signed_cloud_layer,

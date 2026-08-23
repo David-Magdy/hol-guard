@@ -30,10 +30,23 @@ def test_acknowledgement_is_idempotent_and_monotonic() -> None:
     assert accept_acknowledgement(first, _ack(2)).revision == 2
     with pytest.raises(AcknowledgementError):
         accept_acknowledgement(_ack(2), _ack(1))
+    with pytest.raises(AcknowledgementError):
+        accept_acknowledgement(
+            _ack(2),
+            ManagedControlsAcknowledgement(3, "bundle-3", "catalog", "effective", 1),
+        )
 
 
 def test_drift_distinguishes_catalog_and_effective_mismatch() -> None:
-    expected = ExpectedManagedControlsState(1, "catalog", "effective")
+    expected = ExpectedManagedControlsState(1, "bundle-1", "catalog", "effective", 1)
     assert classify_drift(expected, _ack(1)) is DriftState.CURRENT
     assert classify_drift(expected, _ack(1, "other")) is DriftState.CATALOG_MISMATCH
     assert classify_drift(expected, None) is DriftState.PENDING
+    assert classify_drift(expected, _ack(2)) is DriftState.PENDING
+    assert (
+        classify_drift(
+            expected,
+            ManagedControlsAcknowledgement(1, "bundle-1", "catalog", "effective", 2),
+        )
+        is DriftState.PENDING
+    )

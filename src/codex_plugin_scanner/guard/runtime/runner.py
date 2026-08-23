@@ -45,6 +45,8 @@ from ..cloud_exceptions import (
 )
 from ..config import VALID_RECEIPT_REDACTION_LEVELS, GuardConfig, load_guard_config
 from ..edge_events import build_runtime_session_event
+from ..managed_controls_policy_bundle import parsed_managed_controls_from_validated_policy_bundle
+from ..managed_controls_policy_fields import ManagedControlsPolicyError, ParsedManagedControlsPolicy
 from ..mdm.network import managed_urlopen
 from ..models import GuardAction, GuardArtifact, HarnessDetection, PolicyDecision
 from ..package_firewall_defaults import extract_cloud_user_profile
@@ -94,6 +96,7 @@ from .approval_reuse import (
     APPROVAL_REUSE_CLAIM_FAILED,
     APPROVAL_REUSE_LAUNCH_IDENTITY_UNVERIFIED,
 )
+from .command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from .composition_rules import compose_action_from_signals
 from .decisions import (
     AUTHORITATIVE_DECISION_INCONSISTENT,
@@ -102,6 +105,8 @@ from .decisions import (
     rebuild_artifact_authority,
 )
 from .detectors import DetectorContext, DetectorRegistry, DetectorRunResult, register_default_detectors
+from .extension_catalog_sync import MANAGED_CONTROLS_RUNTIME_CAPABILITIES
+from .extension_control_authority import ExtensionControlAuthorityView
 from .prompt_injection import detect_prompt_injection_requests
 from .signals import RiskSignalV2
 from .supply_chain_bundle import (
@@ -2494,6 +2499,31 @@ def _policy_bundle_rejection_payload(reason: str | None) -> dict[str, object]:
     return payload
 
 
+def _managed_controls_negotiated_capabilities(
+    store: GuardStore,
+    sync_payload: dict[str, object] | None,
+) -> frozenset[str]:
+    """Return only capabilities explicitly confirmed by the current sync contract."""
+
+    raw: object = None
+    if isinstance(sync_payload, dict):
+        raw = sync_payload.get("managedControlsCapabilities")
+        if raw is None:
+            raw = sync_payload.get("negotiatedManagedControlsCapabilities")
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        return frozenset()
+    return frozenset(cast(list[str], raw)).intersection(MANAGED_CONTROLS_RUNTIME_CAPABILITIES)
+
+
+def _managed_controls_lkg_capabilities(
+    store: GuardStore,
+    policy_bundle: dict[str, object],
+) -> frozenset[str]:
+    """Use cached negotiation only for the exact authenticated LKG activation."""
+
+    return store.managed_controls_lkg_capabilities(policy_bundle).intersection(MANAGED_CONTROLS_RUNTIME_CAPABILITIES)
+
+
 def _build_canonical_policy_bundle_decisions(
     policy_bundle: dict[str, object],
     *,
@@ -2711,6 +2741,7 @@ def sync_receipts(
     workspace_dir: Path | None = None,
     include_aibom: bool = False,
     force_aibom: bool = False,
+    managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
 ) -> dict[str, object]:
     """Push local receipts to the configured sync endpoint."""
 
@@ -2903,7 +2934,12 @@ def sync_receipts(
     )
     candidate_policy_decisions: list[PolicyDecision] = []
     validated_policy_bundle: dict[str, object] | None = None
+    candidate_managed_controls: ParsedManagedControlsPolicy | None = None
+    candidate_managed_capabilities = frozenset[str]()
+    effective_managed_controls: ParsedManagedControlsPolicy | None = None
+    effective_managed_capabilities = frozenset[str]()
     effective_policy_bundle: dict[str, object] | None = None
+    retain_existing_policy_authority = False
     activation_last_error: dict[str, object] = {}
     trusted_policy_bundle_keys: tuple[PolicyBundleVerificationKey, ...] = ()
     update_last_good = False
@@ -2945,6 +2981,20 @@ def sync_receipts(
             validated_policy_bundle is not None
             and validated_policy_bundle.get("contractVersion") == POLICY_BUNDLE_V2_CONTRACT
         )
+        if validated_bundle_is_v2 and validated_policy_bundle is not None:
+            candidate_managed_capabilities = _managed_controls_negotiated_capabilities(
+                store,
+                policy_bundle_sync_payload,
+            )
+            try:
+                candidate_managed_controls = parsed_managed_controls_from_validated_policy_bundle(
+                    validated_policy_bundle,
+                    registry=BUILT_IN_COMMAND_EXTENSION_REGISTRY,
+                    negotiated_capabilities=candidate_managed_capabilities,
+                )
+            except ManagedControlsPolicyError as error:
+                validated_policy_bundle = None
+                policy_bundle_rejection_reason = error.code
         if validated_policy_bundle is not None:
             try:
                 if validated_bundle_is_v2:
@@ -3095,12 +3145,35 @@ def sync_receipts(
             # cannot leave the previously selected current/LKG bundle active.
             effective_policy_bundle = activation_bundle
             trusted_policy_bundle_keys = activation_keys
+            if activation_bundle.get("contractVersion") == POLICY_BUNDLE_V2_CONTRACT:
+                if (
+                    candidate_managed_controls is not None
+                    and validated_policy_bundle is not None
+                    and activation_bundle.get("bundleHash") == validated_policy_bundle.get("bundleHash")
+                ):
+                    effective_managed_controls = candidate_managed_controls
+                    effective_managed_capabilities = candidate_managed_capabilities
+                else:
+                    effective_managed_capabilities = _managed_controls_lkg_capabilities(store, activation_bundle)
+                    try:
+                        effective_managed_controls = parsed_managed_controls_from_validated_policy_bundle(
+                            activation_bundle,
+                            registry=BUILT_IN_COMMAND_EXTENSION_REGISTRY,
+                            negotiated_capabilities=effective_managed_capabilities,
+                        )
+                    except ManagedControlsPolicyError as error:
+                        activation_last_error = _policy_bundle_rejection_payload(error.code)
+                        store.add_event("policy_bundle/rejected", activation_last_error, now)
+                        effective_policy_bundle = None
+                        retain_existing_policy_authority = True
     if effective_policy_bundle is None:
-        store.clear_policy_bundle_authority(
-            now,
-            policy_bundle_last_error=activation_last_error,
-        )
-        _reset_cloud_receipt_redaction_authority(store, synced_at=now)
+        if not retain_existing_policy_authority:
+            store.clear_policy_bundle_authority(
+                now,
+                policy_bundle_last_error=activation_last_error,
+                managed_controls_publish=managed_controls_publish,
+            )
+            _reset_cloud_receipt_redaction_authority(store, synced_at=now)
     else:
         selected_policy_decisions = (
             candidate_policy_decisions
@@ -3148,6 +3221,9 @@ def sync_receipts(
                 ),
                 update_last_good=update_last_good,
                 policy_bundle_last_error=activation_last_error,
+                managed_controls_policy=effective_managed_controls,
+                managed_controls_negotiated_capabilities=effective_managed_capabilities,
+                managed_controls_publish=managed_controls_publish,
                 remote_write_authorized=True,
             )
             if not activated:
@@ -3906,6 +3982,7 @@ def sync_local_guard_cloud_proof(
     home_dir: Path | None = None,
     workspace_dir: Path | None = None,
     include_aibom: bool = False,
+    managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
 ) -> dict[str, object]:
     """Publish the local Guard runtime session before syncing receipts."""
     resolved_now = now or _now()
@@ -3930,6 +4007,7 @@ def sync_local_guard_cloud_proof(
             home_dir=home_dir,
             workspace_dir=workspace_dir,
             include_aibom=include_aibom,
+            managed_controls_publish=managed_controls_publish,
         )
         summary = dict(receipts_summary)
         summary.update(

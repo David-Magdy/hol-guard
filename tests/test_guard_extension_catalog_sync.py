@@ -99,9 +99,7 @@ def test_wire_projection_is_order_independent_and_cross_language_canonical() -> 
         "command.package-manager",
         "command.shell",
     ]
-    canonical = json.dumps(
-        first["extensions"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    )
+    canonical = json.dumps(first["extensions"], sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     assert first["catalogDigest"] == hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -149,9 +147,7 @@ def test_runtime_posture_uses_cloud_capabilities_and_bounded_digests() -> None:
         extension_authority_revision=7,
         effective_projection_digest="b" * 64,
     )
-    assert posture["managedControlsCapabilities"] == list(
-        MANAGED_CONTROLS_RUNTIME_CAPABILITIES
-    )
+    assert posture["managedControlsCapabilities"] == list(MANAGED_CONTROLS_RUNTIME_CAPABILITIES)
     assert posture["extensionAuthorityRevision"] == 7
     assert posture["effectiveProjectionDigest"] == "b" * 64
 

@@ -35,6 +35,8 @@ def accept_acknowledgement(
         return previous
     if candidate.revision < previous.revision:
         raise AcknowledgementError("acknowledgement revision moved backwards")
+    if candidate.extension_authority_revision < previous.extension_authority_revision:
+        raise AcknowledgementError("extension authority revision moved backwards")
     if candidate.revision == previous.revision:
         raise AcknowledgementError("same revision has conflicting evidence")
     return candidate
