@@ -36,6 +36,7 @@ class ApprovalGatePublicConfig:
     strict_all_decisions: bool
     totp_enabled: bool
     totp_pending: bool
+    totp_recent_satisfied: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -49,6 +50,7 @@ class ApprovalGatePublicConfig:
             "strict_all_decisions": self.strict_all_decisions,
             "totp_enabled": self.totp_enabled,
             "totp_pending": self.totp_pending,
+            "totp_recent_satisfied": self.totp_recent_satisfied,
         }
 
 

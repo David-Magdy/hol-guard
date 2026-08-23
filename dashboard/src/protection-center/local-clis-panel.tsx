@@ -4,6 +4,7 @@ import { HiMiniArrowLeft, HiMiniPlus } from "react-icons/hi2";
 
 import {
   ApprovalProofFieldInputs,
+  approvalProofRecentlySatisfied,
   buildApprovalProofCredentials,
   isApprovalProofSubmitDisabled,
 } from "../approval-proof-inline";
@@ -60,6 +61,16 @@ function reviewTitle(name: string, state: LocalCliState): string {
   if (state === "allowed") return `Save ${name} command settings`;
   if (state === "blocked") return `Block ${name}`;
   return `Remove ${name}`;
+}
+
+function reviewModalDetail(gate: GuardApprovalGatePublicConfig | null): string {
+  if (approvalProofRecentlySatisfied(gate)) {
+    return "Recently confirmed with your authenticator. A new code is not needed yet.";
+  }
+  if (gate?.totp_enabled === true) {
+    return "Enter the current authenticator code to save these settings on this device.";
+  }
+  return "This stays on this device. Guard Cloud can keep the same custom extension on your other machines.";
 }
 
 function customExtensionUnits(surface: LocalCliItem["surface"]): { unit: string; units: string; source: string } {
@@ -150,7 +161,7 @@ export function LocalCliDetail(props: {
   onBack: () => void;
   onRefresh: () => Promise<void>;
 }) {
-  const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
+  const { resolvedApprovalGate, resolveApprovalGate, refreshApprovalGate } = useResolvedApprovalGate(null);
   const [pending, setPending] = useState<LocalCliState | null>(null);
   const [commands, setCommands] = useState(props.item.commands);
   const [busy, setBusy] = useState(false);
@@ -160,11 +171,17 @@ export function LocalCliDetail(props: {
   useEffect(() => {
     setCommands(props.item.commands);
   }, [props.item.cli_id, props.item.grant_revision]);
-  const requestAdd = useCallback(() => setPending("allowed"), []);
-  const requestAllow = useCallback(() => setPending("allowed"), []);
-  const requestBlock = useCallback(() => setPending("blocked"), []);
-  const requestRemove = useCallback(() => setPending("unset"), []);
-  const requestSaveCommands = useCallback(() => setPending(props.item.state === "blocked" ? "blocked" : "allowed"), [props.item.state]);
+  const openPending = useCallback(async (state: LocalCliState) => {
+    await refreshApprovalGate();
+    setPending(state);
+  }, [refreshApprovalGate]);
+  const requestAdd = useCallback(() => openPending("allowed"), [openPending]);
+  const requestAllow = useCallback(() => openPending("allowed"), [openPending]);
+  const requestBlock = useCallback(() => openPending("blocked"), [openPending]);
+  const requestRemove = useCallback(() => openPending("unset"), [openPending]);
+  const requestSaveCommands = useCallback(() => {
+    openPending(props.item.state === "blocked" ? "blocked" : "allowed");
+  }, [openPending, props.item.state]);
   const handleCommandState = useCallback((commandId: string, state: LocalCliCommandState) => {
     setCommands((current) => withCommandState(current, commandId, state));
   }, []);
@@ -192,13 +209,14 @@ export function LocalCliDetail(props: {
       await previewLocalCliMutation(payload);
       await applyLocalCliMutation(payload);
       await props.onRefresh();
+      await refreshApprovalGate();
       setPending(null);
     } catch (caught) {
       setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not update this custom extension.");
     } finally {
       setBusy(false);
     }
-  }, [commands, pending, props]);
+  }, [commands, pending, props, refreshApprovalGate]);
 
   useEffect(() => {
     void resolveApprovalGate({ failClosed: true }).catch(() => {
@@ -222,12 +240,24 @@ export function LocalCliDetail(props: {
         <div className="mt-5 flex flex-wrap gap-3">
           {added ? (
             <>
-              <button type="button" className="min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white" onClick={requestAllow}>
-                Allow this extension's commands
-              </button>
-              <button type="button" className="min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark" onClick={requestBlock}>
-                Block this extension
-              </button>
+              {props.item.state === "allowed" ? (
+                <p className="inline-flex min-h-11 items-center rounded-xl bg-slate-100 px-4 text-sm font-semibold text-brand-dark">
+                  Allowed on this device
+                </p>
+              ) : (
+                <button type="button" className="min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white" onClick={requestAllow}>
+                  Allow this extension's commands
+                </button>
+              )}
+              {props.item.state === "blocked" ? (
+                <p className="inline-flex min-h-11 items-center rounded-xl bg-slate-100 px-4 text-sm font-semibold text-brand-dark">
+                  Blocked
+                </p>
+              ) : (
+                <button type="button" className="min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark" onClick={requestBlock}>
+                  Block this extension
+                </button>
+              )}
               <button type="button" className="min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark/80" onClick={requestRemove}>
                 Remove custom extension
               </button>
@@ -295,7 +325,9 @@ function CustomExtensionReviewModal(props: {
     setPassword(event.target.value);
   }, []);
   const handleTotp = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    setTotp(event.target.value);
+    const digits = event.target.value.replace(/\D/g, "").slice(0, 6);
+    event.target.value = digits;
+    setTotp(digits);
   }, []);
   const handleSubmit = useCallback((event: FormEvent) => {
     event.preventDefault();
@@ -314,7 +346,7 @@ function CustomExtensionReviewModal(props: {
       <form ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="custom-extension-review-title" onSubmit={handleSubmit} className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none">
         <h2 id="custom-extension-review-title" className="text-xl font-semibold text-brand-dark">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-brand-dark/80">
-          This stays on this device. Guard Cloud can keep the same custom extension on your other machines.
+          {reviewModalDetail(props.approvalGate)}
         </p>
         <div className="mt-5">
           <ApprovalProofFieldInputs

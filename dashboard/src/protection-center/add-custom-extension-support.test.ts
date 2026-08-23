@@ -4,6 +4,7 @@ import type { LocalCliItem } from "../local-cli-api";
 import {
   addDialogSubmitLabel,
   dialogIntro,
+  enrollConfirmCopy,
   filterCountCopy,
   suggestionSummary,
 } from "./add-custom-extension-support";
@@ -46,7 +47,14 @@ assert.match(filterCountCopy(1, 8), /1 of 8 scripts match/);
 assert.match(suggestionSummary(packageItem), /1 script from ads-app/);
 assert.equal(
   addDialogSubmitLabel({ recognized: packageItem, busy: false, pending: "allowed" }),
+  "Continue",
+);
+assert.equal(
+  addDialogSubmitLabel({ recognized: packageItem, busy: false, pending: "allowed", step: "confirm" }),
   "Allow these scripts",
 );
+assert.match(enrollConfirmCopy("mcp", true, true), /Recently confirmed/);
+assert.match(enrollConfirmCopy("mcp", false, true), /authenticator code/);
+assert.match(enrollConfirmCopy("mcp", false, false), /approval password/);
 
 console.log("add-custom-extension-support.test.ts: all assertions passed");

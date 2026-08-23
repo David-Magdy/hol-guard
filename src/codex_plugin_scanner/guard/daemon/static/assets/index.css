@@ -4098,6 +4098,10 @@
     padding-top: calc(var(--spacing) * 8);
   }
 
+  .pr-3 {
+    padding-right: calc(var(--spacing) * 3);
+  }
+
   .pr-4 {
     padding-right: calc(var(--spacing) * 4);
   }
@@ -7374,7 +7378,7 @@ input:focus-visible, button:focus-visible, a:focus-visible {
 }
 
 .guard-pattern-row {
-  padding: .9rem 0;
+  padding: .95rem 1rem;
 }
 
 @media (min-width: 40rem) {

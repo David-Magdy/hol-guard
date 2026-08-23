@@ -1,5 +1,5 @@
-import { ax as fetchLocalCliApi, r as reactExports, ay as fetchExtensionControlApi, j as jsxRuntimeExports, a6 as HiMiniLockClosed, M as HiMiniExclamationTriangle, az as HiMiniArrowPath, t as HiMiniShieldCheck, aA as HiMiniInformationCircle, aB as isApprovalProofSubmitDisabled, z as HiMiniXMark, aC as ApprovalProofFieldInputs, aD as buildApprovalProofCredentials, aE as GenIcon, N as HiMiniBolt, aF as HiMiniGlobeAlt, aG as HiMiniCube, I as HiMiniCloud, aH as HiMiniServerStack, b as HiMiniCommandLine, aI as HiMiniFolder, aJ as FaWindows, aK as FaAws, o as HiMiniCheckCircle, c as HiMiniChevronRight, C as HiMiniChevronDown, aL as HiMiniArrowLeft, aM as HiMiniPlus, $ as HiMiniClipboardDocumentCheck, a0 as HiMiniClipboard, as as HiMiniMagnifyingGlass, y as HiMiniSparkles, aN as HiMiniNoSymbol, ar as WorkspacePageHeader, aO as guardAwareHref } from "../guard-dashboard.js";
-import { u as useResolvedApprovalGate, A as ApprovalProofModal } from "./approval-proof-modal.js";
+import { ax as fetchLocalCliApi, r as reactExports, ay as fetchExtensionControlApi, j as jsxRuntimeExports, az as useResolvedApprovalGate, a6 as HiMiniLockClosed, M as HiMiniExclamationTriangle, aA as HiMiniArrowPath, t as HiMiniShieldCheck, aB as HiMiniInformationCircle, aC as isApprovalProofSubmitDisabled, z as HiMiniXMark, aD as ApprovalProofFieldInputs, aE as buildApprovalProofCredentials, aF as GenIcon, N as HiMiniBolt, aG as HiMiniGlobeAlt, aH as HiMiniCube, I as HiMiniCloud, aI as HiMiniServerStack, b as HiMiniCommandLine, aJ as HiMiniFolder, aK as FaWindows, aL as FaAws, o as HiMiniCheckCircle, c as HiMiniChevronRight, C as HiMiniChevronDown, aM as approvalProofRecentlySatisfied, aN as HiMiniArrowLeft, aO as HiMiniPlus, $ as HiMiniClipboardDocumentCheck, a0 as HiMiniClipboard, as as HiMiniMagnifyingGlass, y as HiMiniSparkles, aP as HiMiniNoSymbol, ar as WorkspacePageHeader, aQ as guardAwareHref } from "../guard-dashboard.js";
+import { A as ApprovalProofModal } from "./approval-proof-modal.js";
 const EXTENSION_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const RULE_ID_PATTERN = /^command\.[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 const DEFAULT_EXTENSION_DETAIL_URL_STATE = {
@@ -2145,6 +2145,11 @@ function commandNestingDepth(command) {
   const colons = command.name.split(":").length - 1;
   return colons > 0 ? colons : 0;
 }
+function commandRowUsage(name, usage) {
+  const trimmed = usage.trim();
+  if (trimmed === "" || trimmed === name) return null;
+  return trimmed;
+}
 function CustomExtensionCommandList(props) {
   if (props.commands.length === 0) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm leading-6 text-brand-dark/75", children: emptyCommandCopy(props.surface) });
@@ -2176,14 +2181,14 @@ function CustomExtensionCommandRow(props) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "article",
     {
-      className: "guard-pattern-row",
+      className: "guard-pattern-row px-4 py-3.5",
       "data-command-id": props.command.command_id,
-      style: depth > 0 ? { paddingLeft: `${0.75 + depth * 1.1}rem` } : void 0,
+      style: depth > 0 ? { paddingLeft: `${1.25 + depth * 1.1}rem` } : void 0,
       children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 pr-3", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "text-sm font-semibold text-brand-dark", children: props.command.name }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "guard-pattern-example mt-1", title: props.command.usage, children: props.command.usage }),
-          props.command.description ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-xs leading-5 text-brand-dark/75", children: props.command.description }) : null
+          commandRowUsage(props.command.name, props.command.usage) ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "guard-pattern-example mt-1", title: props.command.usage, children: props.command.usage }) : null,
+          props.command.description ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1.5 text-xs leading-5 text-brand-dark/70", children: props.command.description }) : null
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           CommandDraftControl,
@@ -2801,6 +2806,9 @@ function addDialogSubmitLabel(input) {
   if (input.recognized === null) {
     return input.busy ? "Looking…" : "Find this tool";
   }
+  if (input.step !== "confirm") {
+    return "Continue";
+  }
   if (input.busy) {
     return "Saving…";
   }
@@ -2808,6 +2816,26 @@ function addDialogSubmitLabel(input) {
     return blockActionLabel(input.recognized.surface);
   }
   return allowActionLabel(input.recognized.surface);
+}
+function enrollConfirmCopy(surface, recentlySatisfied, totpEnabled) {
+  if (recentlySatisfied) {
+    return "Recently confirmed with your authenticator. Save these settings.";
+  }
+  if (!totpEnabled) {
+    return "Enter your approval password to save these settings.";
+  }
+  if (surface === "mcp") {
+    return "Enter the current authenticator code to save this server.";
+  }
+  if (surface === "package-scripts") {
+    return "Enter the current authenticator code to save these scripts.";
+  }
+  return "Enter the current authenticator code to save this tool.";
+}
+function enrollSubmitDisabled(input) {
+  if (input.recognized === null) return input.command.trim() === "" || input.busy;
+  if (!input.confirming) return input.busy;
+  return !input.proofReady || input.proofBlocked;
 }
 function commandFieldLabel(surface) {
   if (surface === "package-scripts") return "Find a script";
@@ -2948,272 +2976,8 @@ function SuggestionButton(props) {
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate font-mono text-xs text-brand-dark/60", children: props.item.example_label })
   ] });
 }
-function randomToken$2() {
-  return crypto.randomUUID().replaceAll("-", "");
-}
-function AddCustomExtensionWorkspace(props) {
-  const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
-  const [command, setCommand] = reactExports.useState("");
-  const [recognized, setRecognized] = reactExports.useState(null);
-  const [commands, setCommands] = reactExports.useState([]);
-  const [summary, setSummary] = reactExports.useState(null);
-  const [pending, setPending] = reactExports.useState(null);
-  const [password, setPassword] = reactExports.useState("");
-  const [totp, setTotp] = reactExports.useState("");
-  const [busy, setBusy] = reactExports.useState(false);
-  const [error, setError] = reactExports.useState(null);
-  const [reviewingScripts, setReviewingScripts] = reactExports.useState(false);
-  const recognizeGeneration = reactExports.useRef(0);
-  const autoRecognizedCommand = reactExports.useRef("");
-  const didAutoSelect = reactExports.useRef(false);
-  const rememberedProjects = suggestedPackageScriptExtensions(props.items);
-  const packageScriptSuggestions = filterExtensionSuggestions(rememberedProjects, command).slice(0, 8);
-  const harnessSuggestions = filterExtensionSuggestions(suggestedHarnessExtensions(props.items), command).slice(0, 8);
-  const seenSuggestions = filterExtensionSuggestions(suggestedSeenExtensions(props.items), command).slice(0, 6);
-  const hasSuggestions = packageScriptSuggestions.length > 0 || harnessSuggestions.length > 0 || seenSuggestions.length > 0;
-  reactExports.useEffect(() => {
-    void resolveApprovalGate({ failClosed: true }).catch(() => {
-      setError("Guard could not load local approval settings yet.");
-    });
-  }, [resolveApprovalGate]);
-  const handleCommand = reactExports.useCallback((event) => {
-    const value = event.target.value;
-    const keepCatalog = recognized?.surface === "package-scripts" && keepsPackageScriptCatalog(value, commands);
-    setCommand(value);
-    setError(null);
-    if (keepCatalog) return;
-    recognizeGeneration.current += 1;
-    autoRecognizedCommand.current = "";
-    setBusy(false);
-    setRecognized(null);
-    setCommands([]);
-    setSummary(null);
-    setPending(null);
-    setReviewingScripts(false);
-  }, [commands, recognized]);
-  const handlePassword = reactExports.useCallback((event) => {
-    setPassword(event.target.value);
-  }, []);
-  const handleTotp = reactExports.useCallback((event) => {
-    setTotp(event.target.value);
-  }, []);
-  const runRecognize = reactExports.useCallback(async (commandText, cliId, silent = false) => {
-    const generation = recognizeGeneration.current + 1;
-    recognizeGeneration.current = generation;
-    setBusy(true);
-    if (!silent) setError(null);
-    try {
-      const result = await recognizeLocalCli(commandText, cliId ? { cliId } : void 0);
-      if (recognizeGeneration.current !== generation) return;
-      setRecognized(result.item);
-      setCommands(result.item.commands);
-      setSummary(result.summary);
-      setPending("allowed");
-      setError(null);
-    } catch (caught) {
-      if (recognizeGeneration.current !== generation) return;
-      setRecognized(null);
-      setSummary(null);
-      if (!silent) {
-        setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not identify that command.");
-      }
-    } finally {
-      if (recognizeGeneration.current === generation) setBusy(false);
-    }
-  }, []);
-  const selectSuggestion = reactExports.useCallback((item) => {
-    if (item.surface !== "package-scripts") setCommand(item.example_label);
-    setError(null);
-    if (item.surface === "mcp" && item.commands.length === 0) {
-      setRecognized(null);
-      setCommands([]);
-      setSummary(null);
-      setPending(null);
-      void runRecognize(item.example_label, item.cli_id);
-      return;
-    }
-    setRecognized(item);
-    setCommands(item.commands);
-    setSummary(suggestionSummary(item));
-    setPending("allowed");
-    setReviewingScripts(false);
-  }, [runRecognize]);
-  const findTool = reactExports.useCallback(async () => {
-    await runRecognize(command);
-  }, [command, runRecognize]);
-  reactExports.useEffect(() => {
-    if (didAutoSelect.current || recognized !== null || command.trim() !== "") return;
-    const preferred = preferredPackageScriptExtension(props.items);
-    if (preferred === null) return;
-    didAutoSelect.current = true;
-    selectSuggestion(preferred);
-  }, [command, props.items, recognized, selectSuggestion]);
-  reactExports.useEffect(() => {
-    const trimmed = command.trim();
-    if (recognized !== null || !looksLikePackageScriptPaste(trimmed)) return;
-    if (autoRecognizedCommand.current === trimmed) return;
-    const handle = window.setTimeout(() => {
-      autoRecognizedCommand.current = trimmed;
-      void runRecognize(trimmed, void 0, true);
-    }, 280);
-    return () => window.clearTimeout(handle);
-  }, [busy, command, recognized, runRecognize]);
-  const requestAllow = reactExports.useCallback(() => setPending("allowed"), []);
-  const requestBlock = reactExports.useCallback(() => setPending("blocked"), []);
-  const openScriptReview = reactExports.useCallback(() => setReviewingScripts(true), []);
-  const closeScriptReview = reactExports.useCallback(() => setReviewingScripts(false), []);
-  const applyBulk = reactExports.useCallback((state) => {
-    setCommands((current) => applyBulkCommandState(
-      current,
-      state,
-      recognized?.surface === "package-scripts" ? /* @__PURE__ */ new Set(["root", "other"]) : /* @__PURE__ */ new Set()
-    ));
-    setPending(state === "block" ? "blocked" : "allowed");
-  }, [recognized]);
-  const handleSubmit = reactExports.useCallback(async (event) => {
-    event.preventDefault();
-    if (recognized === null) {
-      await findTool();
-      return;
-    }
-    if (pending === null) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const payload = {
-        cli_id: recognized.cli_id,
-        identity_hash: recognized.identity_hash,
-        name: recognized.name,
-        kind: recognized.kind,
-        example_label: recognized.example_label,
-        interpreter_name: recognized.interpreter_name,
-        state: pending,
-        previous_revision: props.revision,
-        session_nonce: randomToken$2(),
-        commands: enrollmentCommandStates(commands, pending, recognized.surface),
-        ...buildApprovalProofCredentials(resolvedApprovalGate, {
-          approvalPassword: password,
-          approvalTotpCode: totp
-        })
-      };
-      await previewLocalCliMutation(payload);
-      await applyLocalCliMutation(payload);
-      props.onAdded(recognized.cli_id);
-    } catch (caught) {
-      setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not add this custom extension.");
-    } finally {
-      setBusy(false);
-    }
-  }, [commands, findTool, password, pending, props, recognized, resolvedApprovalGate, totp]);
-  const handleCommandState = reactExports.useCallback((commandId, state) => {
-    setCommands((current) => withCommandState(current, commandId, state));
-  }, []);
-  const proofReady = pending !== null && recognized !== null;
-  const submitDisabled = recognized === null ? command.trim() === "" || busy : !proofReady || isApprovalProofSubmitDisabled(
-    resolvedApprovalGate,
-    { approvalPassword: password, approvalTotpCode: totp },
-    busy
-  );
-  const showingPackageCatalog = recognized?.surface === "package-scripts";
-  const showingMcpCatalog = recognized?.surface === "mcp";
-  const showingCatalog = showingPackageCatalog || showingMcpCatalog;
-  const enrollable = showingPackageCatalog ? enrollablePackageScriptCommands(commands) : commands;
-  const visibleCommands = showingPackageCatalog ? filterPackageScriptCommands(enrollable, command) : commands;
-  const previewNames = visibleCommands.slice(0, 8).map((entry) => entry.name);
-  const bulkState = bulkCommandState(enrollable);
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-    "form",
-    {
-      "data-testid": "add-custom-extension",
-      onSubmit: handleSubmit,
-      className: "flex min-h-[70vh] w-full flex-col",
-      children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { type: "button", onClick: props.onBack, className: "inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-1 text-sm font-semibold text-brand-dark/80 hover:text-brand-dark", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowLeft, { className: "size-4", "aria-hidden": "true" }),
-          "Extensions"
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mt-3 max-w-2xl pb-4", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { id: "add-custom-extension-title", className: "text-2xl font-semibold tracking-tight text-brand-dark", children: "Add a custom extension" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-slate-500", children: dialogIntro(rememberedProjects.length > 0, recognized?.surface ?? null) })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "custom-extension-command", className: "mt-4 block text-sm font-semibold text-brand-dark", children: commandFieldLabel(recognized?.surface ?? null) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "input",
-          {
-            id: "custom-extension-command",
-            value: command,
-            onChange: handleCommand,
-            spellCheck: false,
-            autoComplete: "off",
-            placeholder: showingPackageCatalog ? "guard:audit" : "npm run guard:audit",
-            className: "mt-2 min-h-11 w-full max-w-xl rounded-xl border border-slate-300 bg-white px-3 text-sm text-brand-dark placeholder:text-brand-dark/40 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/30"
-          }
-        ),
-        recognized !== null && showingPackageCatalog ? /* @__PURE__ */ jsxRuntimeExports.jsx(ProjectSwitcher, { items: rememberedProjects, currentId: recognized.cli_id, onSelect: selectSuggestion }) : null,
-        recognized ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-5 max-w-3xl", "aria-labelledby": "custom-extension-selected", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "custom-extension-selected", className: "text-xl font-semibold tracking-tight text-brand-dark", children: recognized.name }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 font-mono text-xs text-brand-dark/70", children: recognized.source_label ? `${recognized.source_label} · ${recognized.example_label}` : recognized.example_label }),
-          summary ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-2xl text-sm leading-6 text-slate-500", children: summary }) : null,
-          showingCatalog && enrollable.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(BulkPolicyPicker, { value: bulkState, disabled: busy, onChange: applyBulk }) : null,
-          showingCatalog ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-            CatalogPreview,
-            {
-              query: command,
-              showFilterCount: showingPackageCatalog,
-              previewNames,
-              visibleCount: visibleCommands.length,
-              totalCount: enrollable.length,
-              reviewing: reviewingScripts,
-              adjustLabel: showingMcpCatalog ? "Adjust individual tools" : "Adjust individual scripts",
-              hideLabel: "Hide individual settings",
-              onOpenReview: openScriptReview,
-              onCloseReview: closeScriptReview
-            }
-          ) : null,
-          (!showingCatalog || reviewingScripts) && visibleCommands.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 overflow-auto rounded-2xl border border-slate-200 bg-white", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-            CustomExtensionCommandList,
-            {
-              commands: visibleCommands,
-              disabled: busy,
-              surface: recognized.surface,
-              onChange: handleCommandState
-            }
-          ) }) : null
-        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
-          SuggestionPanel,
-          {
-            query: command,
-            hasSuggestions,
-            packageScriptSuggestions,
-            harnessSuggestions,
-            seenSuggestions,
-            onSelect: selectSuggestion
-          }
-        ),
-        error ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 max-w-xl", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: error }) }) : null,
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sticky bottom-0 mt-auto border-t border-slate-200 bg-white py-4", children: [
-          proofReady ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-4 max-w-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-            ApprovalProofFieldInputs,
-            {
-              approvalGate: resolvedApprovalGate,
-              approvalPassword: password,
-              approvalTotpCode: totp,
-              onApprovalPasswordChange: handlePassword,
-              onApprovalTotpCodeChange: handleTotp
-            }
-          ) }) : null,
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-3", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "submit", disabled: submitDisabled, className: "min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white disabled:opacity-60", children: addDialogSubmitLabel({ recognized, busy, pending }) }),
-            recognized && pending === "allowed" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: requestBlock, className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark", children: blockActionLabel(recognized.surface) }) : null,
-            recognized && pending === "blocked" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: requestAllow, className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark", children: allowActionLabel(recognized.surface) }) : null
-          ] })
-        ] })
-      ]
-    }
-  );
-}
 function CatalogPreview(props) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5", children: [
     props.showFilterCount && props.query.trim() !== "" ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs leading-5 text-brand-dark/60", children: filterCountCopy(props.visibleCount, props.totalCount) }) : null,
     props.previewNames.length > 0 && !props.reviewing ? /* @__PURE__ */ jsxRuntimeExports.jsxs("ul", { className: "mt-3 flex flex-wrap gap-2", children: [
       props.previewNames.map((name) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { className: "rounded-full bg-slate-100 px-3 py-1.5 font-mono text-xs text-brand-dark", children: name }, name)),
@@ -3228,10 +2992,11 @@ function CatalogPreview(props) {
       {
         type: "button",
         onClick: props.reviewing ? props.onCloseReview : props.onOpenReview,
-        className: "mt-3 min-h-11 text-sm font-semibold text-brand-blue",
+        className: "mt-4 min-h-11 text-sm font-semibold text-brand-blue",
         children: props.reviewing ? props.hideLabel : props.adjustLabel
       }
-    )
+    ),
+    props.reviewing ? props.children : null
   ] });
 }
 function BulkPolicyPicker(props) {
@@ -3297,6 +3062,329 @@ function BulkPolicyChoice(props) {
     }
   );
 }
+function randomToken$2() {
+  return crypto.randomUUID().replaceAll("-", "");
+}
+function AddCustomExtensionWorkspace(props) {
+  const { resolvedApprovalGate, resolveApprovalGate, refreshApprovalGate } = useResolvedApprovalGate(null);
+  const [command, setCommand] = reactExports.useState("");
+  const [recognized, setRecognized] = reactExports.useState(null);
+  const [commands, setCommands] = reactExports.useState([]);
+  const [summary, setSummary] = reactExports.useState(null);
+  const [pending, setPending] = reactExports.useState(null);
+  const [step, setStep] = reactExports.useState("pick");
+  const [password, setPassword] = reactExports.useState("");
+  const [totp, setTotp] = reactExports.useState("");
+  const [busy, setBusy] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  const [reviewingScripts, setReviewingScripts] = reactExports.useState(false);
+  const recognizeGeneration = reactExports.useRef(0);
+  const autoRecognizedCommand = reactExports.useRef("");
+  const didAutoSelect = reactExports.useRef(false);
+  const rememberedProjects = suggestedPackageScriptExtensions(props.items);
+  const packageScriptSuggestions = filterExtensionSuggestions(rememberedProjects, command).slice(0, 8);
+  const harnessSuggestions = filterExtensionSuggestions(suggestedHarnessExtensions(props.items), command).slice(0, 8);
+  const seenSuggestions = filterExtensionSuggestions(suggestedSeenExtensions(props.items), command).slice(0, 6);
+  const hasSuggestions = packageScriptSuggestions.length > 0 || harnessSuggestions.length > 0 || seenSuggestions.length > 0;
+  reactExports.useEffect(() => {
+    void resolveApprovalGate({ failClosed: true }).catch(() => {
+      setError("Guard could not load local approval settings yet.");
+    });
+  }, [resolveApprovalGate]);
+  const resetRecognition = reactExports.useCallback(() => {
+    recognizeGeneration.current += 1;
+    autoRecognizedCommand.current = "";
+    setBusy(false);
+    setRecognized(null);
+    setCommands([]);
+    setSummary(null);
+    setPending(null);
+    setReviewingScripts(false);
+    setStep("pick");
+  }, []);
+  const handleCommand = reactExports.useCallback((event) => {
+    const value = event.target.value;
+    const keepCatalog = recognized?.surface === "package-scripts" && keepsPackageScriptCatalog(value, commands);
+    setCommand(value);
+    setError(null);
+    if (keepCatalog) return;
+    resetRecognition();
+  }, [commands, recognized, resetRecognition]);
+  const handlePassword = reactExports.useCallback((event) => {
+    setPassword(event.target.value);
+  }, []);
+  const handleTotp = reactExports.useCallback((event) => {
+    const digits = event.target.value.replace(/\D/g, "").slice(0, 6);
+    event.target.value = digits;
+    setTotp(digits);
+  }, []);
+  const markRecognized = reactExports.useCallback((item, nextSummary) => {
+    setRecognized(item);
+    setCommands(item.commands);
+    setSummary(nextSummary);
+    setPending("allowed");
+    setReviewingScripts(false);
+    setStep("review");
+  }, []);
+  const runRecognize = reactExports.useCallback(async (commandText, cliId, silent = false) => {
+    const generation = recognizeGeneration.current + 1;
+    recognizeGeneration.current = generation;
+    setBusy(true);
+    if (!silent) setError(null);
+    try {
+      const result = await recognizeLocalCli(commandText, cliId ? { cliId } : void 0);
+      if (recognizeGeneration.current !== generation) return;
+      markRecognized(result.item, result.summary);
+      setError(null);
+    } catch (caught) {
+      if (recognizeGeneration.current !== generation) return;
+      setRecognized(null);
+      setSummary(null);
+      setStep("pick");
+      if (!silent) {
+        setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not identify that command.");
+      }
+    } finally {
+      if (recognizeGeneration.current === generation) setBusy(false);
+    }
+  }, [markRecognized]);
+  const selectSuggestion = reactExports.useCallback((item) => {
+    if (item.surface !== "package-scripts") setCommand(item.example_label);
+    setError(null);
+    if (item.surface === "mcp" && item.commands.length === 0) {
+      setRecognized(null);
+      setCommands([]);
+      setSummary(null);
+      setPending(null);
+      setStep("pick");
+      void runRecognize(item.example_label, item.cli_id);
+      return;
+    }
+    markRecognized(item, suggestionSummary(item));
+  }, [markRecognized, runRecognize]);
+  const findTool = reactExports.useCallback(async () => {
+    await runRecognize(command);
+  }, [command, runRecognize]);
+  reactExports.useEffect(() => {
+    if (didAutoSelect.current || recognized !== null || command.trim() !== "") return;
+    const preferred = preferredPackageScriptExtension(props.items);
+    if (preferred === null) return;
+    didAutoSelect.current = true;
+    selectSuggestion(preferred);
+  }, [command, props.items, recognized, selectSuggestion]);
+  reactExports.useEffect(() => {
+    const trimmed = command.trim();
+    if (recognized !== null || !looksLikePackageScriptPaste(trimmed)) return;
+    if (autoRecognizedCommand.current === trimmed) return;
+    const handle = window.setTimeout(() => {
+      autoRecognizedCommand.current = trimmed;
+      void runRecognize(trimmed, void 0, true);
+    }, 280);
+    return () => window.clearTimeout(handle);
+  }, [busy, command, recognized, runRecognize]);
+  const requestAllow = reactExports.useCallback(() => setPending("allowed"), []);
+  const requestBlock = reactExports.useCallback(() => setPending("blocked"), []);
+  const openScriptReview = reactExports.useCallback(() => setReviewingScripts(true), []);
+  const closeScriptReview = reactExports.useCallback(() => setReviewingScripts(false), []);
+  const backToReview = reactExports.useCallback(() => {
+    setStep("review");
+    setError(null);
+  }, []);
+  const applyBulk = reactExports.useCallback((state) => {
+    setCommands((current) => applyBulkCommandState(
+      current,
+      state,
+      recognized?.surface === "package-scripts" ? /* @__PURE__ */ new Set(["root", "other"]) : /* @__PURE__ */ new Set()
+    ));
+    setPending(state === "block" ? "blocked" : "allowed");
+  }, [recognized]);
+  const handleSubmit = reactExports.useCallback(async (event) => {
+    event.preventDefault();
+    if (recognized === null) {
+      await findTool();
+      return;
+    }
+    if (step !== "confirm") {
+      setStep("confirm");
+      setError(null);
+      setBusy(true);
+      try {
+        await refreshApprovalGate({ failClosed: true });
+      } catch {
+        setError("Guard could not load local approval settings yet.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    if (pending === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = {
+        cli_id: recognized.cli_id,
+        identity_hash: recognized.identity_hash,
+        name: recognized.name,
+        kind: recognized.kind,
+        example_label: recognized.example_label,
+        interpreter_name: recognized.interpreter_name,
+        state: pending,
+        previous_revision: props.revision,
+        session_nonce: randomToken$2(),
+        commands: enrollmentCommandStates(commands, pending, recognized.surface),
+        ...buildApprovalProofCredentials(resolvedApprovalGate, {
+          approvalPassword: password,
+          approvalTotpCode: totp
+        })
+      };
+      await previewLocalCliMutation(payload);
+      await applyLocalCliMutation(payload);
+      await refreshApprovalGate();
+      props.onAdded(recognized.cli_id);
+    } catch (caught) {
+      setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not add this custom extension.");
+    } finally {
+      setBusy(false);
+    }
+  }, [commands, findTool, password, pending, props, recognized, refreshApprovalGate, resolvedApprovalGate, step, totp]);
+  const handleCommandState = reactExports.useCallback((commandId, state) => {
+    setCommands((current) => withCommandState(current, commandId, state));
+  }, []);
+  const proofReady = pending !== null && recognized !== null;
+  const confirming = step === "confirm" && recognized !== null;
+  const submitDisabled = enrollSubmitDisabled({
+    recognized,
+    command,
+    confirming,
+    proofReady,
+    proofBlocked: isApprovalProofSubmitDisabled(
+      resolvedApprovalGate,
+      { approvalPassword: password, approvalTotpCode: totp },
+      busy
+    ),
+    busy
+  });
+  const showingPackageCatalog = recognized?.surface === "package-scripts";
+  const showingMcpCatalog = recognized?.surface === "mcp";
+  const showingCatalog = showingPackageCatalog || showingMcpCatalog;
+  const enrollable = showingPackageCatalog ? enrollablePackageScriptCommands(commands) : commands;
+  const visibleCommands = showingPackageCatalog ? filterPackageScriptCommands(enrollable, command) : commands;
+  const previewNames = visibleCommands.slice(0, 8).map((entry) => entry.name);
+  const bulkState = bulkCommandState(enrollable);
+  const recentlySatisfied = approvalProofRecentlySatisfied(resolvedApprovalGate);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "form",
+    {
+      "data-testid": "add-custom-extension",
+      onSubmit: handleSubmit,
+      className: "flex min-h-[70vh] w-full flex-col",
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            type: "button",
+            onClick: confirming ? backToReview : props.onBack,
+            className: "inline-flex min-h-11 w-fit items-center gap-2 rounded-lg px-1 text-sm font-semibold text-brand-dark/80 hover:text-brand-dark",
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(HiMiniArrowLeft, { className: "size-4", "aria-hidden": "true" }),
+              confirming ? "Back to settings" : "Extensions"
+            ]
+          }
+        ),
+        confirming && recognized ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-6 max-w-xl", "aria-labelledby": "custom-extension-confirm-title", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { id: "custom-extension-confirm-title", className: "text-2xl font-semibold tracking-tight text-brand-dark", children: pending === "blocked" ? blockActionLabel(recognized.surface) : allowActionLabel(recognized.surface) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-slate-500", children: recognized.source_label ? `${recognized.name} · ${recognized.source_label}` : recognized.name }),
+          summary ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-slate-500", children: summary }) : null,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-5 text-sm leading-6 text-brand-dark/80", children: enrollConfirmCopy(recognized.surface, recentlySatisfied, resolvedApprovalGate?.totp_enabled === true) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 max-w-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+            ApprovalProofFieldInputs,
+            {
+              approvalGate: resolvedApprovalGate,
+              approvalPassword: password,
+              approvalTotpCode: totp,
+              onApprovalPasswordChange: handlePassword,
+              onApprovalTotpCodeChange: handleTotp
+            }
+          ) })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mt-3 max-w-2xl pb-4", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { id: "add-custom-extension-title", className: "text-2xl font-semibold tracking-tight text-brand-dark", children: "Add a custom extension" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-slate-500", children: dialogIntro(rememberedProjects.length > 0, recognized?.surface ?? null) })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { htmlFor: "custom-extension-command", className: "mt-4 block text-sm font-semibold text-brand-dark", children: commandFieldLabel(recognized?.surface ?? null) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              id: "custom-extension-command",
+              value: command,
+              onChange: handleCommand,
+              spellCheck: false,
+              autoComplete: "off",
+              placeholder: showingPackageCatalog ? "guard:audit" : "npm run guard:audit",
+              className: "mt-2 min-h-11 w-full max-w-xl rounded-xl border border-slate-300 bg-white px-3 text-sm text-brand-dark placeholder:text-brand-dark/40 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/30"
+            }
+          ),
+          recognized !== null && showingPackageCatalog ? /* @__PURE__ */ jsxRuntimeExports.jsx(ProjectSwitcher, { items: rememberedProjects, currentId: recognized.cli_id, onSelect: selectSuggestion }) : null,
+          recognized ? /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mt-5 max-w-3xl", "aria-labelledby": "custom-extension-selected", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "custom-extension-selected", className: "text-xl font-semibold tracking-tight text-brand-dark", children: recognized.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 font-mono text-xs text-brand-dark/70", children: recognized.source_label ? `${recognized.source_label} · ${recognized.example_label}` : recognized.example_label }),
+            summary ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-2xl text-sm leading-6 text-slate-500", children: summary }) : null,
+            showingCatalog && enrollable.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(BulkPolicyPicker, { value: bulkState, disabled: busy, onChange: applyBulk }) : null,
+            showingCatalog ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              CatalogPreview,
+              {
+                query: command,
+                showFilterCount: showingPackageCatalog,
+                previewNames,
+                visibleCount: visibleCommands.length,
+                totalCount: enrollable.length,
+                reviewing: reviewingScripts,
+                adjustLabel: showingMcpCatalog ? "Adjust individual tools" : "Adjust individual scripts",
+                hideLabel: "Hide individual settings",
+                onOpenReview: openScriptReview,
+                onCloseReview: closeScriptReview,
+                children: visibleCommands.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  CustomExtensionCommandList,
+                  {
+                    commands: visibleCommands,
+                    disabled: busy,
+                    surface: recognized.surface,
+                    onChange: handleCommandState
+                  }
+                ) }) : null
+              }
+            ) : null,
+            !showingCatalog && visibleCommands.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+              CustomExtensionCommandList,
+              {
+                commands: visibleCommands,
+                disabled: busy,
+                surface: recognized.surface,
+                onChange: handleCommandState
+              }
+            ) }) : null
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+            SuggestionPanel,
+            {
+              query: command,
+              hasSuggestions,
+              packageScriptSuggestions,
+              harnessSuggestions,
+              seenSuggestions,
+              onSelect: selectSuggestion
+            }
+          )
+        ] }),
+        error ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-4 max-w-xl", children: /* @__PURE__ */ jsxRuntimeExports.jsx(InlineError, { message: error }) }) : null,
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sticky bottom-0 mt-auto border-t border-slate-200 bg-white py-4", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-3", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "submit", disabled: submitDisabled, className: "min-h-11 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white disabled:opacity-60", children: addDialogSubmitLabel({ recognized, busy, pending, step: recognized ? step : "pick" }) }),
+          recognized && confirming && pending === "allowed" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: requestBlock, className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark", children: blockActionLabel(recognized.surface) }) : null,
+          recognized && confirming && pending === "blocked" ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", onClick: requestAllow, className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark", children: allowActionLabel(recognized.surface) }) : null
+        ] }) })
+      ]
+    }
+  );
+}
 function randomToken$1() {
   return crypto.randomUUID().replaceAll("-", "");
 }
@@ -3327,6 +3415,15 @@ function reviewTitle(name, state) {
   if (state === "allowed") return `Save ${name} command settings`;
   if (state === "blocked") return `Block ${name}`;
   return `Remove ${name}`;
+}
+function reviewModalDetail(gate) {
+  if (approvalProofRecentlySatisfied(gate)) {
+    return "Recently confirmed with your authenticator. A new code is not needed yet.";
+  }
+  if (gate?.totp_enabled === true) {
+    return "Enter the current authenticator code to save these settings on this device.";
+  }
+  return "This stays on this device. Guard Cloud can keep the same custom extension on your other machines.";
 }
 function customExtensionUnits(surface) {
   if (surface === "mcp") return { unit: "tool", units: "tools", source: "this server" };
@@ -3389,7 +3486,7 @@ function CustomExtensionRow(props) {
   );
 }
 function LocalCliDetail(props) {
-  const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
+  const { resolvedApprovalGate, resolveApprovalGate, refreshApprovalGate } = useResolvedApprovalGate(null);
   const [pending, setPending] = reactExports.useState(null);
   const [commands, setCommands] = reactExports.useState(props.item.commands);
   const [busy, setBusy] = reactExports.useState(false);
@@ -3399,11 +3496,17 @@ function LocalCliDetail(props) {
   reactExports.useEffect(() => {
     setCommands(props.item.commands);
   }, [props.item.cli_id, props.item.grant_revision]);
-  const requestAdd = reactExports.useCallback(() => setPending("allowed"), []);
-  const requestAllow = reactExports.useCallback(() => setPending("allowed"), []);
-  const requestBlock = reactExports.useCallback(() => setPending("blocked"), []);
-  const requestRemove = reactExports.useCallback(() => setPending("unset"), []);
-  const requestSaveCommands = reactExports.useCallback(() => setPending(props.item.state === "blocked" ? "blocked" : "allowed"), [props.item.state]);
+  const openPending = reactExports.useCallback(async (state) => {
+    await refreshApprovalGate();
+    setPending(state);
+  }, [refreshApprovalGate]);
+  const requestAdd = reactExports.useCallback(() => openPending("allowed"), [openPending]);
+  const requestAllow = reactExports.useCallback(() => openPending("allowed"), [openPending]);
+  const requestBlock = reactExports.useCallback(() => openPending("blocked"), [openPending]);
+  const requestRemove = reactExports.useCallback(() => openPending("unset"), [openPending]);
+  const requestSaveCommands = reactExports.useCallback(() => {
+    openPending(props.item.state === "blocked" ? "blocked" : "allowed");
+  }, [openPending, props.item.state]);
   const handleCommandState = reactExports.useCallback((commandId, state) => {
     setCommands((current) => withCommandState(current, commandId, state));
   }, []);
@@ -3431,13 +3534,14 @@ function LocalCliDetail(props) {
       await previewLocalCliMutation(payload);
       await applyLocalCliMutation(payload);
       await props.onRefresh();
+      await refreshApprovalGate();
       setPending(null);
     } catch (caught) {
       setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not update this custom extension.");
     } finally {
       setBusy(false);
     }
-  }, [commands, pending, props]);
+  }, [commands, pending, props, refreshApprovalGate]);
   reactExports.useEffect(() => {
     void resolveApprovalGate({ failClosed: true }).catch(() => {
       setError("Guard could not load the local approval settings yet.");
@@ -3454,8 +3558,8 @@ function LocalCliDetail(props) {
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-2xl text-sm leading-6 text-slate-500", children: customExtensionStateLabel(props.item) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 max-w-2xl text-sm leading-6 text-brand-dark/75", children: detailPolicyCopy(props.item.surface) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 flex flex-wrap gap-3", children: added ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", onClick: requestAllow, children: "Allow this extension's commands" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark", onClick: requestBlock, children: "Block this extension" }),
+        props.item.state === "allowed" ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-flex min-h-11 items-center rounded-xl bg-slate-100 px-4 text-sm font-semibold text-brand-dark", children: "Allowed on this device" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", onClick: requestAllow, children: "Allow this extension's commands" }),
+        props.item.state === "blocked" ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "inline-flex min-h-11 items-center rounded-xl bg-slate-100 px-4 text-sm font-semibold text-brand-dark", children: "Blocked" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark", onClick: requestBlock, children: "Block this extension" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark/80", onClick: requestRemove, children: "Remove custom extension" })
       ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("button", { type: "button", className: "min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white", onClick: requestAdd, children: "Add custom extension" }) })
     ] }),
@@ -3497,7 +3601,9 @@ function CustomExtensionReviewModal(props) {
     setPassword(event.target.value);
   }, []);
   const handleTotp = reactExports.useCallback((event) => {
-    setTotp(event.target.value);
+    const digits = event.target.value.replace(/\D/g, "").slice(0, 6);
+    event.target.value = digits;
+    setTotp(digits);
   }, []);
   const handleSubmit = reactExports.useCallback((event) => {
     event.preventDefault();
@@ -3513,7 +3619,7 @@ function CustomExtensionReviewModal(props) {
   );
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("form", { ref: dialogRef, tabIndex: -1, role: "dialog", "aria-modal": "true", "aria-labelledby": "custom-extension-review-title", onSubmit: handleSubmit, className: "w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { id: "custom-extension-review-title", className: "text-xl font-semibold text-brand-dark", children: title }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-brand-dark/80", children: "This stays on this device. Guard Cloud can keep the same custom extension on your other machines." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-sm leading-6 text-brand-dark/80", children: reviewModalDetail(props.approvalGate) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
       ApprovalProofFieldInputs,
       {

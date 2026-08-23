@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import type { LocalCliCommand, LocalCliItem } from "../local-cli-api";
-import { commandNestingDepth, commandStatesPayload, withCommandState } from "./custom-extension-commands";
+import { commandNestingDepth, commandRowUsage, commandStatesPayload, withCommandState } from "./custom-extension-commands";
 import { customExtensionStateLabel } from "./local-clis-panel";
 
 const commands: LocalCliCommand[] = [
@@ -80,5 +80,8 @@ assert.equal(
   }),
   2,
 );
+
+assert.equal(commandRowUsage("click", "click"), null);
+assert.equal(commandRowUsage("deploy", "pnpm run deploy"), "pnpm run deploy");
 
 console.log("custom-extension-commands.test.ts: all assertions passed");

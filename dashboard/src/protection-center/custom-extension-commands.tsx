@@ -26,6 +26,12 @@ export function commandNestingDepth(command: LocalCliCommand): number {
   return colons > 0 ? colons : 0;
 }
 
+export function commandRowUsage(name: string, usage: string): string | null {
+  const trimmed = usage.trim();
+  if (trimmed === "" || trimmed === name) return null;
+  return trimmed;
+}
+
 export function CustomExtensionCommandList(props: {
   commands: readonly LocalCliCommand[];
   disabled: boolean;
@@ -74,15 +80,17 @@ function CustomExtensionCommandRow(props: {
   const depth = commandNestingDepth(props.command);
   return (
     <article
-      className="guard-pattern-row"
+      className="guard-pattern-row px-4 py-3.5"
       data-command-id={props.command.command_id}
-      style={depth > 0 ? { paddingLeft: `${0.75 + depth * 1.1}rem` } : undefined}
+      style={depth > 0 ? { paddingLeft: `${1.25 + depth * 1.1}rem` } : undefined}
     >
-      <div className="min-w-0">
+      <div className="min-w-0 pr-3">
         <h3 className="text-sm font-semibold text-brand-dark">{props.command.name}</h3>
-        <p className="guard-pattern-example mt-1" title={props.command.usage}>{props.command.usage}</p>
+        {commandRowUsage(props.command.name, props.command.usage) ? (
+          <p className="guard-pattern-example mt-1" title={props.command.usage}>{props.command.usage}</p>
+        ) : null}
         {props.command.description ? (
-          <p className="mt-2 text-xs leading-5 text-brand-dark/75">{props.command.description}</p>
+          <p className="mt-1.5 text-xs leading-5 text-brand-dark/70">{props.command.description}</p>
         ) : null}
       </div>
       <CommandDraftControl

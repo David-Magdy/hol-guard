@@ -21,10 +21,7 @@ export function useResolvedApprovalGate(initialGate: GuardApprovalGatePublicConf
     setResolvedApprovalGate(initialGate);
   }, [initialGate]);
 
-  const resolveApprovalGate = useCallback(async (options?: { failClosed?: boolean }) => {
-    if (resolvedApprovalGate !== null) {
-      return resolvedApprovalGate;
-    }
+  const refreshApprovalGate = useCallback(async (options?: { failClosed?: boolean }) => {
     try {
       const gate = await fetchResolvedApprovalGate();
       setResolvedApprovalGate(gate);
@@ -33,9 +30,16 @@ export function useResolvedApprovalGate(initialGate: GuardApprovalGatePublicConf
       if (options?.failClosed) {
         throw error;
       }
-      return null;
+      return resolvedApprovalGate;
     }
   }, [resolvedApprovalGate]);
 
-  return { resolvedApprovalGate, resolveApprovalGate };
+  const resolveApprovalGate = useCallback(async (options?: { failClosed?: boolean }) => {
+    if (resolvedApprovalGate !== null) {
+      return resolvedApprovalGate;
+    }
+    return refreshApprovalGate(options);
+  }, [refreshApprovalGate, resolvedApprovalGate]);
+
+  return { resolvedApprovalGate, resolveApprovalGate, refreshApprovalGate };
 }
