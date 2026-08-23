@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import sqlite3
+from collections.abc import Mapping, Sequence
 
 from .approval_resolution import approval_resolution_block_reason
 from .approval_scope_support import request_scope_contract_payload, supported_request_scopes
@@ -264,6 +265,7 @@ def approval_schema_statement() -> str:
           guard_version text,
           first_seen_guard_version text,
           last_seen_guard_version text,
+          watch_only_observation integer not null default 0,
           review_command text not null,
           approval_url text not null,
           status text not null,
@@ -293,6 +295,7 @@ def add_approval_request(
     normalized_oauth_source = oauth_source.strip().lower() or "default"
     identity_key = _normalized_identity_key(request.launch_target)
     action_identity, queue_group_id = approval_queue_identity_for_request(request)
+    watch_only_observation = _scanner_evidence_is_watch_only(request.scanner_evidence)
     existing = connection.execute(
         """
         select request_id
@@ -367,7 +370,12 @@ def add_approval_request(
                 transport = ?, risk_summary = ?, risk_signals_json = ?,
                 artifact_label = ?, source_label = ?, trigger_summary = ?, why_now = ?, launch_summary = ?,
                 risk_headline = ?, action_envelope_json = ?, decision_v2_json = ?, fallback_cli_command = ?,
-                scanner_evidence_json = ?, browser_intent_json = ?, review_command = ?, approval_url = ?,
+                scanner_evidence_json = ?,
+                watch_only_observation = case
+                    when watch_only_observation = 1 and ? = 1 then 1
+                    else 0
+                end,
+                browser_intent_json = ?, review_command = ?, approval_url = ?,
                 raw_command_text = ?, guard_version = ?,
                 first_seen_guard_version = coalesce(first_seen_guard_version, ?),
                 last_seen_guard_version = ?
@@ -411,6 +419,7 @@ def add_approval_request(
                     else None
                 ),
                 json.dumps(list(request.scanner_evidence), sort_keys=True),
+                int(watch_only_observation),
                 json.dumps(request.browser_intent, sort_keys=True) if request.browser_intent is not None else None,
                 review_command,
                 approval_url,
@@ -433,12 +442,13 @@ def add_approval_request(
           risk_signals_json, artifact_label, source_label, trigger_summary, why_now, launch_summary, risk_headline,
           action_envelope_json, decision_v2_json, fallback_cli_command, scanner_evidence_json, browser_intent_json,
           review_command, approval_url, status, resolution_action, resolution_scope, reason, created_at, resolved_at,
-          raw_command_text, guard_version, first_seen_guard_version, last_seen_guard_version
+          raw_command_text, guard_version, first_seen_guard_version, last_seen_guard_version,
+          watch_only_observation
         )
         values (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, ?, ?
             )
         """,
         (
@@ -492,9 +502,14 @@ def add_approval_request(
             request.guard_version,
             request.first_seen_guard_version or request.guard_version,
             request.last_seen_guard_version or request.guard_version,
+            int(watch_only_observation),
         ),
     )
     return request.request_id
+
+
+def _scanner_evidence_is_watch_only(scanner_evidence: Sequence[Mapping[str, object]]) -> bool:
+    return any(item.get("source") == "observe_mode_inbox" for item in scanner_evidence)
 
 
 def _rewrite_review_command(command: str, request_id: str) -> str:
@@ -694,10 +709,7 @@ def count_approval_requests(
         clauses.append("resolved_at < ?")
         params.append(resolved_at_before)
     if exclude_watch_only:
-        clauses.append(
-            "not exists (select 1 from json_each(coalesce(scanner_evidence_json, '[]')) "
-            "where json_extract(value, '$.source') = 'observe_mode_inbox')"
-        )
+        clauses.append("watch_only_observation = 0")
     where_clause = f"where {' and '.join(clauses)}" if clauses else ""
     row = connection.execute(f"select count(*) as total from approval_requests {where_clause}", params).fetchone()
     return int(row["total"]) if row is not None else 0
@@ -839,6 +851,10 @@ def approval_index_statements() -> list[str]:
         "create index if not exists idx_approval_artifact_hash on approval_requests(artifact_hash)",
         "create index if not exists idx_approval_workspace_status on approval_requests(workspace, status)",
         "create index if not exists idx_approval_policy_action on approval_requests(policy_action)",
+        (
+            "create index if not exists idx_approval_status_watch_last_seen "
+            "on approval_requests(status, watch_only_observation, last_seen_at desc, request_id desc)"
+        ),
         "create index if not exists idx_approval_resolution on approval_requests(resolution_action, resolved_at)",
     ]
 
@@ -892,10 +908,7 @@ def _approval_summary_where_clause(
         clauses.append(search_clause)
         params.extend(search_params)
     if exclude_watch_only:
-        clauses.append(
-            "not exists (select 1 from json_each(coalesce(scanner_evidence_json, '[]')) "
-            "where json_extract(value, '$.source') = 'observe_mode_inbox')"
-        )
+        clauses.append("watch_only_observation = 0")
     where_clause = f"where {' and '.join(clauses)}" if clauses else ""
     return where_clause, params
 

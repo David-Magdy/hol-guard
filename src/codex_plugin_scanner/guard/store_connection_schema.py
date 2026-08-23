@@ -153,12 +153,14 @@ _POLICY_INDEX_STATEMENTS = (
 )
 
 _RECEIPT_WARN_ROLLUP_MIGRATION_VERSION = 16
+_WATCH_ONLY_APPROVAL_MIGRATION_VERSION = 23
 # Include the workflow-capability retired-index migration so a database created under an
 # earlier schema version (which still owns the retired index) is not treated as current and
 # is forced through ``_initialize_schema`` on the next open, where the index is reaped.
 _REQUIRED_SCHEMA_MIGRATION_VERSIONS = (
     *range(2, STORAGE_QUERY_INDEX_MIGRATION_VERSION + 1),
     WORKFLOW_CAPABILITY_RECEIPT_EVENT_INDEX_MIGRATION_VERSION,
+    _WATCH_ONLY_APPROVAL_MIGRATION_VERSION,
 )
 
 
@@ -1044,6 +1046,21 @@ class StoreConnectionSchemaMixin:
             self._ensure_approval_column(connection, "first_seen_guard_version", "text")
             self._ensure_approval_column(connection, "last_seen_guard_version", "text")
             self._ensure_approval_column(connection, "oauth_source", "text")
+            self._ensure_approval_column(connection, "watch_only_observation", "integer not null default 0")
+            if not self._schema_version_applied(connection, version=_WATCH_ONLY_APPROVAL_MIGRATION_VERSION):
+                connection.execute(
+                    """
+                    update approval_requests
+                    set watch_only_observation = 1
+                    where coalesce(dedupe_count, 1) = 1
+                      and exists (
+                          select 1
+                          from json_each(coalesce(scanner_evidence_json, '[]'))
+                          where json_extract(value, '$.source') = 'observe_mode_inbox'
+                      )
+                    """
+                )
+                self._record_schema_version(connection, version=_WATCH_ONLY_APPROVAL_MIGRATION_VERSION)
             if not self._schema_version_applied(connection, version=3):
                 _backfill_approval_queue_columns_compat(connection)
                 self._record_schema_version(connection, version=3)
@@ -1154,6 +1171,7 @@ class StoreConnectionSchemaMixin:
                         "guard_version",
                         "first_seen_guard_version",
                         "last_seen_guard_version",
+                        "watch_only_observation",
                     }
                     return (
                         row is not None
