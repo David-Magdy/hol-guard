@@ -268,7 +268,8 @@ def _safe_bounded_log_args(args: tuple[str, ...]) -> bool:
     bounds = [arg for arg in args if arg.startswith("-") and arg[1:].isdigit()]
     if len(bounds) != 1 or not 1 <= int(bounds[0][1:]) <= 100:
         return False
-    refs = [arg for arg in args if arg not in {"--oneline", bounds[0]}]
+    allowed_flags = {"--decorate", "--oneline", bounds[0]}
+    refs = [arg for arg in args if arg not in allowed_flags]
     return len(refs) <= 1 and all(_safe_ref(ref) for ref in refs)
 
 
@@ -374,8 +375,14 @@ def _safe_diff_args(args: tuple[str, ...]) -> bool:
             arg in {"--check", "--stat", "--name-only", "--name-status", "--cached", "HEAD"} or _safe_ref(arg)
             for arg in revisions
         )
-        and all(_safe_repository_path(path) for path in paths)
+        and all(_safe_diff_pathspec(path) for path in paths)
     )
+
+
+def _safe_diff_pathspec(value: str) -> bool:
+    if _safe_repository_path(value):
+        return True
+    return value.startswith((":!", ":^")) and _safe_repository_path(value[2:])
 
 
 def _safe_show_args(args: tuple[str, ...]) -> bool:

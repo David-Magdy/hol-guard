@@ -165,6 +165,28 @@ def test_compound_inspection_uses_current_repository_without_redundant_cd(tmp_pa
     )
 
 
+def test_read_only_source_inspection_accepts_no_match_fallback_and_multiple_reads(tmp_path: Path) -> None:
+    home_dir, repository = _repository(tmp_path)
+    command = "sed -n '1,20p' ui.tsx 2>/dev/null || true; sed -n '1,20p' health.py; rg -n export ui.tsx | head -10"
+
+    assert _is_benign(command, home_dir=home_dir, repository=repository)
+
+
+def test_bounded_decorated_git_logs_are_explicitly_benign(tmp_path: Path) -> None:
+    home_dir, repository = _repository(tmp_path)
+    _create_local_branch(repository, "release/3.0")
+    command = "git log --oneline --decorate -12 release/3.0; git log --oneline --decorate -8 main"
+
+    assert _is_benign(command, home_dir=home_dir, repository=repository)
+
+
+def test_git_status_filter_and_excluded_diff_stat_are_explicitly_benign(tmp_path: Path) -> None:
+    home_dir, repository = _repository(tmp_path)
+    command = "git status --short | rg example || true; git diff --stat -- . ':!node_modules' | tail -30"
+
+    assert _is_benign(command, home_dir=home_dir, repository=repository)
+
+
 def test_static_marker_and_trusted_git_version_are_explicitly_benign(tmp_path: Path) -> None:
     home_dir, repository = _repository(tmp_path)
 

@@ -1552,7 +1552,7 @@ def build_runtime_snapshot(
     include_items: bool = True,
     containment_health: object = None,
 ) -> dict[str, object]:
-    queue_page = store.list_pending_approval_summaries(limit=1)
+    queue_page = store.list_pending_approval_summaries(limit=1, exclude_watch_only=True)
     queue_items = queue_page["items"] if isinstance(queue_page["items"], list) else []
     pending_count = _non_negative_int(queue_page.get("total_pending_count"))
     pending_requests = store.list_approval_requests(limit=request_limit) if include_items else []

@@ -673,6 +673,7 @@ def count_approval_requests(
     search: str | None = None,
     resolved_at_from: str | None = None,
     resolved_at_before: str | None = None,
+    exclude_watch_only: bool = False,
 ) -> int:
     clauses = []
     params: list[object] = []
@@ -692,6 +693,11 @@ def count_approval_requests(
     if resolved_at_before is not None:
         clauses.append("resolved_at < ?")
         params.append(resolved_at_before)
+    if exclude_watch_only:
+        clauses.append(
+            "not exists (select 1 from json_each(coalesce(scanner_evidence_json, '[]')) "
+            "where json_extract(value, '$.source') = 'observe_mode_inbox')"
+        )
     where_clause = f"where {' and '.join(clauses)}" if clauses else ""
     row = connection.execute(f"select count(*) as total from approval_requests {where_clause}", params).fetchone()
     return int(row["total"]) if row is not None else 0
@@ -845,6 +851,7 @@ def list_pending_approval_summaries(
     harness: str | None = None,
     search: str | None = None,
     include_totals: bool = True,
+    exclude_watch_only: bool = False,
 ) -> dict[str, object]:
     return list_approval_request_page(
         connection,
@@ -854,6 +861,7 @@ def list_pending_approval_summaries(
         harness=harness,
         search=search,
         include_totals=include_totals,
+        exclude_watch_only=exclude_watch_only,
     )
 
 
@@ -863,6 +871,7 @@ def _approval_summary_where_clause(
     harness: str | None,
     cursor: str | None,
     search: str | None,
+    exclude_watch_only: bool,
 ) -> tuple[str, list[object]]:
     clauses: list[str] = []
     params: list[object] = []
@@ -882,6 +891,11 @@ def _approval_summary_where_clause(
         search_clause, search_params = _approval_search_clause(search)
         clauses.append(search_clause)
         params.extend(search_params)
+    if exclude_watch_only:
+        clauses.append(
+            "not exists (select 1 from json_each(coalesce(scanner_evidence_json, '[]')) "
+            "where json_extract(value, '$.source') = 'observe_mode_inbox')"
+        )
     where_clause = f"where {' and '.join(clauses)}" if clauses else ""
     return where_clause, params
 
@@ -936,12 +950,14 @@ def list_approval_request_summary_rows(
     limit: int | None = 50,
     cursor: str | None = None,
     search: str | None = None,
+    exclude_watch_only: bool = False,
 ) -> list[dict[str, object]]:
     where_clause, params = _approval_summary_where_clause(
         status=status,
         harness=harness,
         cursor=cursor,
         search=search,
+        exclude_watch_only=exclude_watch_only,
     )
     query = f"""
         select request_id, harness, artifact_id, artifact_name, artifact_type, policy_action,
@@ -969,6 +985,7 @@ def list_approval_request_page(
     harness: str | None = None,
     search: str | None = None,
     include_totals: bool = True,
+    exclude_watch_only: bool = False,
 ) -> dict[str, object]:
     page_limit = min(MAX_APPROVAL_PAGE_LIMIT, max(1, limit))
     rows = list_approval_request_summary_rows(
@@ -978,6 +995,7 @@ def list_approval_request_page(
         limit=page_limit + 1,
         cursor=cursor,
         search=search,
+        exclude_watch_only=exclude_watch_only,
     )
     items = rows[:page_limit]
     next_cursor = _encode_page_cursor(items[-1]) if len(rows) > page_limit and items else None
@@ -993,6 +1011,7 @@ def list_approval_request_page(
                 status="pending",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
             payload["total_pending_count"] = pending_total
             payload["total_count"] = pending_total
@@ -1002,6 +1021,7 @@ def list_approval_request_page(
                 status="resolved",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
             payload["total_count"] = resolved_total
             payload["total_pending_count"] = count_approval_requests(
@@ -1009,6 +1029,7 @@ def list_approval_request_page(
                 status="pending",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
         elif status is None:
             payload["total_count"] = count_approval_requests(
@@ -1016,12 +1037,14 @@ def list_approval_request_page(
                 status=None,
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
             payload["total_pending_count"] = count_approval_requests(
                 connection,
                 status="pending",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
         else:
             payload["total_pending_count"] = count_approval_requests(
@@ -1029,12 +1052,14 @@ def list_approval_request_page(
                 status="pending",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
             payload["total_count"] = count_approval_requests(
                 connection,
                 status=status,
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
     return payload
 

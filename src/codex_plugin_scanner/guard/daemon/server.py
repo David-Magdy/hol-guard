@@ -4933,12 +4933,27 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 elif has_active_hooks:
                     repaired_check_ids.append("harness_hooks")
                 if repaired:
-                    try:
-                        containment_health = self._containment_health_payload(force_refresh=True)
-                        refreshed_signals = containment_health_signals(
-                            containment_health,
-                            now=datetime.now(timezone.utc),
-                        )
+                    refreshed_signals = None
+                    for _attempt in range(3):
+                        try:
+                            containment_health = self._containment_health_payload(force_refresh=True)
+                            candidate_signals = containment_health_signals(
+                                containment_health,
+                                now=datetime.now(timezone.utc),
+                            )
+                        except (OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
+                            continue
+                        refreshed_signals = candidate_signals
+                        if all(
+                            candidate_signals[containment_check_id].status is ProtectionCheckStatus.PASS
+                            for containment_check_id in (
+                                "decision_plane_compatibility",
+                                "containment_compatibility",
+                                "sandbox",
+                            )
+                        ):
+                            break
+                    if refreshed_signals is not None:
                         for containment_check_id in (
                             "decision_plane_compatibility",
                             "containment_compatibility",
@@ -4948,7 +4963,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                                 repaired_check_ids.append(containment_check_id)
                             else:
                                 failed_check_ids.append(containment_check_id)
-                    except (OSError, RuntimeError, TypeError, ValueError, sqlite3.Error):
+                    else:
                         failed_check_ids.extend(
                             ["decision_plane_compatibility", "containment_compatibility", "sandbox"]
                         )

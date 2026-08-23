@@ -51,6 +51,7 @@ class StoreApprovalsMixin:
         harness: str | None = None,
         search: str | None = None,
         include_totals: bool = True,
+        exclude_watch_only: bool = False,
     ) -> dict[str, object]:
         with self._connect() as connection:
             return load_pending_approval_summaries(
@@ -60,6 +61,7 @@ class StoreApprovalsMixin:
                 harness=harness,
                 search=search,
                 include_totals=include_totals,
+                exclude_watch_only=exclude_watch_only,
             )
 
     def list_approval_request_page(
@@ -71,6 +73,7 @@ class StoreApprovalsMixin:
         harness: str | None = None,
         search: str | None = None,
         include_totals: bool = True,
+        exclude_watch_only: bool = False,
     ) -> dict[str, object]:
         with self._connect() as connection:
             return load_approval_request_page(
@@ -81,6 +84,7 @@ class StoreApprovalsMixin:
                 harness=harness,
                 search=search,
                 include_totals=include_totals,
+                exclude_watch_only=exclude_watch_only,
             )
 
     def get_approval_request(self, request_id: str) -> dict[str, object] | None:
@@ -541,6 +545,7 @@ class StoreApprovalsMixin:
         search: str | None = None,
         resolved_at_from: str | None = None,
         resolved_at_before: str | None = None,
+        exclude_watch_only: bool = False,
     ) -> int:
         with self._connect() as connection:
             return count_pending_approval_requests(
@@ -550,6 +555,7 @@ class StoreApprovalsMixin:
                 search=search,
                 resolved_at_from=resolved_at_from,
                 resolved_at_before=resolved_at_before,
+                exclude_watch_only=exclude_watch_only,
             )
 
     def oldest_approval_request_created_at(self, *, status: str = "pending") -> str | None:

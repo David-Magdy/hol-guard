@@ -23,6 +23,42 @@ _AGENT_INSTRUCTION_DIRECTORIES = frozenset({".agents", ".claude", ".codex", ".cu
 _PROTECTED_WORKSPACE_METADATA_DIRECTORIES = frozenset({".bzr", ".git", ".hg", ".jj", ".pijul", ".svn", "_darcs"})
 
 
+def _linked_worktree_root(candidate: Path, *, workspace: Path) -> Path | None:
+    """Return a sibling worktree only when Git metadata binds it to workspace."""
+
+    for worktree_root in (candidate, *candidate.parents):
+        git_file = worktree_root / ".git"
+        if not git_file.is_file():
+            continue
+        try:
+            marker = git_file.read_text(encoding="utf-8").strip()
+            prefix, separator, value = marker.partition(":")
+            if separator != ":" or prefix.casefold() != "gitdir" or not value.strip():
+                return None
+            git_dir_candidate = Path(value.strip()).expanduser()
+            if not git_dir_candidate.is_absolute():
+                git_dir_candidate = worktree_root / git_dir_candidate
+            git_dir = git_dir_candidate.resolve(strict=True)
+            backlink = (git_dir / "gitdir").read_text(encoding="utf-8").strip()
+            backlink_path = Path(backlink).expanduser()
+            if not backlink_path.is_absolute():
+                backlink_path = git_dir / backlink_path
+            if backlink_path.resolve(strict=True) != git_file.resolve(strict=True):
+                return None
+            common_dir_value = (git_dir / "commondir").read_text(encoding="utf-8").strip()
+            common_dir_candidate = Path(common_dir_value).expanduser()
+            if not common_dir_candidate.is_absolute():
+                common_dir_candidate = git_dir / common_dir_candidate
+            common_dir = common_dir_candidate.resolve(strict=True)
+            repository_root = common_dir.parent
+            if repository_root.is_relative_to(workspace) and candidate.is_relative_to(worktree_root):
+                return worktree_root
+        except (OSError, RuntimeError, UnicodeError, ValueError):
+            return None
+        return None
+    return None
+
+
 def verified_non_sensitive_codex_apply_patch(
     *,
     canonical_harness: str,
@@ -65,7 +101,13 @@ def verified_non_sensitive_codex_apply_patch(
             if not candidate.is_absolute():
                 candidate = workspace / candidate
             resolved = candidate.resolve(strict=False)
-            relative = resolved.relative_to(workspace)
+            try:
+                relative = resolved.relative_to(workspace)
+            except ValueError:
+                linked_root = _linked_worktree_root(resolved, workspace=workspace)
+                if linked_root is None:
+                    return False
+                relative = resolved.relative_to(linked_root)
             if (
                 classify_secret_path(str(resolved), cwd=workspace, home_dir=home_dir) is not None
                 or resolved.name.lower() in _AGENT_INSTRUCTION_FILE_NAMES

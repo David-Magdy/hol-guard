@@ -261,7 +261,7 @@ _PYTHON_MODULE_OPTIONS_WITH_VALUES = {
     "ruff": frozenset({"--cache-dir", "--color", "--config"}),
 }
 
-_SAFE_STATIC_SHELL_COMMANDS = frozenset({"echo", "printf"})
+_SAFE_STATIC_SHELL_COMMANDS = frozenset({"echo", "printf", "true"})
 
 _SHELL_TOOL_NAMES = frozenset(
     {
