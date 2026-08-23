@@ -53,3 +53,5 @@ jobs:
             payload-sha256.txt
           if-no-files-found: warn
           retention-days: 1
+
+# Refreshed on 2026-08-23 to regenerate the short-lived audit artifact.
