@@ -42,6 +42,7 @@ _DASHBOARD_UPDATE_RUNNER_ENV_KEYS = frozenset(
         "APPDATA",
         "COMSPEC",
         "HOL_GUARD_DESKTOP",
+        "HOL_GUARD_DESKTOP_VERSION",
         "HOME",
         "LANG",
         "LC_ALL",

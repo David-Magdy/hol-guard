@@ -132,12 +132,15 @@ def apply_desktop_core_update(
     if len(binary) != manifest["size"] or _sha256_hex(binary) != manifest["sha256"]:
         raise DesktopCoreUpdateError("desktop_core_integrity_mismatch")
     trusted_team = _macos_signing_team(Path(sys.executable)) if sys.platform == "darwin" else None
-    with tempfile.TemporaryDirectory(prefix="hol-guard-core-update-") as scratch_root:
-        staged = Path(scratch_root) / _executable_name()
-        _ = staged.write_bytes(binary)
-        _make_executable(staged)
-        _verify_candidate(staged, expected_team=trusted_team, expected_sha256=manifest["sha256"])
-        installed = _install_managed_core(staged, manifest, target)
+    try:
+        with tempfile.TemporaryDirectory(prefix="hol-guard-core-update-") as scratch_root:
+            staged = Path(scratch_root) / _executable_name()
+            _ = staged.write_bytes(binary)
+            _make_executable(staged)
+            _verify_candidate(staged, expected_team=trusted_team, expected_sha256=manifest["sha256"])
+            installed = _install_managed_core(staged, manifest, target)
+    except OSError as error:
+        raise DesktopCoreUpdateError("desktop_core_install_failed") from error
     return DesktopCoreApplyResult(executable=installed, version=normalized_target, changed=True)
 
 

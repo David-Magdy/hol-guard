@@ -14,7 +14,10 @@ import pytest
 from codex_plugin_scanner.guard.cli import update_commands, update_desktop_core
 from codex_plugin_scanner.guard.cli.update_commands import build_guard_update_status_payload
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager
-from codex_plugin_scanner.guard.daemon.dashboard_update import build_dashboard_update_runner_command
+from codex_plugin_scanner.guard.daemon.dashboard_update import (
+    build_dashboard_update_runner_command,
+    build_dashboard_update_runner_popen_kwargs,
+)
 
 
 def _alpha_manifest(*, sha256: str, size: int, minimum: str = "0.1.0") -> dict[str, object]:
@@ -495,3 +498,19 @@ def test_wait_for_updated_core_binds_spawned_pid(
     assert url == "http://127.0.0.1:5410"
     assert seen["require_current_runtime"] is False
     assert seen["expected_pid"] == 4242
+
+
+def test_dashboard_runner_and_daemon_env_preserve_desktop_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from codex_plugin_scanner.guard.daemon import dashboard_update as dashboard_update_module
+
+    monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
+    monkeypatch.setenv("HOL_GUARD_DESKTOP_VERSION", "0.2.0")
+    popen_kwargs = build_dashboard_update_runner_popen_kwargs(tmp_path / "guard-home")
+    runner_env = popen_kwargs["env"]
+    popen_kwargs["log_handle"].close()
+    assert runner_env["HOL_GUARD_DESKTOP_VERSION"] == "0.2.0"
+    assert "HOL_GUARD_DESKTOP_VERSION" in dashboard_update_module._DASHBOARD_UPDATE_RUNNER_ENV_KEYS
+    assert "HOL_GUARD_DESKTOP_VERSION" in daemon_manager._GUARD_DAEMON_ENV_KEYS
