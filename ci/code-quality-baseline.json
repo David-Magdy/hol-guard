@@ -36,7 +36,7 @@
     "src/codex_plugin_scanner/guard/cli/uninstall_commands.py::run_guard_self_uninstall": 31,
     "src/codex_plugin_scanner/guard/cli/update_artifact.py::recover_local_wheel_original": 30,
     "src/codex_plugin_scanner/guard/cli/update_commands.py::build_guard_update_status_payload": 39,
-    "src/codex_plugin_scanner/guard/cli/update_commands.py::run_guard_update": 125,
+    "src/codex_plugin_scanner/guard/cli/update_commands.py::run_guard_update": 124,
     "src/codex_plugin_scanner/guard/cli/update_subprocess.py::_run_bounded_process": 37,
     "src/codex_plugin_scanner/guard/codex_app_server.py::_send_app_server_websocket_messages": 30,
     "src/codex_plugin_scanner/guard/codex_hook_launch_runtime.py::run_isolated_hook_process": 32,
@@ -733,7 +733,7 @@
     "tests/test_policy_bundle_v2.py": 534,
     "tests/test_policy_document_io.py": 679,
     "tests/test_release_train_workflow.py": 568,
-    "tests/test_update_desktop_core.py": 516,
+    "tests/test_update_desktop_core.py": 553,
     "tests/test_verify_release_registry.py": 567
   },
   "schema_version": 2,

@@ -423,6 +423,43 @@ def test_desktop_cli_update_applies_signed_core_feed(
     apply.assert_called_once()
 
 
+def test_desktop_cli_update_fails_when_latest_version_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(update_commands, "_is_desktop_managed_runtime", lambda: True)
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "3.0.0a138")
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_desktop_apply.desktop_core_updates_supported",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "_version_check_payload",
+        lambda current_version, **_kwargs: {
+            "source": "pypi",
+            "status": "unavailable",
+            "current_version": current_version,
+            "latest_version": None,
+            "update_available": None,
+        },
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.update_desktop_apply.apply_desktop_core_update",
+        MagicMock(side_effect=AssertionError("must not apply without a target version")),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(
+        dry_run=False,
+        include_alpha=True,
+        guard_home=tmp_path / "guard-home",
+    )
+
+    assert exit_code == 1
+    assert payload["status"] == "failed"
+    assert payload["reason_code"] == "desktop_core_version_unavailable"
+
+
 def test_frozen_runner_command_uses_desktop_dashboard_update(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

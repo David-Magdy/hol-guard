@@ -75,6 +75,8 @@ def run_desktop_managed_update(
     latest_version = version_check.get("latest_version")
     target_version = latest_version.strip() if isinstance(latest_version, str) and latest_version.strip() else None
     if dry_run:
+        if not already_current and target_version is None:
+            return _unavailable_desktop_version(payload)
         payload["status"] = "current" if already_current else "planned"
         payload["changed"] = False
         payload["resulting_version"] = current_version if already_current else target_version
@@ -84,7 +86,7 @@ def run_desktop_managed_update(
             else "Review the planned signed Core update before applying it."
         )
         return payload, 0
-    if already_current or target_version is None:
+    if already_current:
         return _desktop_already_current(
             payload,
             current_version=current_version,
@@ -92,6 +94,8 @@ def run_desktop_managed_update(
             context=context,
             daemon_refresh_required=daemon_refresh_required,
         )
+    if target_version is None:
+        return _unavailable_desktop_version(payload)
     return _desktop_apply_target(
         payload,
         current_version=current_version,
@@ -275,6 +279,18 @@ def _refresh_or_fail(
         )
         return payload, 1
     return payload, 0
+
+
+def _unavailable_desktop_version(payload: dict[str, object]) -> tuple[dict[str, object], int]:
+    payload.update(
+        {
+            "status": "failed",
+            "changed": False,
+            "reason_code": "desktop_core_version_unavailable",
+            "message": "HOL Guard could not determine the latest Core version.",
+        }
+    )
+    return payload, 1
 
 
 def _blocked_desktop_payload(

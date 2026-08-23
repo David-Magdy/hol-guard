@@ -356,7 +356,7 @@ def run_guard_update(
             workspace=workspace,
             now=now,
             network_policy=network_policy,
-            daemon_refresh_required=daemon_refresh_required or context is not None,
+            daemon_refresh_required=daemon_refresh_required,
         )
     try:
         update_context = build_trusted_update_context(
