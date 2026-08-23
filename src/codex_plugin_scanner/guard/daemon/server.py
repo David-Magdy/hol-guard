@@ -1308,6 +1308,33 @@ def _run_headless_cloud_sync(
     return summary
 
 
+def _run_headless_cloud_sync_with_optional_publish(
+    *,
+    store: GuardStore,
+    managed_controls_publish: Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None,
+) -> dict[str, object]:
+    try:
+        sync_parameters = inspect.signature(_run_headless_cloud_sync).parameters
+    except (TypeError, ValueError):
+        sync_parameters = {}
+    if managed_controls_publish is not None and "managed_controls_publish" in sync_parameters:
+        return _run_headless_cloud_sync(
+            store=store,
+            managed_controls_publish=managed_controls_publish,
+        )
+    return _run_headless_cloud_sync(store=store)
+
+
+def _managed_controls_publish_for(
+    server: object,
+) -> Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None:
+    runtime = getattr(server, "extension_control_runtime", None)
+    publish = getattr(runtime, "publish_after_commit", None)
+    if not callable(publish):
+        return None
+    return cast(Callable[[ExtensionControlAuthorityView, Callable[[], None]], object], publish)
+
+
 def _queue_headless_cloud_sync(
     *,
     store: GuardStore,
@@ -1339,7 +1366,7 @@ def _queue_headless_cloud_sync(
 
     def _run_and_finalize() -> None:
         try:
-            _run_headless_cloud_sync(
+            _run_headless_cloud_sync_with_optional_publish(
                 store=store,
                 managed_controls_publish=managed_controls_publish,
             )
@@ -1356,6 +1383,23 @@ def _queue_headless_cloud_sync(
         "status": "queued",
         "message": "Cloud sync started.",
     }
+
+
+def _queue_headless_cloud_sync_with_optional_publish(
+    *,
+    store: GuardStore,
+    managed_controls_publish: Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None,
+) -> dict[str, object]:
+    try:
+        queue_parameters = inspect.signature(_queue_headless_cloud_sync).parameters
+    except (TypeError, ValueError):
+        queue_parameters = {}
+    if managed_controls_publish is not None and "managed_controls_publish" in queue_parameters:
+        return _queue_headless_cloud_sync(
+            store=store,
+            managed_controls_publish=managed_controls_publish,
+        )
+    return _queue_headless_cloud_sync(store=store)
 
 
 def _maybe_queue_first_cloud_sync(
@@ -1387,16 +1431,10 @@ def _maybe_queue_first_cloud_sync(
         return None
     if str(latest_state.get("milestone") or "") != "first_sync_pending":
         return None
-    try:
-        queue_parameters = inspect.signature(_queue_headless_cloud_sync).parameters
-    except (TypeError, ValueError):
-        queue_parameters = {}
-    if managed_controls_publish is not None and "managed_controls_publish" in queue_parameters:
-        return _queue_headless_cloud_sync(
-            store=store,
-            managed_controls_publish=managed_controls_publish,
-        )
-    return _queue_headless_cloud_sync(store=store)
+    return _queue_headless_cloud_sync_with_optional_publish(
+        store=store,
+        managed_controls_publish=managed_controls_publish,
+    )
 
 
 def _package_firewall_connect_url(store: GuardStore) -> str:
@@ -2148,7 +2186,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         if parsed.path == "/v1/runtime":
             _maybe_queue_first_cloud_sync(
                 store=store,
-                managed_controls_publish=self._daemon_server().extension_control_runtime.publish_after_commit,
+                managed_controls_publish=_managed_controls_publish_for(self._daemon_server()),
             )
             config = load_guard_config(store.guard_home)
             include_receipts = self._query_bool(parsed.query, "include_receipts", default=True)
@@ -3317,9 +3355,9 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             workspace_id=self._optional_string(payload.get("workspace_id")),
             cloud_sync={"status": "pending"},
         )
-        cloud_sync = _queue_headless_cloud_sync(  # type: ignore[attr-defined]
+        cloud_sync = _queue_headless_cloud_sync_with_optional_publish(
             store=self.server.store,
-            managed_controls_publish=self.server.extension_control_runtime.publish_after_commit,
+            managed_controls_publish=_managed_controls_publish_for(self.server),
         )
         receipt["cloud_sync"] = cloud_sync
         return 200, {
@@ -3499,7 +3537,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     policy_bundle_last_error={},
                     managed_controls_policy=managed_controls_policy,
                     managed_controls_negotiated_capabilities=managed_controls_capabilities,
-                    managed_controls_publish=self.server.extension_control_runtime.publish_after_commit,
+                    managed_controls_publish=_managed_controls_publish_for(self.server),
                     approval_gate_grant=approval_gate_grant,
                     remote_write_authorized=True,
                 )
@@ -3980,9 +4018,9 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             "status": response_status,
         }
         if operation == "audit":
-            cloud_sync = _queue_headless_cloud_sync(  # type: ignore[attr-defined]
+            cloud_sync = _queue_headless_cloud_sync_with_optional_publish(
                 store=self.server.store,
-                managed_controls_publish=self.server.extension_control_runtime.publish_after_commit,
+                managed_controls_publish=_managed_controls_publish_for(self.server),
             )
             receipt["cloud_sync"] = cloud_sync
             response_payload["cloud_sync"] = cloud_sync
@@ -4220,7 +4258,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                         ),
                     },
                     now=timestamp,
-                    managed_controls_publish=self.server.extension_control_runtime.publish_after_commit,
+                    managed_controls_publish=_managed_controls_publish_for(self.server),
                 )
                 resolved_entitlement = resolve_package_firewall_entitlement(store)
                 resolved_reason = str(resolved_entitlement.get("reason") or "")
@@ -4406,7 +4444,7 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                         ),
                     },
                     now=timestamp,
-                    managed_controls_publish=self.server.extension_control_runtime.publish_after_commit,
+                    managed_controls_publish=_managed_controls_publish_for(self.server),
                 )
                 if _guard_cloud_connect_succeeded(store):
                     _set_guard_cloud_connect_state(self.server, None)  # type: ignore[arg-type]
@@ -8584,9 +8622,9 @@ class GuardDaemonServer:
             else interval_seconds
         )
         while not self._shutdown_started.is_set():
-            summary = _run_headless_cloud_sync(
+            summary = _run_headless_cloud_sync_with_optional_publish(
                 store=self._server.store,
-                managed_controls_publish=self._server.extension_control_runtime.publish_after_commit,
+                managed_controls_publish=_managed_controls_publish_for(self._server),
             )
             status = str(summary.get("status") or "")
             wait_seconds = interval_seconds if status == "synced" else backoff_seconds
