@@ -128,6 +128,11 @@ line-length = 120
 [tool.hatch.build.targets.wheel]
 packages = ["src/codex_plugin_scanner"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"contracts/guard-cloud-review/v2/contract.json" = "codex_plugin_scanner/guard/contracts/data/guard-cloud-review/v2/contract.json"
+"contracts/guard-cloud-review/v2/fixtures.json" = "codex_plugin_scanner/guard/contracts/data/guard-cloud-review/v2/fixtures.json"
+"docs/guard/contracts/guard-cloud-review-v2.md" = "codex_plugin_scanner/guard/contracts/data/guard-cloud-review/v2/guard-cloud-review-v2.md"
+
 [tool.hatch.build]
 artifacts = [
     "src/codex_plugin_scanner/guard/daemon/static/**",
