@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Set
 
+from .protection_posture import normalize_protection_posture
+
 
 def apply_named_posture_harness_policy(
     next_payload: dict[str, object],
@@ -11,15 +13,20 @@ def apply_named_posture_harness_policy(
     *,
     valid_security_levels: Set[str],
 ) -> dict[str, object]:
-    """Clear blanket ask policy when the caller explicitly resets a named preset."""
+    """Clear blanket ask policy for named-profile resets or transitions away from Watch."""
 
     requested_level = incoming.get("security_level")
-    if (
-        not isinstance(requested_level, str)
-        or requested_level not in valid_security_levels - {"custom"}
-        or incoming.get("risk_actions") != {}
-        or incoming.get("harness_risk_actions") != {}
-    ):
+    selects_named_level = (
+        isinstance(requested_level, str)
+        and requested_level in valid_security_levels - {"custom"}
+        and incoming.get("risk_actions") == {}
+        and incoming.get("harness_risk_actions") == {}
+    )
+    requested_posture = normalize_protection_posture(incoming.get("protection_posture"))
+    current_posture = normalize_protection_posture(next_payload.get("protection_posture"))
+    current_is_watch = current_posture == "watch" or (current_posture is None and next_payload.get("mode") == "observe")
+    leaves_watch = current_is_watch and requested_posture in {"protected", "extra_careful"}
+    if not selects_named_level and not leaves_watch:
         return next_payload
     updated = dict(next_payload)
     updated["harnesses"] = without_blanket_harness_reapproval(updated.get("harnesses"))
