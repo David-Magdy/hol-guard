@@ -115,7 +115,7 @@ def test_azure_read_only_neighbors_remain_safe(tmp_path: Path) -> None:
             "az resource list --subscription prod",
             "az network vnet show --name fixture --resource-group fixture",
             "az vm list --output json",
-            "az keyvault secret show --vault-name fixture --name fixture",
+            "az monitor action-group show --name fixture --resource-group fixture",
         ),
         tmp_path,
     )
