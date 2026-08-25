@@ -52,7 +52,10 @@ AWS_BATCH_4_READ_ONLY_NEIGHBORS: tuple[str, ...] = (
     "aws bedrock get-custom-model --model-identifier example",
     "aws bedrock-agent get-agent --agent-id example",
     "aws budgets describe-budget --account-id 123456789012 --budget-name example",
-    "aws ce get-cost-and-usage --time-period Start=2026-08-01,End=2026-08-02 --granularity DAILY --metrics UnblendedCost",
+    (
+        "aws ce get-cost-and-usage --time-period Start=2026-08-01,End=2026-08-02 "
+        "--granularity DAILY --metrics UnblendedCost"
+    ),
     "aws chime get-account --account-id example",
     "aws cloudhsmv2 describe-clusters",
 )
