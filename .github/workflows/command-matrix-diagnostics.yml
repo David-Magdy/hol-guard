@@ -1,0 +1,54 @@
+name: Command matrix diagnostics
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/command-matrix-diagnostics.yml"
+      - "src/codex_plugin_scanner/guard/runtime/**"
+      - "tests/**"
+      - "ci/test-suite-ratchet-baseline.json"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
+        with:
+          version: "0.9.26"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev --python 3.12
+
+      - name: Emit generated evidence
+        run: |
+          uv run --no-sync python tests/guard_command_decision_diff.py
+          uv run --no-sync python scripts/ci/test_inventory.py --output test-inventory.json
+          uv run --no-sync python - <<'PY'
+          import base64
+          import json
+          from pathlib import Path
+
+          from codex_plugin_scanner.guard.runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
+
+          report = Path("tests/fixtures/guard-command-corpus/decision-diff-report.json")
+          inventory = json.loads(Path("test-inventory.json").read_text(encoding="utf-8"))
+          print("CATALOG_DIGEST=" + BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest)
+          print("TEST_INVENTORY=" + json.dumps(inventory, sort_keys=True, separators=(",", ":")))
+          print("DECISION_DIFF_BASE64=" + base64.b64encode(report.read_bytes()).decode("ascii"))
+          PY
