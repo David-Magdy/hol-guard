@@ -6,11 +6,13 @@ This recipe is intentionally narrow. HOL Guard does not currently ship a native 
 
 ## Install
 
-Install HOL Guard separately from Strands:
+The `command test` inspection surface is currently in the HOL Guard 3.x alpha channel. Install an exact published alpha separately from Strands. For example, the current release at the time of this guide is:
 
 ```bash
-pipx install hol-guard
+pipx install --force "hol-guard==3.0.0a249"
 ```
+
+Check the [HOL Guard prereleases](https://github.com/hashgraph-online/hol-guard/releases) for a newer 3.x alpha before pinning a production evaluation.
 
 Guard Cloud is not required for this local inspection path.
 
