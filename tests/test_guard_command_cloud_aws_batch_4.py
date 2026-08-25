@@ -1,4 +1,4 @@
-"""Regression and adversarial tests for AWS destructive operation batch 4."""
+"""Regression and adversarial coverage for AWS destructive operation batch 4."""
 
 from __future__ import annotations
 
