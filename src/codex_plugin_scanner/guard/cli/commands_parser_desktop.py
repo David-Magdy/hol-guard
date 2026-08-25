@@ -17,11 +17,18 @@ def _configure_guard_desktop_parser(
         dest="desktop_command",
         required=True,
         parser_class=FriendlyArgumentParser,
-        metavar="{bootstrap}",
+        metavar="{bootstrap,dashboard-update}",
     )
     bootstrap_parser = desktop_subparsers.add_parser("bootstrap", help=argparse.SUPPRESS)
     _add_guard_common_args(bootstrap_parser, suppress_defaults=True)
     bootstrap_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    dashboard_update_parser = desktop_subparsers.add_parser("dashboard-update", help=argparse.SUPPRESS)
+    _add_guard_common_args(dashboard_update_parser, suppress_defaults=True)
+    dashboard_update_parser.add_argument("--daemon-pid", type=int, required=True)
+    dashboard_update_parser.add_argument("--daemon-port", type=int, required=True)
+    dashboard_update_parser.add_argument("--update-token", required=True)
+    dashboard_update_parser.add_argument("--force-pypi-reinstall", action="store_true")
+    dashboard_update_parser.add_argument("--alpha", action="store_true")
 
 
 __all__ = ["_configure_guard_desktop_parser"]

@@ -2,14 +2,25 @@ import assert from "node:assert/strict";
 
 import {
   addedCustomExtensions,
+  filterExtensionSuggestions,
+  applyBulkCommandState,
+  bulkCommandState,
+  enrollmentCommandStates,
+  filterPackageScriptCommands,
   isLocalCliId,
   normalizeLocalCliItem,
   normalizeLocalCliList,
+  preferredPackageScriptExtension,
+  seenSuggestionMeta,
   suggestedCustomExtensions,
+  looksLikePackageScriptPaste,
+  looksLikeProjectRelocatePaste,
+  keepsPackageScriptCatalog,
   suggestedHarnessExtensions,
+  suggestedPackageScriptExtensions,
   suggestedSeenExtensions,
 } from "./local-cli-api";
-import { parseProtectionRoute, localCliHref } from "./local-cli-links";
+import { parseProtectionRoute, localCliHref, addCustomExtensionHref } from "./local-cli-links";
 
 assert.equal(isLocalCliId("local-cli.cwv-py-abcdef12"), true);
 assert.equal(isLocalCliId("command.git"), false);
@@ -91,6 +102,8 @@ assert.deepEqual(parseProtectionRoute("/extensions/local-cli/local-cli.cwv-py-ab
   kind: "local-cli",
   cliId: "local-cli.cwv-py-abcdef12",
 });
+assert.equal(parseProtectionRoute("/extensions/add").kind, "add-custom");
+assert.equal(addCustomExtensionHref(), "/extensions/add");
 assert.equal(parseProtectionRoute("/extensions/command.git").kind, "detail");
 assert.equal(localCliHref("local-cli.cwv-py-abcdef12"), "/extensions/local-cli/local-cli.cwv-py-abcdef12");
 assert.equal(addedCustomExtensions(list.items).length, 1);
@@ -132,6 +145,138 @@ const harnessUnset = normalizeLocalCliItem({
 });
 assert.deepEqual(suggestedHarnessExtensions([unsetItem, harnessUnset]).map((entry) => entry.name), ["github"]);
 assert.deepEqual(suggestedSeenExtensions([unsetItem, harnessUnset]).map((entry) => entry.name), ["unset-tool"]);
+const packageScripts = normalizeLocalCliItem({
+  ...unsetItem,
+  cli_id: "local-cli.pkg-demo-abcdef12",
+  name: "demo-app",
+  example_label: "pnpm run",
+  surface: "package-scripts",
+  source_label: "demo-app",
+  suggestable: true,
+  commands: [
+    {
+      command_id: "guard.reddit-targeting.audit",
+      name: "guard:reddit-targeting:audit",
+      usage: "pnpm run guard:reddit-targeting:audit",
+      description: "audit ads",
+      parent_id: "guard.reddit-targeting",
+      state: "inherit",
+    },
+    {
+      command_id: "build",
+      name: "build",
+      usage: "pnpm run build",
+      description: "vite build",
+      parent_id: null,
+      state: "inherit",
+    },
+  ],
+});
+assert.equal(packageScripts.surface, "package-scripts");
+assert.deepEqual(suggestedPackageScriptExtensions([unsetItem, packageScripts]).map((entry) => entry.name), ["demo-app"]);
+assert.deepEqual(suggestedSeenExtensions([unsetItem, packageScripts]).map((entry) => entry.name), ["unset-tool"]);
+assert.equal(looksLikePackageScriptPaste("npm run guard:audit"), true);
+assert.equal(looksLikePackageScriptPaste("pnpm run"), true);
+assert.equal(looksLikePackageScriptPaste("npx -y server"), false);
+assert.equal(looksLikePackageScriptPaste("npm"), false);
+
+const recentJunk = normalizeLocalCliItem({
+  ...unsetItem,
+  cli_id: "local-cli.rg-abcdef12",
+  name: "rg",
+  kind: "executable",
+  example_label: "rg",
+  observed_count: 9,
+  last_seen_at: "2026-08-18T12:00:00Z",
+  suggestable: false,
+});
+const frequentTool = normalizeLocalCliItem({
+  ...unsetItem,
+  cli_id: "local-cli.cwv-py-bbbbbb12",
+  name: "cwv.py",
+  example_label: "python3 cwv.py",
+  observed_count: 4,
+  last_seen_at: "2026-08-18T11:00:00Z",
+  suggestable: true,
+  suggestion_score: 40,
+});
+const rareTool = normalizeLocalCliItem({
+  ...unsetItem,
+  cli_id: "local-cli.ship-it-cccccccc",
+  name: "ship-it",
+  example_label: "ship-it",
+  observed_count: 1,
+  last_seen_at: "2026-08-18T12:30:00Z",
+  suggestable: true,
+  suggestion_score: 30,
+});
+const frequentGeneric = normalizeLocalCliItem({
+  ...unsetItem,
+  cli_id: "local-cli.foo-dddddddd",
+  name: "foo",
+  example_label: "foo",
+  observed_count: 12,
+  last_seen_at: "2026-08-18T13:00:00Z",
+  suggestable: true,
+  suggestion_score: 20,
+});
+assert.deepEqual(
+  suggestedSeenExtensions([recentJunk, frequentGeneric, rareTool, frequentTool, harnessUnset]).map((entry) => entry.name),
+  ["cwv.py", "ship-it", "foo"],
+);
+assert.deepEqual(
+  filterExtensionSuggestions(suggestedSeenExtensions([frequentTool, rareTool]), "cwv").map((entry) => entry.name),
+  ["cwv.py"],
+);
+assert.deepEqual(
+  filterExtensionSuggestions([recentJunk], "rg").map((entry) => entry.name),
+  ["rg"],
+);
+assert.deepEqual(
+  filterExtensionSuggestions([packageScripts], "reddit-targeting").map((entry) => entry.name),
+  ["demo-app"],
+);
+assert.deepEqual(
+  filterPackageScriptCommands(packageScripts.commands, "guard:reddit").map((entry) => entry.name),
+  ["guard:reddit-targeting:audit"],
+);
+assert.deepEqual(
+  filterPackageScriptCommands(packageScripts.commands, "guard:audit").map((entry) => entry.name),
+  ["guard:reddit-targeting:audit"],
+);
+assert.deepEqual(
+  filterPackageScriptCommands(packageScripts.commands, "npm run").map((entry) => entry.name),
+  ["guard:reddit-targeting:audit", "build"],
+);
+assert.equal(preferredPackageScriptExtension([unsetItem, packageScripts])?.name, "demo-app");
+assert.equal(looksLikeProjectRelocatePaste("npm --prefix ./apps/web run"), true);
+assert.equal(looksLikeProjectRelocatePaste("guard:audit"), false);
+assert.equal(looksLikeProjectRelocatePaste("/proj/My App"), true);
+assert.equal(looksLikeProjectRelocatePaste("C:\\\\My App\\\\package.json"), true);
+assert.equal(keepsPackageScriptCatalog("guard:reddit", packageScripts.commands), true);
+assert.equal(keepsPackageScriptCatalog("guard:audit", packageScripts.commands), true);
+assert.equal(keepsPackageScriptCatalog("my-cli", packageScripts.commands), false);
+assert.equal(keepsPackageScriptCatalog("npx -y @scope/mcp-server", packageScripts.commands), false);
+assert.deepEqual(
+  enrollmentCommandStates(packageScripts.commands, "allowed", "package-scripts").map((entry) => entry.state),
+  ["allow", "allow"],
+);
+assert.equal(bulkCommandState(packageScripts.commands), "inherit");
+assert.deepEqual(
+  applyBulkCommandState(packageScripts.commands, "allow").map((entry) => entry.state),
+  ["allow", "allow"],
+);
+assert.equal(bulkCommandState(applyBulkCommandState(packageScripts.commands, "block")), "block");
+const withSynthetic = [
+  { command_id: "root", name: "pnpm run", usage: "pnpm run", description: "", parent_id: null, state: "inherit" as const },
+  ...packageScripts.commands,
+];
+assert.equal(
+  applyBulkCommandState(withSynthetic, "allow", new Set(["root", "other"])).find((entry) => entry.command_id === "root")?.state,
+  "inherit",
+);
+assert.equal(seenSuggestionMeta(frequentTool), "Seen 4 times");
+assert.equal(seenSuggestionMeta(rareTool), "Seen once");
 
 const fallbackCloud = normalizeLocalCliList({
   schema_version: "guard.daemon.local-clis.v1",

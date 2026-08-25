@@ -30,6 +30,13 @@ from ..runtime.extension_control_contract import (
     ExtensionControl,
     ExtensionControlLayer,
 )
+from ..runtime.extension_control_limits import (
+    MAX_CATALOG_PAYLOAD_BYTES,
+    MAX_CONTROL_LAYERS,
+    MAX_CONTROLS_PER_LAYER,
+    MAX_CONTROLS_TOTAL,
+    advertised_extension_control_limits,
+)
 from ..runtime.extension_control_proof import (
     ExtensionControlMutation,
     ExtensionControlProof,
@@ -48,9 +55,6 @@ if TYPE_CHECKING:
 _EXTENSION_CONTROL_API_SCHEMA = "guard.daemon.extension-controls.v1"
 _MAX_PENDING_PROOFS = 128
 _MAX_APPLIED_MUTATIONS = 128
-_MAX_CONTROLS = 4096
-_MAX_LAYERS = 2
-_MAX_OBSERVATIONS = 2048
 _MAX_EVENT_TARGETS = 512
 _MAX_EVENT_RULE_IDS = 1024
 
@@ -86,17 +90,22 @@ class ExtensionControlApiService:
         self._applied_mutations: OrderedDict[str, _AppliedMutation] = OrderedDict()
 
     def catalog(self) -> dict[str, object]:
-        return {
+        limits = advertised_extension_control_limits()
+        payload: dict[str, object] = {
             "schema_version": _EXTENSION_CONTROL_API_SCHEMA,
             "control_schema_version": CONTROL_SCHEMA_VERSION,
             "catalog_digest": self._registry.catalog_digest,
             "extensions": [extension.to_dict() for extension in self._registry.extensions],
             "limits": {
-                "max_body_bytes": 1_000_000,
-                "max_controls": _MAX_CONTROLS,
-                "max_observations": _MAX_OBSERVATIONS,
+                **limits,
+                "max_body_bytes": limits["max_catalog_payload_bytes"],
+                "max_controls": limits["max_controls_total"],
             },
         }
+        wire_body = json.dumps(payload).encode("utf-8")
+        if len(wire_body) > MAX_CATALOG_PAYLOAD_BYTES:
+            raise ExtensionControlApiError(413, "catalog_payload_limit_exceeded")
+        return payload
 
     def effective(self) -> dict[str, object]:
         snapshot = self._runtime.current()
@@ -225,11 +234,12 @@ class ExtensionControlApiService:
     def preview(self, payload: dict[str, object]) -> dict[str, object]:
         current = self._runtime.current()
         mutation = self._mutation_from_payload(payload)
+        proposed_layers = self._effective_layers_for_local_mutation(mutation.layers)
         if current.health is not AuthorityHealth.PROTECTED:
             raise ExtensionControlApiError(423, "authority_unavailable")
         if mutation.previous_revision != current.revision:
             raise ExtensionControlApiError(409, "revision_conflict")
-        composed = compose_control_layers(mutation.layers)
+        composed = compose_control_layers(proposed_layers)
         if composed.failures:
             raise ExtensionControlApiError(400, composed.failures[0].code.value.replace("_", "-"))
         response: dict[str, object] = {
@@ -243,7 +253,7 @@ class ExtensionControlApiService:
             "semantic_preview": build_extension_control_semantic_preview(
                 self._registry,
                 current.layers,
-                mutation.layers,
+                proposed_layers,
             ),
         }
         if self._payload_requests_proof(payload):
@@ -276,13 +286,14 @@ class ExtensionControlApiService:
         if pending.mutation.canonical_digest != mutation.canonical_digest:
             raise ExtensionControlApiError(409, "proof_mismatch")
         current = self._runtime.current()
+        proposed_layers = self._effective_layers_for_local_mutation(mutation.layers)
         semantic_preview = build_extension_control_semantic_preview(
             self._registry,
             current.layers,
-            mutation.layers,
+            proposed_layers,
         )
         try:
-            view = self._store.commit_extension_control_layers(
+            _ = self._store.commit_extension_control_layers(
                 mutation.layers,
                 catalog_digest=mutation.catalog_digest,
                 actor_id=mutation.actor_id,
@@ -295,7 +306,8 @@ class ExtensionControlApiService:
             raise ExtensionControlApiError(409, "proof_invalid") from exc
         except (ExtensionControlAuthorityError, ValueError) as exc:
             raise ExtensionControlApiError(409, "authority_conflict") from exc
-        snapshot = self._runtime.refresh(view)
+        composed_view = self._store.read_extension_control_authority_for_registry(self._registry)
+        snapshot = self._runtime.refresh(composed_view)
         self._store.add_event(
             "extension_control_authority_changed",
             {
@@ -384,12 +396,14 @@ class ExtensionControlApiService:
             raise ExtensionControlApiError(400, "invalid_previous_revision")
         if not isinstance(raw_layers, list):
             raise ExtensionControlApiError(400, "invalid_layers")
-        if len(raw_layers) > _MAX_LAYERS:
+        if len(raw_layers) > MAX_CONTROL_LAYERS:
             raise ExtensionControlApiError(400, "layer_limit_exceeded")
         try:
             layers = layers_from_json(json.dumps(raw_layers, separators=(",", ":")))
             layers = self._canonicalize_extension_ids(layers)
-            if sum(len(layer.controls) for layer in layers) > _MAX_CONTROLS:
+            if any(len(layer.controls) > MAX_CONTROLS_PER_LAYER for layer in layers):
+                raise ExtensionControlApiError(400, "layer_control_limit_exceeded")
+            if sum(len(layer.controls) for layer in layers) > MAX_CONTROLS_TOTAL:
                 raise ExtensionControlApiError(400, "control_limit_exceeded")
             mutation = ExtensionControlMutation(
                 previous_revision=previous_revision,
@@ -422,7 +436,24 @@ class ExtensionControlApiService:
                 elif self._registry.permission(target_id) is None:
                     raise ExtensionControlApiError(400, "unknown_permission")
         self._validate_authority_mutability(mutation.layers)
-        return mutation
+        local_layers = tuple(layer for layer in mutation.layers if layer.kind is ControlLayerKind.LOCAL_ADMIN)
+        raw_authority = self._store.read_extension_control_authority(
+            catalog_digest=self._registry.catalog_digest,
+        )
+        persisted_signed_layers = tuple(
+            layer for layer in raw_authority.layers if layer.kind is ControlLayerKind.SIGNED_CLOUD
+        )
+        return replace(mutation, layers=(*local_layers, *persisted_signed_layers))
+
+    def _effective_layers_for_local_mutation(
+        self,
+        persisted_layers: tuple[ExtensionControlLayer, ...],
+    ) -> tuple[ExtensionControlLayer, ...]:
+        local_layers = tuple(layer for layer in persisted_layers if layer.kind is ControlLayerKind.LOCAL_ADMIN)
+        managed_layers = tuple(
+            layer for layer in self._runtime.current().layers if layer.kind is ControlLayerKind.SIGNED_CLOUD
+        )
+        return (*local_layers, *managed_layers)
 
     def _semantic_event_targets(self, semantic_preview: dict[str, object]) -> list[dict[str, object]]:
         raw_targets = semantic_preview.get("changed_targets")

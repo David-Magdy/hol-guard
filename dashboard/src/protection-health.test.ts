@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   normalizeProtectionHealth,
   PROTECTION_CHECK_IDS,
+  PROTECTION_PROVING_GRACE_MS,
   protectionHeadlineFor,
   protectionHealthFor,
   protectionPresentationState,
@@ -118,14 +119,65 @@ assert.equal(
 assert.equal(protectionPresentationState(unavailableProtectionHealth()), "checking");
 assert.equal(protectionPresentationState(normalizeProtectionHealth(payload(decisionFailure))), "degraded");
 assert.equal(protectionPresentationState(protectedHealth), "protected");
+assert.equal(
+  protectionPresentationState(normalizeProtectionHealth(payload(decisionGap))),
+  "partial",
+);
+
 const unprovenCore = checks();
 unprovenCore[PROTECTION_CHECK_IDS.indexOf("harness_hooks")] = {
   check_id: "harness_hooks",
   status: "unknown",
   reason_code: "hook_verification_unavailable",
 };
+const unprovenCoreHealth = normalizeProtectionHealth(payload(unprovenCore));
+assert.equal(unprovenCoreHealth.state, "degraded");
+assert.equal(protectionPresentationState(unprovenCoreHealth), "checking");
+
+const startupMixed = checks();
+for (const checkId of ["harness_hooks", "rule_packs", "tamper_checks"] as const) {
+  startupMixed[PROTECTION_CHECK_IDS.indexOf(checkId)] = {
+    check_id: checkId,
+    status: "unknown",
+    reason_code: `${checkId}_unavailable`,
+  };
+}
+const startupMixedHealth = normalizeProtectionHealth(payload(startupMixed));
+assert.equal(startupMixedHealth.state, "degraded");
+assert.equal(protectionPresentationState(startupMixedHealth), "checking");
+assert.equal(protectionPresentationState(protectedHealth), "protected");
+
+const failWhileProving = checks();
+failWhileProving[PROTECTION_CHECK_IDS.indexOf("harness_hooks")] = {
+  check_id: "harness_hooks",
+  status: "fail",
+  reason_code: "hooks_verification_failed",
+};
+failWhileProving[PROTECTION_CHECK_IDS.indexOf("tamper_checks")] = {
+  check_id: "tamper_checks",
+  status: "unknown",
+  reason_code: "tamper_proof_unavailable",
+};
 assert.equal(
-  protectionPresentationState(normalizeProtectionHealth(payload(unprovenCore))),
+  protectionPresentationState(normalizeProtectionHealth(payload(failWhileProving))),
+  "degraded",
+);
+
+const settledAttestation = checks();
+settledAttestation[PROTECTION_CHECK_IDS.indexOf("harness_hooks")] = {
+  check_id: "harness_hooks",
+  status: "unknown",
+  reason_code: "hook_attestation_unavailable",
+};
+const settledAttestationHealth = normalizeProtectionHealth(payload(settledAttestation));
+assert.equal(
+  protectionPresentationState(settledAttestationHealth, { unprovenElapsedMs: 0 }),
+  "checking",
+);
+assert.equal(
+  protectionPresentationState(settledAttestationHealth, {
+    unprovenElapsedMs: PROTECTION_PROVING_GRACE_MS,
+  }),
   "degraded",
 );
 
@@ -200,13 +252,15 @@ assert.deepEqual(remainingProtectionRepairParts(hookFailureHealth), {
 });
 assert.match(appDetailSource, /Install state" value=\{active \? "Installed"/);
 assert.match(appDetailSource, /protectionHealthFor\(runtime, harness\)/);
-assert.match(appDetailSource, /protectionPresentationState\(appProtection\)/);
+assert.match(appDetailSource, /useProtectionPresentationState\(appProtection\)/);
+assert.match(fleetSource, /useProtectionPresentationState\(protectionHealth\)/);
 assert.match(fleetSource, /resolveAppStatus\(install, appProtection,/);
 assert.match(fleetSource, /hookCheck\?\.status === "fail"/);
+assert.match(reviewStatesSource, /useProtectionPresentationState\(protectionHealth\)/);
 assert.match(reviewStatesSource, /protectedAppsCount = protectionHealth\.apps\.filter/);
 assert.match(reviewStatesSource, /if \(runtime === null\)/);
 assert.match(reviewStatesSource, /guard-skeleton/);
 assert.match(homeSource, /snapshot\?\.pending_count/);
 assert.match(homeSource, /resolveHomeQueuedCount/);
-assert.match(homeSource, /protectionPresentationState/);
+assert.match(homeSource, /useProtectionPresentationState/);
 assert.doesNotMatch(homeSource, /protectionHealthFor\(snapshot\)\.state : "degraded"/);

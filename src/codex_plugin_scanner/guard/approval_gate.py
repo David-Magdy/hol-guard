@@ -194,12 +194,12 @@ def public_config(guard_home: Path, *, now: str | None = None) -> ApprovalGatePu
             strict_all_decisions=bool(state.get("strict_all_decisions") is True),
             totp_enabled=bool(state.get("totp_enabled") is True),
             totp_pending=_has_pending_totp(state, now_epoch),
+            totp_recent_satisfied=_recent_totp_satisfied_locked(guard_home, state, now_epoch=now_epoch),
         )
 
 
 def recent_totp_satisfied(guard_home: Path, *, now: str | None = None) -> bool:
     """Return whether this local OS session has a valid recent TOTP proof."""
-
     with _APPROVAL_GATE_LOCK:
         state = _load_state(guard_home)
         if not _enabled(state) or not _totp_enabled(state):
@@ -1184,6 +1184,7 @@ def _verify_totp_or_raise(
         now_epoch=now_epoch,
         skew_steps=APPROVAL_GATE_TOTP_SKEW_STEPS,
         last_accepted_counter=_optional_int(state.get("totp_last_counter")),
+        allow_last_counter=_recent_totp_satisfied_locked(guard_home, state, now_epoch=now_epoch),
     )
     if accepted_counter is None:
         _record_failed_attempt(guard_home, state, factor="totp", now=_iso_from_epoch(now_epoch))
@@ -1310,10 +1311,7 @@ def _current_totp_session_binding() -> str | None:
             parent_pid = os.getppid()
         except (AttributeError, OSError):
             parent_pid = 0
-        if parent_pid > 0:
-            signals.append(f"ppid={parent_pid}")
-    if not signals:
-        return None
+        signals.append(f"ppid={parent_pid}" if parent_pid > 0 else f"pid={os.getpid()}")
     return hashlib.sha256("\0".join(signals).encode("utf-8")).hexdigest()
 
 

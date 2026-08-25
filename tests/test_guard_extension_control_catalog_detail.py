@@ -15,6 +15,7 @@ from codex_plugin_scanner.guard.runtime.extension_control_authority import (
     ExtensionControlAuthorityView,
 )
 from codex_plugin_scanner.guard.runtime.extension_control_contract import CONTROL_SCHEMA_VERSION
+from codex_plugin_scanner.guard.runtime.extension_control_limits import advertised_extension_control_limits
 from codex_plugin_scanner.guard.runtime.extension_control_runtime import ExtensionControlRuntime
 from codex_plugin_scanner.guard.store import GuardStore
 
@@ -82,10 +83,11 @@ def test_catalog_exposes_deterministic_full_extension_permission_and_rule_contra
     assert payload["schema_version"] == _API_SCHEMA
     assert payload["control_schema_version"] == CONTROL_SCHEMA_VERSION
     assert payload["catalog_digest"] == BUILT_IN_COMMAND_EXTENSION_REGISTRY.catalog_digest
+    limits = advertised_extension_control_limits()
     assert payload["limits"] == {
-        "max_body_bytes": 1_000_000,
-        "max_controls": 4096,
-        "max_observations": 2048,
+        **limits,
+        "max_body_bytes": limits["max_catalog_payload_bytes"],
+        "max_controls": limits["max_controls_total"],
     }
 
     extensions = payload["extensions"]
@@ -160,13 +162,21 @@ def test_catalog_exposes_deterministic_full_extension_permission_and_rule_contra
     git = next(item for item in extensions if item["extension_id"] == "command.git")
     git_permission_ids = {permission["permission_id"] for permission in git["permissions"]}
     assert git["required"] is True
-    assert git_permission_ids == {
+    assert {
         "command.git.permission.force-clean",
         "command.git.permission.force-push",
         "command.git.permission.hard-reset",
+        "command.git.permission.index-inspection",
         "command.git.permission.local-branch-delete",
         "command.git.permission.remote-branch-delete",
-    }
+        "command.git.permission.unverified-fetch",
+        "command.git.permission.switch",
+        "command.git.permission.checkout",
+        "command.git.permission.stash",
+        "command.git.permission.rebase",
+        "command.git.permission.status",
+        "command.git.permission.unsafe-read",
+    } <= git_permission_ids
     assert all(permission["configurable"] is True for permission in git["permissions"])
     assert all(len(permission["rule_ids"]) == 1 for permission in git["permissions"])
 

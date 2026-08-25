@@ -15,6 +15,7 @@ from codex_plugin_scanner.guard.approval_gate import (
     ApprovalGateInput,
     begin_totp_enrollment,
     confirm_totp_enrollment,
+    public_config,
     recent_totp_satisfied,
     require_approval_decision,
 )
@@ -108,17 +109,18 @@ def test_recent_totp_proof_reuses_factor_without_replaying_code(
     assert reused.factor_set == ("totp",)
     assert reused.totp_verified is True
     assert reused.strict is True
+    assert public_config(guard_home, now="2026-04-11T00:00:45+00:00").totp_recent_satisfied is True
 
-    with pytest.raises(ApprovalGateError) as replay_error:
-        require_approval_decision(
-            guard_home,
-            action="allow",
-            scope="artifact",
-            subject="explicit-replay",
-            approval_gate_input=ApprovalGateInput(totp_code=first_code),
-            now="2026-04-11T00:00:46+00:00",
-        )
-    assert replay_error.value.code == "approval_gate_totp_invalid"
+    same_code = require_approval_decision(
+        guard_home,
+        action="allow",
+        scope="artifact",
+        subject="same-code-while-recent",
+        approval_gate_input=ApprovalGateInput(totp_code=first_code),
+        now="2026-04-11T00:00:46+00:00",
+    )
+    assert same_code is not None
+    assert same_code.totp_verified is True
 
 
 def test_recent_totp_proof_is_bound_to_local_session(
@@ -165,6 +167,17 @@ def test_recent_totp_proof_expires_after_sixty_seconds(
             now="2026-04-11T00:01:31+00:00",
         )
     assert error.value.code == "approval_gate_totp_required"
+    first_code = totp_code_at_counter(secret=secret, counter=_counter("2026-04-11T00:00:31+00:00"))
+    with pytest.raises(ApprovalGateError) as replay_error:
+        require_approval_decision(
+            guard_home,
+            action="allow",
+            scope="artifact",
+            subject="expired-replay",
+            approval_gate_input=ApprovalGateInput(totp_code=first_code),
+            now="2026-04-11T00:01:31+00:00",
+        )
+    assert replay_error.value.code == "approval_gate_totp_invalid"
 
 
 def test_recent_totp_proof_tampering_fails_closed(

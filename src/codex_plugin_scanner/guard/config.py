@@ -23,6 +23,7 @@ else:  # pragma: no cover - runtime compatibility
 
 from .action_lattice import coerce_guard_action, normalize_guard_action
 from .approval_gate import ApprovalGateGrant, public_config, require_settings_write
+from .config_preset_support import apply_named_posture_harness_policy
 from .mdm.contracts import ManagedPolicy, ManagedPolicyState
 from .mdm.policy import apply_managed_policy, fail_closed_managed_policy, load_managed_policy
 from .models import GUARD_ACTION_VALUES, GuardAction, GuardMode
@@ -515,7 +516,7 @@ def load_guard_config(
     return GuardConfig(
         guard_home=guard_home,
         workspace=workspace,
-        mode=loaded_mode,
+        mode=("observe" if loaded_posture == "watch" else loaded_mode),
         protection_posture=loaded_posture,
         protection_posture_explicit=posture_explicit,
         watch_auto_revert_hours=coerce_watch_auto_revert_hours(merged.get("watch_auto_revert_hours")),
@@ -641,12 +642,13 @@ def update_guard_settings(
     current_config = load_guard_config(guard_home)
     next_payload = dict(current)
     switching_to_custom_without_overrides = (
-        payload.get("security_level") == "custom"
-        and "risk_actions" not in payload
-        and "harness_risk_actions" not in payload
+        payload.get("security_level") == "custom" and not {"risk_actions", "harness_risk_actions"} & payload.keys()
     )
     if switching_to_custom_without_overrides:
         next_payload["risk_actions"] = _effective_risk_actions(current_config)
+    next_payload = apply_named_posture_harness_policy(
+        next_payload, payload, valid_security_levels=VALID_SECURITY_LEVELS
+    )
     for key, value in payload.items():
         if key not in EDITABLE_GUARD_SETTING_KEYS:
             continue
@@ -669,7 +671,7 @@ def update_guard_settings(
         ]
         if weakened:
             raise ValueError(f"Managed policy locks prevent weakening: {', '.join(sorted(weakened))}")
-    if next_payload.get("sync") is True and not cloud_sync_entitled:
+    if next_payload.get("sync") is True and current.get("sync") is not True and not cloud_sync_entitled:
         raise ValueError("Cloud sync requires a paid team plan.")
     _write_guard_config(guard_home / "config.toml", next_payload)
     updated = load_guard_config(guard_home)

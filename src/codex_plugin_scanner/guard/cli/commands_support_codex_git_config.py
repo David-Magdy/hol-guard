@@ -119,6 +119,10 @@ def _git_common_dir(git_dir: Path) -> Path:
     return common_dir
 
 
+git_dir_from_file = _git_dir_from_file
+git_common_dir = _git_common_dir
+
+
 def _git_config_tree_disables_diff_helpers(config_path: Path, *, seen_paths: set[Path], repo_dir: Path | None) -> bool:
     normalized_path = config_path.expanduser().resolve()
     if normalized_path in seen_paths:
@@ -366,4 +370,6 @@ __all__ = [
     "_git_repo_config_paths",
     "_git_repo_diff_helpers_are_unconfigured",
     "_git_repo_root",
+    "git_common_dir",
+    "git_dir_from_file",
 ]

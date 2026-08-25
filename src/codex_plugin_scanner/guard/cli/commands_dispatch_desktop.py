@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from ..config import GuardConfig
     from ..store import GuardStore
 
-from ..dashboard_launcher import build_desktop_dashboard_session_url
+from ..dashboard_launcher import build_desktop_dashboard_session_url, desktop_bootstrap_is_preflight
 from ._commands_shared import *  # noqa: F403
 
 DESKTOP_BOOTSTRAP_SCHEMA = "guard-desktop-bootstrap.v1"
@@ -345,12 +345,41 @@ def _run_guard_desktop_command(
     output_stream: TextIO | None = None,
 ) -> int:
     del workspace, input_text
+    if getattr(args, "desktop_command", None) == "dashboard-update":
+        from ..daemon.dashboard_update_runner import main as dashboard_update_main
+
+        resolved_home = getattr(args, "guard_home", None) or guard_home
+        if resolved_home is None:
+            print("Guard dashboard update requires --guard-home.", file=sys.stderr)
+            return 2
+        argv = [
+            "--guard-home",
+            str(resolved_home),
+            "--daemon-pid",
+            str(args.daemon_pid),
+            "--daemon-port",
+            str(args.daemon_port),
+            "--update-token",
+            str(args.update_token),
+        ]
+        if bool(getattr(args, "force_pypi_reinstall", False)):
+            argv.append("--force-pypi-reinstall")
+        if bool(getattr(args, "alpha", False)):
+            argv.append("--alpha")
+        return dashboard_update_main(argv)
     if getattr(args, "desktop_command", None) != "bootstrap":
         print("Choose desktop bootstrap.", file=sys.stderr)
         return 2
     if context is None or store is None or config is None:
         raise RuntimeError("Guard Desktop bootstrap requires local Guard context")
 
+    resolved_guard_home = guard_home or context.guard_home
+    # Start/adopt the matching local runtime before projecting protection.
+    # Candidate preflight must not spawn a disposable-home daemon.
+    if desktop_bootstrap_is_preflight():
+        session_url = None
+    else:
+        session_url = build_desktop_dashboard_session_url(guard_home=resolved_guard_home)
     status_payload = importlib.import_module(".product", __package__).build_guard_status_payload(
         context,
         store,
@@ -381,10 +410,10 @@ def _run_guard_desktop_command(
         resolved_today_count=resolved_today_count,
         receipt_summary=receipt_summary,
     )
-    resolved_guard_home = guard_home or context.guard_home
     dashboard = payload.get("dashboard")
     if isinstance(dashboard, dict):
-        dashboard["sessionUrl"] = build_desktop_dashboard_session_url(guard_home=resolved_guard_home)
+        if session_url is not None:
+            dashboard["sessionUrl"] = session_url
         dashboard["canonical"] = True
     print(json.dumps(payload, sort_keys=True), file=output_stream or sys.stdout)
     return 0

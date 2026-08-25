@@ -13,6 +13,8 @@ from ..compound_git_inspection import (
     is_low_risk_standalone_git_routine,
 )
 from ..git_execution_safety import git_status_args_are_read_only, git_status_has_execution_free_config
+from ..git_index_inspection import owned_git_index_inspection_action_class
+from ..git_origin_refresh import command_is_origin_shaped_git_fetch
 from ..kubernetes_commands import kubernetes_secret_read_source
 from ..shell_command_wrappers import normalize_transparent_shell_command
 from ..shell_execution_context import ShellExecutionContext, model_shell_execution_context
@@ -322,7 +324,7 @@ def _unverified_git_fetch_request(
     cwd: Path | None,
     home_dir: Path | None,
 ) -> ToolActionRequestMatch | None:
-    if "git" not in command_text or "fetch" not in command_text:
+    if "git" not in command_text:
         return None
     parsing_cwd = cwd or home_dir or Path.cwd()
     context = model_shell_execution_context(
@@ -332,7 +334,24 @@ def _unverified_git_fetch_request(
         home_dir=home_dir,
     )
     if not any(_segment_invokes_git_fetch(segment.tokens) for segment in context.segments):
-        return None
+        action_class = owned_git_index_inspection_action_class(
+            command_text,
+            cwd=cwd,
+            home_dir=home_dir,
+        )
+        if action_class is None:
+            return None
+        return ToolActionRequestMatch(
+            tool_name=tool_name,
+            normalized_tool_name=normalized_tool_name,
+            command_text=command_text,
+            action_class=action_class,
+            reason=(
+                "Git cached diff needs a repository-bound index inspection Guard can verify. "
+                "Use git diff --cached with check/stat flags or lockfile excludes, "
+                "or confirm the exact index read in Guard."
+            ),
+        )
     # Home lets git -C target a repo under that home from a sibling workspace.
     if cwd is not None and is_low_risk_standalone_git_routine(context, home_dir=home_dir):
         return None
@@ -341,11 +360,13 @@ def _unverified_git_fetch_request(
         for segment in context.segments
     ):
         return None
+    origin_shaped = command_is_origin_shaped_git_fetch(tuple(segment.tokens for segment in context.segments))
+    action_class = "git origin refresh" if origin_shaped else "unverified Git remote refresh"
     return ToolActionRequestMatch(
         tool_name=tool_name,
         normalized_tool_name=normalized_tool_name,
         command_text=command_text,
-        action_class="unverified Git remote refresh",
+        action_class=action_class,
         reason=(
             "Git fetch needs a repository-bound origin Guard can verify. "
             "Run it from that repository, or use git -C with a path under your "

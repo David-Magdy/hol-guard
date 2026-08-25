@@ -6,6 +6,7 @@ from .command_backup_extensions import BACKUP_COMMAND_RULES
 from .command_cloud_extensions import CLOUD_COMMAND_RULES
 from .command_database_extensions import DATABASE_COMMAND_RULES
 from .command_domain_extensions import DOMAIN_COMMAND_RULES
+from .command_git_porcelain_extensions import GIT_PORCELAIN_COMMAND_RULES
 from .command_github_rules import GITHUB_ACTION_RISK_CLASSES, GITHUB_COMMAND_RULES
 from .command_remote_extensions import REMOTE_COMMAND_RULES
 from .command_rules import (
@@ -43,6 +44,10 @@ COMMAND_ACTION_RISK_CLASSES: dict[str, tuple[str, ...]] = {
     "github pr body shell substitution": ("execution",),
     "filesystem destructive command": ("destructive_shell",),
     "git destructive command": ("destructive_shell",),
+    "git origin refresh": ("network_egress",),
+    "git index inspection": ("local_secret_read",),
+    "git workspace command": ("destructive_shell", "network_egress"),
+    "git read command": ("local_secret_read",),
     "system destructive command": ("destructive_shell",),
     "windows destructive command": ("destructive_shell",),
     "kubernetes destructive command": ("destructive_shell", "network_egress"),
@@ -117,6 +122,7 @@ def _compatibility_rule(
     safer_alternative: str,
     matcher: CommandMatcher | None = None,
     example_command: str | None = None,
+    family: str | None = None,
 ) -> CommandSafetyRule:
     return CommandSafetyRule(
         rule_id=rule_id,
@@ -129,6 +135,7 @@ def _compatibility_rule(
         matcher=matcher,
         compatibility_fallback=True,
         example_command=example_command,
+        family=family,
     )
 
 
@@ -292,6 +299,24 @@ BUILT_IN_COMMAND_RULES = (
         action_class="filesystem destructive command",
         safer_alternative="Preview affected paths and apply the change to the narrowest directory possible.",
     ),
+    _compatibility_rule(
+        rule_id="command.git.unverified-fetch",
+        family="git-remote",
+        example_command="git fetch origin",
+        title="Git origin refresh",
+        description="Identifies named-origin Git fetch operations that Guard cannot verify as safe.",
+        action_class="git origin refresh",
+        safer_alternative="Run fetch from the repository with a named origin, optional quiet flags, and named refs.",
+    ),
+    _compatibility_rule(
+        rule_id="command.git.index-inspection",
+        family="git-index",
+        example_command="git diff --cached --output=patch",
+        title="Git index inspection",
+        description="Identifies staged-index Git reads that Guard cannot verify as a bounded inspection.",
+        action_class="git index inspection",
+        safer_alternative="Run git diff --cached --check, or exclude lockfiles and scan the staged patch on stdin.",
+    ),
     _structured_rule(
         rule_id="command.git.hard-reset",
         family="git-destructive",
@@ -446,6 +471,7 @@ BUILT_IN_COMMAND_RULES = (
             ),
         ),
     ),
+    *GIT_PORCELAIN_COMMAND_RULES,
     *DOMAIN_COMMAND_RULES,
     *CLOUD_COMMAND_RULES,
     *STORAGE_COMMAND_RULES,

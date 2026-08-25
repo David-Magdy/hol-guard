@@ -3,7 +3,7 @@ import { fetchLocalCliApi } from "./guard-api";
 export type LocalCliKind = "executable" | "script";
 export type LocalCliState = "unset" | "allowed" | "blocked";
 export type LocalCliCommandState = "inherit" | "allow" | "block";
-export type LocalCliSurface = "cli" | "mcp";
+export type LocalCliSurface = "cli" | "mcp" | "package-scripts";
 
 export type LocalCliCommand = {
   command_id: string;
@@ -33,6 +33,7 @@ export type LocalCliItem = {
   grant_revision: number | null;
   authority_revision: number;
   suggestable: boolean;
+  suggestion_score: number;
   commands: LocalCliCommand[];
 };
 
@@ -109,7 +110,187 @@ export function suggestedHarnessExtensions(items: readonly LocalCliItem[]): Loca
 }
 
 export function suggestedSeenExtensions(items: readonly LocalCliItem[]): LocalCliItem[] {
-  return suggestedCustomExtensions(items).filter((item) => item.source_label === null);
+  return suggestedCustomExtensions(items)
+    .filter((item) => item.source_label === null && item.surface !== "package-scripts")
+    .slice()
+    .sort(compareSeenSuggestions);
+}
+
+export function suggestedPackageScriptExtensions(items: readonly LocalCliItem[]): LocalCliItem[] {
+  return suggestedCustomExtensions(items)
+    .filter((item) => item.surface === "package-scripts")
+    .slice()
+    .sort(compareSeenSuggestions);
+}
+
+export function looksLikePackageScriptPaste(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (/(^|\/)package\.json$/i.test(trimmed)) return true;
+  if (!trimmed.includes(" ") && (trimmed.includes("/") || trimmed.includes("\\") || trimmed === ".")) {
+    return true;
+  }
+  const manager = /^(npm|pnpm|yarn|bun)(?:\.cmd)?\b/i.exec(trimmed);
+  if (manager === null) return false;
+  if (/\b(run|run-script|start|test|stop|restart)\b/i.test(trimmed)) return true;
+  return /^yarn\s+\S+/i.test(trimmed);
+}
+
+export function filterExtensionSuggestions(
+  items: readonly LocalCliItem[],
+  query: string,
+): LocalCliItem[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [...items];
+  return items.filter((item) => suggestionMatchesQuery(item, needle));
+}
+
+export function preferredPackageScriptExtension(items: readonly LocalCliItem[]): LocalCliItem | null {
+  return suggestedPackageScriptExtensions(items).find((item) => item.commands.length > 0) ?? null;
+}
+
+export function looksLikeProjectRelocatePaste(value: string): boolean {
+  const trimmed = unwrapPathPaste(value);
+  if (!trimmed) return false;
+  if (/(^|[\\/])package\.json$/i.test(trimmed)) return true;
+  if (/\s(--prefix|-C|--dir|--cwd|--workspace-dir)(=|\s)/i.test(trimmed)) return true;
+  if (/^[A-Za-z]:[\\/]/.test(trimmed) || trimmed.startsWith("/") || trimmed.startsWith("~/") || trimmed === ".") {
+    return true;
+  }
+  return !trimmed.includes(" ") && (trimmed.includes("/") || trimmed.includes("\\"));
+}
+
+export function keepsPackageScriptCatalog(
+  query: string,
+  commands: readonly LocalCliCommand[],
+): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return true;
+  if (looksLikeProjectRelocatePaste(trimmed)) return false;
+  if (looksLikePackageScriptPaste(trimmed)) return true;
+  const needle = packageScriptFilterNeedle(trimmed) || trimmed.toLowerCase();
+  return commands.some((command) => commandMatchesQuery(command, needle));
+}
+
+export function filterPackageScriptCommands(
+  commands: readonly LocalCliCommand[],
+  query: string,
+): LocalCliCommand[] {
+  const needle = packageScriptFilterNeedle(query);
+  if (!needle) return [...commands];
+  return commands.filter((command) => commandMatchesQuery(command, needle));
+}
+
+export function commandMatchesQuery(command: LocalCliCommand, needle: string): boolean {
+  const haystacks = [command.name, command.usage, command.description];
+  if (haystacks.some((value) => value.toLowerCase().includes(needle))) return true;
+  return colonPartsMatch(command.name, needle);
+}
+
+export function enrollablePackageScriptCommands(
+  commands: readonly LocalCliCommand[],
+): LocalCliCommand[] {
+  return commands.filter((command) => command.command_id !== "root" && command.command_id !== "other");
+}
+
+export function enrollmentCommandStates(
+  commands: readonly LocalCliCommand[],
+  pending: LocalCliState,
+  surface: LocalCliSurface,
+): Array<{ command_id: string; state: LocalCliCommandState }> {
+  if (surface !== "package-scripts") return commandStatesFrom(commands);
+  return commands.map((command) => ({
+    command_id: command.command_id,
+    state: packageScriptEnrollmentState(command, pending),
+  }));
+}
+
+export function applyBulkCommandState(
+  commands: readonly LocalCliCommand[],
+  state: LocalCliCommandState,
+  skipIds: ReadonlySet<string> = new Set(),
+): LocalCliCommand[] {
+  return commands.map((command) => (
+    skipIds.has(command.command_id) ? command : { ...command, state }
+  ));
+}
+
+export function bulkCommandState(commands: readonly LocalCliCommand[]): LocalCliCommandState | "mixed" {
+  if (commands.length === 0) return "inherit";
+  const first = commands[0]!.state;
+  return commands.every((command) => command.state === first) ? first : "mixed";
+}
+
+function commandStatesFrom(
+  commands: readonly LocalCliCommand[],
+): Array<{ command_id: string; state: LocalCliCommandState }> {
+  return commands.map((command) => ({ command_id: command.command_id, state: command.state }));
+}
+
+function packageScriptEnrollmentState(
+  command: LocalCliCommand,
+  pending: LocalCliState,
+): LocalCliCommandState {
+  if (command.command_id === "root" || command.command_id === "other") return command.state;
+  if (pending === "blocked") return "block";
+  if (command.state === "block") return "block";
+  if (pending === "allowed") return "allow";
+  return command.state;
+}
+
+function colonPartsMatch(name: string, needle: string): boolean {
+  const queryParts = needle.split(":").map((part) => part.trim()).filter(Boolean);
+  if (queryParts.length < 2) return false;
+  const nameParts = name.toLowerCase().split(":");
+  let index = 0;
+  for (const part of nameParts) {
+    if (index < queryParts.length && part.includes(queryParts[index]!)) index += 1;
+  }
+  return index === queryParts.length;
+}
+
+function packageScriptFilterNeedle(query: string): string {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return "";
+  return trimmed.replace(/^(npm|pnpm|yarn|bun)(?:\.cmd)?(?:\s+run(?:-script)?)?\s*/, "").trim();
+}
+
+function unwrapPathPaste(value: string): string {
+  const trimmed = value.trim();
+  if ((trimmed.startsWith("'") && trimmed.endsWith("'")) || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+export function seenSuggestionMeta(item: LocalCliItem): string {
+  if (item.observed_count <= 0) {
+    return item.kind === "script" ? "Script" : "Tool";
+  }
+  if (item.observed_count === 1) return "Seen once";
+  return `Seen ${item.observed_count} times`;
+}
+
+function compareSeenSuggestions(left: LocalCliItem, right: LocalCliItem): number {
+  if (right.suggestion_score !== left.suggestion_score) {
+    return right.suggestion_score - left.suggestion_score;
+  }
+  if (right.observed_count !== left.observed_count) {
+    return right.observed_count - left.observed_count;
+  }
+  const recency = (right.last_seen_at ?? "").localeCompare(left.last_seen_at ?? "");
+  if (recency !== 0) return recency;
+  return left.name.localeCompare(right.name);
+}
+
+function suggestionMatchesQuery(item: LocalCliItem, needle: string): boolean {
+  const compact = packageScriptFilterNeedle(needle) || needle;
+  const haystacks = [item.name, item.example_label, item.source_label ?? ""];
+  if (haystacks.some((value) => value.toLowerCase().includes(needle) || value.toLowerCase().includes(compact))) {
+    return true;
+  }
+  if (item.surface !== "package-scripts") return false;
+  return item.commands.some((command) => commandMatchesQuery(command, compact));
 }
 
 export function normalizeLocalCliItem(value: unknown): LocalCliItem {
@@ -133,7 +314,7 @@ export function normalizeLocalCliItem(value: unknown): LocalCliItem {
     last_seen_at: optionalString(value.last_seen_at),
     source_path: optionalString(value.source_path),
     help_status: normalizeHelpStatus(value.help_status),
-    surface: value.surface === "mcp" ? "mcp" : "cli",
+    surface: normalizeSurface(value.surface),
     server_identity_hash: normalizeIdentityHash(value.server_identity_hash),
     source_label: optionalSourceLabel(value.source_label),
     state,
@@ -143,8 +324,15 @@ export function normalizeLocalCliItem(value: unknown): LocalCliItem {
       : requiredInt(value.grant_revision, "grant revision"),
     authority_revision: requiredInt(value.authority_revision, "revision"),
     suggestable: value.suggestable === true,
+    suggestion_score: optionalScore(value.suggestion_score),
     commands: Array.isArray(value.commands) ? value.commands.map(normalizeLocalCliCommand) : [],
   };
+}
+
+function normalizeSurface(value: unknown): LocalCliSurface {
+  if (value === "mcp") return "mcp";
+  if (value === "package-scripts") return "package-scripts";
+  return "cli";
 }
 
 function normalizeHelpStatus(value: unknown): LocalCliItem["help_status"] {
@@ -155,6 +343,14 @@ function normalizeHelpStatus(value: unknown): LocalCliItem["help_status"] {
 function normalizeIdentityHash(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string" || !SHA256_PATTERN.test(value)) return null;
+  return value;
+}
+
+function optionalScore(value: unknown): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new Error("Invalid local CLI suggestion score");
+  }
   return value;
 }
 

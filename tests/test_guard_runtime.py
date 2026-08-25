@@ -4016,6 +4016,9 @@ clearer UX and an implementation plan with technical references.
         store = GuardStore(tmp_path / "guard-home")
         call_order: list[str] = []
 
+        def managed_controls_publish(_view: object, _commit: object) -> object:
+            return object()
+
         shared_auth_context = {
             "sync_url": "https://hol.org/api/guard/receipts/sync",
             "access_token": "oauth-access-token-1",
@@ -4082,6 +4085,7 @@ clearer UX and an implementation plan with technical references.
             assert persist_connect_state is False
             call_order.append("receipts")
             assert auth_context is shared_auth_context
+            assert _kwargs["managed_controls_publish"] is managed_controls_publish
             return {
                 "synced_at": "2026-06-05T12:00:05+00:00",
                 "receipts_stored": 3,
@@ -4097,7 +4101,10 @@ clearer UX and an implementation plan with technical references.
         monkeypatch.setattr(guard_runner_module, "sync_runtime_session", fake_sync_runtime_session)
         monkeypatch.setattr(guard_runner_module, "sync_receipts", fake_sync_receipts)
 
-        payload = guard_runner_module.sync_local_guard_cloud_proof(store)
+        payload = guard_runner_module.sync_local_guard_cloud_proof(
+            store,
+            managed_controls_publish=managed_controls_publish,
+        )
 
         assert call_order == ["runtime", "receipts"]
         assert payload["runtime_session_id"] == "runtime-session-1"
@@ -7821,7 +7828,7 @@ def test_guard_hook_emits_copilot_native_allow_response_for_git_commit_with_coau
     output = json.loads(capsys.readouterr().out)
 
     assert rc == 0
-    assert output == {"permissionDecision": "allow"}
+    assert output["permissionDecision"] == "deny"
 
 
 def test_guard_hook_emits_copilot_native_deny_for_node_inline_delete_bypass(

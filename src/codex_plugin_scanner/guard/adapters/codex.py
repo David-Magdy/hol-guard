@@ -434,13 +434,13 @@ def _manifest_event_bindings(context: HarnessContext) -> list[dict[str, object]]
 def _hook_packaged_file_paths() -> tuple[tuple[str, Path], ...]:
     scanner_root = Path(__file__).resolve().parents[2]
     guard_root = Path(__file__).resolve().parents[1]
-    daemon_root = Path(__file__).resolve().parents[1] / "daemon"
     return (
         ("bridge", Path(__file__).with_name("codex_daemon_hook_bridge.py").resolve()),
+        ("bridge_resume", Path(__file__).with_name("codex_daemon_hook_resume.py").resolve()),
         ("bridge_runtime", guard_root / "codex_hook_bridge_runtime.py"),
         ("fallback_entrypoint", scanner_root / "cli.py"),
-        ("daemon_entrypoint", daemon_root / "__init__.py"),
-        ("daemon_manager", daemon_root / "manager.py"),
+        ("daemon_entrypoint", guard_root / "daemon" / "__init__.py"),
+        ("daemon_manager", guard_root / "daemon" / "manager.py"),
         ("launch_runtime", guard_root / "codex_hook_launch_runtime.py"),
         ("runtime_trust", guard_root / "codex_hook_runtime_trust.py"),
         ("windows_job", guard_root / "codex_hook_windows_job.py"),
@@ -466,10 +466,6 @@ def _hook_manifest_spec(context: HarnessContext) -> CodexHookManifestSpec:
         event_bindings=tuple(_manifest_event_bindings(context)),
         workspace_rebinding_allowed=not context.workspace_override_explicit,
     )
-
-
-def _build_authenticated_hook_manifest(context: HarnessContext) -> dict[str, object]:
-    return build_authenticated_hook_manifest(_hook_manifest_spec(context))
 
 
 def _current_install_legacy_bindings(context: HarnessContext, hooks: dict[str, object]) -> list[dict[str, object]]:
@@ -1705,7 +1701,9 @@ class CodexHarnessAdapter(HarnessAdapter):
         original_manifest = snapshot_regular_file(manifest_path)
         original_secret = snapshot_regular_file(secret_path)
         try:
-            manifest = _build_authenticated_hook_manifest(context)
+            manifest = build_authenticated_hook_manifest(
+                _hook_manifest_spec(context), previous_manifest=previous_manifest
+            )
             _assert_package_reauthentication_is_safe(previous_manifest, manifest)
             write_hook_manifest(context.guard_home, config_path, manifest)
             atomic_write_text(config_path, dump_toml(payload), mode=0o600)

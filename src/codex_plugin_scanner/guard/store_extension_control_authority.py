@@ -13,6 +13,13 @@ from dataclasses import is_dataclass, replace
 from enum import Enum
 from typing import cast
 
+from .managed_controls_policy_bundle import (
+    MANAGED_CONTROLS_ACTIVE_STATE_KEY,
+    MANAGED_CONTROLS_LAST_GOOD_STATE_KEY,
+    MANAGED_CONTROLS_REVISION_STATE_KEY,
+    managed_controls_layers_from_activation_state,
+    managed_controls_revision_from_state,
+)
 from .runtime.command_extensions import CommandSafetyExtensionRegistry
 from .runtime.extension_control_authority import (
     SNAPSHOT_PURPOSE,
@@ -27,7 +34,13 @@ from .runtime.extension_control_authority import (
     layers_to_json,
     verify_authenticated_record,
 )
-from .runtime.extension_control_contract import ControlState, ControlTargetKind, ExtensionControl, ExtensionControlLayer
+from .runtime.extension_control_contract import (
+    ControlLayerKind,
+    ControlState,
+    ControlTargetKind,
+    ExtensionControl,
+    ExtensionControlLayer,
+)
 from .runtime.extension_control_proof import (
     ExtensionControlEnrollment,
     ExtensionControlEnrollmentProof,
@@ -109,11 +122,104 @@ class StoreExtensionControlAuthorityMixin(_ExtensionControlAuthorityTransitionMi
                     key = self._authority_key(required=True)
                     assert key is not None
                     self._record_catalog_manifest(registry, key=key)
-                return view
+                return self._with_managed_controls_activation(view)
         except ExtensionControlAuthorityError:
             return self._tampered_view(catalog_digest)
         except Exception:
             return self._degraded_view(catalog_digest)
+
+    def _with_managed_controls_activation(
+        self,
+        view: ExtensionControlAuthorityView,
+    ) -> ExtensionControlAuthorityView:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "select state_key, payload_json from sync_state where state_key in (?, ?)",
+                (
+                    MANAGED_CONTROLS_ACTIVE_STATE_KEY,
+                    MANAGED_CONTROLS_REVISION_STATE_KEY,
+                ),
+            ).fetchall()
+        managed_state: dict[str, object] = {}
+        for row in rows:
+            try:
+                managed_state[str(row["state_key"])] = json.loads(str(row["payload_json"]))
+            except json.JSONDecodeError as exc:
+                raise ExtensionControlAuthorityError("invalid managed controls state") from exc
+        active = managed_state.get(MANAGED_CONTROLS_ACTIVE_STATE_KEY)
+        revision_state = managed_state.get(MANAGED_CONTROLS_REVISION_STATE_KEY)
+        if active is None or active == {}:
+            if revision_state is None or revision_state == {}:
+                return view
+            key = self._authority_key(required=True)
+            assert key is not None
+            managed_revision = managed_controls_revision_from_state(
+                revision_state,
+                authority_key=key,
+            )
+            local_layers = tuple(layer for layer in view.layers if layer.kind is ControlLayerKind.LOCAL_ADMIN)
+            return ExtensionControlAuthorityView(
+                view.health,
+                view.revision,
+                view.catalog_digest,
+                local_layers,
+                managed_revision,
+            )
+        if view.health is not AuthorityHealth.PROTECTED:
+            raise ExtensionControlAuthorityError("managed controls require protected local authority")
+        if revision_state is None or revision_state == {}:
+            raise ExtensionControlAuthorityError("managed controls revision state is missing")
+        key = self._authority_key(required=True)
+        assert key is not None
+        managed_layers, managed_revision = managed_controls_layers_from_activation_state(
+            active,
+            catalog_digest=view.catalog_digest,
+            authority_key=key,
+        )
+        durable_revision = managed_controls_revision_from_state(
+            revision_state,
+            authority_key=key,
+        )
+        if managed_revision != durable_revision:
+            raise ExtensionControlAuthorityError("managed controls activation revision mismatch")
+        local_layers = tuple(layer for layer in view.layers if layer.kind is ControlLayerKind.LOCAL_ADMIN)
+        composed = ExtensionControlAuthorityView(
+            view.health,
+            view.revision,
+            view.catalog_digest,
+            (*local_layers, *managed_layers),
+            managed_revision,
+        )
+        return composed
+
+    def managed_controls_lkg_capabilities(
+        self,
+        policy_bundle: dict[str, object],
+    ) -> frozenset[str]:
+        """Return negotiation bound to the exact authenticated managed LKG."""
+
+        state = self.get_sync_payload(MANAGED_CONTROLS_LAST_GOOD_STATE_KEY)
+        if not isinstance(state, dict):
+            return frozenset()
+        if state.get("bundleHash") != policy_bundle.get("bundleHash") or state.get(
+            "bundleVersion"
+        ) != policy_bundle.get("bundleVersion"):
+            return frozenset()
+        key = self._authority_key(required=False)
+        if key is None:
+            return frozenset()
+        try:
+            managed_controls_layers_from_activation_state(
+                state,
+                catalog_digest=str(state.get("catalogDigest", "")),
+                authority_key=key,
+            )
+        except ExtensionControlAuthorityError:
+            return frozenset()
+        raw = state.get("negotiatedCapabilities")
+        if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+            return frozenset()
+        return frozenset(cast(list[str], raw))
 
     def enroll_extension_control_authority(
         self,

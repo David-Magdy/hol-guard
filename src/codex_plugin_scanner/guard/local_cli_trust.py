@@ -11,11 +11,13 @@ from typing import Literal
 from .models import GuardAction, GuardArtifact
 from .runtime.local_cli_commands import (
     OTHER_COMMAND_ID,
+    ROOT_COMMAND_ID,
     LocalCliCommand,
     resolve_command_id_for_text,
     slug_local_cli_command_id,
 )
 from .runtime.local_cli_identity import UnlistedCliIdentity, identify_unlisted_cli
+from .runtime.package_json_scripts import identify_package_json_scripts
 
 LocalCliGrantState = Literal["allowed", "blocked"]
 
@@ -41,7 +43,9 @@ def matching_local_cli_grant(
 
     if current_action not in {"review", "require-reapproval", "warn"}:
         return None
-    identity = identify_unlisted_cli(command, cwd=cwd, home_dir=home_dir)
+    identity = identify_package_json_scripts(command, cwd=cwd, home_dir=home_dir)
+    if identity is None:
+        identity = identify_unlisted_cli(command, cwd=cwd, home_dir=home_dir)
     if identity is None:
         return None
     lookup = getattr(store, "read_local_cli_grant", None)
@@ -70,6 +74,18 @@ def matching_local_cli_grant(
         return identity, "allowed"
     if command_state == "block":
         return identity, "blocked"
+    if (
+        state == "allowed"
+        and command_state == "inherit"
+        and _package_script_inherit_allows(
+            store,
+            identity,
+            command=command,
+            cwd=cwd,
+            home_dir=home_dir,
+        )
+    ):
+        return identity, "allowed"
     return None
 
 
@@ -217,6 +233,48 @@ def _command_state_for_grant(
         return "inherit"
     raw_state = states.get(command_id, "inherit")
     return raw_state if raw_state in {"inherit", "allow", "block"} else "inherit"
+
+
+def _package_script_inherit_allows(
+    store: object,
+    identity: UnlistedCliIdentity,
+    *,
+    command: str,
+    cwd: Path,
+    home_dir: Path | None,
+) -> bool:
+    if _observation_surface(store, identity.cli_id) != "package-scripts":
+        return False
+    catalog_lookup = getattr(store, "read_local_cli_command_catalog", None)
+    commands: list[LocalCliCommand] = []
+    if callable(catalog_lookup):
+        loaded = catalog_lookup(identity.cli_id)
+        if isinstance(loaded, list):
+            commands = [item for item in loaded if isinstance(item, LocalCliCommand)]
+    if not commands:
+        return False
+    command_id = resolve_command_id_for_text(
+        command,
+        cwd=cwd,
+        home_dir=home_dir,
+        identity=identity,
+        commands=commands,
+    )
+    return command_id not in {ROOT_COMMAND_ID, OTHER_COMMAND_ID}
+
+
+def _observation_surface(store: object, cli_id: str) -> str:
+    lister = getattr(store, "list_local_cli_items", None)
+    if not callable(lister):
+        return "cli"
+    raw = lister()
+    if not isinstance(raw, list):
+        return "cli"
+    for item in raw:
+        if isinstance(item, dict) and item.get("cli_id") == cli_id:
+            surface = item.get("surface")
+            return surface if isinstance(surface, str) else "cli"
+    return "cli"
 
 
 def utc_now() -> str:

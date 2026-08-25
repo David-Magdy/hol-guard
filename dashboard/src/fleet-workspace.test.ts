@@ -1,4 +1,5 @@
 import { cloudPolicyRecoveryHint } from "./fleet-protection-recovery";
+import { activeFailedHarnesses, ProtectionRepairFlowError } from "./protection-repair-flow";
 import { repairHarnessesFor, resolveFleetHeroCopy } from "./fleet-workspace";
 import type { FleetHeroCopy } from "./fleet-workspace";
 
@@ -7,6 +8,16 @@ function assert(condition: boolean, message: string): void {
     throw new Error(message);
   }
 }
+
+const targetedRepairError = new ProtectionRepairFlowError("App hooks need repair.", ["codex", "grok"]);
+assert(
+  targetedRepairError.failedHarnesses.length === 2,
+  "repair failures retain every app needed for the next actions",
+);
+assert(
+  activeFailedHarnesses(["codex", "codex", "grok"], ["grok"])[0] === "grok",
+  "resolved and duplicate app failures do not leave stale repair actions",
+);
 
 const urls = {
   fleet_url: "https://hol.org/guard/protect",
@@ -71,6 +82,7 @@ const localCloudProof = cloudPolicyRecoveryHint({
   connectUrl: urls.connect_url,
 });
 assert(localCloudProof?.actionLabel === "Connect Guard Cloud", "local Cloud proof uses the separate connect action");
+assert(localCloudProof?.startsOAuth === true, "disconnected Cloud proof starts the local OAuth flow");
 assert(
   localCloudProof?.detail.includes("Local Guard remains active") === true,
   "missing Cloud proof must not degrade local Guard copy",
@@ -94,7 +106,8 @@ const pendingCloudProof = cloudPolicyRecoveryHint({
 });
 assert(
   pendingCloudProof?.actionLabel === "Open Guard Cloud" &&
-    pendingCloudProof.detail.includes("separate from local repair"),
+    pendingCloudProof.detail.includes("separate from local repair") &&
+    pendingCloudProof.startsOAuth === false,
   "incomplete Cloud proof remains an independent Cloud action",
 );
 

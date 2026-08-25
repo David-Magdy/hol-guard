@@ -14,7 +14,7 @@ from ..github_shell_capabilities import classify_github_shell_capabilities as _c
 from ..interpreter_options import shell_interpreter_command_payload as _shell_interpreter_command_payload
 from .constants_core import _READ_ONLY_LOOKUP_FILTERS, _SHELL_COMMAND_STRING_INTERPRETERS
 from .constants_patterns import _SHELL_ASSIGNMENT_PATTERN, _SHELL_COMMAND_SEPARATORS, _SHELL_COMMAND_WRAPPERS
-from .read_only_filters import _read_only_lookup_filter_segment_is_safe
+from .read_only_filters import _github_output_filter_segment_is_safe
 from .request_artifacts import _normalized_shell_command_name
 from .shell_quote_tokens import (
     ShellTokenWithQuoteContext as _ShellTokenWithQuoteContext,
@@ -131,8 +131,7 @@ def classify_github_shell_capabilities(
             command_builtin_is_lookup=_shell_segment_is_command_builtin_lookup,
             primary_command=_shell_segment_primary_command,
             pipeline_companion_is_read_only=lambda segment: _github_pipeline_companion_is_read_only(
-                segment,
-                home_dir=home_dir,
+                segment, home_dir=home_dir, command_text=command_text
             ),
         ),
     )
@@ -326,6 +325,7 @@ def _github_pipeline_companion_is_read_only(
     segment: list[str],
     *,
     home_dir: Path | None,
+    command_text: str,
 ) -> bool:
     command_name, command_index = _shell_segment_primary_command(segment)
     if command_name is None or command_index is None:
@@ -343,7 +343,7 @@ def _github_pipeline_companion_is_read_only(
     if command_name == "uniq":
         return args in ([], ["-c"])
     if command_name in _READ_ONLY_LOOKUP_FILTERS:
-        return _read_only_lookup_filter_segment_is_safe(command_name, args, home_dir=home_dir)
+        return _github_output_filter_segment_is_safe(command_name, args, home_dir=home_dir, command_text=command_text)
     return False
 
 

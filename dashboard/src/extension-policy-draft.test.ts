@@ -5,6 +5,7 @@ import {
   extensionPolicyDraftIsDirty,
   localPermissionDraftState,
   setLocalPermissionDraftState,
+  setLocalPermissionDraftStates,
 } from "./extension-policy-draft";
 import type { EffectiveExtensionControls, ExtensionControlLayer } from "./extension-controls-api";
 
@@ -44,6 +45,18 @@ const effective: EffectiveExtensionControls = {
 
 assert.equal(localPermissionDraftState(effective.layers, "command.git.permission.force-clean"), "inherit");
 
+const inheritedWithoutLocalLayer = setLocalPermissionDraftStates(
+  [managed],
+  digest,
+  ["command.git.permission.force-clean"],
+  "inherit",
+);
+assert.equal(
+  inheritedWithoutLocalLayer.some((layer) => layer.kind === "local-admin"),
+  false,
+  "recommended must not create an empty local policy layer",
+);
+
 const blocked = setLocalPermissionDraftState(
   effective.layers,
   digest,
@@ -71,6 +84,34 @@ const allowed = setLocalPermissionDraftState(
   "allow",
 );
 assert.equal(localPermissionDraftState(allowed, "command.git.permission.force-clean"), "allow");
+
+const bulkBlocked = setLocalPermissionDraftStates(
+  effective.layers,
+  digest,
+  ["command.git.permission.force-clean", "command.git.permission.branch-delete"],
+  "block",
+);
+assert.equal(localPermissionDraftState(bulkBlocked, "command.git.permission.force-clean"), "block");
+assert.equal(localPermissionDraftState(bulkBlocked, "command.git.permission.branch-delete"), "block");
+assert.equal(effective.layers[0]?.controls.length, 1, "bulk drafting must not mutate authoritative layers");
+const noLocalEffective = { ...effective, layers: [managed] };
+const transientBulkBlock = setLocalPermissionDraftStates(
+  noLocalEffective.layers,
+  digest,
+  ["command.git.permission.force-clean", "command.git.permission.branch-delete"],
+  "block",
+);
+const bulkRecommended = setLocalPermissionDraftStates(
+  transientBulkBlock,
+  digest,
+  ["command.git.permission.force-clean", "command.git.permission.branch-delete"],
+  "inherit",
+);
+assert.equal(
+  extensionPolicyDraftIsDirty(noLocalEffective, bulkRecommended),
+  false,
+  "reverting the final bulk override to recommended must remove the transient empty local layer",
+);
 
 const mutation = buildExtensionPolicyDraftMutation(effective, digest, allowed, {
   idempotencyKey: "draft-idempotency",

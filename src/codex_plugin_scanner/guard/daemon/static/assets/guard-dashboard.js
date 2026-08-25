@@ -15319,11 +15319,11 @@ function computePeriodComparison(receipts, days, now2) {
 function nonNegativeNumber(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }
-function isRecord$4(value) {
+function isRecord$5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function normalizeOperatorHealth(raw) {
-  if (!isRecord$4(raw)) {
+  if (!isRecord$5(raw)) {
     return void 0;
   }
   const state = raw["state"];
@@ -15385,7 +15385,7 @@ const PROTECTION_CHECK_IDS = [
 ];
 const CORE_CHECK_IDS = PROTECTION_CHECK_IDS.filter((checkId) => checkId !== "decision_stream");
 const STABLE_ID$1 = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
-function isRecord$3(value) {
+function isRecord$4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function copyForState(state) {
@@ -15404,7 +15404,7 @@ function deriveState(checks) {
   return byId.get("decision_stream") === "pass" ? "protected" : "partial";
 }
 function normalizeCheck(value) {
-  if (!isRecord$3(value)) return null;
+  if (!isRecord$4(value)) return null;
   const checkId = value.check_id;
   const status = value.status;
   const reasonCode = value.reason_code;
@@ -15450,16 +15450,52 @@ function unavailableProtectionHealth() {
     apps: []
   };
 }
-function protectionPresentationState(health) {
+const PROTECTION_PROVING_GRACE_MS = 4e3;
+function protectionPresentationState(health, options) {
+  if (health.checks.some((check) => check.status === "fail")) {
+    return health.state;
+  }
   const byId = new Map(health.checks.map((check) => [check.check_id, check.status]));
-  const coreUnknown = CORE_CHECK_IDS.every((checkId) => byId.get(checkId) === "unknown");
-  if (coreUnknown && !health.checks.some((check) => check.status === "fail")) {
+  const coreStillProving = CORE_CHECK_IDS.some((checkId) => byId.get(checkId) !== "pass");
+  if (!coreStillProving) {
+    return health.state;
+  }
+  if ((options?.unprovenElapsedMs ?? 0) < PROTECTION_PROVING_GRACE_MS) {
     return "checking";
   }
   return health.state;
 }
+function useProtectionPresentationState(health) {
+  const [unprovenSinceMs, setUnprovenSinceMs] = reactExports.useState(null);
+  const [nowMs, setNowMs] = reactExports.useState(() => Date.now());
+  const failed = health.checks.some((check) => check.status === "fail");
+  const byId = new Map(health.checks.map((check) => [check.check_id, check.status]));
+  const coreStillProving = !failed && CORE_CHECK_IDS.some((checkId) => byId.get(checkId) !== "pass");
+  reactExports.useEffect(() => {
+    if (!coreStillProving) {
+      setUnprovenSinceMs(null);
+      return;
+    }
+    setUnprovenSinceMs((current) => current ?? Date.now());
+  }, [coreStillProving]);
+  reactExports.useEffect(() => {
+    if (unprovenSinceMs === null) {
+      return;
+    }
+    const remainingMs = PROTECTION_PROVING_GRACE_MS - (Date.now() - unprovenSinceMs);
+    if (remainingMs <= 0) {
+      setNowMs(Date.now());
+      return;
+    }
+    const timer = window.setTimeout(() => setNowMs(Date.now()), remainingMs);
+    return () => window.clearTimeout(timer);
+  }, [unprovenSinceMs]);
+  return protectionPresentationState(health, {
+    unprovenElapsedMs: unprovenSinceMs === null ? 0 : Math.max(0, nowMs - unprovenSinceMs)
+  });
+}
 function normalizeApp(value) {
-  if (!isRecord$3(value)) return null;
+  if (!isRecord$4(value)) return null;
   const harness = value.harness;
   if (typeof harness !== "string" || harness.length > 64 || !STABLE_ID$1.test(harness)) return null;
   const checks = normalizeChecks(value.checks);
@@ -15467,7 +15503,7 @@ function normalizeApp(value) {
   return { harness, ...healthFromChecks(checks) };
 }
 function normalizeProtectionHealth(value) {
-  if (!isRecord$3(value) || value.schema_version !== "guard.protection-health.v1") {
+  if (!isRecord$4(value) || value.schema_version !== "guard.protection-health.v1") {
     return unavailableProtectionHealth();
   }
   const checks = normalizeChecks(value.checks);
@@ -15517,6 +15553,57 @@ function remainingProtectionRepairParts(health) {
   return {
     failedHookHarnesses: health.apps.filter((app) => app.checks.some((check) => check.check_id === "harness_hooks" && check.status === "fail")).map((app) => app.harness),
     evidenceFailed: health.checks.some((check) => check.check_id === "decision_stream" && check.status !== "pass")
+  };
+}
+function isRecord$3(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function stringValue$2(value) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+function remainingStep(candidate) {
+  const step = stringValue$2(candidate.step);
+  const message = stringValue$2(candidate.message);
+  const action = stringValue$2(candidate.action);
+  if (step === "intelligence_sync" && action === "connect" && message !== null) {
+    return { step, message, action };
+  }
+  return null;
+}
+function failedStep(candidate) {
+  const step = stringValue$2(candidate.step);
+  const message = stringValue$2(candidate.message);
+  if ((step === "package_shims" || step === "runtime_activation" || step === "intelligence_sync") && message !== null) {
+    return { step, message };
+  }
+  return null;
+}
+function normalizeSupplyChainRepairResult(result) {
+  const failures = [];
+  if (Array.isArray(result.failed_steps)) {
+    for (const candidate of result.failed_steps) {
+      if (!isRecord$3(candidate)) continue;
+      const parsed = failedStep(candidate);
+      if (parsed !== null) failures.push(parsed);
+    }
+  }
+  const remaining = [];
+  if (Array.isArray(result.remaining_steps)) {
+    for (const candidate of result.remaining_steps) {
+      if (!isRecord$3(candidate)) continue;
+      const parsed = remainingStep(candidate);
+      if (parsed !== null) remaining.push(parsed);
+    }
+  }
+  const completedSteps = Array.isArray(result.completed_steps) ? result.completed_steps.filter((value) => typeof value === "string") : [];
+  const requiredSteps = ["package_shims", "runtime_activation", "intelligence_sync"];
+  const completedWithoutFailures = Array.isArray(result.failed_steps) && result.failed_steps.length === 0 && remaining.length === 0 && requiredSteps.every((step) => completedSteps.includes(step));
+  return {
+    repaired: result.repaired === true || !("repaired" in result) && completedWithoutFailures,
+    completed_steps: completedSteps,
+    failed_steps: failures,
+    remaining_steps: remaining,
+    message: stringValue$2(result.message) ?? "Supply-chain repair finished."
   };
 }
 const now = "2026-04-11T12:00:00Z";
@@ -17505,15 +17592,16 @@ function normalizeGuardCloudConnectStatus(value) {
     connect_flow: normalizePackageFirewallConnectFlow(value.connect_flow)
   };
 }
-async function fetchGuardCloudConnectStatus() {
-  return normalizeGuardCloudConnectStatus(await readJson("/v1/cloud/connect"));
+async function fetchGuardCloudConnectStatus(signal) {
+  return normalizeGuardCloudConnectStatus(await readJson("/v1/cloud/connect", { signal }));
 }
-async function startGuardCloudConnect() {
+async function startGuardCloudConnect(signal) {
   return normalizeGuardCloudConnectStatus(
     await readJson("/v1/cloud/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal
     })
   );
 }
@@ -17881,6 +17969,9 @@ class GuardProtectionRepairError extends Error {
   status;
   code;
   repairScope;
+  failedCheckIds;
+  failedHarnesses;
+  pendingCheckIds;
   constructor(status, payload) {
     const message = payload === null ? null : stringValue$1(payload.message);
     super(message ?? `Protection repair failed with ${status}`);
@@ -17888,7 +17979,14 @@ class GuardProtectionRepairError extends Error {
     this.status = status;
     this.code = payload === null ? null : stringValue$1(payload.error);
     this.repairScope = payload?.repair_scope === "local_integrity" ? "local_integrity" : null;
+    this.failedCheckIds = stringArrayValue(payload?.failed_check_ids);
+    this.failedHarnesses = stringArrayValue(payload?.failed_harnesses);
+    this.pendingCheckIds = stringArrayValue(payload?.pending_check_ids);
   }
+}
+function stringArrayValue(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => typeof item === "string" && item.trim().length > 0);
 }
 async function repairProtectionCheck(checkId) {
   if (isGuardDemoMode()) {
@@ -18518,6 +18616,7 @@ async function repairSupplyChainProtection(credentials) {
       repaired: true,
       completed_steps: ["package_shims", "runtime_activation", "intelligence_sync"],
       failed_steps: [],
+      remaining_steps: [],
       message: "Supply-chain protection restored and refreshed."
     };
   }
@@ -18543,26 +18642,7 @@ async function repairSupplyChainProtection(credentials) {
     throw new Error("Guard returned an invalid supply-chain repair result.");
   }
   const result = payloadBody.result;
-  const failures = [];
-  if (Array.isArray(result.failed_steps)) {
-    for (const candidate of result.failed_steps) {
-      if (!isRecord$1(candidate)) continue;
-      const step = stringValue$1(candidate.step);
-      const message = stringValue$1(candidate.message);
-      if ((step === "package_shims" || step === "runtime_activation" || step === "intelligence_sync") && message !== null) {
-        failures.push({ step, message });
-      }
-    }
-  }
-  const completedSteps = Array.isArray(result.completed_steps) ? result.completed_steps.filter((value) => typeof value === "string") : [];
-  const requiredSteps = ["package_shims", "runtime_activation", "intelligence_sync"];
-  const completedWithoutFailures = Array.isArray(result.failed_steps) && result.failed_steps.length === 0 && requiredSteps.every((step) => completedSteps.includes(step));
-  return {
-    repaired: result.repaired === true || !("repaired" in result) && completedWithoutFailures,
-    completed_steps: completedSteps,
-    failed_steps: failures,
-    message: stringValue$1(result.message) ?? "Supply-chain repair finished."
-  };
+  return normalizeSupplyChainRepairResult(result);
 }
 const MCP_POLICY_TERMINAL_STATUSES = {
   applied: true,
@@ -18973,8 +19053,8 @@ const ActionButton = reactExports.forwardRef(
         {
           ref,
           href: guardAwareHref(href),
-          target: href.startsWith("https://") ? "_blank" : void 0,
-          rel: href.startsWith("https://") ? "noreferrer" : void 0,
+          target: /^https?:\/\//i.test(href) ? "_blank" : void 0,
+          rel: /^https?:\/\//i.test(href) ? "noopener noreferrer" : void 0,
           onClick,
           className,
           ...anchorPropsFromButtonProps(buttonProps),
@@ -19168,6 +19248,9 @@ function TabBar(props) {
     tab.value
   )) });
 }
+function approvalProofRecentlySatisfied(gate) {
+  return gate?.totp_enabled === true && gate.totp_recent_satisfied === true;
+}
 function approvalProofRequiresPassword(gate) {
   return gate?.totp_enabled !== true;
 }
@@ -19175,18 +19258,32 @@ function isApprovalProofSubmitDisabled(gate, credentials, busy) {
   if (busy) {
     return true;
   }
+  if (approvalProofRecentlySatisfied(gate)) {
+    return false;
+  }
   if (approvalProofRequiresPassword(gate)) {
     return credentials.approvalPassword.trim() === "";
   }
   return credentials.approvalTotpCode.trim() === "";
 }
 function buildApprovalProofCredentials(gate, credentials) {
+  if (approvalProofRecentlySatisfied(gate)) {
+    return {};
+  }
   if (approvalProofRequiresPassword(gate)) {
     return { approval_password: credentials.approvalPassword };
   }
   return { approval_totp_code: credentials.approvalTotpCode };
 }
 function ApprovalProofFieldInputs(props) {
+  const handleTotpChange = reactExports.useCallback((event) => {
+    const digits = event.target.value.replace(/\D/g, "").slice(0, 6);
+    event.target.value = digits;
+    props.onApprovalTotpCodeChange(event);
+  }, [props]);
+  if (approvalProofRecentlySatisfied(props.approvalGate)) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm leading-6 text-brand-dark/75", children: "Recently confirmed with your authenticator. A new code is not needed yet." });
+  }
   const needsPassword = approvalProofRequiresPassword(props.approvalGate);
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-3", children: needsPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-brand-dark", children: "Approval password" }),
@@ -19209,10 +19306,13 @@ function ApprovalProofFieldInputs(props) {
         type: "text",
         inputMode: "numeric",
         pattern: "[0-9]*",
+        maxLength: 6,
         autoComplete: "one-time-code",
+        name: "one-time-code",
+        autoFocus: true,
         value: props.approvalTotpCode,
-        onChange: props.onApprovalTotpCodeChange,
-        className: "mt-1 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+        onChange: handleTotpChange,
+        className: "mt-2 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-center text-lg font-semibold tracking-[0.35em] text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/30"
       }
     )
   ] }) });
@@ -19521,7 +19621,7 @@ function recoveryReinstallHelpCopy(status) {
   }
   return "This install came from a local folder, so automatic updates are off. Reinstall from PyPI to switch it back to a normal package; Guard restarts briefly and saved approvals stay.";
 }
-function updateHelpCopy(status, phase) {
+function updateHelpCopy(status, phase, errorMessage) {
   if (phase === "updating") {
     return "Guard is installing the update. The dashboard will pause briefly and reopen when ready.";
   }
@@ -19529,7 +19629,7 @@ function updateHelpCopy(status, phase) {
     return "Reconnecting to Guard after the update…";
   }
   if (phase === "error") {
-    return "The update did not finish. Try again or run hol-guard update from your terminal.";
+    return errorMessage?.trim() || "The update did not finish. The installed version stays in place. Try again, or run hol-guard update from your terminal.";
   }
   if (status?.update_suppressed) {
     if (status.retry_command) {
@@ -19554,7 +19654,7 @@ function updateHelpCopy(status, phase) {
 function GuardUpdatePanel(props) {
   const version = props.guardVersion ?? props.updateStatus?.current_version ?? null;
   const phase = props.updatePhase ?? "idle";
-  const helpCopy = updateHelpCopy(props.updateStatus, phase);
+  const helpCopy = updateHelpCopy(props.updateStatus, phase, props.updateError);
   const showUpdateButton = props.updateStatus?.update_available === true && props.updateStatus.auto_updatable && props.updateStatus.update_suppressed !== true && phase !== "updating" && phase !== "reconnecting";
   const showReinstallButton = shouldPromptRecoveryReinstall(props.updateStatus) && phase !== "updating" && phase !== "reconnecting";
   const busy = phase === "updating" || phase === "reconnecting";
@@ -19697,6 +19797,7 @@ function useGuardUpdate(options) {
   const enabled = options?.enabled !== false;
   const [updateStatus, setUpdateStatus] = reactExports.useState(null);
   const [updatePhase, setUpdatePhase] = reactExports.useState(enabled ? "checking" : "idle");
+  const [updateError, setUpdateError] = reactExports.useState(null);
   const reconnectStartedAt = reactExports.useRef(null);
   const updatePhaseRef = reactExports.useRef("checking");
   const updateStatusEpoch = reactExports.useRef(0);
@@ -19806,6 +19907,7 @@ function useGuardUpdate(options) {
   const scheduleAndWait = reactExports.useCallback(
     async (params) => {
       setUpdatePhase("updating");
+      setUpdateError(null);
       try {
         const reconnectAuthorization = await prepareGuardDaemonReconnect();
         const scheduleResult = await scheduleGuardUpdate(
@@ -19824,7 +19926,9 @@ function useGuardUpdate(options) {
           return;
         }
         if (scheduleResult.scheduled !== true) {
-          throw new Error(scheduleResult.message ?? scheduleResult.error ?? "Guard update was not scheduled.");
+          throw new Error(
+            scheduleResult.message ?? scheduleResult.error ?? "Guard update was not scheduled. The installed version stays in place."
+          );
         }
         setUpdatePhase("reconnecting");
         const redirected = await waitForReconnect(
@@ -19835,8 +19939,9 @@ function useGuardUpdate(options) {
         if (!redirected) {
           window.location.reload();
         }
-      } catch {
+      } catch (error) {
         setUpdatePhase("error");
+        setUpdateError(error instanceof Error ? error.message : "The update did not finish. The installed version stays in place.");
       }
     },
     [waitForReconnect]
@@ -19883,6 +19988,7 @@ function useGuardUpdate(options) {
     guardVersion: updateStatus?.current_version ?? null,
     updateStatus,
     updatePhase,
+    updateError,
     onUpdateGuard,
     onReinstallGuard,
     onSetUpdateChannel,
@@ -19937,9 +20043,9 @@ const SHELL_NAV_ITEMS = [
   },
   {
     href: "/policy",
-    label: "Policy",
-    shortLabel: "Policy",
-    description: "Saved decisions and local controls",
+    label: "Rules & exceptions",
+    shortLabel: "Rules",
+    description: "Remembered decisions, Guard Cloud rules, and exceptions",
     view: "policy",
     group: "manage",
     icon: HiMiniClipboardDocumentList
@@ -19948,7 +20054,7 @@ const SHELL_NAV_ITEMS = [
     href: "/extensions",
     label: "Extensions",
     shortLabel: "Extensions",
-    description: "Managed extensions and integrations",
+    description: "Tools and capabilities protected on this device",
     view: "extensions",
     group: "manage",
     icon: HiMiniPuzzlePiece
@@ -20251,6 +20357,7 @@ function NavigationDrawer(props) {
                       guardVersion: props.guardVersion,
                       updateStatus: props.updateStatus,
                       updatePhase: props.updatePhase,
+                      updateError: props.updateError,
                       onUpdateGuard: props.onUpdateGuard,
                       onReinstallGuard: props.onReinstallGuard,
                       approvalGate: props.approvalGate
@@ -20466,6 +20573,7 @@ function PersistentSidebar(props) {
                   guardVersion: props.guardVersion,
                   updateStatus: props.updateStatus,
                   updatePhase: props.updatePhase,
+                  updateError: props.updateError,
                   onUpdateGuard: props.onUpdateGuard,
                   onReinstallGuard: props.onReinstallGuard,
                   approvalGate: props.approvalGate
@@ -27954,21 +28062,27 @@ function requiresApprovalPasswordPrompt(cooldownActive, strictAllDecisions, sele
   }
   return strictAllDecisions;
 }
+function approvalProofModalTitle(recentlySatisfied, needsPassword) {
+  if (recentlySatisfied) return "Recently confirmed";
+  if (needsPassword) return "Approval password required";
+  return "Authenticator code required";
+}
 function ApprovalPasswordModal(props) {
   const passwordRef = reactExports.useRef(null);
-  const totpRef = reactExports.useRef(null);
+  const recentlySatisfied = approvalProofRecentlySatisfied(props.gate);
   const needsPassword = approvalProofRequiresPassword(props.gate);
-  const submitDisabled = needsPassword ? props.approvalPassword.trim() === "" : props.approvalTotpCode.trim() === "";
+  const submitDisabled = isApprovalProofSubmitDisabled(
+    props.gate,
+    { approvalPassword: props.approvalPassword, approvalTotpCode: props.approvalTotpCode },
+    false
+  );
   reactExports.useEffect(() => {
+    if (recentlySatisfied) return void 0;
     const timer = setTimeout(() => {
-      if (needsPassword) {
-        passwordRef.current?.focus();
-      } else {
-        totpRef.current?.focus();
-      }
+      passwordRef.current?.focus();
     }, 50);
-    return () => clearTimeout(timer);
-  }, [needsPassword]);
+    return () => window.clearTimeout(timer);
+  }, [recentlySatisfied]);
   const showCooldownOption = props.gate.cooldown_seconds > 0 && !props.gate.cooldown_active && props.gate.totp_enabled !== true;
   const handleBackdropClick = reactExports.useCallback(
     (e) => {
@@ -28003,42 +28117,24 @@ function ApprovalPasswordModal(props) {
               {
                 id: "approval-password-modal-title",
                 className: "text-lg font-semibold tracking-tight text-brand-dark",
-                children: needsPassword ? "Approval password required" : "Authenticator code required"
+                children: approvalProofModalTitle(recentlySatisfied, needsPassword)
               }
             ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-brand-dark/70", children: "Guard needs a fresh proof before it can save this decision." })
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-brand-dark/70", children: recentlySatisfied ? "A new authenticator code is not needed yet." : "Guard needs a fresh proof before it can save this decision." })
           ] })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 space-y-3", children: [
-          needsPassword ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-brand-dark", children: "Approval password" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                ref: passwordRef,
-                type: "password",
-                autoComplete: "current-password",
-                value: props.approvalPassword,
-                onChange: props.onApprovalPasswordChange,
-                className: "mt-1 min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-              }
-            )
-          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-brand-dark", children: "Authenticator code" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              "input",
-              {
-                ref: totpRef,
-                type: "text",
-                inputMode: "numeric",
-                pattern: "[0-9]*",
-                autoComplete: "one-time-code",
-                value: props.approvalTotpCode,
-                onChange: props.onApprovalTotpCodeChange,
-                className: "mt-1 min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-              }
-            )
-          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            ApprovalProofFieldInputs,
+            {
+              approvalGate: props.gate,
+              approvalPassword: props.approvalPassword,
+              approvalTotpCode: props.approvalTotpCode,
+              passwordRef,
+              onApprovalPasswordChange: props.onApprovalPasswordChange,
+              onApprovalTotpCodeChange: props.onApprovalTotpCodeChange
+            }
+          ),
           showCooldownOption && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "flex cursor-pointer items-center gap-2 text-sm text-brand-dark", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               "input",
@@ -28078,6 +28174,35 @@ function ApprovalPasswordModal(props) {
       ] })
     }
   );
+}
+async function fetchResolvedApprovalGate(fetcher = fetchSettings) {
+  const payload = await fetcher();
+  return payload.settings.approval_gate ?? null;
+}
+function useResolvedApprovalGate(initialGate) {
+  const [resolvedApprovalGate, setResolvedApprovalGate] = reactExports.useState(initialGate);
+  reactExports.useEffect(() => {
+    setResolvedApprovalGate(initialGate);
+  }, [initialGate]);
+  const refreshApprovalGate = reactExports.useCallback(async (options) => {
+    try {
+      const gate = await fetchResolvedApprovalGate();
+      setResolvedApprovalGate(gate);
+      return gate;
+    } catch (error) {
+      if (options?.failClosed) {
+        throw error;
+      }
+      return resolvedApprovalGate;
+    }
+  }, [resolvedApprovalGate]);
+  const resolveApprovalGate = reactExports.useCallback(async (options) => {
+    if (resolvedApprovalGate !== null) {
+      return resolvedApprovalGate;
+    }
+    return refreshApprovalGate(options);
+  }, [refreshApprovalGate, resolvedApprovalGate]);
+  return { resolvedApprovalGate, resolveApprovalGate, refreshApprovalGate };
 }
 function ConsolidatedEvidenceAlert({ items }) {
   const [index, setIndex] = reactExports.useState(0);
@@ -28608,6 +28733,8 @@ function ReviewCodexResumePanel({ resume, onRetry }) {
   ] });
 }
 function ReviewEmptyState({ runtime, resolutionMessage, codexResume, onRetryResume }) {
+  const protectionHealth = runtime === null ? unavailableProtectionHealth() : protectionHealthFor(runtime);
+  const presentation = useProtectionPresentationState(protectionHealth);
   if (runtime === null) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-4", "aria-busy": "true", "aria-live": "polite", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-skeleton h-36 w-full" }),
@@ -28615,8 +28742,6 @@ function ReviewEmptyState({ runtime, resolutionMessage, codexResume, onRetryResu
       /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "guard-skeleton h-48 w-full" })
     ] });
   }
-  const protectionHealth = protectionHealthFor(runtime);
-  const presentation = protectionPresentationState(protectionHealth);
   const protectedAppsCount = protectionHealth.apps.filter((app) => app.state === "protected").length;
   const heroStatus = presentation === "protected" ? "clear" : presentation;
   const appearanceState = presentation === "checking" ? "partial" : protectionHealth.state;
@@ -28764,7 +28889,6 @@ function ReviewDecisionCard(props) {
   const [pendingAction, setPendingAction] = reactExports.useState(null);
   const [pendingContractKey, setPendingContractKey] = reactExports.useState(null);
   const [rememberExactAction, setRememberExactAction] = reactExports.useState(false);
-  const timerRef = reactExports.useRef(null);
   const allowButtonRef = reactExports.useRef(null);
   const availableScopeChoices = reactExports.useMemo(
     () => item ? standardScopeChoicesForRequest(item, "allow") : [],
@@ -28806,14 +28930,6 @@ function ReviewDecisionCard(props) {
       setRememberExactAction(false);
     }
   }, [item?.request_id, item?.scope_contract_version, item?.scope_contract_digest]);
-  reactExports.useEffect(() => {
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, []);
   const handleResolve = reactExports.useCallback(
     async (action) => {
       if (!item || resolutionBlockReason !== null) return;
@@ -28828,8 +28944,8 @@ function ReviewDecisionCard(props) {
           action === "allow" ? rememberExactAction : watchOnlyObservation
         );
         const gate = props.approvalGate;
-        const needsPassword = approvalProofRequiresPassword(gate);
         const includeGateFields = gate?.enabled === true && gate?.configured === true && requiresApprovalPasswordPrompt(gate.cooldown_active, gate.strict_all_decisions, requestedScope);
+        const proof = includeGateFields ? buildApprovalProofCredentials(gate, { approvalPassword, approvalTotpCode }) : {};
         await props.onResolve({
           ...buildDecisionPayload({
             item,
@@ -28838,8 +28954,7 @@ function ReviewDecisionCard(props) {
             reason: action === "allow" ? "approved in review" : "blocked in review",
             persistExactAction
           }),
-          ...includeGateFields && needsPassword ? { approval_password: approvalPassword } : {},
-          ...includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {},
+          ...proof,
           ...includeGateFields ? { approval_gate_use_cooldown: useCooldown } : {}
         });
         setResolved({ action, persistedExactAction: persistExactAction });
@@ -28848,11 +28963,6 @@ function ReviewDecisionCard(props) {
         setUseCooldown(false);
         setPendingAction(null);
         setPendingContractKey(null);
-        if (timerRef.current) {
-          clearTimeout(timerRef.current);
-          timerRef.current = null;
-        }
-        timerRef.current = setTimeout(() => setResolved(null), 2e3);
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : "Something went wrong. Try again.");
       } finally {
@@ -28887,14 +28997,26 @@ function ReviewDecisionCard(props) {
       setLastAction(action);
       const requestedScope = action === "allow" ? allowScope : blockScope;
       const gate = props.approvalGate;
-      const gateRequiresPassword = gate?.enabled === true && gate?.configured === true && requiresApprovalPasswordPrompt(gate.cooldown_active, gate.strict_all_decisions, requestedScope);
-      if (gateRequiresPassword) {
-        setPendingAction(action);
-        setPendingContractKey(decisionContractKey);
-        setErrorMessage(null);
+      const gateEnabled = gate?.enabled === true && gate?.configured === true && requiresApprovalPasswordPrompt(gate.cooldown_active, gate.strict_all_decisions, requestedScope);
+      if (!gateEnabled) {
+        void handleResolve(action);
         return;
       }
-      void handleResolve(action);
+      setErrorMessage(null);
+      if (!approvalProofRecentlySatisfied(gate)) {
+        setPendingAction(action);
+        setPendingContractKey(decisionContractKey);
+        return;
+      }
+      void (async () => {
+        const fresh = await fetchResolvedApprovalGate().catch(() => gate);
+        if (approvalProofRecentlySatisfied(fresh ?? gate)) {
+          void handleResolve(action);
+          return;
+        }
+        setPendingAction(action);
+        setPendingContractKey(decisionContractKey);
+      })();
     },
     [
       allowScope,
@@ -28915,7 +29037,7 @@ function ReviewDecisionCard(props) {
   }, [handleRequestResolve]);
   reactExports.useEffect(() => {
     function handleKeyDown(event) {
-      if (submitting !== null || pendingAction !== null || resolutionBlockReason !== null) return;
+      if (submitting !== null || pendingAction !== null || resolved !== null || resolutionBlockReason !== null) return;
       const target = event.target;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
       if (event.key === "a" || event.key === "A") {
@@ -28934,7 +29056,7 @@ function ReviewDecisionCard(props) {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [availableScopeChoices, handleRequestResolve, pendingAction, resolutionBlockReason, submitting]);
+  }, [availableScopeChoices, handleRequestResolve, pendingAction, resolutionBlockReason, resolved, submitting]);
   const handleModalSubmit = reactExports.useCallback(() => {
     if (pendingAction === null) {
       return;
@@ -29066,7 +29188,7 @@ function ReviewDecisionCard(props) {
         ),
         showConsequences && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 rounded-xl border border-slate-200/70 bg-slate-50 p-4", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-brand-dark", children: whatWouldHappen }) })
       ] }),
-      resolutionBlockReason === null && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      resolutionBlockReason === null && resolved === null && /* @__PURE__ */ jsxRuntimeExports.jsx(
         ReviewScopeControls,
         {
           commonScopeOptions,
@@ -29099,7 +29221,7 @@ function ReviewDecisionCard(props) {
           )
         ] })
       ] }) }),
-      resolutionBlockReason === null && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2", children: [
+      resolutionBlockReason === null && resolved === null && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           ActionButton,
           {
@@ -29995,6 +30117,201 @@ function QueueConnectionError(props) {
     ] })
   ] }) });
 }
+const CHUNK_RELOAD_STORAGE_KEY = "hol-guard-dashboard-chunk-reload";
+const CHUNK_RELOAD_DELAY_MS = 400;
+function isChunkLoadError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return normalized.includes("failed to fetch dynamically imported module") || normalized.includes("error loading dynamically imported module") || normalized.includes("importing a module script failed") || normalized.includes("loading chunk");
+}
+function defaultWait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+function reloadDocument(reload) {
+  if (reload) {
+    reload();
+    return true;
+  }
+  if (typeof window !== "undefined") {
+    window.location.reload();
+    return true;
+  }
+  return false;
+}
+function storageGet(storage, key) {
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function storageSet(storage, key, value) {
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function browserSessionStorage() {
+  try {
+    if (typeof sessionStorage === "undefined") {
+      return void 0;
+    }
+    return sessionStorage;
+  } catch {
+    return void 0;
+  }
+}
+async function loadWorkspaceModule(loader, options = {}) {
+  try {
+    return await loader();
+  } catch (error) {
+    if (!isChunkLoadError(error)) {
+      throw error;
+    }
+    const storage = options.storage;
+    if (!storage || storageGet(storage, CHUNK_RELOAD_STORAGE_KEY) === "1") {
+      throw error;
+    }
+    if (!storageSet(storage, CHUNK_RELOAD_STORAGE_KEY, "1")) {
+      throw error;
+    }
+    const wait = options.wait ?? defaultWait;
+    await wait(options.delayMs ?? CHUNK_RELOAD_DELAY_MS);
+    if (!reloadDocument(options.reload)) {
+      throw error;
+    }
+    return new Promise(() => {
+    });
+  }
+}
+function lazyWorkspace(loader) {
+  return reactExports.lazy(
+    () => loadWorkspaceModule(loader, {
+      storage: browserSessionStorage()
+    })
+  );
+}
+const CHUNK_LOAD_ERROR_HEADLINE = "This screen couldn't load";
+const CHUNK_LOAD_ERROR_BODY = "Guard lost its connection while opening this page. Reload once Guard is running on this device.";
+const GENERIC_ERROR_HEADLINE = "This screen ran into a problem";
+const GENERIC_ERROR_BODY = "Reload this page, or go back home and try again.";
+const DASHBOARD_RELOAD_LABEL = "Reload dashboard";
+const DASHBOARD_GO_HOME_LABEL = "Go home";
+const DASHBOARD_TRY_AGAIN_LABEL = "Try again";
+function dashboardErrorCopy(error) {
+  if (error && isChunkLoadError(error)) {
+    return {
+      kind: "chunk",
+      headline: CHUNK_LOAD_ERROR_HEADLINE,
+      body: CHUNK_LOAD_ERROR_BODY
+    };
+  }
+  return {
+    kind: "generic",
+    headline: GENERIC_ERROR_HEADLINE,
+    body: GENERIC_ERROR_BODY
+  };
+}
+class ErrorBoundary extends reactExports.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("ErrorBoundary caught:", error, errorInfo);
+  }
+  handleReload = () => {
+    if (this.props.reload) {
+      this.props.reload();
+      return;
+    }
+    window.location.reload();
+  };
+  handleGoHome = () => {
+    this.setState({ hasError: false, error: null });
+    this.props.onReset?.();
+  };
+  handleTryAgain = () => {
+    this.setState({ hasError: false, error: null });
+  };
+  render() {
+    if (!this.state.hasError) {
+      return this.props.children;
+    }
+    if (this.props.fallback) {
+      return this.props.fallback;
+    }
+    const copy = dashboardErrorCopy(this.state.error);
+    const showTryAgain = copy.kind === "generic";
+    const showGoHome = Boolean(this.props.onReset);
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "div",
+      {
+        className: "guard-surface-in flex flex-col items-center justify-center py-12 text-center",
+        role: "alert",
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-brand-attention/10", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "svg",
+            {
+              className: "h-7 w-7 text-brand-attention",
+              fill: "none",
+              viewBox: "0 0 24 24",
+              stroke: "currentColor",
+              strokeWidth: 2,
+              "aria-hidden": "true",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "path",
+                {
+                  strokeLinecap: "round",
+                  strokeLinejoin: "round",
+                  d: "M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
+                }
+              )
+            }
+          ) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "text-lg font-semibold tracking-tight text-brand-dark", children: copy.headline }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mx-auto mt-2 max-w-md text-sm text-brand-dark/70", children: copy.body }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 flex flex-wrap items-center justify-center gap-3", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: this.handleReload,
+                className: "inline-flex min-h-11 items-center rounded-lg bg-brand-blue px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-blue/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue",
+                children: DASHBOARD_RELOAD_LABEL
+              }
+            ),
+            showGoHome ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: this.handleGoHome,
+                className: "inline-flex min-h-11 items-center rounded-lg border border-brand-dark/15 bg-white px-4 text-sm font-semibold text-brand-dark transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue",
+                children: DASHBOARD_GO_HOME_LABEL
+              }
+            ) : null,
+            showTryAgain ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "button",
+              {
+                type: "button",
+                onClick: this.handleTryAgain,
+                className: "inline-flex min-h-11 items-center rounded-lg border border-brand-dark/15 bg-white px-4 text-sm font-semibold text-brand-dark transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue",
+                children: DASHBOARD_TRY_AGAIN_LABEL
+              }
+            ) : null
+          ] })
+        ]
+      }
+    );
+  }
+}
 const PROTECTION_POSTURE_COPY = {
   protected: {
     label: "Protected",
@@ -30062,7 +30379,7 @@ function WatchProtectionBanner(props) {
     }
   );
 }
-const McpPolicyRequestPanel = reactExports.lazy(
+const McpPolicyRequestPanel = lazyWorkspace(
   () => __vitePreload(() => import("./chunks/mcp-policy-request-panel.js"), true ? [] : void 0).then((m) => ({ default: m.McpPolicyRequestPanel }))
 );
 function InboxWatchBanner(props) {
@@ -30186,11 +30503,8 @@ function ApprovalCenterLayout(props) {
     }
   });
   const queuedItems = props.requests.kind === "ready" ? props.requests.items : [];
-  const needsFullQueue = props.view === "inbox";
   let queuedCount = 0;
-  if (needsFullQueue && props.requests.kind === "ready") {
-    queuedCount = queuedItems.length;
-  } else if (props.runtime.kind === "ready") {
+  if (props.runtime.kind === "ready") {
     queuedCount = props.runtime.snapshot.pending_count;
   } else {
     queuedCount = queuedItems.length;
@@ -30212,6 +30526,7 @@ function ApprovalCenterLayout(props) {
     guardVersion,
     updateStatus,
     updatePhase,
+    updateError,
     onUpdateGuard,
     onReinstallGuard
   } = useGuardUpdate({ onReconnected: props.onGuardReconnected, enabled: props.enableUpdateStatus });
@@ -30227,6 +30542,7 @@ function ApprovalCenterLayout(props) {
         guardVersion,
         updateStatus,
         updatePhase,
+        updateError,
         onUpdateGuard,
         onReinstallGuard,
         approvalGate: props.approvalGate ?? null,
@@ -30249,7 +30565,7 @@ function ApprovalCenterLayout(props) {
                 onOpenSettings: handleOpenSettings
               }
             ) }) : null,
-            renderViewContent(props)
+            /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { onReset: props.onGoHome, children: renderViewContent(props) }, props.view)
           ] }) }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(ShellFooter, {})
         ]
@@ -30328,42 +30644,17 @@ function clearLabelForScope(scope) {
       return "Clear global decision";
   }
 }
-class ErrorBoundary extends reactExports.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
+class ProtectionRepairFlowError extends Error {
+  failedHarnesses;
+  constructor(message, failedHarnesses) {
+    super(message);
+    this.name = "ProtectionRepairFlowError";
+    this.failedHarnesses = failedHarnesses;
   }
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-  componentDidCatch(error, errorInfo) {
-    console.error("ErrorBoundary caught:", error, errorInfo);
-  }
-  render() {
-    if (this.state.hasError) {
-      if (this.props.fallback) {
-        return this.props.fallback;
-      }
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "guard-surface-in flex flex-col items-center justify-center py-12 text-center", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-brand-attention/10", children: /* @__PURE__ */ jsxRuntimeExports.jsx("svg", { className: "h-7 w-7 text-brand-attention", fill: "none", viewBox: "0 0 24 24", stroke: "currentColor", strokeWidth: 2, "aria-hidden": "true", children: /* @__PURE__ */ jsxRuntimeExports.jsx("path", { strokeLinecap: "round", strokeLinejoin: "round", d: "M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" }) }) }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "text-lg font-semibold tracking-tight text-brand-dark", children: "Something went wrong" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mx-auto mt-2 max-w-md text-sm text-muted-foreground", children: this.state.error?.message ?? "An unexpected error occurred." }),
-        this.props.onReset && /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "button",
-          {
-            type: "button",
-            onClick: () => {
-              this.setState({ hasError: false, error: null });
-              this.props.onReset?.();
-            },
-            className: "mt-6 inline-flex min-h-11 items-center rounded-lg bg-brand-blue px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-blue/90",
-            children: "Try again"
-          }
-        )
-      ] });
-    }
-    return this.props.children;
-  }
+}
+function activeFailedHarnesses(failedHarnesses, repairHarnesses) {
+  const repairable = new Set(repairHarnesses);
+  return Array.from(new Set(failedHarnesses)).filter((harness) => repairable.has(harness));
 }
 function useRouteFocus(view, mainSelector = "main#main-content") {
   const prevViewRef = reactExports.useRef(null);
@@ -30382,24 +30673,21 @@ function useRouteFocus(view, mainSelector = "main#main-content") {
     }
   }, [view, mainSelector]);
 }
-const HomeWorkspace = reactExports.lazy(() => __vitePreload(() => import("./chunks/home-dashboard.js"), true ? __vite__mapDeps([0,1,2]) : void 0).then((m) => ({ default: m.HomeWorkspace })));
-const FleetWorkspace = reactExports.lazy(() => __vitePreload(() => import("./chunks/fleet-workspace.js"), true ? __vite__mapDeps([3,4,2]) : void 0).then((m) => ({ default: m.FleetWorkspace })));
-const SettingsWorkspace = reactExports.lazy(() => __vitePreload(() => import("./chunks/settings-workspace.js"), true ? __vite__mapDeps([5,4]) : void 0).then((m) => ({ default: m.SettingsWorkspace })));
-const ExtensionsWorkspace = reactExports.lazy(
+const HomeWorkspace = lazyWorkspace(() => __vitePreload(() => import("./chunks/home-dashboard.js"), true ? __vite__mapDeps([0,1,2]) : void 0).then((m) => ({ default: m.HomeWorkspace })));
+const FleetWorkspace = lazyWorkspace(() => __vitePreload(() => import("./chunks/fleet-workspace.js"), true ? __vite__mapDeps([3,4,2]) : void 0).then((m) => ({ default: m.FleetWorkspace })));
+const SettingsWorkspace = lazyWorkspace(() => __vitePreload(() => import("./chunks/settings-workspace.js"), true ? __vite__mapDeps([5,4]) : void 0).then((m) => ({ default: m.SettingsWorkspace })));
+const ExtensionsWorkspace = lazyWorkspace(
   () => __vitePreload(() => import("./chunks/extensions-workspace.js"), true ? __vite__mapDeps([6,7]) : void 0).then((module) => ({ default: module.ExtensionsWorkspace }))
 );
-const AppDetailWorkspace = reactExports.lazy(() => __vitePreload(() => import("./chunks/app-detail-workspace.js"), true ? __vite__mapDeps([8,2]) : void 0).then((m) => ({ default: m.AppDetailWorkspace })));
-const HelpModal = reactExports.lazy(() => __vitePreload(() => import("./chunks/help-modal.js"), true ? [] : void 0).then((m) => ({ default: m.HelpModal })));
-const SupplyChainHubWorkspace = reactExports.lazy(
-  () => __vitePreload(() => import("./chunks/supply-chain-hub-workspace.js").then((n) => n.c), true ? __vite__mapDeps([9,7]) : void 0).then((m) => ({ default: m.SupplyChainHubWorkspace }))
+const AppDetailWorkspace = lazyWorkspace(() => __vitePreload(() => import("./chunks/app-detail-workspace.js"), true ? __vite__mapDeps([8,2]) : void 0).then((m) => ({ default: m.AppDetailWorkspace })));
+const HelpModal = lazyWorkspace(() => __vitePreload(() => import("./chunks/help-modal.js"), true ? [] : void 0).then((m) => ({ default: m.HelpModal })));
+const SupplyChainHubWorkspace = lazyWorkspace(
+  () => __vitePreload(() => import("./chunks/supply-chain-hub-workspace.js").then((n) => n.d), true ? __vite__mapDeps([9,7]) : void 0).then((m) => ({ default: m.SupplyChainHubWorkspace }))
 );
-const PolicyWorkspacePage = reactExports.lazy(
+const PolicyWorkspacePage = lazyWorkspace(
   () => __vitePreload(() => import("./chunks/policy-workspace-page.js"), true ? [] : void 0).then((m) => ({ default: m.PolicyWorkspacePage }))
 );
-reactExports.lazy(
-  () => __vitePreload(() => import("./chunks/mcp-policy-request-panel.js"), true ? [] : void 0).then((m) => ({ default: m.McpPolicyRequestPanel }))
-);
-const AboutWorkspace = reactExports.lazy(
+const AboutWorkspace = lazyWorkspace(
   () => __vitePreload(() => import("./chunks/about-workspace.js"), true ? [] : void 0).then((m) => ({ default: m.AboutWorkspace }))
 );
 function LazyFallback() {
@@ -30447,7 +30735,7 @@ function viewTitle(view) {
   if (view === "settings") return "Settings";
   if (view === "supply-chain") return "Supply Chain";
   if (view === "audit") return "Audit";
-  if (view === "policy") return "Policy";
+  if (view === "policy") return "Rules & exceptions";
   if (view === "feed-health") return "Feed Health";
   if (view === "about") return "About";
   if (view === "extensions") return "Extensions";
@@ -30998,6 +31286,7 @@ function App() {
   }, []);
   const handleRepairProtection = reactExports.useCallback(async (harnesses) => {
     const failures = [];
+    const failedHarnesses = /* @__PURE__ */ new Set();
     try {
       await repairApprovalCenter();
     } catch {
@@ -31007,6 +31296,7 @@ function App() {
       try {
         await runHarnessAction({ harness, action: "repair", dryRun: false });
       } catch (error) {
+        failedHarnesses.add(harness);
         failures.push(
           error instanceof Error && error.message.trim() ? error.message : `${harnessDisplayName(harness)} hooks`
         );
@@ -31015,32 +31305,38 @@ function App() {
     try {
       await repairProtectionCheck("all");
     } catch (error) {
+      if (error instanceof GuardProtectionRepairError) {
+        for (const harness of error.failedHarnesses) failedHarnesses.add(harness);
+      }
       failures.push(error instanceof Error ? error.message : "integrity protection");
     }
     const refreshedSnapshot = await refreshStateAfterAction();
-    if (failures.length > 0) {
-      throw new Error(`Repair paused at ${failures.join(", ")}. Retry repair to continue from this page.`);
-    }
     if (refreshedSnapshot === null) {
-      throw new Error("Repair completed, but Guard could not recheck protection. Check again in a moment.");
+      const detail2 = failures.length > 0 ? ` Repair reported: ${failures.join(", ")}.` : "";
+      throw new ProtectionRepairFlowError(
+        `Guard could not recheck protection. Check again in a moment.${detail2}`,
+        []
+      );
     }
     const remainingHealth = protectionHealthFor(refreshedSnapshot);
-    if (remainingHealth.state !== "protected") {
-      const remainingParts = remainingProtectionRepairParts(remainingHealth);
-      const failedHookApps = remainingParts.failedHookHarnesses.map((harness) => harnessDisplayName(harness));
-      const remainingMessages = [];
-      if (failedHookApps.length > 0) {
-        remainingMessages.push(
-          `${failedHookApps.join(", ")} still ${failedHookApps.length === 1 ? "needs" : "need"} hook repair.`
-        );
-      }
-      if (remainingParts.evidenceFailed) {
-        remainingMessages.push("Command evidence still needs repair.");
-      }
-      const remaining = remainingMessages.length > 0 ? remainingMessages.join(" ") : "A local protection check still needs attention.";
-      throw new Error(`${remaining} Open the repair details below for the exact check.`);
+    if (remainingHealth.state === "protected") {
+      return "Automatic repairs completed. Guard rechecked every protection layer below.";
     }
-    return "Automatic repairs completed. Guard rechecked every protection layer below.";
+    const remainingParts = remainingProtectionRepairParts(remainingHealth);
+    const currentFailedHarnesses = new Set(remainingParts.failedHookHarnesses);
+    const failedHookApps = remainingParts.failedHookHarnesses.map((harness) => harnessDisplayName(harness));
+    const remainingMessages = [];
+    if (failedHookApps.length > 0) {
+      remainingMessages.push(
+        `${failedHookApps.join(", ")} still ${failedHookApps.length === 1 ? "needs" : "need"} hook repair.`
+      );
+    }
+    if (remainingParts.evidenceFailed) remainingMessages.push("Command evidence still needs repair.");
+    const remaining = remainingMessages.length > 0 ? remainingMessages.join(" ") : "A local protection check still needs attention.";
+    throw new ProtectionRepairFlowError(
+      `${remaining} Open the repair details below for the exact check.`,
+      [...failedHarnesses].filter((harness) => currentFailedHarnesses.has(harness))
+    );
   }, [refreshStateAfterAction]);
   const appDetailContent = reactExports.useMemo(() => {
     if (view !== "app-detail" || !appDetailHarness || runtime.kind !== "ready") {
@@ -31196,7 +31492,7 @@ function App() {
         } : null }) })
       }
     ),
-    helpOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Suspense, { fallback: null, children: /* @__PURE__ */ jsxRuntimeExports.jsx(HelpModal, { open: helpOpen, onClose: handleCloseHelp }) })
+    helpOpen && /* @__PURE__ */ jsxRuntimeExports.jsx(ErrorBoundary, { onReset: handleCloseHelp, children: /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.Suspense, { fallback: null, children: /* @__PURE__ */ jsxRuntimeExports.jsx(HelpModal, { open: helpOpen, onClose: handleCloseHelp }) }) })
   ] });
 }
 const container = document.getElementById("guard-dashboard-root");
@@ -31207,170 +31503,178 @@ clientExports.createRoot(container).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(reactExports.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })
 );
 export {
-  getDefaultExportFromCjs as $,
+  HiMiniEye as $,
   ActionButton as A,
-  HiMiniChevronDown as B,
-  resolveCloudIntelCopy as C,
+  HiMiniChevronUp as B,
+  HiMiniChevronDown as C,
   DeviceProofCard as D,
   EvidenceInsightsShareButton as E,
-  HiMiniCloud as F,
+  resolveCloudIntelCopy as F,
   GuardStatMetric as G,
   HomeInsightsMetrics as H,
-  HiMiniQuestionMarkCircle as I,
-  useFocusTrap as J,
-  approvalProofRequiresPassword as K,
-  HiMiniExclamationTriangle as L,
-  HiMiniBolt as M,
-  Badge as N,
+  HiMiniCloud as I,
+  HiMiniQuestionMarkCircle as J,
+  useFocusTrap as K,
+  approvalProofRequiresPassword as L,
+  HiMiniExclamationTriangle as M,
+  HiMiniBolt as N,
   OperatorHealthCard as O,
-  HiMiniMinusCircle as P,
-  HiMiniWrenchScrewdriver as Q,
-  HiMiniExclamationCircle as R,
+  Badge as P,
+  HiMiniMinusCircle as Q,
+  startGuardCloudConnect as R,
   SectionLabel as S,
-  ProofStrip as T,
-  HiMiniEye as U,
-  HiMiniXCircle as V,
+  fetchGuardCloudConnectStatus as T,
+  ProtectionRepairFlowError as U,
+  openPackageFirewallAuthorizeFallback as V,
   WatchProtectionBanner as W,
-  HiMiniClipboardDocumentCheck as X,
-  HiMiniClipboard as Y,
-  PROTECTION_POSTURE_COPY as Z,
-  POSTURE_OUTCOME_COLUMNS as _,
+  activeFailedHarnesses as X,
+  HiMiniWrenchScrewdriver as Y,
+  HiMiniExclamationCircle as Z,
+  ProofStrip as _,
   EvidenceActivityHeatmapMini as a,
-  HiMiniRocketLaunch as a$,
-  React as a0,
-  HiMiniKey as a1,
-  HiMiniLockClosed as a2,
-  HiMiniBellAlert as a3,
-  HiMiniAdjustmentsHorizontal as a4,
-  HiMiniCircleStack as a5,
-  TabBar as a6,
-  resolveProtectionLevelCopy as a7,
-  fetchSettings as a8,
-  fetchRuntimeSnapshot as a9,
-  GenIcon as aA,
-  HiMiniGlobeAlt as aB,
-  HiMiniCube as aC,
-  HiMiniServerStack as aD,
-  HiMiniFolder as aE,
-  FaWindows as aF,
-  FaAws as aG,
-  HiMiniArrowLeft as aH,
-  HiMiniPlus as aI,
-  guardAwareHref as aJ,
-  fetchApprovalPage as aK,
-  fetchPolicy as aL,
-  HiMiniHome as aM,
-  guardActionPresentation as aN,
-  DEFAULT_FILTER_STATE as aO,
-  filterEvidence as aP,
-  sortEvidence as aQ,
-  computeMetrics as aR,
-  CommandActivityWorkspace as aS,
-  EvidenceFilterBar as aT,
-  EvidenceInsightStrip as aU,
-  EvidenceActionList as aV,
-  EvidenceActionDetail as aW,
-  policyIdentityKey as aX,
-  HiMiniChartBar as aY,
-  runHarnessAction as aZ,
-  GuardHarnessActionError as a_,
-  clearPolicy as aa,
-  clearReviewQueue as ab,
-  revokeApprovalGateCooldown as ac,
-  disableApprovalGateTotp as ad,
-  importSettings as ae,
-  resetSettings as af,
-  enrollApprovalGateTotp as ag,
-  verifyApprovalGateTotp as ah,
-  clearEvidence as ai,
-  exportDiagnostics as aj,
-  repairApprovalCenter as ak,
-  exportSettings as al,
-  setupDesktopNotifications as am,
-  WorkspacePageHeader as an,
-  HiMiniMagnifyingGlass as ao,
-  isProtectionPosture as ap,
-  deriveProtectionPosture as aq,
-  Tag as ar,
-  approvalGateCooldownLabel as as,
-  fetchLocalCliApi as at,
-  fetchExtensionControlApi as au,
-  HiMiniArrowPath as av,
-  HiMiniInformationCircle as aw,
-  isApprovalProofSubmitDisabled as ax,
-  ApprovalProofFieldInputs as ay,
-  buildApprovalProofCredentials as az,
+  CommandActivityWorkspace as a$,
+  HiMiniXCircle as a0,
+  HiMiniClipboardDocumentCheck as a1,
+  HiMiniClipboard as a2,
+  PROTECTION_POSTURE_COPY as a3,
+  POSTURE_OUTCOME_COLUMNS as a4,
+  getDefaultExportFromCjs as a5,
+  React as a6,
+  HiMiniKey as a7,
+  HiMiniLockClosed as a8,
+  HiMiniBellAlert as a9,
+  fetchExtensionControlApi as aA,
+  useResolvedApprovalGate as aB,
+  HiMiniArrowPath as aC,
+  HiMiniInformationCircle as aD,
+  isApprovalProofSubmitDisabled as aE,
+  ApprovalProofFieldInputs as aF,
+  buildApprovalProofCredentials as aG,
+  GenIcon as aH,
+  HiMiniGlobeAlt as aI,
+  HiMiniCube as aJ,
+  HiMiniServerStack as aK,
+  HiMiniFolder as aL,
+  FaWindows as aM,
+  FaAws as aN,
+  approvalProofRecentlySatisfied as aO,
+  HiMiniArrowLeft as aP,
+  HiMiniPlus as aQ,
+  HiMiniNoSymbol as aR,
+  guardAwareHref as aS,
+  fetchApprovalPage as aT,
+  fetchPolicy as aU,
+  HiMiniHome as aV,
+  guardActionPresentation as aW,
+  DEFAULT_FILTER_STATE as aX,
+  filterEvidence as aY,
+  sortEvidence as aZ,
+  computeMetrics as a_,
+  HiMiniAdjustmentsHorizontal as aa,
+  HiMiniCircleStack as ab,
+  TabBar as ac,
+  resolveProtectionLevelCopy as ad,
+  fetchSettings as ae,
+  fetchRuntimeSnapshot as af,
+  clearPolicy as ag,
+  clearReviewQueue as ah,
+  revokeApprovalGateCooldown as ai,
+  disableApprovalGateTotp as aj,
+  importSettings as ak,
+  resetSettings as al,
+  enrollApprovalGateTotp as am,
+  verifyApprovalGateTotp as an,
+  clearEvidence as ao,
+  exportDiagnostics as ap,
+  repairApprovalCenter as aq,
+  exportSettings as ar,
+  setupDesktopNotifications as as,
+  WorkspacePageHeader as at,
+  HiMiniMagnifyingGlass as au,
+  isProtectionPosture as av,
+  deriveProtectionPosture as aw,
+  Tag as ax,
+  approvalGateCooldownLabel as ay,
+  fetchLocalCliApi as az,
   HiMiniCommandLine as b,
-  HiMiniChevronLeft as b$,
-  HiMiniTrash as b0,
-  clearLabelForScope as b1,
-  formatHarnessCommand as b2,
-  isSupplyChainAuditIncomplete as b3,
-  isSupplyChainAuditEvidence as b4,
-  readString$1 as b5,
-  isRecord$2 as b6,
-  HiMiniClock as b7,
-  IconActionButton as b8,
-  HiMiniBeaker as b9,
-  HiMiniCodeBracket as bA,
-  HiMiniClipboardDocument as bB,
-  HiMiniUsers as bC,
-  HiMiniIdentification as bD,
-  policyActionLabel as bE,
-  createCloudExceptionRequest as bF,
-  HiMiniArrowRight as bG,
-  HiMiniPuzzlePiece as bH,
-  fetchCloudExceptions as bI,
-  fetchCloudExceptionRequests as bJ,
-  downloadBlob as bK,
-  PolicyStatField as bL,
-  PaginationControls as bM,
-  HiMiniNoSymbol as bN,
-  HiMiniArrowDownTray as bO,
-  HiMiniQueueList as bP,
-  fetchMcpPolicyRequest as bQ,
-  resolveMcpPolicyRequest as bR,
-  HiMiniDocumentPlus as bS,
-  HiMiniDocumentMagnifyingGlass as bT,
-  Surface as bU,
-  HiMiniCheckBadge as bV,
-  fetchSupplyChainBundle as bW,
-  isSupplyChainScannerEvidence as bX,
-  isBlockedGuardAction as bY,
-  HiMiniShieldExclamation as bZ,
-  HiMiniComputerDesktop as b_,
-  ActivationSummary as ba,
-  ActionResultPanel as bb,
-  HiMiniBugAnt as bc,
-  GuardModalLayer as bd,
-  ConnectFlowCard as be,
-  ApprovalProofInline as bf,
-  HiMiniArrowTopRightOnSquare as bg,
-  HiMiniCloudArrowDown as bh,
-  fetchPackageFirewallStatus as bi,
-  runPackageAudit as bj,
-  resolveSupplyChainAuditFailure as bk,
-  runPackageSync as bl,
-  startPackageFirewallConnect as bm,
-  openPackageFirewallAuthorizeFallback as bn,
-  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as bo,
-  repairSupplyChainProtection as bp,
-  runPackageFirewallAction as bq,
-  parseInterceptProofSnapshot as br,
-  activatePackageFirewallRuntime as bs,
-  EntitlementNotice as bt,
-  fetchReceipts as bu,
-  __vitePreload as bv,
-  scopeLabel as bw,
-  HiMiniDocumentText as bx,
-  HiMiniCloudArrowUp as by,
-  HiMiniCheck as bz,
+  resolveMcpPolicyRequest as b$,
+  EvidenceFilterBar as b0,
+  EvidenceInsightStrip as b1,
+  EvidenceActionList as b2,
+  EvidenceActionDetail as b3,
+  policyIdentityKey as b4,
+  HiMiniChartBar as b5,
+  runHarnessAction as b6,
+  GuardHarnessActionError as b7,
+  HiMiniRocketLaunch as b8,
+  HiMiniTrash as b9,
+  activatePackageFirewallRuntime as bA,
+  EntitlementNotice as bB,
+  fetchReceipts as bC,
+  lazyWorkspace as bD,
+  __vitePreload as bE,
+  scopeLabel as bF,
+  HiMiniDocumentText as bG,
+  HiMiniCloudArrowUp as bH,
+  HiMiniCheck as bI,
+  HiMiniCodeBracket as bJ,
+  HiMiniClipboardDocument as bK,
+  HiMiniUsers as bL,
+  HiMiniIdentification as bM,
+  policyActionLabel as bN,
+  createCloudExceptionRequest as bO,
+  HiMiniArrowRight as bP,
+  HiMiniPuzzlePiece as bQ,
+  fetchCloudExceptions as bR,
+  fetchCloudExceptionRequests as bS,
+  downloadBlob as bT,
+  PolicyStatField as bU,
+  PaginationControls as bV,
+  HiMiniArrowDownTray as bW,
+  HiMiniQueueList as bX,
+  Surface as bY,
+  HiMiniCheckBadge as bZ,
+  fetchMcpPolicyRequest as b_,
+  clearLabelForScope as ba,
+  formatHarnessCommand as bb,
+  isSupplyChainAuditIncomplete as bc,
+  isSupplyChainAuditEvidence as bd,
+  readString$1 as be,
+  isRecord$2 as bf,
+  HiMiniClock as bg,
+  IconActionButton as bh,
+  HiMiniBeaker as bi,
+  ActivationSummary as bj,
+  ActionResultPanel as bk,
+  HiMiniBugAnt as bl,
+  GuardModalLayer as bm,
+  ConnectFlowCard as bn,
+  ApprovalProofInline as bo,
+  HiMiniArrowTopRightOnSquare as bp,
+  HiMiniCloudArrowDown as bq,
+  fetchPackageFirewallStatus as br,
+  runPackageAudit as bs,
+  resolveSupplyChainAuditFailure as bt,
+  runPackageSync as bu,
+  startPackageFirewallConnect as bv,
+  PACKAGE_FIREWALL_CONNECT_POPUP_BLOCKED_MESSAGE as bw,
+  repairSupplyChainProtection as bx,
+  runPackageFirewallAction as by,
+  parseInterceptProofSnapshot as bz,
   HiMiniChevronRight as c,
-  HiMiniFunnel as c0,
-  HiMiniArrowDown as c1,
-  HiMiniArrowUp as c2,
-  runAuditRemediation as c3,
-  HiMiniSignal as c4,
+  HiMiniDocumentPlus as c0,
+  HiMiniDocumentMagnifyingGlass as c1,
+  fetchSupplyChainBundle as c2,
+  isSupplyChainScannerEvidence as c3,
+  isBlockedGuardAction as c4,
+  HiMiniShieldExclamation as c5,
+  HiMiniComputerDesktop as c6,
+  HiMiniChevronLeft as c7,
+  HiMiniFunnel as c8,
+  HiMiniArrowDown as c9,
+  HiMiniArrowUp as ca,
+  runAuditRemediation as cb,
+  HiMiniSignal as cc,
   createCommandActivityClient as d,
   updateSettings as e,
   fetchCommandActivityApi as f,
@@ -31378,20 +31682,20 @@ export {
   homeCommandActivityModel as h,
   harnessDisplayName as i,
   jsxRuntimeExports as j,
-  protectionHealthFor as k,
-  EmptyState as l,
-  EvidenceInsightsShareModal as m,
-  HiMiniCheckCircle as n,
-  GuardHero as o,
-  protectionPresentationState as p,
-  formatNumber as q,
+  useProtectionPresentationState as k,
+  unavailableProtectionHealth as l,
+  EmptyState as m,
+  EvidenceInsightsShareModal as n,
+  HiMiniCheckCircle as o,
+  protectionHealthFor as p,
+  GuardHero as q,
   reactExports as r,
-  HiMiniShieldCheck as s,
-  guardActionDisposition as t,
+  formatNumber as s,
+  HiMiniShieldCheck as t,
   useReceiptAnalytics as u,
-  formatRelativeTime as v,
-  guardActionActivityCopy as w,
-  HiMiniSparkles as x,
-  HiMiniXMark as y,
-  HiMiniChevronUp as z
+  guardActionDisposition as v,
+  formatRelativeTime as w,
+  guardActionActivityCopy as x,
+  HiMiniSparkles as y,
+  HiMiniXMark as z
 };

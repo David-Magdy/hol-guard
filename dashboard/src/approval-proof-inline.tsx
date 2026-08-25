@@ -13,6 +13,10 @@ type ApprovalProofFieldInputsProps = {
   onApprovalTotpCodeChange: (event: ChangeEvent<HTMLInputElement>) => void;
 };
 
+export function approvalProofRecentlySatisfied(gate: GuardApprovalGatePublicConfig | null | undefined): boolean {
+  return gate?.totp_enabled === true && gate.totp_recent_satisfied === true;
+}
+
 export function approvalProofRequiresPassword(gate: GuardApprovalGatePublicConfig | null | undefined): boolean {
   return gate?.totp_enabled !== true;
 }
@@ -25,6 +29,9 @@ export function isApprovalProofSubmitDisabled(
   if (busy) {
     return true;
   }
+  if (approvalProofRecentlySatisfied(gate)) {
+    return false;
+  }
   if (approvalProofRequiresPassword(gate)) {
     return credentials.approvalPassword.trim() === "";
   }
@@ -35,6 +42,9 @@ export function buildApprovalProofCredentials(
   gate: GuardApprovalGatePublicConfig | null | undefined,
   credentials: { approvalPassword: string; approvalTotpCode: string },
 ): { approval_password?: string; approval_totp_code?: string } {
+  if (approvalProofRecentlySatisfied(gate)) {
+    return {};
+  }
   if (approvalProofRequiresPassword(gate)) {
     return { approval_password: credentials.approvalPassword };
   }
@@ -42,6 +52,18 @@ export function buildApprovalProofCredentials(
 }
 
 export function ApprovalProofFieldInputs(props: ApprovalProofFieldInputsProps) {
+  const handleTotpChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
+    const digits = event.target.value.replace(/\D/g, "").slice(0, 6);
+    event.target.value = digits;
+    props.onApprovalTotpCodeChange(event);
+  }, [props]);
+  if (approvalProofRecentlySatisfied(props.approvalGate)) {
+    return (
+      <p className="text-sm leading-6 text-brand-dark/75">
+        Recently confirmed with your authenticator. A new code is not needed yet.
+      </p>
+    );
+  }
   const needsPassword = approvalProofRequiresPassword(props.approvalGate);
   return (
     <div className="space-y-3">
@@ -64,10 +86,13 @@ export function ApprovalProofFieldInputs(props: ApprovalProofFieldInputsProps) {
             type="text"
             inputMode="numeric"
             pattern="[0-9]*"
+            maxLength={6}
             autoComplete="one-time-code"
+            name="one-time-code"
+            autoFocus
             value={props.approvalTotpCode}
-            onChange={props.onApprovalTotpCodeChange}
-            className="mt-1 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+            onChange={handleTotpChange}
+            className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-center text-lg font-semibold tracking-[0.35em] text-brand-dark focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/30"
           />
         </label>
       )}

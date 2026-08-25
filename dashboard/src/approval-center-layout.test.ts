@@ -476,5 +476,13 @@ assert(
 const layoutSource = readFileSync(fileURLToPath(import.meta.url).replace(/\.test\.ts$/, ".tsx"), "utf8");
 assert(layoutSource.includes("WatchProtectionBanner"), "inbox shows the Watch protection-off banner");
 assert(layoutSource.includes('view === "inbox"'), "Watch banner is scoped to the approval inbox");
+assert(
+  layoutSource.includes('if (props.runtime.kind === "ready") {\n    queuedCount = props.runtime.snapshot.pending_count;'),
+  "sidebar decision count uses the actionable runtime total when watch observations are visible",
+);
+assert(
+  !layoutSource.includes("queuedCount = queuedItems.length;\n  } else if (props.runtime.kind"),
+  "inbox observations do not override the actionable runtime total",
+);
 
 console.log("approval-center-layout.test.ts: all tests passed");

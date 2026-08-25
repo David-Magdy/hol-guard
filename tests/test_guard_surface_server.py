@@ -22,7 +22,7 @@ from codex_plugin_scanner.guard.adapters import get_adapter
 from codex_plugin_scanner.guard.adapters.base import HarnessContext
 from codex_plugin_scanner.guard.cli import commands as guard_commands_module
 from codex_plugin_scanner.guard.config import GuardConfig
-from codex_plugin_scanner.guard.daemon import GuardDaemonServer
+from codex_plugin_scanner.guard.daemon import GuardDaemonServer, protection_repair_retry
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager_module
 from codex_plugin_scanner.guard.daemon import server as daemon_server_module
 from codex_plugin_scanner.guard.daemon.discovery import load_authenticated_daemon_state
@@ -131,7 +131,8 @@ class TestGuardSurfaceServer:
             "error": "harness_repair_failed",
             "harness": "opencode",
             "message": (
-                "Guard could not repair opencode protection. Update Guard, then retry from this page. "
+                "Guard could not repair opencode protection. Open this app's repair details and retry that "
+                "protection layer. "
                 "Your existing protection settings were preserved."
             ),
         }
@@ -244,10 +245,10 @@ class TestGuardSurfaceServer:
             lambda self, *, force_refresh=False: containment_probes.append(force_refresh) or {},
         )
         monkeypatch.setattr(
-            daemon_server_module,
+            protection_repair_retry,
             "containment_health_signals",
             lambda value, **_kwargs: {
-                check_id: SimpleNamespace(status=daemon_server_module.ProtectionCheckStatus.PASS)
+                check_id: SimpleNamespace(status=protection_repair_retry.ProtectionCheckStatus.PASS)
                 for check_id in (
                     "decision_plane_compatibility",
                     "containment_compatibility",
@@ -461,6 +462,11 @@ class TestGuardSurfaceServer:
             "_containment_health_payload",
             lambda self, **_kwargs: (_ for _ in ()).throw(RuntimeError("probe failed")),
         )
+        monkeypatch.setattr(
+            daemon_server_module,
+            "_repair_failing_managed_harness_hooks",
+            lambda _store: (_ for _ in ()).throw(RuntimeError("hook discovery failed")),
+        )
         daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
         daemon.start()
         request = urllib.request.Request(
@@ -478,10 +484,12 @@ class TestGuardSurfaceServer:
 
         assert error.value.code == 409
         assert payload["failed_check_ids"] == [
+            "harness_hooks",
             "decision_plane_compatibility",
             "containment_compatibility",
             "sandbox",
         ]
+        assert payload["failed_harnesses"] == []
         assert payload["message"] == (
             "Repair paused before every protection layer could be confirmed. Retry repair here."
         )

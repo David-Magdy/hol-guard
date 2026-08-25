@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .package_firewall_defaults import build_guard_local_entitlement_defaults
+from .runtime.extension_control_authority import ExtensionControlAuthorityView
 
 # ruff: noqa: F403,F405
 from .store_base import *
@@ -108,8 +111,28 @@ class StoreOAuthConnectMixin:
             )
         return sources
 
-    def clear_cloud_sync_state_for_reconnect(self) -> None:
-        self.delete_sync_payloads(list(_GUARD_CLOUD_RESET_STATE_KEYS))
+    def clear_cloud_sync_state_for_reconnect(
+        self,
+        *,
+        now: str | None = None,
+        managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
+    ) -> None:
+        self.clear_policy_bundle_authority(
+            now or _now(),
+            policy_bundle_last_error={},
+            managed_controls_publish=managed_controls_publish,
+        )
+        self.delete_sync_payloads(
+            [
+                state_key
+                for state_key in _GUARD_CLOUD_RESET_STATE_KEYS
+                if state_key
+                not in {
+                    "managed_controls_active",
+                    "managed_controls_negotiated_capabilities",
+                }
+            ]
+        )
 
     def set_oauth_local_credentials(
         self,

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useState } from "react";
+import { Suspense, useCallback, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { AppView } from "./approval-center-primitives";
@@ -7,10 +7,8 @@ import { ShellNavigation } from "./shell-navigation";
 import { ReceiptsWorkspace } from "./receipts-workspace";
 import { ReviewWorkspace } from "./review-workspace";
 import { QueueConnectionError } from "./queue-connection-error";
-
-const McpPolicyRequestPanel = lazy(() =>
-  import("./mcp-policy-request-panel").then((m) => ({ default: m.McpPolicyRequestPanel })),
-);
+import { ErrorBoundary } from "./error-boundary";
+import { lazyWorkspace } from "./lazy-workspace";
 import type { BulkGateCredentials } from "./approval-gate-utils";
 import type {
   GuardApprovalGatePublicConfig,
@@ -26,6 +24,10 @@ import type {
 import { useGuardUpdate } from "./guard-update-panel";
 import { updateSettings } from "./guard-api";
 import { WatchProtectionBanner } from "./watch-protection-banner";
+
+const McpPolicyRequestPanel = lazyWorkspace(() =>
+  import("./mcp-policy-request-panel").then((m) => ({ default: m.McpPolicyRequestPanel })),
+);
 
 type RequestState =
   | { kind: "loading" }
@@ -233,11 +235,8 @@ export function ApprovalCenterLayout(props: LayoutProps) {
     }
   });
   const queuedItems = props.requests.kind === "ready" ? props.requests.items : [];
-  const needsFullQueue = props.view === "inbox";
   let queuedCount = 0;
-  if (needsFullQueue && props.requests.kind === "ready") {
-    queuedCount = queuedItems.length;
-  } else if (props.runtime.kind === "ready") {
+  if (props.runtime.kind === "ready") {
     queuedCount = props.runtime.snapshot.pending_count;
   } else {
     queuedCount = queuedItems.length;
@@ -263,6 +262,7 @@ export function ApprovalCenterLayout(props: LayoutProps) {
     guardVersion,
     updateStatus,
     updatePhase,
+    updateError,
     onUpdateGuard,
     onReinstallGuard,
   } = useGuardUpdate({ onReconnected: props.onGuardReconnected, enabled: props.enableUpdateStatus });
@@ -278,6 +278,7 @@ export function ApprovalCenterLayout(props: LayoutProps) {
         guardVersion={guardVersion}
         updateStatus={updateStatus}
         updatePhase={updatePhase}
+        updateError={updateError}
         onUpdateGuard={onUpdateGuard}
         onReinstallGuard={onReinstallGuard}
         approvalGate={props.approvalGate ?? null}
@@ -313,7 +314,9 @@ export function ApprovalCenterLayout(props: LayoutProps) {
                 />
               </div>
             ) : null}
-            {renderViewContent(props)}
+            <ErrorBoundary key={props.view} onReset={props.onGoHome}>
+              {renderViewContent(props)}
+            </ErrorBoundary>
           </div>
         </main>
         <ShellFooter />

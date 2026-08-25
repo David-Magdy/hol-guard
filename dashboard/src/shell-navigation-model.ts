@@ -43,6 +43,7 @@ export type ShellNavigationProps = {
   onUpdateGuard?: () => void;
   onReinstallGuard?: () => void;
   updatePhase?: GuardUpdatePhase;
+  updateError?: string | null;
   approvalGate?: GuardApprovalGatePublicConfig | null;
   cloudUserProfile?: GuardCloudUserProfile | null;
   workspaceId?: string | null;
@@ -97,9 +98,9 @@ export const SHELL_NAV_ITEMS: readonly ShellNavigationItem[] = [
   },
   {
     href: "/policy",
-    label: "Policy",
-    shortLabel: "Policy",
-    description: "Saved decisions and local controls",
+    label: "Rules & exceptions",
+    shortLabel: "Rules",
+    description: "Remembered decisions, Guard Cloud rules, and exceptions",
     view: "policy",
     group: "manage",
     icon: HiMiniClipboardDocumentList,
@@ -108,7 +109,7 @@ export const SHELL_NAV_ITEMS: readonly ShellNavigationItem[] = [
     href: "/extensions",
     label: "Extensions",
     shortLabel: "Extensions",
-    description: "Managed extensions and integrations",
+    description: "Tools and capabilities protected on this device",
     view: "extensions",
     group: "manage",
     icon: HiMiniPuzzlePiece,

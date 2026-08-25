@@ -1,4 +1,4 @@
-import { j as jsxRuntimeExports, S as SectionLabel, y as HiMiniXMark, N as Badge, ar as Tag, b as HiMiniCommandLine, L as HiMiniExclamationTriangle, bw as scopeLabel, i as harnessDisplayName, A as ActionButton, aJ as guardAwareHref, v as formatRelativeTime$1, bx as HiMiniDocumentText, n as HiMiniCheckCircle, by as HiMiniCloudArrowUp, bz as HiMiniCheck, bA as HiMiniCodeBracket, bB as HiMiniClipboardDocument, bC as HiMiniUsers, b9 as HiMiniBeaker, aE as HiMiniFolder, a2 as HiMiniLockClosed, s as HiMiniShieldCheck, aw as HiMiniInformationCircle, bh as HiMiniCloudArrowDown, bg as HiMiniArrowTopRightOnSquare, bD as HiMiniIdentification, bE as policyActionLabel, r as reactExports, bF as createCloudExceptionRequest, bG as HiMiniArrowRight, l as EmptyState, ao as HiMiniMagnifyingGlass, z as HiMiniChevronUp, B as HiMiniChevronDown, c as HiMiniChevronRight, bH as HiMiniPuzzlePiece, aB as HiMiniGlobeAlt, b7 as HiMiniClock, bI as fetchCloudExceptions, bJ as fetchCloudExceptionRequests, bK as downloadBlob, bL as PolicyStatField, bM as PaginationControls, bN as HiMiniNoSymbol, aC as HiMiniCube, av as HiMiniArrowPath, F as HiMiniCloud, a4 as HiMiniAdjustmentsHorizontal, bO as HiMiniArrowDownTray, bP as HiMiniQueueList, an as WorkspacePageHeader, bv as __vitePreload } from "../guard-dashboard.js";
+import { j as jsxRuntimeExports, S as SectionLabel, z as HiMiniXMark, P as Badge, ax as Tag, b as HiMiniCommandLine, M as HiMiniExclamationTriangle, bF as scopeLabel, i as harnessDisplayName, A as ActionButton, aS as guardAwareHref, w as formatRelativeTime$1, bG as HiMiniDocumentText, o as HiMiniCheckCircle, bH as HiMiniCloudArrowUp, bI as HiMiniCheck, bJ as HiMiniCodeBracket, bK as HiMiniClipboardDocument, bL as HiMiniUsers, bi as HiMiniBeaker, aL as HiMiniFolder, a8 as HiMiniLockClosed, t as HiMiniShieldCheck, aD as HiMiniInformationCircle, bq as HiMiniCloudArrowDown, bp as HiMiniArrowTopRightOnSquare, bM as HiMiniIdentification, bN as policyActionLabel, r as reactExports, bO as createCloudExceptionRequest, bP as HiMiniArrowRight, m as EmptyState, au as HiMiniMagnifyingGlass, B as HiMiniChevronUp, C as HiMiniChevronDown, c as HiMiniChevronRight, bQ as HiMiniPuzzlePiece, aI as HiMiniGlobeAlt, bg as HiMiniClock, bR as fetchCloudExceptions, bS as fetchCloudExceptionRequests, bT as downloadBlob, bU as PolicyStatField, bV as PaginationControls, aR as HiMiniNoSymbol, aJ as HiMiniCube, aC as HiMiniArrowPath, I as HiMiniCloud, aa as HiMiniAdjustmentsHorizontal, bW as HiMiniArrowDownTray, bX as HiMiniQueueList, at as WorkspacePageHeader, bD as lazyWorkspace, bE as __vitePreload } from "../guard-dashboard.js";
 const CLOUD_EXCEPTION_EXPIRING_SOON_DAYS = 7;
 function parseCloudExceptionTimestamp(value) {
   if (!value || !value.trim()) {
@@ -4161,7 +4161,7 @@ function PolicyExceptionsToolbar({
     !cloudConnected && connectUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { href: connectUrl, variant: "secondary", children: "Connect Guard Cloud" }) : null
   ] });
 }
-const PolicyWorkspace = reactExports.lazy(
+const PolicyWorkspace = lazyWorkspace(
   () => __vitePreload(() => Promise.resolve().then(() => policyWorkspace), true ? void 0 : void 0).then((module) => ({ default: module.PolicyWorkspace }))
 );
 function PolicyFallback() {
@@ -4202,9 +4202,9 @@ function PolicyWorkspacePage(props) {
     /* @__PURE__ */ jsxRuntimeExports.jsx(
       WorkspacePageHeader,
       {
-        eyebrow: "Policy",
-        title: "Remembered rules and exceptions",
-        description: "Inspect remembered outcomes, cloud exceptions, and the order Guard uses to decide. Configure protection behavior in Settings.",
+        eyebrow: "Rules & exceptions",
+        title: "Remembered decisions and exceptions",
+        description: "Review decisions remembered on this device, contextual rules synced from Guard Cloud, exceptions, and the order Guard uses to decide. Configure tools and capability posture in Extensions.",
         actions: activeView === "exceptions" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
           PolicyExceptionsToolbar,
           {

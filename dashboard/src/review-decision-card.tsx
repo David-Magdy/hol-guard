@@ -26,7 +26,8 @@ import {
   taskCapabilityExplanation,
   willPersistExactAction,
 } from "./approval-scopes";
-import { approvalProofRequiresPassword } from "./approval-proof-inline";
+import { approvalProofRecentlySatisfied, buildApprovalProofCredentials } from "./approval-proof-inline";
+import { fetchResolvedApprovalGate } from "./use-resolved-approval-gate";
 import { ConsolidatedEvidenceAlert } from "./consolidated-evidence-alert";
 import { plainEnglishRequestTitle } from "./evidence/plain-english";
 import type { DecisionScope, GuardApprovalGatePublicConfig, GuardApprovalRequest } from "./guard-types";
@@ -76,7 +77,6 @@ export function ReviewDecisionCard(props: {
   const [pendingAction, setPendingAction] = useState<"allow" | "block" | null>(null);
   const [pendingContractKey, setPendingContractKey] = useState<string | null>(null);
   const [rememberExactAction, setRememberExactAction] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const allowButtonRef = useRef<HTMLButtonElement>(null);
   const availableScopeChoices = useMemo(
     () => (item ? standardScopeChoicesForRequest(item, "allow") : []),
@@ -122,15 +122,6 @@ export function ReviewDecisionCard(props: {
     }
   }, [item?.request_id, item?.scope_contract_version, item?.scope_contract_digest]);
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, []);
-
   const handleResolve = useCallback(
     async (action: "allow" | "block") => {
       if (!item || resolutionBlockReason !== null) return;
@@ -145,11 +136,13 @@ export function ReviewDecisionCard(props: {
           action === "allow" ? rememberExactAction : watchOnlyObservation,
         );
         const gate = props.approvalGate;
-        const needsPassword = approvalProofRequiresPassword(gate);
         const includeGateFields =
           gate?.enabled === true &&
           gate?.configured === true &&
           requiresApprovalPasswordPrompt(gate.cooldown_active, gate.strict_all_decisions, requestedScope);
+        const proof = includeGateFields
+          ? buildApprovalProofCredentials(gate, { approvalPassword, approvalTotpCode })
+          : {};
         await props.onResolve({
           ...buildDecisionPayload({
             item,
@@ -158,8 +151,7 @@ export function ReviewDecisionCard(props: {
             reason: action === "allow" ? "approved in review" : "blocked in review",
             persistExactAction,
           }),
-          ...(includeGateFields && needsPassword ? { approval_password: approvalPassword } : {}),
-          ...(includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {}),
+          ...proof,
           ...(includeGateFields ? { approval_gate_use_cooldown: useCooldown } : {}),
         });
         setResolved({ action, persistedExactAction: persistExactAction });
@@ -168,11 +160,6 @@ export function ReviewDecisionCard(props: {
         setUseCooldown(false);
         setPendingAction(null);
         setPendingContractKey(null);
-        if (timerRef.current) {
-          clearTimeout(timerRef.current);
-          timerRef.current = null;
-        }
-        timerRef.current = setTimeout(() => setResolved(null), 2000);
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : "Something went wrong. Try again.");
       } finally {
@@ -208,17 +195,29 @@ export function ReviewDecisionCard(props: {
       setLastAction(action);
       const requestedScope = action === "allow" ? allowScope : blockScope;
       const gate = props.approvalGate;
-      const gateRequiresPassword =
+      const gateEnabled =
         gate?.enabled === true &&
         gate?.configured === true &&
         requiresApprovalPasswordPrompt(gate.cooldown_active, gate.strict_all_decisions, requestedScope);
-      if (gateRequiresPassword) {
-        setPendingAction(action);
-        setPendingContractKey(decisionContractKey);
-        setErrorMessage(null);
+      if (!gateEnabled) {
+        void handleResolve(action);
         return;
       }
-      void handleResolve(action);
+      setErrorMessage(null);
+      if (!approvalProofRecentlySatisfied(gate)) {
+        setPendingAction(action);
+        setPendingContractKey(decisionContractKey);
+        return;
+      }
+      void (async () => {
+        const fresh = await fetchResolvedApprovalGate().catch(() => gate);
+        if (approvalProofRecentlySatisfied(fresh ?? gate)) {
+          void handleResolve(action);
+          return;
+        }
+        setPendingAction(action);
+        setPendingContractKey(decisionContractKey);
+      })();
     },
     [
       allowScope,
@@ -241,7 +240,7 @@ export function ReviewDecisionCard(props: {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (submitting !== null || pendingAction !== null || resolutionBlockReason !== null) return;
+      if (submitting !== null || pendingAction !== null || resolved !== null || resolutionBlockReason !== null) return;
       const target = event.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
 
@@ -261,7 +260,7 @@ export function ReviewDecisionCard(props: {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [availableScopeChoices, handleRequestResolve, pendingAction, resolutionBlockReason, submitting]);
+  }, [availableScopeChoices, handleRequestResolve, pendingAction, resolutionBlockReason, resolved, submitting]);
 
   const handleModalSubmit = useCallback(() => {
     if (pendingAction === null) {
@@ -419,7 +418,7 @@ export function ReviewDecisionCard(props: {
           </div>
         )}
 
-        {resolutionBlockReason === null && (
+        {resolutionBlockReason === null && resolved === null && (
           <ReviewScopeControls
             commonScopeOptions={commonScopeOptions}
             broaderScopeOptions={broaderScopeOptions}
@@ -454,7 +453,7 @@ export function ReviewDecisionCard(props: {
           </div>
         )}
 
-        {resolutionBlockReason === null && <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {resolutionBlockReason === null && resolved === null && <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <ActionButton
             ref={allowButtonRef}
             variant="success"

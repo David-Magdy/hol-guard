@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo, lazy, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, Suspense } from "react";
 
 import {
   clearPolicy,
@@ -18,6 +18,7 @@ import {
   fetchGuardUpdateStatus,
   guardAwareHref,
   bulkAllowReadOnce,
+  GuardProtectionRepairError,
   repairApprovalCenter,
   repairProtectionCheck,
   resolveRequestWithQueueResult,
@@ -29,28 +30,27 @@ import type { AppView } from "./approval-center-primitives";
 import { buildClearPayload } from "./clear-policy-payload";
 import { harnessDisplayName, normalizeHarnessSlug } from "./approval-center-utils";
 import { ErrorBoundary } from "./error-boundary";
+import { lazyWorkspace } from "./lazy-workspace";
 import { protectionHealthFor, remainingProtectionRepairParts } from "./protection-health";
+import { ProtectionRepairFlowError } from "./protection-repair-flow";
 import { selectNextAfterResolution } from "./queue-state";
 import { useRouteFocus } from "./use-route-focus";
 
-const HomeWorkspace = lazy(() => import("./home-dashboard").then((m) => ({ default: m.HomeWorkspace })));
-const FleetWorkspace = lazy(() => import("./fleet-workspace").then((m) => ({ default: m.FleetWorkspace })));
-const SettingsWorkspace = lazy(() => import("./settings-workspace").then((m) => ({ default: m.SettingsWorkspace })));
-const ExtensionsWorkspace = lazy(() =>
+const HomeWorkspace = lazyWorkspace(() => import("./home-dashboard").then((m) => ({ default: m.HomeWorkspace })));
+const FleetWorkspace = lazyWorkspace(() => import("./fleet-workspace").then((m) => ({ default: m.FleetWorkspace })));
+const SettingsWorkspace = lazyWorkspace(() => import("./settings-workspace").then((m) => ({ default: m.SettingsWorkspace })));
+const ExtensionsWorkspace = lazyWorkspace(() =>
   import("./extensions-workspace").then((module) => ({ default: module.ExtensionsWorkspace }))
 );
-const AppDetailWorkspace = lazy(() => import("./apps/app-detail-workspace").then((m) => ({ default: m.AppDetailWorkspace })));
-const HelpModal = lazy(() => import("./help-modal").then((m) => ({ default: m.HelpModal })));
-const SupplyChainHubWorkspace = lazy(() =>
+const AppDetailWorkspace = lazyWorkspace(() => import("./apps/app-detail-workspace").then((m) => ({ default: m.AppDetailWorkspace })));
+const HelpModal = lazyWorkspace(() => import("./help-modal").then((m) => ({ default: m.HelpModal })));
+const SupplyChainHubWorkspace = lazyWorkspace(() =>
   import("./supply-chain-hub-workspace").then((m) => ({ default: m.SupplyChainHubWorkspace }))
 );
-const PolicyWorkspacePage = lazy(() =>
+const PolicyWorkspacePage = lazyWorkspace(() =>
   import("./policy-workspace-page").then((m) => ({ default: m.PolicyWorkspacePage }))
 );
-const McpPolicyRequestPanel = lazy(() =>
-  import("./mcp-policy-request-panel").then((m) => ({ default: m.McpPolicyRequestPanel }))
-);
-const AboutWorkspace = lazy(() =>
+const AboutWorkspace = lazyWorkspace(() =>
   import("./about/about-workspace").then((m) => ({ default: m.AboutWorkspace }))
 );
 
@@ -161,7 +161,7 @@ export function viewTitle(view: AppView): string {
   if (view === "settings") return "Settings";
   if (view === "supply-chain") return "Supply Chain";
   if (view === "audit") return "Audit";
-  if (view === "policy") return "Policy";
+  if (view === "policy") return "Rules & exceptions";
   if (view === "feed-health") return "Feed Health";
   if (view === "about") return "About";
   if (view === "extensions") return "Extensions";
@@ -804,6 +804,7 @@ export function App() {
 
   const handleRepairProtection = useCallback(async (harnesses: string[]) => {
     const failures: string[] = [];
+    const failedHarnesses = new Set<string>();
     try {
       await repairApprovalCenter();
     } catch {
@@ -813,6 +814,7 @@ export function App() {
       try {
         await runHarnessAction({ harness, action: "repair", dryRun: false });
       } catch (error: unknown) {
+        failedHarnesses.add(harness);
         failures.push(
           error instanceof Error && error.message.trim()
             ? error.message
@@ -823,34 +825,40 @@ export function App() {
     try {
       await repairProtectionCheck("all");
     } catch (error: unknown) {
+      if (error instanceof GuardProtectionRepairError) {
+        for (const harness of error.failedHarnesses) failedHarnesses.add(harness);
+      }
       failures.push(error instanceof Error ? error.message : "integrity protection");
     }
     const refreshedSnapshot = await refreshStateAfterAction();
-    if (failures.length > 0) {
-      throw new Error(`Repair paused at ${failures.join(", ")}. Retry repair to continue from this page.`);
-    }
     if (refreshedSnapshot === null) {
-      throw new Error("Repair completed, but Guard could not recheck protection. Check again in a moment.");
+      const detail = failures.length > 0 ? ` Repair reported: ${failures.join(", ")}.` : "";
+      throw new ProtectionRepairFlowError(
+        `Guard could not recheck protection. Check again in a moment.${detail}`,
+        [],
+      );
     }
     const remainingHealth = protectionHealthFor(refreshedSnapshot);
-    if (remainingHealth.state !== "protected") {
-      const remainingParts = remainingProtectionRepairParts(remainingHealth);
-      const failedHookApps = remainingParts.failedHookHarnesses.map((harness) => harnessDisplayName(harness));
-      const remainingMessages: string[] = [];
-      if (failedHookApps.length > 0) {
-        remainingMessages.push(
-          `${failedHookApps.join(", ")} still ${failedHookApps.length === 1 ? "needs" : "need"} hook repair.`,
-        );
-      }
-      if (remainingParts.evidenceFailed) {
-        remainingMessages.push("Command evidence still needs repair.");
-      }
-      const remaining = remainingMessages.length > 0
-        ? remainingMessages.join(" ")
-        : "A local protection check still needs attention.";
-      throw new Error(`${remaining} Open the repair details below for the exact check.`);
+    if (remainingHealth.state === "protected") {
+      return "Automatic repairs completed. Guard rechecked every protection layer below.";
     }
-    return "Automatic repairs completed. Guard rechecked every protection layer below.";
+    const remainingParts = remainingProtectionRepairParts(remainingHealth);
+    const currentFailedHarnesses = new Set(remainingParts.failedHookHarnesses);
+    const failedHookApps = remainingParts.failedHookHarnesses.map((harness) => harnessDisplayName(harness));
+    const remainingMessages: string[] = [];
+    if (failedHookApps.length > 0) {
+      remainingMessages.push(
+        `${failedHookApps.join(", ")} still ${failedHookApps.length === 1 ? "needs" : "need"} hook repair.`,
+      );
+    }
+    if (remainingParts.evidenceFailed) remainingMessages.push("Command evidence still needs repair.");
+    const remaining = remainingMessages.length > 0
+      ? remainingMessages.join(" ")
+      : "A local protection check still needs attention.";
+    throw new ProtectionRepairFlowError(
+      `${remaining} Open the repair details below for the exact check.`,
+      [...failedHarnesses].filter((harness) => currentFailedHarnesses.has(harness)),
+    );
   }, [refreshStateAfterAction]);
 
   const appDetailContent = useMemo(() => {
@@ -1043,9 +1051,11 @@ export function App() {
       }
     />
     {helpOpen && (
-      <Suspense fallback={null}>
-        <HelpModal open={helpOpen} onClose={handleCloseHelp} />
-      </Suspense>
+      <ErrorBoundary onReset={handleCloseHelp}>
+        <Suspense fallback={null}>
+          <HelpModal open={helpOpen} onClose={handleCloseHelp} />
+        </Suspense>
+      </ErrorBoundary>
     )}
     </>);
 }

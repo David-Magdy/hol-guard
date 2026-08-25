@@ -24,7 +24,7 @@ import {
   APP_STATUS_LABELS,
 } from "./apps/app-catalog";
 import { isConnectableAppHarness } from "./apps/harness-setup-target";
-import { protectionHealthFor, protectionPresentationState } from "./protection-health";
+import { protectionHealthFor, useProtectionPresentationState } from "./protection-health";
 import {
   FleetProtectionRecovery,
 } from "./fleet-protection-recovery";
@@ -290,17 +290,17 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
   ).sort((a, b) => a.localeCompare(b));
   const runtimeState = props.runtime.runtime_state;
   const protectionHealth = protectionHealthFor(props.runtime);
+  const protectionState = useProtectionPresentationState(protectionHealth);
   const receiptHarnesses = new Set(props.runtime.latest_receipts.map((r) => r.harness).filter(isConnectableAppHarness));
   const repairHarness = managedInstalls.find((install) => !install.active)?.harness
     ?? visibleHarnesses.find((harness) => protectionHealthFor(props.runtime, harness).checks.some(
       (check) => check.check_id === "harness_hooks" && check.status === "fail"
     ));
   const repairHarnesses = repairHarnessesFor(managedInstalls, protectionHealth);
-
   const heroCopy = resolveFleetHeroCopy(
     props.runtime.cloud_state,
     activeInstalls.length,
-    protectionPresentationState(protectionHealth),
+    protectionState,
     {
       fleet_url: props.runtime.fleet_url,
       dashboard_url: props.runtime.dashboard_url,
@@ -337,7 +337,7 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
         ]}
       />
 
-      {protectionPresentationState(protectionHealth) !== "checking" && protectionHealth.state !== "protected" ? (
+      {protectionState !== "checking" && protectionHealth.state !== "protected" ? (
         <FleetProtectionRecovery
           cloudPolicy={{
             cloudState: props.runtime.cloud_state,
@@ -349,6 +349,7 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
           repairHarness={repairHarness}
           repairHarnesses={repairHarnesses}
           onRepairProtection={props.onRepairProtection}
+          onRepairHarness={props.onRepairHarness}
         />
       ) : null}
 

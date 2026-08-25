@@ -50,7 +50,7 @@ import { appSetupTarget } from "./harness-setup-target";
 import { DEFAULT_FILTER_STATE } from "../evidence/evidence-url-state";
 import type { EvidenceFilterState, EvidenceSortKey } from "../evidence/evidence-types";
 import { CommandActivityWorkspace } from "../command-activity/command-activity-workspace";
-import { protectionHealthFor, protectionPresentationState } from "../protection-health";
+import { protectionHealthFor, useProtectionPresentationState } from "../protection-health";
 import {
   AppCommandActivityModeTabs,
   type AppActivityMode,
@@ -327,7 +327,7 @@ export function AppDetailWorkspace(props: AppDetailWorkspaceProps) {
     : "unknown";
 
   const appProtection = protectionHealthFor(runtime, harness);
-  const protectionState = protectionPresentationState(appProtection);
+  const protectionState = useProtectionPresentationState(appProtection);
   const capability = runtime.protection_capabilities?.find((item) => item.harness === harness);
   const limited = capability?.limited === true;
   const heroStatus = resolveHeroStatus(status, protectionState);

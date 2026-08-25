@@ -1234,7 +1234,7 @@ def test_approval_gate_tracks_active_totp_failures_and_locks(tmp_path: Path) -> 
     assert locked.value.code == "approval_gate_locked"
 
 
-def test_approval_gate_concurrent_totp_replay_allows_only_one_request(tmp_path: Path) -> None:
+def test_approval_gate_concurrent_totp_reuses_recent_session_proof(tmp_path: Path) -> None:
     store = _store(tmp_path)
     _enable_gate(store)
     secret = _enable_totp(store, now="2026-04-11T00:00:00+00:00")
@@ -1259,9 +1259,9 @@ def test_approval_gate_concurrent_totp_replay_allows_only_one_request(tmp_path: 
     with ThreadPoolExecutor(max_workers=2) as executor:
         outcomes = sorted(executor.map(approve, request_ids))
 
-    assert outcomes == ["approval_gate_totp_invalid", "resolved"]
+    assert outcomes == ["resolved", "resolved"]
     statuses = sorted(str(store.get_approval_request(request_id)["status"]) for request_id in request_ids)
-    assert statuses == ["pending", "resolved"]
+    assert statuses == ["resolved", "resolved"]
 
 
 def test_approval_gate_cli_totp_commands_round_trip(tmp_path: Path) -> None:

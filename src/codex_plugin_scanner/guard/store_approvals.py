@@ -264,6 +264,7 @@ def approval_schema_statement() -> str:
           guard_version text,
           first_seen_guard_version text,
           last_seen_guard_version text,
+          watch_only_observation integer not null default 0,
           review_command text not null,
           approval_url text not null,
           status text not null,
@@ -283,233 +284,10 @@ def add_approval_request(
     *,
     oauth_source: str = "default",
 ) -> str:
-    canonical_decision = canonical_approval_surfaces(
-        request.policy_action,
-        request.decision_v2_json,
-        request.action_envelope_json,
-        reject_contradiction=True,
-    )
-    _begin_immediate(connection)
-    normalized_oauth_source = oauth_source.strip().lower() or "default"
-    identity_key = _normalized_identity_key(request.launch_target)
-    action_identity, queue_group_id = approval_queue_identity_for_request(request)
-    existing = connection.execute(
-        """
-        select request_id
-        from approval_requests
-        where queue_group_id = ?
-          and harness = ?
-          and oauth_source = ?
-          and status = 'pending'
-        order by last_seen_at desc, request_id desc
-        limit 1
-        """,
-        (queue_group_id, request.harness, normalized_oauth_source),
-    ).fetchone()
-    if existing is None:
-        existing = connection.execute(
-            """
-        select request_id
-        from approval_requests
-        where harness = ?
-          and oauth_source = ?
-          and artifact_id = ?
-          and workspace IS ?
-          and normalized_identity_key = ?
-          and queue_group_id IS NULL
-          and status = 'pending'
-        order by created_at desc
-        limit 1
-        """,
-            (
-                request.harness,
-                normalized_oauth_source,
-                request.artifact_id,
-                request.workspace,
-                identity_key,
-            ),
-        ).fetchone()
-    if existing is None:
-        existing = connection.execute(
-            """
-            select request_id
-            from approval_requests
-            where harness = ?
-              and oauth_source = ?
-              and artifact_id = ?
-              and workspace IS ?
-              and launch_target IS ?
-              and normalized_identity_key IS NULL
-              and queue_group_id IS NULL
-              and status = 'pending'
-            order by created_at desc
-            limit 1
-            """,
-            (
-                request.harness,
-                normalized_oauth_source,
-                request.artifact_id,
-                request.workspace,
-                request.launch_target,
-            ),
-        ).fetchone()
-    request_id = str(existing["request_id"]) if existing is not None else request.request_id
-    if existing is not None:
-        review_command = _rewrite_review_command(request.review_command, request_id)
-        approval_url = _rewrite_approval_url(request.approval_url, request_id)
-        connection.execute(
-            """
-            update approval_requests
-            set harness = ?, artifact_name = ?, artifact_type = ?, artifact_hash = ?, publisher = ?, policy_action = ?,
-                recommended_scope = ?, changed_fields_json = ?, source_scope = ?, config_path = ?, workspace = ?,
-                launch_target = ?, normalized_identity_key = ?, action_identity = ?, queue_group_id = ?,
-                dedupe_count = coalesce(dedupe_count, 1) + 1, last_seen_at = ?,
-                transport = ?, risk_summary = ?, risk_signals_json = ?,
-                artifact_label = ?, source_label = ?, trigger_summary = ?, why_now = ?, launch_summary = ?,
-                risk_headline = ?, action_envelope_json = ?, decision_v2_json = ?, fallback_cli_command = ?,
-                scanner_evidence_json = ?, browser_intent_json = ?, review_command = ?, approval_url = ?,
-                raw_command_text = ?, guard_version = ?,
-                first_seen_guard_version = coalesce(first_seen_guard_version, ?),
-                last_seen_guard_version = ?
-            where request_id = ? and oauth_source = ?
-            """,
-            (
-                request.harness,
-                request.artifact_name,
-                request.artifact_type,
-                request.artifact_hash,
-                request.publisher,
-                canonical_decision.policy_action,
-                request.recommended_scope,
-                json.dumps(list(request.changed_fields)),
-                request.source_scope,
-                request.config_path,
-                request.workspace,
-                request.launch_target,
-                identity_key,
-                action_identity,
-                queue_group_id,
-                now,
-                request.transport,
-                request.risk_summary,
-                json.dumps(list(request.risk_signals)),
-                request.artifact_label,
-                request.source_label,
-                request.trigger_summary,
-                request.why_now,
-                request.launch_summary,
-                request.risk_headline,
-                (
-                    json.dumps(canonical_decision.action_envelope_json)
-                    if canonical_decision.action_envelope_json is not None
-                    else None
-                ),
-                json.dumps(canonical_decision.decision_v2_json),
-                (
-                    _rewrite_review_command(request.fallback_cli_command, request_id)
-                    if request.fallback_cli_command
-                    else None
-                ),
-                json.dumps(list(request.scanner_evidence), sort_keys=True),
-                json.dumps(request.browser_intent, sort_keys=True) if request.browser_intent is not None else None,
-                review_command,
-                approval_url,
-                request.raw_command_text,
-                request.guard_version,
-                request.first_seen_guard_version or request.guard_version,
-                request.last_seen_guard_version or request.guard_version,
-                request_id,
-                normalized_oauth_source,
-            ),
-        )
-        return request_id
-    connection.execute(
-        """
-        insert into approval_requests (
-          request_id, harness, artifact_id, artifact_name, artifact_type, artifact_hash, publisher, policy_action,
-          recommended_scope, changed_fields_json, source_scope, oauth_source, config_path, workspace,
-          launch_target, normalized_identity_key, action_identity, queue_group_id, dedupe_count, last_seen_at,
-          transport, risk_summary,
-          risk_signals_json, artifact_label, source_label, trigger_summary, why_now, launch_summary, risk_headline,
-          action_envelope_json, decision_v2_json, fallback_cli_command, scanner_evidence_json, browser_intent_json,
-          review_command, approval_url, status, resolution_action, resolution_scope, reason, created_at, resolved_at,
-          raw_command_text, guard_version, first_seen_guard_version, last_seen_guard_version
-        )
-        values (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?
-            )
-        """,
-        (
-            request.request_id,
-            request.harness,
-            request.artifact_id,
-            request.artifact_name,
-            request.artifact_type,
-            request.artifact_hash,
-            request.publisher,
-            canonical_decision.policy_action,
-            request.recommended_scope,
-            json.dumps(list(request.changed_fields)),
-            request.source_scope,
-            normalized_oauth_source,
-            request.config_path,
-            request.workspace,
-            request.launch_target,
-            identity_key,
-            action_identity,
-            queue_group_id,
-            max(1, int(request.dedupe_count)),
-            request.last_seen_at or now,
-            request.transport,
-            request.risk_summary,
-            json.dumps(list(request.risk_signals)),
-            request.artifact_label,
-            request.source_label,
-            request.trigger_summary,
-            request.why_now,
-            request.launch_summary,
-            request.risk_headline,
-            (
-                json.dumps(canonical_decision.action_envelope_json)
-                if canonical_decision.action_envelope_json is not None
-                else None
-            ),
-            json.dumps(canonical_decision.decision_v2_json),
-            request.fallback_cli_command,
-            json.dumps(list(request.scanner_evidence), sort_keys=True),
-            json.dumps(request.browser_intent, sort_keys=True) if request.browser_intent is not None else None,
-            request.review_command,
-            request.approval_url,
-            "pending",
-            None,
-            None,
-            None,
-            now,
-            None,
-            request.raw_command_text,
-            request.guard_version,
-            request.first_seen_guard_version or request.guard_version,
-            request.last_seen_guard_version or request.guard_version,
-        ),
-    )
-    return request.request_id
+    """Compatibility facade for the focused approval write service."""
+    from .store_approval_writes import add_approval_request as persist_approval_request
 
-
-def _rewrite_review_command(command: str, request_id: str) -> str:
-    prefix, _, _ = command.rpartition(" ")
-    if prefix:
-        return f"{prefix} {request_id}"
-    return request_id
-
-
-def _rewrite_approval_url(url: str, request_id: str) -> str:
-    normalized = url.replace("/approvals/", "/requests/")
-    prefix, _, _ = normalized.rpartition("/")
-    if prefix:
-        return f"{prefix}/{request_id}"
-    return request_id
+    return persist_approval_request(connection, request, now, oauth_source=oauth_source)
 
 
 def list_approval_requests(
@@ -673,6 +451,7 @@ def count_approval_requests(
     search: str | None = None,
     resolved_at_from: str | None = None,
     resolved_at_before: str | None = None,
+    exclude_watch_only: bool = False,
 ) -> int:
     clauses = []
     params: list[object] = []
@@ -692,6 +471,8 @@ def count_approval_requests(
     if resolved_at_before is not None:
         clauses.append("resolved_at < ?")
         params.append(resolved_at_before)
+    if exclude_watch_only:
+        clauses.append("watch_only_observation = 0")
     where_clause = f"where {' and '.join(clauses)}" if clauses else ""
     row = connection.execute(f"select count(*) as total from approval_requests {where_clause}", params).fetchone()
     return int(row["total"]) if row is not None else 0
@@ -833,6 +614,10 @@ def approval_index_statements() -> list[str]:
         "create index if not exists idx_approval_artifact_hash on approval_requests(artifact_hash)",
         "create index if not exists idx_approval_workspace_status on approval_requests(workspace, status)",
         "create index if not exists idx_approval_policy_action on approval_requests(policy_action)",
+        (
+            "create index if not exists idx_approval_status_watch_last_seen "
+            "on approval_requests(status, watch_only_observation, last_seen_at desc, request_id desc)"
+        ),
         "create index if not exists idx_approval_resolution on approval_requests(resolution_action, resolved_at)",
     ]
 
@@ -845,6 +630,7 @@ def list_pending_approval_summaries(
     harness: str | None = None,
     search: str | None = None,
     include_totals: bool = True,
+    exclude_watch_only: bool = False,
 ) -> dict[str, object]:
     return list_approval_request_page(
         connection,
@@ -854,6 +640,7 @@ def list_pending_approval_summaries(
         harness=harness,
         search=search,
         include_totals=include_totals,
+        exclude_watch_only=exclude_watch_only,
     )
 
 
@@ -863,6 +650,7 @@ def _approval_summary_where_clause(
     harness: str | None,
     cursor: str | None,
     search: str | None,
+    exclude_watch_only: bool,
 ) -> tuple[str, list[object]]:
     clauses: list[str] = []
     params: list[object] = []
@@ -882,6 +670,8 @@ def _approval_summary_where_clause(
         search_clause, search_params = _approval_search_clause(search)
         clauses.append(search_clause)
         params.extend(search_params)
+    if exclude_watch_only:
+        clauses.append("watch_only_observation = 0")
     where_clause = f"where {' and '.join(clauses)}" if clauses else ""
     return where_clause, params
 
@@ -936,12 +726,14 @@ def list_approval_request_summary_rows(
     limit: int | None = 50,
     cursor: str | None = None,
     search: str | None = None,
+    exclude_watch_only: bool = False,
 ) -> list[dict[str, object]]:
     where_clause, params = _approval_summary_where_clause(
         status=status,
         harness=harness,
         cursor=cursor,
         search=search,
+        exclude_watch_only=exclude_watch_only,
     )
     query = f"""
         select request_id, harness, artifact_id, artifact_name, artifact_type, policy_action,
@@ -969,6 +761,7 @@ def list_approval_request_page(
     harness: str | None = None,
     search: str | None = None,
     include_totals: bool = True,
+    exclude_watch_only: bool = False,
 ) -> dict[str, object]:
     page_limit = min(MAX_APPROVAL_PAGE_LIMIT, max(1, limit))
     rows = list_approval_request_summary_rows(
@@ -978,6 +771,7 @@ def list_approval_request_page(
         limit=page_limit + 1,
         cursor=cursor,
         search=search,
+        exclude_watch_only=exclude_watch_only,
     )
     items = rows[:page_limit]
     next_cursor = _encode_page_cursor(items[-1]) if len(rows) > page_limit and items else None
@@ -993,6 +787,7 @@ def list_approval_request_page(
                 status="pending",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
             payload["total_pending_count"] = pending_total
             payload["total_count"] = pending_total
@@ -1002,6 +797,7 @@ def list_approval_request_page(
                 status="resolved",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
             payload["total_count"] = resolved_total
             payload["total_pending_count"] = count_approval_requests(
@@ -1009,6 +805,7 @@ def list_approval_request_page(
                 status="pending",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
         elif status is None:
             payload["total_count"] = count_approval_requests(
@@ -1016,12 +813,14 @@ def list_approval_request_page(
                 status=None,
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
             payload["total_pending_count"] = count_approval_requests(
                 connection,
                 status="pending",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
         else:
             payload["total_pending_count"] = count_approval_requests(
@@ -1029,12 +828,14 @@ def list_approval_request_page(
                 status="pending",
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
             payload["total_count"] = count_approval_requests(
                 connection,
                 status=status,
                 harness=harness,
                 search=search,
+                exclude_watch_only=exclude_watch_only,
             )
     return payload
 

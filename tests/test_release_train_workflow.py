@@ -91,7 +91,7 @@ def test_main_push_build_computes_a_registry_derived_stable_version() -> None:
     assert 'VERSION="$BASE_VERSION"' in compute_run
     assert 'elif [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/release/3.0" ]]' in compute_run
     assert "pull_request" in compute_run
-    assert "PR_MERGE_SHA" in compute_run
+    assert compute_run.index("PR_MERGE_SHA") < compute_run.index('elif [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]')
     assert 'SOURCE_SHA="$PR_MERGE_SHA"' in compute_run
     assert 'ACTUAL_REF="$TRAIN_REF"' in compute_run
     assert 'SOURCE_SHA" != "$EXPECTED_SOURCE"' in compute_run
@@ -126,7 +126,7 @@ def test_alpha_only_dispatch_and_pr_version_stamping_contracts() -> None:
     assert 'elif [[ "$CHANNEL" == "stable" ]]' not in compute_run
     assert "VERSION=$(uv run --no-sync python scripts/validate_alpha_release.py" in compute_run
     assert 'VERSION=$(BASE_VERSION="$BASE_VERSION" PR_NUMBER="$PR_NUMBER"' in compute_run
-    assert 'sync_repo_version.py --version "$VERSION"' in stamp_run
+    assert 'sync_repo_version.py --version "$VERSION"' in stamp_run and "3.0.0a0" not in stamp_run
 
 
 def test_release_dispatch_binds_channel_train_version_and_sha() -> None:
@@ -270,14 +270,14 @@ def test_alpha_tag_reservation_binds_version_to_build_source() -> None:
     workflow = _workflow(PUBLISH_WORKFLOW)
     job = workflow["jobs"]["reserve-alpha-tag"]
 
-    assert job["needs"] == ["build"]
+    assert job["needs"] == ["build", "assemble-native-guard-distributions"]
     assert job["permissions"] == {"contents": "write"}
     assert "needs.build.outputs.channel == 'alpha'" in job["if"]
     reservation_run = next(step["run"] for step in job["steps"] if step.get("name") == "Reserve exact alpha tag")
-    assert 'tag="alpha/v${VERSION}"' in reservation_run
-    assert "refs/tags/${tag}" in reservation_run
-    assert '-f sha="$SOURCE_SHA"' in reservation_run
-    assert 'remote_tag_sha" != "$SOURCE_SHA"' in reservation_run
+    script = ROOT.joinpath("scripts", "reserve_alpha_tag.sh").read_text(encoding="utf-8")
+    assert reservation_run == "bash scripts/reserve_alpha_tag.sh"
+    assert 'tag="alpha/v${VERSION}"' in script
+    assert '-f sha="$SOURCE_SHA"' in script
 
 
 def test_publish_jobs_use_registered_protected_environments() -> None:

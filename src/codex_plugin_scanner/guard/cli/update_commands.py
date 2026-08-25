@@ -57,13 +57,27 @@ from .update_artifact import (
     recover_local_wheel_original,
     stage_trusted_wheel,
 )
+from .update_desktop_apply import (
+    desktop_update_status_state,
+    finalize_desktop_update_status,
+    run_desktop_managed_update,
+)
+from .update_desktop_core import is_desktop_managed_runtime, pypi_alpha_versions
 from .update_grok_repair import append_grok_repair
+from .update_install_verify import verify_installed_distribution
 from .update_subprocess import (
     InstalledDistribution,
     TrustedUpdateContext,
     UpdateSubprocessError,
     build_trusted_update_context,
 )
+
+_TRUSTED_UPDATE_FAILURE_MESSAGES = {
+    "update_install_inconsistent": (
+        "HOL Guard updated its version metadata but not all of its installed files. "
+        "Retry the update to finish the installation."
+    ),
+}
 
 _ALREADY_CURRENT_HINTS = (
     "already at latest version",
@@ -279,7 +293,7 @@ def run_guard_update(
     guard_home: Path | None = None,
     include_alpha: bool = False,
 ) -> tuple[dict[str, object], int]:
-    installer = _installer_kind()
+    installer = "desktop" if _is_desktop_managed_runtime() else _installer_kind()
     payload: dict[str, object] = {
         "installer": installer,
         "dry_run": dry_run,
@@ -334,6 +348,20 @@ def run_guard_update(
         trusted_workspace = Path(workspace).expanduser()
     else:
         trusted_workspace = Path.cwd()
+    if installer == "desktop":
+        return run_desktop_managed_update(
+            payload,
+            dry_run=dry_run,
+            include_alpha=include_alpha,
+            force_pypi_reinstall=force_pypi_reinstall,
+            requested_wheel_path=requested_wheel_path,
+            context=context,
+            store=store,
+            workspace=workspace,
+            now=now,
+            network_policy=network_policy,
+            daemon_refresh_required=daemon_refresh_required,
+        )
     try:
         update_context = build_trusted_update_context(
             guard_home=resolved_guard_home,
@@ -908,10 +936,19 @@ def _trusted_update_failure(
             "changed": False,
             "reason_code": error.reason_code,
             "error": error.reason_code,
-            "message": "HOL Guard update could not complete in its trusted maintenance environment.",
+            "message": _TRUSTED_UPDATE_FAILURE_MESSAGES.get(
+                error.reason_code,
+                "HOL Guard update could not complete in its trusted maintenance environment.",
+            ),
         }
     )
     return payload, 1
+
+
+def _current_version_from_subprocess(update_context: TrustedUpdateContext) -> str:
+    """Return the validated post-install version from one trusted probe."""
+
+    return verify_installed_distribution(update_context)
 
 
 def _trusted_update_public_payload(context: TrustedUpdateContext) -> dict[str, object]:
@@ -1590,7 +1627,7 @@ def _is_frozen_runtime() -> bool:
 
 
 def _is_desktop_managed_runtime() -> bool:
-    return _is_frozen_runtime() and os.environ.get("HOL_GUARD_DESKTOP") == "1"
+    return is_desktop_managed_runtime()
 
 
 def _runtime_package_path() -> Path:
@@ -2042,12 +2079,6 @@ def _credential_safe_url(value: str) -> str:
         rendered_host = f"[{hostname}]" if ":" in hostname else hostname
         netloc = f"{rendered_host}:{port}" if port is not None else rendered_host
     return parsed._replace(netloc=netloc, query="", fragment="").geturl()
-
-
-def _current_version_from_subprocess(update_context: TrustedUpdateContext) -> str:
-    """Return one validated version from the context's intended distribution."""
-
-    return update_context.query_distribution().version
 
 
 def _standalone_update_context(context: HarnessContext) -> TrustedUpdateContext:
@@ -2688,8 +2719,11 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
         auto_updatable = False
         blocked_reason = "An organization-configured package source is required."
     elif installer == "desktop":
-        auto_updatable = False
-        blocked_reason = "Updates are managed by HOL Guard Desktop."
+        desktop_version = installed_distribution.version if installed_distribution is not None else _current_version()
+        include_alpha, auto_updatable, blocked_reason = desktop_update_status_state(
+            current_version=desktop_version,
+            requested_alpha=include_alpha,
+        )
     else:
         try:
             installed_distribution = _status_installed_distribution(
@@ -2718,17 +2752,17 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
             network_policy=(managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()),
             include_alpha=include_alpha,
         )
-        if installed_distribution is not None and installer != "desktop"
+        if installed_distribution is not None
         else {
             "source": source_kind,
-            "status": "managed" if installer == "desktop" else "unavailable",
-            "current_version": current_version if installer == "desktop" else None,
+            "status": "unavailable",
+            "current_version": None,
             "latest_version": None,
             "update_available": None,
         }
     )
 
-    if auto_updatable and _python_runtime_blocks_update(version_check):
+    if installer != "desktop" and auto_updatable and _python_runtime_blocks_update(version_check):
         auto_updatable = False
         blocked_reason = _python_runtime_block_message(version_check)
     elif auto_updatable and isinstance(direct_url, dict):
@@ -2774,14 +2808,14 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
         "auto_updatable": auto_updatable,
         "update_available": update_available,
         "blocked_reason": blocked_reason,
-        "python_update_required": _python_runtime_blocks_update(version_check),
+        "python_update_required": False if installer == "desktop" else _python_runtime_blocks_update(version_check),
         "recovery_reinstall_available": recovery_reinstall_available,
         "recovery_reinstall_command": recovery_reinstall_command,
-        "release_channel": update_channel,
+        "release_channel": "alpha" if include_alpha else update_channel,
     }
     if trusted_failure_reason is not None:
         payload["reason_code"] = trusted_failure_reason
-    return payload
+    return finalize_desktop_update_status(payload, candidates=pypi_alpha_versions(_last_pypi_payload))
 
 
 def _status_installed_distribution(

@@ -4,13 +4,17 @@ import { HiMiniArrowLeft, HiMiniPlus } from "react-icons/hi2";
 
 import {
   ApprovalProofFieldInputs,
+  approvalProofRecentlySatisfied,
   buildApprovalProofCredentials,
   isApprovalProofSubmitDisabled,
 } from "../approval-proof-inline";
 import type { GuardApprovalGatePublicConfig } from "../guard-types";
 import {
   addedCustomExtensions,
+  applyBulkCommandState,
   applyLocalCliMutation,
+  bulkCommandState,
+  enrollablePackageScriptCommands,
   fetchLocalCliList,
   LocalCliApiError,
   previewLocalCliMutation,
@@ -19,15 +23,61 @@ import {
   type LocalCliListResponse,
   type LocalCliState,
 } from "../local-cli-api";
+import { BulkPolicyPicker } from "./add-custom-extension-catalog";
 import { CustomExtensionCommandList, commandStatesPayload, withCommandState } from "./custom-extension-commands";
 import { useModalDialog } from "../use-modal-dialog";
 import { useResolvedApprovalGate } from "../use-resolved-approval-gate";
 import { InlineError, ProtectionModuleRow } from "./components/protection-primitives";
 
-export { AddCustomExtensionDialog } from "./add-custom-extension-dialog";
+export { AddCustomExtensionWorkspace } from "./add-custom-extension-dialog";
 
 function randomToken(): string {
   return crypto.randomUUID().replaceAll("-", "");
+}
+
+function detailPolicyCopy(surface: LocalCliItem["surface"]): string {
+  if (surface === "mcp") {
+    return "Recommended keeps Guard's usual review. Allow or block applies to that tool from this MCP server. Destructive tools stay under Guard's usual rules.";
+  }
+  if (surface === "package-scripts") {
+    return "Recommended keeps Guard's usual review. Allow or block applies to that npm, pnpm, yarn, or bun script in this project. Nested names such as guard:audit stay grouped.";
+  }
+  return "Recommended keeps Guard's usual review. Allow or block applies to that command from this file. Pipes, wrappers, and destructive commands stay under Guard's usual rules.";
+}
+
+function detailCatalogHeading(surface: LocalCliItem["surface"]): string {
+  if (surface === "mcp") return "MCP tools";
+  if (surface === "package-scripts") return "Package scripts";
+  return "Command patterns";
+}
+
+function detailCatalogHelper(surface: LocalCliItem["surface"]): string {
+  if (surface === "mcp") {
+    return "Same settings as built-in tools. Recommended is the safe default for each MCP tool.";
+  }
+  if (surface === "package-scripts") {
+    return "Same settings as built-in tools. Nested scripts stay indented under their prefix.";
+  }
+  return "Same settings as built-in tools. Recommended is the safe default.";
+}
+
+function bulkPolicyCopy(surface: LocalCliItem["surface"]): { groupLabel: string; mixedCopy: string } {
+  if (surface === "mcp") {
+    return {
+      groupLabel: "All tools protection setting",
+      mixedCopy: "Custom mix. Pick Recommended, Allow all, or Block all to reset every tool.",
+    };
+  }
+  if (surface === "package-scripts") {
+    return {
+      groupLabel: "All scripts protection setting",
+      mixedCopy: "Custom mix. Pick Recommended, Allow all, or Block all to reset every script.",
+    };
+  }
+  return {
+    groupLabel: "All commands protection setting",
+    mixedCopy: "Custom mix. Pick Recommended, Allow all, or Block all to reset every command.",
+  };
 }
 
 function reviewTitle(name: string, state: LocalCliState): string {
@@ -36,11 +86,29 @@ function reviewTitle(name: string, state: LocalCliState): string {
   return `Remove ${name}`;
 }
 
+function reviewModalDetail(gate: GuardApprovalGatePublicConfig | null): string {
+  if (approvalProofRecentlySatisfied(gate)) {
+    return "Recently confirmed with your authenticator. A new code is not needed yet.";
+  }
+  if (gate?.totp_enabled === true) {
+    return "Enter the current authenticator code to save these settings on this device.";
+  }
+  return "This stays on this device. Guard Cloud can keep the same custom extension on your other machines.";
+}
+
+function customExtensionUnits(surface: LocalCliItem["surface"]): { unit: string; units: string; source: string } {
+  if (surface === "mcp") return { unit: "tool", units: "tools", source: "this server" };
+  if (surface === "package-scripts") return { unit: "script", units: "scripts", source: "this project" };
+  return { unit: "command", units: "commands", source: "this file" };
+}
+
 export function customExtensionStateLabel(item: LocalCliItem): string {
-  const unit = item.surface === "mcp" ? "tool" : "command";
-  const units = item.surface === "mcp" ? "tools" : "commands";
-  const source = item.surface === "mcp" ? "this server" : "this file";
-  if (item.stale) return "This file changed. Review the extension again.";
+  const { unit, units, source } = customExtensionUnits(item.surface);
+  if (item.stale) {
+    return item.surface === "package-scripts"
+      ? "package.json scripts changed. Review the extension again."
+      : "This file changed. Review the extension again.";
+  }
   if (item.state === "blocked") return `Every ${unit} from ${source} is blocked.`;
   if (item.state === "allowed") {
     if (item.commands.length === 0) {
@@ -116,7 +184,7 @@ export function LocalCliDetail(props: {
   onBack: () => void;
   onRefresh: () => Promise<void>;
 }) {
-  const { resolvedApprovalGate, resolveApprovalGate } = useResolvedApprovalGate(null);
+  const { resolvedApprovalGate, resolveApprovalGate, refreshApprovalGate } = useResolvedApprovalGate(null);
   const [pending, setPending] = useState<LocalCliState | null>(null);
   const [commands, setCommands] = useState(props.item.commands);
   const [busy, setBusy] = useState(false);
@@ -126,14 +194,32 @@ export function LocalCliDetail(props: {
   useEffect(() => {
     setCommands(props.item.commands);
   }, [props.item.cli_id, props.item.grant_revision]);
-  const requestAdd = useCallback(() => setPending("allowed"), []);
-  const requestAllow = useCallback(() => setPending("allowed"), []);
-  const requestBlock = useCallback(() => setPending("blocked"), []);
-  const requestRemove = useCallback(() => setPending("unset"), []);
-  const requestSaveCommands = useCallback(() => setPending(props.item.state === "blocked" ? "blocked" : "allowed"), [props.item.state]);
+  const openPending = useCallback(async (state: LocalCliState) => {
+    await refreshApprovalGate();
+    setPending(state);
+  }, [refreshApprovalGate]);
+  const requestAdd = useCallback(() => openPending("allowed"), [openPending]);
+  const requestAllow = useCallback(() => openPending("allowed"), [openPending]);
+  const requestBlock = useCallback(() => openPending("blocked"), [openPending]);
+  const requestRemove = useCallback(() => openPending("unset"), [openPending]);
+  const requestSaveCommands = useCallback(() => {
+    openPending(props.item.state === "blocked" ? "blocked" : "allowed");
+  }, [openPending, props.item.state]);
   const handleCommandState = useCallback((commandId: string, state: LocalCliCommandState) => {
     setCommands((current) => withCommandState(current, commandId, state));
   }, []);
+  const applyBulk = useCallback((state: LocalCliCommandState) => {
+    setCommands((current) => applyBulkCommandState(
+      current,
+      state,
+      props.item.surface === "package-scripts" ? new Set(["root", "other"]) : new Set(),
+    ));
+  }, [props.item.surface]);
+  const bulkTargets = props.item.surface === "package-scripts"
+    ? enrollablePackageScriptCommands(commands)
+    : commands;
+  const bulkState = bulkCommandState(bulkTargets);
+  const bulkCopy = bulkPolicyCopy(props.item.surface);
   const clearPending = useCallback(() => {
     if (!busy) setPending(null);
   }, [busy]);
@@ -158,13 +244,14 @@ export function LocalCliDetail(props: {
       await previewLocalCliMutation(payload);
       await applyLocalCliMutation(payload);
       await props.onRefresh();
+      await refreshApprovalGate();
       setPending(null);
     } catch (caught) {
       setError(caught instanceof LocalCliApiError ? caught.message : "Guard could not update this custom extension.");
     } finally {
       setBusy(false);
     }
-  }, [commands, pending, props]);
+  }, [commands, pending, props, refreshApprovalGate]);
 
   useEffect(() => {
     void resolveApprovalGate({ failClosed: true }).catch(() => {
@@ -183,19 +270,29 @@ export function LocalCliDetail(props: {
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-brand-dark">{props.item.name}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">{customExtensionStateLabel(props.item)}</p>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-brand-dark/75">
-          {props.item.surface === "mcp"
-            ? "Recommended keeps Guard's usual review. Allow or block applies to that tool from this MCP server. Destructive tools stay under Guard's usual rules."
-            : "Recommended keeps Guard's usual review. Allow or block applies to that command from this file. Pipes, wrappers, and destructive commands stay under Guard's usual rules."}
+          {detailPolicyCopy(props.item.surface)}
         </p>
         <div className="mt-5 flex flex-wrap gap-3">
           {added ? (
             <>
-              <button type="button" className="min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white" onClick={requestAllow}>
-                Allow this extension's commands
-              </button>
-              <button type="button" className="min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark" onClick={requestBlock}>
-                Block this extension
-              </button>
+              {props.item.state === "allowed" ? (
+                <p className="inline-flex min-h-11 items-center rounded-xl bg-slate-100 px-4 text-sm font-semibold text-brand-dark">
+                  Allowed on this device
+                </p>
+              ) : (
+                <button type="button" className="min-h-11 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white" onClick={requestAllow}>
+                  Allow this extension's commands
+                </button>
+              )}
+              {props.item.state === "blocked" ? (
+                <p className="inline-flex min-h-11 items-center rounded-xl bg-slate-100 px-4 text-sm font-semibold text-brand-dark">
+                  Blocked
+                </p>
+              ) : (
+                <button type="button" className="min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-brand-dark" onClick={requestBlock}>
+                  Block this extension
+                </button>
+              )}
               <button type="button" className="min-h-11 rounded-xl px-4 text-sm font-semibold text-brand-dark/80" onClick={requestRemove}>
                 Remove custom extension
               </button>
@@ -210,13 +307,20 @@ export function LocalCliDetail(props: {
       {added ? (
         <section className="mt-8" aria-labelledby="custom-extension-commands-heading">
           <h2 id="custom-extension-commands-heading" className="text-lg font-semibold text-brand-dark">
-            {props.item.surface === "mcp" ? "MCP tools" : "Command patterns"}
+            {detailCatalogHeading(props.item.surface)}
           </h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
-            {props.item.surface === "mcp"
-              ? "Same settings as built-in tools. Recommended is the safe default for each MCP tool."
-              : "Same settings as built-in tools. Recommended is the safe default."}
+            {detailCatalogHelper(props.item.surface)}
           </p>
+          {bulkTargets.length > 0 ? (
+            <BulkPolicyPicker
+              value={bulkState}
+              disabled={busy}
+              onChange={applyBulk}
+              groupLabel={bulkCopy.groupLabel}
+              mixedCopy={bulkCopy.mixedCopy}
+            />
+          ) : null}
           <div className="mt-4">
             <CustomExtensionCommandList
               commands={commands}
@@ -265,7 +369,9 @@ function CustomExtensionReviewModal(props: {
     setPassword(event.target.value);
   }, []);
   const handleTotp = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    setTotp(event.target.value);
+    const digits = event.target.value.replace(/\D/g, "").slice(0, 6);
+    event.target.value = digits;
+    setTotp(digits);
   }, []);
   const handleSubmit = useCallback((event: FormEvent) => {
     event.preventDefault();
@@ -284,7 +390,7 @@ function CustomExtensionReviewModal(props: {
       <form ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="custom-extension-review-title" onSubmit={handleSubmit} className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl focus:outline-none">
         <h2 id="custom-extension-review-title" className="text-xl font-semibold text-brand-dark">{title}</h2>
         <p className="mt-2 text-sm leading-6 text-brand-dark/80">
-          This stays on this device. Guard Cloud can keep the same custom extension on your other machines.
+          {reviewModalDetail(props.approvalGate)}
         </p>
         <div className="mt-5">
           <ApprovalProofFieldInputs

@@ -11,12 +11,18 @@ from datetime import datetime, timezone
 from typing import ClassVar
 from uuid import uuid4
 
+from . import store_review_event_outbox_schema
 from .mcp.policy_store import ensure_mcp_policy_request_schema
 from .sqlite_profile import (
     SQLiteMigrationGateReport,
     SQLiteProfiler,
     SQLiteProfileSnapshot,
     sqlite_error_is_busy_locked,
+)
+from .sqlite_recovery import (
+    FATAL_SQLITE_ERROR_MARKERS,
+    SQLITE_IO_ERROR_MARKER,
+    sqlite_store_is_proven_unusable,
 )
 
 # ruff: noqa: F403,F405
@@ -35,6 +41,7 @@ from .store_storage_maintenance import (
     STORAGE_QUERY_INDEX_MIGRATION_VERSION,
     storage_maintenance_schema_statements,
 )
+from .store_watch_only_approval_schema import WATCH_ONLY_APPROVAL_MIGRATION_VERSION, ensure_watch_only_approval_schema
 from .store_workflow_capabilities_schema import (
     WORKFLOW_CAPABILITY_RECEIPT_EVENT_INDEX_MIGRATION_VERSION,
     ensure_workflow_capability_schema,
@@ -148,19 +155,12 @@ _POLICY_INDEX_STATEMENTS = (
 )
 
 _RECEIPT_WARN_ROLLUP_MIGRATION_VERSION = 16
-# Include the workflow-capability retired-index migration so a database created under an
-# earlier schema version (which still owns the retired index) is not treated as current and
-# is forced through ``_initialize_schema`` on the next open, where the index is reaped.
-_REQUIRED_SCHEMA_MIGRATION_VERSIONS = (
+_REQUIRED_SCHEMA_MIGRATION_VERSIONS = (  # Keep retired-index databases on the path that reaps the index.
     *range(2, STORAGE_QUERY_INDEX_MIGRATION_VERSION + 1),
     WORKFLOW_CAPABILITY_RECEIPT_EVENT_INDEX_MIGRATION_VERSION,
+    WATCH_ONLY_APPROVAL_MIGRATION_VERSION,
+    store_review_event_outbox_schema.REVIEW_EVENT_OUTBOX_MIGRATION_VERSION,
 )
-_FATAL_SQLITE_ERROR_MARKERS = (
-    "database disk image is malformed",
-    "database corruption",
-    "file is not a database",
-)
-_SQLITE_IO_ERROR_MARKER = "disk i/o error"
 
 
 @dataclass
@@ -190,7 +190,7 @@ class StoreConnectionSchemaMixin:
     @staticmethod
     def _is_fatal_sqlite_error(error: BaseException) -> bool:
         return isinstance(error, sqlite3.DatabaseError) and any(
-            marker in str(error).lower() for marker in _FATAL_SQLITE_ERROR_MARKERS
+            marker in str(error).lower() for marker in FATAL_SQLITE_ERROR_MARKERS
         )
 
     @contextmanager
@@ -250,29 +250,20 @@ class StoreConnectionSchemaMixin:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _store_is_proven_unusable(self, error: BaseException) -> bool:
-        if self._is_fatal_sqlite_error(error):
-            return True
-        if _SQLITE_IO_ERROR_MARKER not in str(error).lower():
-            return False
-        # An I/O error alone does not prove corruption. Only replace the active
-        # path when the same directory supports a fresh SQLite transaction and
-        # the existing database remains unreadable on a second probe.
-        probe_path = self.guard_home / f"storage-probe-{uuid4().hex}.db"
-        try:
-            with sqlite3.connect(probe_path, timeout=0.1) as probe:
-                probe.execute("create table probe (value integer)")
-                probe.execute("insert into probe values (1)")
-            with sqlite3.connect(self.path, timeout=0.1) as existing:
-                _ = existing.execute("pragma schema_version").fetchone()
-                return False
-        except sqlite3.DatabaseError as probe_error:
-            return _SQLITE_IO_ERROR_MARKER in str(probe_error).lower() and probe_path.is_file()
-        finally:
-            with suppress(OSError):
-                probe_path.unlink()
+        return sqlite_store_is_proven_unusable(
+            path=self.path,
+            guard_home=self.guard_home,
+            error=error,
+            fatal_error=self._is_fatal_sqlite_error(error),
+        )
 
-    def _recover_fatal_sqlite_store(self, error: BaseException) -> bool:
-        is_io_error = _SQLITE_IO_ERROR_MARKER in str(error).lower()
+    def _recover_fatal_sqlite_store(
+        self,
+        error: BaseException,
+        *,
+        failed_identity: tuple[int, int] | None = None,
+    ) -> bool:
+        is_io_error = SQLITE_IO_ERROR_MARKER in str(error).lower()
         if (
             not isinstance(error, sqlite3.DatabaseError)
             or (not self._is_fatal_sqlite_error(error) and not is_io_error)
@@ -280,11 +271,12 @@ class StoreConnectionSchemaMixin:
             or self.path.is_symlink()
         ):
             return False
-        try:
-            failed_stat = self.path.stat()
-            failed_identity = failed_stat.st_dev, failed_stat.st_ino
-        except OSError:
-            failed_identity = None
+        if failed_identity is None:
+            try:
+                failed_stat = self.path.stat()
+                failed_identity = failed_stat.st_dev, failed_stat.st_ino
+            except OSError:
+                failed_identity = None
         with self._hold_storage_gate(exclusive=True):
             # Another process may already have replaced the failed store.
             try:
@@ -344,14 +336,20 @@ class StoreConnectionSchemaMixin:
                 yield connection
             return
         fatal_error: sqlite3.DatabaseError | None = None
+        failed_identity: tuple[int, int] | None = None
         with self._hold_storage_gate(exclusive=False):
             try:
                 with self._connect_once() as connection:
                     yield connection
             except sqlite3.DatabaseError as error:
                 fatal_error = error
+                try:
+                    failed_stat = self.path.stat()
+                    failed_identity = failed_stat.st_dev, failed_stat.st_ino
+                except OSError:
+                    failed_identity = None
         if fatal_error is not None:
-            self._recover_fatal_sqlite_store(fatal_error)
+            self._recover_fatal_sqlite_store(fatal_error, failed_identity=failed_identity)
             raise fatal_error
 
     @contextmanager
@@ -384,6 +382,7 @@ class StoreConnectionSchemaMixin:
             connection.execute(f"pragma cache_size=-{SQLITE_CACHE_SIZE_KIB}")
             connection.execute(f"pragma mmap_size={SQLITE_MMAP_SIZE_BYTES}")
             yield connection
+            store_review_event_outbox_schema.finalize_review_event_payload_hashes(connection)
             commit_started = time.monotonic()
             try:
                 connection.commit()
@@ -1043,10 +1042,7 @@ class StoreConnectionSchemaMixin:
             self._ensure_approval_column(connection, "browser_intent_json", "text")
             self._ensure_approval_column(connection, "desktop_notified_at", "text")
             self._ensure_approval_column(connection, "raw_command_text", "text")
-            self._ensure_approval_column(connection, "guard_version", "text")
-            self._ensure_approval_column(connection, "first_seen_guard_version", "text")
-            self._ensure_approval_column(connection, "last_seen_guard_version", "text")
-            self._ensure_approval_column(connection, "oauth_source", "text")
+            ensure_watch_only_approval_schema(connection, schema=self)
             if not self._schema_version_applied(connection, version=3):
                 _backfill_approval_queue_columns_compat(connection)
                 self._record_schema_version(connection, version=3)
@@ -1157,6 +1153,7 @@ class StoreConnectionSchemaMixin:
                         "guard_version",
                         "first_seen_guard_version",
                         "last_seen_guard_version",
+                        "watch_only_observation",
                     }
                     return (
                         row is not None

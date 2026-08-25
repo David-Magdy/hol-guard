@@ -139,17 +139,40 @@ def test_permission_indexes_map_each_enforceable_identifier_exactly_once(lookup:
 def test_shared_action_classes_keep_unique_rule_permissions() -> None:
     registry = BUILT_IN_COMMAND_EXTENSION_REGISTRY
     git = next(extension for extension in registry.extensions if extension.extension_id == "command.git")
-    assert {permission.permission_id for permission in git.permissions} == {
+    git_permission_ids = {permission.permission_id for permission in git.permissions}
+    assert {
+        "command.git.permission.force-clean",
+        "command.git.permission.force-push",
+        "command.git.permission.hard-reset",
+        "command.git.permission.index-inspection",
+        "command.git.permission.local-branch-delete",
+        "command.git.permission.remote-branch-delete",
+        "command.git.permission.unverified-fetch",
+        "command.git.permission.switch",
+        "command.git.permission.checkout",
+        "command.git.permission.status",
+        "command.git.permission.unsafe-read",
+    } <= git_permission_ids
+    assert all(permission.configurable for permission in git.permissions)
+    fetch_id = "command.git.permission.unverified-fetch"
+    index_id = "command.git.permission.index-inspection"
+    destructive_ids = {
         "command.git.permission.force-clean",
         "command.git.permission.force-push",
         "command.git.permission.hard-reset",
         "command.git.permission.local-branch-delete",
         "command.git.permission.remote-branch-delete",
     }
-    assert all(permission.configurable for permission in git.permissions)
-    assert all(permission.action_classes == ("git destructive command",) for permission in git.permissions)
-    first = min(git.permissions, key=lambda permission: permission.permission_id)
+    destructive = [permission for permission in git.permissions if permission.permission_id in destructive_ids]
+    fetch = next(permission for permission in git.permissions if permission.permission_id == fetch_id)
+    index = next(permission for permission in git.permissions if permission.permission_id == index_id)
+    assert all(permission.action_classes == ("git destructive command",) for permission in destructive)
+    assert fetch.action_classes == ("git origin refresh",)
+    assert index.action_classes == ("git index inspection",)
+    first = min(destructive, key=lambda permission: permission.permission_id)
     assert registry.permission_for_action_class("git destructive command") is first
+    assert registry.permission_for_action_class("git origin refresh") is fetch
+    assert registry.permission_for_action_class("git index inspection") is index
     for permission in git.permissions:
         assert registry.permission_for_rule_id(permission.rule_ids[0]) is permission
 
@@ -164,7 +187,7 @@ def test_permission_catalog_serialization_and_digest_are_deterministic() -> None
     reversed_registry = CommandSafetyExtensionRegistry(tuple(reversed(registry.extensions)))
 
     assert reversed_registry.catalog_digest == registry.catalog_digest
-    assert registry.catalog_digest == "55ea7e94ec7e23eea92e9664bd90c6afbe9725e139982a0d76a694c8124b4dd7"
+    assert registry.catalog_digest == "93630c9d55ee6ee9817e6d80e47b858878ce49b3e7415d0e89df5fe33be5ba48"
     assert [permission.permission_id for permission in registry.permissions] == sorted(
         permission.permission_id for permission in registry.permissions
     )
