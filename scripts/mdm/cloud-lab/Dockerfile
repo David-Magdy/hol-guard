@@ -7,10 +7,13 @@ WORKDIR /hol-guard
 
 COPY pyproject.toml uv.lock README.md ./
 COPY docs ./docs
+COPY contracts ./contracts
 COPY src ./src
 COPY scripts/mdm ./scripts/mdm
 
-RUN uv sync --frozen \
+RUN test -f contracts/guard-cloud-review/v2/contract.json \
+    && test -f contracts/guard-cloud-review/v2/fixtures.json \
+    && uv sync --frozen \
     && groupadd --gid "${HOL_MDM_LAB_GID}" hol-mdm \
     && useradd --uid "${HOL_MDM_LAB_UID}" --gid "${HOL_MDM_LAB_GID}" \
         --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin hol-mdm \
