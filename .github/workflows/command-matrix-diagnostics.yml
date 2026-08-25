@@ -68,7 +68,7 @@ jobs:
           catalog_path = Path("tests/fixtures/extension-controls/catalog-baseline.v1.json")
           catalog = catalog_path.read_text(encoding="utf-8")
           catalog, count = re.subn(
-              r'("catalog_digest"\s*:\s*")[0-9a-f]{64}("")',
+              r'("catalog_digest"\s*:\s*")[0-9a-f]{64}(")',
               rf"\g<1>{digest}\g<2>",
               catalog,
               count=1,
@@ -80,7 +80,7 @@ jobs:
           permission_path = Path("tests/test_guard_command_permission_catalog.py")
           permission = permission_path.read_text(encoding="utf-8")
           permission, count = re.subn(
-              r'(_EXPECTED_CATALOG_DIGEST\s*=\s*")[0-9a-f]{64}("")',
+              r'(_EXPECTED_CATALOG_DIGEST\s*=\s*")[0-9a-f]{64}(")',
               rf"\g<1>{digest}\g<2>",
               permission,
               count=1,
