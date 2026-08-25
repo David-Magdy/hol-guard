@@ -2188,6 +2188,193 @@ def test_update_succeeds_when_verified_newer_desktop_runtime_is_retained(
     assert any("Kept the newer HOL Guard runtime active" in note for note in payload["notes"])
 
 
+def test_update_does_not_replace_artifacts_owned_by_newer_desktop_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path)
+    context.guard_home.mkdir(parents=True)
+    (context.guard_home / "daemon-state.json").write_text("signed", encoding="utf-8")
+    retained = {
+        "status": "retained_newer_runtime",
+        "daemon_version": "3.0.0a253",
+        "cli_version": "2.2.123",
+        "runtime_verified": True,
+    }
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.122")
+    monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.2.123")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.123")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(update_commands, "_verified_newer_guard_daemon", lambda *_args, **_kwargs: retained)
+    monkeypatch.setattr(
+        update_commands,
+        "_refresh_package_shims_after_update",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("newer runtime owns package shims")),
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "_repair_supported_harnesses",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("newer runtime owns harness hooks")),
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "refresh_guard_daemon_after_update",
+        lambda *_args, **_kwargs: (retained, "Kept the newer HOL Guard runtime active."),
+    )
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, "installed", ""),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False, context=context)
+
+    assert exit_code == 0
+    assert payload["status"] == "updated"
+    assert payload["runtime_artifact_owner"] == "newer_runtime"
+    assert payload["daemon_refresh"] == retained
+    assert "managed_installs" not in payload
+    assert "package_shims" not in payload
+
+
+def test_current_update_does_not_repair_artifacts_owned_by_newer_desktop_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path)
+    context.guard_home.mkdir(parents=True)
+    (context.guard_home / "daemon-state.json").write_text("signed", encoding="utf-8")
+    retained = {
+        "status": "retained_newer_runtime",
+        "daemon_version": "3.0.0a253",
+        "cli_version": "2.2.123",
+        "runtime_verified": True,
+    }
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.123")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.123")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(update_commands, "_verified_newer_guard_daemon", lambda *_args, **_kwargs: retained)
+    monkeypatch.setattr(
+        update_commands,
+        "_refresh_package_shims_after_update",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("newer runtime owns package shims")),
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "_repair_supported_harnesses",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("newer runtime owns harness hooks")),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False, context=context)
+
+    assert exit_code == 0
+    assert payload["status"] == "current"
+    assert payload["runtime_artifact_owner"] == "newer_runtime"
+    assert payload["daemon_refresh"] == retained
+    assert "managed_installs" not in payload
+    assert "package_shims" not in payload
+
+
+def test_update_repairs_stable_artifacts_from_final_daemon_ownership_decision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path)
+    context.guard_home.mkdir(parents=True)
+    (context.guard_home / "daemon-state.json").write_text("signed", encoding="utf-8")
+    restarted_runtime = {
+        "status": "restarted",
+        "daemon_version": "2.2.123",
+        "runtime_verified": True,
+    }
+    repairs: list[str] = []
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.122")
+    monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.2.123")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.123")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(
+        update_commands,
+        "_verified_newer_guard_daemon",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("only daemon refresh decides ownership")),
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "_refresh_package_shims_after_update",
+        lambda **_kwargs: (repairs.append("shims") or {"status": "refreshed"}, None),
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "_repair_supported_harnesses",
+        lambda **_kwargs: (repairs.append("hooks") or [{"harness": "codex"}], []),
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "refresh_guard_daemon_after_update",
+        lambda *_args, **_kwargs: (restarted_runtime, "Restarted stable HOL Guard."),
+    )
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, "installed", ""),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False, context=context)
+
+    assert exit_code == 0
+    assert repairs == ["shims", "hooks"]
+    assert "runtime_artifact_owner" not in payload
+    assert payload["package_shims"] == {"status": "refreshed"}
+    assert payload["managed_install"] == {"harness": "codex"}
+    assert payload["daemon_refresh"] == restarted_runtime
+    assert not any("Deferred package shim" in note for note in payload["notes"])
+
+
+def test_update_repairs_stable_artifacts_before_reporting_daemon_refresh_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(tmp_path)
+    context.guard_home.mkdir(parents=True)
+    (context.guard_home / "daemon-state.json").write_text("signed", encoding="utf-8")
+    repairs: list[str] = []
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "2.2.122")
+    monkeypatch.setattr(update_commands, "_current_version_from_subprocess", lambda *_args, **_kwargs: "2.2.123")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "2.2.123")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(
+        update_commands,
+        "_refresh_package_shims_after_update",
+        lambda **_kwargs: (repairs.append("shims") or {"status": "refreshed"}, None),
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "_repair_supported_harnesses",
+        lambda **_kwargs: (repairs.append("hooks") or [{"harness": "omp"}], []),
+    )
+    monkeypatch.setattr(
+        update_commands,
+        "refresh_guard_daemon_after_update",
+        lambda *_args, **_kwargs: (None, "Could not restart stable HOL Guard."),
+    )
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, "installed", ""),
+    )
+
+    payload, exit_code = update_commands.run_guard_update(dry_run=False, context=context)
+
+    assert exit_code == 1
+    assert payload["reason_code"] == "update_daemon_refresh_failed"
+    assert repairs == ["shims", "hooks"]
+    assert payload["package_shims"] == {"status": "refreshed"}
+    assert payload["managed_install"] == {"harness": "omp"}
+
+
 def test_required_daemon_refresh_failure_never_deletes_unreceipted_local_wheel_staging(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

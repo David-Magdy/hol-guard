@@ -580,6 +580,22 @@ def run_guard_update(
         payload["changed"] = False
         payload["resulting_version"] = current_version
         payload["message"] = "HOL Guard is already current."
+        newer_runtime = (
+            _verified_newer_guard_daemon(
+                context.guard_home,
+                minimum_version=current_version,
+            )
+            if context is not None
+            else None
+        )
+        if newer_runtime is not None:
+            payload["daemon_refresh"] = newer_runtime
+            payload["runtime_artifact_owner"] = "newer_runtime"
+            _append_payload_note(
+                payload,
+                "Kept newer-runtime package shims and harness hooks unchanged.",
+            )
+            return payload, 0
         # Skip force-reinstall/upgrade noise when PyPI already reports current.
         package_shims, package_shim_note = _refresh_package_shims_after_update(
             context=context,
@@ -797,29 +813,7 @@ def run_guard_update(
     notes = _success_notes(payload)
     if notes:
         payload["notes"] = [*_payload_notes(payload), *notes]
-    if payload.get("changed") is True or payload.get("status") == "current":
-        package_shims, package_shim_note = _refresh_package_shims_after_update(
-            context=context,
-            dry_run=dry_run,
-            update_context=update_context,
-        )
-        if package_shims is not None:
-            payload["package_shims"] = package_shims
-        _append_payload_note(payload, package_shim_note)
-    repaired_installs, repair_notes = _repair_supported_harnesses(
-        context=context,
-        store=store,
-        workspace=workspace,
-        now=now,
-        dry_run=dry_run,
-        update_context=update_context,
-    )
-    if repair_notes:
-        payload["notes"] = [*_payload_notes(payload), *repair_notes]
-    if repaired_installs:
-        payload["managed_installs"] = repaired_installs
-        if len(repaired_installs) == 1:
-            payload["managed_install"] = repaired_installs[0]
+    daemon_refresh: dict[str, object] | None = None
     if context is not None:
         daemon_refresh, daemon_refresh_note = refresh_guard_daemon_after_update(
             context,
@@ -829,6 +823,42 @@ def run_guard_update(
         if daemon_refresh is not None:
             payload["daemon_refresh"] = daemon_refresh
         _append_payload_note(payload, daemon_refresh_note)
+    newer_runtime_owns_artifacts = (
+        isinstance(daemon_refresh, dict)
+        and daemon_refresh.get("status") == "retained_newer_runtime"
+        and daemon_refresh.get("runtime_verified") is True
+    )
+    if newer_runtime_owns_artifacts:
+        payload["runtime_artifact_owner"] = "newer_runtime"
+        _append_payload_note(
+            payload,
+            "Deferred package shim and harness hook repair to the verified newer runtime.",
+        )
+    elif payload.get("changed") is True or payload.get("status") == "current":
+        package_shims, package_shim_note = _refresh_package_shims_after_update(
+            context=context,
+            dry_run=dry_run,
+            update_context=update_context,
+        )
+        if package_shims is not None:
+            payload["package_shims"] = package_shims
+        _append_payload_note(payload, package_shim_note)
+    if not newer_runtime_owns_artifacts:
+        repaired_installs, repair_notes = _repair_supported_harnesses(
+            context=context,
+            store=store,
+            workspace=workspace,
+            now=now,
+            dry_run=dry_run,
+            update_context=update_context,
+        )
+        if repair_notes:
+            payload["notes"] = [*_payload_notes(payload), *repair_notes]
+        if repaired_installs:
+            payload["managed_installs"] = repaired_installs
+            if len(repaired_installs) == 1:
+                payload["managed_install"] = repaired_installs[0]
+    if context is not None:
         daemon_refresh_succeeded = (
             isinstance(daemon_refresh, dict)
             and daemon_refresh.get("status") in {"restarted", "retained_newer_runtime"}
