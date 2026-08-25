@@ -86,7 +86,7 @@ def test_aws_batch_4_compiles_into_the_combined_path_set_matcher() -> None:
         global_flags=frozenset({"--debug"}),
     )
     assert len(matchers) == 1
-    assert tuple(matchers[0].paths) == AWS_DESTRUCTIVE_COMMAND_PATHS
+    assert matchers[0].paths == frozenset(AWS_DESTRUCTIVE_COMMAND_PATHS)
     assert set(AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_4).issubset(matchers[0].paths)
 
 

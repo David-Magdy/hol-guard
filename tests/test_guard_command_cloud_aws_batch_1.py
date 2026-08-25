@@ -52,7 +52,7 @@ def test_aws_batches_compile_to_one_combined_path_set_matcher() -> None:
     )
     assert len(matchers) == 1
     assert len(matchers[0].paths) == 200
-    assert tuple(matchers[0].paths) == AWS_DESTRUCTIVE_COMMAND_PATHS
+    assert matchers[0].paths == frozenset(AWS_DESTRUCTIVE_COMMAND_PATHS)
     assert set(AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_1).isdisjoint(
         AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_4
     )
