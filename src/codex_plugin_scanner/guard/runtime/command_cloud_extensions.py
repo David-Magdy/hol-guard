@@ -180,6 +180,8 @@ def _cloud_delete_rule(
     safer_alternative: str,
     safe_variants: tuple[CommandSafeVariant, ...],
 ) -> CommandSafetyRule:
+    """Build a critical cloud deletion rule with stable policy metadata."""
+
     return CommandSafetyRule(
         rule_id=rule_id,
         title=title,
