@@ -824,13 +824,17 @@ def run_guard_update(
         daemon_refresh, daemon_refresh_note = refresh_guard_daemon_after_update(
             context,
             update_context=update_context,
+            minimum_version=resulting_version,
         )
         if daemon_refresh is not None:
             payload["daemon_refresh"] = daemon_refresh
         _append_payload_note(payload, daemon_refresh_note)
-        if daemon_refresh_required and not (
-            isinstance(daemon_refresh, dict) and daemon_refresh.get("status") == "restarted"
-        ):
+        daemon_refresh_succeeded = (
+            isinstance(daemon_refresh, dict)
+            and daemon_refresh.get("status") in {"restarted", "retained_newer_runtime"}
+            and daemon_refresh.get("runtime_verified") is True
+        )
+        if daemon_refresh_required and not daemon_refresh_succeeded:
             payload.update(
                 {
                     "status": "failed",
@@ -2055,11 +2059,21 @@ def refresh_guard_daemon_after_update(
     context: HarnessContext,
     *,
     update_context: TrustedUpdateContext | None = None,
+    minimum_version: str | None = None,
 ) -> tuple[dict[str, object] | None, str | None]:
     """Restart a resident daemon in a fresh interpreter after a CLI package update."""
 
     if not (context.guard_home / "daemon-state.json").is_file():
         return None, None
+    newer_runtime = _verified_newer_guard_daemon(
+        context.guard_home,
+        minimum_version=minimum_version,
+    )
+    if newer_runtime is not None:
+        return (
+            newer_runtime,
+            "Kept the newer HOL Guard runtime active while updating the shell CLI.",
+        )
     active_context: TrustedUpdateContext | None = None
     try:
         active_context = update_context or _standalone_update_context(context)
@@ -2119,6 +2133,92 @@ def refresh_guard_daemon_after_update(
             cleanup_verified=cleanup_verified,
         )
     return payload, "Restarted the Guard daemon to load the updated package."
+
+
+def _verified_newer_guard_daemon(
+    guard_home: Path,
+    *,
+    minimum_version: str | None = None,
+) -> dict[str, object] | None:
+    """Retain a live newer runtime only after signed-state and loopback health agree."""
+
+    from ..daemon.discovery import load_authenticated_daemon_state
+    from ..daemon.manager import (
+        GUARD_DAEMON_COMPATIBILITY_VERSION,
+        load_guard_daemon_auth_token,
+    )
+
+    state = load_authenticated_daemon_state(guard_home)
+    if state is None:
+        return None
+    daemon_version_text = state.get("package_version")
+    host = state.get("host")
+    port = state.get("port")
+    compatibility_version = state.get("compatibility_version")
+    runtime_fingerprint = state.get("runtime_fingerprint")
+    daemon_pid = state.get("pid")
+    token = load_guard_daemon_auth_token(guard_home)
+    if (
+        not isinstance(daemon_version_text, str)
+        or not isinstance(host, str)
+        or host not in {"127.0.0.1", "::1"}
+        or not isinstance(port, int)
+        or not 1 <= port <= 65535
+        or compatibility_version != GUARD_DAEMON_COMPATIBILITY_VERSION
+        or not isinstance(runtime_fingerprint, str)
+        or not runtime_fingerprint
+        or not isinstance(daemon_pid, int)
+        or daemon_pid <= 0
+        or not isinstance(token, str)
+        or not token
+    ):
+        return None
+    try:
+        daemon_version = Version(daemon_version_text)
+        required_version_text = minimum_version or package_version.__version__
+        required_version = Version(required_version_text)
+    except InvalidVersion:
+        return None
+    if daemon_version <= required_version:
+        return None
+
+    daemon_url = f"http://{f'[{host}]' if host == '::1' else host}:{port}"
+    request = urllib.request.Request(
+        f"{daemon_url}/v1/healthz/details",
+        headers={"X-Guard-Token": token},
+        method="GET",
+    )
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request, timeout=1.0) as response:
+            if response.status != 200:
+                return None
+            response_bytes = response.read(65_537)
+            if len(response_bytes) > 65_536:
+                return None
+            details = json.loads(response_bytes.decode("utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError):
+        return None
+    if not isinstance(details, dict) or details.get("ok") is not True:
+        return None
+    try:
+        details_guard_home = Path(str(details.get("guard_home"))).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    identity_fields = ("package_version", "compatibility_version", "runtime_fingerprint", "pid")
+    if (
+        details_guard_home != guard_home.expanduser().resolve()
+        or any(field not in state or field not in details for field in identity_fields)
+        or any(details.get(field) != state.get(field) for field in identity_fields)
+    ):
+        return None
+    return {
+        "status": "retained_newer_runtime",
+        "daemon_url": daemon_url,
+        "daemon_version": daemon_version_text,
+        "cli_version": required_version_text,
+        "runtime_verified": True,
+    }
 
 
 def _cleanup_failed_guard_daemon_refresh(
