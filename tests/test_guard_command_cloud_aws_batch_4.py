@@ -20,8 +20,7 @@ _ACTION = "AWS destructive command"
 _RULE = "command.cloud.aws.resource-deletion"
 
 AWS_BATCH_4_REVIEW_CASES: tuple[tuple[str, str, str], ...] = tuple(
-    (f"aws {' '.join(path)} --cli-input-json '{{}}'", _ACTION, _RULE)
-    for path in AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_4
+    (f"aws {' '.join(path)} --cli-input-json '{{}}'", _ACTION, _RULE) for path in AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_4
 )
 AWS_BATCH_4_SAFE_CASES: tuple[str, ...] = tuple(
     command
@@ -78,9 +77,7 @@ def test_aws_combined_matrix_is_exactly_two_hundred_unique_operations() -> None:
     assert AWS_DESTRUCTIVE_COMMAND_PATHS == (
         AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_1 + AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_4
     )
-    assert set(AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_1).isdisjoint(
-        AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_4
-    )
+    assert set(AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_1).isdisjoint(AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_4)
 
 
 def test_aws_batch_4_compiles_into_the_combined_path_set_matcher() -> None:

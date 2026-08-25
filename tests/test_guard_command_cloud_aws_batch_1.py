@@ -20,8 +20,7 @@ _ACTION = "AWS destructive command"
 _RULE = "command.cloud.aws.resource-deletion"
 
 AWS_BATCH_1_REVIEW_CASES: tuple[tuple[str, str, str], ...] = tuple(
-    (f"aws {' '.join(path)} --cli-input-json '{{}}'", _ACTION, _RULE)
-    for path in AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_1
+    (f"aws {' '.join(path)} --cli-input-json '{{}}'", _ACTION, _RULE) for path in AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_1
 )
 AWS_BATCH_1_SAFE_CASES: tuple[str, ...] = tuple(
     command
@@ -53,9 +52,7 @@ def test_aws_batches_compile_to_one_combined_path_set_matcher() -> None:
     assert len(matchers) == 1
     assert len(matchers[0].paths) == 200
     assert matchers[0].paths == frozenset(AWS_DESTRUCTIVE_COMMAND_PATHS)
-    assert set(AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_1).isdisjoint(
-        AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_4
-    )
+    assert set(AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_1).isdisjoint(AWS_DESTRUCTIVE_COMMAND_PATHS_BATCH_4)
 
 
 def test_aws_batch_1_operations_feed_inspection_and_runtime_hooks(tmp_path: Path) -> None:
