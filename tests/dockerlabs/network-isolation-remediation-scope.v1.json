@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "program": "hol-guard-network-isolation-dockerlabs-remediation",
+  "issue": 2596,
+  "target_branch": "release/3.0",
+  "proof_authority": "local-dockerlabs",
+  "github_actions_primary_evidence": false,
+  "release_authorized": false,
+  "tasks": [
+    "REM-121",
+    "REM-122",
+    "REM-123",
+    "REM-124",
+    "REM-125",
+    "REM-126",
+    "REM-127",
+    "REM-128",
+    "REM-129",
+    "REM-130",
+    "REM-131",
+    "REM-132",
+    "REM-133",
+    "REM-134",
+    "REM-135",
+    "REM-136",
+    "REM-137",
+    "REM-138",
+    "REM-139"
+  ],
+  "required_local_commands": [
+    "uv sync --frozen --extra dev",
+    "uv build",
+    "uv tool run --from dist/hol_guard-*.whl hol-guard --version",
+    "bun test tests/dockerlabs/installed-guard-package-proof.test.mjs",
+    "docker inventory and teardown proof"
+  ],
+  "required_adversarial_passes": [
+    "policy-replay-downgrade-grant-scope",
+    "process-cgroup-network-escape-teardown",
+    "packaging-supply-chain-privacy-false-ready"
+  ],
+  "status": "implementation-required"
+}
