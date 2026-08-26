@@ -137,13 +137,13 @@ def _run_rules(args: argparse.Namespace) -> int:
         "rules": rules,
     }
     if args.json:
-        print(json.dumps(payload, sort_keys=True))
+        sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
     else:
-        print(f"HOL Guard Secrets detector {payload['detector_version']}")
+        sys.stdout.write(f"HOL Guard Secrets detector {payload['detector_version']}\n")
         for rule in rules:
             validation = str(rule["validation"])
             suffix = f", validates via {validation}" if validation != "none" else ""
-            print(f"- {rule['family']} ({rule['severity']}{suffix})")
+            sys.stdout.write(f"- {rule['family']} ({rule['severity']}{suffix})\n")
     return 0
 
 
