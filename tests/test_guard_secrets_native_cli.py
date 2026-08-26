@@ -112,6 +112,18 @@ def test_native_rules_bypass_guard_parser(monkeypatch: pytest.MonkeyPatch) -> No
     payload = json.loads(output)
     assert payload["schema"] == "guard-secret-rules.v1"
     assert any(rule["rule_id"] == "github-token" for rule in payload["rules"])
+    public_fields = {"description", "family", "rule_id", "severity", "strong_format", "validation"}
+    assert all(set(rule) == public_fields for rule in payload["rules"])
+    assert all("pattern" not in rule and "candidate" not in rule for rule in payload["rules"])
+
+
+def test_public_rules_catalog_matches_detector_metadata() -> None:
+    from codex_plugin_scanner.guard.secrets.public_rule_catalog import PUBLIC_RULES_JSON
+    from codex_plugin_scanner.guard.secrets.secret_detection import detector_version, secret_rule_catalog
+
+    payload = json.loads(PUBLIC_RULES_JSON)
+    assert payload["detector_version"] == detector_version()
+    assert payload["rules"] == secret_rule_catalog()
 
 
 def test_native_staged_scan_fails_on_findings_without_printing_secret(tmp_path: Path) -> None:
