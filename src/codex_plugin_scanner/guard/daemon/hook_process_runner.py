@@ -77,6 +77,7 @@ class HookProcessRunner:
         self._generation: int = 0
         self._capacity_target: int = initial_target
         self._initial_target: int = initial_target
+        self._startup_floor_target: int = 0
         self._ready_slot_ids: set[int] = set()
         self._capacity_listener = capacity_listener
         self._rss_bytes_provider = rss_bytes_provider
@@ -115,7 +116,9 @@ class HookProcessRunner:
             self._recovery_event.clear()
             self._generation += 1
             generation = self._generation
-            self._capacity_target = min(2, self._initial_target) if defer_backfill else self._initial_target
+            startup_floor_target = min(2, self._initial_target) if defer_backfill else self._initial_target
+            self._capacity_target = startup_floor_target
+            self._startup_floor_target = startup_floor_target if nonblocking_deferred_start else 0
             self._adaptive_refresh_enabled = not defer_backfill
             now = time.monotonic()
             self._backfill_not_before = (
@@ -463,14 +466,19 @@ class HookProcessRunner:
             with self._state_lock:
                 closed = self._closed or generation != self._generation
                 should_wait = len(self._all_slots) >= self._capacity_target
+                startup_floor_pending = len(self._ready_slot_ids) < self._startup_floor_target
                 active_reviews = self._active_reviews.get(generation, 0)
                 backfill_not_before = self._backfill_not_before
                 backfill_force_after = self._backfill_force_after
             if closed:
                 return
             now = time.monotonic()
-            backfill_delay = max(0.0, backfill_not_before - now)
-            active_review_delay = max(0.0, backfill_force_after - now) if active_reviews > 0 else 0.0
+            backfill_delay = 0.0 if startup_floor_pending else max(0.0, backfill_not_before - now)
+            active_review_delay = (
+                max(0.0, backfill_force_after - now)
+                if active_reviews > 0 and not startup_floor_pending
+                else 0.0
+            )
             if should_wait or backfill_delay > 0 or active_review_delay > 0:
                 capacity_delay = max(backfill_delay, active_review_delay)
                 timeout = min(0.05, capacity_delay) if capacity_delay > 0 else 1.0
@@ -506,6 +514,8 @@ class HookProcessRunner:
                     return
             with self._state_lock:
                 self._ready_slot_ids.add(replacement.process.pid or id(replacement))
+                if len(self._ready_slot_ids) >= self._startup_floor_target:
+                    self._startup_floor_target = 0
             self._publish_capacity()
             retry_delay = 0.05
 

@@ -9,15 +9,17 @@ from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessRun
 from codex_plugin_scanner.guard.daemon.hook_process_worker import HookWorkerSlot
 
 
-def test_adaptive_deferred_start_returns_before_worker_backfill(monkeypatch, tmp_path: Path) -> None:
+def test_adaptive_deferred_start_returns_before_startup_floor_is_ready(monkeypatch, tmp_path: Path) -> None:
     runner = HookProcessRunner(guard_home=tmp_path)
     spawn_attempted = threading.Event()
+    release_spawn = threading.Event()
 
-    def unexpected_start(_generation: int) -> None:
+    def delayed_start(_generation: int) -> None:
         spawn_attempted.set()
+        assert release_spawn.wait(timeout=2.0)
         return None
 
-    monkeypatch.setattr(runner, "_start_slot_interruptibly", unexpected_start)
+    monkeypatch.setattr(runner, "_start_slot_interruptibly", delayed_start)
 
     started_at = time.monotonic()
     runner.start(defer_backfill=True)
@@ -25,6 +27,7 @@ def test_adaptive_deferred_start_returns_before_worker_backfill(monkeypatch, tmp
 
     assert elapsed < 0.5
     assert runner.stats()["target"] >= 1
+    assert spawn_attempted.wait(timeout=0.5)
 
     with runner._state_lock:
         startup_not_before = runner._backfill_not_before
@@ -34,7 +37,7 @@ def test_adaptive_deferred_start_returns_before_worker_backfill(monkeypatch, tmp
 
     assert enabled_not_before >= startup_not_before
     assert enabled_not_before > time.monotonic()
-    assert not spawn_attempted.wait(timeout=0.1)
+    release_spawn.set()
     assert runner.close_contained()
 
 
