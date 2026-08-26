@@ -34,12 +34,13 @@ from .hook_process_worker import (
 _HOOK_PROCESS_MAX_LIMIT = 16
 _HOOK_PROCESS_TIMEOUT_SECONDS = 2.8
 _HOOK_PROCESS_READY_TIMEOUT_SECONDS, _HOOK_PROCESS_START_TIMEOUT_SECONDS = 14.0, 30.0
-_HOOK_PROCESS_BACKFILL_DELAY_SECONDS = 30.0
+_HOOK_PROCESS_BACKFILL_DELAY_SECONDS = 2.0
 _HOOK_PROCESS_BACKFILL_MAX_DEFERRAL_SECONDS = 5.0
 _HOOK_PROCESS_RETRY_MAX_SECONDS = 5.0
 _HOOK_PROCESS_RETRY_READY_SECONDS = 0.75
 _HOOK_PROCESS_TRANSIENT_NOT_READY_RETRIES = 8
 _HOOK_PROCESS_TRANSIENT_NOT_READY_BACKOFF_SECONDS = 0.025
+_HOOK_PROCESS_CLOSE_CONTAINMENT_GRACE_SECONDS = 4.0
 
 
 @final
@@ -76,6 +77,7 @@ class HookProcessRunner:
         self._generation: int = 0
         self._capacity_target: int = initial_target
         self._initial_target: int = initial_target
+        self._startup_floor_target: int = 0
         self._ready_slot_ids: set[int] = set()
         self._capacity_listener = capacity_listener
         self._rss_bytes_provider = rss_bytes_provider
@@ -102,6 +104,7 @@ class HookProcessRunner:
         self._reason_codes: dict[str, int] = {}
 
     def start(self, *, defer_backfill: bool = False) -> None:
+        nonblocking_deferred_start = defer_backfill and self._adaptive_capacity is not None
         with self._state_lock:
             if self._started and not self._closed:
                 return
@@ -113,10 +116,19 @@ class HookProcessRunner:
             self._recovery_event.clear()
             self._generation += 1
             generation = self._generation
-            self._capacity_target = min(2, self._initial_target) if defer_backfill else self._initial_target
+            startup_floor_target = min(2, self._initial_target) if defer_backfill else self._initial_target
+            self._capacity_target = startup_floor_target
+            self._startup_floor_target = startup_floor_target if nonblocking_deferred_start else 0
             self._adaptive_refresh_enabled = not defer_backfill
-            self._backfill_not_before = 0.0
-            self._backfill_force_after = 0.0
+            now = time.monotonic()
+            self._backfill_not_before = (
+                now + _HOOK_PROCESS_BACKFILL_DELAY_SECONDS if nonblocking_deferred_start else 0.0
+            )
+            self._backfill_force_after = (
+                self._backfill_not_before + _HOOK_PROCESS_BACKFILL_MAX_DEFERRAL_SECONDS
+                if nonblocking_deferred_start
+                else 0.0
+            )
             self._closed = False
             self._started = True
             supervisor = threading.Thread(
@@ -134,6 +146,8 @@ class HookProcessRunner:
                 self._generation += 1
                 self._increment_metric("failures")
                 return
+        if nonblocking_deferred_start:
+            return
         _ = self.wait_for_capacity(
             minimum_workers=self._capacity_target,
             timeout_seconds=_HOOK_PROCESS_START_TIMEOUT_SECONDS,
@@ -155,8 +169,12 @@ class HookProcessRunner:
             now = time.monotonic()
             self._capacity_target = self._initial_target
             self._adaptive_refresh_enabled = True
-            self._backfill_not_before = now + max(0.0, delay_seconds)
-            self._backfill_force_after = self._backfill_not_before + active_deferral_seconds
+            requested_not_before = now + max(0.0, delay_seconds)
+            self._backfill_not_before = max(self._backfill_not_before, requested_not_before)
+            self._backfill_force_after = max(
+                self._backfill_force_after,
+                self._backfill_not_before + active_deferral_seconds,
+            )
         self._recovery_event.set()
 
     def review(
@@ -359,15 +377,7 @@ class HookProcessRunner:
         if adaptive_capacity is None:
             return
         adaptive_capacity.observe_load(queue_p95_ms=queue_p95_ms, queued=queued)
-        if queued > 0:
-            self.notify_queued_work()
         self._refresh_capacity_policy()
-
-    def notify_queued_work(self) -> None:
-        with self._state_lock:
-            self._backfill_not_before = 0.0
-            self._backfill_force_after = 0.0
-        self._recovery_event.set()
 
     def close(self) -> None:
         _ = self.close_contained()
@@ -377,37 +387,58 @@ class HookProcessRunner:
             self._closed = True
             self._started = False
             self._generation += 1
-            slots = list(self._all_slots.values())
-            supervisor = self._supervisor_thread
-            spawn_threads = list(self._spawn_threads)
-            retirement_threads = list(self._retirement_threads)
             self._recovery_event.set()
-        isolation_deadline = time.monotonic() + _HOOK_PROCESS_READY_TIMEOUT_SECONDS
-        for slot in slots:
-            if not slot.isolation_ready and not slot.pre_isolation_contained:
-                remaining = max(0.0, isolation_deadline - time.monotonic())
-                _ = hook_worker_became_isolated(slot, remaining)
-            _ = self._retire_slot(slot, graceful=True)
-        for retirement_thread in retirement_threads:
-            if retirement_thread is not threading.current_thread():
-                retirement_thread.join(timeout=3.0)
-        if supervisor is not None:
-            supervisor.join(timeout=1.0)
-        for spawn_thread in spawn_threads:
-            if spawn_thread is not threading.current_thread():
-                spawn_thread.join(timeout=0.2)
-        active_review_deadline = time.monotonic() + 1.0
+
+        containment_grace_seconds = min(
+            _HOOK_PROCESS_CLOSE_CONTAINMENT_GRACE_SECONDS,
+            _HOOK_PROCESS_READY_TIMEOUT_SECONDS,
+        )
+        deadline = time.monotonic() + _HOOK_PROCESS_READY_TIMEOUT_SECONDS + containment_grace_seconds
+        retired_slot_ids: set[int] = set()
         while True:
             with self._state_lock:
-                if not self._active_reviews:
-                    break
-            remaining = active_review_deadline - time.monotonic()
+                slots = list(self._all_slots.values())
+                supervisor = self._supervisor_thread
+                spawn_threads = list(self._spawn_threads)
+                retirement_threads = list(self._retirement_threads)
+
+            for slot in slots:
+                slot_id = slot.process.pid or id(slot)
+                if slot_id in retired_slot_ids:
+                    continue
+                if not slot.isolation_ready and not slot.pre_isolation_contained:
+                    remaining = max(0.0, deadline - time.monotonic())
+                    _ = hook_worker_became_isolated(slot, remaining)
+                if self._retire_slot(slot, graceful=True):
+                    retired_slot_ids.add(slot_id)
+
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            _ = self._recovery_event.wait(timeout=min(0.05, remaining))
+            for thread in (*retirement_threads, *spawn_threads):
+                if thread is not threading.current_thread() and thread.is_alive():
+                    thread.join(timeout=min(0.05, remaining))
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+            if remaining > 0 and supervisor is not None and supervisor is not threading.current_thread():
+                supervisor.join(timeout=min(0.05, remaining))
+
+            with self._state_lock:
+                current_supervisor = self._supervisor_thread
+                if current_supervisor is not None and not current_supervisor.is_alive():
+                    self._supervisor_thread = None
+                contained = not self._all_slots and not self._retirement_threads
+                contained = contained and not self._spawn_threads and not self._active_reviews
+                contained = contained and self._supervisor_thread is None
+            if contained:
+                return True
+            _ = self._recovery_event.wait(timeout=min(0.05, max(0.0, deadline - time.monotonic())))
             self._recovery_event.clear()
+
         with self._state_lock:
-            if supervisor is not None and not supervisor.is_alive():
+            current_supervisor = self._supervisor_thread
+            if current_supervisor is not None and not current_supervisor.is_alive():
                 self._supervisor_thread = None
             contained = not self._all_slots and not self._retirement_threads
             contained = contained and not self._spawn_threads and not self._active_reviews
@@ -435,14 +466,17 @@ class HookProcessRunner:
             with self._state_lock:
                 closed = self._closed or generation != self._generation
                 should_wait = len(self._all_slots) >= self._capacity_target
+                startup_floor_pending = len(self._ready_slot_ids) < self._startup_floor_target
                 active_reviews = self._active_reviews.get(generation, 0)
                 backfill_not_before = self._backfill_not_before
                 backfill_force_after = self._backfill_force_after
             if closed:
                 return
             now = time.monotonic()
-            backfill_delay = max(0.0, backfill_not_before - now)
-            active_review_delay = max(0.0, backfill_force_after - now) if active_reviews > 0 else 0.0
+            backfill_delay = 0.0 if startup_floor_pending else max(0.0, backfill_not_before - now)
+            active_review_delay = (
+                max(0.0, backfill_force_after - now) if active_reviews > 0 and not startup_floor_pending else 0.0
+            )
             if should_wait or backfill_delay > 0 or active_review_delay > 0:
                 capacity_delay = max(backfill_delay, active_review_delay)
                 timeout = min(0.05, capacity_delay) if capacity_delay > 0 else 1.0
@@ -462,23 +496,36 @@ class HookProcessRunner:
                 _ = self._recovery_event.wait(timeout=retry_delay)
                 retry_delay = min(retry_delay * 2, _HOOK_PROCESS_RETRY_MAX_SECONDS)
                 continue
-            if not hook_worker_became_ready(replacement, _HOOK_PROCESS_READY_TIMEOUT_SECONDS):
-                self._increment_metric("failures")
+            ready = hook_worker_became_ready(replacement, _HOOK_PROCESS_READY_TIMEOUT_SECONDS)
+            with self._state_lock:
+                cancelled = self._closed or generation != self._generation
+                if not cancelled and not ready:
+                    self._increment_metric("failures")
+            if cancelled:
+                return
+            if not ready:
                 if not self._retire_slot(replacement):
                     self._mark_containment_failed()
                     return
                 _ = self._recovery_event.wait(timeout=retry_delay)
                 retry_delay = min(retry_delay * 2, _HOOK_PROCESS_RETRY_MAX_SECONDS)
                 continue
-            try:
-                self._slots.put_nowait(replacement)
-            except queue.Full:
-                if not self._retire_slot(replacement):
-                    self._mark_containment_failed()
-                    return
+            queue_full = False
             with self._state_lock:
-                self._ready_slot_ids.add(replacement.process.pid or id(replacement))
-            self._publish_capacity()
+                if self._closed or generation != self._generation:
+                    return
+                try:
+                    self._slots.put_nowait(replacement)
+                except queue.Full:
+                    queue_full = True
+                else:
+                    self._ready_slot_ids.add(replacement.process.pid or id(replacement))
+                    if len(self._ready_slot_ids) >= self._startup_floor_target:
+                        self._startup_floor_target = 0
+            if queue_full and not self._retire_slot(replacement):
+                self._mark_containment_failed()
+                return
+            self._publish_capacity(generation=generation)
             retry_delay = 0.05
 
     def _start_slot_interruptibly(self, generation: int) -> HookWorkerSlot | None:
@@ -492,6 +539,7 @@ class HookProcessRunner:
             finally:
                 with self._state_lock:
                     self._spawn_threads.discard(threading.current_thread())
+                self._recovery_event.set()
 
         thread = threading.Thread(target=attempt, name="hol-guard-hook-worker-spawn", daemon=True)
         start_failed = False
@@ -507,14 +555,19 @@ class HookProcessRunner:
         if start_failed:
             self._increment_metric("failures")
             return None
+        cancelled = False
         while thread.is_alive():
             _ = self._recovery_event.wait(timeout=0.05)
             with self._state_lock:
-                if self._closed or generation != self._generation:
-                    return None
+                cancelled = cancelled or self._closed or generation != self._generation
+        with self._state_lock:
+            cancelled = cancelled or self._closed or generation != self._generation
         outcome = outcomes.get_nowait()
         if isinstance(outcome, BaseException):
-            self._increment_metric("failures")
+            if not cancelled:
+                self._increment_metric("failures")
+            return None
+        if cancelled:
             return None
         return outcome
 
@@ -589,6 +642,7 @@ class HookProcessRunner:
     def _discard_retirement_thread(self, thread: threading.Thread) -> None:
         with self._state_lock:
             self._retirement_threads.discard(thread)
+        self._recovery_event.set()
 
     def _trim_excess_ready_capacity(self) -> None:
         while True:
@@ -645,8 +699,10 @@ class HookProcessRunner:
             self._publish_capacity()
         return contained
 
-    def _publish_capacity(self) -> None:
+    def _publish_capacity(self, *, generation: int | None = None) -> None:
         with self._state_lock:
+            if generation is not None and (self._closed or generation != self._generation):
+                return
             listener = self._capacity_listener
             capacity = len(self._ready_slot_ids)
         if listener is not None:

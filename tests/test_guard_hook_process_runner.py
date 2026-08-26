@@ -6,7 +6,7 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
@@ -608,62 +608,6 @@ def test_deferred_runner_does_not_adapt_before_backfill_is_enabled(tmp_path: Pat
         runner.close()
 
 
-def test_default_backfill_grace_yields_immediately_to_queued_work(tmp_path: Path) -> None:
-    runner = HookProcessRunner(guard_home=tmp_path)
-    scheduler = RuntimeHookScheduler(active_limit=0)
-    runner.set_capacity_listener(scheduler.set_active_limit)
-    scheduler.set_queue_listener(runner.notify_queued_work)
-    permits = []
-    third_admission = []
-    try:
-        runner.start(defer_backfill=True)
-        enabled_at = time.monotonic()
-        runner.enable_full_capacity()
-
-        assert runner._backfill_not_before - enabled_at >= 29.9  # pyright: ignore[reportPrivateUsage]
-        assert runner.stats()["ready"] == 2
-        for client_key in ("first", "second"):
-            admission = scheduler.acquire(
-                harness="codex",
-                client_key=client_key,
-                lane="decision",
-                payload_bytes=1,
-                deadline=time.monotonic() + 10,
-            )
-            assert admission.permit is not None
-            permits.append(admission.permit)
-        with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
-            runner._backfill_not_before = time.monotonic() - 1  # pyright: ignore[reportPrivateUsage]
-            runner._backfill_force_after = time.monotonic() + 5  # pyright: ignore[reportPrivateUsage]
-            generation = runner._generation  # pyright: ignore[reportPrivateUsage]
-            runner._active_reviews[generation] = 1  # pyright: ignore[reportPrivateUsage]
-
-        def acquire_third() -> None:
-            third_admission.append(
-                scheduler.acquire(
-                    harness="codex",
-                    client_key="third",
-                    lane="decision",
-                    payload_bytes=1,
-                    deadline=time.monotonic() + 10,
-                )
-            )
-
-        queued = threading.Thread(target=acquire_third)
-        queued.start()
-        assert runner.wait_for_capacity(minimum_workers=4, timeout_seconds=8)
-        queued.join(timeout=2)
-        assert third_admission and third_admission[0].permit is not None
-    finally:
-        with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
-            runner._active_reviews.clear()  # pyright: ignore[reportPrivateUsage]
-        for permit in permits:
-            permit.release()
-        if third_admission and third_admission[0].permit is not None:
-            third_admission[0].permit.release()
-        runner.close()
-
-
 def test_deferred_runner_bounds_backfill_deferral_during_active_reviews(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -952,6 +896,81 @@ def test_transient_initial_worker_failure_replenishes_capacity(
     assert runner.stats()["workers"] == 0
 
 
+@pytest.mark.parametrize("readiness_result", [False, True])
+def test_close_cancels_worker_readiness_from_stale_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    readiness_result: bool,
+) -> None:
+    published_capacities: list[int] = []
+    runner = HookProcessRunner(
+        guard_home=tmp_path,
+        process_limit=1,
+        capacity_listener=published_capacities.append,
+    )
+    readiness_waiting = threading.Event()
+    release_readiness = threading.Event()
+    isolation_started = threading.Event()
+    process = MagicMock()
+    process.pid = 4244
+    process.is_alive.return_value = False
+    slot = HookWorkerSlot(process=process, connection=MagicMock())
+
+    def start_slot(generation: int) -> HookWorkerSlot:
+        assert generation == 1
+        with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
+            runner._all_slots[process.pid] = slot  # pyright: ignore[reportPrivateUsage]
+        return slot
+
+    def wait_for_readiness(candidate: HookWorkerSlot, timeout: float) -> bool:
+        assert candidate is slot
+        assert timeout > 0
+        readiness_waiting.set()
+        assert release_readiness.wait(timeout=2)
+        return readiness_result
+
+    def finish_isolation(candidate: HookWorkerSlot, timeout: float) -> bool:
+        assert candidate is slot
+        assert timeout > 0
+        candidate.pre_isolation_contained = True
+        isolation_started.set()
+        return True
+
+    monkeypatch.setattr(runner, "_start_slot_interruptibly", start_slot)
+    monkeypatch.setattr(hook_runner_module, "hook_worker_became_ready", wait_for_readiness)
+    monkeypatch.setattr(hook_runner_module, "hook_worker_became_isolated", finish_isolation)
+    with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
+        runner._closed = False  # pyright: ignore[reportPrivateUsage]
+        runner._started = True  # pyright: ignore[reportPrivateUsage]
+        runner._generation = 1  # pyright: ignore[reportPrivateUsage]
+
+    supervisor = threading.Thread(target=lambda: runner._supervise_capacity(1))  # pyright: ignore[reportPrivateUsage]
+    with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
+        runner._supervisor_thread = supervisor  # pyright: ignore[reportPrivateUsage]
+    close_results: list[bool] = []
+    closer = threading.Thread(target=lambda: close_results.append(runner.close_contained()))
+    try:
+        supervisor.start()
+        assert readiness_waiting.wait(timeout=1)
+        closer.start()
+        assert isolation_started.wait(timeout=1)
+        with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
+            assert runner._generation == 2  # pyright: ignore[reportPrivateUsage]
+    finally:
+        release_readiness.set()
+        supervisor.join(timeout=2)
+        if closer.ident is not None:
+            closer.join(timeout=2)
+
+    assert not supervisor.is_alive()
+    assert not closer.is_alive()
+    assert close_results == [True]
+    assert runner.stats()["failures"] == 0
+    assert runner.stats()["ready"] == 0
+    assert not runner._ready_slot_ids  # pyright: ignore[reportPrivateUsage]
+    assert published_capacities == [0]
+
+
 def test_pre_isolation_worker_death_replenishes_capacity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1027,6 +1046,51 @@ def test_transient_worker_spawn_failure_replenishes_capacity(
 
     assert attempts == 3
     assert result.payload is not None
+
+
+def test_finished_cancelled_spawn_failure_does_not_increment_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1)
+    spawned_threads: list[object] = []
+    real_thread_type = threading.Thread
+
+    class _FinishedThenClosedThread:
+        def __init__(self, *, target: object, name: str, daemon: bool) -> None:
+            del name
+            self._target = cast(Callable[[], None], target)
+            self.daemon = daemon
+            self._closed_runner = False
+            self._thread: threading.Thread | None = None
+            spawned_threads.append(self)
+
+        def start(self) -> None:
+            self._thread = real_thread_type(target=self._target)
+            self._thread.start()
+
+        def is_alive(self) -> bool:
+            assert self._thread is not None
+            alive = self._thread.is_alive()
+            if not alive and not self._closed_runner:
+                self._closed_runner = True
+                assert runner.close_contained()
+            return alive
+
+    def failed_start(*, generation: int) -> HookWorkerSlot:
+        del generation
+        raise OSError("injected worker spawn failure")
+
+    with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
+        runner._closed = False  # pyright: ignore[reportPrivateUsage]
+        runner._started = True  # pyright: ignore[reportPrivateUsage]
+        runner._generation = 1  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(runner, "_start_slot", failed_start)
+    monkeypatch.setattr(hook_runner_module.threading, "Thread", _FinishedThenClosedThread)
+    monkeypatch.setattr(hook_runner_module.threading, "current_thread", lambda: spawned_threads[0])
+
+    assert runner._start_slot_interruptibly(1) is None  # pyright: ignore[reportPrivateUsage]
+    assert runner.stats()["failures"] == 0
 
 
 def test_persistent_spawn_failure_uses_one_bounded_backoff_supervisor(
