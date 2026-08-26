@@ -9,8 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .precommit import install_precommit_hook, uninstall_precommit_hook
-from .public_rule_catalog import PUBLIC_SECRET_RULE_CATALOG
-from .secret_detection import detector_version
+from .public_rule_catalog import PUBLIC_RULES_JSON, PUBLIC_RULES_TEXT
 from .secret_repository_scanner import (
     DEFAULT_MAX_COMMITS,
     DEFAULT_MAX_FILE_BYTES,
@@ -131,20 +130,7 @@ def _run_scan(args: argparse.Namespace) -> int:
 
 
 def _run_rules(args: argparse.Namespace) -> int:
-    rules = PUBLIC_SECRET_RULE_CATALOG
-    payload = {
-        "schema": "guard-secret-rules.v1",
-        "detector_version": detector_version(),
-        "rules": rules,
-    }
-    if args.json:
-        sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
-    else:
-        sys.stdout.write(f"HOL Guard Secrets detector {payload['detector_version']}\n")
-        for rule in rules:
-            validation = str(rule["validation"])
-            suffix = f", validates via {validation}" if validation != "none" else ""
-            sys.stdout.write(f"- {rule['family']} ({rule['severity']}{suffix})\n")
+    sys.stdout.write(PUBLIC_RULES_JSON if args.json else PUBLIC_RULES_TEXT)
     return 0
 
 

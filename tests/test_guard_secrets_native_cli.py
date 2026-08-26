@@ -118,10 +118,12 @@ def test_native_rules_bypass_guard_parser(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_public_rules_catalog_matches_detector_metadata() -> None:
-    from codex_plugin_scanner.guard.secrets.public_rule_catalog import PUBLIC_SECRET_RULE_CATALOG
-    from codex_plugin_scanner.guard.secrets.secret_detection import secret_rule_catalog
+    from codex_plugin_scanner.guard.secrets.public_rule_catalog import PUBLIC_RULES_JSON
+    from codex_plugin_scanner.guard.secrets.secret_detection import detector_version, secret_rule_catalog
 
-    assert list(PUBLIC_SECRET_RULE_CATALOG) == secret_rule_catalog()
+    payload = json.loads(PUBLIC_RULES_JSON)
+    assert payload["detector_version"] == detector_version()
+    assert payload["rules"] == secret_rule_catalog()
 
 
 def test_native_staged_scan_fails_on_findings_without_printing_secret(tmp_path: Path) -> None:
