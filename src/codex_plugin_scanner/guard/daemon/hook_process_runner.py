@@ -475,9 +475,7 @@ class HookProcessRunner:
             now = time.monotonic()
             backfill_delay = 0.0 if startup_floor_pending else max(0.0, backfill_not_before - now)
             active_review_delay = (
-                max(0.0, backfill_force_after - now)
-                if active_reviews > 0 and not startup_floor_pending
-                else 0.0
+                max(0.0, backfill_force_after - now) if active_reviews > 0 and not startup_floor_pending else 0.0
             )
             if should_wait or backfill_delay > 0 or active_review_delay > 0:
                 capacity_delay = max(backfill_delay, active_review_delay)
@@ -498,25 +496,36 @@ class HookProcessRunner:
                 _ = self._recovery_event.wait(timeout=retry_delay)
                 retry_delay = min(retry_delay * 2, _HOOK_PROCESS_RETRY_MAX_SECONDS)
                 continue
-            if not hook_worker_became_ready(replacement, _HOOK_PROCESS_READY_TIMEOUT_SECONDS):
-                self._increment_metric("failures")
+            ready = hook_worker_became_ready(replacement, _HOOK_PROCESS_READY_TIMEOUT_SECONDS)
+            with self._state_lock:
+                cancelled = self._closed or generation != self._generation
+                if not cancelled and not ready:
+                    self._increment_metric("failures")
+            if cancelled:
+                return
+            if not ready:
                 if not self._retire_slot(replacement):
                     self._mark_containment_failed()
                     return
                 _ = self._recovery_event.wait(timeout=retry_delay)
                 retry_delay = min(retry_delay * 2, _HOOK_PROCESS_RETRY_MAX_SECONDS)
                 continue
-            try:
-                self._slots.put_nowait(replacement)
-            except queue.Full:
-                if not self._retire_slot(replacement):
-                    self._mark_containment_failed()
-                    return
+            queue_full = False
             with self._state_lock:
-                self._ready_slot_ids.add(replacement.process.pid or id(replacement))
-                if len(self._ready_slot_ids) >= self._startup_floor_target:
-                    self._startup_floor_target = 0
-            self._publish_capacity()
+                if self._closed or generation != self._generation:
+                    return
+                try:
+                    self._slots.put_nowait(replacement)
+                except queue.Full:
+                    queue_full = True
+                else:
+                    self._ready_slot_ids.add(replacement.process.pid or id(replacement))
+                    if len(self._ready_slot_ids) >= self._startup_floor_target:
+                        self._startup_floor_target = 0
+            if queue_full and not self._retire_slot(replacement):
+                self._mark_containment_failed()
+                return
+            self._publish_capacity(generation=generation)
             retry_delay = 0.05
 
     def _start_slot_interruptibly(self, generation: int) -> HookWorkerSlot | None:
@@ -690,8 +699,10 @@ class HookProcessRunner:
             self._publish_capacity()
         return contained
 
-    def _publish_capacity(self) -> None:
+    def _publish_capacity(self, *, generation: int | None = None) -> None:
         with self._state_lock:
+            if generation is not None and (self._closed or generation != self._generation):
+                return
             listener = self._capacity_listener
             capacity = len(self._ready_slot_ids)
         if listener is not None:
