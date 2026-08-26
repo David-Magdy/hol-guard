@@ -137,12 +137,16 @@ def _run_rules(args: argparse.Namespace) -> int:
         "rules": rules,
     }
     if args.json:
+        # Public catalog metadata excludes detector patterns and candidate bytes.
+        # codeql[py/clear-text-logging-sensitive-data]
         sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
     else:
         sys.stdout.write(f"HOL Guard Secrets detector {payload['detector_version']}\n")
         for rule in rules:
             validation = str(rule["validation"])
             suffix = f", validates via {validation}" if validation != "none" else ""
+            # These allowlisted fields are public detector descriptions.
+            # codeql[py/clear-text-logging-sensitive-data]
             sys.stdout.write(f"- {rule['family']} ({rule['severity']}{suffix})\n")
     return 0
 
