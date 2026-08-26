@@ -9,7 +9,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .precommit import install_precommit_hook, uninstall_precommit_hook
-from .secret_detection import detector_version, secret_rule_catalog
+from .public_rule_catalog import PUBLIC_SECRET_RULE_CATALOG
+from .secret_detection import detector_version
 from .secret_repository_scanner import (
     DEFAULT_MAX_COMMITS,
     DEFAULT_MAX_FILE_BYTES,
@@ -130,23 +131,19 @@ def _run_scan(args: argparse.Namespace) -> int:
 
 
 def _run_rules(args: argparse.Namespace) -> int:
-    rules = secret_rule_catalog()
+    rules = PUBLIC_SECRET_RULE_CATALOG
     payload = {
         "schema": "guard-secret-rules.v1",
         "detector_version": detector_version(),
         "rules": rules,
     }
     if args.json:
-        # Public catalog metadata excludes detector patterns and candidate bytes.
-        # codeql[py/clear-text-logging-sensitive-data]
         sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
     else:
         sys.stdout.write(f"HOL Guard Secrets detector {payload['detector_version']}\n")
         for rule in rules:
             validation = str(rule["validation"])
             suffix = f", validates via {validation}" if validation != "none" else ""
-            # These allowlisted fields are public detector descriptions.
-            # codeql[py/clear-text-logging-sensitive-data]
             sys.stdout.write(f"- {rule['family']} ({rule['severity']}{suffix})\n")
     return 0
 
