@@ -386,7 +386,11 @@ class HookProcessRunner:
             self._generation += 1
             self._recovery_event.set()
 
-        deadline = time.monotonic() + _HOOK_PROCESS_READY_TIMEOUT_SECONDS + _HOOK_PROCESS_CLOSE_CONTAINMENT_GRACE_SECONDS
+        containment_grace_seconds = min(
+            _HOOK_PROCESS_CLOSE_CONTAINMENT_GRACE_SECONDS,
+            _HOOK_PROCESS_READY_TIMEOUT_SECONDS,
+        )
+        deadline = time.monotonic() + _HOOK_PROCESS_READY_TIMEOUT_SECONDS + containment_grace_seconds
         retired_slot_ids: set[int] = set()
         while True:
             with self._state_lock:
