@@ -537,6 +537,8 @@ class HookProcessRunner:
             _ = self._recovery_event.wait(timeout=0.05)
             with self._state_lock:
                 cancelled = cancelled or self._closed or generation != self._generation
+        with self._state_lock:
+            cancelled = cancelled or self._closed or generation != self._generation
         outcome = outcomes.get_nowait()
         if isinstance(outcome, BaseException):
             if not cancelled:

@@ -6,7 +6,7 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from pathlib import Path
@@ -974,6 +974,51 @@ def test_transient_worker_spawn_failure_replenishes_capacity(
 
     assert attempts == 3
     assert result.payload is not None
+
+
+def test_finished_cancelled_spawn_failure_does_not_increment_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = HookProcessRunner(guard_home=tmp_path, process_limit=1)
+    spawned_threads: list[object] = []
+    real_thread_type = threading.Thread
+
+    class _FinishedThenClosedThread:
+        def __init__(self, *, target: object, name: str, daemon: bool) -> None:
+            del name
+            self._target = cast(Callable[[], None], target)
+            self.daemon = daemon
+            self._closed_runner = False
+            self._thread: threading.Thread | None = None
+            spawned_threads.append(self)
+
+        def start(self) -> None:
+            self._thread = real_thread_type(target=self._target)
+            self._thread.start()
+
+        def is_alive(self) -> bool:
+            assert self._thread is not None
+            alive = self._thread.is_alive()
+            if not alive and not self._closed_runner:
+                self._closed_runner = True
+                assert runner.close_contained()
+            return alive
+
+    def failed_start(*, generation: int) -> HookWorkerSlot:
+        del generation
+        raise OSError("injected worker spawn failure")
+
+    with runner._state_lock:  # pyright: ignore[reportPrivateUsage]
+        runner._closed = False  # pyright: ignore[reportPrivateUsage]
+        runner._started = True  # pyright: ignore[reportPrivateUsage]
+        runner._generation = 1  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(runner, "_start_slot", failed_start)
+    monkeypatch.setattr(hook_runner_module.threading, "Thread", _FinishedThenClosedThread)
+    monkeypatch.setattr(hook_runner_module.threading, "current_thread", lambda: spawned_threads[0])
+
+    assert runner._start_slot_interruptibly(1) is None  # pyright: ignore[reportPrivateUsage]
+    assert runner.stats()["failures"] == 0
 
 
 def test_persistent_spawn_failure_uses_one_bounded_backoff_supervisor(
