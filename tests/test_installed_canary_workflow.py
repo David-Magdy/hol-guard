@@ -85,6 +85,15 @@ def test_same_repo_post_publish_matrix_covers_all_supported_operating_systems() 
     assert _mapping(bun["with"])["bun-version"] == "1.3.14"
 
 
+def test_dynamic_native_wheel_checkout_cannot_write_dependency_cache() -> None:
+    steps = _steps(_job("build-native-guard-wheels"))
+    checkout = _action_step(steps, "actions/checkout")
+    setup_uv = _action_step(steps, "astral-sh/setup-uv")
+
+    assert _mapping(checkout["with"])["ref"] == "${{ needs.build.outputs.source_sha }}"
+    assert _mapping(setup_uv["with"])["enable-cache"] is False
+
+
 def test_matrix_proves_remote_bytes_install_origin_record_corpus_and_dashboard() -> None:
     steps = _steps(_job("pr-installed-canary"))
     names = [step.get("name") for step in steps]
