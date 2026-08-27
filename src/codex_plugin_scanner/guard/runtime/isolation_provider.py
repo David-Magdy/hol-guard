@@ -175,17 +175,19 @@ class ProviderRegistry:
 
         # Normalize so a `..` or `.` traversal cannot escape the provider root
         # while still lexically starting with it.
-        root = str(Path(self._provider_root).expanduser().resolve(strict=False))
+        root_path = Path(self._provider_root).expanduser().resolve(strict=False)
         configured = Path(configured_path).expanduser()
-        normalized = str(configured.resolve(strict=False))
-        if normalized != root and not normalized.startswith(root + "/"):
-            raise ValueError("provider path is outside the Guard-owned provider root")
-        if _path_has_symlink_below_root(configured, Path(root)):
+        normalized_path = configured.resolve(strict=False)
+        try:
+            _ = normalized_path.relative_to(root_path)
+        except ValueError as error:
+            raise ValueError("provider path is outside the Guard-owned provider root") from error
+        if _path_has_symlink_below_root(configured, root_path):
             raise ValueError("provider artifact path must not contain symlinks")
         identity = provider.identity()
         if identity != trust_anchor:
             raise ValueError("provider identity does not match the configured trust anchor")
-        actual_digest = self._artifact_digest_resolver(Path(normalized))
+        actual_digest = self._artifact_digest_resolver(normalized_path)
         if not hmac.compare_digest(actual_digest, trust_anchor.binary_or_image_digest):
             raise ValueError("provider artifact digest does not match the configured trust anchor")
         key = identity.thumbprint()
