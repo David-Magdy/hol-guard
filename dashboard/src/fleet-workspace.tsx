@@ -30,6 +30,7 @@ import {
 } from "./fleet-protection-recovery";
 import type {
   GuardInventoryItem,
+  GuardHarnessSetupItem,
   GuardPolicyDecision,
   GuardProtectionAppHealth,
   GuardProtectionHealth,
@@ -46,6 +47,11 @@ type FleetWorkspaceProps = {
     | { kind: "loading" }
     | { kind: "error"; message: string }
     | { kind: "ready"; items: GuardInventoryItem[] };
+  harnessSetup:
+    | { kind: "idle" }
+    | { kind: "loading" }
+    | { kind: "error"; message: string }
+    | { kind: "ready"; items: GuardHarnessSetupItem[] };
   onConnectHarness?: (harness: string) => void;
   onTestHarness?: (harness: string) => void;
   onRepairHarness?: (harness: string) => void;
@@ -153,6 +159,22 @@ function collectHarnesses(snapshot: GuardRuntimeSnapshot): string[] {
   return Array.from(harnesses).sort((a, b) => a.localeCompare(b));
 }
 
+export function visibleHarnessesFor(input: {
+  managed: string[];
+  observed: string[];
+  inventory: string[];
+  detected: string[];
+  policies: string[];
+}): string[] {
+  return Array.from(new Set([
+    ...input.managed,
+    ...input.observed,
+    ...input.inventory,
+    ...input.detected,
+    ...input.policies,
+  ].filter(isConnectableAppHarness))).sort((a, b) => a.localeCompare(b));
+}
+
 function renderReceiptContext(receipt: GuardReceipt): string {
   return `${harnessDisplayName(receipt.harness)} · ${receipt.policy_decision.replace(/-/g, " ")}`;
 }
@@ -176,11 +198,12 @@ export function repairHarnessesFor(
   ));
 }
 
-function resolveAppStatus(
+export function resolveAppStatus(
   install: { active?: boolean } | undefined,
   protectionHealth: GuardProtectionAppHealth,
   hasInventory: boolean,
-  hasReceipts: boolean
+  hasReceipts: boolean,
+  detected: boolean,
 ): AppStatus {
   if (install !== undefined) {
     const hookCheck = protectionHealth.checks.find((check) => check.check_id === "harness_hooks");
@@ -190,7 +213,7 @@ function resolveAppStatus(
     // Degraded with active hooks is not "partially protected" — treat as repair path.
     return "needs_repair";
   }
-  if (!hasInventory && !hasReceipts) return "not_found";
+  if (!hasInventory && !hasReceipts && !detected) return "not_found";
   return "found_unprotected";
 }
 
@@ -280,14 +303,23 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
   const managedInstalls = (props.runtime.managed_installs ?? []).filter((i) => isConnectableAppHarness(i.harness));
   const activeInstalls = managedInstalls.filter((i) => i.active);
   const inventory = props.inventory.kind === "ready" ? props.inventory.items.filter((i) => isConnectableAppHarness(i.harness)) : [];
-  const visibleHarnesses = Array.from(
-    new Set([
-      ...managedInstalls.map((i) => i.harness),
-      ...harnesses,
-      ...inventory.map((i) => i.harness),
-      ...props.policies.map((p) => p.harness),
-    ].filter(isConnectableAppHarness))
-  ).sort((a, b) => a.localeCompare(b));
+  const detectedHarnesses = props.harnessSetup.kind === "ready"
+    ? props.harnessSetup.items.filter((item) => item.status !== "not_found" && isConnectableAppHarness(item.harness))
+    : [];
+  const visibleHarnesses = visibleHarnessesFor({
+    managed: managedInstalls.map((item) => item.harness),
+    observed: harnesses,
+    inventory: inventory.map((item) => item.harness),
+    detected: detectedHarnesses.map((item) => item.harness),
+    policies: props.policies.map((item) => item.harness),
+  });
+  const watchedHarnesses = visibleHarnessesFor({
+    managed: managedInstalls.map((item) => item.harness),
+    observed: harnesses,
+    inventory: inventory.map((item) => item.harness),
+    detected: detectedHarnesses.map((item) => item.harness),
+    policies: [],
+  });
   const runtimeState = props.runtime.runtime_state;
   const protectionHealth = protectionHealthFor(props.runtime);
   const protectionState = useProtectionPresentationState(protectionHealth);
@@ -332,7 +364,7 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
         items={[
           { label: "Needs review", value: formatCount(props.runtime.pending_count), tone: props.runtime.pending_count > 0 ? "blue" : "slate" },
           { label: "History", value: formatCount(props.runtime.receipt_count), tone: "purple" },
-          { label: "Watched apps", value: formatCount(activeInstalls.length > 0 ? activeInstalls.length : visibleHarnesses.length), tone: protectionHealth.state === "protected" ? "green" : "slate" },
+          { label: "Watched apps", value: formatCount(watchedHarnesses.length), tone: protectionHealth.state === "protected" ? "green" : "slate" },
           { label: "Runtime", value: runtimeState ? "active" : "offline", tone: runtimeState ? "green" : "slate" },
         ]}
       />
@@ -367,8 +399,9 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
                 const harnessInventory = inventory.filter((i) => i.harness === harness && i.present);
                 const harnessPolicies = props.policies.filter((p) => p.harness === harness);
                 const hasReceipts = receiptHarnesses.has(harness);
+                const detected = detectedHarnesses.some((item) => item.harness === harness);
                 const appProtection = protectionHealthFor(props.runtime, harness);
-                const status = resolveAppStatus(install, appProtection, harnessInventory.length > 0, hasReceipts);
+                const status = resolveAppStatus(install, appProtection, harnessInventory.length > 0, hasReceipts, detected);
                 return (
                   <AppRow
                     key={harness}
@@ -391,6 +424,9 @@ export function FleetWorkspace(props: FleetWorkspaceProps) {
 
           {props.inventory.kind === "error" ? (
             <p className="mt-3 text-xs text-slate-500">{props.inventory.message}</p>
+          ) : null}
+          {props.harnessSetup.kind === "error" ? (
+            <p className="mt-3 text-xs text-slate-500">{props.harnessSetup.message}</p>
           ) : null}
         </section>
 

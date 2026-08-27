@@ -17303,6 +17303,13 @@ async function fetchInventory() {
   const payload = await readJson("/v1/inventory");
   return normalizeInventory(payload.items);
 }
+async function fetchHarnessSetupItems() {
+  if (isGuardDemoMode()) {
+    return [];
+  }
+  const payload = await readJson("/v1/harnesses");
+  return payload.items;
+}
 async function fetchSettings() {
   if (isGuardDemoMode()) {
     return {
@@ -30950,6 +30957,7 @@ function App() {
   const [runtime, setRuntime] = reactExports.useState({ kind: "loading" });
   const [policies, setPolicies] = reactExports.useState({ kind: "loading" });
   const [inventory, setInventory] = reactExports.useState({ kind: "idle" });
+  const [harnessSetup, setHarnessSetup] = reactExports.useState({ kind: "idle" });
   const [resolutionMessage, setResolutionMessage] = reactExports.useState(null);
   const [codexResume, setCodexResume] = reactExports.useState(null);
   const [resolvedRequestId, setResolvedRequestId] = reactExports.useState(null);
@@ -31157,15 +31165,23 @@ function App() {
     }
     let cancelled = false;
     setInventory({ kind: "loading" });
-    fetchInventory().then((items) => {
-      if (!cancelled) {
-        setInventory({ kind: "ready", items });
-      }
-    }).catch((error) => {
-      if (!cancelled) {
+    setHarnessSetup({ kind: "loading" });
+    void Promise.allSettled([fetchInventory(), fetchHarnessSetupItems()]).then(([inventoryResult, harnessResult]) => {
+      if (cancelled) return;
+      if (inventoryResult.status === "fulfilled") {
+        setInventory({ kind: "ready", items: inventoryResult.value });
+      } else {
         setInventory({
           kind: "error",
-          message: error instanceof Error ? error.message : "Unable to load watched app inventory."
+          message: inventoryResult.reason instanceof Error ? inventoryResult.reason.message : "Unable to load watched app inventory."
+        });
+      }
+      if (harnessResult.status === "fulfilled") {
+        setHarnessSetup({ kind: "ready", items: harnessResult.value });
+      } else {
+        setHarnessSetup({
+          kind: "error",
+          message: harnessResult.reason instanceof Error ? harnessResult.reason.message : "Unable to detect local AI apps."
         });
       }
     });
@@ -31195,11 +31211,12 @@ function App() {
     }
   }, []);
   const refreshStateAfterAction = reactExports.useCallback(async () => {
-    const [inboxResult, receiptsResult, policiesResult, inventoryResult] = await Promise.allSettled([
+    const [inboxResult, receiptsResult, policiesResult, inventoryResult, harnessResult] = await Promise.allSettled([
       fetchInboxState(),
       fetchReceipts(),
       fetchPolicies(),
-      fetchInventory()
+      fetchInventory(),
+      fetchHarnessSetupItems()
     ]);
     if (inboxResult.status === "fulfilled") {
       setRuntime({ kind: "ready", snapshot: inboxResult.value.snapshot });
@@ -31231,6 +31248,14 @@ function App() {
       setInventory({
         kind: "error",
         message: inventoryResult.reason instanceof Error ? inventoryResult.reason.message : "Unable to load watched app inventory."
+      });
+    }
+    if (harnessResult.status === "fulfilled") {
+      setHarnessSetup({ kind: "ready", items: harnessResult.value });
+    } else {
+      setHarnessSetup({
+        kind: "error",
+        message: harnessResult.reason instanceof Error ? harnessResult.reason.message : "Unable to detect local AI apps."
       });
     }
     return inboxResult.status === "fulfilled" ? inboxResult.value.snapshot : null;
@@ -31592,6 +31617,7 @@ function App() {
             runtime: runtime.snapshot,
             policies: policies.kind === "ready" ? policies.items : [],
             inventory,
+            harnessSetup,
             onConnectHarness: handleConnectHarness,
             onTestHarness: handleTestHarness,
             onRepairHarness: handleRepairHarness,

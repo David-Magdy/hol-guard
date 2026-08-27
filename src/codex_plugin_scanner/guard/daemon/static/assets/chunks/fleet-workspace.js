@@ -519,6 +519,15 @@ function collectHarnesses(snapshot) {
   }
   return Array.from(harnesses).sort((a, b) => a.localeCompare(b));
 }
+function visibleHarnessesFor(input) {
+  return Array.from(new Set([
+    ...input.managed,
+    ...input.observed,
+    ...input.inventory,
+    ...input.detected,
+    ...input.policies
+  ].filter(isConnectableAppHarness))).sort((a, b) => a.localeCompare(b));
+}
 function renderReceiptContext(receipt) {
   return `${harnessDisplayName(receipt.harness)} · ${receipt.policy_decision.replace(/-/g, " ")}`;
 }
@@ -532,7 +541,7 @@ function repairHarnessesFor(installs, health) {
     )?.checks.some((check) => check.check_id === "harness_hooks" && check.status === "fail") === true).map((install) => install.harness)
   ));
 }
-function resolveAppStatus(install, protectionHealth, hasInventory, hasReceipts) {
+function resolveAppStatus(install, protectionHealth, hasInventory, hasReceipts, detected) {
   if (install !== void 0) {
     const hookCheck = protectionHealth.checks.find((check) => check.check_id === "harness_hooks");
     if (!install.active || hookCheck?.status === "fail") return "needs_repair";
@@ -540,7 +549,7 @@ function resolveAppStatus(install, protectionHealth, hasInventory, hasReceipts) 
     if (protectionHealth.state === "partial") return "partial";
     return "needs_repair";
   }
-  if (!hasInventory && !hasReceipts) return "not_found";
+  if (!hasInventory && !hasReceipts && !detected) return "not_found";
   return "found_unprotected";
 }
 function toInstallStatus(status) {
@@ -617,14 +626,21 @@ function FleetWorkspace(props) {
   const managedInstalls = (props.runtime.managed_installs ?? []).filter((i) => isConnectableAppHarness(i.harness));
   const activeInstalls = managedInstalls.filter((i) => i.active);
   const inventory = props.inventory.kind === "ready" ? props.inventory.items.filter((i) => isConnectableAppHarness(i.harness)) : [];
-  const visibleHarnesses = Array.from(
-    new Set([
-      ...managedInstalls.map((i) => i.harness),
-      ...harnesses,
-      ...inventory.map((i) => i.harness),
-      ...props.policies.map((p) => p.harness)
-    ].filter(isConnectableAppHarness))
-  ).sort((a, b) => a.localeCompare(b));
+  const detectedHarnesses = props.harnessSetup.kind === "ready" ? props.harnessSetup.items.filter((item) => item.status !== "not_found" && isConnectableAppHarness(item.harness)) : [];
+  const visibleHarnesses = visibleHarnessesFor({
+    managed: managedInstalls.map((item) => item.harness),
+    observed: harnesses,
+    inventory: inventory.map((item) => item.harness),
+    detected: detectedHarnesses.map((item) => item.harness),
+    policies: props.policies.map((item) => item.harness)
+  });
+  const watchedHarnesses = visibleHarnessesFor({
+    managed: managedInstalls.map((item) => item.harness),
+    observed: harnesses,
+    inventory: inventory.map((item) => item.harness),
+    detected: detectedHarnesses.map((item) => item.harness),
+    policies: []
+  });
   const runtimeState = props.runtime.runtime_state;
   const protectionHealth = protectionHealthFor(props.runtime);
   const protectionState = useProtectionPresentationState(protectionHealth);
@@ -660,7 +676,7 @@ function FleetWorkspace(props) {
         items: [
           { label: "Needs review", value: formatCount(props.runtime.pending_count), tone: props.runtime.pending_count > 0 ? "blue" : "slate" },
           { label: "History", value: formatCount(props.runtime.receipt_count), tone: "purple" },
-          { label: "Watched apps", value: formatCount(activeInstalls.length > 0 ? activeInstalls.length : visibleHarnesses.length), tone: protectionHealth.state === "protected" ? "green" : "slate" },
+          { label: "Watched apps", value: formatCount(watchedHarnesses.length), tone: protectionHealth.state === "protected" ? "green" : "slate" },
           { label: "Runtime", value: runtimeState ? "active" : "offline", tone: runtimeState ? "green" : "slate" }
         ]
       }
@@ -692,8 +708,9 @@ function FleetWorkspace(props) {
           const harnessInventory = inventory.filter((i) => i.harness === harness && i.present);
           const harnessPolicies = props.policies.filter((p) => p.harness === harness);
           const hasReceipts = receiptHarnesses.has(harness);
+          const detected = detectedHarnesses.some((item) => item.harness === harness);
           const appProtection = protectionHealthFor(props.runtime, harness);
-          const status = resolveAppStatus(install, appProtection, harnessInventory.length > 0, hasReceipts);
+          const status = resolveAppStatus(install, appProtection, harnessInventory.length > 0, hasReceipts, detected);
           return /* @__PURE__ */ jsxRuntimeExports.jsx(
             AppRow,
             {
@@ -713,7 +730,8 @@ function FleetWorkspace(props) {
             tone: "teach"
           }
         ),
-        props.inventory.kind === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-slate-500", children: props.inventory.message }) : null
+        props.inventory.kind === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-slate-500", children: props.inventory.message }) : null,
+        props.harnessSetup.kind === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-slate-500", children: props.harnessSetup.message }) : null
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-4", children: [
@@ -816,5 +834,7 @@ function SetupStep(props) {
 export {
   FleetWorkspace,
   repairHarnessesFor,
-  resolveFleetHeroCopy
+  resolveAppStatus,
+  resolveFleetHeroCopy,
+  visibleHarnessesFor
 };
