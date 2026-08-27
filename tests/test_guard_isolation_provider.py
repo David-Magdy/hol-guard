@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -135,6 +136,16 @@ class TestProviderRegistry:
     def test_registers_guard_owned_path(self) -> None:
         registry = _registry()
         identity = _register(registry, _FakeProvider(), "/usr/libexec/hol-guard/providers/seatbelt")
+        assert identity.provider_kind == "local-seatbelt"
+
+    @pytest.mark.skipif(os.name != "nt", reason="requires native Windows path semantics")
+    def test_registers_guard_owned_windows_path(self) -> None:
+        provider_root = r"C:\ProgramData\HOL Guard\providers"
+        registry = ProviderRegistry(
+            provider_root=provider_root,
+            artifact_digest_resolver=lambda _path: _SHA,
+        )
+        identity = _register(registry, _FakeProvider(), provider_root + r"\oci-isolation.py")
         assert identity.provider_kind == "local-seatbelt"
 
     def test_rejects_workspace_path(self) -> None:
