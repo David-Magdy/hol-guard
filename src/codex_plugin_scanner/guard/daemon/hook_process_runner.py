@@ -414,7 +414,7 @@ class HookProcessRunner(HookProcessRunnerLifecycleMixin):
                 attempted_slot_ids.add(slot_id)
                 if not slot.isolation_ready and not slot.pre_isolation_contained:
                     remaining = max(0.0, deadline - time.monotonic())
-                    _ = hook_worker_became_isolated(slot, remaining)
+                    _ = hook_worker_became_isolated(slot, min(_HOOK_PROCESS_READY_TIMEOUT_SECONDS, remaining))
                 _ = self._retire_slot(slot, graceful=True)
 
             remaining = deadline - time.monotonic()
