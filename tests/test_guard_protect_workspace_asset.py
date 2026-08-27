@@ -5,16 +5,24 @@ from __future__ import annotations
 from pathlib import Path
 
 _ASSET = Path(__file__).parents[1] / "src/codex_plugin_scanner/guard/daemon/static/assets/chunks/fleet-workspace.js"
+_DETECTION_ASSET = (
+    Path(__file__).parents[1]
+    / "src/codex_plugin_scanner/guard/daemon/static/assets/chunks/harness-detection.js"
+)
 _AUTHORITATIVE_SOURCE = Path(__file__).parents[1] / "dashboard/src/fleet-workspace.tsx"
+_DETECTION_SOURCE = Path(__file__).parents[1] / "dashboard/src/harness-detection.ts"
 _RECOVERY_SOURCE = Path(__file__).parents[1] / "dashboard/src/fleet-protection-recovery.tsx"
 
 
 def _source() -> str:
-    return _ASSET.read_text(encoding="utf-8")
+    return "\n".join(path.read_text(encoding="utf-8") for path in (_ASSET, _DETECTION_ASSET))
 
 
 def _authoritative_source() -> str:
-    return "\n".join(path.read_text(encoding="utf-8") for path in (_AUTHORITATIVE_SOURCE, _RECOVERY_SOURCE))
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (_AUTHORITATIVE_SOURCE, _DETECTION_SOURCE, _RECOVERY_SOURCE)
+    )
 
 
 def test_repair_message_does_not_blame_apps_for_shared_evidence_failure() -> None:
@@ -59,4 +67,4 @@ def test_protect_metrics_use_locale_grouping() -> None:
 
     assert "formatCount(props.runtime.pending_count)" in source
     assert "formatCount(props.runtime.receipt_count)" in source
-    assert "formatCount(activeInstalls.length" in source
+    assert "formatCount(watchedHarnesses.length)" in source
