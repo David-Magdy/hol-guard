@@ -407,6 +407,11 @@ jobs:
             (github.event_name == 'push' && github.ref == 'refs/heads/release/3.0') ||
             (github.event_name == 'workflow_dispatch' && github.event.inputs.release_train == '3.0')
           )
+        ) ||
+        (
+          needs.build.outputs.channel == 'stable' &&
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main'
         )
       )
     needs: build
@@ -1082,8 +1087,9 @@ jobs:
       github.run_attempt == 1 &&
       github.ref == 'refs/heads/main' &&
       needs.build.result == 'success' &&
+      needs.assemble-native-guard-distributions.result == 'success' &&
       needs.build.outputs.channel == 'stable'
-    needs: build
+    needs: [build, assemble-native-guard-distributions]
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -1099,13 +1105,13 @@ jobs:
           version: "0.9.26"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distributions
+          name: distributions-native
           path: dist/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distribution-sha256
+          name: distribution-sha256-native
       - name: Verify immutable build artifact
-        run: sha256sum --check distribution-sha256.txt
+        run: sha256sum --check distribution-sha256-native.txt
       - name: Keep only the Guard release distribution
         run: rm -f dist/plugin_scanner-* dist/plugin-scanner-*
       - name: Revalidate main source before TestPyPI
@@ -1159,8 +1165,11 @@ jobs:
             fi
             sleep 5
           done
-          wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$result")
-          [[ -n "$wheel" ]]
+          mapfile -t wheels < <(
+            jq -r '.install_paths[] | select(endswith("-py3-none-any.whl"))' <<< "$result"
+          )
+          [[ "${#wheels[@]}" == "1" ]]
+          wheel="${wheels[0]}"
           [[ "$(uv tool run --from "$wheel" hol-guard --version)" == "hol-guard $VERSION" ]]
 
   publish-main-pypi:
@@ -1172,8 +1181,9 @@ jobs:
       github.run_attempt == 1 &&
       github.ref == 'refs/heads/main' &&
       needs.build.result == 'success' &&
+      needs.assemble-native-guard-distributions.result == 'success' &&
       needs.build.outputs.channel == 'stable'
-    needs: build
+    needs: [build, assemble-native-guard-distributions]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -1189,19 +1199,19 @@ jobs:
           version: "0.9.26"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distributions
+          name: distributions-native
           path: dist/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distribution-sha256
+          name: distribution-sha256-native
       - name: Verify immutable build artifact
-        run: sha256sum --check distribution-sha256.txt
+        run: sha256sum --check distribution-sha256-native.txt
       - name: Prepare project-specific distributions
         run: |
           shopt -s nullglob
           guard_files=(dist/hol_guard-* dist/hol-guard-*)
           scanner_files=(dist/plugin_scanner-* dist/plugin-scanner-*)
-          [[ "${#guard_files[@]}" == "2" && "${#scanner_files[@]}" == "2" ]]
+          [[ "${#guard_files[@]}" -ge "2" && "${#scanner_files[@]}" == "2" ]]
           mkdir dist-hol-guard dist-plugin-scanner
           cp "${guard_files[@]}" dist-hol-guard/
           cp "${scanner_files[@]}" dist-plugin-scanner/
@@ -1297,9 +1307,15 @@ jobs:
             fi
             sleep 5
           done
-          guard_wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$guard_result")
-          scanner_wheel=$(jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$scanner_result")
-          [[ -n "$guard_wheel" && -n "$scanner_wheel" ]]
+          mapfile -t guard_wheels < <(
+            jq -r '.install_paths[] | select(endswith("-py3-none-any.whl"))' <<< "$guard_result"
+          )
+          mapfile -t scanner_wheels < <(
+            jq -r '.install_paths[] | select(endswith(".whl"))' <<< "$scanner_result"
+          )
+          [[ "${#guard_wheels[@]}" == "1" && "${#scanner_wheels[@]}" == "1" ]]
+          guard_wheel="${guard_wheels[0]}"
+          scanner_wheel="${scanner_wheels[0]}"
           [[ "$(uv tool run --from "$guard_wheel" hol-guard --version)" == "hol-guard $VERSION" ]]
           [[ "$(uv tool run --from "$scanner_wheel" plugin-scanner --version)" == "plugin-scanner $VERSION" ]]
 
@@ -1312,9 +1328,10 @@ jobs:
       github.run_attempt == 1 &&
       github.ref == 'refs/heads/main' &&
       needs.build.result == 'success' &&
+      needs.assemble-native-guard-distributions.result == 'success' &&
       needs.publish-main-pypi.result == 'success' &&
       needs.build.outputs.channel == 'stable'
-    needs: [build, publish-main-pypi]
+    needs: [build, assemble-native-guard-distributions, publish-main-pypi]
     runs-on: ubuntu-latest
     permissions:
       attestations: write
@@ -1327,11 +1344,11 @@ jobs:
           ref: ${{ needs.build.outputs.source_sha }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distributions
+          name: distributions-native
           path: dist/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: distribution-sha256
+          name: distribution-sha256-native
       - name: Download release toolchain SBOM
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -1339,7 +1356,7 @@ jobs:
           path: dist/
       - name: Verify and select release assets
         run: |
-          sha256sum --check distribution-sha256.txt
+          sha256sum --check distribution-sha256-native.txt
           rm -f dist/plugin_scanner-* dist/plugin-scanner-*
       - name: Attest main release assets
         id: provenance

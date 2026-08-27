@@ -68,10 +68,14 @@ def test_release_branch_pushes_publish_alpha_while_main_pushes_publish_stable() 
         assert "github.run_attempt == 1" in condition
         assert "github.ref == 'refs/heads/main'" in condition
         assert "needs.build.outputs.channel == 'stable'" in condition
-    assert jobs["publish-main-pypi"]["needs"] == "build"
+    assert jobs["publish-main-pypi"]["needs"] == ["build", "assemble-native-guard-distributions"]
     assert "needs.publish-main-testpypi.result == 'success'" not in jobs["publish-main-pypi"]["if"]
     assert "vars.MAIN_TESTPYPI_ENABLED == 'true'" in jobs["publish-main-testpypi"]["if"]
-    assert jobs["release-main"]["needs"] == ["build", "publish-main-pypi"]
+    assert jobs["release-main"]["needs"] == [
+        "build",
+        "assemble-native-guard-distributions",
+        "publish-main-pypi",
+    ]
 
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "startsWith(github.ref, 'refs/tags/')" not in workflow_text
@@ -232,7 +236,8 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     )
     for job_name in ("publish-main-testpypi",):
         steps = jobs[job_name]["steps"]
-        assert any(step.get("run") == "sha256sum --check distribution-sha256.txt" for step in steps)
+        assert any(step.get("run") == "sha256sum --check distribution-sha256-native.txt" for step in steps)
+        assert any(step.get("with", {}).get("name") == "distributions-native" for step in steps)
         assert any(
             step.get("name") == "Keep only the Guard release distribution" and "plugin_scanner" in step.get("run", "")
             for step in steps
@@ -240,7 +245,7 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
 
     public_hashes = {
         "publish-alpha-pypi": "sha256sum --check distribution-sha256-native.txt",
-        "publish-main-pypi": "sha256sum --check distribution-sha256.txt",
+        "publish-main-pypi": "sha256sum --check distribution-sha256-native.txt",
     }
     for job_name in ("publish-alpha-pypi", "publish-main-pypi"):
         steps = jobs[job_name]["steps"]
@@ -256,6 +261,24 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
         if step.get("name") == "Prepare project-specific distributions"
     )
     assert '"${#guard_files[@]}" -ge "2"' in alpha_prepare["run"]
+    stable_prepare = next(
+        step
+        for step in jobs["publish-main-pypi"]["steps"]
+        if step.get("name") == "Prepare project-specific distributions"
+    )
+    assert '"${#guard_files[@]}" -ge "2"' in stable_prepare["run"]
+
+    stable_native = jobs["build-native-guard-wheels"]["if"]
+    assert "needs.build.outputs.channel == 'stable'" in stable_native
+    assert "github.ref == 'refs/heads/main'" in stable_native
+    for job_name in ("publish-main-testpypi", "publish-main-pypi", "release-main"):
+        job = jobs[job_name]
+        assert "assemble-native-guard-distributions" in job["needs"]
+        assert "needs.assemble-native-guard-distributions.result == 'success'" in job["if"]
+        assert any(
+            step.get("with", {}).get("name") == "distributions-native"
+            for step in job["steps"]
+        )
 
     workflow_text = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
     assert "skip-existing" not in workflow_text and "pytest" not in workflow_text
@@ -348,6 +371,8 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
         < main_test_steps.index(main_test_verify)
     )
     assert "--download-dir verified-testpypi" in main_test_verify["run"]
+    assert 'select(endswith("-py3-none-any.whl"))' in main_test_verify["run"]
+    assert '"${#wheels[@]}" == "1"' in main_test_verify["run"]
 
     main_revalidation = next(
         step["run"] for step in jobs["publish-main-pypi"]["steps"] if step.get("name") == "Revalidate main publication"
@@ -420,6 +445,9 @@ def test_registry_state_is_revalidated_at_each_publication_boundary() -> None:
         assert 'attempt" == "60"' in verify_step["run"]
         assert '== "hol-guard $VERSION"' in verify_step["run"]
         assert '== "plugin-scanner $VERSION"' in verify_step["run"]
+        assert 'select(endswith("-py3-none-any.whl"))' in verify_step["run"]
+        assert '"${#guard_wheels[@]}" == "1"' in verify_step["run"]
+        assert '"${#scanner_wheels[@]}" == "1"' in verify_step["run"]
 
     alpha_steps = jobs["publish-alpha-pypi"]["steps"]
     alpha_inspect = next(step for step in alpha_steps if step.get("name") == "Inspect PyPI release state")
