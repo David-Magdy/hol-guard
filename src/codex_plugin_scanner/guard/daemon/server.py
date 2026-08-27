@@ -371,6 +371,7 @@ _RUNTIME_HOOK_ADMISSION_TIMEOUT_SECONDS = 3.0
 _RUNTIME_HOOK_PROCESS_TIMEOUT_SECONDS = 1.45
 _RUNTIME_POST_HOOK_PROCESS_TIMEOUT_SECONDS = 2.75
 _DAEMON_REQUEST_READ_TIMEOUT_SECONDS = 0.4
+_DAEMON_SERVE_THREAD_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_CONNECTION_ADMISSION_WAIT_SECONDS = 0.05
 _DAEMON_CONTROL_ADMISSION_WAIT_SECONDS = 1.0
 _DAEMON_UNCLASSIFIED_WATCHDOG_POLL_SECONDS = 0.025
@@ -7967,6 +7968,7 @@ class GuardDaemonServer:
         self._extension_control_refresh_interval_seconds = extension_control_refresh_interval_seconds
         self._cloud_review_sync_worker: CloudReviewSyncWorker | None = None
         self._thread: threading.Thread | None = None
+        self._serve_loop_started = threading.Event()
         self._watchdog_thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -7980,9 +7982,12 @@ class GuardDaemonServer:
         self._begin_service()
         serve_thread_started = False
         try:
+            self._serve_loop_started.clear()
             self._thread = threading.Thread(target=self._serve_forever, daemon=True)
             self._thread.start()
             serve_thread_started = True
+            if not self._serve_loop_started.wait(timeout=_DAEMON_SERVE_THREAD_START_TIMEOUT_SECONDS):
+                raise RuntimeError("Guard daemon serve thread did not become ready")
             self._server.hook_process_runner.enable_full_capacity()
         except BaseException as error:
             self._diagnostics.record_exception("daemon_start_thread_failed")
@@ -8208,6 +8213,7 @@ class GuardDaemonServer:
     def _serve_forever(self) -> None:
         stop_reason = "serve_loop_returned"
         try:
+            self._serve_loop_started.set()
             self._server.serve_forever()
             if self._shutdown_started.is_set():
                 stop_reason = "requested_shutdown"
