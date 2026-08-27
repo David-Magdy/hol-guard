@@ -4249,7 +4249,7 @@ class TestGuardDaemonFastHookPath:
     These tests exercise the full daemon HTTP path with
     HOL_GUARD_HOOK_FAST_PATH=1 enabled, proving that:
     - PostToolUse with guard_source_ref uses the resident worker
-    - PreToolUse falls through to legacy CLI (not the worker)
+    - Non-command PreToolUse and unavailable native command PreToolUse fall through to CLI
     - PostToolUse inline output uses the resident scanner
     - Worker exceptions return fail-safe deny/block
     """
@@ -4320,11 +4320,7 @@ class TestGuardDaemonFastHookPath:
         assert result["notice"] == "none"
 
     def test_fast_path_pre_tool_use_falls_back_to_legacy(self, tmp_path, monkeypatch) -> None:
-        """PreToolUse must NOT be handled by the fast worker.
-
-        It must fall through to the legacy CLI path so existing
-        policy/permission/approval checks run.
-        """
+        """Command PreToolUse without a native runtime still reaches the CLI path."""
         home_dir = tmp_path / "home"
         workspace_dir = tmp_path / "workspace"
         workspace_dir.mkdir(parents=True, exist_ok=True)

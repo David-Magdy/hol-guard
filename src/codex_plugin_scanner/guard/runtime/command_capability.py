@@ -241,9 +241,7 @@ def _verified_capability(store: GuardStore, *, now: str | None = None) -> dict[s
         | set(LOCAL_CONFIRMATION_COMMAND_OPERATIONS)
         | set(STATE_CHANGING_COMMAND_OPERATIONS)
     )
-    # Verify the original signed payload before projecting it onto the current
-    # operation set. This lets upgrades drop retired grants without preserving
-    # their names or authorizing any operation the current runtime cannot model.
+    # Project signed grants onto the current runtime operation set.
     active_operations = set(validated_operations) & classified_operations
     return {
         **capability,
@@ -252,8 +250,6 @@ def _verified_capability(store: GuardStore, *, now: str | None = None) -> dict[s
 
 
 def command_capability_status(store: GuardStore, *, now: str | None = None) -> dict[str, object]:
-    """Return safe capability state for CLI, daemon, and dashboard surfaces."""
-
     pending_status = [
         {key: item[key] for key in ("id", "operation", "issuer", "expiresAt", "approveCommand") if key in item}
         for item in pending_command_approvals(store, now=now)
@@ -591,6 +587,7 @@ def audit_command_decision(
 
 
 def _audit(store: GuardStore, event_name: str, payload: dict[str, object], now: str) -> None:
+    """Best-effort local audit; never raises."""
     try:
         store.add_event(event_name, payload, now)
     except Exception:
