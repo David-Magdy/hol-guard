@@ -46,7 +46,6 @@ import type {
   GuardHarnessAction,
   GuardHarnessActionErrorPayload,
   GuardHarnessActionResult,
-  GuardHarnessSetupItem,
   GuardManagedInstall,
   GuardNotificationSetupResult,
   GuardPolicyDecision,
@@ -2132,14 +2131,6 @@ export async function fetchInventory(): Promise<GuardInventoryItem[]> {
   return normalizeInventory(payload.items);
 }
 
-export async function fetchHarnessSetupItems(): Promise<GuardHarnessSetupItem[]> {
-  if (isGuardDemoMode()) {
-    return [];
-  }
-  const payload = await readJson<{ items: GuardHarnessSetupItem[] }>("/v1/harnesses");
-  return payload.items;
-}
-
 export async function fetchSettings(): Promise<GuardSettingsPayload> {
   if (isGuardDemoMode()) {
     return {
@@ -2887,7 +2878,7 @@ export async function fetchDiff(
   return (await response.json()) as GuardArtifactDiff;
 }
 
-function fetchGuardApi(input: RequestInfo, init?: RequestInit): Promise<Response> {
+export function fetchGuardApi(input: RequestInfo, init?: RequestInit): Promise<Response> {
   return fetchWithGuardAuth(input, init);
 }
 

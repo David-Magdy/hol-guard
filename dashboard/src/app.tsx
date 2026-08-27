@@ -4,7 +4,6 @@ import {
   clearPolicy,
   fetchDiff,
   fetchInventory,
-  fetchHarnessSetupItems,
   fetchLatestReceipt,
   fetchPolicies,
   fetchPolicy,
@@ -72,7 +71,6 @@ import type {
   GuardReceipt,
   GuardRuntimeSnapshot,
   GuardInventoryItem,
-  GuardHarnessSetupItem,
   DecisionScope,
 } from "./guard-types";
 
@@ -114,11 +112,6 @@ type InventoryState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "ready"; items: GuardInventoryItem[] };
-type HarnessSetupState =
-  | { kind: "idle" }
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready"; items: GuardHarnessSetupItem[] };
 
 function usePathname(): string {
   const [pathname, setPathname] = useState(window.location.pathname);
@@ -302,7 +295,6 @@ export function App() {
   const [runtime, setRuntime] = useState<RuntimeState>({ kind: "loading" });
   const [policies, setPolicies] = useState<PolicyState>({ kind: "loading" });
   const [inventory, setInventory] = useState<InventoryState>({ kind: "idle" });
-  const [harnessSetup, setHarnessSetup] = useState<HarnessSetupState>({ kind: "idle" });
   const [resolutionMessage, setResolutionMessage] = useState<string | null>(null);
   const [codexResume, setCodexResume] = useState<GuardCodexResumeResult | null>(null);
   const [resolvedRequestId, setResolvedRequestId] = useState<string | null>(null);
@@ -544,26 +536,20 @@ export function App() {
     }
     let cancelled = false;
     setInventory({ kind: "loading" });
-    setHarnessSetup({ kind: "loading" });
-    void Promise.allSettled([fetchInventory(), fetchHarnessSetupItems()]).then(([inventoryResult, harnessResult]) => {
-      if (cancelled) return;
-      if (inventoryResult.status === "fulfilled") {
-        setInventory({ kind: "ready", items: inventoryResult.value });
-      } else {
-        setInventory({
-          kind: "error",
-          message: inventoryResult.reason instanceof Error ? inventoryResult.reason.message : "Unable to load watched app inventory."
-        });
-      }
-      if (harnessResult.status === "fulfilled") {
-        setHarnessSetup({ kind: "ready", items: harnessResult.value });
-      } else {
-        setHarnessSetup({
-          kind: "error",
-          message: harnessResult.reason instanceof Error ? harnessResult.reason.message : "Unable to detect local AI apps."
-        });
-      }
-    });
+    fetchInventory()
+      .then((items) => {
+        if (!cancelled) {
+          setInventory({ kind: "ready", items });
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setInventory({
+            kind: "error",
+            message: error instanceof Error ? error.message : "Unable to load watched app inventory."
+          });
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -592,12 +578,11 @@ export function App() {
   }, []);
 
   const refreshStateAfterAction = useCallback(async () => {
-    const [inboxResult, receiptsResult, policiesResult, inventoryResult, harnessResult] = await Promise.allSettled([
+    const [inboxResult, receiptsResult, policiesResult, inventoryResult] = await Promise.allSettled([
       fetchInboxState(),
       fetchReceipts(),
       fetchPolicies(),
       fetchInventory(),
-      fetchHarnessSetupItems(),
     ]);
     if (inboxResult.status === "fulfilled") {
       setRuntime({ kind: "ready", snapshot: inboxResult.value.snapshot });
@@ -630,14 +615,6 @@ export function App() {
       setInventory({
         kind: "error",
         message: inventoryResult.reason instanceof Error ? inventoryResult.reason.message : "Unable to load watched app inventory.",
-      });
-    }
-    if (harnessResult.status === "fulfilled") {
-      setHarnessSetup({ kind: "ready", items: harnessResult.value });
-    } else {
-      setHarnessSetup({
-        kind: "error",
-        message: harnessResult.reason instanceof Error ? harnessResult.reason.message : "Unable to detect local AI apps.",
       });
     }
     return inboxResult.status === "fulfilled" ? inboxResult.value.snapshot : null;
@@ -1051,7 +1028,6 @@ export function App() {
               runtime={runtime.snapshot}
               policies={policies.kind === "ready" ? policies.items : []}
               inventory={inventory}
-              harnessSetup={harnessSetup}
               onConnectHarness={handleConnectHarness}
               onTestHarness={handleTestHarness}
               onRepairHarness={handleRepairHarness}

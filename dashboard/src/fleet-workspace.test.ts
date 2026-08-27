@@ -1,6 +1,7 @@
 import { cloudPolicyRecoveryHint } from "./fleet-protection-recovery";
 import { activeFailedHarnesses, ProtectionRepairFlowError } from "./protection-repair-flow";
-import { repairHarnessesFor, resolveAppStatus, resolveFleetHeroCopy, visibleHarnessesFor } from "./fleet-workspace";
+import { repairHarnessesFor, resolveFleetHeroCopy } from "./fleet-workspace";
+import { isHarnessDetectedItems, resolveDetectedAppStatus, visibleHarnessesFor } from "./harness-detection";
 import type { FleetHeroCopy } from "./fleet-workspace";
 
 function assert(condition: boolean, message: string): void {
@@ -25,11 +26,11 @@ const noProtectionHealth = {
   reason_codes: [],
 };
 assert(
-  resolveAppStatus(undefined, noProtectionHealth, false, false, true) === "found_unprotected",
+  resolveDetectedAppStatus(undefined, noProtectionHealth, false, false, true) === "found_unprotected",
   "detected OMP and ZCode installs appear as observed before Guard manages their hooks",
 );
 assert(
-  resolveAppStatus(undefined, noProtectionHealth, false, false, false) === "not_found",
+  resolveDetectedAppStatus(undefined, noProtectionHealth, false, false, false) === "not_found",
   "apps without detection or activity remain absent",
 );
 const detectedApps = visibleHarnessesFor({
@@ -42,6 +43,10 @@ const detectedApps = visibleHarnessesFor({
 assert(
   detectedApps.join(",") === "codex,omp,zcode",
   "Protect includes locally detected OMP and ZCode without requiring prior activity",
+);
+assert(
+  isHarnessDetectedItems([{ harness: "zcode", status: "found" }], "zcode"),
+  "app detail preserves detection for config-only harnesses",
 );
 assert(
   activeFailedHarnesses(["codex", "codex", "grok"], ["grok"])[0] === "grok",

@@ -817,15 +817,6 @@ export type GuardHarnessSetupContract = {
   coverage: GuardHarnessCoverage;
 };
 
-export type GuardHarnessSetupItem = GuardHarnessSetupContract & {
-  status: "protected" | "found" | "not_found";
-  observed_copy: string;
-  installed: boolean;
-  command_available: boolean;
-  config_paths: string[];
-  artifact_count: number;
-};
-
 export type GuardHarnessVerification = {
   checked: boolean;
   writes_config: boolean;
