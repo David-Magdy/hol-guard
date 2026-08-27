@@ -168,11 +168,7 @@ def test_close_waits_for_inflight_worker_isolation_before_retirement(
 
     assert runner.close_contained()
     assert len(isolation_waits) == 1
-    containment_timeout = hook_runner_module._HOOK_PROCESS_READY_TIMEOUT_SECONDS + min(
-        hook_runner_module._HOOK_PROCESS_CLOSE_CONTAINMENT_GRACE_SECONDS,
-        hook_runner_module._HOOK_PROCESS_READY_TIMEOUT_SECONDS,
-    )
-    assert 0 < isolation_waits[0] <= containment_timeout
+    assert 0 < isolation_waits[0] <= hook_runner_module._HOOK_PROCESS_READY_TIMEOUT_SECONDS
     assert runner.stats()["workers"] == 0
 
 
