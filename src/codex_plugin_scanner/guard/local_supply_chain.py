@@ -2175,6 +2175,7 @@ def _resolve_stored_package_policy_override(
     )
     decision = None
     ignored_integrity = None
+    daemon_authority = None
     policy_workspaces = _package_policy_workspace_candidates(
         artifact=artifact,
         artifact_hash=artifact_hash,
@@ -2197,6 +2198,21 @@ def _resolve_stored_package_policy_override(
             break
         if ignored_integrity is not None:
             break
+    if not isinstance(decision, dict) and ignored_integrity is not None:
+        from .daemon.policy_authority_client import resolve_package_policy
+
+        daemon_resolution = resolve_package_policy(
+            guard_home=store.guard_home,
+            harness=artifact.harness,
+            artifact_id=artifact.artifact_id,
+            artifact_hash=artifact_hash,
+            workspaces=policy_workspaces,
+            publisher=artifact.publisher,
+        )
+        daemon_authority = daemon_resolution.authority
+        if daemon_resolution.decision is not None:
+            decision = daemon_resolution.decision
+            ignored_integrity = None
     diagnosed_reason: ApprovalReuseValidationFailure | None = None
     if not isinstance(decision, dict) and ignored_integrity is None:
         for policy_workspace in policy_workspaces:
@@ -2258,7 +2274,11 @@ def _resolve_stored_package_policy_override(
             claim_disposition = cast(_PackageApprovalClaimDisposition, raw_disposition)
     claim_succeeded = True
     if claim_saved_approval and reuse.should_claim and isinstance(decision, dict):
-        if legacy_local_approval:
+        if daemon_authority is not None:
+            from .daemon.policy_authority_client import claim_package_policy
+
+            claim_succeeded = claim_package_policy(daemon_authority, decision)
+        elif legacy_local_approval:
             approval_id = decision.get("approval_id")
             assert isinstance(approval_id, str)
             claim_succeeded = store.claim_local_once_approval(
