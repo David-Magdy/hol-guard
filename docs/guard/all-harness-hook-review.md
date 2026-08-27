@@ -79,12 +79,23 @@ sees exactly what the model would see.
 path. Shell commands, MCP tools, and other action types still fall
 through to `_review_standard` (which may block or return an excerpt).
 
-### Legacy Path (Non-PostToolUse Events)
+## Rust Authority Boundary
 
-PreToolUse, UserPromptSubmit, and PermissionRequest events raise
-`HookWorkerUnsupported`, causing the server to fall through to the
-legacy CLI path. This preserves existing policy/permission/approval
-checks for non-output events.
+Supported `PreToolUse` and `PostToolUse` semantic decisions are owned by the
+version-matched bundled Rust runtime. Native unavailability, incompatibility,
+overload, timeout, malformed output, or containment failure does not convert
+into Python semantic evaluation. Those conditions fail closed.
+
+Python remains outside the semantic authority boundary. It may authenticate and
+transport a request, render the already-produced native result for a harness,
+coordinate approval continuation, and persist bounded asynchronous evidence.
+It may not parse or classify a supported `PreToolUse` command, lower a native
+action floor, rescan supported `PostToolUse` output as an authoritative
+fallback, or synthesize an allow after native failure.
+
+The permanent ownership contract is recorded in
+`ci/rust-authority-ownership.v1.json` and enforced by
+`.github/workflows/rust-authority-ownership.yml`.
 
 ## Why Not Server-Side Source Ref Synthesis?
 

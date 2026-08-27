@@ -175,10 +175,6 @@
       "scripts/mdm/generate-release-manifest.py::_open_readonly_no_follow",
       "src/codex_plugin_scanner/guard/mdm/manifest.py::_open_readonly_no_follow"
     ],
-    "a2233416339a44feb323b8d880f70b4e0ddcec38fbf68eecfb8a8f3cf64abc26": [
-      "scripts/ci/converge_rust_posttool_authority_v2.py::patch_runtime_cargo",
-      "scripts/ci/fallback_rust_posttool_authority.py::patch_runtime_cargo"
-    ],
     "ee068bf26c55108e4273122278b85669476edf3ac085f08ff36f8aeff6ea8bd6": [
       "scripts/ci/rust_posttool_failclosed_integration.py::_request",
       "scripts/ci/rust_posttool_failclosed_integration_v2.py::_request"
@@ -189,9 +185,7 @@
     "scripts/bench_guard_native_full_path.py::main": 105,
     "scripts/bench_guard_native_release_gate.py::main": 110,
     "scripts/ci/code_quality_audit.py::audit_repository": 101,
-    "scripts/ci/converge_rust_posttool_authority_v2.py::patch_runtime_rust": 125,
     "scripts/ci/finish_extension_authority_stability.py::_move_authority_tests": 148,
-    "scripts/ci/harden_rust_policy_snapshot_v3.py::main": 131,
     "scripts/codex-auto-resume-smoke.py::_queue_pending_request": 103,
     "scripts/stress_guard_daemon.py::run_stress": 133,
     "src/codex_plugin_scanner/action_runner.py::main": 384,
@@ -450,7 +444,7 @@
     "dashboard/src/apps/app-detail-workspace.tsx": 1935,
     "dashboard/src/audit-workspace.tsx": 705,
     "dashboard/src/evidence/evidence-activity-heatmap.tsx": 527,
-    "dashboard/src/fleet-workspace.tsx": 531,
+    "dashboard/src/fleet-workspace.tsx": 529,
     "dashboard/src/guard-api.test.ts": 1953,
     "dashboard/src/guard-api.ts": 4280,
     "dashboard/src/guard-types.ts": 1156,
