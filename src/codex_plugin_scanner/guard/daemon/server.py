@@ -157,6 +157,7 @@ from ..runtime.command_shadow_evaluation import (
 )
 from ..runtime.extension_control_authority import ExtensionControlAuthorityError, ExtensionControlAuthorityView
 from ..runtime.extension_control_runtime import ExtensionControlRuntime, ExtensionControlRuntimeSnapshot
+from ..runtime.isolation_provider import load_managed_provider_registry
 from ..runtime.local_temp_paths import trusted_temporary_root_for_path
 from ..runtime.network_status import build_network_status, project_network_supervisor_health
 from ..runtime.network_supervisor import NetworkSupervisor
@@ -7888,6 +7889,7 @@ class GuardDaemonServer:
             raise RuntimeError("A previous Guard daemon remains quarantined after unconfirmed containment.")
         self._diagnostics = DaemonDiagnostics(store.guard_home)
         try:
+            self._isolation_provider_registry = load_managed_provider_registry()
             _validate_dashboard_bundle()
         except BaseException:
             self._diagnostics.record_exception("daemon_initialization_failed")
@@ -7927,9 +7929,7 @@ class GuardDaemonServer:
         self._headless_cloud_sync_interval_seconds = _DEFAULT_HEADLESS_CLOUD_SYNC_INTERVAL_SECONDS
         self._aibom_home_dir = home_dir.expanduser() if home_dir is not None else None
         self._aibom_workspace_dir = workspace_dir.expanduser() if workspace_dir is not None else None
-        self._aibom_context_workspace_id = (
-            store.get_cloud_workspace_id() if self._aibom_workspace_dir is not None else None
-        )
+        self._aibom_context_workspace_id = store.get_cloud_workspace_id() if self._aibom_workspace_dir else None
         self._aibom_refresh_thread: threading.Thread | None = None
         self._bundle_refresh_thread: threading.Thread | None = None
         self._command_queue_worker: CommandQueueWorker | None = None
@@ -8020,6 +8020,7 @@ class GuardDaemonServer:
         self._require_command_activity_maintenance_stopped()
         self._shutdown_started.clear()
         self._server.hook_process_runner.start(defer_backfill=True)
+        self._server.hook_process_runner.require_initial_capacity()
         self._reconcile_runtime_artifacts_best_effort()
         self._maintain_command_activity_best_effort()
         self._persist_aibom_inventory_context()
@@ -8091,9 +8092,7 @@ class GuardDaemonServer:
     def _maintain_command_activity_best_effort(self) -> None:
         now = datetime.now(timezone.utc)
         try:
-            config = load_guard_config(
-                self._server.store.guard_home,
-            )
+            config = load_guard_config(self._server.store.guard_home)
             self._server.store.maintain_command_activity(
                 now=now,
                 detail_retain_days=config.evidence_retain_days,
