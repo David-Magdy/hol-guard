@@ -1,10 +1,6 @@
 name: Notify HOL Guard Plugin of Runtime Releases
 
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/notify-hol-guard-plugin.yml"
-      - "tests/test_notify_hol_guard_plugin_workflow.py"
   workflow_dispatch:
     inputs:
       version:
