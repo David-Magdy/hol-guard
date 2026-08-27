@@ -327,6 +327,19 @@ class TestGrokHookPayloadFixtures:
         assert normalized["mcp_server"] == "filesystem"
         assert normalized["mcp_tool"] == "write_file"
 
+    def test_dispatcher_unwrap_aliases_inner_edit_tool(self) -> None:
+        normalized = prepare_grok_hook_payload(
+            {
+                "hookEventName": "pre_tool_use",
+                "toolName": "use_tool",
+                "toolInput": {
+                    "tool_name": "search_replace",
+                    "arguments": {"file_path": "src/app.py", "old_string": "a", "new_string": "b"},
+                },
+            }
+        )
+        assert normalized["tool_name"] == "Edit"
+
     def test_subagent_start_is_observe_event(self) -> None:
         normalized = prepare_grok_hook_payload(_fixture("subagent_start.json"))
         assert normalized["hook_event_name"] == "SubagentStart"

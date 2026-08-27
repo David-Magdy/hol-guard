@@ -12,32 +12,13 @@ from .cli_ui import build_cli_epilog, build_plain_text, build_scan_help_epilog
 from .ecosystems.registry import list_supported_ecosystems
 from .guard.cli import add_guard_parser, add_guard_root_parser, run_guard_command
 from .guard.product_model import SUPPORTED_HARNESS_VALUES
-from .reporting import format_json as render_json
+from .reporting import format_json as format_json
 from .rules import get_rule_spec
 from .version import __version__
 
 
 def format_text(result) -> str:
     return build_plain_text(result)
-
-
-def format_json(
-    result,
-    *,
-    profile: str = "default",
-    policy_pass: bool = True,
-    verify_pass: bool = True,
-    raw_score: int | None = None,
-    effective_score: int | None = None,
-) -> str:
-    return render_json(
-        result,
-        profile=profile,
-        policy_pass=policy_pass,
-        verify_pass=verify_pass,
-        raw_score=raw_score,
-        effective_score=effective_score,
-    )
 
 
 def _add_common_policy_args(parser: argparse.ArgumentParser) -> None:
@@ -56,6 +37,12 @@ def _is_guard_program(program_name: str) -> bool:
 def _is_scanner_program(program_name: str) -> bool:
     normalized_name = Path(program_name).stem.lower()
     return normalized_name in {"plugin-scanner", "plugin-ecosystem-scanner"}
+
+
+def _resolve_hol_guard_help_alias(program_name: str, argv: list[str]) -> list[str]:
+    if not _is_hol_guard_program(program_name) or argv[:1] != ["help"]:
+        return argv
+    return [*argv[1:], "--help"]
 
 
 def _build_parser(program_name: str, *, program_mode: str) -> argparse.ArgumentParser:
@@ -267,6 +254,7 @@ def _resolve_legacy_args(
         "allow",
         "deny",
         "policies",
+        "policy",
         "trust",
         "settings",
         "exceptions",
@@ -278,7 +266,7 @@ def _resolve_legacy_args(
         "disconnect",
         "login",
         "sync",
-        "device",
+        *("device", "cloud-review"),
         "bridge",
         "daemon",
         "hook",
@@ -292,11 +280,26 @@ def _resolve_legacy_args(
         "cursor-mcp-proxy",
         "hermes-mcp-proxy",
     }
-    if program_mode == "combined" and argv[0] in _guard_subcommands and "--format" not in argv:
+    if program_mode == "combined" and argv[0] in _guard_subcommands and ("--format" not in argv or argv[0] == "policy"):
         return ["guard", *argv]
     if not should_default_to_scan_target(argv[0], known_commands=known_commands):
         return argv
     return ["scan", *argv]
+
+
+def _run_frozen_early_dispatch(requested_argv: list[str]) -> int | None:
+    if not bool(getattr(sys, "frozen", False)):
+        return None
+    if requested_argv[:1] == ["__guard-bounded-hook"]:
+        from .guard.adapters.bounded_cli_hook_bridge import main_from_argv
+
+        return main_from_argv(requested_argv[1:])
+    from .guard.shims import resolve_frozen_package_shim_path, run_frozen_package_shim
+
+    frozen_shim_path = resolve_frozen_package_shim_path(requested_argv)
+    if frozen_shim_path is None:
+        return None
+    return run_frozen_package_shim(frozen_shim_path, requested_argv[1:])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -306,19 +309,28 @@ def main(argv: list[str] | None = None) -> int:
 
         return main_from_argv(effective_argv[1:])
     program_name = Path(sys.argv[0]).name or "plugin-scanner"
+    requested_argv = sys.argv[1:] if argv is None else argv
+    frozen_exit = _run_frozen_early_dispatch(requested_argv)
+    if frozen_exit is not None:
+        return frozen_exit
+    requested_argv = _resolve_hol_guard_help_alias(program_name, requested_argv)
+    if _is_hol_guard_program(program_name) and requested_argv and requested_argv[0] == "secrets":
+        from .guard.secrets.cli import main as secrets_main
+
+        return secrets_main(requested_argv[1:], program_name=f"{program_name} secrets")
     if _is_guard_program(program_name):
         program_mode = "guard"
     elif _is_hol_guard_program(program_name):
         program_mode = "hol-guard"
-    elif _is_scanner_program(program_name):
+    elif _is_scanner_program(program_name) and (not requested_argv or requested_argv[0] != "guard"):
         program_mode = "scanner"
     else:
         program_mode = "combined"
-    if program_mode in {"guard", "hol-guard"} and effective_argv[:1] == ["help"]:
-        effective_argv = [*effective_argv[1:], "--help"]
+    if program_mode == "guard" and requested_argv[:1] == ["help"]:
+        requested_argv = [*requested_argv[1:], "--help"]
     parser = _build_parser(program_name, program_mode=program_mode)
     resolved_argv = _resolve_legacy_args(
-        effective_argv,
+        requested_argv,
         program_mode=program_mode,
         program_name=program_name,
     )

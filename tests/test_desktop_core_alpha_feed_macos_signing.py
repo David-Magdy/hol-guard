@@ -89,9 +89,7 @@ def test_signing_identity_is_imported_before_pyinstaller_build() -> None:
 def test_final_verification_checks_reused_and_new_embedded_team_identity() -> None:
     steps = _publish_steps()
     verify = next(
-        step
-        for step in steps
-        if step.get("name") == "Verify exact Apple identity, notarization, and Core contract"
+        step for step in steps if step.get("name") == "Verify exact Apple identity, notarization, and Core contract"
     )
     run = verify["run"]
     assert isinstance(run, str)
@@ -175,7 +173,7 @@ def test_verifier_rejects_missing_cookie_declared_runtime(
     )
     monkeypatch.setattr(module, "_team_id", lambda _path: "TEAM123")
 
-    with pytest.raises(ValueError, match="Cookie-declared Python runtime target 'Python'.*found 0"):
+    with pytest.raises(ValueError, match=r"Cookie-declared Python runtime target 'Python'.*found 0"):
         module.verify(archive, "TEAM123")
 
 

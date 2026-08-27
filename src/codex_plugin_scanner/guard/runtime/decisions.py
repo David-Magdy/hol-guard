@@ -17,7 +17,10 @@ from codex_plugin_scanner.guard.runtime.composition_rules import compose_action_
 from codex_plugin_scanner.guard.runtime.signals import (
     RiskConfidenceLabel,
     RiskSignalV2,
+    parse_risk_confidence,
 )
+
+from .data_flow_sink import data_flow_sink_type
 
 GuardDecisionAction = Literal["allow", "warn", "ask", "block"]
 
@@ -549,17 +552,7 @@ def _harness_message_from_signals(
     return fallback
 
 
-def _data_flow_sink_type(signals: tuple[RiskSignalV2, ...]) -> str:
-    signal_ids = {signal.signal_id for signal in signals}
-    if any(signal.category == "network" for signal in signals):
-        return "network host"
-    if "data-flow:clipboard-secret" in signal_ids:
-        return "clipboard"
-    if "data-flow:world-readable-temp-secret" in signal_ids:
-        return "world-readable temp file"
-    if "data-flow:git-remote-token" in signal_ids:
-        return "git remote configuration"
-    return "external sink"
+_data_flow_sink_type = data_flow_sink_type
 
 
 def _has_data_flow_exfiltration_signal(signals: tuple[RiskSignalV2, ...]) -> bool:
@@ -598,16 +591,7 @@ def _parse_action(value: object) -> GuardDecisionAction:
             raise ValueError("action must be a known Guard decision action")
 
 
-def _parse_confidence(value: object) -> RiskConfidenceLabel:
-    match value:
-        case "weak":
-            return "weak"
-        case "likely":
-            return "likely"
-        case "strong":
-            return "strong"
-        case _:
-            raise ValueError("confidence must be a known confidence label")
+_parse_confidence = parse_risk_confidence
 
 
 def _parse_signals(value: object) -> tuple[RiskSignalV2, ...]:

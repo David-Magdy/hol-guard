@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import hashlib
 import json
 import os
@@ -11,11 +9,12 @@ import re
 import shlex
 import stat
 from dataclasses import asdict, dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Final, Literal, cast
 from urllib.parse import urlsplit
 
 from .containment_executor import file_sha256
+from .package_evidence_common import resolved_package_bin_target, valid_sha512_integrity
 
 PackageScriptOperation = Literal["test", "lint", "build", "typecheck"]
 EvidenceStatus = Literal["complete", "incomplete"]
@@ -329,14 +328,7 @@ def _canonical_resolution(package: str, version: str, resolved: object) -> bool:
     )
 
 
-def _valid_integrity(value: object) -> bool:
-    if not isinstance(value, str) or not value.startswith("sha512-"):
-        return False
-    try:
-        decoded = base64.b64decode(value.removeprefix("sha512-"), validate=True)
-    except (binascii.Error, ValueError):
-        return False
-    return len(decoded) == 64
+_valid_integrity = valid_sha512_integrity
 
 
 def _package_bin_target(payload: dict[str, object] | None, runner: str) -> str | None:
@@ -348,18 +340,7 @@ def _package_bin_target(payload: dict[str, object] | None, runner: str) -> str |
     return target.strip() if isinstance(target, str) and target.strip() else None
 
 
-def _resolved_bin_target(package_root: Path, target: str | None) -> Path | None:
-    if target is None:
-        return None
-    portable = PurePosixPath(target.replace("\\", "/"))
-    if portable.is_absolute() or not portable.parts or ".." in portable.parts:
-        return None
-    candidate = package_root.joinpath(*portable.parts).resolve(strict=False)
-    try:
-        _ = candidate.relative_to(package_root)
-    except ValueError:
-        return None
-    return candidate
+_resolved_bin_target = resolved_package_bin_target
 
 
 def _version_spec_matches(specifier: str | None, version: str | None) -> bool:

@@ -26,7 +26,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal, TypeGuard, cast
 
+from ..file_identity import content_stat_identity
 from .env_wrapper import parse_env_wrapper
+from .extension_control_runtime import current_extension_control_binding_digest
 
 APPROVAL_CONTEXT_TOKEN_PREFIX = "guard-approval-context:v1:"
 
@@ -92,7 +94,13 @@ def build_approval_context_token(
         identity_hash=_component_hash("identity", identity),
         content_hash=_component_hash("content", content),
         capabilities_hash=_component_hash("capabilities", capabilities),
-        policy_hash=_component_hash("policy", policy),
+        policy_hash=_component_hash(
+            "policy",
+            {
+                "extension_control_digest": current_extension_control_binding_digest(),
+                "policy": policy,
+            },
+        ),
         sandbox_hash=_component_hash("sandbox", sandbox),
     )
     payload = json.dumps(
@@ -197,6 +205,18 @@ def approval_context_tokens_validation_reason(
         if not hmac.compare_digest(saved_hash, current_hash):
             return reason
     return None
+
+
+def saved_allow_context_validation_reason(
+    decision: Mapping[str, object],
+    *,
+    artifact_hash: str,
+) -> str | None:
+    """Validate only stored allows and fail closed on stale context tokens."""
+
+    if decision.get("action") != "allow":
+        return None
+    return approval_context_tokens_validation_reason(decision.get("artifact_hash"), artifact_hash)
 
 
 def _runtime_path_with_trusted_home(command: str, *, home_dir: Path | None) -> Path | None:
@@ -1662,15 +1682,7 @@ def _parse_executable_shebang(prefix: bytes) -> tuple[str | None, str]:
     return (decoded, "verified") if decoded else (None, "interpreter_missing")
 
 
-def _executable_stat_key(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    return (
-        metadata.st_dev,
-        metadata.st_ino,
-        metadata.st_size,
-        metadata.st_mtime_ns,
-        metadata.st_ctime_ns,
-        metadata.st_mode,
-    )
+_executable_stat_key = content_stat_identity
 
 
 def _unreusable_executable_identity(

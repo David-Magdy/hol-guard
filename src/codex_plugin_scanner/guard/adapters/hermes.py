@@ -16,8 +16,6 @@ from typing import Any
 import yaml as _yaml  # type: ignore[import-untyped]
 
 from ..aibom_detection import enrich_mcp_server_metadata
-from ..inventory_cisco import run_cisco_inventory_scans
-from ..inventory_contract import GuardAgentInventorySnapshot, inventory_snapshot_from_detection
 from ..models import GuardArtifact, HarnessDetection
 from ..shims import install_guard_shim, remove_guard_shim
 from ..skill_directory_identity import (
@@ -398,7 +396,14 @@ class HermesHarnessAdapter(HarnessAdapter):
                     )
 
         # Discover MCP servers from both config.yaml and mcp_servers.json.
-        artifacts.extend(self._scan_mcp_servers(hermes_home, found_paths, warnings))
+        artifacts.extend(
+            self._scan_mcp_servers(
+                hermes_home,
+                found_paths,
+                warnings,
+                managed_names=frozenset(_read_managed_server_names(context)),
+            )
+        )
 
         # Container fallback: use an explicit or persisted host-home mirror
         # when the sandbox has only empty skills and trivial config.
@@ -420,31 +425,6 @@ class HermesHarnessAdapter(HarnessAdapter):
             artifacts=tuple(artifacts),
             config_paths=tuple(found_paths),
             warnings=tuple(dict.fromkeys(warnings)),
-        )
-
-    def inventory_snapshot(
-        self,
-        context: HarnessContext,
-        *,
-        generated_at: str,
-        cisco_mcp_scan: str = "off",
-        cisco_skill_scan: str = "off",
-        cisco_timeout_seconds: float | None = None,
-    ) -> GuardAgentInventorySnapshot:
-        detection = self.detect(context)
-        return inventory_snapshot_from_detection(
-            detection,
-            generated_at=generated_at,
-            home_dir=context.home_dir,
-            workspace_dir=context.workspace_dir,
-            cisco_runs=run_cisco_inventory_scans(
-                harness=self.harness,
-                context=context,
-                detection=detection,
-                mcp_mode=cisco_mcp_scan,
-                skill_mode=cisco_skill_scan,
-                timeout_seconds=cisco_timeout_seconds,
-            ),
         )
 
     # ------------------------------------------------------------------
@@ -602,6 +582,8 @@ class HermesHarnessAdapter(HarnessAdapter):
         hermes_home: Path,
         found_paths: list[str],
         warnings: list[str],
+        *,
+        managed_names: frozenset[str] = frozenset(),
     ) -> list[GuardArtifact]:
         """Read MCP server configs from config.yaml and mcp_servers.json."""
         artifacts: list[GuardArtifact] = []
@@ -612,7 +594,11 @@ class HermesHarnessAdapter(HarnessAdapter):
             found_paths.append(str(yaml_path))
             inspection = inspect_hermes_config(yaml_path, syntax="yaml")
             if inspection.complete and inspection.payload is not None:
-                yaml_servers = _mcp_servers_from_payload(inspection.payload)
+                yaml_servers = {
+                    name: config
+                    for name, config in _mcp_servers_from_payload(inspection.payload).items()
+                    if name not in managed_names
+                }
                 artifacts.extend(self._mcp_artifacts(yaml_servers, str(yaml_path), source="yaml"))
             else:
                 artifacts.append(_config_failure_artifact(yaml_path, source="yaml", inspection=inspection))

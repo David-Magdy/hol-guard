@@ -1,5 +1,6 @@
 import type { GuardPolicyDecision } from "./guard-types";
 import { harnessDisplayName, policyActionLabel, scopeLabel } from "./approval-center-utils";
+import { isCloudManagedPolicySource, resolvePolicyRowSourceLabel } from "./policy-managed-authority";
 
 const MATCHER_FAMILY_LABELS: Record<string, string> = {
   "package-request": "Package install",
@@ -60,7 +61,7 @@ export function formatPolicyScopePath(path: string | null | undefined): string |
 }
 
 export function isCloudManagedPolicy(source: string): boolean {
-  return source === "cloud-sync" || source === "team-policy" || source === "policy-bundle";
+  return isCloudManagedPolicySource(source);
 }
 
 export function resolvePolicySourceLabel(source: string): string {
@@ -372,10 +373,6 @@ export function resolvePolicyRowTitle(policy: GuardPolicyDecision, display: Poli
   return headline;
 }
 
-export function resolvePolicyRowSourceLabel(policy: GuardPolicyDecision): string {
-  return resolvePolicySourceLabel(policy.source);
-}
-
 export type PolicySortKey = "action" | "rule" | "source" | "scope" | "app" | "updated" | "approval";
 export type PolicySortState = { key: PolicySortKey; direction: "asc" | "desc" } | null;
 
@@ -546,33 +543,33 @@ export function groupPoliciesByHarness(
 export function resolveSecurityModeCopy(
   level: string | undefined,
 ): { label: string; description: string; tone: "green" | "attention" | "slate" } {
-  if (level === "strict") {
+  if (level === "watch" || level === "observe") {
     return {
-      label: "Protect",
-      description:
-        "Guard asks before risky actions that are not already allowed by policy, remembered rules, or Cloud exceptions.",
+      label: "Watch",
+      description: "Records what Guard would have stopped, but does not stop anything. Use only while debugging.",
       tone: "attention",
     };
   }
-  if (level === "balanced") {
+  if (level === "extra_careful" || level === "strict" || level === "paranoid") {
     return {
-      label: "Balanced (default)",
+      label: "Extra careful",
       description:
-        "Guard asks for secrets, destructive commands, and new network destinations. Low noise, solid coverage.",
-      tone: "green",
+        "Same as Protected, and also asks the first time this project talks to a new site or installs a new tool.",
+      tone: "attention",
     };
   }
-  if (level === "gentle" || level === "relaxed") {
+  if (level === "custom") {
     return {
-      label: "Low noise",
-      description: "Guard only asks for the highest-risk actions. Minimal interruptions.",
+      label: "Protected",
+      description: "Using custom rules on top of Protected.",
       tone: "slate",
     };
   }
   return {
-    label: level ?? "Custom",
-    description: "Custom policy rules apply. Review individual rules below.",
-    tone: "slate",
+    label: "Protected",
+    description:
+      "Stops theft, wipes, and attempts to disable Guard. Asks once about new tools or first-time secret access, then remembers.",
+    tone: "green",
   };
 }
 

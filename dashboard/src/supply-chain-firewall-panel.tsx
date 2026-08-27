@@ -56,8 +56,9 @@ import {
   type AuditRecoveryModalPhase,
 } from "./supply-chain-audit-recovery-modal";
 import {
-  supplyChainFixAllRequiresConnection,
-  type SupplyChainFixAllState,
+  supplyChainFixAllConnectState, supplyChainFixAllNeedsCloudConnect,
+  supplyChainFixAllRequiresConnection, supplyChainFixAllStateFromRepair,
+  supplyChainFixAllWorkingState, type SupplyChainFixAllState,
 } from "./supply-chain-fix-all";
 
 type PanelLoadState =
@@ -192,12 +193,13 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
   } = props;
   const rootRef = useRef<HTMLDivElement>(null);
   const recoveryConnectHandledRef = useRef(false);
+  const repairNeedsCloudConnectRef = useRef(false);
   const [panelLoad, setPanelLoad] = useState<PanelLoadState>({ phase: "loading" });
   const [pendingOp, setPendingOp] = useState<PendingOp | null>(null);
   const [lastCompleted, setLastCompleted] = useState<CompletedOp | null>(null);
   const [lastFailed, setLastFailed] = useState<FailedOp | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [activationAssist, setActivationAssist] = useState<{ message: string; isError: boolean } | null>(null);
+  const [activationAssistError, setActivationAssistError] = useState<string | null>(null);
   const [startingConnect, setStartingConnect] = useState(false);
   const [activatingRuntime, setActivatingRuntime] = useState(false);
   const [confirmRemoveManager, setConfirmRemoveManager] = useState<string | null>(null);
@@ -294,7 +296,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
       setPendingOp({ op: "audit", manager: null });
       setLastFailed(null);
       setConnectError(null);
-      setActivationAssist(null);
+      setActivationAssistError(null);
       onAuditErrorChange?.(null);
       onAuditStarted?.();
       onAuditRunningChange?.(true);
@@ -448,7 +450,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
   const handleStartConnect = useCallback(async () => {
     setStartingConnect(true);
     setConnectError(null);
-    setActivationAssist(null);
+    setActivationAssistError(null);
     try {
       const connectFlow = await startPackageFirewallConnect();
       const popupBlocked = Boolean(
@@ -476,48 +478,42 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
 
   const beginFixAllConnectRecovery = useCallback(async () => {
     setResumeFixAllAfterConnect(true);
-    onFixAllStateChange?.({
-      phase: "connecting",
-      message: "Finish Guard Cloud sign-in. Repair will resume here automatically.",
-      completedSteps: [],
-      failedSteps: [],
-    });
+    onFixAllStateChange?.(
+      supplyChainFixAllConnectState(
+        "connecting",
+        "Finish Guard Cloud sign-in. Repair will resume here automatically.",
+      ),
+    );
     const started = await handleStartConnect();
     if (started) return;
     setResumeFixAllAfterConnect(false);
-    onFixAllStateChange?.({
-      phase: "error",
-      message: "Guard Cloud sign-in could not start. Retry fixes to try again.",
-      completedSteps: [],
-      failedSteps: ["Guard Cloud sign-in could not start."],
-    });
+    repairNeedsCloudConnectRef.current = true;
+    onFixAllStateChange?.(
+      supplyChainFixAllConnectState(
+        "error",
+        "Guard Cloud sign-in could not start. Connect again to continue.",
+        ["Guard Cloud sign-in could not start."],
+      ),
+    );
   }, [handleStartConnect, onFixAllStateChange]);
 
   const handleFixAll = useCallback(
     async (credentials?: { approval_password?: string; approval_totp_code?: string }) => {
       const requiresConnection =
         panelLoad.phase === "loaded" && supplyChainFixAllRequiresConnection(panelLoad.data);
-      if (requiresConnection) {
+      if (requiresConnection || repairNeedsCloudConnectRef.current) {
         await beginFixAllConnectRecovery();
         return;
       }
-      onFixAllStateChange?.({
-        phase: "working",
-        message: "Repairing package tools, activation, and safety intelligence…",
-        completedSteps: [],
-        failedSteps: [],
-      });
+      onFixAllStateChange?.(supplyChainFixAllWorkingState());
       setPendingOp({ op: "fix_all", manager: null });
       try {
         const result = await repairSupplyChainProtection(credentials);
         await refreshAfterOp();
         await onStateChanged?.();
-        onFixAllStateChange?.({
-          phase: result.repaired ? "success" : "incomplete",
-          message: result.message,
-          completedSteps: result.completed_steps,
-          failedSteps: result.failed_steps.map((failure) => failure.message),
-        });
+        const nextState = supplyChainFixAllStateFromRepair(result);
+        repairNeedsCloudConnectRef.current = supplyChainFixAllNeedsCloudConnect(nextState);
+        onFixAllStateChange?.(nextState);
       } catch (error) {
         if (credentials === undefined && isApprovalGateRequiredError(error)) {
           await resolveApprovalGate();
@@ -536,7 +532,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
         }
         const message = readHarnessActionUserMessage(
           error,
-          "Guard could not complete supply-chain repair. Retry here to continue safely.",
+          "Guard could not complete supply-chain repair. Retry remaining steps to continue safely.",
         );
         onFixAllStateChange?.({
           phase: "error",
@@ -571,22 +567,25 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
     ) {
       const connectFailed = panelLoad.data.connect_flow?.state === "failed";
       setResumeFixAllAfterConnect(false);
-      onFixAllStateChange?.({
-        phase: "error",
-        message: connectFailed
-          ? panelLoad.data.connect_flow?.detail || "Guard Cloud sign-in did not finish. Retry fixes."
-          : "Guard Cloud sign-in did not grant package protection access. Retry or review plan access.",
-        completedSteps: [],
-        failedSteps: [
+      repairNeedsCloudConnectRef.current = true;
+      onFixAllStateChange?.(
+        supplyChainFixAllConnectState(
+          "error",
           connectFailed
-            ? "Guard Cloud sign-in did not finish."
-            : "Package protection access is still unavailable.",
-        ],
-      });
+            ? panelLoad.data.connect_flow?.detail || "Guard Cloud sign-in did not finish. Connect again to continue."
+            : "Guard Cloud sign-in did not grant package protection access. Connect again or review plan access.",
+          [
+            connectFailed
+              ? "Guard Cloud sign-in did not finish."
+              : "Package protection access is still unavailable.",
+          ],
+        ),
+      );
       return;
     }
     if (!panelLoad.data.entitlement.allowed) return;
     setResumeFixAllAfterConnect(false);
+    repairNeedsCloudConnectRef.current = false;
     void handleFixAll();
   }, [
     handleFixAll,
@@ -696,7 +695,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
       setPendingOp({ op, manager });
       setLastFailed(null);
       setConnectError(null);
-      setActivationAssist(null);
+      setActivationAssistError(null);
       try {
         const response = await runPackageFirewallAction(op, manager, credentials);
         setLastCompleted({ op, manager, response });
@@ -741,7 +740,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
       setPendingOp({ op, manager: null });
       setLastFailed(null);
       setConnectError(null);
-      setActivationAssist(null);
+      setActivationAssistError(null);
       try {
         const response = await runPackageSync();
         setLastCompleted({ op, manager: null, response });
@@ -826,17 +825,13 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
   const handleRetry = useCallback(() => void load(), [load]);
   const handleActivateRuntime = useCallback(async () => {
     setActivatingRuntime(true);
-    setActivationAssist(null);
+    setActivationAssistError(null);
     try {
-      const message = await activatePackageFirewallRuntime();
-      setActivationAssist({ message, isError: false });
+      await activatePackageFirewallRuntime();
       await refreshAfterOp();
       await onStateChanged?.();
     } catch (error) {
-      setActivationAssist({
-        message: error instanceof Error ? error.message : "Unable to activate package protection.",
-        isError: true,
-      });
+      setActivationAssistError(error instanceof Error ? error.message : "Unable to activate package protection.");
     } finally {
       setActivatingRuntime(false);
     }
@@ -985,7 +980,7 @@ export const PackageFirewallPanel = forwardRef(function PackageFirewallPanel(
             onRefreshStatus={handleRetry}
             onOpenManagerDetails={handleOpenManagerDetails}
             activatingRuntime={activatingRuntime}
-            activationAssist={activationAssist}
+            activationAssistError={activationAssistError}
           />
         </>
       )}

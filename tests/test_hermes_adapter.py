@@ -443,7 +443,7 @@ def test_inventory_snapshot_can_include_cisco_hermes_inventory_runs(tmp_path: Pa
             ),
         )
 
-    monkeypatch.setattr("codex_plugin_scanner.guard.adapters.hermes.run_cisco_inventory_scans", fake_cisco_runs)
+    monkeypatch.setattr("codex_plugin_scanner.guard.inventory_cisco.run_cisco_inventory_scans", fake_cisco_runs)
 
     snapshot = HermesHarnessAdapter().inventory_snapshot(
         context,

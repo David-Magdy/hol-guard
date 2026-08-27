@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from pathlib import Path
 
 from codex_plugin_scanner.guard.models import GuardApprovalRequest
+from codex_plugin_scanner.guard.store import GuardStore
 from codex_plugin_scanner.guard.store_approvals import (
     add_approval_request,
     approval_index_statements,
@@ -37,6 +39,7 @@ def _make_request(
     artifact_id: str | None = None,
     launch_target: str | None = None,
     action_envelope_json: dict[str, object] | None = None,
+    watch_only: bool = False,
 ) -> GuardApprovalRequest:
     aid = artifact_id or f"codex:project:tool-{uuid.uuid4().hex[:8]}"
     rid = str(uuid.uuid4())
@@ -67,6 +70,7 @@ def _make_request(
         action_envelope_json=action_envelope_json,
         decision_v2_json=None,
         fallback_cli_command=None,
+        scanner_evidence=(({"source": "observe_mode_inbox", "authoritative_action": "allow"},) if watch_only else ()),
         review_command=f"hol-guard review {rid}",
         approval_url=f"http://localhost:4455/approve/{rid}",
     )
@@ -111,6 +115,96 @@ class TestDuplicatePendingRequestCollapse:
         assert id1 == id2, "Same command with different transient request IDs must collapse to one row"
         total = count_approval_requests(conn, status="pending")
         assert total == 1, f"Expected 1 pending row after transient variation, got {total}"
+
+    def test_actionable_request_dominates_a_later_watch_observation(self) -> None:
+        conn = _make_conn()
+        request_args = {
+            "artifact_id": "codex:project:tool-actionable-first",
+            "workspace": "ws-a",
+            "launch_target": "git status",
+        }
+
+        actionable_id = add_approval_request(conn, _make_request(**request_args), "2026-01-01T00:00:00Z")
+        watch_id = add_approval_request(
+            conn,
+            _make_request(**request_args, watch_only=True),
+            "2026-01-01T00:01:00Z",
+        )
+
+        assert watch_id == actionable_id
+        assert count_approval_requests(conn, exclude_watch_only=True) == 1
+
+    def test_actionable_request_promotes_an_existing_watch_observation(self) -> None:
+        conn = _make_conn()
+        request_args = {
+            "artifact_id": "codex:project:tool-watch-first",
+            "workspace": "ws-a",
+            "launch_target": "git diff --stat",
+        }
+
+        watch_id = add_approval_request(
+            conn,
+            _make_request(**request_args, watch_only=True),
+            "2026-01-01T00:00:00Z",
+        )
+        actionable_id = add_approval_request(conn, _make_request(**request_args), "2026-01-01T00:01:00Z")
+
+        assert actionable_id == watch_id
+        assert count_approval_requests(conn, exclude_watch_only=True) == 1
+
+    def test_repeated_watch_observations_stay_out_of_actionable_count(self) -> None:
+        conn = _make_conn()
+        request_args = {
+            "artifact_id": "codex:project:tool-watch-only",
+            "workspace": "ws-a",
+            "launch_target": "git log -5 --oneline",
+            "watch_only": True,
+        }
+
+        add_approval_request(conn, _make_request(**request_args), "2026-01-01T00:00:00Z")
+        add_approval_request(conn, _make_request(**request_args), "2026-01-01T00:01:00Z")
+
+        assert count_approval_requests(conn) == 1
+        assert count_approval_requests(conn, exclude_watch_only=True) == 0
+
+
+def test_watch_only_schema_migration_backfills_only_unambiguous_observations(tmp_path: Path) -> None:
+    guard_home = tmp_path / "guard-home"
+    store = GuardStore(guard_home)
+    unambiguous = _make_request(
+        artifact_id="codex:project:watch-unambiguous",
+        launch_target="git status",
+        watch_only=True,
+    )
+    ambiguous = _make_request(
+        artifact_id="codex:project:watch-ambiguous",
+        launch_target="git diff --stat",
+        watch_only=True,
+    )
+    with sqlite3.connect(store.path) as connection:
+        connection.row_factory = sqlite3.Row
+        add_approval_request(connection, unambiguous, "2026-01-01T00:00:00Z")
+        add_approval_request(connection, ambiguous, "2026-01-01T00:00:00Z")
+        connection.execute(
+            "update approval_requests set watch_only_observation = 0, dedupe_count = 2 where request_id = ?",
+            (ambiguous.request_id,),
+        )
+        connection.execute(
+            "update approval_requests set watch_only_observation = 0 where request_id = ?",
+            (unambiguous.request_id,),
+        )
+        connection.execute("delete from schema_migrations where version = 23")
+
+    migrated = GuardStore(guard_home)
+    with sqlite3.connect(migrated.path) as connection:
+        values = dict(
+            connection.execute(
+                "select request_id, watch_only_observation from approval_requests order by request_id"
+            ).fetchall()
+        )
+
+    assert values[unambiguous.request_id] == 1
+    assert values[ambiguous.request_id] == 0
 
 
 class TestDifferentWorkspacesGetSeparateRows:

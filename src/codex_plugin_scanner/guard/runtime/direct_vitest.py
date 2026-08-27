@@ -25,6 +25,7 @@ from ..shims import package_shim_status
 from .direct_typescript_diagnostics import direct_typescript_diagnostic_filter_context
 from .git_execution_safety import git_binary_path_is_trusted
 from .jsonc import loads_jsonc
+from .node_semver import node_semver_spec_matches as _semver_spec_matches
 from .shell_execution_context import ShellExecutionContext, model_shell_execution_context
 
 _LOCKFILE_NAMES = ("bun.lock", "package-lock.json")
@@ -524,27 +525,6 @@ def _locked_package_version(path: Path, package_name: str) -> str | None:
     typed_entry = cast(dict[object, object], entry)
     version = typed_entry.get("version")
     return version if isinstance(version, str) else None
-
-
-def _semver_spec_matches(specifier: str, version: str) -> bool:
-    match = re.fullmatch(r"([~^]?)(\d+)\.(\d+)\.(\d+)", specifier)
-    installed = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
-    if match is None or installed is None:
-        return False
-    operator, major, minor, patch = match.groups()
-    requested = (int(major), int(minor), int(patch))
-    actual = tuple(int(value) for value in installed.groups())
-    if actual < requested:
-        return False
-    if operator == "^":
-        if requested[0] > 0:
-            return actual[0] == requested[0]
-        if requested[1] > 0:
-            return actual[:2] == requested[:2]
-        return actual == requested
-    if operator == "~":
-        return actual[:2] == requested[:2]
-    return actual == requested
 
 
 def _contained_test_target(target: str, *, workspace: Path) -> bool:

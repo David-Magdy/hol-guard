@@ -23,6 +23,7 @@ from ..codex_hook_launch_runtime import (
     isolated_hook_environment,
     run_isolated_hook_process,
 )
+from ..private_file_io import read_private_regular_text
 
 _MAX_HOOK_INPUT_BYTES = 1_000_000
 _MAX_HOOK_RESPONSE_BYTES = 1_000_000
@@ -58,9 +59,6 @@ def _codesign_team(path: Path) -> str | None:
         if team != line.strip() and team and team != "not set":
             return team
     return None
-
-
-_DESKTOP_PROXY_FALLBACK_EXIT = 125
 
 
 _DESKTOP_PROXY_LAUNCH_SCRIPT = r"""
@@ -148,18 +146,7 @@ def _trusted_desktop_hook_proxy_command(
     python_executable: str,
     config_json: str,
 ) -> tuple[str, ...] | None:
-    """Return a runtime-verified signed macOS proxy command or retain Core.
-
-    The generated command is installed only by a genuine frozen Desktop launch.
-    Both executables must be regular, private files in the same signed app
-    bundle and share one non-empty Apple TeamIdentifier with that bundle. The
-    runtime launcher re-verifies the bundle, proxy, and Core immediately before
-    a normal path-based macOS launch. If any validation, launch, or daemon-fast-
-    path step fails, status 125/126/127 executes the exact frozen Core bridge.
-
-    Linux intentionally stays on the internal frozen bridge. AppImage path
-    variables are caller-controlled and are never executable provenance.
-    """
+    """Return a runtime-verified signed macOS proxy command or retain Core."""
 
     if (
         sys.platform != "darwin"
@@ -266,7 +253,11 @@ def bounded_cli_hook_command(
         desktop_proxy = _trusted_desktop_hook_proxy_command(python_executable, config_json)
         if desktop_proxy is not None:
             return desktop_proxy
-        return python_executable, _FROZEN_BRIDGE_COMMAND, config_json
+        return (
+            python_executable,
+            _FROZEN_BRIDGE_COMMAND,
+            config_json,
+        )
     return (
         python_executable,
         "-I",
@@ -289,17 +280,21 @@ def _validated_frozen_cli_args(
     guard_home: Path,
     harness: str,
 ) -> tuple[str, ...] | None:
-    expected_prefix = (
-        "guard",
-        "hook",
-        "--guard-home",
-        str(guard_home),
-        "--harness",
-        harness,
-    )
-    if tuple(cli_args[: len(expected_prefix)]) != expected_prefix:
+    if len(cli_args) < 6 or tuple(cli_args[:3]) != ("guard", "hook", "--guard-home"):
         return None
-    tail = cli_args[len(expected_prefix) :]
+    supplied_guard_home_value = Path(cli_args[3])
+    if not supplied_guard_home_value.is_absolute() or not guard_home.is_absolute():
+        return None
+    try:
+        supplied_guard_home = supplied_guard_home_value.resolve(strict=False)
+        expected_guard_home = guard_home.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    if supplied_guard_home != expected_guard_home:
+        return None
+    if tuple(cli_args[4:6]) != ("--harness", harness):
+        return None
+    tail = cli_args[6:]
     json_output = bool(tail and tail[-1] == "--json")
     if json_output:
         tail = tail[:-1]
@@ -313,7 +308,14 @@ def _validated_frozen_cli_args(
         if not Path(value).is_absolute():
             return None
         seen_flags.add(flag)
-    command = ("hook", *cli_args[2 : len(cli_args) - int(json_output)])
+    command: tuple[str, ...] = (
+        "hook",
+        "--guard-home",
+        str(expected_guard_home),
+        "--harness",
+        harness,
+        *tail,
+    )
     if json_output:
         command = (*command, "--json")
     return command
@@ -409,48 +411,28 @@ def _emit_failure(*, harness: str, input_text: str, reason: str = _FAILURE_REASO
     return returncode
 
 
-def _private_daemon_file_is_valid(path: Path) -> bool:
-    """Mirror daemon/manager._private_daemon_file_is_valid without importing it."""
-
-    try:
-        parent_metadata = path.parent.lstat()
-        metadata = path.lstat()
-    except OSError:
-        return False
-    if not stat.S_ISDIR(parent_metadata.st_mode):
-        return False
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        return False
-    if os.name == "nt":
-        return True
-    return (
-        parent_metadata.st_uid == os.getuid()
-        and metadata.st_uid == os.getuid()
-        and not stat.S_IMODE(parent_metadata.st_mode) & 0o077
-        and not stat.S_IMODE(metadata.st_mode) & 0o077
-    )
-
-
 def _read_daemon_auth_token(guard_home: Path) -> str | None:
-    token_path = guard_home / "daemon-auth-token"
-    if not _private_daemon_file_is_valid(token_path):
-        return None
-    try:
-        token = token_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
+    token = read_private_regular_text(
+        guard_home / "daemon-auth-token",
+        max_bytes=4096,
+        require_private_parent=True,
+    )
     return token or None
 
 
 def _daemon_hook_endpoint(guard_home: Path, harness: str) -> str | None:
     """Return the loopback hook URL from authenticated daemon state, or None."""
 
-    state_path = guard_home / "daemon-state.json"
-    if not _private_daemon_file_is_valid(state_path):
+    raw_state = read_private_regular_text(
+        guard_home / "daemon-state.json",
+        max_bytes=64 * 1024,
+        require_private_parent=True,
+    )
+    if raw_state is None:
         return None
     try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        state = json.loads(raw_state)
+    except json.JSONDecodeError:
         return None
     if not isinstance(state, dict):
         return None
@@ -588,6 +570,8 @@ def _try_daemon_hook(
     Returns None on any auth/transport/malformed-response failure so the caller
     falls back to the isolated CLI path (fail-closed).
     """
+    if harness.strip().lower() == "grok" and _event_name(input_text) == "PreToolUse":
+        return None
 
     endpoint = _daemon_hook_endpoint(guard_home, harness)
     if endpoint is None:
@@ -669,8 +653,24 @@ def run_bounded_cli_hook(config: Mapping[str, object], *, input_text: str) -> in
         return _emit_failure(harness=harness, input_text=input_text)
     package_root = Path(package_root_value)
     guard_home = Path(guard_home_value)
-    # Fast path: serve the hook from the already-running daemon (~50ms)
-    # instead of paying a fresh interpreter + full CLI import (~1s).
+    runtime_frozen = bool(getattr(sys, "frozen", False))
+    if runtime_frozen:
+        direct_cli_args = _validated_frozen_cli_args(
+            cli_args,
+            guard_home=guard_home,
+            harness=harness,
+        )
+        if direct_cli_args is None:
+            return _emit_failure(harness=harness, input_text=input_text)
+        command = (sys.executable, *direct_cli_args)
+    elif frozen_launcher:
+        return _emit_failure(harness=harness, input_text=input_text)
+    else:
+        command = isolated_guard_cli_command(
+            python_executable,
+            package_root,
+            cli_args,
+        )
     daemon_result = _try_daemon_hook(
         guard_home=guard_home,
         harness=harness,
@@ -684,21 +684,6 @@ def run_bounded_cli_hook(config: Mapping[str, object], *, input_text: str) -> in
         if daemon_stderr:
             print(daemon_stderr, file=sys.stderr)
         return daemon_exit
-    if frozen_launcher:
-        direct_cli_args = _validated_frozen_cli_args(
-            cli_args,
-            guard_home=guard_home,
-            harness=harness,
-        )
-        if direct_cli_args is None:
-            return _emit_failure(harness=harness, input_text=input_text)
-        command = (sys.executable, *direct_cli_args)
-    else:
-        command = isolated_guard_cli_command(
-            python_executable,
-            package_root,
-            cli_args,
-        )
     result = run_isolated_hook_process(
         command,
         input_text=input_text,

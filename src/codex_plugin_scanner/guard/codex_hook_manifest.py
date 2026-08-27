@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NoReturn
 
+from .codex_hook_compatibility import compatible_bridge_argv_hashes
 from .codex_hook_file_integrity import (
     CodexHookIntegrityError,
     canonical_path,
@@ -31,9 +32,19 @@ from .codex_hook_integrity import (
     load_or_create_hook_secret,
     sign_hook_manifest,
 )
-from .codex_hook_package_identity import assert_package_reauthentication_is_safe
+from .codex_hook_package_identity import (
+    assert_package_reauthentication_is_safe as assert_package_reauthentication_is_safe,
+)
 
 MANAGED_CODEX_HOOK_EVENTS = ("PreToolUse", "PermissionRequest", "UserPromptSubmit", "PostToolUse")
+_TRANSPORT_PACKAGE_ROLES = (
+    "bridge",
+    "bridge_resume",
+    "bridge_runtime",
+    "launch_runtime",
+    "runtime_trust",
+    "windows_job",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +65,11 @@ class CodexHookManifestSpec:
     workspace_rebinding_allowed: bool = False
 
 
-def build_authenticated_hook_manifest(spec: CodexHookManifestSpec) -> dict[str, object]:
+def build_authenticated_hook_manifest(
+    spec: CodexHookManifestSpec,
+    *,
+    previous_manifest: Mapping[str, object] | None = None,
+) -> dict[str, object]:
     secret = load_or_create_hook_secret(spec.guard_home)
     interpreter = describe_executable_file(spec.interpreter_path, role="interpreter")
     packaged_files = [
@@ -63,18 +78,9 @@ def build_authenticated_hook_manifest(spec: CodexHookManifestSpec) -> dict[str, 
     packaged_by_role = {
         identity.get("role"): identity for identity in packaged_files if isinstance(identity.get("role"), str)
     }
-    bridge = packaged_by_role.get("bridge")
-    bridge_runtime = packaged_by_role.get("bridge_runtime")
-    launch_runtime = packaged_by_role.get("launch_runtime")
-    runtime_trust = packaged_by_role.get("runtime_trust")
-    windows_job = packaged_by_role.get("windows_job")
-    if (
-        not isinstance(bridge, dict)
-        or not isinstance(bridge_runtime, dict)
-        or not isinstance(launch_runtime, dict)
-        or not isinstance(runtime_trust, dict)
-        or not isinstance(windows_job, dict)
-        or len(packaged_by_role) != len(spec.packaged_file_paths)
+    transport = {role: packaged_by_role.get(role) for role in _TRANSPORT_PACKAGE_ROLES}
+    if any(not isinstance(identity, dict) for identity in transport.values()) or len(packaged_by_role) != len(
+        spec.packaged_file_paths
     ):
         raise CodexHookIntegrityError(
             "codex_hook_manifest_packaged_files_invalid",
@@ -83,6 +89,7 @@ def build_authenticated_hook_manifest(spec: CodexHookManifestSpec) -> dict[str, 
     generated_at = datetime.now(timezone.utc).isoformat()
     unsigned_manifest: dict[str, object] = {
         "config": {"scope": "global", "target": canonical_path(spec.config_path)},
+        "compatible_bridge_argv_sha256": compatible_bridge_argv_hashes(previous_manifest),
         "context": _expected_context(spec),
         "daemon_start": {
             "argv": list(spec.daemon_start_argv),
@@ -102,14 +109,7 @@ def build_authenticated_hook_manifest(spec: CodexHookManifestSpec) -> dict[str, 
         "package_version": spec.package_version,
         "packaged_files": packaged_files,
         "schema_version": HOOK_MANIFEST_SCHEMA_VERSION,
-        "transport": {
-            "bridge": bridge,
-            "bridge_runtime": bridge_runtime,
-            "launch_runtime": launch_runtime,
-            "runtime_trust": runtime_trust,
-            "windows_job": windows_job,
-            "wrapper": None,
-        },
+        "transport": {**transport, "wrapper": None},
     }
     return sign_hook_manifest(unsigned_manifest, secret)
 
@@ -364,11 +364,7 @@ def _verify_launch_identities(
     if (
         not isinstance(transport, dict)
         or transport.get("wrapper") is not None
-        or transport.get("bridge") != packaged_by_role.get("bridge")
-        or transport.get("bridge_runtime") != packaged_by_role.get("bridge_runtime")
-        or transport.get("launch_runtime") != packaged_by_role.get("launch_runtime")
-        or transport.get("runtime_trust") != packaged_by_role.get("runtime_trust")
-        or transport.get("windows_job") != packaged_by_role.get("windows_job")
+        or any(transport.get(role) != packaged_by_role.get(role) for role in _TRANSPORT_PACKAGE_ROLES)
     ):
         _raise_manifest_failure(
             "codex_hook_manifest_transport_invalid",

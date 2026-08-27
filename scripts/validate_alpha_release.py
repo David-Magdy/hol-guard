@@ -62,6 +62,13 @@ RELEASE_TRAINS: Final[Mapping[str, ReleaseTrain]] = MappingProxyType(
             git_ref="refs/heads/release/3.0",
             major=3,
             minor=0,
+            patch=1,
+            stable_enabled=False,
+        ),
+        "refs/heads/release/3.1": ReleaseTrain(
+            git_ref="refs/heads/release/3.1",
+            major=3,
+            minor=1,
             stable_enabled=False,
         ),
     }

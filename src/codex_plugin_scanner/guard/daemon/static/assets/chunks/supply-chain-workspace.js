@@ -1,8 +1,9 @@
-import { r as reactExports, bL as fetchSupplyChainBundle, j as jsxRuntimeExports, S as SectionLabel, k as EmptyState, b4 as HiMiniArrowTopRightOnSquare, ao as Tag, t as formatRelativeTime, M as Badge, K as HiMiniExclamationTriangle, b0 as HiMiniBugAnt, ax as guardActionPresentation, bM as isSupplyChainScannerEvidence, bN as isBlockedGuardAction, aM as HiMiniArrowPath, bO as HiMiniDocumentMagnifyingGlass, bP as HiMiniShieldExclamation, bQ as HiMiniComputerDesktop, C as HiMiniCloud, m as HiMiniCheckCircle, U as HiMiniWrenchScrewdriver, A as ActionButton, z as HiMiniChevronDown, V as HiMiniExclamationCircle, bh as fetchReceipts, Y as HiMiniXCircle, e as harnessDisplayName, y as HiMiniChevronUp } from "../guard-dashboard.js";
+import { r as reactExports, c2 as fetchSupplyChainBundle, j as jsxRuntimeExports, S as SectionLabel, m as EmptyState, aS as HiMiniArrowTopRightOnSquare, ax as Tag, w as formatRelativeTime, P as Badge, M as HiMiniExclamationTriangle, bm as HiMiniBugAnt, aX as guardActionPresentation, c3 as isSupplyChainScannerEvidence, c4 as isBlockedGuardAction, aC as HiMiniArrowPath, c1 as HiMiniDocumentMagnifyingGlass, c5 as HiMiniShieldExclamation, c6 as HiMiniComputerDesktop, I as HiMiniCloud, o as HiMiniCheckCircle, Y as HiMiniWrenchScrewdriver, A as ActionButton, C as HiMiniChevronDown, Z as HiMiniExclamationCircle, bC as fetchReceipts, a0 as HiMiniXCircle, i as harnessDisplayName, B as HiMiniChevronUp } from "../guard-dashboard.js";
 import { resolveFeedStaleness } from "./feed-health-workspace.js";
 import { r as resolveHomeProtectionStatus } from "./home-protection-module.js";
 import { b as buildSupplyChainStats, r as resolveManagerCoverageManagers, a as resolveManagerCoverageStatus } from "./supply-chain-protection-stats.js";
-import { s as supplyChainFixAllIsPending, a as supplyChainFixAllButtonLabel, S as SUPPLY_CHAIN_WORKSPACE_SHELL_CLASS } from "./supply-chain-hub-workspace.js";
+import { s as supplyChainFixAllIsPending, a as supplyChainFixAllNeedsCloudConnect, b as supplyChainFixAllButtonLabel, S as SUPPLY_CHAIN_WORKSPACE_SHELL_CLASS } from "./supply-chain-hub-workspace.js";
+import "./approval-proof-modal.js";
 function SeverityBadge({ severity }) {
   const tone = severity === "critical" || severity === "high" ? "destructive" : severity === "medium" ? "attention" : "default";
   return /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { tone, children: severity });
@@ -767,7 +768,7 @@ function SupplyChainWorkspaceHero({ hero, compact = false }) {
   );
 }
 function recoverySummary(issueCount) {
-  return `Fix ${issueCount} open issue${issueCount === 1 ? "" : "s"} in one guided pass. Guard repairs package tools, activates routing, refreshes safety intelligence, and rechecks status.`;
+  return `Fix ${issueCount} open issue${issueCount === 1 ? "" : "s"} in one guided pass. Guard repairs package tools and turns on routing. Safety intelligence refreshes when Guard Cloud is connected.`;
 }
 function SupplyChainRecovery({
   issues,
@@ -781,6 +782,14 @@ function SupplyChainRecovery({
   }, []);
   const pending = supplyChainFixAllIsPending(state.phase);
   const showResult = state.message !== null;
+  const remainingSteps = state.remainingSteps ?? [];
+  const needsCloudConnect = supplyChainFixAllNeedsCloudConnect(state);
+  const isHardFailure = state.phase === "error" || state.phase === "incomplete" && state.failedSteps.length > 0;
+  const buttonLabel = supplyChainFixAllButtonLabel(
+    state.phase,
+    state.remainingAction ?? null,
+    state.failedSteps.length
+  );
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "section",
     {
@@ -810,15 +819,15 @@ function SupplyChainRecovery({
               }
             ) : null
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: onFixAll, disabled: pending, "aria-busy": pending, children: supplyChainFixAllButtonLabel(state.phase) })
+          /* @__PURE__ */ jsxRuntimeExports.jsx(ActionButton, { onClick: onFixAll, disabled: pending, "aria-busy": pending, children: buttonLabel })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: showResult ? "mt-3" : "", "aria-live": "polite", children: showResult ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "p",
             {
-              className: `flex items-start gap-2 text-sm ${state.phase === "error" || state.phase === "incomplete" ? "text-red-600" : "text-slate-600"}`,
+              className: `flex items-start gap-2 text-sm ${isHardFailure ? "text-red-600" : "text-slate-600"}`,
               children: [
-                state.phase === "success" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+                state.phase === "success" || needsCloudConnect ? /* @__PURE__ */ jsxRuntimeExports.jsx(
                   HiMiniCheckCircle,
                   {
                     className: "mt-0.5 h-4 w-4 shrink-0 text-emerald-500",
@@ -829,7 +838,8 @@ function SupplyChainRecovery({
               ]
             }
           ),
-          state.failedSteps.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 space-y-1 text-xs text-red-600", children: state.failedSteps.map((failure, index) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: failure }, `${index}:${failure}`)) }) : null
+          state.failedSteps.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 space-y-1 text-xs text-red-600", children: state.failedSteps.map((failure, index) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: failure }, `failed:${index}:${failure}`)) }) : null,
+          remainingSteps.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "mt-2 space-y-1 text-xs font-medium text-brand-primary", children: remainingSteps.map((remaining, index) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: remaining }, `remaining:${index}:${remaining}`)) }) : null
         ] }) : null }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",

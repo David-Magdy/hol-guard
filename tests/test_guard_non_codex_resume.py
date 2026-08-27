@@ -82,15 +82,80 @@ def test_pi_approval_with_session_id_metadata_does_not_attempt_codex_resume(tmp_
         daemon.stop()
 
     assert payload["resolved"] is True
-    assert "codex_resume" not in payload
-    assert payload["harness_resume"]["status"] == "resumed"
-    assert payload["harnessResume"] == payload["harness_resume"]
-    assert "resume_token" not in str(payload["harness_resume"])
+    assert "codexResume" not in payload
+    assert payload["harnessResume"]["status"] == "manual_retry_required"
+    assert "resume_token" not in str(payload["harnessResume"])
     assert payload["copy"]["body"] == "Return to Pi and retry"
     assert store.list_events(event_name="codex/thread_resume") == []
     operation = store.get_guard_operation("pi-operation")
     assert operation is not None
-    assert operation["status"] == "resumed"
+    assert operation["status"] == "manual_retry_required"
+    assert store.list_events(event_name="harness/operation_resume")
+
+
+def test_grok_approval_marks_waiting_operation_manual_retry_required(tmp_path: Path) -> None:
+    store = GuardStore(tmp_path / "guard-home")
+    request = GuardApprovalRequest(
+        request_id="req-grok",
+        harness="grok",
+        artifact_id="grok:project:read-secret",
+        artifact_name="Read credential-looking source",
+        artifact_hash="hash-grok",
+        publisher=None,
+        policy_action="require-reapproval",
+        recommended_scope="artifact",
+        changed_fields=("tool_response",),
+        source_scope="project",
+        config_path=str(tmp_path / ".grok" / "managed_config.toml"),
+        workspace=str(tmp_path),
+        launch_target="Read .env",
+        action_envelope_json={"action_type": "file_read", "tool_name": "Read", "target_paths": [".env"]},
+        review_command="hol-guard approvals approve req-grok",
+        approval_url="http://127.0.0.1/pending/req-grok",
+    )
+    store.add_approval_request(request, "2026-05-08T10:00:00+00:00")
+    session = store.upsert_guard_session(
+        session_id="grok-session",
+        harness="grok",
+        surface="harness-adapter",
+        status="waiting_on_approval",
+        client_name="grok-hook",
+        client_title="Grok hook",
+        client_version="1.0.0",
+        workspace=str(tmp_path),
+        capabilities=["approval-resolution"],
+        now="2026-05-08T10:00:00+00:00",
+    )
+    store.upsert_guard_operation(
+        operation_id="grok-operation",
+        session_id=str(session["session_id"]),
+        harness="grok",
+        operation_type="tool_call",
+        status="waiting_on_approval",
+        approval_request_ids=["req-grok"],
+        resume_token="resume-token",
+        metadata={"session_id": "grok-session-id"},
+        now="2026-05-08T10:00:00+00:00",
+    )
+    daemon = GuardDaemonServer(store, host="127.0.0.1", port=0)
+    daemon.start()
+
+    try:
+        payload = _post_json(
+            daemon.port,
+            daemon._server.auth_token,
+            "/v1/requests/req-grok/approve",
+            {"scope": "artifact"},
+        )
+    finally:
+        daemon.stop()
+
+    assert payload["resolved"] is True
+    assert "codexResume" not in payload
+    assert payload["harnessResume"]["status"] == "manual_retry_required"
+    assert payload["harnessResume"]["harness"] == "grok"
+    assert payload["copy"]["body"]
+    assert store.get_guard_operation("grok-operation")["status"] == "manual_retry_required"
     assert store.list_events(event_name="harness/operation_resume")
 
 
@@ -128,11 +193,18 @@ def test_omp_denial_marks_waiting_operation_blocked_without_leaking_resume_token
     )
 
     assert result == {
-        "operationId": "pi-operation-block",
-        "harness": "omp",
-        "status": "blocked",
         "action": "block",
-        "completedAt": "2026-05-08T10:01:00+00:00",
+        "continuationCompletedAt": "2026-05-08T10:01:00+00:00",
+        "continuationReason": "blocked_not_resumed",
+        "continuationStatus": "blocked_not_resumed",
+        "harnessResume": {
+            "completedAt": "2026-05-08T10:01:00+00:00",
+            "harness": "omp",
+            "operationId": "pi-operation-block",
+            "reason": "blocked_not_resumed",
+            "status": "blocked_not_resumed",
+            "supported": False,
+        },
     }
     assert "resume-token-secret" not in str(result)
     operation = store.get_guard_operation("pi-operation-block")

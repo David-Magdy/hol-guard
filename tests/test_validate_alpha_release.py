@@ -25,7 +25,8 @@ GITHUB_SHA = "0123456789abcdef0123456789abcdef01234567"
         ("refs/heads/release/2.1", "2.1.0a37"),
         ("refs/heads/release/2.2", "2.2.0a1"),
         ("refs/heads/release/2.2", "2.2.0a37"),
-        ("refs/heads/release/3.0", "3.0.0a5"),
+        ("refs/heads/release/3.0", "3.0.1a5"),
+        ("refs/heads/release/3.1", "3.1.0a2"),
     ],
 )
 def test_accepts_exact_canonical_release_train_alphas(git_ref: str, version: str) -> None:
@@ -54,16 +55,19 @@ def test_generic_alpha_validator_returns_typed_sha_bound_release() -> None:
     )
 
 
-def test_registry_preserves_release_30_and_adds_release_21() -> None:
+def test_registry_preserves_release_30_and_release_31() -> None:
     assert ALPHA_BRANCHES == (
         "refs/heads/release/2.1",
         "refs/heads/release/2.2",
         "refs/heads/release/3.0",
+        "refs/heads/release/3.1",
     )
     assert RELEASE_TRAINS["refs/heads/release/2.1"].version_prefix == "2.1.0"
     assert RELEASE_TRAINS["refs/heads/release/2.2"].version_prefix == "2.2.0"
     assert RELEASE_TRAINS["refs/heads/release/2.2"].stable_enabled is True
+    assert RELEASE_TRAINS["refs/heads/release/3.0"].version_prefix == "3.0.1"
     assert RELEASE_TRAINS["refs/heads/release/3.0"].stable_enabled is False
+    assert RELEASE_TRAINS["refs/heads/release/3.1"].version_prefix == "3.1.0"
 
 
 @pytest.mark.parametrize(
@@ -106,7 +110,7 @@ def test_rejects_stable_release_for_alpha_only_release_30_train() -> None:
         ("refs/heads/release/3.0", "3.1.0a9"),
         ("refs/heads/release/3.0", "3.2.0a1"),
         ("refs/heads/release/3.0", "2.1.0a1"),
-        ("refs/heads/release/3.0", "3.0.1a1"),
+        ("refs/heads/release/3.0", "3.0.0a291"),
     ],
 )
 def test_rejects_wrong_train_major_minor_or_patch(git_ref: str, version: str) -> None:
@@ -278,12 +282,12 @@ def test_rejects_malformed_existing_version() -> None:
 
 def test_compatibility_wrapper_uses_generic_validator() -> None:
     release = validate_alpha_release(
-        "3.0.0a5",
+        "3.0.1a5",
         "refs/heads/release/3.0",
-        existing_versions=["3.0.0a4"],
+        existing_versions=["3.0.0", "3.0.0a290", "3.0.1a4"],
     )
 
-    assert release.version == "3.0.0a5"
+    assert release.version == "3.0.1a5"
 
 
 def test_cli_accepts_repeated_existing_versions(

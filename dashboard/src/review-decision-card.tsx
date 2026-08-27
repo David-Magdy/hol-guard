@@ -29,16 +29,14 @@ import {
   taskCapabilityExplanation,
   willPersistExactAction,
 } from "./approval-scopes";
-import { approvalProofRequiresPassword } from "./approval-proof-inline";
+import { approvalProofRecentlySatisfied, buildApprovalProofCredentials } from "./approval-proof-inline";
+import { fetchResolvedApprovalGate } from "./use-resolved-approval-gate";
 import { ConsolidatedEvidenceAlert } from "./consolidated-evidence-alert";
 import { plainEnglishRequestTitle } from "./evidence/plain-english";
 import type { DecisionScope, GuardApprovalGatePublicConfig, GuardApprovalRequest } from "./guard-types";
-import type { GuardTemporaryMcpGrantDuration, GuardTemporaryMcpGrantTarget } from "./guard-types";
-import type { GuardLocalToolGrantDuration, GuardLocalToolGrantTarget } from "./guard-types";
 import { guardActionPresentation } from "./guard-action";
 import { requiresApprovalPasswordPrompt } from "./approval-gate-utils";
 import { buildEvidenceItems, buildTopAlertItems } from "./review-evidence";
-import { ReviewCloudRecovery } from "./review-cloud-recovery";
 import {
   allowButtonLabel,
   blockButtonLabel,
@@ -46,30 +44,8 @@ import {
 } from "./review-scope-controls";
 import { buildWhatWouldHappen, pastDecisionVerb, PrimaryActionCard } from "./review-states";
 import type { ReviewViewModel, ReviewWorkspaceProps } from "./review-workspace";
-import {
-  TemporaryMcpApprovalControls,
-  TemporaryMcpRetryNotice,
-} from "./temporary-mcp-approval-controls";
-import {
-  defaultTemporaryMcpDuration,
-  defaultTemporaryMcpTarget,
-  buildTemporaryMcpResolutionFields,
-  temporaryMcpAllowButtonLabel,
-  temporaryMcpApprovalOptions,
-  temporaryMcpApprovalNeedsRetry,
-  validTemporaryMcpSelection,
-} from "./temporary-mcp-approval";
-import { LocalToolApprovalControls } from "./local-tool-approval-controls";
-import {
-  buildLocalToolResolutionFields,
-  defaultLocalToolDuration,
-  defaultLocalToolTarget,
-  localToolAllowButtonLabel,
-  localToolApprovalOptions,
-  validLocalToolSelection,
-} from "./local-tool-approval";
 
-const commonScopeValues = new Set<DecisionScope>(["artifact"]);
+const commonScopeValues = new Set<DecisionScope>(["artifact", "workspace"]);
 
 function resolvedActionCopy(
   item: GuardApprovalRequest | null,
@@ -103,12 +79,7 @@ export function ReviewDecisionCard(props: {
   const [useCooldown, setUseCooldown] = useState(false);
   const [pendingAction, setPendingAction] = useState<"allow" | "block" | null>(null);
   const [pendingContractKey, setPendingContractKey] = useState<string | null>(null);
-  const [mcpGrantTarget, setMcpGrantTarget] = useState<GuardTemporaryMcpGrantTarget>("exact");
-  const [mcpGrantDuration, setMcpGrantDuration] = useState<GuardTemporaryMcpGrantDuration>("once");
-  const [localToolGrantTarget, setLocalToolGrantTarget] = useState<GuardLocalToolGrantTarget>("capability");
-  const [localToolGrantDuration, setLocalToolGrantDuration] = useState<GuardLocalToolGrantDuration>("once");
   const [rememberExactAction, setRememberExactAction] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const allowButtonRef = useRef<HTMLButtonElement>(null);
   const availableScopeChoices = useMemo(
     () => (item ? standardScopeChoicesForRequest(item, "allow") : []),
@@ -131,15 +102,6 @@ export function ReviewDecisionCard(props: {
     [item],
   );
   const taskCapabilityCopy = item ? taskCapabilityExplanation(item) : null;
-  const temporaryMcpOptions = useMemo(
-    () => (item ? temporaryMcpApprovalOptions(item) : null),
-    [item],
-  );
-  const temporaryMcpRetryRequired = item !== null && temporaryMcpApprovalNeedsRetry(item);
-  const localToolOptions = useMemo(
-    () => (item ? localToolApprovalOptions(item) : null),
-    [item],
-  );
   const watchOnlyObservation = item !== null && isWatchOnlyObservation(item);
   const hasAllowScope = availableScopeChoices.length + advancedScopeOptions.length > 0;
   const decisionContractKey = item ? approvalDecisionContractKey(item) : null;
@@ -159,22 +121,6 @@ export function ReviewDecisionCard(props: {
       setPendingAction(null);
       setPendingContractKey(null);
       setRememberExactAction(false);
-      const nextTemporaryOptions = temporaryMcpApprovalOptions(item);
-      if (nextTemporaryOptions !== null) {
-        setMcpGrantTarget(defaultTemporaryMcpTarget(nextTemporaryOptions));
-        setMcpGrantDuration(defaultTemporaryMcpDuration(nextTemporaryOptions));
-      } else {
-        setMcpGrantTarget("exact");
-        setMcpGrantDuration("once");
-      }
-      const nextLocalToolOptions = localToolApprovalOptions(item);
-      if (nextLocalToolOptions !== null) {
-        setLocalToolGrantTarget(defaultLocalToolTarget(nextLocalToolOptions));
-        setLocalToolGrantDuration(defaultLocalToolDuration(nextLocalToolOptions));
-      } else {
-        setLocalToolGrantTarget("capability");
-        setLocalToolGrantDuration("once");
-      }
     }
   }, [decisionSubjectKey]);
 
@@ -191,24 +137,6 @@ export function ReviewDecisionCard(props: {
     }
   }, [decisionContractKey]);
 
-  useEffect(() => {
-    const selection = validTemporaryMcpSelection(temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration);
-    if (selection.target !== mcpGrantTarget) setMcpGrantTarget(selection.target);
-    if (selection.duration !== mcpGrantDuration) setMcpGrantDuration(selection.duration);
-  }, [temporaryMcpOptions, mcpGrantTarget, mcpGrantDuration]);
-
-  useEffect(() => {
-    const selection = validLocalToolSelection(localToolOptions, localToolGrantTarget, localToolGrantDuration);
-    if (selection.target !== localToolGrantTarget) setLocalToolGrantTarget(selection.target);
-    if (selection.duration !== localToolGrantDuration) setLocalToolGrantDuration(selection.duration);
-  }, [localToolOptions, localToolGrantTarget, localToolGrantDuration]);
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, []);
-
   const handleResolve = useCallback(
     async (action: "allow" | "block") => {
       if (!item || resolutionBlockReason !== null) return;
@@ -223,11 +151,13 @@ export function ReviewDecisionCard(props: {
           action === "allow" ? rememberExactAction : watchOnlyObservation,
         );
         const gate = props.approvalGate;
-        const needsPassword = approvalProofRequiresPassword(gate);
         const includeGateFields =
           gate?.enabled === true &&
           gate?.configured === true &&
           requiresApprovalPasswordPrompt(gate.cooldown_active, gate.strict_all_decisions, requestedScope);
+        const proof = includeGateFields
+          ? buildApprovalProofCredentials(gate, { approvalPassword, approvalTotpCode })
+          : {};
         await props.onResolve({
           ...buildDecisionPayload({
             item,
@@ -236,20 +166,8 @@ export function ReviewDecisionCard(props: {
             reason: action === "allow" ? "approved in review" : "blocked in review",
             persistExactAction,
           }),
-          ...(includeGateFields && needsPassword ? { approval_password: approvalPassword } : {}),
-          ...(includeGateFields && !needsPassword ? { approval_totp_code: approvalTotpCode } : {}),
+          ...proof,
           ...(includeGateFields ? { approval_gate_use_cooldown: useCooldown } : {}),
-          ...(action === "allow"
-            ? buildTemporaryMcpResolutionFields(
-                temporaryMcpOptions,
-                mcpGrantTarget,
-                mcpGrantDuration,
-                rememberExactAction,
-              )
-            : {}),
-          ...(action === "allow" && temporaryMcpOptions === null
-            ? buildLocalToolResolutionFields(localToolOptions, localToolGrantTarget, localToolGrantDuration)
-            : {}),
         });
         setResolved({ action, persistedExactAction: persistExactAction });
         setApprovalPassword("");
@@ -257,7 +175,6 @@ export function ReviewDecisionCard(props: {
         setUseCooldown(false);
         setPendingAction(null);
         setPendingContractKey(null);
-        timerRef.current = setTimeout(() => setResolved(null), 2000);
       } catch (err) {
         setErrorMessage(err instanceof Error ? err.message : "Something went wrong. Try again.");
       } finally {
@@ -276,12 +193,6 @@ export function ReviewDecisionCard(props: {
       approvalTotpCode,
       useCooldown,
       resolutionBlockReason,
-      temporaryMcpOptions,
-      mcpGrantTarget,
-      mcpGrantDuration,
-      localToolOptions,
-      localToolGrantTarget,
-      localToolGrantDuration,
     ]
   );
 
@@ -299,17 +210,29 @@ export function ReviewDecisionCard(props: {
       setLastAction(action);
       const requestedScope = action === "allow" ? allowScope : blockScope;
       const gate = props.approvalGate;
-      const gateRequiresPassword =
+      const gateEnabled =
         gate?.enabled === true &&
         gate?.configured === true &&
         requiresApprovalPasswordPrompt(gate.cooldown_active, gate.strict_all_decisions, requestedScope);
-      if (gateRequiresPassword) {
-        setPendingAction(action);
-        setPendingContractKey(decisionContractKey);
-        setErrorMessage(null);
+      if (!gateEnabled) {
+        void handleResolve(action);
         return;
       }
-      void handleResolve(action);
+      setErrorMessage(null);
+      if (!approvalProofRecentlySatisfied(gate)) {
+        setPendingAction(action);
+        setPendingContractKey(decisionContractKey);
+        return;
+      }
+      void (async () => {
+        const fresh = await fetchResolvedApprovalGate().catch(() => gate);
+        if (approvalProofRecentlySatisfied(fresh ?? gate)) {
+          void handleResolve(action);
+          return;
+        }
+        setPendingAction(action);
+        setPendingContractKey(decisionContractKey);
+      })();
     },
     [
       allowScope,
@@ -332,7 +255,7 @@ export function ReviewDecisionCard(props: {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (submitting !== null || pendingAction !== null || resolutionBlockReason !== null) return;
+      if (submitting !== null || pendingAction !== null || resolved !== null || resolutionBlockReason !== null) return;
       const target = event.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
 
@@ -352,7 +275,7 @@ export function ReviewDecisionCard(props: {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [availableScopeChoices, handleRequestResolve, pendingAction, resolutionBlockReason, submitting]);
+  }, [availableScopeChoices, handleRequestResolve, pendingAction, resolutionBlockReason, resolved, submitting]);
 
   const handleModalSubmit = useCallback(() => {
     if (pendingAction === null) {
@@ -415,16 +338,17 @@ export function ReviewDecisionCard(props: {
   const topAlertItems = buildTopAlertItems(item);
   const evidenceItems = buildEvidenceItems(item);
   const actionPresentation = guardActionPresentation(item.policy_action);
-  let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
   const persistExactAllow = item !== null && willPersistExactAction(item, "allow", allowScope, rememberExactAction);
   const persistExactBlock = item !== null && willPersistExactAction(item, "block", blockScope, watchOnlyObservation);
-  if (persistExactAllow) {
-    resolvedAllowButtonLabel = watchOnlyObservation ? "Allow next time" : "Approve and remember";
+  let resolvedAllowButtonLabel = allowButtonLabel(allowScope);
+  if (watchOnlyObservation) {
+    resolvedAllowButtonLabel = "Keep allowing";
+  } else if (persistExactAllow) {
+    resolvedAllowButtonLabel = "Approve and remember";
   }
-  if (temporaryMcpOptions !== null && !rememberExactAction) {
-    resolvedAllowButtonLabel = temporaryMcpAllowButtonLabel(mcpGrantDuration);
-  } else if (localToolOptions !== null) {
-    resolvedAllowButtonLabel = localToolAllowButtonLabel(localToolGrantDuration);
+  let resolvedBlockButtonLabel = blockButtonLabel(blockScope);
+  if (watchOnlyObservation || persistExactBlock) {
+    resolvedBlockButtonLabel = "Stop this next time";
   }
   return (
     <div className="space-y-5">
@@ -458,7 +382,7 @@ export function ReviewDecisionCard(props: {
             </p>
           </div>
           <Badge tone={watchOnlyObservation ? "info" : actionPresentation.tone}>
-            {watchOnlyObservation ? "Ran in Watch only" : actionPresentation.label}
+            {watchOnlyObservation ? "Would have stopped" : actionPresentation.label}
           </Badge>
         </div>
 
@@ -485,8 +409,6 @@ export function ReviewDecisionCard(props: {
           </div>
         )}
 
-        {resolutionBlockReason === null ? <ReviewCloudRecovery key={item.request_id} item={item} /> : null}
-
         {whatWouldHappen && (
           <div className="mt-5">
             <button
@@ -511,48 +433,22 @@ export function ReviewDecisionCard(props: {
           </div>
         )}
 
-        {resolutionBlockReason === null && (
-          <>
-            {temporaryMcpOptions !== null && !rememberExactAction && (
-              <TemporaryMcpApprovalControls
-                options={temporaryMcpOptions}
-                target={mcpGrantTarget}
-                duration={mcpGrantDuration}
-                onTargetChange={setMcpGrantTarget}
-                onDurationChange={setMcpGrantDuration}
-              />
-            )}
-            {temporaryMcpRetryRequired && (
-              <TemporaryMcpRetryNotice />
-            )}
-            {temporaryMcpOptions === null && localToolOptions !== null && (
-              <LocalToolApprovalControls
-                options={localToolOptions}
-                target={localToolGrantTarget}
-                duration={localToolGrantDuration}
-                onTargetChange={setLocalToolGrantTarget}
-                onDurationChange={setLocalToolGrantDuration}
-              />
-            )}
-            <ReviewScopeControls
-              commonScopeOptions={commonScopeOptions}
-              broaderScopeOptions={broaderScopeOptions}
-              advancedScopeOptions={advancedScopeOptions}
-              blockScopeOptions={blockScopeOptions}
-              hasAllowScope={hasAllowScope}
-              taskCapabilityCopy={taskCapabilityCopy}
-              exactActionPersistenceEligible={
-                item.exact_action_persistence_eligible === true && localToolOptions === null
-              }
-              rememberExactAction={rememberExactAction}
-              allowScope={allowScope}
-              blockScope={blockScope}
-              showAllowScopes={temporaryMcpOptions === null && localToolOptions === null}
-              onAllowScopeChange={setAllowScope}
-              onBlockScopeChange={setBlockScope}
-              onRememberExactActionChange={setRememberExactAction}
-            />
-          </>
+        {resolutionBlockReason === null && resolved === null && (
+          <ReviewScopeControls
+            commonScopeOptions={commonScopeOptions}
+            broaderScopeOptions={broaderScopeOptions}
+            advancedScopeOptions={advancedScopeOptions}
+            blockScopeOptions={blockScopeOptions}
+            hasAllowScope={hasAllowScope}
+            taskCapabilityCopy={taskCapabilityCopy}
+            exactActionPersistenceEligible={item.exact_action_persistence_eligible === true}
+            rememberExactAction={rememberExactAction}
+            allowScope={allowScope}
+            blockScope={blockScope}
+            onAllowScopeChange={setAllowScope}
+            onBlockScopeChange={setBlockScope}
+            onRememberExactActionChange={setRememberExactAction}
+          />
         )}
         {errorMessage && (
           <div className="guard-fade-in mt-4 rounded-xl border border-brand-purple/25 bg-brand-purple/[0.05] p-4">
@@ -572,7 +468,7 @@ export function ReviewDecisionCard(props: {
           </div>
         )}
 
-        {resolutionBlockReason === null && <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {resolutionBlockReason === null && resolved === null && <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <ActionButton
             ref={allowButtonRef}
             variant="success"
@@ -604,7 +500,7 @@ export function ReviewDecisionCard(props: {
             ) : (
               <span className="flex items-center gap-2">
                 <HiMiniNoSymbol className="h-4 w-4" aria-hidden="true" />
-                {persistExactBlock ? "Block next time" : blockButtonLabel(blockScope)}
+                {resolvedBlockButtonLabel}
               </span>
             )}
           </ActionButton>
@@ -669,11 +565,7 @@ export function ReviewDecisionCard(props: {
           onUseCooldownChange={handleUseCooldownChange}
           onSubmit={handleModalSubmit}
           onCancel={handleModalCancel}
-          submitLabel={
-            pendingAction === "allow"
-              ? resolvedAllowButtonLabel
-              : blockButtonLabel(blockScope)
-          }
+          submitLabel={pendingAction === "allow" ? resolvedAllowButtonLabel : resolvedBlockButtonLabel}
         />
       )}
     </div>

@@ -11,13 +11,30 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Final
 
 from packaging.utils import InvalidSdistFilename, InvalidWheelFilename, parse_sdist_filename, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
+
+if __package__:
+    from .release_registry_types import (
+        Registry,
+        RegistryResult,
+        RegistryVerificationError,
+        ReleaseFile,
+        ReleaseInspection,
+        TestPyPIResult,
+    )
+else:
+    from release_registry_types import (  # pyright: ignore[reportImplicitRelativeImport]
+        Registry,
+        RegistryResult,
+        RegistryVerificationError,
+        ReleaseFile,
+        ReleaseInspection,
+        TestPyPIResult,
+    )
 
 DEFAULT_PROJECT_NAME: Final = "hol-guard"
 SUPPORTED_PROJECT_NAMES: Final = ("hol-guard", "plugin-scanner")
@@ -25,54 +42,6 @@ MAX_RESPONSE_BYTES: Final = 256 * 1024 * 1024
 _SHA256: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{64}")
 
 Fetcher = Callable[[str], bytes]
-
-
-class Registry(str, Enum):
-    PYPI = "pypi"
-    TESTPYPI = "testpypi"
-
-    @property
-    def api_host(self) -> str:
-        return "pypi.org" if self is Registry.PYPI else "test.pypi.org"
-
-    @property
-    def file_host(self) -> str:
-        return "files.pythonhosted.org" if self is Registry.PYPI else "test-files.pythonhosted.org"
-
-
-class RegistryVerificationError(RuntimeError):
-    pass
-
-
-@dataclass(frozen=True)
-class ReleaseFile:
-    filename: str
-    sha256: str
-    download_url: str
-
-
-@dataclass(frozen=True)
-class ReleaseInspection:
-    registry: Registry
-    version: str
-    exists: bool
-    files: tuple[ReleaseFile, ...] = ()
-
-    @property
-    def digests(self) -> dict[str, str]:
-        return {item.filename: item.sha256 for item in self.files}
-
-
-@dataclass(frozen=True)
-class RegistryResult:
-    registry: Registry
-    status: str
-    version: str
-    files: tuple[str, ...]
-    downloaded_paths: tuple[Path, ...] = ()
-
-
-TestPyPIResult = RegistryResult
 
 
 def stdlib_fetch(url: str) -> bytes:
@@ -197,6 +166,16 @@ def _validate_distribution_filename(filename: object, version: Version, project_
     return filename
 
 
+def _is_publish_attestation(filename: object, version: Version, project_name: str) -> bool:
+    if not isinstance(filename, str) or not filename.endswith(".publish.attestation"):
+        return False
+    distribution_filename = filename
+    while distribution_filename.endswith(".publish.attestation"):
+        distribution_filename = distribution_filename.removesuffix(".publish.attestation")
+    _validate_distribution_filename(distribution_filename, version, project_name)
+    return True
+
+
 def _validated_download_url(url: object, filename: str, registry: Registry) -> str:
     if not isinstance(url, str):
         raise RegistryVerificationError("Registry distribution URL must be a string")
@@ -252,6 +231,8 @@ def inspect_release(
     for item in urls:
         if not isinstance(item, dict):
             raise RegistryVerificationError("Registry release file entry must be an object")
+        if _is_publish_attestation(item.get("filename"), version, project_name):
+            continue
         filename = _validate_distribution_filename(item.get("filename"), version, project_name)
         if filename in seen:
             raise RegistryVerificationError(f"Registry release repeats distribution filename: {filename}")
@@ -264,6 +245,8 @@ def inspect_release(
             raise RegistryVerificationError(f"Registry release has an invalid SHA-256 for {filename}")
         download_url = _validated_download_url(item.get("url"), filename, registry)
         files.append(ReleaseFile(filename=filename, sha256=sha256, download_url=download_url))
+    if not files:
+        raise RegistryVerificationError("Existing registry release has no distribution files")
     return ReleaseInspection(
         registry=registry,
         version=str(version),
@@ -299,7 +282,7 @@ def compute_local_distribution_hashes(
             if path.name.startswith(tuple(f"{prefix}-" for prefix in project_prefixes)):
                 raise RegistryVerificationError("Local project distributions cannot be symbolic links")
             continue
-        if not path.is_file():
+        if not path.is_file() or _is_publish_attestation(path.name, version, project_name):
             continue
         try:
             name, file_version = _distribution_identity(path.name)

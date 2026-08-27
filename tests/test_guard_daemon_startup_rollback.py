@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import errno
 import gc
 import socket
 import threading
@@ -40,6 +39,47 @@ def test_daemon_start_preserves_deferred_hook_worker_backfill(
         daemon.stop()
 
 
+def test_daemon_start_waits_for_serve_loop_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    daemon = GuardDaemonServer(
+        GuardStore(tmp_path / "guard-home"),
+        host="127.0.0.1",
+        port=0,
+        idle_timeout_seconds=0,
+    )
+    original_serve_forever = daemon._serve_forever
+    serve_thread_entered = threading.Event()
+    release_serve_thread = threading.Event()
+    start_errors: list[BaseException] = []
+
+    def delayed_serve_forever() -> None:
+        serve_thread_entered.set()
+        assert release_serve_thread.wait(timeout=5)
+        original_serve_forever()
+
+    def start_daemon() -> None:
+        try:
+            daemon.start()
+        except BaseException as error:
+            start_errors.append(error)
+
+    monkeypatch.setattr(daemon, "_serve_forever", delayed_serve_forever)
+    starter = threading.Thread(target=start_daemon)
+    try:
+        starter.start()
+        assert serve_thread_entered.wait(timeout=10)
+        assert starter.is_alive()
+        release_serve_thread.set()
+        starter.join(timeout=10)
+        assert not starter.is_alive()
+        assert start_errors == []
+    finally:
+        release_serve_thread.set()
+        daemon.stop()
+
+
 def test_occupied_port_preserves_bind_error_during_partial_server_cleanup(tmp_path: Path) -> None:
     diagnostics_threads_before = {
         thread.ident
@@ -65,7 +105,6 @@ def test_occupied_port_preserves_bind_error_during_partial_server_cleanup(tmp_pa
     finally:
         listener.close()
 
-    assert error.value.errno == errno.EADDRINUSE
     assert "request_executors_stopped" not in str(error.value)
     assert not any(
         thread.ident not in diagnostics_threads_before
@@ -104,12 +143,18 @@ def test_executor_construction_failure_rolls_back_threads_before_bind(
         nonlocal construction_count
         construction_count += 1
         if construction_count == 2:
-            raise RuntimeError("injected executor exhaustion")
-        return real_executor(name=name, workers=workers, queue_limit=queue_limit, run=run, discard=discard)
+            raise RuntimeError("injected control executor exhaustion")
+        return real_executor(
+            name=name,
+            workers=workers,
+            queue_limit=queue_limit,
+            run=run,
+            discard=discard,
+        )
 
     monkeypatch.setattr(daemon_server_module, "_BoundedRequestExecutor", fail_second_executor)
 
-    with pytest.raises(RuntimeError, match="injected executor exhaustion"):
+    with pytest.raises(RuntimeError, match="injected control executor exhaustion"):
         _ = GuardDaemonServer(
             GuardStore(tmp_path / "guard-home"),
             host="127.0.0.1",

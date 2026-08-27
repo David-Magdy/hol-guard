@@ -13,7 +13,11 @@ from ..runtime.direct_vitest import (
 from ..runtime.github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
 from ..runtime.jsonc import loads_jsonc
 from ..runtime.kubernetes_commands import kubernetes_secret_read_source
+from ..runtime.node_semver import node_semver_spec_matches as _routine_semver_spec_matches
 from ..runtime.package_intent_common import PackageExecutionFileEvidence, PackageIntent
+from ..runtime.secret_file_request_services.github_pr_ephemeral_body import (
+    gh_pr_create_uses_safe_ephemeral_body,
+)
 from ..runtime.shell_command_wrappers import normalize_transparent_shell_command
 from ..runtime.shell_execution_context import (
     model_shell_execution_context,
@@ -302,27 +306,6 @@ def _routine_local_runner_versions_match(
     return locked_versions == {installed_version} and _routine_semver_spec_matches(declared_version, installed_version)
 
 
-def _routine_semver_spec_matches(specifier: str, version: str) -> bool:
-    match = re.fullmatch(r"([~^]?)(\d+)\.(\d+)\.(\d+)", specifier)
-    installed = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
-    if match is None or installed is None:
-        return False
-    operator, major, minor, patch = match.groups()
-    requested = (int(major), int(minor), int(patch))
-    actual = tuple(int(value) for value in installed.groups())
-    if actual < requested:
-        return False
-    if operator == "^":
-        if requested[0] > 0:
-            return actual[0] == requested[0]
-        if requested[1] > 0:
-            return actual[:2] == requested[:2]
-        return actual == requested
-    if operator == "~":
-        return actual[:2] == requested[:2]
-    return actual == requested
-
-
 def _unmodeled_shell_runtime_artifact(
     *,
     harness: str,
@@ -332,7 +315,9 @@ def _unmodeled_shell_runtime_artifact(
     workspace: Path | None,
     home_dir: Path,
 ) -> GuardArtifact | None:
-    if is_nonexecuting_github_actions_read_workflow(command_text):
+    if is_nonexecuting_github_actions_read_workflow(command_text) or gh_pr_create_uses_safe_ephemeral_body(
+        command_text
+    ):
         return None
     canonical_command = parse_shell_command(command_text, cwd=workspace, home_dir=home_dir)
     execution_context = model_shell_execution_context(command_text, cwd=workspace, workspace_root=workspace)
@@ -560,7 +545,7 @@ def _hook_runtime_artifact(
 ) -> GuardArtifact | None:
     harness = _canonical_harness_name(harness)
     event_name = _hook_event_name(payload)
-    if harness in {"codex", "pi", "omp"} and event_name == "PostToolUse":
+    if harness in {"codex", "cline", "pi", "omp"} and event_name == "PostToolUse":
         output_artifact = _codex_post_tool_output_artifact(
             harness=harness,
             payload=payload,
@@ -850,7 +835,7 @@ def _codex_post_tool_output_artifact(
     home_dir: Path | None = None,
 ) -> GuardArtifact | None:
     canonical_harness = _canonical_harness_name(harness)
-    harness_label = {"pi": "Pi", "omp": "Oh My Pi"}.get(canonical_harness, "Codex")
+    harness_label = {"cline": "Cline", "pi": "Pi", "omp": "Oh My Pi"}.get(canonical_harness, "Codex")
     response_text = _collect_codex_tool_response_text(payload.get("tool_response"))
     stdout_text = _optional_string(payload.get("stdout"))
     if stdout_text:

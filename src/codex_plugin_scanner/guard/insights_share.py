@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-import math
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+
+from .value_coercion import coerce_int as _coerce_int
 
 if TYPE_CHECKING:
     from codex_plugin_scanner.guard.store import GuardStore
@@ -25,26 +26,6 @@ _HARNESS_LABELS: dict[str, str] = {
     "omp": "Oh My Pi",
     "windsurf": "Windsurf",
 }
-
-
-def _coerce_int(value: object) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            return 0
-        return int(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return 0
-        try:
-            return int(stripped)
-        except ValueError:
-            return 0
-    return 0
 
 
 def _harness_label(harness: str) -> str:

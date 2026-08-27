@@ -96,8 +96,11 @@ def _build_guard_product_payload(
     managed_harnesses = sum(1 for item in harnesses if item["managed"] is True)
     runtime_state = store.get_runtime_state()
     approval_center_url = load_guard_daemon_url(context.guard_home)
+    from ..protection_posture import protection_status_fields
+
     payload: dict[str, object] = {
         "generated_at": _now(),
+        **protection_status_fields(posture=config.protection_posture, mode=config.mode),
         "guard_home": _redacted_path(context.guard_home, context.home_dir),
         "workspace": _redacted_path(context.workspace_dir, context.home_dir),
         "sync_configured": store.get_cloud_sync_profile() is not None,
@@ -258,11 +261,11 @@ def _build_cloud_context(store: GuardStore) -> dict[str, object]:
     remote_policy = _coerce_payload_dict(policy_defaults if isinstance(policy_defaults, dict) else None)
     policy_bundle_last_error = _coerce_payload_dict(store.get_sync_payload("policy_bundle_last_error"))
     headless_sync_summary = _coerce_payload_dict(store.get_sync_payload("headless_app_sync_summary"))
-    live_request_sync_state = _coerce_payload_dict(store.get_sync_payload("guard_live_request_sync_state"))
+    cloud_review_sync_state = _coerce_payload_dict(store.get_sync_payload("guard_cloud_review_sync_state"))
     cloud_auth_expired = (
         policy_bundle_last_error.get("reason") == "auth_expired"
         or headless_sync_summary.get("status") == "auth_expired"
-        or live_request_sync_state.get("state") == "auth_expired"
+        or cloud_review_sync_state.get("state") == "auth_expired"
     )
     oauth_repair_required = oauth_repair_required or cloud_auth_expired
     sync_summary = _coerce_payload_dict(store.get_sync_payload("sync_summary"))

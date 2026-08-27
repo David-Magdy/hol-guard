@@ -17,7 +17,7 @@ from .lint_fixes import apply_safe_autofixes
 from .models import ScanOptions, get_grade
 from .policy import POLICY_PROFILES, build_rule_inventory, evaluate_policy, resolve_profile
 from .quality_artifact import build_quality_artifact, write_quality_artifact
-from .reporting import format_json as render_json
+from .reporting import format_json as _format_scan_json
 from .reporting import format_markdown, format_sarif, should_fail_for_severity
 from .rules import get_rule_spec, list_rule_specs
 from .rules.specs import RuleSpec
@@ -26,25 +26,6 @@ from .suppressions import apply_severity_overrides, apply_suppressions, compute_
 from .verification import build_doctor_report, build_verification_payload, verify_plugin
 
 RuleSpecLookup = Callable[[str], RuleSpec | None]
-
-
-def _format_scan_json(
-    result,
-    *,
-    profile: str = "default",
-    policy_pass: bool = True,
-    verify_pass: bool = True,
-    raw_score: int | None = None,
-    effective_score: int | None = None,
-) -> str:
-    return render_json(
-        result,
-        profile=profile,
-        policy_pass=policy_pass,
-        verify_pass=verify_pass,
-        raw_score=raw_score,
-        effective_score=effective_score,
-    )
 
 
 def _print_lint_rules() -> None:

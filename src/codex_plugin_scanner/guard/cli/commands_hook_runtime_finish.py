@@ -32,7 +32,6 @@ if TYPE_CHECKING:
         _runtime_artifact_native_reason,
     )
     from .commands_support_runtime_policy import (
-        _native_approval_center_context,
         _native_hook_reason,
         _native_hook_reason_for_harness,
     )
@@ -69,6 +68,29 @@ def _embedded_script_remediation(state: RuntimeArtifactHookState) -> str | None:
     if command_has_embedded_script(command_text):
         return EMBEDDED_SCRIPT_REMEDIATION_GUIDANCE
     return None
+
+
+def _browser_approval_decision(
+    state: RuntimeArtifactHookState,
+    args: argparse.Namespace,
+    *,
+    config: GuardConfig,
+    store: GuardStore,
+    fresh_context_provider: Callable[[], Mapping[str, object] | None],
+) -> str | None:
+    return _codex_browser_approval_decision(
+        args=args,
+        event_name=state.event_name,
+        policy_action=state.policy_action,
+        response_payload=state.response_payload,
+        store=store,
+        config=config,
+        browser_wait_bound=state.browser_approval_wait_bound,
+        daemon_client=state.browser_approval_daemon_client,
+        expected_artifact_hash=state.runtime_artifact_hash,
+        fresh_context_provider=fresh_context_provider,
+    )
+
 
 def _finalize_runtime_artifact_hook(
     state: RuntimeArtifactHookState,
@@ -125,15 +147,11 @@ def _finalize_runtime_artifact_hook(
             "authoritative_action": fresh_state.policy_action,
         }
 
-    codex_browser_decision = _codex_browser_approval_decision(
-        args=args,
-        event_name=event_name,
-        policy_action=policy_action,
-        response_payload=response_payload,
-        store=store,
+    codex_browser_decision = _browser_approval_decision(
+        state,
+        args,
         config=config,
-        daemon_client=state.browser_approval_daemon_client,
-        expected_artifact_hash=state.runtime_artifact_hash,
+        store=store,
         fresh_context_provider=fresh_browser_context,
     )
 
@@ -222,7 +240,7 @@ def _finalize_runtime_artifact_hook(
         policy_action = state.policy_action
         response_payload = state.response_payload
     record_runtime_artifact_hook_receipt(state, store)
-    approval_context = _native_approval_center_context(response_payload, harness=args.harness)
+    approval_context = live_hook_approval_context(response_payload, harness=args.harness, guard_home=store.guard_home)
     raw_runtime_reason = _runtime_artifact_native_reason(runtime_artifact, response_payload)
     if _should_emit_native_hook_exit_block(args, event_name=event_name, policy_action=policy_action):
         if _canonical_harness_name(args.harness) == "codex" and approval_context is not None:
@@ -247,13 +265,13 @@ def _finalize_runtime_artifact_hook(
                 output_stream=output_stream,
             )
         elif _canonical_harness_name(args.harness) == "grok":
-            from ..adapters.grok_hooks import emit_grok_hook_response
-
+            from ..adapters.grok_hooks import emit_grok_hook_response, grok_hook_process_exit
             emit_grok_hook_response(
-                policy_action=policy_action,
-                reason=native_block_reason,
+                policy_action=policy_action, event_name=event_name,
+                reason=native_block_reason, approval_payload=response_payload,
                 output_stream=output_stream,
             )
+            return grok_hook_process_exit(policy_action)
         elif _canonical_harness_name(args.harness) in {"pi", "omp"}:
             from ..adapters.pi_hooks import emit_pi_hook_response
 
@@ -327,11 +345,11 @@ def _finalize_runtime_artifact_hook(
                 native_reason=runtime_reason,
             )
         if canonical_harness == "grok":
-            from ..adapters.grok_hooks import emit_grok_hook_response
+            from ..adapters.grok_hooks import emit_grok_hook_response, grok_hook_process_exit
 
             emit_grok_hook_response(
-                policy_action=policy_action,
-                reason=runtime_reason,
+                policy_action=policy_action, event_name=event_name,
+                reason=runtime_reason, approval_payload=response_payload,
                 output_stream=output_stream,
             )
             _record_harness_usage_for_hook(
@@ -340,7 +358,7 @@ def _finalize_runtime_artifact_hook(
                 payload=payload,
                 policy_action=policy_action,
             )
-            return 0 if policy_action not in {"review", "require-reapproval", "sandbox-required", "block"} else 2
+            return grok_hook_process_exit(policy_action)
         if canonical_harness in {"pi", "omp"}:
             from ..adapters.pi_hooks import emit_pi_hook_response
 

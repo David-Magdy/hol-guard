@@ -112,8 +112,6 @@ _DECISION_RANK = {"allow": 0, "monitor": 1, "warn": 2, "ask": 3, "block": 4}
 _SEVERITY_RANK = {"unknown": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 _TIMEOUT_SECONDS = 1
 _RETRY_TIMEOUT_SECONDS = 1
-_CLOUD_EVALUATION_TIMEOUT_SECONDS = 5
-_CLOUD_EVALUATION_RETRY_TIMEOUT_SECONDS = 3
 _CLOUD_INBOX_URL_RE = re.compile(r"https?://[^\s]+/guard/inbox/?", re.IGNORECASE)
 _LOCAL_REVIEW_INSTRUCTION = "Review this request in HOL Guard, then retry."
 _LOCAL_REVIEW_INSTRUCTION_RE = re.compile(re.escape(_LOCAL_REVIEW_INSTRUCTION), re.IGNORECASE)
@@ -1263,8 +1261,8 @@ def _evaluate_with_cloud(
     try:
         response_payload = _urlopen_json_with_timeout_retry(
             request=request,
-            timeout_seconds=_CLOUD_EVALUATION_TIMEOUT_SECONDS,
-            retry_timeout_seconds=_CLOUD_EVALUATION_RETRY_TIMEOUT_SECONDS,
+            timeout_seconds=_TIMEOUT_SECONDS,
+            retry_timeout_seconds=_RETRY_TIMEOUT_SECONDS,
         )
     except urllib.error.HTTPError as error:
         status_code: int | None = error.code
@@ -1277,8 +1275,8 @@ def _evaluate_with_cloud(
                 )
                 response_payload = _urlopen_json_with_timeout_retry(
                     request=evaluation_request(refreshed_auth_context),
-                    timeout_seconds=_CLOUD_EVALUATION_TIMEOUT_SECONDS,
-                    retry_timeout_seconds=_CLOUD_EVALUATION_RETRY_TIMEOUT_SECONDS,
+                    timeout_seconds=_TIMEOUT_SECONDS,
+                    retry_timeout_seconds=_RETRY_TIMEOUT_SECONDS,
                 )
             except (GuardSyncAuthorizationExpiredError, GuardSyncNotConfiguredError, RuntimeError):
                 response_payload = None
@@ -4108,7 +4106,7 @@ def _poetry_lock_target_versions(
     )
 
 
-def _poetry_lock_direct_versions(text: str, direct_manifest_names: set[str]) -> dict[str, str]:
+def _toml_lock_direct_versions(text: str, direct_manifest_names: set[str]) -> dict[str, str]:
     try:
         payload = tomllib.loads(text or "")
     except tomllib.TOMLDecodeError:
@@ -4127,6 +4125,10 @@ def _poetry_lock_direct_versions(text: str, direct_manifest_names: set[str]) -> 
             continue
         direct_versions[normalized_name] = version
     return direct_versions
+
+
+_poetry_lock_direct_versions = _toml_lock_direct_versions
+_uv_lock_direct_versions = _toml_lock_direct_versions
 
 
 def _uv_lock_target_versions(
@@ -4138,27 +4140,6 @@ def _uv_lock_target_versions(
         targets,
         _uv_lock_direct_versions(text, direct_manifest_names),
     )
-
-
-def _uv_lock_direct_versions(text: str, direct_manifest_names: set[str]) -> dict[str, str]:
-    try:
-        payload = tomllib.loads(text or "")
-    except tomllib.TOMLDecodeError:
-        return {}
-    packages = payload.get("package")
-    direct_versions: dict[str, str] = {}
-    if not isinstance(packages, list):
-        return direct_versions
-    for package in packages:
-        if not isinstance(package, dict):
-            continue
-        name = _optional_string(package.get("name"))
-        version = _optional_string(package.get("version"))
-        normalized_name = _normalize_package_name("pypi", name) if name is not None else None
-        if normalized_name is None or version is None or normalized_name not in direct_manifest_names:
-            continue
-        direct_versions[normalized_name] = version
-    return direct_versions
 
 
 def _pipfile_lock_target_versions(

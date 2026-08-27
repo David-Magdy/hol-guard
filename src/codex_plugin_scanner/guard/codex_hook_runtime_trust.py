@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from .codex_hook_compatibility import bridge_argv_sha256
 from .codex_hook_file_integrity import (
     canonical_path,
     verify_executable_file_identity,
@@ -28,6 +29,7 @@ from .codex_hook_launch_runtime import (
 _REQUIRED_PACKAGE_ROLES = frozenset(
     {
         "bridge",
+        "bridge_resume",
         "bridge_runtime",
         "daemon_entrypoint",
         "daemon_manager",
@@ -175,12 +177,15 @@ def _verify_transport(
     manifest: Mapping[str, object],
 ) -> None:
     bridge_path = Path(__file__).with_name("adapters").joinpath("codex_daemon_hook_bridge.py").resolve()
+    bridge_resume_path = Path(__file__).with_name("adapters").joinpath("codex_daemon_hook_resume.py").resolve()
     bridge_runtime_path = Path(__file__).with_name("codex_hook_bridge_runtime.py").resolve()
     launch_runtime_path = Path(__file__).with_name("codex_hook_launch_runtime.py").resolve()
     runtime_trust_path = Path(__file__).resolve()
     windows_job_path = Path(__file__).with_name("codex_hook_windows_job.py").resolve()
     if packaged_by_role["bridge"].get("path") != str(bridge_path):
         raise ValueError("managed Codex hook bridge path is invalid")
+    if packaged_by_role["bridge_resume"].get("path") != str(bridge_resume_path):
+        raise ValueError("managed Codex hook resume path is invalid")
     if packaged_by_role["bridge_runtime"].get("path") != str(bridge_runtime_path):
         raise ValueError("managed Codex hook bridge runtime path is invalid")
     if packaged_by_role["launch_runtime"].get("path") != str(launch_runtime_path):
@@ -192,6 +197,7 @@ def _verify_transport(
     transport = _mapping(manifest.get("transport"), label="transport")
     if (
         transport.get("bridge") != packaged_by_role["bridge"]
+        or transport.get("bridge_resume") != packaged_by_role["bridge_resume"]
         or transport.get("bridge_runtime") != packaged_by_role["bridge_runtime"]
         or transport.get("launch_runtime") != packaged_by_role["launch_runtime"]
         or transport.get("runtime_trust") != packaged_by_role["runtime_trust"]
@@ -274,10 +280,18 @@ def _verify_registered_bridge_argv(
     events = manifest.get("events")
     if not isinstance(events, list) or not events:
         raise ValueError("managed Codex hook event identity is invalid")
+    if all(_mapping(event, label="event").get("argv") == expected_argv for event in events):
+        return
+    compatible_hashes = manifest.get("compatible_bridge_argv_sha256")
+    if not isinstance(compatible_hashes, list) or bridge_argv_sha256(expected_argv) not in compatible_hashes:
+        raise ValueError("managed Codex hook bridge config changed after authentication")
+    for value in compatible_hashes:
+        if not isinstance(value, str) or len(value) != 64:
+            raise ValueError("managed Codex hook bridge compatibility identity is invalid")
     for event in events:
         binding = _mapping(event, label="event")
-        if binding.get("argv") != expected_argv:
-            raise ValueError("managed Codex hook bridge config changed after authentication")
+        if not isinstance(binding.get("argv"), list):
+            raise ValueError("managed Codex hook event identity is invalid")
 
 
 def _mapping(value: object, *, label: str) -> dict[str, object]:

@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import cast
 
 from ..command_model import CanonicalCommand
-from ..compound_git_inspection import is_low_risk_git_inspection_segment, is_low_risk_standalone_git_routine
+from ..compound_git_inspection import (
+    is_low_risk_git_inspection_segment,
+    is_low_risk_standalone_git_routine,
+)
 from ..git_execution_safety import git_status_args_are_read_only, git_status_has_execution_free_config
 from ..git_index_inspection import owned_git_index_inspection_action_class
 from ..git_origin_refresh import command_is_origin_shaped_git_fetch
@@ -21,6 +24,7 @@ from .docker_requests import (
     _docker_sensitive_tool_action_request,
     _shell_execution_context_validation_reason,
 )
+from .environment_secret_dump import environment_secret_dump_request
 from .pytest_config_safety import _shell_args_without_trailing_redirections
 from .request_artifacts import _candidate_command_texts, _shell_normalized_tool_name
 from .request_models import ToolActionRequestMatch, _normalize_tool_name
@@ -161,30 +165,17 @@ def extract_sensitive_tool_action_request(
                     wrapper_chain=wrapper_chain,
                 )
             return docker_config_request
-        kubernetes_secret_source = kubernetes_secret_read_source(command_text)
-        if kubernetes_secret_source is not None:
-            kubernetes_secret_request = ToolActionRequestMatch(
-                tool_name=requested_tool_name,
-                normalized_tool_name=effective_tool_name,
-                command_text=command_text,
-                action_class="Kubernetes secret read command",
-                reason=(
-                    f"Guard treats {kubernetes_secret_source} reads through Kubernetes CLIs as sensitive because "
-                    "they can expose cluster credentials or application secrets before the user confirms the action."
-                ),
-            )
-            kubernetes_secret_request = _request_with_shell_execution_context(
-                kubernetes_secret_request,
-                command_text=command_text,
-                cwd=cwd,
-            )
-            if wrapper_chain:
-                kubernetes_secret_request = _request_with_wrapper_context(
-                    kubernetes_secret_request,
-                    raw_command_text=raw_command_text,
-                    wrapper_chain=wrapper_chain,
-                )
-            return kubernetes_secret_request
+        secret_request = _kubernetes_or_environment_secret_request(
+            tool_name=requested_tool_name,
+            normalized_tool_name=effective_tool_name,
+            command_text=command_text,
+            cwd=cwd,
+            home_dir=home_dir,
+            raw_command_text=raw_command_text,
+            wrapper_chain=wrapper_chain,
+        )
+        if secret_request is not None:
+            return secret_request
         destructive_execution_context = model_shell_execution_context(
             command_text,
             cwd=cwd,
@@ -260,6 +251,71 @@ def extract_sensitive_tool_action_request(
     return None
 
 
+def _kubernetes_or_environment_secret_request(
+    *,
+    tool_name: str,
+    normalized_tool_name: str,
+    command_text: str,
+    cwd: Path | None,
+    home_dir: Path | None,
+    raw_command_text: str,
+    wrapper_chain: tuple[str, ...],
+) -> ToolActionRequestMatch | None:
+    kubernetes_secret_source = kubernetes_secret_read_source(command_text)
+    if kubernetes_secret_source is not None:
+        request = ToolActionRequestMatch(
+            tool_name=tool_name,
+            normalized_tool_name=normalized_tool_name,
+            command_text=command_text,
+            action_class="Kubernetes secret read command",
+            reason=(
+                f"Guard treats {kubernetes_secret_source} reads through Kubernetes CLIs as sensitive because "
+                "they can expose cluster credentials or application secrets before the user confirms the action."
+            ),
+        )
+        return _finalize_shell_match(
+            request,
+            command_text=command_text,
+            cwd=cwd,
+            raw_command_text=raw_command_text,
+            wrapper_chain=wrapper_chain,
+        )
+    env_dump_request = environment_secret_dump_request(
+        tool_name=tool_name,
+        normalized_tool_name=normalized_tool_name,
+        command_text=command_text,
+        cwd=cwd,
+        home_dir=home_dir,
+    )
+    if env_dump_request is None:
+        return None
+    return _finalize_shell_match(
+        env_dump_request,
+        command_text=command_text,
+        cwd=cwd,
+        raw_command_text=raw_command_text,
+        wrapper_chain=wrapper_chain,
+    )
+
+
+def _finalize_shell_match(
+    request: ToolActionRequestMatch,
+    *,
+    command_text: str,
+    cwd: Path | None,
+    raw_command_text: str,
+    wrapper_chain: tuple[str, ...],
+) -> ToolActionRequestMatch:
+    request = _request_with_shell_execution_context(request, command_text=command_text, cwd=cwd)
+    if wrapper_chain:
+        request = _request_with_wrapper_context(
+            request,
+            raw_command_text=raw_command_text,
+            wrapper_chain=wrapper_chain,
+        )
+    return request
+
+
 def _unverified_git_fetch_request(
     *,
     tool_name: str,
@@ -296,10 +352,11 @@ def _unverified_git_fetch_request(
                 "or confirm the exact index read in Guard."
             ),
         )
-    if cwd is not None and is_low_risk_standalone_git_routine(context):
+    # Home lets git -C target a repo under that home from a sibling workspace.
+    if cwd is not None and is_low_risk_standalone_git_routine(context, home_dir=home_dir):
         return None
     if context.complete and all(
-        not _segment_invokes_git_fetch(segment.tokens) or is_low_risk_git_inspection_segment(segment)
+        not _segment_invokes_git_fetch(segment.tokens) or is_low_risk_git_inspection_segment(segment, home_dir=home_dir)
         for segment in context.segments
     ):
         return None
@@ -310,7 +367,11 @@ def _unverified_git_fetch_request(
         normalized_tool_name=normalized_tool_name,
         command_text=command_text,
         action_class=action_class,
-        reason="Git fetch requires repository-bound remote and execution-configuration verification.",
+        reason=(
+            "Git fetch needs a repository-bound origin Guard can verify. "
+            "Run it from that repository, or use git -C with a path under your "
+            "home directory, a named origin, and no force/prune/URL remotes."
+        ),
     )
 
 

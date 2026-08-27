@@ -6,8 +6,10 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -59,6 +61,7 @@ from .approval_gate_state import (
 from .approval_gate_state import (
     write_state as _write_state,
 )
+from .local_authority_integrity import sign_local_authority_payload, verify_local_authority_payload
 from .models import PolicyDecision
 from .totp import TotpSecretStore, build_otpauth_uri, generate_totp_secret, verify_totp_code
 
@@ -67,11 +70,14 @@ APPROVAL_GATE_GRANT_TTL_SECONDS = 30
 APPROVAL_GATE_HASH_ITERATIONS = 310_000
 APPROVAL_GATE_TOTP_SKEW_STEPS = 1
 APPROVAL_GATE_TOTP_PENDING_TTL_SECONDS = 600
+APPROVAL_GATE_TOTP_RECENT_TTL_SECONDS = 60
 
 ApprovalGatePurpose = Literal[
     "approval_decision",
     "policy_write",
     "policy_clear",
+    "policy_import",
+    "policy_export_provenance",
     "evidence_clear",
     "queue_clear",
     "settings_write",
@@ -80,11 +86,22 @@ ApprovalGatePurpose = Literal[
     "headless_policy_sync",
     "supply_chain_firewall",
     "extension_control_mutation",
+    "local_cli_trust_mutation",
     "protection_lifecycle",
 ]
 
 _ACTIVE_GRANTS: dict[str, dict[str, object]] = {}
 _APPROVAL_GATE_LOCK = threading.RLock()
+_TOTP_RECENT_STATE_KEY = "totp_recent_proof"
+_TOTP_RECENT_INTEGRITY_PURPOSE = "guard-approval-gate-totp-recent"
+_TOTP_SESSION_ENV_KEYS = (
+    "TERM_SESSION_ID",
+    "WT_SESSION",
+    "WEZTERM_PANE",
+    "KITTY_WINDOW_ID",
+    "TMUX_PANE",
+    "SSH_TTY",
+)
 _INVALIDATED_AUTH_STATE_KEYS = (
     "approval_sessions",
     "recovery_code_hashes",
@@ -92,6 +109,7 @@ _INVALIDATED_AUTH_STATE_KEYS = (
     "session_nonces",
     "trusted_device_state",
     "trusted_devices",
+    _TOTP_RECENT_STATE_KEY,
 )
 
 
@@ -176,7 +194,17 @@ def public_config(guard_home: Path, *, now: str | None = None) -> ApprovalGatePu
             strict_all_decisions=bool(state.get("strict_all_decisions") is True),
             totp_enabled=bool(state.get("totp_enabled") is True),
             totp_pending=_has_pending_totp(state, now_epoch),
+            totp_recent_satisfied=_recent_totp_satisfied_locked(guard_home, state, now_epoch=now_epoch),
         )
+
+
+def recent_totp_satisfied(guard_home: Path, *, now: str | None = None) -> bool:
+    """Return whether this local OS session has a valid recent TOTP proof."""
+    with _APPROVAL_GATE_LOCK:
+        state = _load_state(guard_home)
+        if not _enabled(state) or not _totp_enabled(state):
+            return False
+        return _recent_totp_satisfied_locked(guard_home, state, now_epoch=_epoch(now))
 
 
 def update_settings(
@@ -719,6 +747,62 @@ def consume_extension_control_grant(
         _ACTIVE_GRANTS.pop(approval_gate_grant.grant_id, None)
 
 
+def require_local_cli_trust(
+    guard_home: Path,
+    *,
+    approval_gate_input: ApprovalGateInput | None,
+    action: str,
+    subject: str,
+    session_nonce: str,
+    now: str | None = None,
+) -> ApprovalGateGrant:
+    """Issue a strict proof for one unlisted-CLI allow-list mutation."""
+
+    if not _enabled(_load_state(guard_home)):
+        raise ApprovalGateError(
+            "approval_gate_configuration_required",
+            "Configure the approval gate before changing CLI allow-list settings.",
+            status=423,
+        )
+    return _verify_or_raise(
+        guard_home,
+        purpose="local_cli_trust_mutation",
+        approval_gate_input=approval_gate_input,
+        strict=True,
+        action=action,
+        scope="local-cli-allowlist",
+        subject=subject,
+        session_nonce=session_nonce,
+        now=now,
+    )
+
+
+def consume_local_cli_trust_grant(
+    guard_home: Path,
+    approval_gate_grant: ApprovalGateGrant,
+    *,
+    action: str,
+    subject: str,
+    session_nonce: str,
+    now: str | None = None,
+) -> None:
+    """Atomically validate and consume one unlisted-CLI allow-list grant."""
+
+    with _APPROVAL_GATE_LOCK:
+        _validate_grant_locked(
+            guard_home,
+            approval_gate_grant,
+            purpose="local_cli_trust_mutation",
+            strict=True,
+            action=action,
+            scope="local-cli-allowlist",
+            subject=subject,
+            session_nonce=session_nonce,
+            now=now,
+        )
+        _ACTIVE_GRANTS.pop(approval_gate_grant.grant_id, None)
+
+
 def create_verifier(password: str) -> dict[str, object]:
     if len(password) < APPROVAL_GATE_MIN_PASSWORD_LENGTH:
         raise ApprovalGateError("approval_gate_weak_password", "Approval gate password is too weak.")
@@ -920,15 +1004,26 @@ def _verify_or_raise_locked(
     factor_set = ("password",)
     if _totp_enabled(state):
         if gate_input.totp_code is None:
-            raise ApprovalGateError("approval_gate_totp_required", "TOTP code is required.")
-        accepted_counter = _verify_totp_or_raise(
-            guard_home,
-            state,
-            code=gate_input.totp_code,
-            now_epoch=now_epoch,
-        )
+            if not _recent_totp_satisfied_locked(guard_home, state, now_epoch=now_epoch):
+                raise ApprovalGateError("approval_gate_totp_required", "TOTP code is required.")
+            accepted_counter = _optional_int(state.get("totp_last_counter"))
+            if accepted_counter is None:
+                raise ApprovalGateError("approval_gate_totp_required", "TOTP code is required.")
+        else:
+            accepted_counter = _verify_totp_or_raise(
+                guard_home,
+                state,
+                code=gate_input.totp_code,
+                now_epoch=now_epoch,
+            )
+            state["totp_last_counter"] = accepted_counter
+            _record_recent_totp_satisfaction(
+                guard_home,
+                state,
+                accepted_counter=accepted_counter,
+                now_epoch=now_epoch,
+            )
         factor_set = ("totp",)
-        state["totp_last_counter"] = accepted_counter
         state.pop("cooldown_expires_at", None)
     else:
         _verify_password_stage(guard_home, state, password=gate_input.password, now=now)
@@ -1089,6 +1184,7 @@ def _verify_totp_or_raise(
         now_epoch=now_epoch,
         skew_steps=APPROVAL_GATE_TOTP_SKEW_STEPS,
         last_accepted_counter=_optional_int(state.get("totp_last_counter")),
+        allow_last_counter=_recent_totp_satisfied_locked(guard_home, state, now_epoch=now_epoch),
     )
     if accepted_counter is None:
         _record_failed_attempt(guard_home, state, factor="totp", now=_iso_from_epoch(now_epoch))
@@ -1115,6 +1211,108 @@ def _validate_totp_state_or_raise(guard_home: Path, state: dict[str, object]) ->
             status=423,
         )
     return secret
+
+
+def _record_recent_totp_satisfaction(
+    guard_home: Path,
+    state: dict[str, object],
+    *,
+    accepted_counter: int,
+    now_epoch: float,
+) -> None:
+    session_binding = _current_totp_session_binding()
+    secret_id = _optional_string(state.get("totp_secret_id"))
+    if session_binding is None or secret_id is None:
+        state.pop(_TOTP_RECENT_STATE_KEY, None)
+        return
+    secret = _validate_totp_state_or_raise(guard_home, state)
+    issued_at = _iso_from_epoch(now_epoch)
+    payload: dict[str, object] = {
+        "session_binding": session_binding,
+        "factor_generation": _factor_generation(state),
+        "accepted_counter": accepted_counter,
+        "issued_at": issued_at,
+        "expires_at": _iso_from_epoch(now_epoch + APPROVAL_GATE_TOTP_RECENT_TTL_SECONDS),
+    }
+    integrity = sign_local_authority_payload(
+        payload,
+        key=secret.encode("utf-8"),
+        key_id=secret_id,
+        purpose=_TOTP_RECENT_INTEGRITY_PURPOSE,
+        signed_at=issued_at,
+    )
+    state[_TOTP_RECENT_STATE_KEY] = {"payload": payload, "integrity": integrity}
+
+
+def _recent_totp_satisfied_locked(
+    guard_home: Path,
+    state: dict[str, object],
+    *,
+    now_epoch: float,
+) -> bool:
+    proof = state.get(_TOTP_RECENT_STATE_KEY)
+    if not isinstance(proof, dict):
+        return False
+    payload = proof.get("payload")
+    integrity = proof.get("integrity")
+    if not isinstance(payload, dict) or not isinstance(integrity, dict):
+        return False
+    session_binding = _current_totp_session_binding()
+    secret_id = _optional_string(state.get("totp_secret_id"))
+    if session_binding is None or secret_id is None:
+        return False
+    secret = TotpSecretStore(guard_home).get_secret(secret_id)
+    if secret is None:
+        return False
+    integrity_result = verify_local_authority_payload(
+        payload,
+        integrity,
+        key=secret.encode("utf-8"),
+        key_id=secret_id,
+        purpose=_TOTP_RECENT_INTEGRITY_PURPOSE,
+    )
+    if integrity_result.status != "valid":
+        return False
+    stored_session_binding = _optional_string(payload.get("session_binding"))
+    if stored_session_binding is None or not hmac.compare_digest(stored_session_binding, session_binding):
+        return False
+    if _optional_int(payload.get("factor_generation")) != _factor_generation(state):
+        return False
+    accepted_counter = _optional_int(payload.get("accepted_counter"))
+    if accepted_counter is None or accepted_counter != _optional_int(state.get("totp_last_counter")):
+        return False
+    issued_at = _optional_string(payload.get("issued_at"))
+    expires_at = _optional_string(payload.get("expires_at"))
+    if issued_at is None or expires_at is None:
+        return False
+    issued_epoch = _epoch(issued_at)
+    expires_epoch = _epoch(expires_at)
+    if issued_epoch <= 0 or issued_epoch > now_epoch + 1.0:
+        return False
+    if expires_epoch <= issued_epoch:
+        return False
+    if expires_epoch - issued_epoch > APPROVAL_GATE_TOTP_RECENT_TTL_SECONDS + 0.001:
+        return False
+    return expires_epoch > now_epoch
+
+
+def _current_totp_session_binding() -> str | None:
+    signals: list[str] = []
+    getsid = getattr(os, "getsid", None)
+    if callable(getsid):
+        with suppress(OSError):
+            signals.append(f"sid={getsid(0)}")
+    for key in _TOTP_SESSION_ENV_KEYS:
+        value = os.environ.get(key)
+        if value:
+            signals.append(f"{key}={value}")
+    if not signals:
+        try:
+            parent_pid = os.getppid()
+        except (AttributeError, OSError):
+            parent_pid = 0
+        signals.append(f"ppid={parent_pid}" if parent_pid > 0 else f"pid={os.getpid()}")
+    return hashlib.sha256("\0".join(signals).encode("utf-8")).hexdigest()
 
 
 def _requires_decision_gate(state: dict[str, object], *, action: str, scope: str) -> bool:

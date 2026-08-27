@@ -31,6 +31,7 @@ def _package_values(spec: PackageCommandExtensionSpec) -> CommandExtensionValues
             ecosystem_ids=spec.ecosystem_ids,
             executables=spec.executables,
             project_markers=spec.project_markers,
+            example_command=spec.example_command,
         ),
         (),
     )
@@ -54,10 +55,16 @@ _CORE_COMMAND_EXTENSION_SPECS: Final[tuple[CommandExtensionSpec, ...]] = (
         extension_id="command.git",
         name="Git protection",
         description=(
-            "Reviews local and remote Git operations that can discard work, replace history, "
-            "refresh a remote Guard cannot verify, or read a staged index Guard cannot bound."
+            "Reviews everyday Git porcelain plus local and remote operations that can discard work, "
+            "replace history, refresh a remote Guard cannot verify, or read a staged index Guard cannot bound."
         ),
-        action_classes=("git destructive command", "git origin refresh", "git index inspection"),
+        action_classes=(
+            "git destructive command",
+            "git origin refresh",
+            "git index inspection",
+            "git workspace command",
+            "git read command",
+        ),
         risk_classes=("destructive_shell", "network_egress", "local_secret_read"),
         safer_alternatives=(
             "Preview affected files and refs before destructive repository operations.",
@@ -155,6 +162,7 @@ _CORE_COMMAND_EXTENSION_SPECS: Final[tuple[CommandExtensionSpec, ...]] = (
             "guard-managed config write",
             "sensitive local file write",
             "GitHub PR body shell substitution",
+            "process environment secret read",
         ),
         risk_classes=("destructive_shell", "local_secret_read", "execution"),
         safer_alternatives=(

@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from .package_evidence_common import read_package_json
+
 _DEPENDENCY_SECTIONS = ("dependencies", "optionalDependencies", "peerDependencies")
 _MAX_CLOSURE_PACKAGES = 1_000
 _MAX_CLOSURE_BYTES = 512 * 1024 * 1024
@@ -382,17 +384,7 @@ def _dependency_names(package: dict[str, object]) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
-def _read_package_json(path: Path) -> dict[str, object] | None:
-    try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
-            return None
-        payload = cast(object, json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    typed = cast(dict[object, object], payload)
-    return {key: value for key, value in typed.items() if isinstance(key, str)}
+_read_package_json = read_package_json
 
 
 __all__ = (

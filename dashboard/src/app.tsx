@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo, lazy, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, Suspense } from "react";
 
 import {
   clearPolicy,
@@ -9,6 +9,7 @@ import {
   fetchPolicy,
   fetchReceipts,
   fetchRequest,
+  fetchMcpPolicyRequest,
   fetchApprovalPage,
   fetchAllPendingRequests,
   fetchInboxState,
@@ -17,34 +18,40 @@ import {
   fetchGuardUpdateStatus,
   guardAwareHref,
   bulkAllowReadOnce,
+  GuardProtectionRepairError,
   repairApprovalCenter,
   repairProtectionCheck,
-  runHarnessAction,
   resolveRequestWithQueueResult,
   GuardRequestResolutionError,
   retryResume,
+  runHarnessAction,
 } from "./guard-api";
 import { ApprovalCenterLayout, type BulkGateCredentials } from "./approval-center-layout";
 import type { AppView } from "./approval-center-primitives";
 import { buildClearPayload } from "./clear-policy-payload";
 import { harnessDisplayName, normalizeHarnessSlug } from "./approval-center-utils";
 import { ErrorBoundary } from "./error-boundary";
+import { lazyWorkspace } from "./lazy-workspace";
 import { protectionHealthFor, remainingProtectionRepairParts } from "./protection-health";
+import { ProtectionRepairFlowError } from "./protection-repair-flow";
 import { selectNextAfterResolution } from "./queue-state";
 import { useRouteFocus } from "./use-route-focus";
 
-const HomeWorkspace = lazy(() => import("./home-dashboard").then((m) => ({ default: m.HomeWorkspace })));
-const FleetWorkspace = lazy(() => import("./fleet-workspace").then((m) => ({ default: m.FleetWorkspace })));
-const SettingsWorkspace = lazy(() => import("./settings-workspace").then((m) => ({ default: m.SettingsWorkspace })));
-const AppDetailWorkspace = lazy(() => import("./apps/app-detail-workspace").then((m) => ({ default: m.AppDetailWorkspace })));
-const HelpModal = lazy(() => import("./help-modal").then((m) => ({ default: m.HelpModal })));
-const SupplyChainHubWorkspace = lazy(() =>
+const HomeWorkspace = lazyWorkspace("home-dashboard", () => import("./home-dashboard").then((m) => ({ default: m.HomeWorkspace })));
+const FleetWorkspace = lazyWorkspace("fleet-workspace", () => import("./fleet-workspace").then((m) => ({ default: m.FleetWorkspace })));
+const SettingsWorkspace = lazyWorkspace("settings-workspace", () => import("./settings-workspace").then((m) => ({ default: m.SettingsWorkspace })));
+const ExtensionsWorkspace = lazyWorkspace("extensions-workspace", () =>
+  import("./extensions-workspace").then((module) => ({ default: module.ExtensionsWorkspace }))
+);
+const AppDetailWorkspace = lazyWorkspace("app-detail-workspace", () => import("./apps/app-detail-workspace").then((m) => ({ default: m.AppDetailWorkspace })));
+const HelpModal = lazyWorkspace("help-modal", () => import("./help-modal").then((m) => ({ default: m.HelpModal })));
+const SupplyChainHubWorkspace = lazyWorkspace("supply-chain-hub-workspace", () =>
   import("./supply-chain-hub-workspace").then((m) => ({ default: m.SupplyChainHubWorkspace }))
 );
-const PolicyWorkspacePage = lazy(() =>
+const PolicyWorkspacePage = lazyWorkspace("policy-workspace-page", () =>
   import("./policy-workspace-page").then((m) => ({ default: m.PolicyWorkspacePage }))
 );
-const AboutWorkspace = lazy(() =>
+const AboutWorkspace = lazyWorkspace("about-workspace", () =>
   import("./about/about-workspace").then((m) => ({ default: m.AboutWorkspace }))
 );
 
@@ -64,7 +71,7 @@ import type {
   GuardReceipt,
   GuardRuntimeSnapshot,
   GuardInventoryItem,
-  GuardApprovalResolutionInput,
+  DecisionScope,
 } from "./guard-types";
 
 type RequestState =
@@ -83,7 +90,8 @@ type DetailState =
       diff: GuardArtifactDiff | null;
       receipt: GuardReceipt | null;
       policy: GuardPolicyDecision[];
-    };
+    }
+  | { kind: "mcp-policy"; requestId: string };
 
 type ReceiptsState =
   | { kind: "loading" }
@@ -122,6 +130,18 @@ function navigate(pathname: string): void {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+function focusVisibleDashboardSearch(): boolean {
+  const candidates = document.querySelectorAll<HTMLInputElement>(
+    'input[type="search"], input[role="searchbox"]',
+  );
+  for (const input of candidates) {
+    if (input.closest("[hidden], [inert]")) continue;
+    input.focus();
+    return true;
+  }
+  return false;
+}
+
 function parseRequestId(pathname: string): string | null {
   if (pathname.startsWith("/requests/")) {
     return pathname.slice("/requests/".length);
@@ -143,9 +163,10 @@ export function viewTitle(view: AppView): string {
   if (view === "settings") return "Settings";
   if (view === "supply-chain") return "Supply Chain";
   if (view === "audit") return "Audit";
-  if (view === "policy") return "Policy";
+  if (view === "policy") return "Rules & exceptions";
   if (view === "feed-health") return "Feed Health";
   if (view === "about") return "About";
+  if (view === "extensions") return "Extensions";
   return "App detail";
 }
 
@@ -167,6 +188,9 @@ export function resolveView(pathname: string): AppView {
   }
   if (pathname.startsWith("/apps/")) {
     return "fleet";
+  }
+  if (pathname === "/extensions" || pathname.startsWith("/extensions/")) {
+    return "extensions";
   }
   if (pathname === "/settings") {
     return "settings";
@@ -218,6 +242,18 @@ async function loadDetail(requestId: string): Promise<Exclude<DetailState, { kin
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (message.includes("404")) {
+      // VPC045-047/056: a 404 on /v1/requests/<id> may mean this is a staged
+      // MCP policy creation request rather than a regular approval. Probe the
+      // MCP endpoint; if it exists, render the MCP panel. Otherwise fall back
+      // to the stale state so the inbox shows an honest "gone" message.
+      try {
+        const mcpRequest = await fetchMcpPolicyRequest(requestId);
+        if (mcpRequest !== null) {
+          return { kind: "mcp-policy", requestId };
+        }
+      } catch {
+        // Swallow — the original 404 is the source of truth here.
+      }
       return { kind: "stale" };
     }
     return {
@@ -305,9 +341,9 @@ export function App() {
         setHelpOpen((open) => !open);
       }
       if (event.key === "/") {
-        event.preventDefault();
-        const searchInput = document.querySelector('input[type="search"]') as HTMLInputElement | null;
-        searchInput?.focus();
+        if (focusVisibleDashboardSearch()) {
+          event.preventDefault();
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -337,11 +373,7 @@ export function App() {
       const runtimeErrorMessage = "Unable to load the local runtime snapshot.";
       let pendingRequests: Promise<void>;
       if (needsFullQueue) {
-        pendingRequests = fetchAllPendingRequests((items) => {
-          if (!cancelled && !resolutionInFlight.current) {
-            setRequests({ kind: "ready", items });
-          }
-        })
+        pendingRequests = fetchAllPendingRequests()
           .then((items) => {
             if (!cancelled && !resolutionInFlight.current) {
               setRequests({ kind: "ready", items });
@@ -529,7 +561,7 @@ export function App() {
   const handleOpenTodayEvidence = useCallback(() => navigate(TODAY_EVIDENCE_ROUTE), []);
   const handleOpenInsights = useCallback(() => navigate("/evidence?view=insights"), [navigate]);
   const handleOpenCommands = useCallback(() => navigate("/evidence?view=commands"), [navigate]);
-  const handleOpenSettings = useCallback((pathname = "/settings") => navigate(pathname), []);
+  const handleOpenSettings = useCallback(() => navigate("/settings"), []);
   const handleOpenSupplyChain = useCallback(() => navigate("/supply-chain"), []);
   const handleOpenPolicy = useCallback(() => navigate("/policy"), []);
   const handleOpenHelp = useCallback(() => setHelpOpen(true), []);
@@ -671,7 +703,18 @@ export function App() {
     setReceipts({ kind: "ready", items: [] });
   }, [setReceipts]);
 
-  const handleResolve = useCallback(async (payload: GuardApprovalResolutionInput) => {
+  const handleResolve = useCallback(async (payload: {
+    requestId: string;
+    action: "allow" | "block";
+    scope: DecisionScope;
+    workspace?: string;
+    reason: string;
+    approval_password?: string;
+    approval_totp_code?: string;
+    approval_gate_use_cooldown?: boolean;
+    scope_contract_version?: string;
+    scope_contract_digest?: string;
+  }) => {
     resolutionInFlight.current = true;
     const queuedItemsSnapshot = requests.kind === "ready" ? requests.items : [];
     try {
@@ -696,7 +739,7 @@ export function App() {
         throw error;
       });
       const nextId = selectNextAfterResolution(result, queuedItemsSnapshot);
-      const resume = result.codex_resume ?? null;
+      const resume = result.codexResume ?? null;
       setCodexResume(resume);
       setResolvedRequestId(resume !== null ? payload.requestId : null);
       if (nextId !== null) {
@@ -805,6 +848,7 @@ export function App() {
 
   const handleRepairProtection = useCallback(async (harnesses: string[]) => {
     const failures: string[] = [];
+    const failedHarnesses = new Set<string>();
     try {
       await repairApprovalCenter();
     } catch {
@@ -813,41 +857,52 @@ export function App() {
     for (const harness of harnesses) {
       try {
         await runHarnessAction({ harness, action: "repair", dryRun: false });
-      } catch {
-        failures.push(`${harnessDisplayName(harness)} hooks`);
+      } catch (error: unknown) {
+        failedHarnesses.add(harness);
+        failures.push(
+          error instanceof Error && error.message.trim()
+            ? error.message
+            : `${harnessDisplayName(harness)} hooks`,
+        );
       }
     }
     try {
       await repairProtectionCheck("all");
     } catch (error: unknown) {
+      if (error instanceof GuardProtectionRepairError) {
+        for (const harness of error.failedHarnesses) failedHarnesses.add(harness);
+      }
       failures.push(error instanceof Error ? error.message : "integrity protection");
     }
     const refreshedSnapshot = await refreshStateAfterAction();
-    if (failures.length > 0) {
-      throw new Error(`Repair paused at ${failures.join(", ")}. Retry repair to continue from this page.`);
-    }
     if (refreshedSnapshot === null) {
-      throw new Error("Repair completed, but Guard could not recheck protection. Check again in a moment.");
+      const detail = failures.length > 0 ? ` Repair reported: ${failures.join(", ")}.` : "";
+      throw new ProtectionRepairFlowError(
+        `Guard could not recheck protection. Check again in a moment.${detail}`,
+        [],
+      );
     }
     const remainingHealth = protectionHealthFor(refreshedSnapshot);
-    if (remainingHealth.state !== "protected") {
-      const remainingParts = remainingProtectionRepairParts(remainingHealth);
-      const failedHookApps = remainingParts.failedHookHarnesses.map((harness) => harnessDisplayName(harness));
-      const remainingMessages: string[] = [];
-      if (failedHookApps.length > 0) {
-        remainingMessages.push(
-          `${failedHookApps.join(", ")} still ${failedHookApps.length === 1 ? "needs" : "need"} hook repair.`,
-        );
-      }
-      if (remainingParts.evidenceFailed) {
-        remainingMessages.push("Command evidence still needs repair.");
-      }
-      const remaining = remainingMessages.length > 0
-        ? remainingMessages.join(" ")
-        : "A local protection check still needs attention.";
-      throw new Error(`${remaining} Open the repair details below for the exact check.`);
+    if (remainingHealth.state === "protected") {
+      return "Automatic repairs completed. Guard rechecked every protection layer below.";
     }
-    return "Automatic repairs completed. Guard rechecked every protection layer below.";
+    const remainingParts = remainingProtectionRepairParts(remainingHealth);
+    const currentFailedHarnesses = new Set(remainingParts.failedHookHarnesses);
+    const failedHookApps = remainingParts.failedHookHarnesses.map((harness) => harnessDisplayName(harness));
+    const remainingMessages: string[] = [];
+    if (failedHookApps.length > 0) {
+      remainingMessages.push(
+        `${failedHookApps.join(", ")} still ${failedHookApps.length === 1 ? "needs" : "need"} hook repair.`,
+      );
+    }
+    if (remainingParts.evidenceFailed) remainingMessages.push("Command evidence still needs repair.");
+    const remaining = remainingMessages.length > 0
+      ? remainingMessages.join(" ")
+      : "A local protection check still needs attention.";
+    throw new ProtectionRepairFlowError(
+      `${remaining} Open the repair details below for the exact check.`,
+      [...failedHarnesses].filter((harness) => currentFailedHarnesses.has(harness)),
+    );
   }, [refreshStateAfterAction]);
 
   const appDetailContent = useMemo(() => {
@@ -944,6 +999,7 @@ export function App() {
             onOpenInsights={handleOpenInsights}
             onOpenCommands={handleOpenCommands}
             onOpenSettings={handleOpenSettings}
+            onRefreshRuntime={async () => { await refreshStateAfterAction(); }}
             onOpenSupplyChain={handleOpenSupplyChain}
             onClearPolicies={handleClearPolicies}
             onOpenAppDetail={handleOpenAppDetail}
@@ -985,6 +1041,13 @@ export function App() {
         <ErrorBoundary onReset={handleGoHome}>
           <Suspense fallback={<LazyFallback />}>
             {appDetailContent}
+          </Suspense>
+        </ErrorBoundary>
+      }
+      extensionsContent={
+        <ErrorBoundary onReset={handleGoHome}>
+          <Suspense fallback={<LazyFallback />}>
+            <ExtensionsWorkspace runtime={runtime.kind === "ready" ? runtime.snapshot : null} />
           </Suspense>
         </ErrorBoundary>
       }
@@ -1033,9 +1096,11 @@ export function App() {
       }
     />
     {helpOpen && (
-      <Suspense fallback={null}>
-        <HelpModal open={helpOpen} onClose={handleCloseHelp} />
-      </Suspense>
+      <ErrorBoundary onReset={handleCloseHelp}>
+        <Suspense fallback={null}>
+          <HelpModal open={helpOpen} onClose={handleCloseHelp} />
+        </Suspense>
+      </ErrorBoundary>
     )}
     </>);
 }

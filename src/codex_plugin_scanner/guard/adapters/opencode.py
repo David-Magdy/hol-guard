@@ -13,7 +13,7 @@ from ..launcher import merge_guard_launcher_env
 from ..models import HarnessDetection
 from ..shims import install_guard_shim, remove_guard_shim
 from .base import HarnessAdapter, HarnessContext, _command_available, _run_command_probe
-from .hook_python import resolve_guard_hook_python
+from .hook_python import guard_cli_command
 from .mcp_servers import (
     GUARD_MCP_COMPANION_PREFIX,
     ManagedMcpServer,
@@ -41,6 +41,8 @@ from .opencode_install_snapshot import (
     write_json_transaction,
 )
 from .opencode_pretool import install_pretool_plugin, remove_pretool_plugin
+from .state_files import load_backup_payload, load_string_state_payload
+from .workspace_overrides import should_skip_workspace_override
 
 _OPENCODE_SCHEMA = "https://opencode.ai/config.json"
 _GUARD_MCP_COMPANION_PREFIX = GUARD_MCP_COMPANION_PREFIX
@@ -382,16 +384,16 @@ class OpenCodeHarnessAdapter(HarnessAdapter):
                 continue
             entry: dict[str, object] = {
                 "type": "local",
-                "command": [
-                    str(resolve_guard_hook_python(context)),
-                    *proxy_cli_args(
+                "command": guard_cli_command(
+                    context,
+                    proxy_cli_args(
                         proxy_command="opencode-mcp-proxy",
                         guard_home=str(context.guard_home),
                         server=server,
                         home=str(context.home_dir) if context.home_dir.resolve() != Path.home().resolve() else None,
                         workspace=str(context.workspace_dir) if context.workspace_dir is not None else None,
                     ),
-                ],
+                ),
                 "enabled": server.enabled,
             }
             environment = merge_guard_launcher_env(proxy_process_env(getattr(server, "env", {})))
@@ -428,21 +430,7 @@ class OpenCodeHarnessAdapter(HarnessAdapter):
     def _skip_global_managed_server(server: ManagedMcpServer) -> bool:
         return server.source_scope == "project"
 
-    @staticmethod
-    def _should_skip_workspace_override(
-        *,
-        context: HarnessContext,
-        server: ManagedMcpServer,
-        existing_workspace_server_names: set[str],
-        for_companion: bool = False,
-    ) -> bool:
-        if context.workspace_dir is None:
-            return False
-        if server.source_scope == "project":
-            return False
-        if for_companion and server.source_scope == "global":
-            return False
-        return server.name in existing_workspace_server_names
+    _should_skip_workspace_override = staticmethod(should_skip_workspace_override)
 
     def _workspace_server_names(self, context: HarnessContext) -> set[str]:
         if context.workspace_dir is None:
@@ -535,22 +523,7 @@ class OpenCodeHarnessAdapter(HarnessAdapter):
             return global_entries[0]
         return preferred_path, {}
 
-    @staticmethod
-    def _state_payload(state_path: Path) -> dict[str, str]:
-        if not state_path.is_file():
-            return {}
-        try:
-            payload = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(payload, dict):
-            return {}
-        result: dict[str, str] = {}
-        for key in ("managed_config_path", "backup_path", "scope", "workspace_dir"):
-            value = payload.get(key)
-            if isinstance(value, str):
-                result[key] = value
-        return result
+    _state_payload = staticmethod(load_string_state_payload)
 
     @classmethod
     def _managed_config_path_from_state(cls, context: HarnessContext, state_payload: dict[str, str]) -> Path:
@@ -572,17 +545,7 @@ class OpenCodeHarnessAdapter(HarnessAdapter):
         digest = hashlib.sha256(str(target_config_path.resolve()).encode("utf-8")).hexdigest()[:12]
         return context.guard_home / "managed" / "opencode" / f"{digest}.backup.json"
 
-    @staticmethod
-    def _backup_payload(backup_path: Path) -> dict[str, str | bool | None]:
-        try:
-            payload = json.loads(backup_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {"readable": False, "existed": False, "content": None}
-        if not isinstance(payload, dict):
-            return {"readable": False, "existed": False, "content": None}
-        existed = payload.get("existed") is True
-        content = payload.get("content")
-        return {"readable": True, "existed": existed, "content": content if isinstance(content, str) else None}
+    _backup_payload = staticmethod(load_backup_payload)
 
     def _interactive_command(self, context: HarnessContext) -> list[str]:
         command = [self.executable]
@@ -761,16 +724,16 @@ def _persisted_mcp_with_guard_companions(
         companion_name = _guard_mcp_companion_name(server.name)
         entry: dict[str, object] = {
             "type": "local",
-            "command": [
-                str(resolve_guard_hook_python(context)),
-                *proxy_cli_args(
+            "command": guard_cli_command(
+                context,
+                proxy_cli_args(
                     proxy_command="opencode-mcp-proxy",
                     guard_home=str(context.guard_home),
                     server=server,
                     home=str(context.home_dir) if context.home_dir.resolve() != Path.home().resolve() else None,
                     workspace=None,
                 ),
-            ],
+            ),
             "enabled": server.enabled,
         }
         environment = merge_guard_launcher_env(proxy_process_env(getattr(server, "env", {})))

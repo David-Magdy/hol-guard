@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import importlib
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
 
 from ..aibom_detection import extend_detection_with_workspace_aibom
+from ..codex_config import read_toml_payload
 from ..models import GuardArtifact, HarnessDetection
 from ..shims import install_guard_shim, remove_guard_shim
 from .base import (
@@ -21,13 +20,6 @@ from .base import (
     _shell_command,
 )
 from .bounded_cli_hook_bridge import bounded_cli_hook_command
-
-tomllib: Any
-try:
-    import tomllib as tomllib  # type: ignore[attr-defined]
-except ModuleNotFoundError:
-    tomllib = importlib.import_module("tomli")
-
 
 _KIMI_HOME_ENV_VAR = "KIMI_CODE_HOME"
 _KIMI_DIR = ".kimi-code"
@@ -82,16 +74,7 @@ class KimiHarnessAdapter(HarnessAdapter):
             candidates.append((context.workspace_dir / _KIMI_DIR / _KIMI_MCP_FILE, "project"))
         return candidates
 
-    @staticmethod
-    def _read_toml(path: Path) -> dict[str, object]:
-        if not path.is_file():
-            return {}
-        try:
-            with path.open("rb") as handle:
-                payload = tomllib.load(handle)
-        except (OSError, tomllib.TOMLDecodeError):
-            return {}
-        return payload if isinstance(payload, dict) else {}
+    _read_toml = staticmethod(read_toml_payload)
 
     def policy_path(self, context: HarnessContext) -> Path:
         home = self._kimi_home_dir(context)

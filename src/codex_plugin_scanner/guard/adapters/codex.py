@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
 import shlex
 import sys
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlencode
 
 from ...version import __version__
@@ -83,23 +81,9 @@ from .mcp_servers import (
     proxy_process_env,
     skipped_stdio_server_names,
 )
+from .workspace_overrides import should_skip_workspace_override
 
-tomllib: Any
-try:  # pragma: no cover - Python 3.11+
-    import tomllib as tomllib  # pyright: ignore[reportMissingImports]
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    tomllib = importlib.import_module("tomli")
-
-
-def _read_toml(path: Path) -> dict[str, object]:
-    if not path.is_file():
-        return {}
-    try:
-        with path.open("rb") as handle:
-            payload = tomllib.load(handle)
-        return payload if isinstance(payload, dict) else {}
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
+_read_toml = read_toml_payload
 
 
 def _artifact_from_guard_proxy_args(
@@ -450,13 +434,13 @@ def _manifest_event_bindings(context: HarnessContext) -> list[dict[str, object]]
 def _hook_packaged_file_paths() -> tuple[tuple[str, Path], ...]:
     scanner_root = Path(__file__).resolve().parents[2]
     guard_root = Path(__file__).resolve().parents[1]
-    daemon_root = Path(__file__).resolve().parents[1] / "daemon"
     return (
         ("bridge", Path(__file__).with_name("codex_daemon_hook_bridge.py").resolve()),
+        ("bridge_resume", Path(__file__).with_name("codex_daemon_hook_resume.py").resolve()),
         ("bridge_runtime", guard_root / "codex_hook_bridge_runtime.py"),
         ("fallback_entrypoint", scanner_root / "cli.py"),
-        ("daemon_entrypoint", daemon_root / "__init__.py"),
-        ("daemon_manager", daemon_root / "manager.py"),
+        ("daemon_entrypoint", guard_root / "daemon" / "__init__.py"),
+        ("daemon_manager", guard_root / "daemon" / "manager.py"),
         ("launch_runtime", guard_root / "codex_hook_launch_runtime.py"),
         ("runtime_trust", guard_root / "codex_hook_runtime_trust.py"),
         ("windows_job", guard_root / "codex_hook_windows_job.py"),
@@ -482,10 +466,6 @@ def _hook_manifest_spec(context: HarnessContext) -> CodexHookManifestSpec:
         event_bindings=tuple(_manifest_event_bindings(context)),
         workspace_rebinding_allowed=not context.workspace_override_explicit,
     )
-
-
-def _build_authenticated_hook_manifest(context: HarnessContext) -> dict[str, object]:
-    return build_authenticated_hook_manifest(_hook_manifest_spec(context))
 
 
 def _current_install_legacy_bindings(context: HarnessContext, hooks: dict[str, object]) -> list[dict[str, object]]:
@@ -1447,18 +1427,7 @@ class CodexHarnessAdapter(HarnessAdapter):
             migrated.append(name)
         return tuple(sorted(migrated))
 
-    @staticmethod
-    def _should_skip_workspace_override(
-        *,
-        context: HarnessContext,
-        server: ManagedMcpServer,
-        existing_workspace_server_names: set[str],
-    ) -> bool:
-        if context.workspace_dir is None:
-            return False
-        if server.source_scope == "project":
-            return False
-        return server.name in existing_workspace_server_names
+    _should_skip_workspace_override = staticmethod(should_skip_workspace_override)
 
     def _load_hook_payloads(self, context: HarnessContext) -> dict[Path, dict[str, object]]:
         return {
@@ -1732,7 +1701,9 @@ class CodexHarnessAdapter(HarnessAdapter):
         original_manifest = snapshot_regular_file(manifest_path)
         original_secret = snapshot_regular_file(secret_path)
         try:
-            manifest = _build_authenticated_hook_manifest(context)
+            manifest = build_authenticated_hook_manifest(
+                _hook_manifest_spec(context), previous_manifest=previous_manifest
+            )
             _assert_package_reauthentication_is_safe(previous_manifest, manifest)
             write_hook_manifest(context.guard_home, config_path, manifest)
             atomic_write_text(config_path, dump_toml(payload), mode=0o600)

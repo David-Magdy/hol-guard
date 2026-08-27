@@ -254,6 +254,29 @@ function testApprovalProofTotpOverridesPassword(): void {
   assert(!("approval_password" in credentials), "totp approval proof should omit password");
 }
 
+function testApprovalProofRecentTotpSkipsCode(): void {
+  const recentGate: GuardApprovalGatePublicConfig = {
+    enabled: true,
+    configured: true,
+    cooldown_seconds: 0,
+    cooldown_active: false,
+    cooldown_expires_at: null,
+    locked_until: null,
+    fail_closed: false,
+    strict_all_decisions: false,
+    totp_enabled: true,
+    totp_pending: false,
+    totp_recent_satisfied: true,
+  };
+  assert(
+    isApprovalProofSubmitDisabled(recentGate, { approvalPassword: "", approvalTotpCode: "" }, false) === false,
+    "recent totp should not require a new authenticator code",
+  );
+  const credentials = buildApprovalProofCredentials(recentGate, { approvalPassword: "", approvalTotpCode: "469550" });
+  assert(!("approval_totp_code" in credentials), "recent totp should omit the previous authenticator code");
+  assert(!("approval_password" in credentials), "recent totp should omit password");
+}
+
 const tests: Array<[string, () => void]> = [
   ["testApprovalGatePublicConfigEnabled", testApprovalGatePublicConfigEnabled],
   ["testApprovalGatePublicConfigDisabled", testApprovalGatePublicConfigDisabled],
@@ -264,6 +287,7 @@ const tests: Array<[string, () => void]> = [
   ["testApprovalGateCooldownReflectedInDraftApprovalGate", testApprovalGateCooldownReflectedInDraftApprovalGate],
   ["testBulkApproveGateCredentialsPayload", testBulkApproveGateCredentialsPayload],
   ["testApprovalProofTotpOverridesPassword", testApprovalProofTotpOverridesPassword],
+  ["testApprovalProofRecentTotpSkipsCode", testApprovalProofRecentTotpSkipsCode],
 ];
 
 let passed = 0;

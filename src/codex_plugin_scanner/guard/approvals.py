@@ -35,7 +35,8 @@ from .cli.connect_flow import (
     resolve_guard_cloud_repair_detail,
     resolve_guard_cloud_state,
 )
-from .config import load_guard_config
+from .config import load_guard_config, maybe_auto_revert_watch
+from .continuation_runtime import continuation_offer_payload
 from .daemon.manager import load_guard_daemon_auth_token
 from .decision_boundaries import canonical_approval_surfaces
 from .desktop_notifications import (
@@ -56,6 +57,7 @@ from .models import (
     PolicyDecision,
 )
 from .package_execution_context import package_execution_context_from_scanner_evidence
+from .protection_capabilities import protection_capability_payloads
 from .redaction import redact_text
 from .risk import artifact_risk_signals, artifact_risk_summary
 from .runtime.approval_context import parse_approval_context_token
@@ -68,6 +70,7 @@ from .runtime.github_workflow_runtime import (
 from .runtime.protection_health_runtime import build_runtime_protection_health
 from .store import (
     GuardStore,
+    _global_runtime_scoped_exact_match_key,
     _is_runtime_scoped_exact_match_key,
     _runtime_scoped_exact_match_key,
     browser_mcp_exact_match_context,
@@ -86,6 +89,7 @@ from .trusted_local_tools import (
     local_tool_grant_decision,
     parse_local_tool_grant_selection,
 )
+from .value_coercion import coerce_non_negative_int
 
 GUARD_COMMAND = "hol-guard"
 GUARD_DASHBOARD_URL = "https://hol.org/guard"
@@ -450,6 +454,7 @@ def queue_blocked_approvals(
     now: str | None = None,
     notify: bool = True,
     redaction_level: str = "full",
+    continuation_operation: Mapping[str, object] | None = None,
 ) -> list[dict[str, object]]:
     timestamp = now or _now()
     artifacts_by_id = {artifact.artifact_id: artifact for artifact in detection.artifacts}
@@ -568,6 +573,16 @@ def queue_blocked_approvals(
             guard_version=guard_version,
             first_seen_guard_version=guard_version,
             last_seen_guard_version=guard_version,
+        )
+        request = replace(
+            request,
+            continuation_snapshot=continuation_offer_payload(
+                store,
+                request_row=request.to_dict(),
+                now=timestamp,
+                headless=True,
+                operation=continuation_operation,
+            ),
         )
         persisted_request_id = store.add_approval_request(request, timestamp)
         created_new_request = persisted_request_id == request.request_id
@@ -1061,7 +1076,10 @@ def _broad_runtime_exact_match_key(request: Mapping[str, object], scope: str) ->
             ),
             permission_mode=_request_permission_mode(request),
         )
-        return _runtime_scoped_exact_match_key(artifact_id, runtime_tool_action_portable_match_context(context))
+        portable_context = runtime_tool_action_portable_match_context(context)
+        if scope == "global":
+            return _global_runtime_scoped_exact_match_key(artifact_id, portable_context)
+        return _runtime_scoped_exact_match_key(artifact_id, portable_context)
     return _runtime_scoped_exact_match_key(artifact_id)
 
 
@@ -1205,6 +1223,16 @@ def _record_resolution_event(
         },
         resolved_at,
     )
+    if action == "allow" and persisted_rule:
+        store.add_event(
+            "guard.protection.ask_once_remembered",
+            {
+                "request_id": request_id,
+                "scope": scope,
+                "local_once_fallback": local_once_fallback,
+            },
+            resolved_at,
+        )
     _enqueue_memory_decision_for_resolution(
         store,
         request_id=request_id,
@@ -1259,6 +1287,17 @@ def _record_created_event(store: GuardStore, request: GuardApprovalRequest, crea
         },
         created_at,
     )
+    if request.policy_action in {"review", "require-reapproval"}:
+        store.add_event(
+            "guard.protection.ask_once_shown",
+            {
+                "request_id": request.request_id,
+                "harness": request.harness,
+                "artifact_id": request.artifact_id,
+                "policy_action": request.policy_action,
+            },
+            created_at,
+        )
 
 
 def _refresh_queue_result(
@@ -1435,6 +1474,21 @@ def attach_primary_approval_link(
         payload["primary_approval_url"] = review_url
 
 
+_UNPROVEN_HOOK_REASONS = frozenset({"guard_cursor_cli_attestation_unavailable"})
+
+
+def _recorded_hook_verification(value: object) -> bool | None:
+    """Return proven hook state, or None when current proof is still unavailable."""
+
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, Mapping):
+        return None
+    if value.get("reason") in _UNPROVEN_HOOK_REASONS or value.get("integrity_status") == "attestation-unavailable":
+        return None
+    return value.get("protection_active") is True
+
+
 def _live_hook_verification(
     managed_installs: Sequence[Mapping[str, object]],
     store: GuardStore,
@@ -1453,12 +1507,23 @@ def _live_hook_verification(
             if harness == "codex":
                 from .adapters.codex import codex_native_hook_state
 
-                verified[harness] = codex_native_hook_state(context).get("protection_active") is True
+                proven = _recorded_hook_verification(codex_native_hook_state(context))
+                if proven is None:
+                    continue
+                verified[harness] = proven
                 continue
             if harness == "cursor":
                 from .adapters.cursor_hooks import cursor_native_hook_state
 
-                verified[harness] = cursor_native_hook_state(context).get("protection_active") is True
+                proven = _recorded_hook_verification(cursor_native_hook_state(context))
+                if proven is None:
+                    continue
+                verified[harness] = proven
+                continue
+            if harness == "grok":
+                from .cli.install_commands import grok_hooks_protection_ready
+
+                verified[harness] = grok_hooks_protection_ready(context)
                 continue
             if harness == "grok":
                 from .cli.install_commands import grok_hooks_protection_ready
@@ -1504,7 +1569,7 @@ def build_runtime_snapshot(
     include_items: bool = True,
     containment_health: object = None,
 ) -> dict[str, object]:
-    queue_page = store.list_pending_approval_summaries(limit=1)
+    queue_page = store.list_pending_approval_summaries(limit=1, exclude_watch_only=True)
     queue_items = queue_page["items"] if isinstance(queue_page["items"], list) else []
     pending_count = _non_negative_int(queue_page.get("total_pending_count"))
     pending_requests = store.list_approval_requests(limit=request_limit) if include_items else []
@@ -1514,7 +1579,7 @@ def build_runtime_snapshot(
     next_request_id = active_request_id if active_is_pending else first_request_id
     latest_receipts = store.list_receipts(limit=receipt_limit) if receipt_limit > 0 else []
     snapshot_now = now or _now()
-    config = load_guard_config(store.guard_home)
+    config = maybe_auto_revert_watch(store.guard_home)
     latest_connect_state = _build_latest_connect_state(store, snapshot_now)
     oauth_storage_health = store.get_oauth_local_credential_health()
     cloud_context = _build_runtime_cloud_context(
@@ -1572,6 +1637,8 @@ def build_runtime_snapshot(
         **cloud_context,
         "trust_status": trust_status,
         "protection_health": protection_health,
+        "protection_capabilities": protection_capability_payloads(),
+        "protection_posture": config.protection_posture,
     }
 
 
@@ -2642,17 +2709,7 @@ def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _non_negative_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return max(0, value)
-    if isinstance(value, str) and value.strip():
-        try:
-            return max(0, int(value.strip()))
-        except ValueError:
-            return 0
-    return 0
+_non_negative_int = coerce_non_negative_int
 
 
 def _queue_risk_summary(queued: list[dict[str, object]]) -> str:

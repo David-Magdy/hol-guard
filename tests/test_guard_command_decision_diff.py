@@ -30,6 +30,12 @@ def _fixture() -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
+def teardown_module() -> None:
+    from codex_plugin_scanner.guard.cli.commands_support import _sync_namespace
+
+    _sync_namespace()
+
+
 def test_report_is_exactly_reproducible_and_source_bound() -> None:
     report = generate_decision_diff_report()
     assert REPORT_PATH.read_bytes() == canonical_json_bytes(report)
@@ -65,6 +71,7 @@ def test_report_is_exactly_reproducible_and_source_bound() -> None:
         "src/codex_plugin_scanner/guard/contained_package_script_execution.py",
         "src/codex_plugin_scanner/guard/contained_workspace_write_execution.py",
         "src/codex_plugin_scanner/guard/package_shim_gate.py",
+        "src/codex_plugin_scanner/guard/package_shim_frozen.py",
         "src/codex_plugin_scanner/guard/shims.py",
         "tests/test_guard_contained_package_script_execution.py",
         "tests/test_guard_contained_workspace_write_contract.py",
@@ -138,8 +145,10 @@ def test_report_contains_only_privacy_safe_deterministic_evidence() -> None:
 
 def test_fresh_process_report_is_environment_independent_and_bounded() -> None:
     script = Path(__file__).with_name("guard_command_decision_diff.py")
+    expected_digest = report_framed_sha256(_fixture())
     metrics: list[dict[str, object]] = []
     manifest = load_seed_manifest()
+    evaluation_budget_seconds = int(str(manifest["evaluation_budget_seconds"]))
     for hash_seed, timezone, locale in (("1", "UTC", "C"), ("8731", "US/Pacific", "C.UTF-8")):
         environ = os.environ.copy()
         environ.update({"PYTHONHASHSEED": hash_seed, "TZ": timezone, "LC_ALL": locale})
@@ -147,18 +156,14 @@ def test_fresh_process_report_is_environment_independent_and_bounded() -> None:
             [sys.executable, str(script), "--metrics"],
             check=True,
             capture_output=True,
-            timeout=45,
+            timeout=evaluation_budget_seconds + 15,
             env=environ,
         )
         value = cast(object, json.loads(completed.stdout))
         assert isinstance(value, dict)
         metrics.append(cast(dict[str, object], value))
-    digests = [item["report_framed_sha256"] for item in metrics]
-    assert all(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) for digest in digests)
-    assert digests == [digests[0]] * len(digests)
-    assert all(
-        float(str(item["elapsed_seconds"])) < int(str(manifest["evaluation_budget_seconds"])) for item in metrics
-    ), metrics
+    assert [item["report_framed_sha256"] for item in metrics] == [expected_digest, expected_digest]
+    assert all(float(str(item["elapsed_seconds"])) < evaluation_budget_seconds for item in metrics), metrics
     assert all(float(str(item["rss_mib"])) < int(str(manifest["evaluation_rss_budget_mib"])) for item in metrics), (
         metrics
     )

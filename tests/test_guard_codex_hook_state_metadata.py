@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 
 import pytest
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 
 from codex_plugin_scanner.cli import main
 from codex_plugin_scanner.guard.codex_config import dump_toml
@@ -66,11 +70,35 @@ def test_uppercase_codex_hook_state_hash_is_recognized(tmp_path: Path) -> None:
     assert inventory.complete is True
 
 
+@pytest.mark.parametrize("enabled", (True, False))
+def test_codex_hook_state_enabled_metadata_is_recognized(tmp_path: Path, enabled: bool) -> None:
+    inventory = enumerate_codex_hooks(
+        {
+            "hooks": {
+                "state": {
+                    "fixture": {
+                        "trusted_hash": f"sha256:{'a' * 64}",
+                        "enabled": enabled,
+                    }
+                }
+            }
+        },
+        source_path=tmp_path / "config.toml",
+        source_scope="global",
+        source_format="toml",
+        source_hooks_enabled=False,
+    )
+
+    assert inventory.complete is True
+
+
 @pytest.mark.parametrize(
     "state",
     (
         "not-a-metadata-table",
         {"fixture": {"trusted_hash": "not-a-sha256-hash"}},
+        {"fixture": {"trusted_hash": f"sha256:{'a' * 64}", "enabled": "yes"}},
+        {"fixture": {"trusted_hash": f"sha256:{'a' * 64}", "unexpected": True}},
     ),
 )
 def test_malformed_codex_hook_state_metadata_remains_fail_closed(tmp_path: Path, state: object) -> None:

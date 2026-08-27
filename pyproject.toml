@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hol-guard"
-version = "2.2.0"
+version = "3.0.1"
 description = "Open-source antivirus and runtime protection for AI agents, tools, MCP servers, plugins, skills, and package installs."
 readme = "README.md"
 license = "Apache-2.0"
@@ -48,8 +48,12 @@ dependencies = [
     "cryptography>=50.0.0",
     "keyring>=25.0",
     "packaging>=24.0",
+    "idna==3.15",
+    "jsonschema>=4.26.0",
     "pyyaml>=6.0.3",
+    "regex>=2025.0.0,<2027",
     "requests>=2.32,<3",
+    "publicsuffixlist==1.0.2.20260726",
     "tomli>=2.0; python_version < '3.11'",
     "cisco-ai-skill-scanner~=2.0.12",
     "litellm==1.93.0; python_version < '3.15'",
@@ -63,7 +67,6 @@ cisco = [
 dev = [
     "basedpyright>=1.39.8",
     "build>=1.5.0",
-    "jsonschema>=4.26.0",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.15",
@@ -104,6 +107,7 @@ override-dependencies = [
 
 [project.scripts]
 hol-guard = "codex_plugin_scanner.cli:main"
+hol-guard-secrets = "codex_plugin_scanner.guard.secrets.cli:main"
 plugin-scanner = "codex_plugin_scanner.cli:main"
 plugin-guard = "codex_plugin_scanner.cli:main"
 plugin-ecosystem-scanner = "codex_plugin_scanner.cli:main"
@@ -125,8 +129,17 @@ line-length = 120
 [tool.hatch.build.targets.wheel]
 packages = ["src/codex_plugin_scanner"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"contracts/guard-cloud-review/v2/contract.json" = "codex_plugin_scanner/guard/contracts/data/guard-cloud-review/v2/contract.json"
+"contracts/guard-cloud-review/v2/command-result.json" = "codex_plugin_scanner/guard/contracts/data/guard-cloud-review/v2/command-result.json"
+"contracts/guard-cloud-review/v2/fixtures.json" = "codex_plugin_scanner/guard/contracts/data/guard-cloud-review/v2/fixtures.json"
+"docs/guard/contracts/guard-cloud-review.md" = "codex_plugin_scanner/guard/contracts/data/guard-cloud-review/guard-cloud-review.md"
+
 [tool.hatch.build]
-artifacts = ["src/codex_plugin_scanner/guard/daemon/static/**"]
+artifacts = [
+    "src/codex_plugin_scanner/guard/daemon/static/**",
+    "src/codex_plugin_scanner/guard/schemas/**",
+]
 exclude = [
     ".guard-live/**",
     ".guard-package-venv/**",
@@ -135,6 +148,8 @@ exclude = [
     ".guard-e2e-prod2/**",
     ".guard-prod-venv/**",
     ".guard-prod-venv-fresh/**",
+    ".venv/**",
+    ".venv-*/**",
     "dashboard/node_modules/**",
 ]
 
@@ -143,6 +158,8 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/fixtures/mcp-canary-server.py" = ["N999"]
+"scripts/codex-auto-resume-smoke.py" = ["N999"]
+"scripts/e2e-cursor-hook-smoke.py" = ["N999"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -169,7 +186,11 @@ markers = [
 
 [tool.mutmut]
 source_paths = ["src/codex_plugin_scanner/guard/runtime/command_model.py"]
-also_copy = ["src/codex_plugin_scanner"]
+also_copy = [
+  "src/codex_plugin_scanner",
+  "contracts/guard-cloud-review",
+  "docs/guard/contracts/guard-cloud-review.md",
+]
 pytest_add_cli_args_test_selection = [
   "tests/test_guard_command_model.py",
   "tests/test_guard_command_critical_floors.py",
@@ -180,3 +201,4 @@ pytest_add_cli_args_test_selection = [
 include = ["src"]
 pythonVersion = "3.10"
 failOnWarnings = false
+reportImportCycles = false

@@ -21,31 +21,12 @@ if TYPE_CHECKING:
 
 from ._commands_shared import *
 from .commands_parser_helpers import *
+from .commands_parser_helpers import (
+    _add_aibom_cli_args as _add_aibom_cli_args,
+    _add_guard_common_args as _add_guard_common_args,
+)
 from ..browser_opener import open_browser_url
 
-def _add_guard_common_args(
-    parser: argparse.ArgumentParser,
-    *,
-    suppress_defaults: bool = False,
-) -> None:
-    default = argparse.SUPPRESS if suppress_defaults else None
-    parser.add_argument("--home", default=default)
-    parser.add_argument("--guard-home", default=default)
-    parser.add_argument("--workspace", default=default)
-
-def _add_aibom_cli_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--include-symlinks",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Include symlink source-of-truth metadata in AIBOM output (default: enabled).",
-    )
-    parser.add_argument(
-        "--follow-unsafe-symlinks",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Follow symlink targets outside safe roots (default: disabled).",
-    )
 
 def _aibom_cli_options_from_args(args: argparse.Namespace) -> AibomCliOptions:
     return AibomCliOptions(
@@ -371,6 +352,18 @@ def _normalize_explicit_workspace_path(value: str | None) -> Path | None:
     except OSError:
         return path
 
+
+def _workspace_from_hook_payload(payload: object, workspace: Path | None = None) -> Path | None:
+    if workspace is not None:
+        return workspace
+    if not isinstance(payload, dict):
+        return None
+    for key in ("workspace_root", "workspaceRoot", "cwd"):
+        value = payload.get(key)
+        resolved = _normalize_explicit_workspace_path(value if isinstance(value, str) else None)
+        if resolved is not None:
+            return resolved
+    return None
 _INSTALL_WORKSPACE_COMMANDS = frozenset({"install", "uninstall"})
 
 _PROJECT_ROOT_MARKERS = (
@@ -383,7 +376,6 @@ _PROJECT_ROOT_MARKERS = (
     "build.gradle",
     "build.gradle.kts",
 )
-
 def _requested_install_harness(args: argparse.Namespace) -> str | None:
     if bool(getattr(args, "all", False)):
         return None
@@ -503,5 +495,6 @@ __all__ = [
     "_skip_init_step_payload",
     "_workspace_from_cursor_project_dir",
     "_workspace_from_harness_detection",
+    "_workspace_from_hook_payload",
     "_workspace_has_project_markers",
 ]

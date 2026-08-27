@@ -75,6 +75,7 @@ def retry_request_resume(
     request_id: str,
     now: str,
     force: bool = False,
+    timeout_seconds: float | None = None,
 ) -> dict[str, object]:
     request = store.get_approval_request(request_id)
     if request is None:
@@ -128,6 +129,7 @@ def retry_request_resume(
         action=action,
         resume=refreshed,
         now=now,
+        timeout_seconds=timeout_seconds,
     )
     return final
 
@@ -147,7 +149,12 @@ def defer_request_resume_to_live_hook(
     if str(operation.get("status")) != "waiting_on_approval":
         return None
     metadata = operation.get("metadata")
-    if not isinstance(metadata, Mapping) or not _live_hook_wait_is_active(metadata=metadata, now=now):
+    if not isinstance(metadata, Mapping):
+        return None
+    event_name = str(metadata.get("hook_event_name") or metadata.get("event") or "")
+    if not _live_hook_wait_is_active(metadata=metadata, now=now) and not (
+        event_name == "PreToolUse" and _pretool_bridge_wait_is_active(store, operation, now=now)
+    ):
         return None
     resume = get_request_resume_status(store, request_id=request_id, now=now)
     if resume is None:
@@ -205,6 +212,10 @@ def inspect_codex_resume_capabilities(store: GuardStore) -> dict[str, object]:
 def _live_hook_wait_is_active(*, metadata: Mapping[str, object], now: str) -> bool:
     if metadata.get("codex_hook_waits_for_browser_approval") is not True:
         return False
+    from .live_process_identity import process_identity_matches
+
+    if not process_identity_matches(metadata.get("codex_browser_wait_process")):
+        return False
     deadline = _first_string(metadata, ("codex_browser_wait_deadline_at", "browser_wait_deadline_at"))
     if deadline is None:
         return False
@@ -213,6 +224,26 @@ def _live_hook_wait_is_active(*, metadata: Mapping[str, object], now: str) -> bo
     if deadline_at is None or now_at is None:
         return False
     return now_at <= deadline_at
+
+
+def _pretool_bridge_wait_is_active(
+    store: GuardStore,
+    operation: Mapping[str, object],
+    *,
+    now: str,
+) -> bool:
+    metadata = operation.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return False
+    from .codex_live_hook_target import codex_live_hook_wait_deadline
+
+    deadline = codex_live_hook_wait_deadline(
+        store,
+        operation={**operation, "status": operation.get("status") or "waiting_on_approval"},
+        metadata={**metadata, "hook_event_name": metadata.get("hook_event_name") or "PreToolUse"},
+    )
+    now_at = _parse_timestamp(now)
+    return deadline is not None and now_at is not None and now_at <= deadline
 
 
 def _parse_timestamp(value: str) -> datetime | None:
@@ -232,6 +263,7 @@ def _finalize_resume_attempt(
     action: str,
     resume: dict[str, object],
     now: str,
+    timeout_seconds: float | None,
 ) -> dict[str, object]:
     strategy = str(resume["strategy"])
     supported = bool(resume["supported"])
@@ -264,6 +296,7 @@ def _finalize_resume_attempt(
         action=action,
         strategy=strategy,
         thread_id=thread_id,
+        timeout_seconds=timeout_seconds,
     )
     normalized = _normalize_dispatch_result(
         action=action,
@@ -327,11 +360,17 @@ def _dispatch_resume_attempt(
     action: str,
     strategy: str,
     thread_id: str | None,
+    timeout_seconds: float | None,
 ) -> dict[str, object] | None:
     if thread_id is None:
         return None
 
-    app_server_result = resume_codex_thread_for_request(store=store, request_id=request_id, action=action)
+    app_server_result = resume_codex_thread_for_request(
+        store=store,
+        request_id=request_id,
+        action=action,
+        **({"timeout_seconds": timeout_seconds} if timeout_seconds is not None else {}),
+    )
     if app_server_result is None:
         return {
             "status": "skipped",

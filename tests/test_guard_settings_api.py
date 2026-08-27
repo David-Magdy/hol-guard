@@ -8,6 +8,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from codex_plugin_scanner.guard import config as config_module
 from codex_plugin_scanner.guard.config import load_guard_config, resolve_risk_action, update_guard_settings
 from codex_plugin_scanner.guard.daemon import GuardDaemonServer
@@ -15,14 +17,102 @@ from codex_plugin_scanner.guard.daemon import server as daemon_server_module
 from codex_plugin_scanner.guard.mdm.contracts import ManagedPolicy, ManagedPolicyState
 from codex_plugin_scanner.guard.models import GuardApprovalRequest, PolicyDecision
 from codex_plugin_scanner.guard.runtime.runner import (
-    _LIVE_REQUEST_PRIVACY_PROJECTION_MARKER,
-    _ensure_live_request_privacy_projection,
+    _CLOUD_REVIEW_PRIVACY_PROJECTION_MARKER,
+    _ensure_cloud_review_privacy_projection,
     _persist_cloud_receipt_redaction_level,
     _reset_cloud_receipt_redaction_authority,
 )
 from codex_plugin_scanner.guard.store import GuardStore
 
-_LIVE_OUTBOX_TABLE = "guard_" + "live_request_outbox"
+_LIVE_OUTBOX_TABLE = "guard_review_outbox_events"
+
+
+def test_existing_cloud_sync_does_not_block_switching_to_watch_only(tmp_path: Path) -> None:
+    guard_home = tmp_path / "guard-home"
+    guard_home.mkdir(parents=True)
+    (guard_home / "config.toml").write_text('sync = true\nmode = "prompt"\n', encoding="utf-8")
+    _store, daemon = _with_daemon(guard_home)
+    try:
+        status, payload = _json_request(
+            daemon.port,
+            daemon._server.auth_token,
+            "/v1/settings",
+            method="POST",
+            payload={"settings": {"mode": "observe", "sync": True}},
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 200
+    assert payload["settings"]["mode"] == "observe"
+    assert payload["settings"]["sync"] is True
+
+
+def test_managed_mode_floor_cannot_fake_watch_only_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    guard_home.mkdir(parents=True)
+    (guard_home / "config.toml").write_text('sync = true\nmode = "observe"\n', encoding="utf-8")
+    managed_state = ManagedPolicyState(
+        status="active",
+        source="fixture",
+        policy=ManagedPolicy(
+            schema_version="guard-managed-policy.v1",
+            settings={"mode": "prompt"},
+            locked_settings=frozenset(),
+        ),
+    )
+    monkeypatch.setattr(config_module, "load_managed_policy", lambda: managed_state)
+    _store, daemon = _with_daemon(guard_home)
+    try:
+        status, payload = _json_request(
+            daemon.port,
+            daemon._server.auth_token,
+            "/v1/settings",
+            method="POST",
+            payload={"settings": {"mode": "observe", "sync": True, "desktop_notifications": False}},
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 400
+    assert payload["message"] == "Cloud sync requires a paid team plan."
+
+
+def test_managed_sync_cannot_be_persisted_by_watch_only_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    guard_home.mkdir(parents=True)
+    (guard_home / "config.toml").write_text('mode = "prompt"\n', encoding="utf-8")
+    managed_state = ManagedPolicyState(
+        status="active",
+        source="fixture",
+        policy=ManagedPolicy(
+            schema_version="guard-managed-policy.v1",
+            settings={"sync": True},
+            locked_settings=frozenset(),
+        ),
+    )
+    monkeypatch.setattr(config_module, "load_managed_policy", lambda: managed_state)
+    _store, daemon = _with_daemon(guard_home)
+    try:
+        status, payload = _json_request(
+            daemon.port,
+            daemon._server.auth_token,
+            "/v1/settings",
+            method="POST",
+            payload={"settings": {"mode": "observe", "sync": True}},
+        )
+    finally:
+        daemon.stop()
+
+    assert status == 400
+    assert payload["message"] == "Cloud sync requires a paid team plan."
+    assert "sync = true" not in (guard_home / "config.toml").read_text(encoding="utf-8")
 
 
 def _json_request(
@@ -113,7 +203,7 @@ def test_relaxing_receipt_privacy_requeues_pending_cloud_projection(tmp_path: Pa
     assert [str(row["local_request_id"]) for row in rows] == [request_id]
     with store._connect() as connection:
         connection.execute(f"delete from {_LIVE_OUTBOX_TABLE}")
-    _ensure_live_request_privacy_projection(store, level="none", synced_at="2026-08-03T00:02:00Z")
+    _ensure_cloud_review_privacy_projection(store, level="none", synced_at="2026-08-03T00:02:00Z")
     with store._connect() as connection:
         assert connection.execute(f"select count(*) from {_LIVE_OUTBOX_TABLE}").fetchone()[0] == 0
 
@@ -124,7 +214,7 @@ def test_upgrade_republishes_pending_cloud_projection_once(tmp_path: Path) -> No
     with store._connect() as connection:
         connection.execute(f"delete from {_LIVE_OUTBOX_TABLE}")
 
-    _ensure_live_request_privacy_projection(store, level="none", synced_at="2026-08-03T00:01:00Z")
+    _ensure_cloud_review_privacy_projection(store, level="none", synced_at="2026-08-03T00:01:00Z")
 
     with store._connect() as connection:
         rows = connection.execute(
@@ -133,13 +223,13 @@ def test_upgrade_republishes_pending_cloud_projection_once(tmp_path: Path) -> No
         ).fetchall()
         connection.execute(f"delete from {_LIVE_OUTBOX_TABLE}")
     assert [str(row["local_request_id"]) for row in rows] == [request_id]
-    assert store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER) == {
+    assert store.get_sync_payload(_CLOUD_REVIEW_PRIVACY_PROJECTION_MARKER) == {
         "level": "none",
         "requeued": 1,
         "updated_at": "2026-08-03T00:01:00Z",
     }
 
-    _ensure_live_request_privacy_projection(store, level="none", synced_at="2026-08-03T00:02:00Z")
+    _ensure_cloud_review_privacy_projection(store, level="none", synced_at="2026-08-03T00:02:00Z")
     with store._connect() as connection:
         assert connection.execute(f"select count(*) from {_LIVE_OUTBOX_TABLE}").fetchone()[0] == 0
 
@@ -149,15 +239,19 @@ def test_cloud_privacy_transitions_advance_projection_marker(tmp_path: Path) -> 
     _ = store.add_approval_request(_pending_request("cloud-privacy"), "2026-08-03T00:00:00Z")
 
     _persist_cloud_receipt_redaction_level(store, level="none", synced_at="2026-08-03T00:01:00Z")
-    assert store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER)["level"] == "none"
+    projection_marker = store.get_sync_payload(_CLOUD_REVIEW_PRIVACY_PROJECTION_MARKER)
+    assert isinstance(projection_marker, dict)
+    assert projection_marker["level"] == "none"
     with store._connect() as connection:
         connection.execute(f"delete from {_LIVE_OUTBOX_TABLE}")
-    _ensure_live_request_privacy_projection(store, level="none", synced_at="2026-08-03T00:02:00Z")
+    _ensure_cloud_review_privacy_projection(store, level="none", synced_at="2026-08-03T00:02:00Z")
     with store._connect() as connection:
         assert connection.execute(f"select count(*) from {_LIVE_OUTBOX_TABLE}").fetchone()[0] == 0
 
     _reset_cloud_receipt_redaction_authority(store, synced_at="2026-08-03T00:03:00Z")
-    assert store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER)["level"] == "full"
+    projection_marker = store.get_sync_payload(_CLOUD_REVIEW_PRIVACY_PROJECTION_MARKER)
+    assert isinstance(projection_marker, dict)
+    assert projection_marker["level"] == "full"
 
 
 def test_relaxed_security_level_persists_granular_risk_settings(tmp_path: Path) -> None:
@@ -287,6 +381,13 @@ def test_cloud_sync_requires_trusted_paid_team_entitlement(tmp_path: Path, monke
             "resolve_package_firewall_entitlement",
             lambda _store: {"allowed": False, "reason": "paid_guard_cloud_required", "tier": "free"},
         )
+        _json_request(
+            daemon.port,
+            daemon._server.auth_token,
+            "/v1/settings",
+            method="POST",
+            payload={"settings": {"sync": False}},
+        )
         expired_status, expired_payload = _json_request(
             daemon.port,
             daemon._server.auth_token,
@@ -308,86 +409,89 @@ def test_cloud_sync_requires_trusted_paid_team_entitlement(tmp_path: Path, monke
     assert expired_payload["message"] == "Cloud sync requires a paid team plan."
 
 
-def test_existing_cloud_sync_does_not_block_switching_to_watch_only(tmp_path: Path) -> None:
+def test_existing_cloud_sync_does_not_block_protection_posture_change(tmp_path: Path) -> None:
     guard_home = tmp_path / "guard-home"
-    guard_home.mkdir(parents=True)
-    (guard_home / "config.toml").write_text('sync = true\nmode = "prompt"\n', encoding="utf-8")
+    update_guard_settings(
+        guard_home,
+        {"sync": True, "protection_posture": "watch"},
+        cloud_sync_entitled=True,
+    )
+    updated = update_guard_settings(
+        guard_home,
+        {"protection_posture": "protected"},
+        cloud_sync_entitled=False,
+    )
+
+    assert updated.protection_posture == "protected"
+    assert updated.sync is True
+
+
+def test_watch_to_protected_api_ignores_existing_sync_without_entitlement(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    update_guard_settings(
+        guard_home,
+        {"sync": True, "protection_posture": "watch"},
+        cloud_sync_entitled=True,
+    )
     _store, daemon = _with_daemon(guard_home)
+    monkeypatch.setattr(
+        daemon_server_module,
+        "resolve_package_firewall_entitlement",
+        lambda _store: {"allowed": False, "reason": "paid_guard_cloud_required", "tier": "free"},
+    )
     try:
         status, payload = _json_request(
             daemon.port,
             daemon._server.auth_token,
             "/v1/settings",
             method="POST",
-            payload={"settings": {"mode": "observe", "sync": True}},
+            payload={"settings": {"protection_posture": "protected"}},
         )
     finally:
         daemon.stop()
 
     assert status == 200
-    assert payload["settings"]["mode"] == "observe"
+    assert payload["settings"]["protection_posture"] == "protected"
     assert payload["settings"]["sync"] is True
 
 
-def test_managed_mode_floor_cannot_fake_watch_only_transition(tmp_path: Path, monkeypatch) -> None:
-    guard_home = tmp_path / "guard-home"
-    guard_home.mkdir(parents=True)
-    (guard_home / "config.toml").write_text('sync = true\nmode = "observe"\n', encoding="utf-8")
-    managed_state = ManagedPolicyState(
-        status="active",
-        source="fixture",
-        policy=ManagedPolicy(
-            schema_version="guard-managed-policy.v1",
-            settings={"mode": "prompt"},
-            locked_settings=frozenset(),
-        ),
+def test_managed_policy_sync_does_not_persist_local_sync_without_entitlement(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from codex_plugin_scanner.guard import config as config_module
+    from codex_plugin_scanner.guard.mdm.contracts import (
+        MDM_POLICY_SCHEMA_VERSION,
+        ManagedPolicy,
+        ManagedPolicyState,
+        ManagedUpdatePolicy,
     )
-    monkeypatch.setattr(config_module, "load_managed_policy", lambda: managed_state)
-    _store, daemon = _with_daemon(guard_home)
-    try:
-        status, payload = _json_request(
-            daemon.port,
-            daemon._server.auth_token,
-            "/v1/settings",
-            method="POST",
-            payload={"settings": {"mode": "observe", "sync": True, "desktop_notifications": False}},
-        )
-    finally:
-        daemon.stop()
 
-    assert status == 400
-    assert payload["message"] == "Cloud sync requires a paid team plan."
-
-
-def test_managed_sync_cannot_be_persisted_by_watch_only_transition(tmp_path: Path, monkeypatch) -> None:
     guard_home = tmp_path / "guard-home"
-    guard_home.mkdir(parents=True)
-    (guard_home / "config.toml").write_text('mode = "prompt"\n', encoding="utf-8")
-    managed_state = ManagedPolicyState(
-        status="active",
-        source="fixture",
-        policy=ManagedPolicy(
-            schema_version="guard-managed-policy.v1",
-            settings={"sync": True},
-            locked_settings=frozenset(),
-        ),
+    policy = ManagedPolicy(
+        schema_version=MDM_POLICY_SCHEMA_VERSION,
+        settings={"sync": True},
+        locked_settings=frozenset(),
+        update=ManagedUpdatePolicy(owner="mdm", allow_downgrade=False),
+        content_hash="managed-sync",
     )
-    monkeypatch.setattr(config_module, "load_managed_policy", lambda: managed_state)
-    _store, daemon = _with_daemon(guard_home)
-    try:
-        status, payload = _json_request(
-            daemon.port,
-            daemon._server.auth_token,
-            "/v1/settings",
-            method="POST",
-            payload={"settings": {"mode": "observe", "sync": True}},
+    monkeypatch.setattr(
+        config_module,
+        "load_managed_policy",
+        lambda: ManagedPolicyState(status="active", source="test", policy=policy),
+    )
+    with pytest.raises(ValueError, match="Cloud sync requires a paid team plan"):
+        update_guard_settings(
+            guard_home,
+            {"sync": True},
+            cloud_sync_entitled=False,
         )
-    finally:
-        daemon.stop()
-
-    assert status == 400
-    assert payload["message"] == "Cloud sync requires a paid team plan."
-    assert "sync = true" not in (guard_home / "config.toml").read_text(encoding="utf-8")
+    config_path = guard_home / "config.toml"
+    persisted = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    assert "sync = true" not in persisted.lower()
 
 
 def test_risk_settings_drive_runtime_policy_resolution(tmp_path: Path) -> None:

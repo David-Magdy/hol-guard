@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import shlex
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -69,6 +70,12 @@ from .commands_hook_github_workflow import (
     github_workflow_approval_evidence,
     prepare_github_workflow_hook_state,
 )
+from .commands_hook_native_floor import (
+    _runtime_package_raw_command,
+    apply_local_grant_then_native_floor,
+    attach_native_pre_tool_floor,
+    runtime_hook_scanner_setup,
+)
 from .commands_hook_runtime_state import RuntimeArtifactHookState
 from .commands_parser_helpers import *
 from .commands_support_hook_state import _load_cursor_native_shell_allowance
@@ -110,24 +117,6 @@ def _cursor_native_saved_approval_hash(
     if approved is None:
         return None
     return _optional_string(approved.get("artifact_hash"))
-
-
-def _runtime_package_raw_command(
-    payload: Mapping[str, object],
-    action_envelope: GuardActionEnvelope | None,
-) -> str | None:
-    for candidate in (
-        payload.get("tool_input"),
-        payload.get("arguments"),
-        payload,
-    ):
-        if not isinstance(candidate, Mapping):
-            continue
-        for key in ("command", "cmd", "shell_command", "shellCommand"):
-            value = candidate.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-    return action_envelope.command if action_envelope is not None else None
 
 
 def _runtime_external_archive_command_matches_executable(raw_command: str | None, executable: str) -> bool:
@@ -197,6 +186,27 @@ def _runtime_external_archive_has_digest_binding_sink(
     except (OSError, RuntimeError):
         return False
     return resolved_executable == shim_path
+
+
+def _stamp_runtime_posture_metadata(artifact: object, signals: object) -> None:
+    metadata = getattr(artifact, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    if isinstance(signals, tuple) and signals:
+        metadata["risk_signals"] = [
+            {
+                "confidence": getattr(signal, "confidence", None),
+                "category": getattr(signal, "category", None),
+            }
+            for signal in signals
+        ]
+        if any(getattr(signal, "confidence", None) == "strong" for signal in signals):
+            metadata["risk_confidence"] = "strong"
+    action_class = metadata.get("action_class")
+    if isinstance(action_class, str):
+        lowered = action_class.lower()
+        if any(token in lowered for token in ("launch agent", "login item", "launchctl", "cron", "systemd", "launchd")):
+            metadata["persistence_writes_launch_agent"] = True
 
 
 def _embedded_script_evidence(command_text: str) -> list[dict[str, object]]:
@@ -412,6 +422,8 @@ def _evaluate_runtime_artifact_hook(
     requested_policy_action = (
         requested_action_normalization.original_action if requested_action_normalization is not None else None
     )
+    _stamp_runtime_posture_metadata(runtime_artifact, data_flow_signals)
+    _stamp_runtime_posture_metadata(approval_context_artifact, data_flow_signals)
     current_config_action = _resolved_guard_action(
         _runtime_artifact_policy_action(config, runtime_artifact, args.harness),
         "warn",
@@ -432,29 +444,25 @@ def _evaluate_runtime_artifact_hook(
         # Hook payloads are untrusted hints.  They may make a decision stricter,
         # but can never lower current local policy or suppress later scanners.
         current_action_inputs.append(payload_action_normalization.action)
+    native_pre_tool_floor = attach_native_pre_tool_floor(
+        event_name,
+        payload_map,
+        action_envelope,
+        current_action_inputs,
+        guard_home=context.guard_home,
+        cwd=runtime_workspace,
+        home_dir=context.home_dir,
+    )
     policy_action = most_restrictive_guard_action(*current_action_inputs)
     approval_context_policy_action = most_restrictive_guard_action(
         approval_context_config_action,
         *(item for item in current_action_inputs[1:]),
     )
-    changed_capabilities = [runtime_artifact.artifact_type]
-    artifact_metadata = runtime_artifact.metadata if isinstance(runtime_artifact.metadata, dict) else {}
-    raw_shell_cwds = artifact_metadata.get("shell_execution_effective_cwds")
-    shell_context_incomplete = (
-        bool(
-            artifact_metadata.get("shell_execution_context_hash")
-            or artifact_metadata.get("shell_execution_context_hashes")
-        )
-        and artifact_metadata.get("shell_execution_context_complete") is False
-    )
-    scanner_evidence = (
-        _runtime_cisco_scanner_evidence(
-            action_envelope,
-            runtime_workspace=runtime_workspace,
-            raw_shell_cwds=raw_shell_cwds,
-        )
-        if action_envelope is not None and not shell_context_incomplete
-        else ()
+    changed_capabilities, artifact_metadata, scanner_evidence = runtime_hook_scanner_setup(
+        runtime_artifact,
+        action_envelope,
+        runtime_workspace,
+        _runtime_cisco_scanner_evidence,
     )
     scanner_evidence_payload = [signal.to_dict() for signal in scanner_evidence]
     if action_envelope is not None and isinstance(action_envelope.command, str):
@@ -495,6 +503,21 @@ def _evaluate_runtime_artifact_hook(
             "data_flow_exfiltration",
             harness=policy_harness,
         )
+        from ..protection_posture import apply_posture_confidence, is_high_confidence
+
+        data_flow_confidence = (
+            "strong"
+            if any(is_high_confidence(getattr(signal, "confidence", None)) for signal in data_flow_signals)
+            else None
+        )
+        if configured_data_flow_action is not None:
+            configured_data_flow_action = apply_posture_confidence(
+                posture=config.protection_posture,
+                explicit=config.protection_posture_explicit,
+                risk_class="data_flow_exfiltration",
+                action=configured_data_flow_action,
+                confidence=data_flow_confidence,
+            )
         data_flow_action = _resolved_guard_action(configured_data_flow_action, policy_action)
         approval_context_data_flow_action = _resolved_guard_action(
             configured_data_flow_action,
@@ -584,6 +607,14 @@ def _evaluate_runtime_artifact_hook(
     current_policy_action = policy_action
     local_tool_eligibility: LocalToolApprovalEligibility | None = None
     raw_runtime_command = _runtime_package_raw_command(payload_map, action_envelope)
+    local_grants_allowed = (
+        current_action_override is None
+        and cli_action_normalization is None
+        and payload_action_normalization is None
+        and not data_flow_signals
+        and not scanner_evidence
+        and (package_evaluation is None or package_policy_action != "block")
+    )
     if (
         event_name == "PreToolUse"
         and runtime_artifact.artifact_type in {"tool_action_request", "package_request"}
@@ -601,12 +632,7 @@ def _evaluate_runtime_artifact_hook(
             eligibility=local_tool_eligibility,
             current_action=current_policy_action,
         )
-        if current_action_override is None
-        and cli_action_normalization is None
-        and payload_action_normalization is None
-        and not data_flow_signals
-        and not scanner_evidence
-        and (package_evaluation is None or package_policy_action != "block")
+        if local_grants_allowed
         else None
     )
     if local_tool_eligibility is not None:
@@ -623,6 +649,17 @@ def _evaluate_runtime_artifact_hook(
         current_policy_action = "allow"
         policy_action = "allow"
         approval_context_policy_action = "allow"
+    policy_action, current_policy_action, approval_context_policy_action = apply_local_grant_then_native_floor(
+        store=store,
+        command=raw_runtime_command,
+        cwd=runtime_workspace or Path.cwd(),
+        home_dir=context.home_dir,
+        current_policy_action=current_policy_action,
+        policy_action=policy_action,
+        approval_context_policy_action=approval_context_policy_action,
+        grant_allowed=local_grants_allowed,
+        native_floor=native_pre_tool_floor,
+    )
     runtime_artifact_hash = _runtime_hook_approval_context_token(
         artifact=approval_context_artifact,
         content_hash=artifact_content_hash,
@@ -1052,7 +1089,7 @@ def _evaluate_runtime_artifact_hook(
             "allow",
             saved_decision_present=True,
             validation_reason=claimed_validation_reason,
-            fresh_local_approval=_claimed_package_approval_consumed,
+            fresh_local_approval=(_claimed_package_approval_consumed or _claimed_trusted_request_override),
         )
         policy_action = approval_reuse.action
         approval_reuse_source = (

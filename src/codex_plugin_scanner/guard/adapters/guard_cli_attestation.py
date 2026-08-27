@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
+from ...version import __version__
 from .base import HarnessContext
-from .hook_python import HookPythonAttestation, HookPythonFileMetadata, attest_guard_hook_python
+from .hook_python import (
+    HookPythonAttestation,
+    HookPythonExecutableIdentity,
+    HookPythonFileMetadata,
+    _executable_identity,
+    attest_guard_hook_python,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,12 +22,31 @@ class GuardCliAttestation:
     """One isolated CLI command bound to the active Guard distribution."""
 
     command: tuple[str, ...]
-    python: HookPythonAttestation
+    python: HookPythonAttestation | None
+    frozen_identity: HookPythonExecutableIdentity | None = None
+
+    @property
+    def frozen(self) -> bool:
+        return self.frozen_identity is not None
 
     def manifest_payload(self) -> dict[str, object]:
         """Return the complete identity persisted by managed harnesses."""
 
-        identity = self.python.identity
+        identity = self.frozen_identity or (self.python.identity if self.python is not None else None)
+        if identity is None:
+            raise RuntimeError("guard_cli_identity_unavailable")
+        if self.python is None:
+            return {
+                "schema": 1,
+                "runtime": "frozen-core",
+                "command": list(self.command),
+                "entry_point": "hol-guard",
+                "guard_version": __version__,
+                "package_file": None,
+                "package_root": None,
+                "hol_distribution_root": None,
+                "interpreter": _executable_identity_payload(identity),
+            }
         return {
             "schema": 1,
             "command": list(self.command),
@@ -29,16 +57,20 @@ class GuardCliAttestation:
             "hol_distribution_root": (
                 str(self.python.hol_distribution_root) if self.python.hol_distribution_root is not None else None
             ),
-            "interpreter": {
-                "invocation_path": str(identity.invocation_path),
-                "invocation_type": identity.invocation_type,
-                "invocation_link_target": identity.invocation_link_target,
-                "invocation_stat": _file_metadata_payload(identity.invocation_stat),
-                "target_path": str(identity.target_path),
-                "target_stat": _file_metadata_payload(identity.target_stat),
-                "target_sha256": identity.target_sha256,
-            },
+            "interpreter": _executable_identity_payload(identity),
         }
+
+
+def _executable_identity_payload(identity: HookPythonExecutableIdentity) -> dict[str, object]:
+    return {
+        "invocation_path": str(identity.invocation_path),
+        "invocation_type": identity.invocation_type,
+        "invocation_link_target": identity.invocation_link_target,
+        "invocation_stat": _file_metadata_payload(identity.invocation_stat),
+        "target_path": str(identity.target_path),
+        "target_stat": _file_metadata_payload(identity.target_stat),
+        "target_sha256": identity.target_sha256,
+    }
 
 
 def _file_metadata_payload(value: HookPythonFileMetadata) -> dict[str, int]:
@@ -54,6 +86,14 @@ def _file_metadata_payload(value: HookPythonFileMetadata) -> dict[str, int]:
 def resolve_attested_guard_cli(context: HarnessContext) -> GuardCliAttestation:
     """Resolve Guard's CLI without consulting PATH or the caller's import cwd."""
 
+    if bool(getattr(sys, "frozen", False)):
+        executable = Path(sys.executable).expanduser().absolute()
+        identity = _executable_identity(executable)
+        return GuardCliAttestation(
+            command=(str(identity.invocation_path),),
+            python=None,
+            frozen_identity=identity,
+        )
     try:
         python = attest_guard_hook_python(context)
     except RuntimeError as error:
@@ -72,4 +112,13 @@ def resolve_attested_guard_cli(context: HarnessContext) -> GuardCliAttestation:
     return GuardCliAttestation(command=command, python=python)
 
 
-__all__ = ["GuardCliAttestation", "resolve_attested_guard_cli"]
+def guard_hook_command(attestation: GuardCliAttestation, *, harness: str) -> list[str]:
+    """Return the canonical Guard hook command for either packaged runtime."""
+
+    prefix = [*attestation.command]
+    if not attestation.frozen:
+        prefix.append("guard")
+    return [*prefix, "hook", "--harness", harness, "--json"]
+
+
+__all__ = ["GuardCliAttestation", "guard_hook_command", "resolve_attested_guard_cli"]

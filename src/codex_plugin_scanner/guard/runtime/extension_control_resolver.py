@@ -22,6 +22,13 @@ from .extension_control_contract import (
     ExtensionControlLayer,
     ResolverFailureCode,
 )
+from .extension_control_limits import (
+    MAX_CONTROL_LAYERS,
+    MAX_CONTROLS_PER_LAYER,
+    MAX_INPUT_TEXT_LENGTH,
+    MAX_OBSERVATIONS,
+    MAX_RESOLUTION_IDS,
+)
 
 _FAILURE_REASON = "control.resolver-failure"
 _TRUSTED_LOCKDOWN_SURFACES = frozenset({ControlSurface.TRUSTED_LOCAL_RECOVERY, ControlSurface.TRUSTED_LOCAL_PROOF})
@@ -66,26 +73,29 @@ def resolve_extension_controls(
     permission_ids: tuple[str, ...],
     surface: ControlSurface,
     observations: tuple[str, ...] = (),
+    authority_failure: ResolverFailureCode | None = None,
 ) -> ControlResolution:
     """Resolve controls for classified catalog identities without suppressing observations."""
 
-    layer_values = tuple(islice(layers, _MAX_LAYERS + 1))
+    layer_values = tuple(islice(layers, MAX_CONTROL_LAYERS + 1))
     composed = compose_control_layers(layer_values)
     failures = set(composed.failures)
+    if authority_failure is not None and surface is not ControlSurface.TRUSTED_LOCAL_PROOF:
+        failures.add(ControlResolverFailure(authority_failure))
     if (
-        len(layer_values) > _MAX_LAYERS
-        or any(len(layer.controls) > _MAX_CONTROLS_PER_LAYER for layer in layer_values)
-        or len(extension_ids) > _MAX_RESOLUTION_IDS
-        or len(permission_ids) > _MAX_RESOLUTION_IDS
-        or len(observations) > _MAX_OBSERVATIONS
+        len(layer_values) > MAX_CONTROL_LAYERS
+        or any(len(layer.controls) > MAX_CONTROLS_PER_LAYER for layer in layer_values)
+        or len(extension_ids) > MAX_RESOLUTION_IDS
+        or len(permission_ids) > MAX_RESOLUTION_IDS
+        or len(observations) > MAX_OBSERVATIONS
         or any(
-            len(value) > _MAX_INPUT_TEXT_LENGTH
+            len(value) > MAX_INPUT_TEXT_LENGTH
             for values in (extension_ids, permission_ids, observations)
             for value in values
         )
     ):
         failures.add(ControlResolverFailure(ResolverFailureCode.INPUT_LIMIT_EXCEEDED))
-        return _resolution(composed, failures, observations[:_MAX_OBSERVATIONS], reason=None)
+        return _resolution(composed, failures, observations[:MAX_OBSERVATIONS], reason=None)
     if type(surface) is not ControlSurface:
         failures.add(ControlResolverFailure(ResolverFailureCode.INVALID_CONTROL_SURFACE))
     if not isinstance(cast(object, registry), CommandSafetyExtensionRegistry):
@@ -118,7 +128,26 @@ def resolve_extension_controls(
         for permission_id in expanded_permissions
     ):
         return _resolution(composed, failures, observations, reason="control.disabled-permission")
-    return ControlResolution(composed, False, (), (), observations)
+    explicitly_enabled_permission_ids = tuple(
+        sorted(
+            permission_id
+            for permission_id in permission_ids
+            if _has_explicit_enabled_permission(composed, permission_id)
+        )
+    )
+    return ControlResolution(
+        composed,
+        False,
+        (),
+        (),
+        observations,
+        explicitly_enabled_permission_ids,
+    )
+
+
+def _has_explicit_enabled_permission(composed: ComposedExtensionControls, permission_id: str) -> bool:
+    target = ControlTarget(ControlTargetKind.PERMISSION, permission_id)
+    return any(control.target == target and control.state is ControlState.ENABLED for control in composed.controls)
 
 
 def _validate_layer_targets(

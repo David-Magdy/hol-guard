@@ -289,9 +289,14 @@ const auditWithRestartInstalled = deriveFrontendAuditResults(
   },
 );
 const restartPnpmIssue = auditWithRestartInstalled.find((r) => r.id === "unprotected-pnpm");
+assert(restartPnpmIssue !== undefined, "SCRG162-F6: restart-required installed manager should appear");
 assert(
-  restartPnpmIssue === undefined,
-  "SCRG162-F6: staged profile activation stays guidance instead of an unresolved audit finding",
+  restartPnpmIssue!.title.includes("waiting for restart"),
+  "SCRG162-F7: restart-required manager should prompt for restart",
+);
+assert(
+  restartPnpmIssue!.remediationAction === null,
+  "SCRG162-F8: restart-required manager should not expose install remediation",
 );
 
 const receiptNow = new Date().toISOString();
@@ -335,7 +340,7 @@ assert(grouped.get("cursor")?.length === 1, "SCRG164-B: 1 cursor policy");
 
 const strictCopy = resolveSecurityModeCopy("strict");
 assert(strictCopy.tone === "attention", "SCRG164-C: strict mode is attention tone");
-assert(strictCopy.label.toLowerCase().includes("protect"), "SCRG164-D: strict mode shows Protect label");
+assert(strictCopy.label.toLowerCase().includes("careful"), "SCRG164-D: strict mode maps to Extra careful");
 
 const balancedCopy = resolveSecurityModeCopy("balanced");
 assert(balancedCopy.tone === "green", "SCRG164-E: balanced is green tone");

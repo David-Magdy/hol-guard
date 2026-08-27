@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import type {
   GuardProtectionAppHealth,
   GuardProtectionCheck,
@@ -22,6 +23,8 @@ export const PROTECTION_CHECK_IDS = [
 
 const CORE_CHECK_IDS = PROTECTION_CHECK_IDS.filter((checkId) => checkId !== "decision_stream");
 const STABLE_ID = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
+
+export type ProtectionPresentationState = GuardProtectionState | "checking";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -94,6 +97,61 @@ export function unavailableProtectionHealth(): GuardProtectionHealth {
     ...healthFromChecks(fallbackChecks()),
     apps: [],
   };
+}
+
+export const PROTECTION_PROVING_GRACE_MS = 4000;
+
+export function protectionPresentationState(
+  health: Pick<GuardProtectionHealth, "state" | "checks">,
+  options?: { unprovenElapsedMs?: number },
+): ProtectionPresentationState {
+  if (health.checks.some((check) => check.status === "fail")) {
+    return health.state;
+  }
+  const byId = new Map(health.checks.map((check) => [check.check_id, check.status]));
+  const coreStillProving = CORE_CHECK_IDS.some((checkId) => byId.get(checkId) !== "pass");
+  if (!coreStillProving) {
+    return health.state;
+  }
+  if ((options?.unprovenElapsedMs ?? 0) < PROTECTION_PROVING_GRACE_MS) {
+    return "checking";
+  }
+  return health.state;
+}
+
+export function useProtectionPresentationState(
+  health: Pick<GuardProtectionHealth, "state" | "checks">,
+): ProtectionPresentationState {
+  const [unprovenSinceMs, setUnprovenSinceMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const failed = health.checks.some((check) => check.status === "fail");
+  const byId = new Map(health.checks.map((check) => [check.check_id, check.status]));
+  const coreStillProving = !failed && CORE_CHECK_IDS.some((checkId) => byId.get(checkId) !== "pass");
+
+  useEffect(() => {
+    if (!coreStillProving) {
+      setUnprovenSinceMs(null);
+      return;
+    }
+    setUnprovenSinceMs((current) => current ?? Date.now());
+  }, [coreStillProving]);
+
+  useEffect(() => {
+    if (unprovenSinceMs === null) {
+      return;
+    }
+    const remainingMs = PROTECTION_PROVING_GRACE_MS - (Date.now() - unprovenSinceMs);
+    if (remainingMs <= 0) {
+      setNowMs(Date.now());
+      return;
+    }
+    const timer = window.setTimeout(() => setNowMs(Date.now()), remainingMs);
+    return () => window.clearTimeout(timer);
+  }, [unprovenSinceMs]);
+
+  return protectionPresentationState(health, {
+    unprovenElapsedMs: unprovenSinceMs === null ? 0 : Math.max(0, nowMs - unprovenSinceMs),
+  });
 }
 
 function normalizeApp(value: unknown): GuardProtectionAppHealth | null {

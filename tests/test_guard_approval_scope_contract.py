@@ -119,6 +119,12 @@ def test_scope_contract_is_action_aware(policy_action: GuardAction, expected_all
     assert contract.allow_scopes == expected_allow
     assert contract.block_scopes == ("artifact", "workspace", "publisher", "harness", "global")
     assert contract.task_capability_eligible is False
+    if "workspace" in expected_allow:
+        assert contract.recommended_allow_scope == "workspace"
+    elif "artifact" in expected_allow:
+        assert contract.recommended_allow_scope == "artifact"
+    else:
+        assert contract.recommended_allow_scope is None
 
 
 def test_guard_control_cannot_be_browser_allowed() -> None:
@@ -154,6 +160,26 @@ def test_artifact_family_text_cannot_spoof_canonical_broad_deny() -> None:
     ).to_dict()
 
     assert request_scope_contract(request).block_scopes == ("artifact",)
+
+
+def test_recommended_allow_scope_prefers_workspace_when_reusable() -> None:
+    contract = request_scope_contract(_request("remember-project").to_dict())
+
+    assert "workspace" in contract.allow_scopes
+    assert contract.recommended_allow_scope == "workspace"
+
+
+def test_recommended_allow_scope_falls_back_to_artifact() -> None:
+    request = _request(
+        "artifact-only",
+        artifact_id="codex:project:package-request:artifact-only",
+        artifact_type="package_request",
+    ).to_dict()
+
+    contract = request_scope_contract(request)
+
+    assert contract.allow_scopes == ("artifact",)
+    assert contract.recommended_allow_scope == "artifact"
 
 
 def test_package_context_never_invents_workspace_allow() -> None:
@@ -612,32 +638,6 @@ def test_exact_action_persistence_accepts_envelope_raw_command_text(tmp_path: Pa
     request = replace(
         _request("envelope-raw-command"),
         action_envelope_json={"action_type": "shell_command", "raw_command_text": "echo test"},
-    )
-    row = _store_request(store, request)
-
-    assert request_scope_contract(row).exact_action_persistence_eligible is True
-
-
-def test_exact_action_persistence_accepts_context_bound_generic_tool_action(tmp_path: Path) -> None:
-    store = GuardStore(tmp_path / "guard-home")
-    context_token = build_approval_context_token(
-        identity={"harness": "codex", "tool": "Bash"},
-        content={"command": "npm run guard:acquisition-loop"},
-        capabilities={"action_type": "shell_command"},
-        policy={"action": "require-reapproval"},
-        sandbox={"mode": "workspace-write"},
-    )
-    request = replace(
-        _request(
-            "generic-tool-action",
-            artifact_id="codex:project:Bash",
-            artifact_hash=context_token,
-        ),
-        action_envelope_json={
-            "action_type": "shell_command",
-            "tool_name": "Bash",
-            "command": "npm run guard:acquisition-loop",
-        },
     )
     row = _store_request(store, request)
 

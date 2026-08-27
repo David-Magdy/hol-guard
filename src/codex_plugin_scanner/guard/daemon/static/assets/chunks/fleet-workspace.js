@@ -1,5 +1,95 @@
-import { r as reactExports, P as waitForAuthorizeUrl, Q as startOrRecoverCloudConnect, R as openPackageFirewallAuthorizeFallback, T as waitForCloudConnection, j as jsxRuntimeExports, U as HiMiniWrenchScrewdriver, A as ActionButton, m as HiMiniCheckCircle, z as HiMiniChevronDown, V as HiMiniExclamationCircle, e as harnessDisplayName, i as isConnectableAppHarness, p as protectionHealthFor, n as GuardHero, W as ProofStrip, S as SectionLabel, k as EmptyState, c as HiMiniChevronRight, X as HiMiniEye, Y as HiMiniXCircle, Z as HiMiniClipboardDocumentCheck, _ as HiMiniClipboard } from "../guard-dashboard.js";
+import { R as startGuardCloudConnect, T as fetchGuardCloudConnectStatus, r as reactExports, U as ProtectionRepairFlowError, V as openPackageFirewallAuthorizeFallback, X as activeFailedHarnesses, j as jsxRuntimeExports, Y as HiMiniWrenchScrewdriver, A as ActionButton, o as HiMiniCheckCircle, C as HiMiniChevronDown, i as harnessDisplayName, Z as HiMiniExclamationCircle, p as protectionHealthFor, k as useProtectionPresentationState, q as GuardHero, _ as ProofStrip, S as SectionLabel, m as EmptyState, c as HiMiniChevronRight, $ as HiMiniEye, a0 as HiMiniXCircle, a1 as HiMiniClipboardDocumentCheck, a2 as HiMiniClipboard } from "../guard-dashboard.js";
 import { S as SUPPORTED_APPS_BRIEF, A as APP_STATUS_LABELS } from "./app-catalog.js";
+import { i as isConnectableAppHarness } from "./harness-setup-target.js";
+class CloudRequestTimeoutError extends Error {
+  constructor() {
+    super("Guard Cloud did not respond within 5 seconds. Try again.");
+    this.name = "CloudRequestTimeoutError";
+  }
+}
+async function withCloudRequestTimeout(request, parentSignal) {
+  if (parentSignal?.aborted) {
+    throw new DOMException("Cloud connection request stopped", "AbortError");
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  parentSignal?.addEventListener("abort", abort, { once: true });
+  let timedOut = false;
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 5e3);
+  try {
+    return await request(controller.signal);
+  } catch (error) {
+    if (timedOut && !parentSignal?.aborted && error instanceof DOMException && error.name === "AbortError") {
+      throw new CloudRequestTimeoutError();
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abort);
+  }
+}
+async function startOrRecoverCloudConnect(signal) {
+  try {
+    return await withCloudRequestTimeout(startGuardCloudConnect, signal);
+  } catch (error) {
+    if (!(error instanceof CloudRequestTimeoutError)) throw error;
+    return await withCloudRequestTimeout(fetchGuardCloudConnectStatus, signal);
+  }
+}
+function waitForPoll(delayMs, signal) {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Cloud connection polling stopped", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const finish = () => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timeout = globalThis.setTimeout(finish, delayMs);
+    const abort = () => {
+      globalThis.clearTimeout(timeout);
+      reject(new DOMException("Cloud connection polling stopped", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+async function waitForAuthorizeUrl(initialStatus, signal) {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
+  let status = initialStatus;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const flow = status.connect_flow;
+    if (!status.connect_required || flow?.authorize_url || !flow || !["starting", "running"].includes(flow.state)) {
+      return status;
+    }
+    const pollDelayMs = Math.max(100, Math.min(5e3, flow.poll_after_ms ?? 1e3));
+    await waitForPoll(pollDelayMs, signal);
+    status = await withCloudRequestTimeout(fetchGuardCloudConnectStatus, signal);
+  }
+  return status;
+}
+async function waitForCloudConnection(initialStatus, {
+  signal,
+  fetchStatus = fetchGuardCloudConnectStatus,
+  wait = waitForPoll,
+  maxAttempts = 300
+}) {
+  if (signal.aborted) {
+    throw new DOMException("Cloud connection polling stopped", "AbortError");
+  }
+  let status = initialStatus;
+  for (let attempt = 0; attempt < maxAttempts && status.connect_required; attempt += 1) {
+    if (status.connect_flow?.state === "failed") return status;
+    const pollDelayMs = Math.max(250, Math.min(5e3, status.connect_flow?.poll_after_ms ?? 1e3));
+    await wait(pollDelayMs, signal);
+    status = await withCloudRequestTimeout(fetchStatus, signal);
+  }
+  return status;
+}
 const PROTECTION_CHECK_ACTIONS = {
   harness_hooks: {
     label: "App hooks",
@@ -81,6 +171,17 @@ function ProtectionGapItem({
     ] })
   ] }) });
 }
+function TargetedRepairButton({
+  harness,
+  onRepair
+}) {
+  const handleRepair = reactExports.useCallback(() => onRepair(harness), [harness, onRepair]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(ActionButton, { onClick: handleRepair, variant: "outline", children: [
+    "Open ",
+    harnessDisplayName(harness),
+    " repair"
+  ] });
+}
 function recoverySummary(failCount, unknownCount) {
   if (failCount === 0) {
     return "Complete the remaining local proof here. Guard repairs and rechecks every local protection layer in one pass.";
@@ -134,6 +235,11 @@ function FleetProtectionRecovery(props) {
   const failCount = gaps.filter((check) => check.status === "fail").length;
   const unknownCount = gaps.length - failCount;
   const cloudPolicyHint = cloudPolicyRecoveryHint(props.cloudPolicy);
+  const repairHarnessKey = props.repairHarnesses.join("\0");
+  const repairHarnessList = reactExports.useMemo(
+    () => repairHarnessKey ? repairHarnessKey.split("\0") : [],
+    [repairHarnessKey]
+  );
   const isActiveCloudConnect = reactExports.useCallback(
     (controller) => cloudConnectControllerRef.current === controller && !controller.signal.aborted,
     []
@@ -149,7 +255,11 @@ function FleetProtectionRecovery(props) {
       setDetailsOpen(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Repair paused before every protection step completed. Retry to continue safely.";
-      setRepairState({ status: "error", message });
+      setRepairState({
+        status: "error",
+        message,
+        failedHarnesses: error instanceof ProtectionRepairFlowError ? error.failedHarnesses : void 0
+      });
       setDetailsOpen(true);
     }
   }, [props.onRepairProtection, props.repairHarnesses]);
@@ -233,6 +343,14 @@ function FleetProtectionRecovery(props) {
     setCloudConnectState(null);
   }, [props.cloudPolicy.cloudState, props.cloudPolicy.connectUrl]);
   reactExports.useEffect(() => () => cloudConnectControllerRef.current?.abort(), []);
+  reactExports.useEffect(() => {
+    setRepairState((state) => {
+      if (state?.status !== "error" || !state.failedHarnesses) return state;
+      const activeFailures = activeFailedHarnesses(state.failedHarnesses, repairHarnessList);
+      if (activeFailures.length === state.failedHarnesses.length) return state;
+      return { ...state, failedHarnesses: activeFailures };
+    });
+  }, [repairHarnessList]);
   if (gaps.length === 0) return null;
   const working = repairState?.status === "working";
   const cloudConnectDisabled = ["working", "success"].includes(
@@ -295,6 +413,14 @@ function FleetProtectionRecovery(props) {
             ]
           }
         ) : null,
+        repairState?.status === "error" && repairState.failedHarnesses?.length && props.onRepairHarness ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 flex flex-wrap gap-2", children: Array.from(new Set(repairState.failedHarnesses)).map((harness) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+          TargetedRepairButton,
+          {
+            harness,
+            onRepair: props.onRepairHarness
+          },
+          harness
+        )) }) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsxs(
           "button",
           {
@@ -329,6 +455,17 @@ function FleetProtectionRecovery(props) {
 const SUPPORTED_APPS_COPY = SUPPORTED_APPS_BRIEF;
 function resolveFleetHeroCopy(cloudState, activeInstallCount, protectionState, urls) {
   const hasApps = activeInstallCount > 0;
+  if (hasApps && protectionState === "checking") {
+    return {
+      status: "checking",
+      headline: "Checking app protection",
+      subheadline: "Guard is confirming local protection. This takes a moment.",
+      primaryCtaLabel: "Open Protect",
+      primaryCtaHref: urls.fleet_url,
+      secondaryCtaLabel: "Open Home",
+      secondaryCtaHref: urls.dashboard_url
+    };
+  }
   if (hasApps && protectionState !== "protected") {
     return {
       status: protectionState,
@@ -490,6 +627,7 @@ function FleetWorkspace(props) {
   ).sort((a, b) => a.localeCompare(b));
   const runtimeState = props.runtime.runtime_state;
   const protectionHealth = protectionHealthFor(props.runtime);
+  const protectionState = useProtectionPresentationState(protectionHealth);
   const receiptHarnesses = new Set(props.runtime.latest_receipts.map((r) => r.harness).filter(isConnectableAppHarness));
   const repairHarness = managedInstalls.find((install) => !install.active)?.harness ?? visibleHarnesses.find((harness) => protectionHealthFor(props.runtime, harness).checks.some(
     (check) => check.check_id === "harness_hooks" && check.status === "fail"
@@ -498,7 +636,7 @@ function FleetWorkspace(props) {
   const heroCopy = resolveFleetHeroCopy(
     props.runtime.cloud_state,
     activeInstalls.length,
-    protectionHealth.state,
+    protectionState,
     {
       fleet_url: props.runtime.fleet_url,
       dashboard_url: props.runtime.dashboard_url,
@@ -527,7 +665,7 @@ function FleetWorkspace(props) {
         ]
       }
     ),
-    protectionHealth.state !== "protected" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+    protectionState !== "checking" && protectionHealth.state !== "protected" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
       FleetProtectionRecovery,
       {
         cloudPolicy: {
@@ -539,7 +677,8 @@ function FleetWorkspace(props) {
         health: protectionHealth,
         repairHarness,
         repairHarnesses,
-        onRepairProtection: props.onRepairProtection
+        onRepairProtection: props.onRepairProtection,
+        onRepairHarness: props.onRepairHarness
       }
     ) : null,
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)]", children: [

@@ -12,8 +12,11 @@ from pathlib import Path
 from ...models import GuardArtifact
 from ..command_decision_adapter import effect_decision_to_dict
 from ..command_evaluation import evaluate_command
+from ..command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from ..direct_vitest import direct_local_typescript_execution_context, direct_local_vitest_execution_context
-from ..extension_control_contract import ExtensionControlLayer
+from ..extension_control_contract import ControlSurface, ExtensionControlLayer
+from ..extension_control_resolver import resolve_extension_controls
+from ..extension_control_runtime import current_extension_control_snapshot
 from ..false_positive_rules import KNOWN_AGENT_DOC_SUFFIXES, target_is_known_skill_doc_path
 from ..github_actions_read_workflow import is_nonexecuting_github_actions_read_workflow
 from ..github_capability_contract import GitHubCommandAssessment
@@ -22,6 +25,7 @@ from ..read_only_git_audit import is_read_only_git_ancestry_audit
 from ..routine_setup_commands import is_safe_codex_memory_registry_search, is_safe_git_worktree_add
 from ..shell_command_wrappers import normalize_transparent_shell_command
 from ..shell_execution_context import model_shell_execution_context
+from .agent_guidance_reads import is_benign_agent_guidance_read
 from .constants_core import _SHELL_TOOL_NAMES
 from .destructive_shell_detection import _shell_command_names_from_parts
 from .developer_routines import (
@@ -35,6 +39,7 @@ from .git_routines import (
     _looks_like_safe_git_status_command,
     _looks_like_safe_standalone_git_routine,
 )
+from .github_pr_ephemeral_body import gh_pr_create_uses_safe_ephemeral_body
 from .github_shell_capabilities import (
     _ShellTokenWithQuoteContext,
     classify_github_shell_capabilities,
@@ -48,7 +53,7 @@ from .interpreter_observers import (
     _looks_like_safe_read_only_lookup_command,
 )
 from .request_artifacts import _candidate_command_texts
-from .request_models import ToolActionRequestMatch, _normalize_tool_name
+from .request_models import ToolActionRequestMatch, _normalize_tool_name, tool_action_risk_summary
 from .routine_directory_creation import is_safe_routine_directory_creation
 from .sensitive_read_pipeline import _runtime_read_root_texts
 from .shell_quote_tokens import shell_token_segments, shell_tokens_preserving_quote_context
@@ -102,20 +107,34 @@ def is_explicitly_benign_tool_action_request(
         if is_nonexecuting_github_actions_read_workflow(stripped_command, cwd=cwd):
             found_benign_candidate = True
             continue
+        if gh_pr_create_uses_safe_ephemeral_body(stripped_command):
+            found_benign_candidate = True
+            continue
         github_assessment = classify_github_shell_capabilities(stripped_command, home_dir=home_dir)
         if github_assessment is not None and github_capability_requires_confirmation(github_assessment):
             return False
+        control_snapshot = current_extension_control_snapshot()
+        if github_assessment is not None and control_snapshot is not None:
+            permissions = tuple(
+                permission
+                for capability in github_assessment.capabilities
+                if (permission := BUILT_IN_COMMAND_EXTENSION_REGISTRY.permission_for_typed_capability(capability))
+                is not None
+            )
+            control_resolution = resolve_extension_controls(
+                control_snapshot.layers,
+                BUILT_IN_COMMAND_EXTENSION_REGISTRY,
+                extension_ids=tuple(sorted({permission.extension_id for permission in permissions})),
+                permission_ids=tuple(sorted({permission.permission_id for permission in permissions})),
+                surface=ControlSurface.COMMAND_EVALUATION,
+                authority_failure=control_snapshot.authority_failure,
+            )
+            if control_resolution.blocked:
+                return False
         if _quote_aware_direct_github_read_is_safe(stripped_command, assessment=github_assessment):
             found_benign_candidate = True
             continue
-        if home_dir is not None and _is_bounded_agent_guidance_read_chain(
-            stripped_command,
-            cwd=cwd,
-            home_dir=home_dir,
-        ):
-            found_benign_candidate = True
-            continue
-        if home_dir is not None and _is_guard_safety_doc_read(stripped_command, home_dir=home_dir):
+        if home_dir is not None and is_benign_agent_guidance_read(stripped_command, cwd, home_dir):
             found_benign_candidate = True
             continue
         parts = _split_shell_parts(stripped_command)
@@ -153,7 +172,7 @@ def is_explicitly_benign_tool_action_request(
         if _looks_like_safe_git_status_command(stripped_command, parts, cwd=cwd):
             found_benign_candidate = True
             continue
-        if _looks_like_safe_standalone_git_routine(stripped_command, cwd=cwd):
+        if _looks_like_safe_standalone_git_routine(stripped_command, cwd=cwd, home_dir=home_dir):
             found_benign_candidate = True
             continue
         if home_dir is not None and is_safe_git_worktree_add(
@@ -342,15 +361,6 @@ def _looks_like_safe_existence_probe(
     return bool(allowed_roots) and any(resolved.is_relative_to(root) for root in allowed_roots)
 
 
-def _is_guard_safety_doc_read(command_text: str, *, home_dir: Path) -> bool:
-    try:
-        parts = shlex.split(command_text)
-    except ValueError:
-        return False
-    target = _bounded_sed_read_target(parts)
-    return target is not None and _is_guard_safety_doc_target(target, home_dir=home_dir)
-
-
 def _skip_shell_wrapper_options(segment: list[_ShellTokenWithQuoteContext], index: int) -> int:
     while index < len(segment) and segment[index].plain.startswith("-"):
         index += 1
@@ -397,7 +407,7 @@ def build_tool_action_request_artifact(
     *,
     config_path: str,
     source_scope: str,
-    extension_control_layers: tuple[ExtensionControlLayer, ...] = (),
+    extension_control_layers: tuple[ExtensionControlLayer, ...] | None = None,
 ) -> GuardArtifact:
     """Build a Guard artifact for a sensitive native tool action request."""
 
@@ -429,7 +439,7 @@ def build_tool_action_request_artifact(
             f"Requested `{request.tool_name}` action `{request.command_text}` via transparent wrappers "
             f"`{' -> '.join(wrapper_chain)}` ({request.action_class})."
         )
-    risk_summary = f"Requests a sensitive native tool action: {request.action_class}."
+    risk_summary = tool_action_risk_summary(request)
     runtime_reason = request.reason
     if wrapper_chain:
         runtime_reason = (
@@ -459,7 +469,7 @@ def build_tool_action_request_artifact(
             "command_text": request.command_text,
             "action_class": request.action_class,
             "request_summary": request_summary,
-            "runtime_request_signals": [f"invokes a sensitive native tool action: {request.action_class}"],
+            "runtime_request_signals": [risk_summary],
             "runtime_request_summary": risk_summary,
             "runtime_request_reason": runtime_reason,
             "raw_command_text": request.raw_command_text,
@@ -470,6 +480,15 @@ def build_tool_action_request_artifact(
             "extension_control_resolution": {
                 "blocked": evaluation.control_resolution.blocked,
                 "failures": [failure.code.value for failure in evaluation.control_resolution.failures],
+                **(
+                    {
+                        "explicitly_enabled_permission_ids": list(
+                            evaluation.control_resolution.explicitly_enabled_permission_ids
+                        )
+                    }
+                    if evaluation.control_resolution.explicitly_enabled_permission_ids
+                    else {}
+                ),
             },
             "command_rule_matches": [owned.to_dict() for owned in evaluation.matches],
             "risk_classes": list(evaluation.risk_classes),

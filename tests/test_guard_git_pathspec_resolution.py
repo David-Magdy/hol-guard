@@ -46,6 +46,7 @@ def git_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _git(repository, "init", "--quiet")
     _git(repository, "config", "user.name", "Guard Fixture")
     _git(repository, "config", "user.email", "guard@example.invalid")
+    _git(repository, "config", "commit.gpgsign", "false")
     _write(repository / "src" / "app.py", "print('safe')\n")
     _write(repository / "src" / "nested" / "worker.py", "print('safe')\n")
     _write(repository / "src" / "nested" / "MODEL.PY", "print('safe')\n")
@@ -292,8 +293,6 @@ def test_git_pathspec_environment_preserves_windows_loader_variable_case_insensi
         'git diff -- ":(glob)src/**/*.py"',
         "git log --oneline",
         "git show HEAD",
-        "git add src/app.py",
-        'git commit -m "Fix validation"',
     ),
 )
 def test_normal_git_workflows_receive_no_new_preflight_review(

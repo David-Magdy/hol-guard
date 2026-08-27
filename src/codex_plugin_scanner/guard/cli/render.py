@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 import sys
 import textwrap
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO, TypeAlias
 
 from ..redaction import redact_text
+from ..value_coercion import coerce_int as _coerce_int
 from .render_uninstall import render_self_uninstall
 
 try:
@@ -691,16 +691,33 @@ def _init_notification_summary(payload: dict[str, object]) -> str:
     return ", ".join(states) if states else "ready"
 
 
+def _protection_display_name(payload: dict[str, object], fallback: str) -> str:
+    label = payload.get("protection_label")
+    if isinstance(label, str) and label.strip():
+        return label.strip()
+    return fallback
+
+
+def _protection_status_copy(payload: dict[str, object], fallback: str) -> tuple[str, bool]:
+    raw = payload.get("protection") or payload.get("protection_posture") or fallback
+    protection = str(raw)
+    protection_off = bool(payload.get("protection_off")) or protection == "watch"
+    return _protection_display_name(payload, protection), protection_off
+
+
 def _render_status(console: Console, payload: dict[str, object]) -> None:
     harnesses = _coerce_dict_list(payload.get("harnesses"))
+    name, protection_off = _protection_status_copy(payload, "protected")
+    protection_line = f"[bold red]protection: {name} (off)[/bold red]" if protection_off else f"protection: {name}"
     console.print(
         Panel.fit(
             f"[bold]HOL Guard status[/bold]\n"
+            f"{protection_line}\n"
             f"{payload.get('managed_harnesses', 0)} managed harnesses • "
             f"{payload.get('receipt_count', 0)} receipts • "
             f"{payload.get('pending_approvals', 0)} approvals • "
             f"sync {'connected' if payload.get('sync_configured') else 'local only'}",
-            border_style="cyan",
+            border_style="red" if protection_off else "cyan",
         )
     )
     console.print(_build_cloud_summary_panel(payload))
@@ -774,10 +791,12 @@ def _render_doctor(console: Console, payload: dict[str, object]) -> None:
         console.print(Panel(summary, title="Guard notification setup", border_style="cyan"))
     elif "adapters" in payload:
         tables = _coerce_string_list(payload.get("tables"))
+        name, protection_off = _protection_status_copy(payload, "protected")
+        protection_line = f"[bold red]protection: {name} (off)[/bold red]" if protection_off else f"protection: {name}"
         console.print(
             Panel.fit(
-                f"[bold]HOL Guard doctor[/bold]\n{len(tables)} local tables checked",
-                border_style="cyan",
+                f"[bold]HOL Guard doctor[/bold]\n{protection_line}\n{len(tables)} local tables checked",
+                border_style="red" if protection_off else "cyan",
             )
         )
         adapters = _coerce_dict_list(payload.get("adapters"))
@@ -829,6 +848,10 @@ def _render_doctor(console: Console, payload: dict[str, object]) -> None:
             if isinstance(recovery_command, str) and recovery_command.strip():
                 summary.add_row("Recovery", recovery_command)
         summary.add_row("Warnings", str(len(warnings)))
+        name, protection_off = _protection_status_copy(payload, "")
+        if name:
+            value = f"[bold red]{name} (off)[/bold red]" if protection_off else name
+            summary.add_row("Protection", value)
         console.print(Panel(summary, title="Guard doctor", border_style="cyan"))
         if warnings:
             warning_text = "\n".join(
@@ -1740,6 +1763,17 @@ def _managed_install_notes(managed_install: dict[str, object], manifest: object)
     return notes
 
 
+def _add_update_version_rows(body: Table, version_check: object) -> None:
+    if not isinstance(version_check, dict):
+        return
+    latest_version = version_check.get("latest_version")
+    if isinstance(latest_version, str) and latest_version.strip():
+        body.add_row("Latest PyPI version", latest_version.strip())
+    reserved_alpha = version_check.get("reserved_alpha_version")
+    if isinstance(reserved_alpha, str) and reserved_alpha.strip():
+        body.add_row("Reserved GitHub alpha", reserved_alpha.strip())
+
+
 def _render_update(console: Console, payload: dict[str, object]) -> None:
     body = Table.grid(padding=(0, 1))
     body.add_row("Current version", str(payload.get("current_version") or "unknown"))
@@ -1748,11 +1782,7 @@ def _render_update(console: Console, payload: dict[str, object]) -> None:
     if isinstance(command, list) and command:
         body.add_row("Command", " ".join(str(part) for part in command))
     body.add_row("Dry run", _bool_label(bool(payload.get("dry_run"))))
-    version_check = payload.get("version_check")
-    if isinstance(version_check, dict):
-        latest_version = version_check.get("latest_version")
-        if isinstance(latest_version, str) and latest_version.strip():
-            body.add_row("Latest PyPI version", latest_version.strip())
+    _add_update_version_rows(body, payload.get("version_check"))
     if payload.get("resulting_version"):
         body.add_row("Resulting version", str(payload.get("resulting_version")))
     if payload.get("editable_install") is not None:
@@ -2807,26 +2837,6 @@ def _coerce_string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if isinstance(item, str) and item]
-
-
-def _coerce_int(value: object) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            return 0
-        return int(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return 0
-        try:
-            return int(stripped)
-        except ValueError:
-            return 0
-    return 0
 
 
 def _short_path(value: object) -> str:

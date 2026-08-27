@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 from codex_plugin_scanner.guard.models import GuardApprovalRequest
-from codex_plugin_scanner.guard.runtime.live_request_sync import _build_live_request_event
+from codex_plugin_scanner.guard.runtime.cloud_review_sync import build_cloud_review_event
 from codex_plugin_scanner.guard.store import GuardStore
 from codex_plugin_scanner.guard.store_approvals import (
     add_approval_request,
@@ -74,7 +74,7 @@ def test_deduplicated_legacy_request_records_its_first_observed_guard_version() 
     assert tuple(row) == ("2.2.0a131", "2.2.0a131", "2.2.0a131")
 
 
-def test_live_request_event_sends_guard_version_metadata(tmp_path: Path) -> None:
+def test_cloud_review_event_sends_guard_version_metadata(tmp_path: Path) -> None:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     connection.execute(approval_schema_statement())
@@ -85,7 +85,7 @@ def test_live_request_event_sends_guard_version_metadata(tmp_path: Path) -> None
     item = get_approval_request(connection, request_id)
 
     assert item is not None
-    event = _build_live_request_event(
+    event = build_cloud_review_event(
         item,
         oauth=None,
         redaction_level="full",
@@ -104,6 +104,8 @@ def test_schema_probe_rejects_store_missing_request_version_columns(tmp_path: Pa
     assert store._schema_is_current() is True  # pyright: ignore[reportPrivateUsage]
 
     with sqlite3.connect(store.path) as connection:
+        connection.execute("drop trigger guard_review_outbox_after_insert")
+        connection.execute("drop trigger guard_review_outbox_after_update")
         connection.execute("alter table approval_requests drop column guard_version")
 
     assert store._schema_is_current() is False  # pyright: ignore[reportPrivateUsage]

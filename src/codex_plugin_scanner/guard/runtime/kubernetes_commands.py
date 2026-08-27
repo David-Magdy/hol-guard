@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from functools import partial
 from pathlib import Path
 
 from .data_flow import extract_command_segments, extract_command_substitutions, extract_input_redirects
@@ -21,6 +22,10 @@ from .kubernetes_command_support import (
     remote_cp_path,
     resource_token_includes_secret,
     script_reads_sensitive_env,
+    skip_kubectl_options,
+)
+from .kubernetes_command_support import (
+    shell_command_script as _shell_c_script,
 )
 from .kubernetes_heredoc_support import kubernetes_heredoc_secret_source
 from .shell_command_wrappers import normalize_transparent_shell_command
@@ -364,22 +369,12 @@ def _unwrap_command_start(tokens: tuple[str, ...]) -> int:
     return index
 
 
-def _skip_kubectl_options(tokens: tuple[str, ...], index: int) -> int:
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "--":
-            return index + 1
-        if not token.startswith("-"):
-            return index
-        option_consumed = kubernetes_option_tokens_consumed(
-            tokens,
-            index,
-            base_value_flags=_KUBECTL_OPTIONS_WITH_VALUES,
-            base_boolean_flags=_KUBECTL_BOOLEAN_OPTIONS,
-            base_boolean_short_cluster=_EXEC_BOOLEAN_SHORT_CLUSTER,
-        )
-        index += option_consumed if option_consumed is not None else 1
-    return index
+_skip_kubectl_options = partial(
+    skip_kubectl_options,
+    value_flags=_KUBECTL_OPTIONS_WITH_VALUES,
+    boolean_flags=_KUBECTL_BOOLEAN_OPTIONS,
+    boolean_short_cluster=_EXEC_BOOLEAN_SHORT_CLUSTER,
+)
 
 
 def _kubectl_resource_is_secret(tokens: tuple[str, ...], index: int) -> bool:
@@ -580,18 +575,6 @@ def _remote_cp_operands(tokens: tuple[str, ...]) -> tuple[str, ...]:
     if has_target_directory:
         return tuple(operands)
     return tuple(operands[:-1]) if len(operands) >= 2 else ()
-
-
-def _shell_c_script(tokens: tuple[str, ...]) -> str | None:
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "-c" and index + 1 < len(tokens):
-            return tokens[index + 1]
-        if token.startswith("-") and "c" in token[1:] and index + 1 < len(tokens):
-            return tokens[index + 1]
-        index += 1
-    return None
 
 
 def _shell_stdin_secret_source(tokens: tuple[str, ...]) -> str | None:

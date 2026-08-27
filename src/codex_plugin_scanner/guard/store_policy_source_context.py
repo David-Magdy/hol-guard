@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from functools import partial
 from hashlib import sha256
 from pathlib import Path
+
+from .artifact_identity import artifact_family_key
 
 _GENERIC_POLICY_REASONS = (
     "approved in review",
@@ -119,19 +122,10 @@ def _artifact_hash_in_clause(artifact_hash: str) -> tuple[str, tuple[object, ...
     return f"artifact_hash in ({placeholders})", variants
 
 
-def _artifact_family_key(artifact_id: str | None) -> str | None:
-    if artifact_id is None or not artifact_id.strip():
-        return None
-    if artifact_id.startswith("family:"):
-        family = artifact_id.removeprefix("family:").strip().lower()
-        return artifact_id if family in _SCOPED_HARNESS_FAMILIES else None
-    parts = artifact_id.split(":")
-    if len(parts) < 3:
-        return None
-    family = parts[2].strip().lower()
-    if family not in _SCOPED_HARNESS_FAMILIES:
-        return None
-    return f"family:{family}"
+_artifact_family_key = partial(
+    artifact_family_key,
+    allowed_families=_SCOPED_HARNESS_FAMILIES,
+)
 
 
 def _runtime_scoped_exact_match_key(artifact_id: str | None) -> str | None:

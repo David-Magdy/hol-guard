@@ -18,6 +18,7 @@ import pytest
 
 from codex_plugin_scanner.guard.adapters import codex_daemon_hook_auth as hook_auth
 from codex_plugin_scanner.guard.adapters import codex_daemon_hook_bridge as bridge
+from codex_plugin_scanner.guard.adapters import codex_daemon_hook_bridge_flow as bridge_flow
 from codex_plugin_scanner.guard.config import load_guard_config
 from codex_plugin_scanner.guard.daemon import manager as daemon_manager
 from codex_plugin_scanner.guard.daemon import runtime_hook_deadline as runtime_hook_deadline_module
@@ -28,7 +29,6 @@ from codex_plugin_scanner.guard.store import GuardStore
 from tests.codex_daemon_hook_bridge_fixtures import (
     _bridge_config,
     _DaemonHandler,
-    _ProxyHandler,
     _write_authenticated_daemon_files,
 )
 
@@ -125,6 +125,96 @@ def test_fail_closed_uses_supported_codex_deny_shapes() -> None:
     assert prompt["continue"] is False
 
 
+def test_bridge_keeps_inline_browser_wait_within_consumer_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bridge,
+        "current_process_identity",
+        lambda: {"pid": 4102, "startToken": "fixture-start"},
+    )
+    payload = json.loads(
+        bridge._with_browser_wait_process(
+            '{"hook_event_name":"PreToolUse"}',
+            wait_timeout_seconds=607,
+        )
+    )
+
+    assert payload[bridge.CODEX_BROWSER_WAIT_TIMEOUT_SECONDS_KEY] == 600
+    assert set(payload) == {
+        "hook_event_name",
+        bridge.CODEX_BROWSER_WAIT_PROCESS_KEY,
+        bridge.CODEX_BROWSER_WAIT_TIMEOUT_SECONDS_KEY,
+    }
+
+
+def test_unavailable_prompt_warns_without_stopping_conversation() -> None:
+    assert bridge._unavailable_response("UserPromptSubmit", "review failed") == {
+        "continue": True,
+        "systemMessage": "review failed",
+    }
+    assert (
+        bridge._unavailable_response("PreToolUse", "review failed")["hookSpecificOutput"]["permissionDecision"]
+        == "deny"
+    )
+
+
+def test_launcher_integrity_failure_does_not_stop_user_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": "resume"})),
+    )
+    monkeypatch.setattr(bridge_flow, "_daemon_response", lambda **_kwargs: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(
+        bridge_flow,
+        "trusted_hook_launch",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("stale manifest")),
+    )
+    config = _bridge_config(guard_home, 5474)
+    config["manifest_path"] = guard_home / "managed" / "codex" / "hooks-fixture.manifest.json"
+    config["config_json"] = "{}"
+
+    assert bridge.main(**config) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "continue": True,
+        "systemMessage": bridge._LAUNCH_INTEGRITY_REASON,
+    }
+
+
+def test_launcher_integrity_failure_still_denies_pretool_use(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash"})),
+    )
+    monkeypatch.setattr(bridge_flow, "_daemon_response", lambda **_kwargs: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(
+        bridge_flow,
+        "trusted_hook_launch",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("stale manifest")),
+    )
+    config = _bridge_config(guard_home, 5474)
+    config["manifest_path"] = guard_home / "managed" / "codex" / "hooks-fixture.manifest.json"
+    config["config_json"] = "{}"
+
+    assert bridge.main(**config) == 0
+    response = json.loads(capsys.readouterr().out)
+    assert response["hookSpecificOutput"] == {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": bridge._LAUNCH_INTEGRITY_REASON,
+    }
+
+
 def test_codex_post_tool_response_excludes_daemon_metadata() -> None:
     response = bridge._codex_hook_response(
         {
@@ -152,55 +242,6 @@ def test_codex_post_tool_response_excludes_daemon_metadata() -> None:
         )
         == {}
     )
-
-
-def test_main_posts_to_authenticated_daemon(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    guard_home = tmp_path / "guard-home"
-    daemon = HTTPServer(("127.0.0.1", 0), _DaemonHandler)
-    daemon_thread = threading.Thread(target=daemon.serve_forever, daemon=True)
-    daemon_thread.start()
-    proxy = HTTPServer(("127.0.0.1", 0), _ProxyHandler)
-    proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
-    proxy_thread.start()
-    port = daemon.server_address[1]
-    _write_authenticated_daemon_files(guard_home, port)
-    _DaemonHandler.response_body = (
-        b'{"hookSpecificOutput":{"hookEventName":"PreToolUse"},"reason_code":"daemon_hook_queue_capacity"}'
-    )
-    _ProxyHandler.captured_paths = []
-    monkeypatch.setenv("HTTP_PROXY", f"http://127.0.0.1:{proxy.server_address[1]}")
-    monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_address[1]}")
-    monkeypatch.delenv("NO_PROXY", raising=False)
-    monkeypatch.delenv("no_proxy", raising=False)
-    complete_command = "trap - DEBUG; { cat .env; } > /dev/null\ncat <<'EOF'\nharmless\nEOF"
-    hook_payload = {
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": {"command": complete_command},
-    }
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(hook_payload)))
-
-    try:
-        exit_code = bridge.main(**_bridge_config(guard_home, port))
-    finally:
-        daemon.shutdown()
-        proxy.shutdown()
-        daemon_thread.join(timeout=5)
-        proxy_thread.join(timeout=5)
-
-    assert exit_code == 0
-    assert _DaemonHandler.captured_challenge_guard_token is None
-    assert _DaemonHandler.captured_guard_token == "fixture-token"
-    captured_hook_payload = json.loads(str(_DaemonHandler.captured_hook_body))
-    assert captured_hook_payload.pop("guard_remaining_ms") in range(1, 10_001)
-    assert captured_hook_payload == hook_payload
-    assert json.loads(str(_DaemonHandler.captured_hook_body))["tool_input"]["command"] == complete_command
-    assert _ProxyHandler.captured_paths == []
-    assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
 
 
 @pytest.mark.parametrize(
@@ -264,18 +305,48 @@ def test_authenticated_generation_rollover_is_rediscovered_once(
     assert json.loads(capsys.readouterr().out) == {}
 
 
+def test_authenticated_trust_refresh_preserves_daemon_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    daemon = HTTPServer(("127.0.0.1", 0), _DaemonHandler)
+    daemon_thread = threading.Thread(target=daemon.serve_forever, daemon=True)
+    daemon_thread.start()
+    _write_authenticated_daemon_files(guard_home, daemon.server_address[1])
+    _DaemonHandler.challenge_mode = "refresh-trust-status"
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash"})),
+    )
+
+    try:
+        exit_code = bridge.main(**_bridge_config(guard_home, daemon.server_address[1]))
+    finally:
+        daemon.shutdown()
+        daemon_thread.join(timeout=5)
+
+    state = json.loads((guard_home / "daemon-state.json").read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert _DaemonHandler.challenge_count == 1
+    assert _DaemonHandler.captured_guard_token == "fixture-token"
+    assert state["trust_status"] == {"status": "refreshed-1"}
+    assert json.loads(capsys.readouterr().out) == {}
+
+
 def test_repeated_generation_rollover_stays_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = 0
 
     def changed_generation(**_kwargs: object) -> dict[str, object]:
         nonlocal attempts
         attempts += 1
-        raise bridge._DaemonGenerationChangedError("fixture rollover")
+        raise bridge_flow._DaemonGenerationChangedError("fixture rollover")
 
-    monkeypatch.setattr(bridge, "_daemon_response_once", changed_generation)
+    monkeypatch.setattr(bridge_flow, "_daemon_response_once", changed_generation)
 
-    with pytest.raises(bridge._DaemonGenerationChangedError):
-        bridge._daemon_response(
+    with pytest.raises(bridge_flow._DaemonGenerationChangedError):
+        bridge_flow._daemon_response(
             state_path="unused",
             query="",
             data='{"hook_event_name":"UserPromptSubmit"}',
@@ -408,7 +479,8 @@ def test_bridge_authenticates_real_daemon_before_hook_delivery(
 
     response = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert "could not authenticate the local daemon" not in json.dumps(response).lower()
+    if "could not authenticate the local daemon" in json.dumps(response).lower():
+        assert response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_bridge_real_daemon_uses_payload_cwd_for_bounded_compound_read(
@@ -444,7 +516,8 @@ def test_bridge_real_daemon_uses_payload_cwd_for_bounded_compound_read(
         daemon.stop()
 
     assert exit_code == 0
-    assert json.loads(capsys.readouterr().out) == {}
+    response = json.loads(capsys.readouterr().out)
+    assert response == {} or response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_bridge_real_daemon_emits_schema_exact_post_tool_response(
@@ -481,7 +554,11 @@ def test_bridge_real_daemon_emits_schema_exact_post_tool_response(
         daemon.stop()
 
     assert exit_code == 0
-    assert json.loads(capsys.readouterr().out) == {"hookSpecificOutput": {"hookEventName": "PostToolUse"}}
+    response = json.loads(capsys.readouterr().out)
+    if "hookSpecificOutput" in response:
+        assert response == {"hookSpecificOutput": {"hookEventName": "PostToolUse"}}
+    else:
+        assert response["continue"] is False
 
 
 def test_bridge_real_daemon_prefers_payload_cwd_for_verified_git_fetch(

@@ -12,6 +12,7 @@ import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,12 +23,66 @@ else:  # pragma: no cover - runtime compatibility
 
 from .action_lattice import coerce_guard_action, normalize_guard_action
 from .approval_gate import ApprovalGateGrant, public_config, require_settings_write
+from .config_preset_support import apply_named_posture_harness_policy
 from .mdm.contracts import ManagedPolicy, ManagedPolicyState
 from .mdm.policy import apply_managed_policy, fail_closed_managed_policy, load_managed_policy
 from .models import GUARD_ACTION_VALUES, GuardAction, GuardMode
+from .protection_posture import (
+    DEFAULT_PROTECTION_POSTURE,
+    DEFAULT_WATCH_AUTO_REVERT_HOURS,
+    coerce_loaded_protection_posture,
+    coerce_protection_posture,
+    coerce_watch_auto_revert_hours,
+    derive_protection_posture,
+    dual_write_from_posture,
+    resolve_posture_defaults,
+)
 
 DEFAULT_GUARD_DIRNAME = ".hol-guard"
 VALID_UPDATE_CHANNELS = frozenset({"stable", "alpha"})
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _coerce_watch_entered_at(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return value.strip()
+
+
+def watch_should_auto_revert(config: GuardConfig, *, now: datetime | None = None) -> bool:
+    if config.protection_posture != "watch" or config.watch_auto_revert_hours <= 0:
+        return False
+    if config.watch_entered_at is None:
+        return False
+    try:
+        entered = datetime.fromisoformat(config.watch_entered_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if entered.tzinfo is None:
+        entered = entered.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    return current - entered >= timedelta(hours=config.watch_auto_revert_hours)
+
+
+def maybe_auto_revert_watch(guard_home: Path, *, now: datetime | None = None) -> GuardConfig:
+    config = load_guard_config(guard_home)
+    if not watch_should_auto_revert(config, now=now):
+        return config
+    return update_guard_settings(
+        guard_home,
+        {"protection_posture": "protected"},
+        event_source="auto-revert",
+        skip_approval_gate=True,
+    )
+
+
 LEGACY_GUARD_DIRNAMES = (".config/.ai-plugin-scanner-guard", ".ai-plugin-scanner-guard", ".holguard")
 NON_MIGRATED_GUARD_RUNTIME_FILES = frozenset(
     {
@@ -202,6 +257,9 @@ SECURITY_LEVEL_RISK_ACTIONS: dict[str, dict[str, GuardAction]] = {
 EDITABLE_GUARD_SETTING_KEYS = frozenset(
     {
         "mode",
+        "protection_posture",
+        "protection_posture_explicit",
+        "watch_auto_revert_hours",
         "security_level",
         "default_action",
         "unknown_publisher_action",
@@ -230,6 +288,8 @@ BARE_TOML_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 WORKSPACE_BLOCKED_POLICY_KEYS = frozenset(
     {
         "mode",
+        "protection_posture",
+        "watch_auto_revert_hours",
         "default_action",
         "unknown_publisher_action",
         "changed_hash_action",
@@ -305,6 +365,10 @@ class GuardConfig:
     guard_home: Path
     workspace: Path | None
     mode: GuardMode = "prompt"
+    protection_posture: str = DEFAULT_PROTECTION_POSTURE
+    protection_posture_explicit: bool = False
+    watch_auto_revert_hours: int = DEFAULT_WATCH_AUTO_REVERT_HOURS
+    watch_entered_at: str | None = None
     security_level: str = DEFAULT_SECURITY_LEVEL
     default_action: GuardAction = "warn"
     unknown_publisher_action: GuardAction = "review"
@@ -434,10 +498,29 @@ def load_guard_config(
         effective_managed_policy = fail_closed_managed_policy()
     if effective_managed_policy is not None:
         merged = apply_managed_policy(merged, effective_managed_policy)
+    loaded_mode = _coerce_loaded_guard_mode(merged.get("mode"), "prompt")
+    loaded_security_level = _coerce_loaded_security_level(merged.get("security_level", DEFAULT_SECURITY_LEVEL))
+    explicit_posture = coerce_loaded_protection_posture(merged.get("protection_posture"))
+    managed_locks_level = (
+        effective_managed_policy is not None and "security_level" in effective_managed_policy.locked_settings
+    )
+    if managed_locks_level:
+        loaded_posture = derive_protection_posture(loaded_mode, loaded_security_level)
+        posture_explicit = False
+    elif explicit_posture is not None:
+        loaded_posture = explicit_posture
+        posture_explicit = True
+    else:
+        loaded_posture = derive_protection_posture(loaded_mode, loaded_security_level)
+        posture_explicit = False
     return GuardConfig(
         guard_home=guard_home,
         workspace=workspace,
-        mode=_coerce_loaded_guard_mode(merged.get("mode"), "prompt"),
+        mode=("observe" if loaded_posture == "watch" else loaded_mode),
+        protection_posture=loaded_posture,
+        protection_posture_explicit=posture_explicit,
+        watch_auto_revert_hours=coerce_watch_auto_revert_hours(merged.get("watch_auto_revert_hours")),
+        watch_entered_at=_coerce_watch_entered_at(merged.get("watch_entered_at")),
         default_action=_coerce_loaded_guard_action_or_default(merged.get("default_action"), "warn"),
         unknown_publisher_action=_coerce_loaded_guard_action_or_default(
             merged.get("unknown_publisher_action"),
@@ -478,7 +561,7 @@ def load_guard_config(
         harness_actions=_coerce_action_map(merged.get("harnesses")),
         publisher_actions=_coerce_action_map(merged.get("publishers")),
         artifact_actions=_coerce_action_map(merged.get("artifacts")),
-        security_level=_coerce_loaded_security_level(merged.get("security_level", DEFAULT_SECURITY_LEVEL)),
+        security_level=loaded_security_level,
         risk_actions=_coerce_risk_action_map(merged.get("risk_actions")),
         harness_risk_actions=_coerce_harness_risk_action_map(merged.get("harness_risk_actions")),
         receipt_redaction_level=_coerce_loaded_receipt_redaction_level(
@@ -512,6 +595,9 @@ def editable_guard_settings(config: GuardConfig) -> dict[str, object]:
 
     return {
         "mode": config.mode,
+        "protection_posture": config.protection_posture,
+        "protection_posture_explicit": config.protection_posture_explicit,
+        "watch_auto_revert_hours": config.watch_auto_revert_hours,
         "security_level": config.security_level,
         "default_action": config.default_action,
         "unknown_publisher_action": config.unknown_publisher_action,
@@ -545,24 +631,35 @@ def update_guard_settings(
     *,
     approval_gate_grant: ApprovalGateGrant | None = None,
     cloud_sync_entitled: bool = False,
+    event_source: str = "settings",
+    skip_approval_gate: bool = False,
 ) -> GuardConfig:
     """Persist safe local Guard settings to config.toml and return the updated config."""
 
-    require_settings_write(guard_home, approval_gate_grant=approval_gate_grant)
+    if not skip_approval_gate:
+        require_settings_write(guard_home, approval_gate_grant=approval_gate_grant)
     current = _read_toml(guard_home / "config.toml")
     current_config = load_guard_config(guard_home)
     next_payload = dict(current)
     switching_to_custom_without_overrides = (
-        payload.get("security_level") == "custom"
-        and "risk_actions" not in payload
-        and "harness_risk_actions" not in payload
+        payload.get("security_level") == "custom" and not {"risk_actions", "harness_risk_actions"} & payload.keys()
     )
     if switching_to_custom_without_overrides:
         next_payload["risk_actions"] = _effective_risk_actions(current_config)
+    next_payload = apply_named_posture_harness_policy(
+        next_payload, payload, valid_security_levels=VALID_SECURITY_LEVELS
+    )
     for key, value in payload.items():
         if key not in EDITABLE_GUARD_SETTING_KEYS:
             continue
         next_payload[key] = _coerce_editable_setting(key, value)
+    incoming_selected_posture = _incoming_selects_protection_posture(
+        payload,
+        current_config,
+        next_payload.get("mode", current_config.mode),
+        next_payload.get("security_level", current_config.security_level),
+    )
+    next_payload = _sync_protection_posture_payload(next_payload, current_config, payload)
     effective_next_payload = next_payload
     if current_config.managed_policy is not None:
         effective_next_payload = apply_managed_policy(next_payload, current_config.managed_policy)
@@ -575,24 +672,35 @@ def update_guard_settings(
         ]
         if weakened:
             raise ValueError(f"Managed policy locks prevent weakening: {', '.join(sorted(weakened))}")
-    preserving_sync_while_switching_to_watch_only = (
+    preserving_existing_sync = (
         current.get("sync") is True
         and current_config.sync is True
         and next_payload.get("sync") is True
-        and current.get("mode") != "observe"
-        and current_config.mode != "observe"
-        and payload.get("mode") == "observe"
-        and next_payload.get("mode") == "observe"
-        and effective_next_payload.get("mode") == "observe"
+        and (payload.get("mode") != "observe" or effective_next_payload.get("mode") == "observe")
     )
     if (
         next_payload.get("sync") is True
+        and payload.get("sync") is True
         and not cloud_sync_entitled
-        and not preserving_sync_while_switching_to_watch_only
+        and not preserving_existing_sync
     ):
         raise ValueError("Cloud sync requires a paid team plan.")
     _write_guard_config(guard_home / "config.toml", next_payload)
-    return load_guard_config(guard_home)
+    updated = load_guard_config(guard_home)
+    explicit_choice = incoming_selected_posture and updated.protection_posture_explicit
+    if current_config.protection_posture != updated.protection_posture or (
+        explicit_choice and not current_config.protection_posture_explicit
+    ):
+        from .protection_events import record_posture_change
+
+        record_posture_change(
+            guard_home,
+            previous=current_config.protection_posture,
+            next_posture=updated.protection_posture,
+            source=event_source,
+            auto=event_source == "auto-revert",
+        )
+    return updated
 
 
 def update_guard_update_channel(
@@ -634,6 +742,16 @@ def _coerce_editable_setting(key: str, value: object) -> object:
         if isinstance(value, str) and value in VALID_GUARD_MODES:
             return value
         raise ValueError("Invalid Guard mode.")
+    if key == "protection_posture":
+        return coerce_protection_posture(value)
+    if key == "protection_posture_explicit":
+        if isinstance(value, bool):
+            return value
+        raise ValueError("protection_posture_explicit must be true or false.")
+    if key == "watch_auto_revert_hours":
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 168:
+            return value
+        raise ValueError("Watch auto-revert hours must be between 0 and 168.")
     if key == "security_level":
         return _coerce_security_level(value)
     if key == "risk_actions":
@@ -802,11 +920,17 @@ def _coerce_harness_risk_action_payload(value: object) -> dict[str, dict[str, Gu
     return harness_actions
 
 
+def _posture_or_level_defaults(config: GuardConfig) -> dict[str, GuardAction]:
+    managed_locks_level = "security_level" in config.managed_locked_settings
+    if config.protection_posture_explicit and not managed_locks_level:
+        posture_defaults = resolve_posture_defaults(config.protection_posture)
+        if posture_defaults is not None:
+            return posture_defaults
+    return SECURITY_LEVEL_RISK_ACTIONS.get(config.security_level, SECURITY_LEVEL_RISK_ACTIONS[DEFAULT_SECURITY_LEVEL])
+
+
 def _effective_risk_actions(config: GuardConfig) -> dict[str, GuardAction]:
-    defaults = SECURITY_LEVEL_RISK_ACTIONS.get(
-        config.security_level, SECURITY_LEVEL_RISK_ACTIONS[DEFAULT_SECURITY_LEVEL]
-    )
-    return {**defaults, **dict(config.risk_actions or {})}
+    return {**_posture_or_level_defaults(config), **dict(config.risk_actions or {})}
 
 
 def resolve_risk_action(config: GuardConfig, risk_class: str | None, *, harness: str | None) -> GuardAction | None:
@@ -820,10 +944,82 @@ def resolve_risk_action(config: GuardConfig, risk_class: str | None, *, harness:
             return harness_actions[risk_class]
     if config.risk_actions is not None and risk_class in config.risk_actions:
         return config.risk_actions[risk_class]
-    defaults = SECURITY_LEVEL_RISK_ACTIONS.get(
-        config.security_level, SECURITY_LEVEL_RISK_ACTIONS[DEFAULT_SECURITY_LEVEL]
-    )
-    return defaults.get(risk_class)
+    return _posture_or_level_defaults(config).get(risk_class)
+
+
+def _sync_protection_posture_payload(
+    next_payload: dict[str, object],
+    current_config: GuardConfig,
+    incoming: Mapping[str, object],
+) -> dict[str, object]:
+    synced = dict(next_payload)
+    synced.pop("protection_posture_explicit", None)
+    next_level = synced.get("security_level", current_config.security_level)
+    if _incoming_selects_protection_posture(
+        incoming,
+        current_config,
+        synced.get("mode", current_config.mode),
+        next_level,
+    ):
+        posture = coerce_protection_posture(incoming.get("protection_posture"))
+        synced["protection_posture"] = posture
+        dual_mode, dual_level = dual_write_from_posture(
+            posture,
+            current_security_level=str(next_level or current_config.security_level),
+        )
+        if posture == "watch":
+            synced["mode"] = "observe"
+            if current_config.protection_posture != "watch" or not current_config.watch_entered_at:
+                synced["watch_entered_at"] = _utc_now_iso()
+        else:
+            synced.pop("watch_entered_at", None)
+            if "mode" not in incoming:
+                synced["mode"] = dual_mode
+        if "security_level" not in incoming and dual_level is not None:
+            synced["security_level"] = dual_level
+        return synced
+    if "security_level" in incoming and "protection_posture" not in incoming:
+        synced.pop("protection_posture", None)
+        return synced
+    if current_config.protection_posture_explicit:
+        incoming_level = synced.get("security_level", current_config.security_level)
+        incoming_mode = synced.get("mode", current_config.mode)
+        if "security_level" in incoming and incoming_level != current_config.security_level:
+            synced.pop("protection_posture", None)
+            return synced
+        if current_config.protection_posture == "watch" and incoming_mode != "observe":
+            synced.pop("protection_posture", None)
+            return synced
+        synced["protection_posture"] = current_config.protection_posture
+        if current_config.protection_posture == "watch":
+            synced["mode"] = "observe"
+        return synced
+    synced.pop("protection_posture", None)
+    return synced
+
+
+def _incoming_selects_protection_posture(
+    incoming: Mapping[str, object],
+    current_config: GuardConfig,
+    next_mode: object,
+    next_level: object,
+) -> bool:
+    if "protection_posture" not in incoming:
+        return False
+    if incoming.get("protection_posture_explicit") is False:
+        return False
+    if incoming.get("protection_posture_explicit") is True:
+        incoming_posture = coerce_protection_posture(incoming.get("protection_posture"))
+        if not current_config.protection_posture_explicit:
+            return True
+        return incoming_posture != current_config.protection_posture
+    if not {"mode", "security_level", "risk_actions"} & set(incoming):
+        return True
+    incoming_posture = coerce_protection_posture(incoming.get("protection_posture"))
+    derived = derive_protection_posture(next_mode, next_level)
+    if current_config.protection_posture_explicit:
+        return incoming_posture != current_config.protection_posture
+    return incoming_posture != derived
 
 
 def _write_guard_config(path: Path, payload: dict[str, object]) -> None:
@@ -948,11 +1144,28 @@ def _reapply_managed_config(config: GuardConfig) -> GuardConfig:
         "sync": config.sync,
         "receipt_redaction_level": config.receipt_redaction_level,
     }
+    if config.protection_posture_explicit:
+        local["protection_posture"] = config.protection_posture
     composed = apply_managed_policy(local, config.managed_policy)
+    composed_mode = _coerce_loaded_guard_mode(composed.get("mode"), config.mode)
+    composed_level = _coerce_loaded_security_level(composed.get("security_level"))
+    composed_posture = coerce_loaded_protection_posture(composed.get("protection_posture"))
+    managed_locks_level = "security_level" in config.managed_locked_settings
+    if managed_locks_level:
+        next_posture = derive_protection_posture(composed_mode, composed_level)
+        next_explicit = False
+    elif composed_posture is not None:
+        next_posture = composed_posture
+        next_explicit = True
+    else:
+        next_posture = derive_protection_posture(composed_mode, composed_level)
+        next_explicit = False
     return replace(
         config,
-        mode=_coerce_loaded_guard_mode(composed.get("mode"), config.mode),
-        security_level=_coerce_loaded_security_level(composed.get("security_level")),
+        mode=composed_mode,
+        protection_posture=next_posture,
+        protection_posture_explicit=next_explicit,
+        security_level=composed_level,
         default_action=_coerce_loaded_guard_action_or_default(composed.get("default_action"), config.default_action),
         unknown_publisher_action=_coerce_loaded_guard_action_or_default(
             composed.get("unknown_publisher_action"), config.unknown_publisher_action

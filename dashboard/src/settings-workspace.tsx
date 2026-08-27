@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import {
   HiMiniShieldCheck,
-  HiMiniLockClosed,
-  HiMiniCog6Tooth,
   HiMiniCheckCircle,
   HiMiniExclamationTriangle,
   HiMiniBellAlert,
@@ -17,7 +15,6 @@ import {
   EmptyState,
   SectionLabel,
   Tag,
-  GuardHero,
 } from "./approval-center-primitives";
 import {
   clearEvidence,
@@ -41,7 +38,16 @@ import {
 } from "./guard-api";
 import { approvalGateCooldownLabel } from "./approval-gate-utils";
 import { resolveProtectionLevelCopy } from "./runtime-overview";
-import { RISK_CONTROL_CONSEQUENCES, filterSettingsBySearch, securityLevelLabel } from "./apps/app-catalog";
+import { RISK_CONTROL_CONSEQUENCES, filterSettingsBySearch } from "./apps/app-catalog";
+import { WorkspacePageHeader } from "./workspace-page-header";
+import { ProtectionPosturePanel } from "./protection-posture-panel";
+import { WatchProtectionBanner } from "./watch-protection-banner";
+import {
+  deriveProtectionPosture,
+  isProtectionPosture,
+  PROTECTION_POSTURE_COPY,
+  type ProtectionPosture,
+} from "./protection-posture-copy";
 import { useFocusTrap } from "./use-focus-trap";
 export {
   buildTotpQrImageOptions,
@@ -62,6 +68,7 @@ import type {
   GuardApprovalGatePublicConfig,
   GuardNotificationSetupResult,
   GuardRuntimeSnapshot,
+  GuardProtectionCapability,
   GuardSettings,
   GuardSettingsExport,
   GuardSettingsPayload,
@@ -88,9 +95,10 @@ export function resolveFineTuningSectionDescription(
   securityLevel: GuardSettings["security_level"],
 ): string {
   if (securityLevel === "custom") {
-    return "You are overriding the preset for this machine.";
+    return "Using custom rules on top of this machine's protection posture.";
   }
-  return `These rules follow the ${securityLevelLabel(securityLevel)} preset. Use Custom fine-tuning to edit each action type here.`;
+  const postureLabel = securityLevel === "strict" ? "Extra careful" : "Protected";
+  return `These rules follow ${postureLabel}. Switch to Custom to change how Guard handles each action type.`;
 }
 
 export function isFineTuningEditable(securityLevel: GuardSettings["security_level"]): boolean {
@@ -178,18 +186,18 @@ type SettingsState =
   | { kind: "ready"; payload: GuardSettingsPayload };
 
 const actionOptions = [
-  { value: "allow", label: "Allow without asking" },
-  { value: "warn", label: "Warn only" },
-  { value: "review", label: "Ask me first" },
+  { value: "allow", label: "Allow" },
+  { value: "warn", label: "Allow and record" },
+  { value: "review", label: "Ask once" },
   { value: "require-reapproval", label: "Ask every time" },
   { value: "sandbox-required", label: "Run in sandbox" },
-  { value: "block", label: "Block" },
+  { value: "block", label: "Stop" },
 ];
 
 const surfacePolicyOptions = [
-  { value: "attention-aware", label: "Smart (recommended)" },
-  { value: "approval-center", label: "Open prompts immediately" },
-  { value: "native-only", label: "Never open the browser" },
+  { value: "attention-aware", label: "In the app when possible" },
+  { value: "approval-center", label: "Always in Guard" },
+  { value: "native-only", label: "Never open a browser" },
 ];
 
 const attentionSeverityOptions = [
@@ -197,47 +205,6 @@ const attentionSeverityOptions = [
   { value: "high", label: "High or critical risk" },
   { value: "medium", label: "Medium risk or higher" },
   { value: "low", label: "Any identified risk" },
-];
-
-const protectionModeChoices = [
-  { value: "prompt" as const, label: "Ask first" },
-  { value: "enforce" as const, label: "Block until approved" },
-  { value: "observe" as const, label: "Watch only" },
-];
-
-const securityLevels = [
-  {
-    value: "relaxed" as const,
-    label: "Relaxed",
-    description: "Warn on dangerous actions. Most safe actions run without a prompt.",
-    icon: HiMiniShieldCheck,
-    protects: ["Destructive commands", "Credential sharing"],
-    tone: "green" as const,
-  },
-  {
-    value: "balanced" as const,
-    label: "Balanced",
-    description: "Ask before secret access, hidden execution, exfiltration, and destructive actions.",
-    icon: HiMiniShieldCheck,
-    protects: ["Secret file access", "Credential sharing", "Destructive shell commands", "Hidden scripts"],
-    tone: "blue" as const,
-  },
-  {
-    value: "strict" as const,
-    label: "Strict",
-    description: "Ask more often, including new network destinations.",
-    icon: HiMiniLockClosed,
-    protects: ["Everything in Balanced", "New network destinations"],
-    tone: "purple" as const,
-  },
-  {
-    value: "custom" as const,
-    label: "Custom",
-    description: "Use the exact choices below for this machine and connected apps.",
-    icon: HiMiniCog6Tooth,
-    protects: [],
-    tone: "slate" as const,
-  }
 ];
 
 const riskControls = [
@@ -326,35 +293,6 @@ const riskProfileActions: Record<"relaxed" | "balanced" | "strict" | "custom", R
   }
 };
 
-const securityToneClasses = {
-  green: {
-    icon: "text-emerald-600",
-    iconBg: "bg-emerald-50",
-    selected: "border-emerald-300 bg-emerald-50"
-  },
-  blue: {
-    icon: "text-brand-blue",
-    iconBg: "bg-brand-blue/10",
-    selected: "border-brand-blue/30 bg-brand-blue/[0.05]"
-  },
-  purple: {
-    icon: "text-brand-purple",
-    iconBg: "bg-brand-purple/10",
-    selected: "border-brand-purple/30 bg-brand-purple/[0.04]"
-  },
-  slate: {
-    icon: "text-slate-500",
-    iconBg: "bg-slate-100",
-    selected: "border-slate-300 bg-slate-50"
-  }
-} as const;
-
-type SecurityTone = keyof typeof securityToneClasses;
-
-function getSecurityToneClasses(tone: SecurityTone) {
-  return securityToneClasses[tone] ?? securityToneClasses.slate;
-}
-
 function normalizeSettingsPayload(payload: GuardSettingsPayload): GuardSettingsPayload {
   return { ...payload, settings: normalizeGuardSettings(payload.settings) };
 }
@@ -367,8 +305,13 @@ function normalizeGuardSettings(settings: GuardSettings): GuardSettings {
     actions[risk.key] = settings.risk_actions?.[risk.key] ?? explicitOverrides[risk.key] ?? defaults[risk.key];
     return actions;
   }, {} as Record<RiskKey, string>);
+  const posture = isProtectionPosture(settings.protection_posture)
+    ? settings.protection_posture
+    : deriveProtectionPosture(settings.mode, securityLevel);
   return {
     ...settings,
+    protection_posture: posture,
+    watch_auto_revert_hours: settings.watch_auto_revert_hours ?? 24,
     security_level: securityLevel,
     risk_actions: effectiveRiskActions,
     risk_action_overrides: explicitOverrides,
@@ -376,15 +319,63 @@ function normalizeGuardSettings(settings: GuardSettings): GuardSettings {
   };
 }
 
+function applyProtectionPosture(settings: GuardSettings, posture: ProtectionPosture): GuardSettings {
+  if (posture === "watch") {
+    return {
+      ...settings,
+      protection_posture: "watch",
+      protection_posture_explicit: true,
+      mode: "observe",
+    };
+  }
+  const securityLevel = posture === "extra_careful" ? "strict" : "balanced";
+  return {
+    ...settings,
+    protection_posture: posture,
+    protection_posture_explicit: true,
+    mode: "enforce",
+    security_level: securityLevel,
+    risk_actions: riskProfileActions[securityLevel],
+    risk_action_overrides: {},
+  };
+}
+
+function currentProtectionPosture(settings: GuardSettings): ProtectionPosture {
+  if (isProtectionPosture(settings.protection_posture)) {
+    return settings.protection_posture;
+  }
+  return deriveProtectionPosture(settings.mode, settings.security_level);
+}
+
+function lockedSetting(settings: GuardSettings, key: string): boolean {
+  return settings.managed_locked_settings?.includes(key) === true;
+}
+
+function lockedProtectionPostures(settings: GuardSettings): ProtectionPosture[] {
+  const allPostures: ProtectionPosture[] = ["protected", "extra_careful", "watch"];
+  if (lockedSetting(settings, "protection_posture")) {
+    const current = currentProtectionPosture(settings);
+    return allPostures.filter((posture) => posture !== current);
+  }
+  if (lockedSetting(settings, "mode") && settings.mode !== "observe") {
+    return ["watch"];
+  }
+  return [];
+}
+
 function buildConsequenceSummary(settings: GuardSettings): string {
-  const level = settings.security_level;
-  const mode = settings.mode;
-  if (mode === "observe") return "Guard is watching and recording what your AI apps do, but it will not pause any actions. Switch to Prompt or Enforce when you want Guard to actively protect you.";
-  if (level === "relaxed") return "Guard will warn about destructive commands and credential sharing but will not pause for approval. Most safe actions run automatically. Good for trusted environments.";
-  if (level === "balanced") return "Guard will ask before secret access, hidden execution, and destructive commands. New network destinations get a warning. This is the recommended setting for most users.";
-  if (level === "strict") return "Guard will ask before almost every risky action, including new network destinations. Use this when working with sensitive data or untrusted AI tools.";
-  if (level === "custom") return "You have customized individual risk controls. Review the choices below to make sure they match how you want Guard to behave.";
-  return "";
+  const posture = currentProtectionPosture(settings);
+  if (posture === "watch") {
+    return "Protection is off. Guard is only recording.";
+  }
+  if (posture === "extra_careful") {
+    return "Guard will also ask the first time this project talks to a new site or installs a new tool.";
+  }
+  if (settings.security_level === "custom") {
+    const postureLabel = PROTECTION_POSTURE_COPY[posture].label;
+    return `Using custom rules on top of ${postureLabel}.`;
+  }
+  return "Guard stops dangerous actions automatically and asks once about new or unknown work.";
 }
 
 export function hasUnsavedChanges(saved: GuardSettings | null, draft: GuardSettings | null): boolean {
@@ -418,21 +409,6 @@ export function applyApprovalGateDraft(
   };
 }
 
-function protectionModeHelp(mode: GuardSettings["mode"]): string {
-  if (mode === "enforce") {
-    return "Guard keeps risky actions stopped until you allow them.";
-  }
-  if (mode === "observe") {
-    return "Guard logs what it sees without pausing anything.";
-  }
-  return "Guard pauses risky actions and asks what to do.";
-}
-
-function protectionModeLabel(mode: GuardSettings["mode"]): string {
-  const match = protectionModeChoices.find((choice) => choice.value === mode);
-  return match?.label ?? mode;
-}
-
 function saveStatusText(saveSuccess: boolean, saveError: string | null): string {
   if (saveSuccess) {
     return "Settings saved successfully.";
@@ -461,6 +437,7 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
   const [actionMessageKind, setActionMessageKind] = useState<"success" | "error">("success");
   const [perfSnapshot, setPerfSnapshot] = useState<GuardRuntimeSnapshot | null>(null);
   const [pendingMode, setPendingMode] = useState<GuardSettings["mode"] | null>(null);
+  const [pendingPosture, setPendingPosture] = useState<ProtectionPosture | null>(null);
   const [activeTab, setActiveTab] = useState<LocalSettingsTabKey>(() => resolveInitialSettingsTab(window.location.search));
   const [searchQuery, setSearchQuery] = useState("");
   const [importingSettings, setImportingSettings] = useState(false);
@@ -641,14 +618,45 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
     setSaveError(null);
   }, []);
 
+  const applyDraftPosture = useCallback((posture: ProtectionPosture) => {
+    setDraft((value) => value === null ? value : applyProtectionPosture(value, posture));
+    setSaveError(null);
+  }, []);
+
+  const handleProtectionPostureChange = useCallback((posture: ProtectionPosture) => {
+    if (posture === "watch") {
+      setPendingPosture(posture);
+      return;
+    }
+    applyDraftPosture(posture);
+  }, [applyDraftPosture]);
+
+  const handleTurnProtectionOn = useCallback(() => {
+    applyDraftPosture("protected");
+  }, [applyDraftPosture]);
+
+  const handleWatchAutoRevertToggle = useCallback((checked: boolean) => {
+    setDraft((value) => value === null ? value : { ...value, watch_auto_revert_hours: checked ? 24 : 0 });
+    setSaveError(null);
+  }, []);
+
   const confirmModeChange = useCallback(() => {
+    if (pendingPosture === "watch") {
+      applyDraftPosture("watch");
+      setPendingPosture(null);
+      setPendingMode(null);
+      return;
+    }
     if (pendingMode === null) return;
     setDraft((value) => value === null ? value : { ...value, mode: pendingMode });
     setPendingMode(null);
     setSaveError(null);
-  }, [pendingMode]);
+  }, [applyDraftPosture, pendingMode, pendingPosture]);
 
-  const cancelModeChange = useCallback(() => { setPendingMode(null); }, []);
+  const cancelModeChange = useCallback(() => {
+    setPendingMode(null);
+    setPendingPosture(null);
+  }, []);
 
   const handleBooleanChange = useCallback(
     (key: keyof GuardSettings) => (event: ChangeEvent<HTMLInputElement>) => {
@@ -1323,8 +1331,11 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
     return <EmptyState title="Settings are unavailable" body={state.kind === "error" ? state.message : "Guard did not return editable settings."} tone="teach" />;
   }
 
-  const modeHelp = protectionModeHelp(draft.mode);
   const consequenceSummary = buildConsequenceSummary(draft);
+  const selectedPosture = currentProtectionPosture(draft);
+  const protectionCapabilities: GuardProtectionCapability[] = state.kind === "ready"
+    ? (state.payload.protection_capabilities ?? [])
+    : [];
   const searchMatches = filterSettingsBySearch(searchQuery);
   const hasSearch = searchQuery.trim().length > 0;
   const riskSearchMatches = searchMatches.filter((m) => m.section === "risk");
@@ -1334,12 +1345,14 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
 
   return (
     <div className="flex min-h-[calc(100dvh-11rem)] flex-col gap-6">
-      <GuardHero
-        status="neutral"
-        headline="Set how hard Guard should push back"
-        subheadline="Pick a security level, then fine-tune individual rules whenever you need more control."
-        cta={<Tag tone="blue">{protectionModeLabel(draft.mode)}</Tag>}
+      <WorkspacePageHeader
+        eyebrow="This machine"
+        title="Protection"
+        description="Guard stops dangerous actions automatically and asks once about new or unknown work."
       />
+      {selectedPosture === "watch" ? (
+        <WatchProtectionBanner onTurnProtectionOn={handleTurnProtectionOn} />
+      ) : null}
 
       <div className="relative">
         <HiMiniMagnifyingGlass className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
@@ -1366,6 +1379,7 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
             <div className="mt-3">
               <FineTuningPresetBanner
                 securityLevel={draft.security_level}
+                posture={selectedPosture}
                 onSwitchToCustom={handleSwitchToCustomFineTuning}
               />
             </div>
@@ -1406,50 +1420,16 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
         {activeTab === "protection" && (
           <div className="flex min-h-0 flex-1 flex-col space-y-6">
             <SettingsFormSection
-              title="Protection level"
-              description={`${securityLevelLabel(draft.security_level)} · ${protectionModeLabel(draft.mode)}`}
+              title="Protection"
+              description={consequenceSummary}
             >
-              <fieldset className="space-y-6 border-0 p-0">
-                <legend className="sr-only">Security level</legend>
-                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-                  {securityLevels.map((level) => (
-                    <SecurityLevelCard
-                      key={level.value}
-                      level={level}
-                      isSelected={draft.security_level === level.value}
-                      onSelect={handleSecurityLevelChange}
-                    />
-                  ))}
-                </div>
-              </fieldset>
-            </SettingsFormSection>
-
-            <SettingsFormSection title="Protection mode" description={modeHelp}>
-              <fieldset className="border-0 p-0">
-                <legend className="sr-only">Protection mode</legend>
-                <div className="grid gap-2 py-3 sm:grid-cols-3">
-                  {protectionModeChoices.map((modeChoice) => (
-                    <label
-                      key={modeChoice.value}
-                      className={`flex min-h-11 cursor-pointer items-center justify-center rounded-lg border px-3 py-2 transition-colors ${
-                        draft.mode === modeChoice.value
-                          ? "border-brand-blue/25 bg-brand-blue/[0.04]"
-                          : "border-transparent bg-slate-50/80 hover:bg-white"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="mode"
-                        value={modeChoice.value}
-                        checked={draft.mode === modeChoice.value}
-                        onChange={handleModeChange}
-                        className="sr-only"
-                      />
-                      <span className="text-sm font-semibold text-brand-dark">{modeChoice.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
+              <ProtectionPosturePanel
+                posture={selectedPosture}
+                customRules={draft.security_level === "custom"}
+                capabilities={protectionCapabilities}
+                disabledPostures={lockedProtectionPostures(draft)}
+                onPostureChange={handleProtectionPostureChange}
+              />
             </SettingsFormSection>
 
             <SettingsFormSection title="Timing and features">
@@ -1519,6 +1499,35 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
                 </p>
               </div>
             ) : null}
+            <SettingsFormSection
+              title="Where Guard asks"
+              description="This only chooses the surface for Ask once. It does not change what Guard stops."
+            >
+              <div className="space-y-4 py-3">
+                <SettingsSelectRow
+                  label="Ask surface"
+                  description="In the app when possible, always in Guard, or never open a browser."
+                  value={draft.approval_surface_policy}
+                  onChange={handleStringChange("approval_surface_policy")}
+                  options={surfacePolicyOptions}
+                />
+                {draft.approval_surface_policy === "attention-aware" ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="text-sm font-medium text-brand-dark">Browser delay (seconds)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={120}
+                        value={draft.approval_browser_delay_seconds}
+                        onChange={handleNumberChange("approval_browser_delay_seconds")}
+                        className="mt-2 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+            </SettingsFormSection>
             <ApprovalGateCard
               enabled={approvalGateEnabled}
               gateConfig={draft.approval_gate ?? null}
@@ -1566,6 +1575,7 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
             {!isFineTuningEditable(draft.security_level) ? (
               <FineTuningPresetBanner
                 securityLevel={draft.security_level}
+                posture={selectedPosture}
                 onSwitchToCustom={handleSwitchToCustomFineTuning}
               />
             ) : null}
@@ -1623,29 +1633,16 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
                   <SettingSelect label="Changed command" value={draft.changed_hash_action} options={actionOptions} onChange={handleStringChange("changed_hash_action")} />
                   <SettingSelect label="New website or host" value={draft.new_network_domain_action} options={actionOptions} onChange={handleStringChange("new_network_domain_action")} />
                   <SettingSelect label="Nested commands" value={draft.subprocess_action} options={actionOptions} onChange={handleStringChange("subprocess_action")} />
-                  <SettingSelect label="Where to ask" value={draft.approval_surface_policy} options={surfacePolicyOptions} onChange={handleStringChange("approval_surface_policy")} />
                 </div>
-                {draft.approval_surface_policy === "attention-aware" ? (
-                  <div className="grid gap-3 border-t border-slate-100 py-4 sm:grid-cols-2">
-                    <SettingNumber
-                      label="Browser delay"
-                      value={draft.approval_browser_delay_seconds}
-                      min={0}
-                      max={300}
-                      suffix="seconds"
-                      onChange={handleNumberChange("approval_browser_delay_seconds")}
-                    />
-                    <SettingSelect
-                      label="Open immediately for"
-                      value={draft.approval_browser_immediate_severity}
-                      options={attentionSeverityOptions}
-                      onChange={handleStringChange("approval_browser_immediate_severity")}
-                    />
-                    <p className="text-xs leading-5 text-slate-500 sm:col-span-2">
-                      Guard cancels the browser prompt when your AI app continues with a different action. Desktop and in-app notices still appear immediately.
-                    </p>
-                  </div>
-                ) : null}
+                <div className="border-t border-slate-100 py-4">
+                  <SettingsToggleRow
+                    label="Auto-revert Watch"
+                    description="Turn protection back on after 24 hours unless you disable this."
+                    checked={(draft.watch_auto_revert_hours ?? 24) > 0}
+                    disabled={lockedSetting(draft, "watch_auto_revert_hours")}
+                    onChange={handleWatchAutoRevertToggle}
+                  />
+                </div>
               </div>
             </details>
           </div>
@@ -1810,7 +1807,7 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
         />
       ) : null}
 
-      {pendingMode === "observe" && (
+      {(pendingMode === "observe" || pendingPosture === "watch") && (
         <div className="guard-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-brand-attention/15 bg-white p-6 shadow-xl">
             <div className="flex items-start gap-3">
@@ -1818,13 +1815,13 @@ export function SettingsWorkspace({ onApprovalGateChange }: SettingsWorkspacePro
                 <HiMiniExclamationTriangle className="h-5 w-5 text-brand-attention" aria-hidden="true" />
               </span>
               <div>
-                <h3 className="text-base font-semibold text-brand-dark">Switch to Watch only?</h3>
-                <p className="mt-2 text-sm text-slate-500">In Watch only mode, Guard records what your AI apps do but does not pause anything. Use this only when debugging or in a fully trusted environment.</p>
+                <h3 className="text-base font-semibold text-brand-dark">Switch to Watch?</h3>
+                <p className="mt-2 text-sm text-slate-500">Protection is off. Guard is only recording. Use this only while debugging.</p>
               </div>
             </div>
             <div className="mt-6 flex flex-wrap gap-2">
-              <button onClick={confirmModeChange} className="inline-flex min-h-11 items-center rounded-lg bg-brand-attention px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-attention/90">Switch to Watch only</button>
-              <button onClick={cancelModeChange} className="inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-brand-dark transition-colors hover:bg-slate-50">Keep current mode</button>
+              <button onClick={confirmModeChange} className="inline-flex min-h-11 items-center rounded-lg bg-brand-attention px-4 text-sm font-semibold text-white transition-colors hover:bg-brand-attention/90">Switch to Watch</button>
+              <button onClick={cancelModeChange} className="inline-flex min-h-11 items-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-brand-dark transition-colors hover:bg-slate-50">Keep protection on</button>
             </div>
           </div>
         </div>
@@ -1994,74 +1991,30 @@ function SettingToggle(props: {
 
 function FineTuningPresetBanner(props: {
   securityLevel: GuardSettings["security_level"];
+  posture: ProtectionPosture;
   onSwitchToCustom: () => void;
 }) {
   if (isFineTuningEditable(props.securityLevel)) return null;
+  const postureLabel = PROTECTION_POSTURE_COPY[props.posture].label;
 
   return (
     <div
       className="rounded-xl border border-brand-blue/15 bg-brand-blue/[0.04] px-4 py-4 sm:flex sm:items-center sm:justify-between sm:gap-4"
       role="region"
-      aria-label="Fine-tuning preset controls"
+      aria-label="Advanced rules"
     >
       <div className="min-w-0">
         <p className="text-sm font-medium text-brand-dark">
-          Using the {securityLevelLabel(props.securityLevel)} preset
+          These rules follow {postureLabel}
         </p>
         <p className="mt-1 text-sm text-slate-500">
-          Individual rules match this preset. Switch to Custom to change how Guard handles each risky action type on this machine.
+          Switch to Custom to change how Guard handles each action type on this machine.
         </p>
       </div>
       <div className="mt-3 w-full shrink-0 sm:mt-0 sm:w-auto">
         <ActionButton onClick={props.onSwitchToCustom}>Use Custom fine-tuning</ActionButton>
       </div>
     </div>
-  );
-}
-
-type SecurityLevelCardProps = {
-  level: (typeof securityLevels)[number];
-  isSelected: boolean;
-  onSelect: (value: "relaxed" | "balanced" | "strict" | "custom") => void;
-};
-
-function SecurityLevelCard({ level, isSelected, onSelect }: SecurityLevelCardProps) {
-  const LevelIcon = level.icon;
-  const toneClasses = getSecurityToneClasses(level.tone);
-  const iconColorClass = toneClasses.icon;
-  const iconBgClass = toneClasses.iconBg;
-  const selectedBorderClass = toneClasses.selected;
-
-  const handleClick = useCallback(() => onSelect(level.value), [onSelect, level.value]);
-
-  return (
-    <button
-      type="button"
-      onClick={handleClick}
-      aria-pressed={isSelected}
-      className={`relative rounded-xl border p-4 text-left transition-all duration-150 hover:-translate-y-0.5 ${isSelected ? selectedBorderClass : "border-transparent bg-slate-50/80 hover:bg-white"}`}
-    >
-      {isSelected && (
-        <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600">
-          <HiMiniCheckCircle className="h-3.5 w-3.5 text-white" aria-hidden="true" />
-        </span>
-      )}
-      <span className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${iconBgClass}`}>
-        <LevelIcon className={`h-4 w-4 ${iconColorClass}`} aria-hidden="true" />
-      </span>
-      <span className="mt-2 block text-sm font-semibold text-brand-dark">{level.label}</span>
-      <span className="mt-1 block text-xs leading-relaxed text-slate-500">{level.description}</span>
-      {level.protects.length > 0 && (
-        <ul className="mt-2 space-y-0.5">
-          {level.protects.map((item) => (
-            <li key={item} className="flex items-center gap-1.5 text-[11px] text-slate-500">
-              <span className={`h-1 w-1 shrink-0 rounded-full ${iconColorClass}`} />
-              {item}
-            </li>
-          ))}
-        </ul>
-      )}
-    </button>
   );
 }
 

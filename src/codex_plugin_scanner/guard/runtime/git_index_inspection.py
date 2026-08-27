@@ -276,7 +276,7 @@ def owned_git_index_inspection_action_class(
         return None
     if cwd is not None and is_low_risk_git_index_inspection(command_text, cwd=cwd, home_dir=home_dir):
         return None
-    if cwd is not None and is_low_risk_standalone_git_routine(context):
+    if cwd is not None and is_low_risk_standalone_git_routine(context, home_dir=home_dir):
         return None
     return "git index inspection"
 
@@ -373,9 +373,10 @@ def _git_cached_diff_segment_is_safe(
         return False
     synthetic = replace(segment, tokens=_proof_cached_diff_tokens(tokens))
     repository_path = tokens[2] if tokens[:2] == ("git", "-C") and len(tokens) > 2 else None
-    return is_low_risk_git_inspection_segment(synthetic) and _git_show_has_execution_free_config(
-        synthetic, repository_path=repository_path
-    )
+    return is_low_risk_git_inspection_segment(
+        synthetic,
+        home_dir=home_dir,
+    ) and _git_show_has_execution_free_config(synthetic, repository_path=repository_path)
 
 
 def git_diff_operands(tokens: tuple[str, ...]) -> tuple[str, ...] | None:

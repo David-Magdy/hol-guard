@@ -614,68 +614,6 @@ class TestGuardApprovals:
         assert queued[0]["risk_signals"] == ["call arguments mention sensitive local files or secrets"]
         assert queued[0]["launch_summary"] == "Launches with `dangerous_delete .env`."
 
-    def test_guard_queue_projects_command_category_from_artifact_metadata(self, tmp_path):
-        store = GuardStore(tmp_path / "guard-home")
-        envelope = {
-            "schema_version": 1,
-            "action_id": "action-docker",
-            "harness": "codex",
-            "event_name": "PreToolUse",
-            "action_type": "shell_command",
-            "workspace": "/workspace",
-            "workspace_hash": "workspace-hash",
-            "tool_name": "Bash",
-            "command": "docker ps",
-            "prompt_excerpt": None,
-            "prompt_text": None,
-            "target_paths": [],
-            "network_hosts": [],
-            "mcp_server": None,
-            "mcp_tool": None,
-            "package_manager": None,
-            "package_name": None,
-            "script_name": None,
-            "raw_payload_redacted": {},
-        }
-        artifact = GuardArtifact(
-            artifact_id="codex:runtime:docker",
-            name="docker ps",
-            harness="codex",
-            artifact_type="command",
-            source_scope="runtime",
-            config_path=str(tmp_path / "workspace" / "guard.toml"),
-            metadata={"command_rule_matches": [{"extension_id": "command.container-runtime"}]},
-        )
-        detection = HarnessDetection(
-            harness="codex",
-            installed=True,
-            command_available=True,
-            config_paths=(artifact.config_path,),
-            artifacts=(artifact,),
-        )
-
-        queued = queue_blocked_approvals(
-            detection=detection,
-            evaluation={
-                "artifacts": [
-                    {
-                        "artifact_id": artifact.artifact_id,
-                        "artifact_name": artifact.name,
-                        "artifact_hash": "hash-docker",
-                        "artifact_type": artifact.artifact_type,
-                        "source_scope": artifact.source_scope,
-                        "policy_action": "require-reapproval",
-                        "action_envelope_json": envelope,
-                    }
-                ]
-            },
-            store=store,
-            approval_center_url="http://127.0.0.1:4455",
-            now="2026-07-22T00:00:00+00:00",
-        )
-
-        assert queued[0]["action_envelope_json"]["command_category"] == "command.container-runtime"
-
     @pytest.mark.parametrize(
         ("artifact_name", "action_envelope_json", "expected"),
         [
@@ -1807,20 +1745,67 @@ class TestGuardApprovals:
 
         assert daemon_manager_module.load_guard_daemon_url(guard_home) is None
 
-    def test_load_guard_daemon_url_rejects_daemon_from_different_source_root(self, tmp_path, monkeypatch):
+    def test_load_guard_daemon_url_adopts_same_fingerprint_from_different_source_root(self, tmp_path, monkeypatch):
         guard_home = tmp_path / "guard-home"
 
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self) -> FakeResponse:
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "tables": ["guard_connect_states"],
+                        "compatibility_version": daemon_manager_module.GUARD_DAEMON_COMPATIBILITY_VERSION,
+                    }
+                ).encode("utf-8")
+
+        daemon_manager_module.write_guard_daemon_state(
+            guard_home,
+            5530,
+            "token-123",
+            pid=12345,
+        )
         monkeypatch.setattr(
             daemon_manager_module,
-            "_load_state",
-            lambda _guard_home: {
-                "port": 5530,
-                "auth_token": "token-123",
-                "compatibility_version": daemon_manager_module.GUARD_DAEMON_COMPATIBILITY_VERSION,
-                "source_root": "/tmp/older-source-root",
-                "runtime_fingerprint": daemon_manager_module._current_guard_daemon_runtime_fingerprint(),
-            },
+            "_current_guard_daemon_source_root",
+            lambda: "/different/install/path",
         )
+        monkeypatch.setattr(daemon_manager_module, "_guard_daemon_pid_is_running", lambda _pid: True)
+        monkeypatch.setattr(
+            daemon_manager_module,
+            "_guard_daemon_pid_matches_command",
+            lambda _pid, expected_guard_home=None: True,
+        )
+        monkeypatch.setattr(
+            daemon_manager_module.urllib.request,
+            "urlopen",
+            lambda request, timeout=1: FakeResponse(),
+        )
+
+        assert daemon_manager_module.load_guard_daemon_url(guard_home) == "http://127.0.0.1:5530"
+
+    def test_load_guard_daemon_url_rejects_different_runtime_fingerprint(self, tmp_path, monkeypatch):
+        guard_home = tmp_path / "guard-home"
+
+        daemon_manager_module.write_guard_daemon_state(
+            guard_home,
+            5530,
+            "token-123",
+            pid=12345,
+        )
+        monkeypatch.setattr(
+            daemon_manager_module,
+            "_current_guard_daemon_runtime_fingerprint",
+            lambda: "stale-runtime-fingerprint",
+        )
+        monkeypatch.setattr(daemon_manager_module, "_guard_daemon_pid_is_running", lambda _pid: True)
 
         assert daemon_manager_module.load_guard_daemon_url(guard_home) is None
 
@@ -3683,7 +3668,7 @@ class TestGuardApprovals:
             assert timeout == 30
             return SimpleNamespace(status_code=200, json=lambda: {"resolved": True})
 
-        monkeypatch.setattr(guard_bridge_module.requests, "post", fake_post)
+        monkeypatch.setattr(guard_bridge_module._DAEMON_SESSION, "post", fake_post)
 
         resolved = bridge._execute_resolution("approve", "req-bridge")
 

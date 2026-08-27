@@ -12,6 +12,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "desktop-core-alpha-feed.yml"
 TOOL = ROOT / "scripts" / "release" / "desktop_core_alpha_feed.py"
+FROZEN_ENTRYPOINT = ROOT / "scripts" / "mdm" / "hol-guard-entry.py"
 
 
 def workflow_text() -> str:
@@ -79,11 +80,11 @@ def test_feed_uses_apple_trust_and_no_redundant_manifest_key() -> None:
     helper = TOOL.read_text(encoding="utf-8")
     job = publish_job()
     steps = {step.get("name"): step for step in job["steps"]}
-    extraction_line = 'codesign --display --extract-certificates "$BINARY" >/dev/null 2> "$RUNNER_TEMP/codesign-certificates.txt"'
+    extraction_line = (
+        'codesign --display --extract-certificates "$BINARY" >/dev/null 2> "$RUNNER_TEMP/codesign-certificates.txt"'
+    )
     extraction_lines = [
-        line.strip()
-        for line in text.splitlines()
-        if "codesign --display --extract-certificates" in line
+        line.strip() for line in text.splitlines() if "codesign --display --extract-certificates" in line
     ]
     verify = steps["Verify exact Apple identity, notarization, and Core contract"]
     verify_run = verify["run"]
@@ -110,7 +111,15 @@ def test_feed_uses_apple_trust_and_no_redundant_manifest_key() -> None:
     assert verify["env"]["MODE"] == "${{ steps.existing.outputs.mode }}"
     assert "spctl --assess" not in verify_run
     assert 'test -s "$RUNNER_TEMP/notary-result.json"' in verify_run
-    assert ".status == \"Accepted\" and (.id | type == \"string\" and length > 0)" in verify_run
+    assert '.status == "Accepted" and (.id | type == "string" and length > 0)' in verify_run
+
+
+def test_feed_builds_core_with_multiprocessing_safe_entrypoint() -> None:
+    entrypoint = FROZEN_ENTRYPOINT.read_text(encoding="utf-8")
+    freeze_dispatch = entrypoint.index("freeze_support()")
+    guard_import = entrypoint.index("from codex_plugin_scanner.guard.frozen_daemon_runtime")
+    assert freeze_dispatch < guard_import
+    assert "scripts/mdm/hol-guard-entry.py" in workflow_text()
 
 
 def test_macos_feed_avoids_bash4_only_builtins_and_binds_mode() -> None:
@@ -129,18 +138,10 @@ def test_macos_feed_avoids_bash4_only_builtins_and_binds_mode() -> None:
     assert '-name "hol_guard-${CORE_VERSION}-*.whl"' not in text
 
 
-def test_frozen_sidecar_copies_cloud_review_package_data() -> None:
+def test_frozen_sidecar_stages_cloud_review_package_data() -> None:
     text = workflow_text()
-    copies = (
-        'cp "$SOURCE/contracts/guard-cloud-review/v2/contract.json" "$DATA_ROOT/v2/contract.json"',
-        'cp "$SOURCE/contracts/guard-cloud-review/v2/command-result.json" "$DATA_ROOT/v2/command-result.json"',
-        'cp "$SOURCE/contracts/guard-cloud-review/v2/fixtures.json" "$DATA_ROOT/v2/fixtures.json"',
-        'cp "$SOURCE/docs/guard/contracts/guard-cloud-review.md" "$DATA_ROOT/guard-cloud-review.md"',
-    )
-    assert 'DATA_ROOT="$SOURCE/src/codex_plugin_scanner/guard/contracts/data/guard-cloud-review"' in text
-    assert 'mkdir -p "$DATA_ROOT/v2"' in text
-    for command in copies:
-        assert command in text
+    assert "python3 -I scripts/release/stage_guard_cloud_review_artifacts.py" in text
+    assert '--source-root "$SOURCE"' in text
 
 
 def test_existing_asset_set_is_all_or_nothing(tmp_path: Path, capsys) -> None:

@@ -7,15 +7,24 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from hashlib import sha256
+from ipaddress import ip_address
 from pathlib import Path, PurePath
 from typing import Literal, cast
 
 from .action_lattice import most_restrictive_guard_action, normalize_guard_action
 from .approval_gate import ApprovalGateGrant
+from .collections_support import dedupe_preserving_order
 from .config import DEFAULT_SECURITY_LEVEL, GuardConfig, resolve_risk_action
+from .local_cli_trust import apply_local_mcp_extension_decision
 from .models import GuardAction, GuardArtifact, GuardReceipt, PolicyDecision
 from .receipts import build_receipt
-from .runtime.approval_context import approval_context_tokens_validation_reason, build_approval_context_token
+from .runtime.approval_context import (
+    approval_context_tokens_validation_reason,
+    build_approval_context_token,
+)
+from .runtime.approval_context import (
+    saved_allow_context_validation_reason as _tool_call_saved_allow_validation_reason,
+)
 from .runtime.approval_reuse import (
     APPROVAL_REUSE_ACCEPTED,
     APPROVAL_REUSE_CLAIM_FAILED,
@@ -39,19 +48,12 @@ from .runtime.mcp_skill_firewall import enrich_artifact_with_mcp_skill_firewall,
 from .store import GuardStore, browser_mcp_exact_match_context
 from .temporary_mcp_approvals import runtime_grant_selectors
 
-# Bump when MCP risk classification or action-composition semantics change.
-_MCP_TOOL_CALL_EVALUATOR_POLICY_VERSION = "mcp-tool-call-evaluation-v3"
+_MCP_TOOL_CALL_EVALUATOR_POLICY_VERSION = "mcp-tool-call-evaluation-v3"  # bump with risk/action semantics
 
 _NON_EXECUTED_TOOL_CALL_TAXONOMY: Mapping[GuardAction, tuple[str, str]] = {
     "review": ("runtime_tool_call_review_required", "runtime tool call awaiting review"),
-    "require-reapproval": (
-        "runtime_tool_call_reapproval_required",
-        "runtime tool call awaiting fresh approval",
-    ),
-    "sandbox-required": (
-        "runtime_tool_call_sandbox_required",
-        "runtime tool call requires an enforceable sandbox",
-    ),
+    "require-reapproval": ("runtime_tool_call_reapproval_required", "runtime tool call awaiting fresh approval"),
+    "sandbox-required": ("runtime_tool_call_sandbox_required", "runtime tool call requires an enforceable sandbox"),
     "block": ("runtime_tool_call_blocked", "runtime tool call blocked"),
 }
 
@@ -399,6 +401,14 @@ def _tool_call_policy_context(config: GuardConfig, artifact: GuardArtifact) -> d
         "managed_policy_hash": config.managed_policy_hash,
         "managed_policy_status": config.managed_policy_status,
         "mode": config.mode,
+        **(
+            {
+                "protection_posture": config.protection_posture,
+                "protection_posture_explicit": True,
+            }
+            if config.protection_posture_explicit
+            else {}
+        ),
         "security_level": config.security_level,
     }
 
@@ -426,19 +436,6 @@ def _browser_runtime_exact_match_context(artifact: GuardArtifact, arguments: obj
         mcp_schema_hash=browser_intent.mcp_schema_hash,
         sensitive_surface_flags=browser_intent.sensitive_surface_flags,
     )
-
-
-def _tool_call_saved_allow_validation_reason(
-    decision: Mapping[str, object],
-    *,
-    artifact_hash: str,
-) -> str | None:
-    if decision.get("action") != "allow":
-        return None
-    # Equality of a legacy digest cannot prove that workspace, executable,
-    # capabilities, policy, and sandbox are unchanged. Only a valid v1 token
-    # can authorize reuse; malformed and legacy values fail closed.
-    return approval_context_tokens_validation_reason(decision.get("artifact_hash"), artifact_hash)
 
 
 def evaluate_tool_call(
@@ -564,28 +561,32 @@ def _apply_temporary_mcp_grant(
     arguments: object,
     current: ToolCallDecision,
 ) -> ToolCallDecision:
-    if current.action != "review":
-        return current
-    selectors = runtime_grant_selectors(
-        normalize_browser_mcp_intent(artifact, arguments),
-        current.risk_categories,
-        artifact_id=artifact.artifact_id,
-        artifact_hash=artifact_hash,
-    )
-    for selector in selectors:
-        lookup = store.resolve_policy_decision_lookup(
-            artifact.harness,
-            selector,
-            consume_one_shot=False,
+    original_action = current.action
+    if original_action == "review":
+        selectors = runtime_grant_selectors(
+            normalize_browser_mcp_intent(artifact, arguments),
+            current.risk_categories,
+            artifact_id=artifact.artifact_id,
+            artifact_hash=artifact_hash,
         )
-        decision = lookup["decision"]
-        if decision is not None and decision.get("action") == "allow" and decision.get("source") == "approval-gate":
-            return replace(
-                current,
-                action="allow",
-                source="temporary-mcp-grant",
-                summary="A time-bounded approval covers this routine MCP capability.",
+        for selector in selectors:
+            lookup = store.resolve_policy_decision_lookup(
+                artifact.harness,
+                selector,
+                consume_one_shot=False,
             )
+            decision = lookup["decision"]
+            if decision is not None and decision.get("action") == "allow" and decision.get("source") == "approval-gate":
+                current = replace(
+                    current,
+                    action="allow",
+                    source="temporary-mcp-grant",
+                    summary="A time-bounded approval covers this routine MCP capability.",
+                )
+                break
+    granted = apply_local_mcp_extension_decision(store, artifact, original_action)
+    if granted is not None and (granted[0] == "block" or current.action != "allow"):
+        return replace(current, action=granted[0], source=granted[1], summary=granted[2])
     return current
 
 
@@ -811,7 +812,12 @@ def _evaluate_current_tool_call(
     )
     if configured_risk_action is not None:
         source = "policy"
-        if explicit_risk_action is None and config.mode == "prompt" and config.security_level == DEFAULT_SECURITY_LEVEL:
+        if (
+            explicit_risk_action is None
+            and not config.protection_posture_explicit
+            and config.mode == "prompt"
+            and config.security_level == DEFAULT_SECURITY_LEVEL
+        ):
             configured_risk_action = "review"
             source = "risk-policy"
         return with_current_config(
@@ -973,18 +979,25 @@ def _tool_call_risk_category_set(artifact: GuardArtifact, arguments: object) -> 
 
     if len(tool_name_tokens.intersection({"delete", "remove", "rm", "destroy", "erase"})) > 0:
         categories.add("destructive_mutation")
-    if len(tool_name_tokens.intersection({"shell", "bash", "exec", "execute", "command", "powershell"})) > 0:
-        categories.add("command_execution")
-    if (
-        _matches_any(
-            combined,
-            (
-                r"https?://",
-                _token_pattern("curl", "wget", "fetch", "axios", "requests"),
-            ),
-        )
-        and not is_browser_navigation
+    if len(
+        tool_name_tokens.intersection({"shell", "bash", "exec", "execute", "command", "powershell"})
+    ) > 0 or _matches_any(
+        combined,
+        (
+            r"(?<![a-z0-9_])(subprocess|child_process|childprocess|popen|os\.system|runtime\.exec)(?![a-z0-9_])",
+            r"(?<![a-z0-9_])(spawn|execfile|system)(?:_sync)?\s*\(",
+        ),
     ):
+        categories.add("command_execution")
+    network_patterns = (
+        r"https?://",
+        _token_pattern("curl", "wget", "fetch", "axios", "requests"),
+        r"(?<![a-z0-9_])(?:socket|net|dns)\s*[.(]",
+        r"(?<![a-z0-9_])(?:create_connection|getaddrinfo|gethostbyname|sendto|recvfrom)\s*\(",
+        r"(?<![a-z0-9_])(?:urllib(?:\.request)?|http\.client|https?)\s*\.",
+        r"(?<![a-z0-9_])(udp|tcp|socks|proxy|tunnel|port_forward|port-forward)(?![a-z0-9_])",
+    )
+    if (_matches_any(combined, network_patterns) or _contains_ip_address(combined)) and not is_browser_navigation:
         # Browser navigation intent suppresses generic outbound_network;
         # browser-specific categories below capture the actual risk surface.
         categories.add("outbound_network")
@@ -1057,6 +1070,19 @@ def _serialized_tool_arguments(arguments: object) -> str:
         return json.dumps(arguments, sort_keys=True, default=str)
     except (TypeError, ValueError):
         return str(arguments)
+
+
+def _contains_ip_address(value: str) -> bool:
+    for match in re.finditer(r"(?<![0-9a-z])\[?([0-9a-f:.]{3,})\]?(?![0-9a-z])", value, flags=re.IGNORECASE):
+        candidate = match.group(1)
+        if candidate.count(":") == 1 and "." in candidate:
+            candidate = candidate.partition(":")[0]
+        try:
+            ip_address(candidate)
+        except ValueError:
+            continue
+        return True
+    return False
 
 
 def _matches_any(value: str, patterns: tuple[str, ...]) -> bool:
@@ -1534,15 +1560,7 @@ def block_tool_call(
     return receipt
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
+_dedupe = dedupe_preserving_order
 
 
 def _tool_name_tokens(tool_name: str) -> tuple[str, ...]:

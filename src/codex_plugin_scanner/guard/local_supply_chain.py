@@ -43,6 +43,9 @@ from .runtime.approval_context import (
     resolved_runtime_launch_argv,
     runtime_launch_identity_is_reusable,
 )
+from .runtime.approval_context import (
+    saved_allow_context_validation_reason as package_saved_allow_validation_reason,
+)
 from .runtime.approval_reuse import (
     APPROVAL_REUSE_CLAIM_FAILED,
     APPROVAL_REUSE_CONTEXT_CHANGED_AFTER_CLAIM,
@@ -2172,6 +2175,7 @@ def _resolve_stored_package_policy_override(
     )
     decision = None
     ignored_integrity = None
+    daemon_authority = None
     policy_workspaces = _package_policy_workspace_candidates(
         artifact=artifact,
         artifact_hash=artifact_hash,
@@ -2194,6 +2198,21 @@ def _resolve_stored_package_policy_override(
             break
         if ignored_integrity is not None:
             break
+    if not isinstance(decision, dict) and ignored_integrity is not None:
+        from .daemon.policy_authority_client import resolve_package_policy
+
+        daemon_resolution = resolve_package_policy(
+            guard_home=store.guard_home,
+            harness=artifact.harness,
+            artifact_id=artifact.artifact_id,
+            artifact_hash=artifact_hash,
+            workspaces=policy_workspaces,
+            publisher=artifact.publisher,
+        )
+        daemon_authority = daemon_resolution.authority
+        if daemon_resolution.decision is not None:
+            decision = daemon_resolution.decision
+            ignored_integrity = None
     diagnosed_reason: ApprovalReuseValidationFailure | None = None
     if not isinstance(decision, dict) and ignored_integrity is None:
         for policy_workspace in policy_workspaces:
@@ -2234,7 +2253,7 @@ def _resolve_stored_package_policy_override(
         store=store,
     )
     fresh_local_approval = isinstance(decision, dict) and (
-        _is_fresh_artifact_approval(decision) or legacy_local_approval
+        _is_fresh_artifact_approval(decision, store=store) or legacy_local_approval
     )
     durable_exact_approval = isinstance(decision, dict) and _is_durable_exact_artifact_approval(decision)
     reuse = evaluate_approval_reuse(
@@ -2255,7 +2274,11 @@ def _resolve_stored_package_policy_override(
             claim_disposition = cast(_PackageApprovalClaimDisposition, raw_disposition)
     claim_succeeded = True
     if claim_saved_approval and reuse.should_claim and isinstance(decision, dict):
-        if legacy_local_approval:
+        if daemon_authority is not None:
+            from .daemon.policy_authority_client import claim_package_policy
+
+            claim_succeeded = claim_package_policy(daemon_authority, decision)
+        elif legacy_local_approval:
             approval_id = decision.get("approval_id")
             assert isinstance(approval_id, str)
             claim_succeeded = store.claim_local_once_approval(
@@ -2334,15 +2357,25 @@ def _resolve_stored_package_policy_override(
     return _StoredPackagePolicyResolution(_package_evaluation_with_rejected_reuse(current_evaluation, reuse))
 
 
-def _is_fresh_artifact_approval(decision: dict[str, object]) -> bool:
+def _is_fresh_artifact_approval(decision: dict[str, object], *, store: Any) -> bool:
     decision_id = decision.get("decision_id")
-    return (
+    if not (
         isinstance(decision_id, int)
         and not isinstance(decision_id, bool)
         and decision.get("source") == "approval-gate"
         and decision.get("scope") == "artifact"
         and isinstance(decision.get("expires_at"), str)
-    )
+    ):
+        return False
+    request_id = decision.get("request_id")
+    request_getter = getattr(store, "get_approval_request", None)
+    if not isinstance(request_id, str) or not request_id or not callable(request_getter):
+        return False
+    try:
+        request = request_getter(request_id)
+    except Exception:
+        return False
+    return isinstance(request, dict) and request.get("resolution_scope") == "artifact"
 
 
 def _is_durable_exact_artifact_approval(decision: dict[str, object]) -> bool:
@@ -2385,24 +2418,6 @@ def _is_legacy_package_local_approval(decision: dict[str, object], *, store: Any
         and request.get("artifact_id") == decision.get("artifact_id")
         and request.get("artifact_hash") == decision.get("artifact_hash")
     )
-
-
-def package_saved_allow_validation_reason(
-    decision: dict[str, object],
-    *,
-    artifact_hash: str,
-) -> str | None:
-    """Validate that local saved package ``allow`` evidence is exact.
-
-    Broad policy scopes are matches for lookup only, not proof that this exact
-    package request was previously reviewed. Every stored ``allow``—regardless
-    of scope or source—must bind the current package/context digest before it
-    can satisfy review.
-    """
-
-    if decision.get("action") != "allow":
-        return None
-    return approval_context_tokens_validation_reason(decision.get("artifact_hash"), artifact_hash)
 
 
 def _package_evaluation_with_current_policy_action(
@@ -2709,16 +2724,32 @@ def _package_matched_cached_advisory_ids(store: Any, artifact: GuardArtifact) ->
     return tuple(sorted(matched_ids))
 
 
+def _package_feed_snapshot_hash(store: Any) -> str | None:
+    workspace_id = store.get_cloud_workspace_id()
+    if workspace_id is None:
+        return None
+    cached_bundle = store.get_cached_supply_chain_bundle(workspace_id)
+    if not isinstance(cached_bundle, dict):
+        return None
+    bundle = cached_bundle.get("bundle")
+    if not isinstance(bundle, dict):
+        return None
+    value = bundle.get("feedSnapshotHash")
+    return value if isinstance(value, str) and value else None
+
+
 def _package_policy_gate_context(
     store: Any,
     artifact: GuardArtifact,
     evaluation: Any,
 ) -> dict[str, object]:
     return {
+        "bundle_version": evaluation.bundle_version,
         "decision": evaluation.decision,
         "enforcement": evaluation.enforcement,
         "entitlement_state": evaluation.entitlement_state,
         "exception_id": evaluation.exception_id,
+        "feed_snapshot_hash": _package_feed_snapshot_hash(store),
         "matched_advisory_ids": list(_package_matched_cached_advisory_ids(store, artifact)),
         "matched_rule_id": evaluation.matched_rule_id,
         "packages": list(evaluation.packages),

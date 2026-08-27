@@ -45,6 +45,8 @@ def test_user_prompt_missing_artifact_fails_closed_for_detected_risk() -> None:
             payload={"hook_event_name": "UserPromptSubmit", "prompt": prompt},
             runtime_workspace=None,
         )
+
+
 def test_plain_user_prompt_has_no_runtime_risk_artifact() -> None:
     assert extract_prompt_requests("Summarize public documentation.") == []
 

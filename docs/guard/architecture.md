@@ -13,7 +13,7 @@ The runtime is split into:
 - `guard/store`: SQLite persistence for snapshots, diffs, receipts, managed installs, and sync state
 - `guard/schemas`: stable JSON payloads for consumer-mode outputs
 
-Runtime detectors include a Safe Decode sandbox for encoded commands and prompt text. It unwraps bounded base64, hex, gzip, heredoc, Python `-c`, Node `-e`, and PowerShell `-EncodedCommand` layers, redacts decoded previews, records the detector version in evidence, and never executes decoded payloads.
+Runtime detectors include a Safe Decode scanning layer for encoded commands and prompt text. It unwraps bounded base64, hex, gzip, heredoc, Python `-c`, Node `-e`, and PowerShell `-EncodedCommand` layers, redacts decoded previews, records the detector version in evidence, and never executes decoded payloads.
 
 Guard evaluates local artifacts in this order:
 
@@ -49,6 +49,7 @@ Cisco AIBOM stays out of Guard runtime policy in this phase. If it returns later
 - [Command extension architecture](command-extension-architecture.md)
 - [Command extension precedence](command-extension-precedence.md)
 - [Command extension threat model](command-extension-threat-model.md)
+- [Managed Controls threat model](managed-controls-threat-model.md)
 - [Package command extension coverage](command-package-extension-coverage.md)
 - [Infrastructure command extension coverage](command-domain-extension-coverage.md)
 - [Cloud command extension coverage](command-cloud-extension-coverage.md)

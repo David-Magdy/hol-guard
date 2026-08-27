@@ -50,7 +50,7 @@ import { appSetupTarget } from "./harness-setup-target";
 import { DEFAULT_FILTER_STATE } from "../evidence/evidence-url-state";
 import type { EvidenceFilterState, EvidenceSortKey } from "../evidence/evidence-types";
 import { CommandActivityWorkspace } from "../command-activity/command-activity-workspace";
-import { protectionHealthFor } from "../protection-health";
+import { protectionHealthFor, useProtectionPresentationState } from "../protection-health";
 import {
   AppCommandActivityModeTabs,
   type AppActivityMode,
@@ -116,8 +116,8 @@ function writeTabToUrl(tab: TabKey) {
 
 function resolveHeroStatus(
   status: "active" | "needs_setup" | "observed" | "unknown",
-  protectionState: GuardProtectionState,
-): "clear" | "setup_gap" | "needs_review" | "partial" | "degraded" {
+  protectionState: GuardProtectionState | "checking",
+): "clear" | "setup_gap" | "needs_review" | "partial" | "degraded" | "checking" {
   if (status === "active") return protectionState === "protected" ? "clear" : protectionState;
   if (status === "needs_setup") return "setup_gap";
   return "needs_review";
@@ -127,9 +127,14 @@ function resolveHeroHeadline(
   status: "active" | "needs_setup" | "observed" | "unknown",
   harness: string,
   isObserved: boolean,
-  protectionState: GuardProtectionState,
+  protectionState: GuardProtectionState | "checking",
+  limited: boolean,
 ): string {
+  if (status === "active" && protectionState === "protected" && limited) {
+    return `${harnessDisplayName(harness)} is limited`;
+  }
   if (status === "active" && protectionState === "protected") return `${harnessDisplayName(harness)} is protected`;
+  if (status === "active" && protectionState === "checking") return `Checking ${harnessDisplayName(harness)} protection`;
   if (status === "active" && protectionState === "partial") return `${harnessDisplayName(harness)} is partially protected`;
   if (status === "active") return `${harnessDisplayName(harness)} protection is degraded`;
   if (status === "needs_setup") return `${harnessDisplayName(harness)} needs setup`;
@@ -140,9 +145,12 @@ function resolveHeroHeadline(
 function resolveHeroSubheadline(
   status: "active" | "needs_setup" | "observed" | "unknown",
   isObserved: boolean,
-  protectionState: GuardProtectionState,
+  protectionState: GuardProtectionState | "checking",
+  honestySentence: string | undefined,
 ): string {
+  if (status === "active" && honestySentence) return honestySentence;
   if (status === "active" && protectionState === "protected") return "All required protection checks have current proof.";
+  if (status === "active" && protectionState === "checking") return "Guard is confirming local protection. This takes a moment.";
   if (status === "active" && protectionState === "partial") return "Core protection passes, but decision-stream evidence is incomplete.";
   if (status === "active") return "One or more required protection checks failed or remain unproven.";
   if (status === "needs_setup") return "Finish setup so Guard can protect this app.";
@@ -153,7 +161,7 @@ function resolveHeroSubheadline(
 function resolveHeroCta(opts: {
   pendingCount: number;
   status: "active" | "needs_setup" | "observed" | "unknown";
-  protectionState: GuardProtectionState;
+  protectionState: GuardProtectionState | "checking";
   onGoActivity: () => void;
   onGoSettings: () => void;
 }): React.ReactNode {
@@ -164,7 +172,7 @@ function resolveHeroCta(opts: {
       </ActionButton>
     );
   }
-  if (opts.status === "needs_setup" || (opts.status === "active" && opts.protectionState !== "protected")) {
+  if (opts.status === "needs_setup" || (opts.status === "active" && opts.protectionState !== "protected" && opts.protectionState !== "checking")) {
     return (
       <ActionButton onClick={opts.onGoSettings} data-primary="true">
         Open Settings
@@ -319,10 +327,12 @@ export function AppDetailWorkspace(props: AppDetailWorkspaceProps) {
     : "unknown";
 
   const appProtection = protectionHealthFor(runtime, harness);
-  const protectionState = appProtection.state;
+  const protectionState = useProtectionPresentationState(appProtection);
+  const capability = runtime.protection_capabilities?.find((item) => item.harness === harness);
+  const limited = capability?.limited === true;
   const heroStatus = resolveHeroStatus(status, protectionState);
-  const heroHeadline = resolveHeroHeadline(status, harness, isObserved, protectionState);
-  const heroSub = resolveHeroSubheadline(status, isObserved, protectionState);
+  const heroHeadline = resolveHeroHeadline(status, harness, isObserved, protectionState, limited);
+  const heroSub = resolveHeroSubheadline(status, isObserved, protectionState, capability?.honesty_sentence);
 
   const handleTabChange = useCallback((next: TabKey) => {
     const currentIndex = tabOrder.indexOf(activeTab);

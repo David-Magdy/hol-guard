@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from codex_plugin_scanner.guard.runtime.github_pr_body_file import (
-    _omp_session_authored_root,
     github_pr_body_file_is_safe,
 )
 
@@ -23,7 +22,10 @@ def test_github_pr_body_file_accepts_bounded_owner_controlled_markdown(tmp_path:
     )
 
 
-@pytest.mark.parametrize("name", ("pr-body.md", "pr-body.markdown", "PR-BODY.MD"))
+@pytest.mark.parametrize(
+    "name",
+    ("pr-body.md", "pr-body.markdown", "PR-BODY.MD", "PR_BODY.md", "PR_BODY_PROTECTION.md"),
+)
 def test_github_pr_body_file_accepts_canonical_markdown_name(tmp_path: Path, name: str) -> None:
     body_file = tmp_path / name
     _ = body_file.write_text("## Summary\n- Focused change.\n", encoding="utf-8")
@@ -35,15 +37,20 @@ def test_github_pr_body_file_accepts_canonical_markdown_name(tmp_path: Path, nam
     )
 
 
-def test_github_pr_body_file_recognizes_only_direct_omp_session_local_output(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    local_file = home / ".omp" / "agent" / "sessions" / "workspace" / "session" / "local" / "pr-body.md"
-    state_file = home / ".omp" / "agent" / "sessions" / "workspace" / "session" / "state" / "pr-body.md"
-    nested_file = local_file.parent / "nested" / "pr-body.md"
+def test_github_pr_body_file_accepts_named_body_in_user_cascade_projects(tmp_path: Path) -> None:
+    home_dir = tmp_path / "home"
+    workspace = home_dir / "CascadeProjects" / "active-project"
+    body_directory = home_dir / "CascadeProjects" / "proposal-worktree"
+    workspace.mkdir(parents=True)
+    body_directory.mkdir()
+    body_file = body_directory / "PR_BODY_PROTECTION.md"
+    _ = body_file.write_text("## Summary\n- Focused change.\n", encoding="utf-8")
 
-    assert _omp_session_authored_root(local_file, home_dir=home) == home
-    assert _omp_session_authored_root(state_file, home_dir=home) is None
-    assert _omp_session_authored_root(nested_file, home_dir=home) is None
+    assert github_pr_body_file_is_safe(
+        "~/CascadeProjects/proposal-worktree/PR_BODY_PROTECTION.md",
+        cwd=workspace,
+        home_dir=home_dir,
+    )
 
 
 def test_github_pr_body_file_rejects_oversized_markdown(tmp_path: Path) -> None:
@@ -70,6 +77,17 @@ def test_github_pr_body_file_rejects_sensitive_path(tmp_path: Path) -> None:
 
 def test_github_pr_body_file_rejects_arbitrary_markdown_name(tmp_path: Path) -> None:
     body_file = tmp_path / "internal-notes.md"
+    _ = body_file.write_text("Private planning notes.\n", encoding="utf-8")
+
+    assert not github_pr_body_file_is_safe(
+        str(body_file),
+        cwd=tmp_path,
+        home_dir=tmp_path.parent,
+    )
+
+
+def test_github_pr_body_file_rejects_pr_body_marker_only_as_suffix(tmp_path: Path) -> None:
+    body_file = tmp_path / "internal_notes_pr_body.md"
     _ = body_file.write_text("Private planning notes.\n", encoding="utf-8")
 
     assert not github_pr_body_file_is_safe(

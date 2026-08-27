@@ -4,16 +4,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from .oauth_token_claims import oauth_binding_metadata
 from .package_firewall_defaults import build_guard_local_entitlement_defaults
+from .runtime.extension_control_authority import ExtensionControlAuthorityView
 
 # ruff: noqa: F403,F405
 from .store_base import *
+from .store_oauth_metadata import copy_oauth_binding_metadata
 
 
 class StoreOAuthConnectMixin:
     def legacy_macos_oauth_secret_migration_required(self) -> bool:
         """Return whether authenticated OAuth metadata lacks its local vault copy."""
-
         if sys.platform != "darwin":
             return False
         payload = self.get_sync_payload(self._oauth_local_credentials_state_key)
@@ -108,8 +112,28 @@ class StoreOAuthConnectMixin:
             )
         return sources
 
-    def clear_cloud_sync_state_for_reconnect(self) -> None:
-        self.delete_sync_payloads(list(_GUARD_CLOUD_RESET_STATE_KEYS))
+    def clear_cloud_sync_state_for_reconnect(
+        self,
+        *,
+        now: str | None = None,
+        managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
+    ) -> None:
+        self.clear_policy_bundle_authority(
+            now or _now(),
+            policy_bundle_last_error={},
+            managed_controls_publish=managed_controls_publish,
+        )
+        self.delete_sync_payloads(
+            [
+                state_key
+                for state_key in _GUARD_CLOUD_RESET_STATE_KEYS
+                if state_key
+                not in {
+                    "managed_controls_active",
+                    "managed_controls_negotiated_capabilities",
+                }
+            ]
+        )
 
     def set_oauth_local_credentials(
         self,
@@ -123,6 +147,7 @@ class StoreOAuthConnectMixin:
         now: str,
         grant_id: str | None = None,
         machine_id: str | None = None,
+        device_id: str | None = None,
         supply_chain_entitlement_expires_at: str | None = None,
         supply_chain_firewall: bool | None = None,
         supply_chain_plan_id: str | None = None,
@@ -145,6 +170,7 @@ class StoreOAuthConnectMixin:
                 now=now,
                 grant_id=grant_id,
                 machine_id=machine_id,
+                device_id=device_id,
                 supply_chain_entitlement_expires_at=supply_chain_entitlement_expires_at,
                 supply_chain_firewall=supply_chain_firewall,
                 supply_chain_plan_id=supply_chain_plan_id,
@@ -169,6 +195,7 @@ class StoreOAuthConnectMixin:
         now: str,
         grant_id: str | None = None,
         machine_id: str | None = None,
+        device_id: str | None = None,
         supply_chain_entitlement_expires_at: str | None = None,
         supply_chain_firewall: bool | None = None,
         supply_chain_plan_id: str | None = None,
@@ -203,6 +230,8 @@ class StoreOAuthConnectMixin:
             payload["grant_id"] = grant_id
         if machine_id:
             payload["machine_id"] = machine_id
+        if device_id:
+            payload["device_id"] = device_id
         if supply_chain_entitlement_expires_at:
             payload["supply_chain_entitlement_expires_at"] = supply_chain_entitlement_expires_at
         if isinstance(supply_chain_firewall, bool):
@@ -229,8 +258,7 @@ class StoreOAuthConnectMixin:
         )
         if secret_material_changed:
             self._clear_oauth_secret_payload_cache()
-        # Metadata-only updates can skip the primary rewrite because the encrypted
-        # fallback remains current and continues to backstop headless recovery.
+        # Metadata-only updates skip primary rewrite while fallback remains current.
         skip_primary_secret_rewrite = (
             not force_primary_secret_rewrite
             and not secret_material_changed
@@ -290,8 +318,7 @@ class StoreOAuthConnectMixin:
                         with suppress(OSError):
                             legacy_path.unlink()
             self.delete_sync_payload(self._oauth_local_credentials_state_key)
-            # A capability is bound to one exact OAuth device/workspace grant. It
-            # must never survive disconnect and silently authorize a later grant.
+            # A capability bound to one OAuth grant must not survive disconnect for a later grant.
             self.delete_sync_payloads(list(_GUARD_CLOUD_COMMAND_STATE_KEYS))
 
     def get_oauth_local_credential_health(self) -> dict[str, object]:
@@ -363,10 +390,7 @@ class StoreOAuthConnectMixin:
             "issuer": issuer,
             "client_id": client_id,
         }
-        for key in ("grant_id", "machine_id", "workspace_id", "runtime_id", "runtime_label"):
-            value = payload.get(key)
-            if isinstance(value, str) and value:
-                result[key] = value
+        copy_oauth_binding_metadata(payload, result)
         for key in ("supply_chain_entitlement_expires_at", "supply_chain_plan_id"):
             value = payload.get(key)
             if isinstance(value, str) and value:
@@ -491,10 +515,8 @@ class StoreOAuthConnectMixin:
             _OAUTH_LOCAL_CREDENTIALS_REF_KEY: secret_ref,
             _OAUTH_LOCAL_CREDENTIALS_HASH_KEY: _secret_fingerprint(secret_json),
         }
-        device = self.get_device_metadata()
-        installation_id = device.get("installation_id")
-        if isinstance(installation_id, str) and installation_id:
-            recovered_payload["machine_id"] = installation_id
+        if access_token := _string_value(secret_payload.get("access_token")):
+            recovered_payload.update(oauth_binding_metadata(access_token, issuer=oauth_client.issuer))
         for key in ("workspace_id", "supply_chain_plan_id", "supply_chain_entitlement_expires_at"):
             value = workspace_metadata.get(key)
             if isinstance(value, str) and value:
@@ -618,6 +640,7 @@ class StoreOAuthConnectMixin:
             "dpop_private_key_pem": dpop_private_key_pem,
             "dpop_public_jwk": {str(key): str(value) for key, value in dpop_public_jwk.items()},
             "dpop_public_jwk_thumbprint": dpop_public_jwk_thumbprint,
+            "device_id": _string_value(credentials.get("device_id")),
             "grant_id": _string_value(credentials.get("grant_id")),
             "machine_id": _string_value(credentials.get("machine_id")),
             "supply_chain_entitlement_expires_at": _string_value(
@@ -825,10 +848,7 @@ class StoreOAuthConnectMixin:
         access_token_expires_at = secret_payload.get("access_token_expires_at")
         if isinstance(access_token_expires_at, str) and access_token_expires_at:
             result["access_token_expires_at"] = access_token_expires_at
-        for key in ("grant_id", "machine_id", "workspace_id", "runtime_id", "runtime_label"):
-            value = metadata.get(key)
-            if isinstance(value, str) and value:
-                result[key] = value
+        copy_oauth_binding_metadata(metadata, result)
         for key in ("supply_chain_entitlement_expires_at", "supply_chain_plan_id"):
             value = metadata.get(key)
             if isinstance(value, str) and value:

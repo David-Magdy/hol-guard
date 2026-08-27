@@ -133,6 +133,7 @@ _DISPLAY_NAMES = {
     "opencode": "OpenCode",
     "copilot": "Copilot",
     "cursor": "Cursor",
+    "cline": "Cline",
     "gemini": "Gemini",
     "hermes": "Hermes",
     "openclaw": "OpenClaw",
@@ -227,6 +228,53 @@ HARNESS_CONTRACTS: tuple[HarnessProtectionContract, ...] = (
         icon_label="Cursor",
     ),
     HarnessProtectionContract(
+        harness="cline",
+        install_aliases=("cline", "cline-cli", "cline-vscode"),
+        config_paths=(
+            "~/.cline/hooks/",
+            "~/.cline/plugins/",
+            "~/.cline/data/settings/cline_mcp_settings.json",
+            "~/.cline/settings/cline_mcp_settings.json",
+            "~/Documents/Cline/Hooks/",
+            "~/Documents/Cline/Plugins/",
+        ),
+        event_surfaces=("shell", "prompt", "mcp_tool", "file_read", "file_write", "tool_result", "network_request"),
+        native_approval=False,
+        browser_fallback=True,
+        resume_support=False,
+        known_blind_spots=(
+            "Native Cline PostToolUse hooks are observation-only and cannot replace a result already returned to "
+            "the model; full post-tool output mediation requires the Guard-managed Cline plugin transport. "
+            "JetBrains protection is reported as unverified until a live pre-tool deny proof is observed."
+        ),
+        smoke_command="hol-guard apps test cline --json",
+        surface_capabilities=("auto", "hooks", "plugin", "cli", "all"),
+        supported_actions=(
+            "connect:auto",
+            "connect:hooks",
+            "connect:plugin",
+            "connect:cli",
+            "connect:all",
+            "test:auto",
+            "test:hooks",
+            "test:plugin",
+            "test:cli",
+            "test:all",
+            "repair:auto",
+            "repair:hooks",
+            "repair:plugin",
+            "repair:cli",
+            "repair:all",
+            "disconnect:auto",
+            "disconnect:hooks",
+            "disconnect:plugin",
+            "disconnect:cli",
+            "disconnect:all",
+        ),
+        docs_path="docs/guard/cline-local-protection-contract.md",
+        icon_label="Cline",
+    ),
+    HarnessProtectionContract(
         harness="gemini",
         install_aliases=("gemini",),
         config_paths=("~/.gemini/settings.json",),
@@ -310,7 +358,7 @@ HARNESS_CONTRACTS: tuple[HarnessProtectionContract, ...] = (
         event_surfaces=("shell", "prompt", "mcp_tool", "file_read", "file_write"),
         native_approval=False,
         browser_fallback=True,
-        resume_support=False,
+        resume_support=True,
         known_blind_spots=(
             "Grok UserPromptSubmit hooks are observe-only, so prompt screening cannot block the model from "
             "seeing a prompt. Enforcement is the catch-all PreToolUse hook, including subagent and MCP tools. "
@@ -387,6 +435,12 @@ for _c in HARNESS_CONTRACTS:
 def contract_for(harness: str) -> HarnessProtectionContract | None:
     """Return the contract for a harness name or install alias, or None."""
     return _CONTRACT_BY_ALIAS.get(harness)
+
+
+def display_name_for(harness: str) -> str:
+    contract = contract_for(harness)
+    key = contract.harness if contract is not None else harness
+    return _DISPLAY_NAMES.get(key, key)
 
 
 def setup_contract_for(harness: str) -> HarnessSetupContract | None:

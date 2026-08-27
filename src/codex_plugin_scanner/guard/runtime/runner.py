@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from base64 import urlsafe_b64decode, urlsafe_b64encode
+from base64 import urlsafe_b64encode
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
@@ -43,16 +43,23 @@ from ..cloud_exceptions import (
     cloud_exception_to_dict,
     dedupe_cloud_exceptions,
 )
-from ..config import VALID_RECEIPT_REDACTION_LEVELS, GuardConfig, load_guard_config
+from ..config import VALID_RECEIPT_REDACTION_LEVELS, GuardConfig
 from ..edge_events import build_runtime_session_event
+from ..managed_controls_policy_fields import ParsedManagedControlsPolicy
 from ..mdm.network import managed_urlopen
 from ..models import GuardAction, GuardArtifact, HarnessDetection, PolicyDecision
+from ..oauth_token_claims import decode_oauth_access_token_claims as _decode_oauth_access_token_claims
+from ..oauth_token_claims import oauth_binding_from_credentials, oauth_binding_metadata, oauth_refresh_binding
 from ..package_firewall_defaults import extract_cloud_user_profile
 from ..package_firewall_entitlement import (
     build_oauth_package_firewall_entitlement,
     reconcile_connect_state_with_oauth_entitlement,
 )
+from ..policy_bundle_activation import activate_with_reason, persist_activation_rejection
 from ..policy_bundle_decisions import build_policy_bundle_decisions as _materialize_policy_bundle_decisions
+from ..policy_bundle_delivery import (
+    effective_policy_bundle_acknowledgement,
+)
 from ..policy_bundle_parser import (
     POLICY_BUNDLE_RULE_MATCHER_FAMILIES,
     computed_policy_bundle_hash,
@@ -71,7 +78,15 @@ from ..policy_bundle_trusted_keys import (
     policy_bundle_keyring_payload,
     validate_synced_policy_bundle,
 )
+from ..policy_bundle_v2 import (
+    POLICY_BUNDLE_V2_CONTRACT,
+    validate_policy_bundle_v2_transition,
+    validated_policy_bundle_v2_acknowledgement,
+)
+from ..policy_document import GuardPolicyDocument
+from ..policy_document_io import PolicyCompilationError, compile_policy_document
 from ..redaction import redact_sensitive_text
+from ..review_contracts import validated_review_verification_keys_from_sync
 from ..shims import package_shim_cloud_coverage
 from ..store import GuardStore
 from ..synced_policy import cached_policy_bundle_validation, validated_synced_policy_bundle
@@ -95,6 +110,31 @@ from .decisions import (
     rebuild_artifact_authority,
 )
 from .detectors import DetectorContext, DetectorRegistry, DetectorRunResult, register_default_detectors
+from .extension_catalog_handshake import (
+    prepare_extension_catalog_handshake,
+    runtime_session_success_summary,
+    runtime_summary_device_id,
+)
+from .extension_catalog_handshake import (
+    validate_extension_catalog_sync_response as _validate_extension_catalog_sync_response,
+)
+from .extension_catalog_sync import build_builtin_extension_catalog_wire
+from .extension_control_authority import ExtensionControlAuthorityView
+from .local_runtime_fallbacks import best_effort_access_token, local_receipt_redaction_level
+from .managed_controls_sync import (
+    apply_custom_extension_continuity_from_sync,
+    effective_managed_controls_for_activation,
+    validated_managed_controls_candidate,
+)
+from .managed_controls_sync import (
+    managed_controls_lkg_capabilities as _managed_controls_lkg_capabilities,  # noqa: F401
+)
+from .managed_controls_sync import (
+    managed_controls_negotiated_capabilities as _managed_controls_negotiated_capabilities,
+)
+from .managed_controls_sync import (
+    managed_controls_runtime_sync_posture as _managed_controls_runtime_sync_posture,
+)
 from .prompt_injection import detect_prompt_injection_requests
 from .signals import RiskSignalV2
 from .supply_chain_bundle import (
@@ -105,6 +145,12 @@ from .supply_chain_bundle import (
 )
 from .supply_chain_bundle_models import SupplyChainVerificationKey
 from .supply_chain_support import ecosystem_support_matrix
+
+_POLICY_DOCUMENT_VERSIONS = ("guard.hashgraphonline.com/v1alpha1",)
+_POLICY_BUNDLE_VERSIONS = ("guard-policy-bundle.v1", "guard-policy-bundle.v2")
+_POLICY_CONTRACTS = ("guard-policy-bundle/v1", "guard-policy-bundle/v2")
+_POLICY_YAML_IMPORT_ENV = "HOL_GUARD_POLICY_YAML_IMPORT"
+_POLICY_CANONICAL_ENFORCEMENT_ENV = "HOL_GUARD_POLICY_CANONICAL_ENFORCEMENT"
 
 
 def _hol_guard_runtime_source_sha256(package_root: Path | None = None) -> str:
@@ -133,6 +179,34 @@ def _hol_guard_runtime_package_identity() -> tuple[str | None, str] | None:
 
 
 _LOADED_HOL_GUARD_RUNTIME_PACKAGE_IDENTITY = _hol_guard_runtime_package_identity()
+
+
+def _canonical_policy_rollout_percentage() -> int:
+    raw = os.environ.get(_POLICY_CANONICAL_ENFORCEMENT_ENV, "").strip().lower()
+    if raw in {"", "0", "false", "off", "legacy"}:
+        return 0
+    if raw in {"1", "true", "on", "canonical"}:
+        return 100
+    try:
+        percentage = int(raw)
+    except ValueError:
+        return 0
+    return percentage if 1 <= percentage <= 100 else 0
+
+
+def _canonical_policy_enforcement_enabled(
+    *,
+    device_id: str,
+    workspace_id: str | None,
+) -> bool:
+    percentage = _canonical_policy_rollout_percentage()
+    if percentage in {0, 100}:
+        return percentage == 100
+    cohort_key = f"{workspace_id or 'local'}:{device_id}".encode()
+    # This is an in-memory rollout bucket for opaque installation IDs, not a password verifier.
+    # codeql[py/weak-sensitive-data-hashing]
+    cohort = int.from_bytes(hashlib.sha256(cohort_key).digest()[:8], "big") % 100
+    return cohort < percentage
 
 
 def detect_harness(harness: str, context: HarnessContext) -> HarnessDetection:
@@ -1031,20 +1105,7 @@ def _iter_hint_occurrences(text: str, hint: str) -> list[tuple[int, int]]:
 
 
 def _resolve_hermes_guard_access_token(store: GuardStore) -> str | None:
-    """Best-effort retrieval of the current Guard OAuth access token for Hermes runtime.
-
-    Returns ``None`` if credentials are not configured or the token cannot be resolved.
-    Hermes's ``guard_runtime_policy.py`` defaults to ``fail_open=True`` when no token
-    is available, so this is non-fatal.
-    """
-    try:
-        auth_context = _resolve_guard_sync_auth_context(store)
-    except Exception:
-        return None
-    token = auth_context.get("access_token")
-    if isinstance(token, str) and token:
-        return token
-    return None
+    return best_effort_access_token(lambda: _resolve_guard_sync_auth_context(store))
 
 
 def guard_run(
@@ -2286,27 +2347,39 @@ def _prompt_config_candidates(detection: HarnessDetection, context: HarnessConte
     return detection.config_paths
 
 
-def _policy_bundle_acknowledgement_payload(
-    *,
-    device_id: str,
-    device_name: str,
-    policy_bundle: dict[str, object],
-    synced_at: str,
-) -> dict[str, object]:
-    return {
-        "appliedAt": synced_at,
-        "bundleHash": policy_bundle["bundleHash"],
-        "bundleVersion": policy_bundle["bundleVersion"],
-        "deviceId": device_id,
-        "deviceName": device_name,
-        "status": "synced",
-    }
-
-
 def _policy_bundle_is_version_downgrade(
     existing_bundle: dict[str, object] | None,
     next_bundle: dict[str, object],
+    *,
+    expected_last_good_bundle: dict[str, object] | None = None,
 ) -> bool:
+    if next_bundle.get("contractVersion") == POLICY_BUNDLE_V2_CONTRACT:
+        current_version = existing_bundle.get("bundleVersion") if isinstance(existing_bundle, dict) else None
+        current_hash = existing_bundle.get("bundleHash") if isinstance(existing_bundle, dict) else None
+        expected_version = (
+            expected_last_good_bundle.get("bundleVersion") if isinstance(expected_last_good_bundle, dict) else None
+        )
+        expected_hash = (
+            expected_last_good_bundle.get("bundleHash") if isinstance(expected_last_good_bundle, dict) else None
+        )
+        return (
+            validate_policy_bundle_v2_transition(
+                next_bundle,
+                current_bundle_version=(
+                    current_version
+                    if isinstance(current_version, int) and not isinstance(current_version, bool)
+                    else None
+                ),
+                current_bundle_hash=(current_hash if isinstance(current_hash, str) else None),
+                expected_last_good_bundle_version=(
+                    expected_version
+                    if isinstance(expected_version, int) and not isinstance(expected_version, bool)
+                    else None
+                ),
+                expected_last_good_bundle_hash=(expected_hash if isinstance(expected_hash, str) else None),
+            )
+            is not None
+        )
     return policy_bundle_is_version_downgrade(existing_bundle, next_bundle)
 
 
@@ -2382,17 +2455,123 @@ def _policy_bundle_rejection_payload(reason: str | None) -> dict[str, object]:
     return payload
 
 
-def _build_policy_bundle_decisions(
+def _build_canonical_policy_bundle_decisions(
     policy_bundle: dict[str, object],
     *,
     device_id: str,
     device_name: str,
 ) -> list[PolicyDecision]:
+    payload = policy_bundle.get("payload")
+    if not isinstance(payload, dict):
+        raise PolicyCompilationError("missing_policy_bundle_payload", "policy-bundle")
+    local_document = json.loads(json.dumps(payload))
+    spec = local_document.get("spec")
+    if not isinstance(spec, dict):
+        raise PolicyCompilationError("invalid_policy_spec", "policy-bundle")
+    rules = spec.get("rules")
+    if not isinstance(rules, list):
+        raise PolicyCompilationError("invalid_policy_rules", "policy-bundle")
+    local_rules: list[object] = []
+    for raw_rule in rules:
+        if not isinstance(raw_rule, dict):
+            continue
+        # Extension-targeted rules are compiled by the Managed Controls
+        # authority path. Materializing them again as generic policy rows can
+        # reject valid Extension outcomes (for example ``review``) or apply a
+        # second, semantically different enforcement decision.
+        if "x-hol-extension-targets" in raw_rule:
+            continue
+        match = raw_rule.get("match")
+        if not isinstance(match, dict):
+            local_rules.append(raw_rule)
+            continue
+        devices = match.get("devices")
+        if isinstance(devices, list) and devices:
+            device_selectors = {str(value) for value in devices}
+            if device_id not in device_selectors and device_name not in device_selectors:
+                continue
+            match.pop("devices", None)
+        local_rules.append(raw_rule)
+    spec["rules"] = local_rules
+    document = GuardPolicyDocument.from_mapping(local_document)
+    decisions: list[PolicyDecision] = []
+    for row in compile_policy_document(document):
+        decision = row.decision
+        decisions.append(
+            PolicyDecision(
+                harness=decision.harness,
+                scope=decision.scope,
+                action=decision.action,
+                artifact_id=decision.artifact_id,
+                artifact_hash=decision.artifact_hash,
+                workspace=decision.workspace,
+                publisher=decision.publisher,
+                reason=decision.reason,
+                owner=row.rule_id,
+                source="policy-bundle-canonical",
+                expires_at=decision.expires_at,
+            )
+        )
+    return decisions
+
+
+def _build_policy_bundle_decisions(
+    policy_bundle: dict[str, object],
+    *,
+    device_id: str,
+    device_name: str,
+    canonical_enforcement: bool = False,
+) -> list[PolicyDecision]:
+    if policy_bundle.get("contractVersion") == POLICY_BUNDLE_V2_CONTRACT:
+        if not canonical_enforcement:
+            return []
+        return _build_canonical_policy_bundle_decisions(
+            policy_bundle,
+            device_id=device_id,
+            device_name=device_name,
+        )
     return _materialize_policy_bundle_decisions(
         policy_bundle,
         device_id=device_id,
         device_name=device_name,
     )
+
+
+def _policy_shadow_mismatch_reason_codes(
+    legacy: list[PolicyDecision],
+    canonical: list[PolicyDecision],
+) -> tuple[str, ...]:
+    if not legacy:
+        return ("legacy_unavailable",)
+
+    def keyed(
+        decisions: list[PolicyDecision],
+    ) -> dict[tuple[str, str, str | None, str | None, str | None, str | None], PolicyDecision]:
+        return {
+            (
+                decision.harness,
+                decision.scope,
+                decision.artifact_id,
+                decision.artifact_hash,
+                decision.workspace,
+                decision.publisher,
+            ): decision
+            for decision in decisions
+        }
+
+    reasons: list[str] = []
+    legacy_by_key = keyed(legacy)
+    canonical_by_key = keyed(canonical)
+    if len(legacy) != len(canonical):
+        reasons.append("row_count")
+    if legacy_by_key.keys() != canonical_by_key.keys():
+        reasons.append("selector_set")
+    shared_keys = legacy_by_key.keys() & canonical_by_key.keys()
+    if any(legacy_by_key[key].action != canonical_by_key[key].action for key in shared_keys):
+        reasons.append("action")
+    if any(legacy_by_key[key].expires_at != canonical_by_key[key].expires_at for key in shared_keys):
+        reasons.append("expiration")
+    return tuple(reasons[:4])
 
 
 def _parse_policy_simulation_timestamp(value: object) -> datetime | None:
@@ -2499,6 +2678,7 @@ def sync_receipts(
     workspace_dir: Path | None = None,
     include_aibom: bool = False,
     force_aibom: bool = False,
+    managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
 ) -> dict[str, object]:
     """Push local receipts to the configured sync endpoint."""
 
@@ -2506,7 +2686,7 @@ def sync_receipts(
     sync_url = _normalized_receipts_sync_url(_validate_guard_sync_url(_auth_context_sync_url(resolved_auth_context)))
     local_guard_online_at = _now()
     redaction_level = _resolve_cloud_receipt_redaction_level(store)
-    _ensure_live_request_privacy_projection(store, level=redaction_level, synced_at=local_guard_online_at)
+    _ensure_cloud_review_privacy_projection(store, level=redaction_level, synced_at=local_guard_online_at)
     _ensure_relaxed_receipt_redaction_resync(store, level=redaction_level, synced_at=local_guard_online_at)
     prior_receipt_cursor = _receipt_sync_cursor_rowid(store)
     receipts = _receipt_sync_rows_for_upload(store, cursor_rowid=prior_receipt_cursor)
@@ -2523,9 +2703,12 @@ def sync_receipts(
     advisories_payload: list[dict[str, object]] = []
     policy_bundle_payload: dict[str, object] | None = None
     policy_bundle_sync_payload: dict[str, object] | None = None
+    policy_bundle_delivery_payload: object = None
+    policy_bundle_delivery_field_provided = False
     policy_bundle_field_provided = False
     policy_bundle_field_malformed = False
     alert_preferences_payload: dict[str, object] | None = None
+    review_verification_keys_payload: object | None = None
     remote_decisions: set[PolicyDecision] = set()
     device_id, device_name = _guard_device_metadata(store)
     sync_context = _receipt_sync_context(
@@ -2646,11 +2829,15 @@ def sync_receipts(
                 if policy_bundle or policy_bundle_payload is None:
                     policy_bundle_payload = policy_bundle
                     policy_bundle_sync_payload = payload
+                    policy_bundle_delivery_field_provided = "policyBundleDelivery" in payload
+                    policy_bundle_delivery_payload = payload.get("policyBundleDelivery")
             else:
                 policy_bundle_field_malformed = True
         alert_preferences = payload.get("alertPreferences")
         if isinstance(alert_preferences, dict) and (alert_preferences or alert_preferences_payload is None):
             alert_preferences_payload = alert_preferences
+        if "reviewVerificationKeys" in payload:
+            review_verification_keys_payload = payload.get("reviewVerificationKeys")
     now = _sync_timestamp(payload)
     aibom_context: dict[str, object] = {}
     if home_dir is not None:
@@ -2684,8 +2871,20 @@ def sync_receipts(
     advisories_stored = 0
     if deduped_advisories:
         advisories_stored = store.cache_advisories(deduped_advisories, now)
+    cloud_workspace_id = store.get_cloud_workspace_id()
+    canonical_enforcement = _canonical_policy_enforcement_enabled(
+        device_id=device_id,
+        workspace_id=cloud_workspace_id,
+    )
+    candidate_policy_decisions: list[PolicyDecision] = []
     validated_policy_bundle: dict[str, object] | None = None
+    candidate_managed_controls: ParsedManagedControlsPolicy | None = None
+    candidate_managed_capabilities = frozenset[str]()
+    validated_policy_bundle_delivery: dict[str, object] | None = None
+    effective_managed_controls: ParsedManagedControlsPolicy | None = None
+    effective_managed_capabilities = frozenset[str]()
     effective_policy_bundle: dict[str, object] | None = None
+    retain_existing_policy_authority = False
     activation_last_error: dict[str, object] = {}
     trusted_policy_bundle_keys: tuple[PolicyBundleVerificationKey, ...] = ()
     update_last_good = False
@@ -2694,6 +2893,8 @@ def sync_receipts(
         store,
         existing_policy_bundle_payload,
     )
+    runtime_session_summary = store.get_sync_payload("runtime_session_summary")
+    delivery_device_id = runtime_summary_device_id(runtime_session_summary, device_id)
     if policy_bundle_field_provided:
         policy_bundle_rejection_reason: str | None
         if policy_bundle_field_malformed or policy_bundle_payload is None:
@@ -2723,6 +2924,84 @@ def sync_receipts(
         ):
             validated_policy_bundle = None
             policy_bundle_rejection_reason = "bundle_version_downgrade"
+        candidate_managed_capabilities = _managed_controls_negotiated_capabilities(store, policy_bundle_sync_payload)
+        (
+            validated_policy_bundle,
+            candidate_managed_controls,
+            validated_policy_bundle_delivery,
+            managed_controls_error,
+            validated_bundle_is_v2,
+        ) = validated_managed_controls_candidate(
+            validated_policy_bundle,
+            negotiated_capabilities=candidate_managed_capabilities,
+            delivery_field_provided=policy_bundle_delivery_field_provided,
+            delivery_payload=policy_bundle_delivery_payload,
+            workspace_id=cloud_workspace_id,
+            device_id=delivery_device_id,
+            runtime_summary=runtime_session_summary,
+        )
+        if managed_controls_error is not None:
+            policy_bundle_rejection_reason = managed_controls_error
+        if validated_policy_bundle is not None:
+            try:
+                if validated_bundle_is_v2:
+                    canonical_decisions = _build_canonical_policy_bundle_decisions(
+                        validated_policy_bundle,
+                        device_id=device_id,
+                        device_name=device_name,
+                    )
+                    legacy_payload = store.get_sync_payload("policy_bundle_legacy_last_good")
+                    if not isinstance(legacy_payload, dict):
+                        legacy_payload = (
+                            existing_policy_bundle
+                            if isinstance(existing_policy_bundle, dict)
+                            and existing_policy_bundle.get("contractVersion") != POLICY_BUNDLE_V2_CONTRACT
+                            else None
+                        )
+                    legacy_decisions = (
+                        _build_policy_bundle_decisions(
+                            legacy_payload,
+                            device_id=device_id,
+                            device_name=device_name,
+                        )
+                        if isinstance(legacy_payload, dict)
+                        else []
+                    )
+                    mismatch_reasons = _policy_shadow_mismatch_reason_codes(
+                        legacy_decisions,
+                        canonical_decisions,
+                    )
+                    blocking_mismatch_reasons = tuple(
+                        reason for reason in mismatch_reasons if reason != "legacy_unavailable"
+                    )
+                    candidate_policy_decisions = (
+                        canonical_decisions
+                        if canonical_enforcement and not blocking_mismatch_reasons
+                        else legacy_decisions
+                    )
+                    if mismatch_reasons:
+                        store.add_event(
+                            "policy_bundle/shadow_mismatch",
+                            {
+                                "canonicalRows": len(canonical_decisions),
+                                "legacyRows": len(legacy_decisions),
+                                "reasonCodes": list(mismatch_reasons),
+                                "status": "mismatch",
+                            },
+                            now,
+                        )
+                    if canonical_enforcement and blocking_mismatch_reasons:
+                        validated_policy_bundle = None
+                        policy_bundle_rejection_reason = "canonical_shadow_mismatch"
+                else:
+                    candidate_policy_decisions = _build_policy_bundle_decisions(
+                        validated_policy_bundle,
+                        device_id=device_id,
+                        device_name=device_name,
+                    )
+            except PolicyCompilationError as error:
+                validated_policy_bundle = None
+                policy_bundle_rejection_reason = f"canonical_compile_{error.code}"
         if validated_policy_bundle is not None:
             effective_policy_bundle = validated_policy_bundle
             update_last_good = True
@@ -2813,24 +3092,49 @@ def sync_receipts(
             # cannot leave the previously selected current/LKG bundle active.
             effective_policy_bundle = activation_bundle
             trusted_policy_bundle_keys = activation_keys
+            if activation_bundle.get("contractVersion") == POLICY_BUNDLE_V2_CONTRACT:
+                effective_managed_controls, effective_managed_capabilities, managed_error = (
+                    effective_managed_controls_for_activation(
+                        store,
+                        activation_bundle,
+                        validated_policy_bundle=validated_policy_bundle,
+                        candidate=candidate_managed_controls,
+                        candidate_capabilities=candidate_managed_capabilities,
+                    )
+                )
+                if managed_error is not None:
+                    activation_last_error = _policy_bundle_rejection_payload(managed_error)
+                    store.add_event("policy_bundle/rejected", activation_last_error, now)
+                    effective_policy_bundle = None
+                    retain_existing_policy_authority = True
     if effective_policy_bundle is None:
-        store.clear_policy_bundle_authority(
-            now,
-            policy_bundle_last_error=activation_last_error,
-        )
-        _reset_cloud_receipt_redaction_authority(store, synced_at=now)
+        if not retain_existing_policy_authority:
+            store.clear_policy_bundle_authority(
+                now,
+                policy_bundle_last_error=activation_last_error,
+                managed_controls_publish=managed_controls_publish,
+            )
+            _reset_cloud_receipt_redaction_authority(store, synced_at=now)
     else:
-        remote_decisions.update(
-            _build_policy_bundle_decisions(
+        selected_policy_decisions = (
+            candidate_policy_decisions
+            if validated_policy_bundle is not None
+            and effective_policy_bundle.get("bundleHash") == validated_policy_bundle.get("bundleHash")
+            else _build_policy_bundle_decisions(
                 effective_policy_bundle,
                 device_id=device_id,
                 device_name=device_name,
+                canonical_enforcement=canonical_enforcement,
             )
         )
-        policy_bundle_ack = _policy_bundle_acknowledgement_payload(
+        remote_decisions.update(selected_policy_decisions)
+        policy_bundle_ack = effective_policy_bundle_acknowledgement(
             device_id=device_id,
             device_name=device_name,
-            policy_bundle=effective_policy_bundle,
+            effective_policy_bundle=effective_policy_bundle,
+            validated_policy_bundle=validated_policy_bundle,
+            validated_delivery=validated_policy_bundle_delivery,
+            stored_acknowledgement=store.get_sync_payload("policy_bundle_ack"),
             synced_at=now,
         )
         cloud_exception_items = _policy_bundle_cloud_exception_items(
@@ -2840,11 +3144,16 @@ def sync_receipts(
             policy_bundle=effective_policy_bundle,
             policy_bundle_ack=policy_bundle_ack,
         )
-        checkpoint = _policy_bundle_downgrade_reference(store, effective_policy_bundle)
-        if validated_policy_bundle is not None:
-            checkpoint = _policy_bundle_acceptance_checkpoint(validated_policy_bundle)
         try:
-            activated = store.apply_policy_bundle_authority(
+            custom_extension_continuity = apply_custom_extension_continuity_from_sync(
+                store,
+                effective_policy_bundle,
+                device_id=delivery_device_id,
+                negotiated_capabilities=effective_managed_capabilities,
+                now=now,
+            )
+            activated, activation_rejection_reason = activate_with_reason(
+                store.apply_policy_bundle_authority,
                 list(remote_decisions),
                 now,
                 policy_bundle=effective_policy_bundle,
@@ -2854,25 +3163,52 @@ def sync_receipts(
                 ),
                 cloud_exceptions=cloud_exception_items,
                 policy_bundle_ack=policy_bundle_ack,
-                policy_bundle_checkpoint=(
-                    _policy_bundle_acceptance_checkpoint(checkpoint)
-                    if isinstance(checkpoint, dict)
-                    else _policy_bundle_acceptance_checkpoint(effective_policy_bundle)
-                ),
+                policy_bundle_checkpoint=_policy_bundle_acceptance_checkpoint(effective_policy_bundle),
                 update_last_good=update_last_good,
                 policy_bundle_last_error=activation_last_error,
+                managed_controls_policy=effective_managed_controls,
+                managed_controls_negotiated_capabilities=effective_managed_capabilities,
+                managed_controls_delivery=validated_policy_bundle_delivery,
+                managed_controls_publish=managed_controls_publish,
+                custom_extension_continuity=custom_extension_continuity,
                 remote_write_authorized=True,
             )
-            if not activated:
+            if activated is None:
                 cloud_exception_items = []
-                activation_last_error = _policy_bundle_rejection_payload("bundle_version_downgrade")
-                store.add_event(
-                    "policy_bundle/rejected",
-                    activation_last_error,
-                    now,
-                )
+                activation_last_error = _policy_bundle_rejection_payload(activation_rejection_reason)
+                persist_activation_rejection(store, activation_last_error, now)
             else:
                 remote_policies_stored = len(remote_decisions)
+                if effective_policy_bundle.get("contractVersion") == POLICY_BUNDLE_V2_CONTRACT:
+                    canonical_last_good = store.get_sync_payload("policy_bundle_canonical_last_good")
+                    if isinstance(canonical_last_good, dict) and canonical_last_good.get(
+                        "bundleHash"
+                    ) != effective_policy_bundle.get("bundleHash"):
+                        store.set_sync_payload(
+                            "policy_bundle_canonical_previous_good",
+                            canonical_last_good,
+                            now,
+                        )
+                    store.set_sync_payload(
+                        "policy_bundle_canonical_last_good",
+                        effective_policy_bundle,
+                        now,
+                    )
+                else:
+                    store.set_sync_payload(
+                        "policy_bundle_legacy_last_good",
+                        effective_policy_bundle,
+                        now,
+                    )
+                if validated_policy_bundle is None and policy_bundle_field_provided:
+                    store.add_event(
+                        "policy_bundle/rollback",
+                        {
+                            "reason": activation_last_error.get("reason", "invalid_policy_bundle"),
+                            "restored": "policy_bundle_last_good",
+                        },
+                        now,
+                    )
                 cloud_redaction_level = non_empty_string(effective_policy_bundle.get("receiptRedactionLevel"))
                 if cloud_redaction_level in VALID_RECEIPT_REDACTION_LEVELS:
                     _persist_cloud_receipt_redaction_level(
@@ -2893,6 +3229,19 @@ def sync_receipts(
                 },
                 now,
             )
+    if review_verification_keys_payload is not None:
+        if cloud_workspace_id is None:
+            raise RuntimeError("review_verification_keys_workspace_missing")
+        review_verification_keys = validated_review_verification_keys_from_sync(
+            review_verification_keys_payload,
+            store=store,
+            workspace_id=cloud_workspace_id,
+        )
+        store.set_sync_payload(
+            "guard_review_verification_keyring",
+            [key.to_dict() for key in review_verification_keys],
+            now,
+        )
     _record_synced_alert_events(
         store=store,
         advisories=deduped_advisories,
@@ -3525,19 +3874,19 @@ def sync_runtime_session(
         raise RuntimeError(_sync_url_error_message(error)) from error
     if not isinstance(payload, dict):
         raise RuntimeError("Invalid sync response")
+    catalog_sync = _sync_extension_catalog_from_runtime_handshake(
+        auth_context=resolved_auth_context,
+        runtime_sync_url=sync_url,
+        runtime_response=payload,
+        session_payload=session_payload,
+    )
     synced_at = _sync_timestamp(payload)
-    synced_items = payload.get("items")
-    summary: dict[str, object] = {
-        "synced_at": synced_at,
-        "runtime_session_synced_at": synced_at,
-        "runtime_session_id": session_payload["sessionId"],
-        "runtime_sessions_visible": len(synced_items) if isinstance(synced_items, list) else 0,
-        "local_guard_online_at": synced_at,
-        "runtime_harness": session_payload["harness"],
-        "runtime_surface": session_payload["surface"],
-        "runtime_workspace": session_payload["workspace"],
-        "runtime_device_id": session_payload["deviceId"],
-    }
+    summary = runtime_session_success_summary(
+        session_payload=session_payload,
+        response_payload=payload,
+        synced_at=synced_at,
+        catalog_sync=catalog_sync,
+    )
     store.set_sync_payload("runtime_session_summary", summary, synced_at)
     workspace_id = store.get_cloud_workspace_id()
     device_id = store.get_or_create_installation_id()
@@ -3554,8 +3903,12 @@ def sync_runtime_session(
     return summary
 
 
-def _local_guard_runtime_session() -> dict[str, object]:
-    return {
+def _local_guard_runtime_session(
+    *,
+    device_id: str = "local-machine",
+    workspace_id: str | None = None,
+) -> dict[str, object]:
+    session: dict[str, object] = {
         "harness": "hol-guard",
         "surface": "cli",
         "status": "active",
@@ -3564,7 +3917,17 @@ def _local_guard_runtime_session() -> dict[str, object]:
         "client_version": __version__,
         "workspace": "local-machine",
         "capabilities": ["approval-center", "guard-cloud-sync", "local-daemon"],
+        "policy_document_versions": list(_POLICY_DOCUMENT_VERSIONS),
+        "policy_bundle_versions": list(_POLICY_BUNDLE_VERSIONS),
+        "policy_contracts": list(_POLICY_CONTRACTS),
+        "yaml_import": os.environ.get(_POLICY_YAML_IMPORT_ENV) == "1",
     }
+    if _canonical_policy_enforcement_enabled(
+        device_id=device_id,
+        workspace_id=workspace_id,
+    ):
+        session["canonical_policy_enforcement"] = True
+    return session
 
 
 def sync_local_guard_cloud_proof(
@@ -3575,15 +3938,22 @@ def sync_local_guard_cloud_proof(
     home_dir: Path | None = None,
     workspace_dir: Path | None = None,
     include_aibom: bool = False,
+    force_aibom: bool = False,
+    managed_controls_publish: (Callable[[ExtensionControlAuthorityView, Callable[[], None]], object] | None) = None,
 ) -> dict[str, object]:
     """Publish the local Guard runtime session before syncing receipts."""
     resolved_now = now or _now()
     with store.hold_cloud_sync_lock():
         reconcile_connect_state_with_oauth_entitlement(store, now=resolved_now)
         resolved_auth_context = auth_context if auth_context is not None else _resolve_guard_sync_auth_context(store)
+        device_id = store.get_or_create_installation_id()
+        workspace_id = store.get_cloud_workspace_id()
         runtime_summary = sync_runtime_session(
             store,
-            session=_local_guard_runtime_session(),
+            session=_local_guard_runtime_session(
+                device_id=device_id,
+                workspace_id=workspace_id,
+            ),
             auth_context=resolved_auth_context,
         )
         receipts_summary = sync_receipts(
@@ -3594,6 +3964,8 @@ def sync_local_guard_cloud_proof(
             home_dir=home_dir,
             workspace_dir=workspace_dir,
             include_aibom=include_aibom,
+            force_aibom=force_aibom,
+            managed_controls_publish=managed_controls_publish,
         )
         summary = dict(receipts_summary)
         summary.update(
@@ -3949,6 +4321,20 @@ def _guard_runtime_upgrade_restart_message() -> str:
     )
 
 
+def _guard_runtime_was_upgraded() -> bool:
+    loaded_identity = _LOADED_HOL_GUARD_RUNTIME_PACKAGE_IDENTITY
+    if loaded_identity is None:
+        return True
+    return _hol_guard_runtime_package_identity() != loaded_identity
+
+
+def _guard_runtime_upgrade_restart_message() -> str:
+    return (
+        "HOL Guard was upgraded while this process was running. Restart the agent application "
+        "before Guard Cloud access resumes."
+    )
+
+
 def _invalid_grant_oauth_payload(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -4000,12 +4386,12 @@ def repair_guard_cloud_connect_storage(store: GuardStore) -> dict[str, object]:
     repaired_storage = store.repair_oauth_local_credential_storage_from_primary()
     credentials = store.get_oauth_local_credentials(allow_primary=True)
     repaired_oauth_binding = False
-    claimed_live_requests = 0
+    rebound_review_events = 0
     if credentials is not None:
         repaired_oauth_binding = _persist_recovered_oauth_binding(store, credentials)
-        binding = store.get_live_request_oauth_binding()
+        binding = store.get_review_event_oauth_binding()
         if binding is not None:
-            claimed_live_requests = store.claim_unowned_live_request_outbox(
+            rebound_review_events = store.refresh_review_event_outbox_binding_for_identity(
                 workspace_id=binding["workspace_id"],
                 oauth_subject_hash=binding["oauth_subject_hash"],
                 machine_id=binding["machine_id"],
@@ -4015,7 +4401,7 @@ def repair_guard_cloud_connect_storage(store: GuardStore) -> dict[str, object]:
     return {
         "cleared_stale_sign_in": False,
         "existing_sign_in_valid": existing_sign_in_valid,
-        "claimed_live_requests": claimed_live_requests,
+        "rebound_review_events": rebound_review_events,
         "repaired_oauth_binding": repaired_oauth_binding,
         "repaired_storage": repaired_storage,
     }
@@ -4148,52 +4534,11 @@ def _oauth_dpop_key_material(credentials: dict[str, object]) -> GuardDpopKeyMate
 
 
 _OAUTH_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 60
-
-
-def _decode_oauth_access_token_claims(access_token: str) -> dict[str, object]:
-    parts = access_token.split(".")
-    if len(parts) != 3:
-        return {}
-    try:
-        padding = "=" * (-len(parts[1]) % 4)
-        payload = json.loads(urlsafe_b64decode(parts[1] + padding).decode("utf-8"))
-    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _nested_oauth_claim(claims: dict[str, object], section: str, key: str) -> str | None:
-    nested = claims.get(section)
-    if not isinstance(nested, dict):
-        return None
-    return _optional_string(nested.get(key))
-
-
-def _oauth_binding_metadata_from_access_token(credentials: dict[str, object]) -> dict[str, str]:
-    access_token = _optional_string(credentials.get("access_token"))
-    issuer = _optional_string(credentials.get("issuer"))
-    if access_token is None or issuer is None:
-        return {}
-    claims = _decode_oauth_access_token_claims(access_token)
-    token_issuer = _optional_string(claims.get("iss"))
-    if token_issuer is not None and token_issuer.rstrip("/") != issuer.rstrip("/"):
-        return {}
-    claimed = {
-        "grant_id": _nested_oauth_claim(claims, "grant", "grantId"),
-        "machine_id": _nested_oauth_claim(claims, "machine", "machineId"),
-        "workspace_id": _nested_oauth_claim(claims, "workspace", "workspaceId"),
-    }
-    if not all(claimed.values()):
-        return {}
-    for key, claimed_value in claimed.items():
-        existing_value = _optional_string(credentials.get(key))
-        if existing_value is not None and existing_value != claimed_value:
-            return {}
-    return {key: str(value) for key, value in claimed.items()}
+_oauth_binding_metadata_from_access_token = oauth_binding_from_credentials
 
 
 def _persist_recovered_oauth_binding(store: GuardStore, credentials: dict[str, object]) -> bool:
-    recovered = _oauth_binding_metadata_from_access_token(credentials)
+    recovered = oauth_binding_from_credentials(credentials)
     if not recovered or all(_optional_string(credentials.get(key)) is not None for key in recovered):
         return False
     refresh_token = _optional_string(credentials.get("refresh_token"))
@@ -4290,8 +4635,14 @@ def _persist_rotated_oauth_refresh_token(
             credentials_supply_chain_firewall if isinstance(credentials_supply_chain_firewall, bool) else None
         )
     effective_access_token = access_token or _optional_string(credentials.get("access_token"))
-    recovered_binding = _oauth_binding_metadata_from_access_token(
-        {**credentials, "access_token": effective_access_token}
+    if access_token is not None:
+        recovered_binding = oauth_binding_metadata(access_token, issuer=issuer)
+    else:
+        recovered_binding = oauth_binding_from_credentials({**credentials, "access_token": effective_access_token})
+    effective_binding = oauth_refresh_binding(
+        credentials,
+        recovered_binding,
+        refreshed=access_token is not None,
     )
     store.set_oauth_local_credentials(
         issuer=issuer,
@@ -4300,8 +4651,9 @@ def _persist_rotated_oauth_refresh_token(
         dpop_private_key_pem=dpop_private_key_pem,
         dpop_public_jwk={str(key): str(value) for key, value in dpop_public_jwk.items()},
         dpop_public_jwk_thumbprint=dpop_public_jwk_thumbprint,
-        grant_id=_optional_string(credentials.get("grant_id")) or recovered_binding.get("grant_id"),
-        machine_id=_optional_string(credentials.get("machine_id")) or recovered_binding.get("machine_id"),
+        grant_id=effective_binding["grant_id"],
+        machine_id=effective_binding["machine_id"],
+        device_id=effective_binding["device_id"],
         supply_chain_entitlement_expires_at=(
             _optional_string(package_firewall_entitlement.get("supply_chain_entitlement_expires_at"))
             if isinstance(package_firewall_entitlement, dict)
@@ -4313,7 +4665,7 @@ def _persist_rotated_oauth_refresh_token(
             if isinstance(package_firewall_entitlement, dict)
             else _optional_string(credentials.get("supply_chain_plan_id"))
         ),
-        workspace_id=_optional_string(credentials.get("workspace_id")) or recovered_binding.get("workspace_id"),
+        workspace_id=effective_binding["workspace_id"],
         cloud_user_profile=cloud_user_profile,
         runtime_id=_optional_string(credentials.get("runtime_id")),
         runtime_label=_optional_string(credentials.get("runtime_label")),
@@ -5413,9 +5765,15 @@ def _validated_policy_bundle_acknowledgement(
     device_id: str,
     device_name: str,
 ) -> dict[str, object] | None:
-    policy_bundle = validated_synced_policy_bundle(store)
     acknowledgement = store.get_sync_payload("policy_bundle_ack")
-    if policy_bundle is None or not isinstance(acknowledgement, dict):
+    if not isinstance(acknowledgement, dict):
+        return None
+    if acknowledgement.get("contractVersion") == POLICY_BUNDLE_V2_CONTRACT:
+        validated, _error = validated_policy_bundle_v2_acknowledgement(acknowledgement)
+        return validated
+
+    policy_bundle = validated_synced_policy_bundle(store)
+    if policy_bundle is None:
         return None
 
     bundle_hash = non_empty_string(policy_bundle.get("bundleHash"))
@@ -5470,8 +5828,13 @@ def _receipt_sync_context(
         "localGuardOnlineAt": local_guard_online_at,
         "syncHealth": sync_health,
     }
-    if policy_bundle_ack is not None:
-        context["policyBundleAcknowledgement"] = policy_bundle_ack
+    if isinstance(policy_bundle_ack, dict) and policy_bundle_ack:
+        acknowledgement_key = (
+            "policyBundleAcknowledgementV2"
+            if policy_bundle_ack.get("contractVersion") == POLICY_BUNDLE_V2_CONTRACT
+            else "policyBundleAcknowledgement"
+        )
+        context[acknowledgement_key] = policy_bundle_ack
     if runtime_synced_at is not None:
         context["lastRuntimeSyncAt"] = runtime_synced_at
     return context
@@ -5498,7 +5861,7 @@ _RECEIPT_REDACTION_LEVEL_RANK: dict[str, int] = {
     "none": 2,
 }
 _RELAXED_RECEIPT_REDACTION_RESYNC_MARKER = "cloud_receipt_redaction_relaxed_resync_v1"
-_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER = "cloud_live_request_privacy_projection_v1"
+_CLOUD_REVIEW_PRIVACY_PROJECTION_MARKER = "cloud_review_privacy_projection_v2"
 _RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER = "cloud_receipt_command_detail_backfill_v2"
 _RECEIPT_COMMAND_DETAIL_BACKFILL_FLAG = "__command_detail_backfill"
 
@@ -5517,18 +5880,8 @@ def _stored_cloud_receipt_redaction_level(store: GuardStore) -> str | None:
     return level if isinstance(level, str) and level in VALID_RECEIPT_REDACTION_LEVELS else None
 
 
-def _local_receipt_redaction_level(store: GuardStore) -> str:
-    try:
-        config = load_guard_config(store.guard_home)
-        if config.receipt_redaction_level in VALID_RECEIPT_REDACTION_LEVELS:
-            return config.receipt_redaction_level
-    except Exception:
-        pass
-    return "full"
-
-
 def _persist_cloud_receipt_redaction_level(store: GuardStore, *, level: str, synced_at: str) -> None:
-    previous_level = _stored_cloud_receipt_redaction_level(store) or _local_receipt_redaction_level(store)
+    previous_level = _stored_cloud_receipt_redaction_level(store) or local_receipt_redaction_level(store.guard_home)
     if _receipt_redaction_level_rank(level) > _receipt_redaction_level_rank(previous_level):
         store.set_sync_payload(
             "receipt_sync_cursor",
@@ -5546,7 +5899,7 @@ def _persist_cloud_receipt_redaction_level(store: GuardStore, *, level: str, syn
         synced_at,
     )
     if level != previous_level:
-        _requeue_live_request_privacy_projection(store, level=level, changed_at=synced_at)
+        _requeue_cloud_review_privacy_projection(store, level=level, changed_at=synced_at)
     if _receipt_redaction_level_rank(level) > _receipt_redaction_level_rank("full"):
         store.set_sync_payload(
             _RELAXED_RECEIPT_REDACTION_RESYNC_MARKER,
@@ -5559,39 +5912,39 @@ def _reset_cloud_receipt_redaction_authority(store: GuardStore, *, synced_at: st
     """Reset relaxation bookkeeping when no signed override is effective."""
 
     previous_level = _stored_cloud_receipt_redaction_level(store)
-    local_level = _local_receipt_redaction_level(store)
+    local_level = local_receipt_redaction_level(store.guard_home)
     store.set_sync_payload(
         "cloud_receipt_redaction_level",
         {"level": local_level, "updated_at": synced_at},
         synced_at,
     )
     if previous_level is not None and previous_level != local_level:
-        _requeue_live_request_privacy_projection(store, level=local_level, changed_at=synced_at)
+        _requeue_cloud_review_privacy_projection(store, level=local_level, changed_at=synced_at)
     store.delete_sync_payload(_RELAXED_RECEIPT_REDACTION_RESYNC_MARKER)
     store.delete_sync_payload(_RECEIPT_COMMAND_DETAIL_BACKFILL_MARKER)
 
 
-def _ensure_live_request_privacy_projection(
+def _ensure_cloud_review_privacy_projection(
     store: GuardStore,
     *,
     level: str,
     synced_at: str,
 ) -> None:
-    marker = store.get_sync_payload(_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER)
+    marker = store.get_sync_payload(_CLOUD_REVIEW_PRIVACY_PROJECTION_MARKER)
     if isinstance(marker, dict) and marker.get("level") == level:
         return
-    _requeue_live_request_privacy_projection(store, level=level, changed_at=synced_at)
+    _requeue_cloud_review_privacy_projection(store, level=level, changed_at=synced_at)
 
 
-def _requeue_live_request_privacy_projection(
+def _requeue_cloud_review_privacy_projection(
     store: GuardStore,
     *,
     level: str,
     changed_at: str,
 ) -> int:
-    return store.requeue_pending_live_requests_with_marker(
+    return store.requeue_pending_review_events_with_marker(
         changed_at=changed_at,
-        marker_key=_LIVE_REQUEST_PRIVACY_PROJECTION_MARKER,
+        marker_key=_CLOUD_REVIEW_PRIVACY_PROJECTION_MARKER,
         marker_payload={"level": level, "updated_at": changed_at},
     )
 
@@ -5636,7 +5989,7 @@ def _resolve_cloud_receipt_redaction_level(store: GuardStore) -> str:
         level = policy_bundle.get("receiptRedactionLevel")
         if isinstance(level, str) and level in VALID_RECEIPT_REDACTION_LEVELS:
             return level
-    return _local_receipt_redaction_level(store)
+    return local_receipt_redaction_level(store.guard_home)
 
 
 def _cloud_sync_command_display_part(value: str) -> str:
@@ -5763,13 +6116,24 @@ def _cloud_runtime_session_payload(store: GuardStore, session: dict[str, object]
     created_at = _optional_string(session.get("created_at") or session.get("createdAt")) or _now()
     updated_at = _optional_string(session.get("updated_at") or session.get("updatedAt")) or created_at
     capabilities = list(_string_items(session.get("capabilities")))
+    policy_document_versions = list(
+        _string_items(session.get("policy_document_versions") or session.get("policyDocumentVersions"))
+    )
+    policy_bundle_versions = list(
+        _string_items(session.get("policy_bundle_versions") or session.get("policyBundleVersions"))
+    )
+    policy_contracts = list(_string_items(session.get("policy_contracts") or session.get("policyContracts")))
+    yaml_import = session.get("yaml_import") is True or session.get("yamlImport") is True
+    canonical_policy_enforcement = (
+        session.get("canonical_policy_enforcement") is True or session.get("canonicalPolicyEnforcement") is True
+    )
     package_manager_coverage = _cloud_package_manager_coverage(
         store,
         workspace=workspace,
         generated_at=updated_at,
     )
     local_identity = _cloud_local_identity_payload(observed_at=updated_at)
-    return {
+    payload: dict[str, object] = {
         "sessionId": session_id,
         "harness": _optional_string(session.get("harness")) or "hol-guard",
         "surface": _optional_string(session.get("surface")) or "cli",
@@ -5789,6 +6153,61 @@ def _cloud_runtime_session_payload(store: GuardStore, session: dict[str, object]
         "createdAt": created_at,
         "updatedAt": updated_at,
     }
+    if policy_document_versions:
+        payload["policyDocumentVersions"] = policy_document_versions
+    if policy_bundle_versions:
+        payload["policyBundleVersions"] = policy_bundle_versions
+    if policy_contracts:
+        payload["policyContracts"] = policy_contracts
+    payload["yamlImport"] = yaml_import
+    if canonical_policy_enforcement:
+        payload["canonicalPolicyEnforcement"] = True
+    payload.update(_managed_controls_runtime_sync_posture(store, generated_at=updated_at))
+    return payload
+
+
+def _sync_extension_catalog_from_runtime_handshake(
+    *,
+    auth_context: dict[str, object],
+    runtime_sync_url: str,
+    runtime_response: dict[str, object],
+    session_payload: dict[str, object],
+) -> dict[str, object]:
+    """Upload the canonical catalog only after a digest-bound Cloud request."""
+
+    summary, upload = prepare_extension_catalog_handshake(
+        runtime_sync_url=runtime_sync_url,
+        runtime_response=runtime_response,
+        session_payload=session_payload,
+        catalog_factory=lambda generated_at: build_builtin_extension_catalog_wire(
+            guard_version=__version__, generated_at=generated_at
+        ),
+        fallback_generated_at=_now(),
+    )
+    if upload is None:
+        return summary
+    request = _guard_sync_request(
+        auth_context,
+        request_url=upload.url,
+        method="POST",
+        data=upload.body,
+        extra_headers=None,
+    )
+    try:
+        response = _urlopen_json_with_timeout_retry(
+            request=request,
+            timeout_seconds=_RUNTIME_SYNC_TIMEOUT_SECONDS,
+            retry_timeout_seconds=_RUNTIME_SYNC_RETRY_TIMEOUT_SECONDS,
+        )
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(_sync_http_error_message(error)) from error
+    except OSError as error:
+        raise RuntimeError(_sync_url_error_message(error)) from error
+    digest = session_payload.get("extensionCatalogDigest")
+    if not isinstance(digest, str):
+        raise RuntimeError("Invalid Extension catalog handshake response")
+    _validate_extension_catalog_sync_response(response, expected_digest=digest)
+    return summary
 
 
 def _cloud_local_identity_payload(*, observed_at: str) -> dict[str, object]:

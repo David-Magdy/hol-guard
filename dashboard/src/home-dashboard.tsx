@@ -29,7 +29,9 @@ import { EvidenceInsightsHomePreview } from "./evidence/evidence-insights-home-p
 import { EvidenceInsightsShareModal } from "./evidence/evidence-insights-share-modal";
 import { useReceiptAnalytics } from "./evidence/use-receipt-analytics";
 import { HomeCommandActivityCard } from "./command-activity/command-activity-home-card";
-import { protectionHealthFor } from "./protection-health";
+import { protectionHealthFor, unavailableProtectionHealth, useProtectionPresentationState } from "./protection-health";
+import { WatchProtectionBanner } from "./watch-protection-banner";
+import { updateSettings } from "./guard-api";
 import { guardActionActivityCopy, guardActionDisposition } from "./guard-action";
 import { isConnectableAppHarness } from "./apps/harness-setup-target";
 import type {
@@ -143,6 +145,7 @@ export function HomeWorkspace(props: {
   onOpenInsights?: () => void;
   onOpenCommands: () => void;
   onOpenSettings: () => void;
+  onRefreshRuntime?: () => Promise<void> | void;
   onOpenSupplyChain?: () => void;
   onClearPolicies: (scope: { harness?: string; all?: boolean }) => void;
   onOpenAppDetail: (harness: string) => void;
@@ -184,6 +187,19 @@ export function HomeWorkspace(props: {
     props.onClearPolicies(scope);
   }, [props.onClearPolicies]);
 
+  const handleTurnProtectionOn = useCallback(() => {
+    void updateSettings({ protection_posture: "protected" })
+      .then(async () => {
+        await props.onRefreshRuntime?.();
+        props.onOpenSettings();
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "Unable to turn protection on.";
+        showToast(message);
+        props.onOpenSettings();
+      });
+  }, [props.onOpenSettings, props.onRefreshRuntime, showToast]);
+
   const handleClearPasswordChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     setClearPassword(event.target.value);
     setClearError(null);
@@ -218,7 +234,10 @@ export function HomeWorkspace(props: {
   }, [clearPassword, clearTotpCode, props.clearConfirm, props.onConfirmClear, showToast]);
 
   const snapshot = props.runtime.kind === "ready" ? props.runtime.snapshot : null;
-  const queuedCount = props.requests.kind === "ready" ? props.requests.items.length : 0;
+  const queuedCount = resolveHomeQueuedCount({
+    pendingCount: snapshot?.pending_count ?? null,
+    requestCount: props.requests.kind === "ready" ? props.requests.items.length : null,
+  });
   const policyItems = props.policies.kind === "ready" ? props.policies.items : [];
   const managedInstalls = (snapshot?.managed_installs ?? []).filter((item: GuardManagedInstall) => isConnectableAppHarness(item.harness));
   const activeInstalls = managedInstalls.filter((item: GuardManagedInstall) => item.active);
@@ -233,7 +252,9 @@ export function HomeWorkspace(props: {
     : [];
   const clearHarnesses = activeInstalls.length > 0 ? activeInstalls.map((i: GuardManagedInstall) => i.harness) : observedHarnesses;
   const watchedAppsCount = activeInstalls.length > 0 ? activeInstalls.length : observedHarnesses.length;
-  const protectionState = snapshot ? protectionHealthFor(snapshot).state : "degraded";
+  const protectionState = useProtectionPresentationState(
+    snapshot ? protectionHealthFor(snapshot) : unavailableProtectionHealth(),
+  );
 
   const state = useMemo(
     () =>
@@ -299,6 +320,9 @@ export function HomeWorkspace(props: {
 
   return (
     <div className="space-y-6">
+      {snapshot.protection_posture === "watch" ? (
+        <WatchProtectionBanner onTurnProtectionOn={handleTurnProtectionOn} />
+      ) : null}
       {shareOpen && analyticsState.kind === "ready" ? (
         <EvidenceInsightsShareModal
           analytics={analyticsState.data}
@@ -420,11 +444,7 @@ export function HomeWorkspace(props: {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <DeviceProofCard
-          device={snapshot.device}
-          proofStatus={snapshot.proof_status}
-          connectUrl={snapshot.connect_url}
-        />
+        <DeviceProofCard device={snapshot.device} proofStatus={snapshot.proof_status} />
 
         <CloudStatusCard
           snapshot={snapshot}
@@ -544,14 +564,21 @@ function ClearConfirmDialog(props: {
   );
 }
 
+export function resolveHomeQueuedCount(input: {
+  pendingCount: number | null;
+  requestCount: number | null;
+}): number {
+  return Math.max(input.pendingCount ?? 0, input.requestCount ?? 0);
+}
+
 export function deriveHomeState(input: {
   hasActiveInstalls: boolean;
   hasObservedHarnesses: boolean;
   queuedCount: number;
   watchedAppsCount: number;
-  protectionState: GuardProtectionState;
+  protectionState: GuardProtectionState | "checking";
 }): {
-  heroStatus: "clear" | "needs_review" | "setup_gap" | "partial" | "degraded";
+  heroStatus: "clear" | "needs_review" | "setup_gap" | "partial" | "degraded" | "checking";
   headline: string;
   subheadline: string;
   ctaLabel: string;
@@ -584,6 +611,16 @@ export function deriveHomeState(input: {
       heroStatus: "setup_gap",
       headline: "Finish setup",
       subheadline: "Guard detected apps but they need setup to be fully protected.",
+      ctaLabel: "Open Protect",
+      ctaTarget: "protect",
+    };
+  }
+
+  if (protectionState === "checking") {
+    return {
+      heroStatus: "checking",
+      headline: "Checking protection",
+      subheadline: "Guard is confirming local protection. This takes a moment.",
       ctaLabel: "Open Protect",
       ctaTarget: "protect",
     };

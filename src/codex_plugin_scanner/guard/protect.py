@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from .action_lattice import normalize_guard_action
 from .advisory_model import ProtectTargetIdentity, advisory_matches_target, build_package_url
+from .collections_support import dedupe_preserving_order
 from .config import GuardConfig
 from .models import GuardReceipt
 from .redaction import redact_text
@@ -1125,12 +1126,4 @@ def _command_fingerprint(command: list[str]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
+_dedupe = dedupe_preserving_order

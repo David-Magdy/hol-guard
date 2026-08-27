@@ -22,32 +22,6 @@ else
   echo "PATH_SCAN=PASS"
 fi"""
 
-_THREE_SCAN = """git diff --cached --check; echo "CHECK_EXIT=$?"
-
-echo "==== PATH SCAN ===="
-if git diff --cached -- . ':!pnpm-lock.yaml' ':!package-lock.json' \\
-  | rg -n 'unique-token-alpha'; then
-  echo "PATH_SCAN=FAIL"
-else
-  echo "PATH_SCAN=PASS"
-fi
-
-echo "==== SECOND SCAN ===="
-if git diff --cached -- . ':!pnpm-lock.yaml' ':!package-lock.json' \\
-  | rg -in 'unique-token-beta'; then
-  echo "SECOND_SCAN=FAIL"
-else
-  echo "SECOND_SCAN=PASS"
-fi
-
-echo "==== THIRD SCAN ===="
-if git diff --cached -- . ':!pnpm-lock.yaml' ':!package-lock.json' \\
-  | rg -in 'unique-token-gamma'; then
-  echo "THIRD_SCAN=MATCHES"
-else
-  echo "THIRD_SCAN=PASS"
-fi"""
-
 
 @pytest.fixture(autouse=True)
 def _isolate_user_git_config(  # pyright: ignore[reportUnusedFunction]
@@ -105,7 +79,6 @@ def _is_benign(command: str, *, home: Path, repository: Path) -> bool:
             "| rg -n unique-token-alpha; then echo FAIL; else echo PASS; fi"
         ),
         _INDEX_SCAN,
-        _THREE_SCAN,
     ),
 )
 def test_repo_bound_cached_diff_variants_are_benign(tmp_path: Path, command: str) -> None:

@@ -18,6 +18,7 @@ from ..models import GuardArtifact, HarnessDetection
 from ..shims import install_guard_shim, remove_guard_shim
 from .base import HarnessAdapter, HarnessContext, _json_payload, _run_command_probe
 from .bounded_cli_hook_bridge import bounded_cli_hook_command
+from .hook_payloads import inline_hooks_payload
 from .mcp_servers import (
     ManagedMcpServer,
     is_guard_proxy_command,
@@ -26,6 +27,8 @@ from .mcp_servers import (
     proxy_process_env,
     skipped_stdio_server_names,
 )
+from .state_files import load_backup_payload, load_string_state_payload
+from .workspace_overrides import should_skip_workspace_override
 
 _MANAGED_HOOK_EVENTS = ("userPromptSubmitted", "preToolUse", "postToolUse", "permissionRequest")
 _DETECTABLE_HOOK_EVENTS = (
@@ -246,18 +249,7 @@ def _hooks_payload(payload: dict[str, object]) -> dict[str, object]:
     return payload
 
 
-def _inline_hooks_payload(payload: dict[str, object]) -> dict[str, object]:
-    hooks = payload.get("hooks")
-    if isinstance(hooks, dict):
-        normalized = {
-            str(hook_name): list(entries) if isinstance(entries, list) else entries
-            for hook_name, entries in hooks.items()
-        }
-        payload["hooks"] = normalized
-        return normalized
-    normalized: dict[str, object] = {}
-    payload["hooks"] = normalized
-    return normalized
+_inline_hooks_payload = inline_hooks_payload
 
 
 def _hook_command_variants(entry: dict[str, object]) -> tuple[tuple[str, str], ...]:
@@ -801,17 +793,7 @@ class CopilotHarnessAdapter(HarnessAdapter):
             entry["type"] = "stdio"
         return entry
 
-    @staticmethod
-    def _backup_payload(backup_path: Path) -> dict[str, str | bool | None]:
-        try:
-            payload = json.loads(backup_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {"readable": False, "existed": False, "content": None}
-        if not isinstance(payload, dict):
-            return {"readable": False, "existed": False, "content": None}
-        existed = payload.get("existed") is True
-        content = payload.get("content")
-        return {"readable": True, "existed": existed, "content": content if isinstance(content, str) else None}
+    _backup_payload = staticmethod(load_backup_payload)
 
     @staticmethod
     def _state_path(target_path: Path, context: HarnessContext) -> Path:
@@ -819,22 +801,7 @@ class CopilotHarnessAdapter(HarnessAdapter):
         digest = sha256(target.encode("utf-8")).hexdigest()[:12]
         return context.guard_home / "managed" / "copilot" / f"{digest}.state.json"
 
-    @staticmethod
-    def _state_payload(state_path: Path) -> dict[str, str]:
-        if not state_path.is_file():
-            return {}
-        try:
-            payload = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(payload, dict):
-            return {}
-        result: dict[str, str] = {}
-        for key in ("managed_config_path", "backup_path", "scope", "workspace_dir"):
-            value = payload.get(key)
-            if isinstance(value, str):
-                result[key] = value
-        return result
+    _state_payload = staticmethod(load_string_state_payload)
 
     @classmethod
     def _state_entries(cls, context: HarnessContext) -> list[tuple[Path, Path, Path, dict[str, str]]]:
@@ -898,15 +865,4 @@ class CopilotHarnessAdapter(HarnessAdapter):
                 filtered.append(server)
         return tuple(filtered)
 
-    @staticmethod
-    def _should_skip_workspace_override(
-        *,
-        context: HarnessContext,
-        server: ManagedMcpServer,
-        existing_workspace_server_names: set[str],
-    ) -> bool:
-        if context.workspace_dir is None:
-            return False
-        if server.source_scope == "project":
-            return False
-        return server.name in existing_workspace_server_names
+    _should_skip_workspace_override = staticmethod(should_skip_workspace_override)

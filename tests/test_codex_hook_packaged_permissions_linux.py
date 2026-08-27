@@ -11,7 +11,6 @@ from codex_plugin_scanner.guard import codex_hook_file_integrity as integrity
 from codex_plugin_scanner.guard.codex_hook_file_integrity import CodexHookIntegrityError, validate_regular_file
 from codex_plugin_scanner.guard.codex_hook_manifest import CodexHookManifestSpec, build_authenticated_hook_manifest
 
-
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX ownership and permission semantics are required")
 
 
@@ -164,6 +163,7 @@ def test_manifest_build_accepts_private_group_pipx_style_packaged_files(
     scanner_root = package_root / "codex_plugin_scanner"
     roles = (
         "bridge",
+        "bridge_resume",
         "bridge_runtime",
         "fallback_entrypoint",
         "daemon_entrypoint",

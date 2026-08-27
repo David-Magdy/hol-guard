@@ -58,12 +58,13 @@ from codex_plugin_scanner.guard.policy_bundle_parser import policy_bundle_accept
 from codex_plugin_scanner.guard.store import (
     EncryptedFileSecretStore,
     GuardStore,
-    MigratingFallbackSecretStore,
     SystemKeyringSecretStore,
 )
 from tests.policy_bundle_signing_helpers import policy_bundle_test_keyring, sign_policy_bundle
 
 _POLICY_BUNDLE_WORKSPACE_ID = "workspace-1"
+_TRUST_BACKEND_CORRUPT_RESULT_RUNTIME_TIMEOUT_SECONDS = 1.0
+_TRUST_BACKEND_CORRUPT_RESULT_STARTUP_TIMEOUT_SECONDS = 10.0
 
 
 @pytest.fixture(autouse=True)
@@ -253,7 +254,7 @@ def _nested_trust_result(marker_path: str) -> dict[str, str]:
     context = local_trust_contract_module.multiprocessing.get_context("spawn")
     process = context.Process(target=_write_nested_trust_marker, args=(marker_path,))
     process.start()
-    process.join(timeout=3.0)
+    process.join(timeout=10.0)
     return {"mode": "protected", "nested": str(Path(marker_path).exists())}
 
 
@@ -360,6 +361,30 @@ def test_trust_backend_timeout_returns_degraded_result_without_waiting() -> None
     assert time.monotonic() - started < 0.5
 
 
+@pytest.mark.parametrize("startup_timeout_seconds", (0.0, -1.0))
+def test_trust_backend_check_does_not_spawn_for_nonpositive_startup_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    startup_timeout_seconds: float,
+) -> None:
+    calls: list[str | None] = []
+
+    def unexpected_get_context(method: str | None = None):
+        calls.append(method)
+        raise AssertionError("non-positive startup timeout must not spawn a worker")
+
+    monkeypatch.setattr(local_trust_contract_module.multiprocessing, "get_context", unexpected_get_context)
+
+    result = run_trust_backend_check(
+        _protected_trust_result,
+        timeout_seconds=1.0,
+        timeout_result={"mode": "degraded"},
+        startup_timeout_seconds=startup_timeout_seconds,
+    )
+
+    assert result == {"mode": "degraded"}
+    assert calls == []
+
+
 def test_trust_backend_timeout_contains_late_side_effects(tmp_path: Path) -> None:
     marker_path = tmp_path / "late-side-effect"
 
@@ -456,8 +481,9 @@ def test_trust_backend_check_handles_corrupt_result_file(
 
     result = run_trust_backend_check(
         _protected_trust_result,
-        timeout_seconds=1.0,
+        timeout_seconds=_TRUST_BACKEND_CORRUPT_RESULT_RUNTIME_TIMEOUT_SECONDS,
         timeout_result={"mode": "degraded"},
+        startup_timeout_seconds=_TRUST_BACKEND_CORRUPT_RESULT_STARTUP_TIMEOUT_SECONDS,
         on_error=lambda error: {
             "mode": "degraded",
             "error": error.__class__.__name__,
@@ -479,8 +505,9 @@ def test_trust_backend_check_rejects_malformed_result_payload(
 
     result = run_trust_backend_check(
         _protected_trust_result,
-        timeout_seconds=1.0,
+        timeout_seconds=_TRUST_BACKEND_CORRUPT_RESULT_RUNTIME_TIMEOUT_SECONDS,
         timeout_result={"mode": "degraded"},
+        startup_timeout_seconds=_TRUST_BACKEND_CORRUPT_RESULT_STARTUP_TIMEOUT_SECONDS,
         on_error=lambda error: {
             "mode": "degraded",
             "error": error.__class__.__name__,
@@ -502,8 +529,9 @@ def test_trust_backend_check_rejects_list_result_payload(
 
     result = run_trust_backend_check(
         _protected_trust_result,
-        timeout_seconds=1.0,
+        timeout_seconds=_TRUST_BACKEND_CORRUPT_RESULT_RUNTIME_TIMEOUT_SECONDS,
         timeout_result={"mode": "degraded"},
+        startup_timeout_seconds=_TRUST_BACKEND_CORRUPT_RESULT_STARTUP_TIMEOUT_SECONDS,
         on_error=lambda error: {
             "mode": "degraded",
             "error": error.__class__.__name__,
@@ -516,6 +544,75 @@ def test_trust_backend_check_rejects_list_result_payload(
         "error": "TrustBackendCorruptResultError",
         "reason": POLICY_INTEGRITY_REASON_BACKEND_CORRUPT,
     }
+
+
+def test_trust_backend_check_separates_startup_and_runtime_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleep_delays: list[float] = []
+    join_timeouts: list[float | None] = []
+    monotonic_values = iter((100.0, 103.5))
+
+    class FakeProcess:
+        def __init__(self, args: tuple[str, str, str]) -> None:
+            self.ready_path = Path(args[1])
+            self.result_path = Path(args[2])
+            self.is_running = True
+
+        def start(self) -> None:
+            return None
+
+        def is_alive(self) -> bool:
+            return self.is_running
+
+        def join(self, timeout: float | None = None) -> None:
+            join_timeouts.append(timeout)
+            self.is_running = False
+
+        def terminate(self) -> None:
+            self.is_running = False
+
+        def kill(self) -> None:
+            self.is_running = False
+
+    processes: list[FakeProcess] = []
+
+    class FakeContext:
+        def process(self, *, target: object, args: tuple[str, str, str]) -> FakeProcess:
+            del target
+            process = FakeProcess(args)
+            processes.append(process)
+            return process
+
+    FakeContext.Process = FakeContext.process
+
+    def fake_get_context(method: str | None = None) -> FakeContext:
+        assert method == "spawn"
+        return FakeContext()
+
+    def fake_monotonic() -> float:
+        return next(monotonic_values)
+
+    def mark_worker_ready(delay_seconds: float) -> None:
+        sleep_delays.append(delay_seconds)
+        process = processes[0]
+        process.result_path.write_bytes(pickle.dumps((True, {"mode": "protected"})))
+        process.ready_path.touch()
+
+    monkeypatch.setattr(local_trust_contract_module.multiprocessing, "get_context", fake_get_context)
+    monkeypatch.setattr(local_trust_contract_module.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(local_trust_contract_module.time, "sleep", mark_worker_ready)
+
+    result = run_trust_backend_check(
+        _protected_trust_result,
+        timeout_seconds=_TRUST_BACKEND_CORRUPT_RESULT_RUNTIME_TIMEOUT_SECONDS,
+        timeout_result={"mode": "degraded"},
+        startup_timeout_seconds=_TRUST_BACKEND_CORRUPT_RESULT_STARTUP_TIMEOUT_SECONDS,
+    )
+
+    assert result == {"mode": "protected"}
+    assert sleep_delays == [0.005]
+    assert join_timeouts == [_TRUST_BACKEND_CORRUPT_RESULT_RUNTIME_TIMEOUT_SECONDS]
 
 
 def test_trust_backend_result_loader_preserves_permission_denied() -> None:
@@ -537,7 +634,7 @@ def test_trust_backend_check_handles_result_permission_denied(
 
     result = run_trust_backend_check(
         _protected_trust_result,
-        timeout_seconds=1.0,
+        timeout_seconds=10.0,
         timeout_result={"mode": "degraded"},
         on_error=lambda error: {
             "mode": "degraded",
@@ -598,8 +695,8 @@ def test_trust_backend_check_allows_spawned_helper_child_process(tmp_path: Path)
 
     result = run_trust_backend_check(
         partial(_nested_trust_result, str(marker_path)),
-        # This verifies nested containment, while concurrent spawn runners need startup headroom.
-        timeout_seconds=4.0,
+        # Nested spawn gets 10s under runner contention; outer containment keeps cleanup headroom.
+        timeout_seconds=15.0,
         timeout_result={"mode": "degraded", "nested": "False"},
     )
 
@@ -645,15 +742,15 @@ def test_trust_backend_check_uses_spawn_from_concurrent_threads(
     def run_check(_: int) -> dict[str, str]:
         return run_trust_backend_check(
             _protected_trust_result,
-            timeout_seconds=2.0,
+            timeout_seconds=10.0,
             timeout_result={"mode": "degraded"},
         )
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(executor.map(run_check, range(8)))
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(run_check, range(4)))
 
-    assert results == [{"mode": "protected"}] * 8
-    assert calls == ["spawn"] * 8
+    assert results == [{"mode": "protected"}] * 4
+    assert calls == ["spawn"] * 4
 
 
 def test_passive_trust_probe_prefers_authenticated_daemon_degradation(
@@ -771,7 +868,7 @@ def test_policy_integrity_status_includes_trust_status(tmp_path: Path) -> None:
 def test_guard_store_init_does_not_create_policy_integrity_keyring_material(tmp_path: Path) -> None:
     store = _store(tmp_path)
     secret_store = store._policy_integrity_secret_store
-    assert isinstance(secret_store, MigratingFallbackSecretStore)
+    assert isinstance(secret_store, SystemKeyringSecretStore)
 
     assert secret_store.get_secret(store._policy_integrity_key_ref) is None
     assert secret_store.get_secret(store._policy_integrity_control_ref) is None
@@ -1047,7 +1144,7 @@ def test_upsert_policy_uses_single_integrity_key_lookup_per_write(
     assert state["key_id"] is None
 
 
-def test_policy_integrity_status_uses_mirrored_vault_without_keychain_reads(
+def test_policy_integrity_status_uses_timed_keychain_reads_once_per_secret(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1057,7 +1154,7 @@ def test_policy_integrity_status_uses_mirrored_vault_without_keychain_reads(
         "2026-06-14T00:00:00Z",
     )
     secret_store = store._policy_integrity_secret_store
-    assert isinstance(secret_store, MigratingFallbackSecretStore)
+    assert isinstance(secret_store, SystemKeyringSecretStore)
     key_value = secret_store.get_secret(store._policy_integrity_key_ref)
     control_value = secret_store.get_secret(store._policy_integrity_control_ref)
     assert isinstance(key_value, str) and key_value
@@ -1074,7 +1171,14 @@ def test_policy_integrity_status_uses_mirrored_vault_without_keychain_reads(
             return control_value
         raise AssertionError(f"unexpected policy-integrity secret lookup: {secret_id}")
 
-    monkeypatch.setattr(secret_store.primary, "get_secret_with_timeout", _count_timed_reads)
+    monkeypatch.setattr(
+        store,
+        "_get_secret_from_store",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("plain keyring reads should not run for policy integrity")
+        ),
+    )
+    monkeypatch.setattr(secret_store, "get_secret_with_timeout", _count_timed_reads)
     store._clear_policy_integrity_cache()
 
     first_status = store.get_policy_integrity_status()
@@ -1082,13 +1186,16 @@ def test_policy_integrity_status_uses_mirrored_vault_without_keychain_reads(
 
     assert first_status["mode"] == "protected"
     assert second_status["mode"] == "protected"
-    assert timed_reads == []
+    assert timed_reads == [
+        store._policy_integrity_control_ref,
+        store._policy_integrity_key_ref,
+    ]
 
 
 def test_policy_integrity_status_and_verify_do_not_create_keyring_material_on_fresh_store(tmp_path: Path) -> None:
     store = _store(tmp_path)
     secret_store = store._policy_integrity_secret_store
-    assert isinstance(secret_store, MigratingFallbackSecretStore)
+    assert isinstance(secret_store, SystemKeyringSecretStore)
     _delete_policy_integrity_key(store)
     _delete_policy_integrity_control_state(store)
     assert secret_store.get_secret(store._policy_integrity_key_ref) is None

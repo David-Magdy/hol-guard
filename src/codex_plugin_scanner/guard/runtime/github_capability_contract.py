@@ -17,8 +17,8 @@ GitHubCommandCapability = Literal[
     "read_remote",
     "propose_remote",
     "routine_merge_remote",
-    "routine_workflow_remote",
     "routine_review_thread_remote",
+    "routine_workflow_remote",
     "write_local",
     "maintain_remote",
     "content_remote",
@@ -51,6 +51,8 @@ class GitHubCapabilityContract:
     risk_tier: PermissionRiskTier
     risk_classes: tuple[str, ...]
     safer_alternatives: tuple[str, ...]
+    example_command: str
+    family: str | None = None
 
 
 _CAPABILITY_ORDER: Final[tuple[GitHubCommandCapability, ...]] = (
@@ -58,8 +60,8 @@ _CAPABILITY_ORDER: Final[tuple[GitHubCommandCapability, ...]] = (
     "read_remote",
     "propose_remote",
     "routine_merge_remote",
-    "routine_workflow_remote",
     "routine_review_thread_remote",
+    "routine_workflow_remote",
     "write_local",
     "maintain_remote",
     "content_remote",
@@ -81,8 +83,8 @@ _CAPABILITY_FLOOR: Final[MappingProxyType[GitHubCommandCapability, GuardAction]]
         "read_remote": "allow",
         "propose_remote": "allow",
         "routine_merge_remote": "allow",
-        "routine_workflow_remote": "require-reapproval",
         "routine_review_thread_remote": "allow",
+        "routine_workflow_remote": "require-reapproval",
         "write_local": "review",
         "maintain_remote": "review",
         "content_remote": "review",
@@ -108,18 +110,20 @@ def _contract(
     title: str,
     *,
     local: bool = False,
+    example_command: str,
+    family: str | None = None,
 ) -> GitHubCapabilityContract:
-    prompt_free = rule_suffix is None
+    prompt_free = _CAPABILITY_FLOOR[capability] == "allow"
     if capability == "propose_remote":
         description = "Creates a pull-request proposal without merging it or changing repository controls."
     elif capability == "routine_merge_remote":
         description = (
             "Completes a statically bounded squash pull-request merge, optionally cleaning up its merged head branch."
         )
-    elif capability == "routine_workflow_remote":
-        description = "Retries only failed jobs from one existing GitHub Actions run."
     elif capability == "routine_review_thread_remote":
         description = "Resolves one statically bounded pull-request review thread."
+    elif capability == "routine_workflow_remote":
+        description = "Retries only failed jobs from one existing GitHub Actions run."
     else:
         description = (
             f"Reads {title.lower()} without changing state."
@@ -140,12 +144,14 @@ def _contract(
         title=title,
         description=description,
         risk_tier="low" if prompt_free else "high",
-        risk_classes=() if prompt_free else (_LOCAL_WRITE_RISKS if local else _REMOTE_MUTATION_RISKS),
+        risk_classes=(() if rule_suffix is None else (_LOCAL_WRITE_RISKS if local else _REMOTE_MUTATION_RISKS)),
         safer_alternatives=(
             "Keep the operation read-only or limited to opening a pull-request proposal."
             if prompt_free
             else "Inspect the exact repository, resource, and operation before confirming it.",
         ),
+        example_command=example_command,
+        family=family,
     )
 
 
@@ -153,22 +159,31 @@ _CONTRACTS: Final = MappingProxyType(
     {
         contract.capability: contract
         for contract in (
-            _contract("read_local", "read-local", None, None, "local GitHub state"),
-            _contract("read_remote", "read-remote", None, None, "remote GitHub state"),
-            _contract("propose_remote", "propose-remote", None, None, "pull-request proposal"),
+            _contract("read_local", "read-local", None, None, "local GitHub state", example_command="gh auth status"),
+            _contract(
+                "read_remote",
+                "read-remote",
+                None,
+                None,
+                "remote GitHub state",
+                example_command="gh pr view 123",
+            ),
+            _contract(
+                "propose_remote",
+                "propose-remote",
+                None,
+                None,
+                "pull-request proposal",
+                example_command='gh pr create --title "Fix login" --body "Summary"',
+            ),
             _contract(
                 "routine_merge_remote",
                 "routine-merge-remote",
-                None,
-                None,
+                "GitHub routine pull-request merge command",
+                "routine-merge",
                 "routine squash pull-request merge",
-            ),
-            _contract(
-                "routine_workflow_remote",
-                "routine-workflow-remote",
-                "GitHub workflow rerun",
-                "workflow-mutation",
-                "routine failed-job rerun",
+                example_command="gh pr merge 123 --squash",
+                family="gh-pr-merge",
             ),
             _contract(
                 "routine_review_thread_remote",
@@ -176,6 +191,15 @@ _CONTRACTS: Final = MappingProxyType(
                 None,
                 None,
                 "routine review-thread resolution",
+                example_command="gh api graphql -f query=resolveReviewThread",
+            ),
+            _contract(
+                "routine_workflow_remote",
+                "routine-workflow-remote",
+                "GitHub workflow rerun",
+                "workflow-mutation",
+                "routine failed-job rerun",
+                example_command="gh run rerun 1234567890 --failed",
             ),
             _contract(
                 "write_local",
@@ -184,6 +208,7 @@ _CONTRACTS: Final = MappingProxyType(
                 "local-write",
                 "GitHub local configuration write",
                 local=True,
+                example_command="gh repo set-default owner/repo",
             ),
             _contract(
                 "maintain_remote",
@@ -191,6 +216,7 @@ _CONTRACTS: Final = MappingProxyType(
                 "GitHub bounded maintenance command",
                 "maintenance",
                 "Bounded GitHub maintenance",
+                example_command="gh pr ready 123",
             ),
             _contract(
                 "content_remote",
@@ -198,14 +224,25 @@ _CONTRACTS: Final = MappingProxyType(
                 "GitHub content mutation command",
                 "content",
                 "GitHub content mutation",
+                example_command="gh issue close 123",
             ),
-            _contract("merge_remote", "merge-remote", "GitHub merge command", "merge", "GitHub pull-request merge"),
+            _contract(
+                "merge_remote",
+                "merge-remote",
+                "GitHub merge command",
+                "merge",
+                "GitHub pull-request merge",
+                example_command="gh pr merge 123 --merge",
+                family="gh-pr-merge",
+            ),
             _contract(
                 "admin_merge_remote",
                 "merge-admin",
                 "GitHub administrator pull-request merge command",
                 "admin-merge",
                 "GitHub administrator pull-request merge",
+                example_command="gh pr merge 123 --admin",
+                family="gh-pr-merge",
             ),
             _contract(
                 "publish_remote",
@@ -213,6 +250,7 @@ _CONTRACTS: Final = MappingProxyType(
                 "GitHub release publication command",
                 "publish",
                 "GitHub release publication",
+                example_command="gh release create v1.2.3",
             ),
             _contract(
                 "workflow_remote",
@@ -220,19 +258,47 @@ _CONTRACTS: Final = MappingProxyType(
                 "GitHub workflow mutation command",
                 "workflow",
                 "GitHub workflow mutation",
+                example_command="gh workflow run deploy.yml",
             ),
             _contract(
-                "force_remote", "force-remote", "GitHub force mutation command", "force", "Forced GitHub mutation"
-            ),
-            _contract("delete_remote", "delete-remote", "GitHub delete command", "delete", "GitHub deletion"),
-            _contract(
-                "secret_remote", "secret-remote", "GitHub secret mutation command", "secret", "GitHub secret mutation"
-            ),
-            _contract(
-                "access_remote", "access-remote", "GitHub access mutation command", "access", "GitHub access mutation"
+                "force_remote",
+                "force-remote",
+                "GitHub force mutation command",
+                "force",
+                "Forced GitHub mutation",
+                example_command="gh repo sync owner/repo --force",
             ),
             _contract(
-                "mutate_remote", "mutate-remote", "GitHub remote mutation command", "mutation", "GitHub remote mutation"
+                "delete_remote",
+                "delete-remote",
+                "GitHub delete command",
+                "delete",
+                "GitHub deletion",
+                example_command="gh repo delete owner/repo",
+            ),
+            _contract(
+                "secret_remote",
+                "secret-remote",
+                "GitHub secret mutation command",
+                "secret",
+                "GitHub secret mutation",
+                example_command="gh secret set DEPLOY_TOKEN",
+            ),
+            _contract(
+                "access_remote",
+                "access-remote",
+                "GitHub access mutation command",
+                "access",
+                "GitHub access mutation",
+                example_command="gh repo edit owner/repo --visibility private",
+            ),
+            _contract(
+                "mutate_remote",
+                "mutate-remote",
+                "GitHub remote mutation command",
+                "mutation",
+                "GitHub remote mutation",
+                example_command="gh api -X POST /repos/OWNER/REPO/dispatches",
             ),
             _contract(
                 "unknown",
@@ -240,6 +306,7 @@ _CONTRACTS: Final = MappingProxyType(
                 "Unverified GitHub command capability",
                 "unknown",
                 "Unverified GitHub command capability",
+                example_command="gh extension run custom-tool",
             ),
         )
     }
@@ -311,6 +378,12 @@ def github_assessment(
     )
 
 
+def github_cli_invocation_is_help(normalized: list[str]) -> bool:
+    """Recognize local help without treating option values named ``--help`` as help."""
+
+    return normalized[:1] in (["--help"], ["-h"]) or normalized == ["auth", "switch", "--help"]
+
+
 def combine_github_assessments(
     assessments: Iterable[GitHubCommandAssessment],
 ) -> GitHubCommandAssessment | None:
@@ -353,6 +426,8 @@ def github_permission_specs(implementation_version: str) -> tuple[CommandPermiss
             deprecated=False,
             replacement_permission_id=None,
             safer_guidance=contract.safer_alternatives,
+            example_command=contract.example_command,
+            family=contract.family,
         )
         for contract in github_capability_contracts()
     )

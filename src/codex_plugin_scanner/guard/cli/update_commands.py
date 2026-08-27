@@ -18,6 +18,7 @@ import sysconfig
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import ParseResult, urlparse
@@ -38,14 +39,17 @@ from ..adapters.opencode_pretool import (
 from ..adapters.pi import OmpHarnessAdapter, PiHarnessAdapter, legacy_omp_managed_extension_is_verified
 from ..adapters.pi_extension_source import managed_extension_source
 from ..adapters.pi_support import json_payload
-from ..codex_hook_integrity import CodexHookIntegrityError, load_authenticated_hook_manifest
 from ..config import load_guard_config, resolve_guard_home
+from ..daemon.update_refresh_program import DAEMON_REFRESH_SCRIPT
 from ..mdm.contracts import ManagedNetworkPolicy, ManagedPolicy
 from ..mdm.network import ManagedNetworkError, managed_urlopen
 from ..mdm.policy import load_managed_policy
 from ..redaction import redact_sensitive_text
+from ..runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
+from ..runtime.extension_control_authority import AuthorityHealth
 from ..store import GuardStore
 from .install_commands import apply_managed_install
+from .managed_install_context import managed_install_context as _repair_context_from_managed_install
 from .update_artifact import (
     TrustedWheelArtifact,
     UpdateArtifactError,
@@ -53,12 +57,27 @@ from .update_artifact import (
     recover_local_wheel_original,
     stage_trusted_wheel,
 )
+from .update_desktop_apply import (
+    desktop_update_status_state,
+    finalize_desktop_update_status,
+    run_desktop_managed_update,
+)
+from .update_desktop_core import is_desktop_managed_runtime, pypi_alpha_versions
+from .update_grok_repair import append_grok_repair
+from .update_install_verify import verify_installed_distribution
 from .update_subprocess import (
     InstalledDistribution,
     TrustedUpdateContext,
     UpdateSubprocessError,
     build_trusted_update_context,
 )
+
+_TRUSTED_UPDATE_FAILURE_MESSAGES = {
+    "update_install_inconsistent": (
+        "HOL Guard updated its version metadata but not all of its installed files. "
+        "Retry the update to finish the installation."
+    ),
+}
 
 _ALREADY_CURRENT_HINTS = (
     "already at latest version",
@@ -102,6 +121,7 @@ _PYPI_AUTH_STATUS_RE = re.compile(
 _PYPI_PROPAGATION_RETRY_DELAY_SECONDS = 2.0
 _PYPI_PROPAGATION_RETRY_LIMIT = 1
 _PYPI_JSON_URL = "https://pypi.org/pypi/hol-guard/json"
+_GITHUB_ALPHA_REFS_URL = "https://api.github.com/repos/hashgraph-online/hol-guard/git/matching-refs/tags/alpha/v"
 _PYPI_TIMEOUT_SECONDS = 3.0
 _PYPI_RESPONSE_LIMIT_BYTES = 8 * 1024 * 1024
 _PYPI_READ_CHUNK_BYTES = 64 * 1024
@@ -148,95 +168,11 @@ print(json.dumps({"before": before, "repair": repair, "after": after}))
 """.strip()
 _DAEMON_REFRESH_TIMEOUT_SECONDS = 75.0
 _DAEMON_REFRESH_CLEANUP_TIMEOUT_SECONDS = 15.0
-_DAEMON_REFRESH_SCRIPT = """
-from __future__ import annotations
+_DAEMON_REFRESH_SCRIPT = DAEMON_REFRESH_SCRIPT
+_DAEMON_REFRESH_BOOTSTRAP_SCRIPT = """
+from codex_plugin_scanner.guard.daemon.update_refresh_program import DAEMON_REFRESH_SCRIPT
 
-import inspect
-import json
-import sys
-import time
-from pathlib import Path
-
-from codex_plugin_scanner.guard.daemon.manager import (
-    clear_guard_daemon_state,
-    ensure_approval_center,
-    ensure_guard_daemon_after_update,
-    guard_daemon_retirement_is_complete,
-    load_guard_daemon_url,
-    repair_approval_center_locator,
-    retire_all_guard_daemons_for_home,
-)
-
-payload = json.loads(sys.stdin.read())
-guard_home = Path(payload["guard_home"]).expanduser().resolve()
-home_dir_value = payload.get("home_dir")
-home_dir = (
-    Path(home_dir_value).expanduser().resolve()
-    if isinstance(home_dir_value, str) and home_dir_value.strip()
-    else Path.home().resolve()
-)
-state_path = guard_home / "daemon-state.json"
-if not state_path.is_file():
-    print(json.dumps({"status": "not_running"}))
-    raise SystemExit(0)
-try:
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError):
-    state = {}
-preferred_port = state.get("port") if isinstance(state.get("port"), int) else None
-refresh_parameters = inspect.signature(ensure_guard_daemon_after_update).parameters
-refresh_kwargs = {"preferred_port": preferred_port}
-if "home_dir" in refresh_parameters:
-    refresh_kwargs["home_dir"] = home_dir
-if "allow_windows_job_breakaway" in refresh_parameters:
-    refresh_kwargs["allow_windows_job_breakaway"] = True
-retired = []
-last_failure_status = "runtime_replaced"
-for attempt in range(1, 4):
-    retirement_complete = False
-    retirement_deadline = time.monotonic() + 5.0
-    while True:
-        for pid in retire_all_guard_daemons_for_home(guard_home):
-            if pid not in retired:
-                retired.append(pid)
-        if guard_daemon_retirement_is_complete(guard_home):
-            retirement_complete = True
-            break
-        if time.monotonic() >= retirement_deadline:
-            last_failure_status = "retirement_failed"
-            break
-        time.sleep(0.1)
-    if not retirement_complete:
-        continue
-    clear_guard_daemon_state(guard_home)
-    repair_approval_center_locator(guard_home)
-    daemon_url = ensure_guard_daemon_after_update(guard_home, **refresh_kwargs)
-    ensure_approval_center(guard_home)
-    # A separately installed desktop app can race the refresh and replace the
-    # just-started daemon with older bytes. Require the updated fingerprint to
-    # remain bound across a short stability window before reporting success.
-    verified_url = None
-    for _stability_check in range(3):
-        time.sleep(1.0)
-        verified_url = load_guard_daemon_url(guard_home)
-        if verified_url is None:
-            break
-    if verified_url is not None:
-        print(
-            json.dumps(
-                {
-                    "status": "restarted",
-                    "retired": retired,
-                    "daemon_url": verified_url,
-                    "attempts": attempt,
-                    "runtime_verified": True,
-                }
-            )
-        )
-        raise SystemExit(0)
-    last_failure_status = "runtime_replaced"
-print(json.dumps({"status": last_failure_status, "retired": retired, "attempts": 3}))
-raise SystemExit(1)
+exec(DAEMON_REFRESH_SCRIPT, {})
 """.strip()
 _DAEMON_REFRESH_CLEANUP_SCRIPT = """
 from __future__ import annotations
@@ -326,6 +262,25 @@ def _read_direct_url_dir_info(direct_url: dict[str, object] | None) -> dict[str,
     return dir_info if isinstance(dir_info, dict) else {}
 
 
+def _authority_blocks_downgrade(
+    store: GuardStore | None,
+    *,
+    guard_home: Path,
+    current_version: str,
+    candidate_version: str | None,
+) -> bool:
+    if candidate_version is None:
+        return False
+    try:
+        if Version(candidate_version) >= Version(current_version):
+            return False
+    except InvalidVersion:
+        return False
+    authority_store = store or GuardStore(guard_home)
+    authority = authority_store.read_extension_control_authority_for_registry(BUILT_IN_COMMAND_EXTENSION_REGISTRY)
+    return authority.health is not AuthorityHealth.UNENROLLED
+
+
 def run_guard_update(
     *,
     dry_run: bool,
@@ -338,7 +293,7 @@ def run_guard_update(
     guard_home: Path | None = None,
     include_alpha: bool = False,
 ) -> tuple[dict[str, object], int]:
-    installer = _installer_kind()
+    installer = "desktop" if _is_desktop_managed_runtime() else _installer_kind()
     payload: dict[str, object] = {
         "installer": installer,
         "dry_run": dry_run,
@@ -393,6 +348,20 @@ def run_guard_update(
         trusted_workspace = Path(workspace).expanduser()
     else:
         trusted_workspace = Path.cwd()
+    if installer == "desktop":
+        return run_desktop_managed_update(
+            payload,
+            dry_run=dry_run,
+            include_alpha=include_alpha,
+            force_pypi_reinstall=force_pypi_reinstall,
+            requested_wheel_path=requested_wheel_path,
+            context=context,
+            store=store,
+            workspace=workspace,
+            now=now,
+            network_policy=network_policy,
+            daemon_refresh_required=daemon_refresh_required,
+        )
     try:
         update_context = build_trusted_update_context(
             guard_home=resolved_guard_home,
@@ -512,6 +481,24 @@ def run_guard_update(
             )
         except UpdateArtifactError as error:
             return _trusted_update_failure(payload, UpdateSubprocessError(error.reason_code))
+    downgrade_candidate = trusted_wheel.version if trusted_wheel is not None else target_version
+    if _authority_blocks_downgrade(
+        store,
+        guard_home=resolved_guard_home,
+        current_version=current_version,
+        candidate_version=downgrade_candidate,
+    ):
+        if trusted_wheel is not None:
+            trusted_wheel.cleanup()
+        payload.update(
+            {
+                "status": "blocked",
+                "changed": False,
+                "reason_code": "extension_control_authority_downgrade_blocked",
+                "message": "HOL Guard cannot downgrade while extension-control authority is active.",
+            }
+        )
+        return payload, 1
     command = _update_command(
         installer,
         use_pypi=use_pypi,
@@ -561,7 +548,7 @@ def run_guard_update(
             payload["status"] = "current"
             payload["changed"] = False
             payload["resulting_version"] = current_version
-            payload["message"] = "HOL Guard is already current."
+            payload["message"] = already_current_update_message(version_check)
             if trusted_wheel is not None:
                 trusted_wheel.cleanup()
             return payload, 0
@@ -579,7 +566,7 @@ def run_guard_update(
         payload["status"] = "current"
         payload["changed"] = False
         payload["resulting_version"] = current_version
-        payload["message"] = "HOL Guard is already current."
+        payload["message"] = already_current_update_message(version_check)
         newer_runtime = (
             _verified_newer_guard_daemon(
                 context.guard_home,
@@ -623,6 +610,10 @@ def run_guard_update(
     active_command = execution_command
     active_display_command = command
     attempted_force_retry = False
+
+    def finish_update(result: tuple[dict[str, object], int]) -> tuple[dict[str, object], int]:
+        return result
+
     attempted_pipx_recovery = False
     propagation_retries = 0
     installer_execution_started = False
@@ -633,39 +624,47 @@ def run_guard_update(
             installer_execution_started = True
             result = update_context.run(active_command)
         except UpdateArtifactError as error:
-            return _trusted_update_failure(
-                payload,
-                UpdateSubprocessError(error.reason_code),
-                trusted_wheel=trusted_wheel,
-                retain_trusted_wheel=installer_execution_started,
+            return finish_update(
+                _trusted_update_failure(
+                    payload,
+                    UpdateSubprocessError(error.reason_code),
+                    trusted_wheel=trusted_wheel,
+                    retain_trusted_wheel=installer_execution_started,
+                )
             )
         except UpdateSubprocessError as error:
-            return _trusted_update_failure(
-                payload,
-                error,
-                trusted_wheel=trusted_wheel,
-                retain_trusted_wheel=installer_execution_started,
+            return finish_update(
+                _trusted_update_failure(
+                    payload,
+                    error,
+                    trusted_wheel=trusted_wheel,
+                    retain_trusted_wheel=installer_execution_started,
+                )
             )
         payload["command"] = active_display_command
         payload["stdout"] = _normalize_output_text(result.stdout)
         payload["stderr"] = _normalize_output_text(result.stderr)
         payload["return_code"] = result.returncode
         if result.output_limited:
-            return _trusted_update_failure(
-                payload,
-                UpdateSubprocessError("update_installer_output_limit"),
-                trusted_wheel=trusted_wheel,
-                retain_trusted_wheel=installer_execution_started,
+            return finish_update(
+                _trusted_update_failure(
+                    payload,
+                    UpdateSubprocessError("update_installer_output_limit"),
+                    trusted_wheel=trusted_wheel,
+                    retain_trusted_wheel=installer_execution_started,
+                )
             )
         importlib.invalidate_caches()
         try:
             payload["resulting_version"] = _current_version_from_subprocess(update_context)
         except UpdateSubprocessError as error:
-            return _trusted_update_failure(
-                payload,
-                error,
-                trusted_wheel=trusted_wheel,
-                retain_trusted_wheel=installer_execution_started,
+            return finish_update(
+                _trusted_update_failure(
+                    payload,
+                    error,
+                    trusted_wheel=trusted_wheel,
+                    retain_trusted_wheel=installer_execution_started,
+                )
             )
         initial_version_check = payload.get("version_check")
         resulting_version = str(payload.get("resulting_version") or current_version)
@@ -722,29 +721,33 @@ def run_guard_update(
                 payload.pop("retry_command", None)
                 if trusted_wheel is not None:
                     _retain_local_wheel_staging(payload)
-                return payload, 1
+                return finish_update((payload, 1))
             payload["status"] = "failed"
             payload["changed"] = False
             payload["reason_code"] = "update_installer_failed"
             payload["message"] = "HOL Guard update failed."
             if trusted_wheel is not None:
                 _retain_local_wheel_staging(payload)
-            return payload, 1
+            return finish_update((payload, 1))
         if trusted_wheel is not None:
             try:
                 if Version(resulting_version) != Version(trusted_wheel.version):
-                    return _trusted_update_failure(
+                    return finish_update(
+                        _trusted_update_failure(
+                            payload,
+                            UpdateSubprocessError("update_version_mismatch"),
+                            trusted_wheel=trusted_wheel,
+                            retain_trusted_wheel=installer_execution_started,
+                        )
+                    )
+            except InvalidVersion:
+                return finish_update(
+                    _trusted_update_failure(
                         payload,
-                        UpdateSubprocessError("update_version_mismatch"),
+                        UpdateSubprocessError("update_version_output_invalid"),
                         trusted_wheel=trusted_wheel,
                         retain_trusted_wheel=installer_execution_started,
                     )
-            except InvalidVersion:
-                return _trusted_update_failure(
-                    payload,
-                    UpdateSubprocessError("update_version_output_invalid"),
-                    trusted_wheel=trusted_wheel,
-                    retain_trusted_wheel=installer_execution_started,
                 )
         if trusted_wheel is not None:
             _record_verified_local_wheel_receipt(
@@ -787,7 +790,7 @@ def run_guard_update(
                 try:
                     active_command = update_context.build_installer_command(retry_command)
                 except UpdateSubprocessError as error:
-                    return _trusted_update_failure(payload, error, trusted_wheel=trusted_wheel)
+                    return finish_update(_trusted_update_failure(payload, error, trusted_wheel=trusted_wheel))
                 payload["upgrade_source"] = update_context.source.public_name
                 continue
         break
@@ -872,8 +875,8 @@ def run_guard_update(
                     "message": "HOL Guard was updated, but its daemon could not be restarted safely.",
                 }
             )
-            return payload, 1
-    return payload, 0
+            return finish_update((payload, 1))
+    return finish_update((payload, 0))
 
 
 def _record_verified_local_wheel_receipt(
@@ -961,10 +964,19 @@ def _trusted_update_failure(
             "changed": False,
             "reason_code": error.reason_code,
             "error": error.reason_code,
-            "message": "HOL Guard update could not complete in its trusted maintenance environment.",
+            "message": _TRUSTED_UPDATE_FAILURE_MESSAGES.get(
+                error.reason_code,
+                "HOL Guard update could not complete in its trusted maintenance environment.",
+            ),
         }
     )
     return payload, 1
+
+
+def _current_version_from_subprocess(update_context: TrustedUpdateContext) -> str:
+    """Return the validated post-install version from one trusted probe."""
+
+    return verify_installed_distribution(update_context)
 
 
 def _trusted_update_public_payload(context: TrustedUpdateContext) -> dict[str, object]:
@@ -1157,10 +1169,7 @@ def _stale_retry_command(payload: dict[str, object]) -> str:
         return ""
     version_check = payload.get("version_check")
     if isinstance(version_check, dict) and version_check.get("update_available") is True:
-        command = ["hol-guard", "update"]
-        if payload.get("release_channel") == "alpha":
-            command.append("--alpha")
-        return _shell_command(command)
+        return _shell_command(["hol-guard", "update"])
     retry_command = payload.get("retry_command")
     if isinstance(retry_command, str) and retry_command.strip():
         return retry_command.strip()
@@ -1204,7 +1213,7 @@ def _success_message(
             return f"{message} Run: {retry_command}"
         return message
     if status == "current":
-        return "HOL Guard is already current."
+        return already_current_update_message(version_check if isinstance(version_check, dict) else None)
     if status == "updated" and current_version == resulting_version:
         return "HOL Guard source was repaired successfully."
     if (
@@ -1311,6 +1320,7 @@ def _version_check_payload(
             "required_python": _format_python_requirements(required_python_requirements),
             "runtime_python": runtime_python,
         }
+    reserved_alpha = _newest_reserved_alpha_version(latest_pypi=latest_version) if include_alpha else None
     return {
         "source": "pypi",
         **({"release_channel": "alpha"} if include_alpha else {}),
@@ -1318,6 +1328,7 @@ def _version_check_payload(
         "current_version": current_version,
         "latest_version": latest_version,
         "update_available": update_available,
+        **({"reserved_alpha_version": reserved_alpha} if reserved_alpha else {}),
     }
 
 
@@ -1385,6 +1396,92 @@ def _latest_alpha_version_from_pypi(current_version: str) -> str | None:
     if not candidates:
         return None
     return max(candidates, key=lambda candidate: candidate[0])[1]
+
+
+def already_current_update_message(version_check: Mapping[str, object] | None) -> str:
+    if not version_check:
+        return "HOL Guard is already current."
+    latest = version_check.get("latest_version")
+    reserved = version_check.get("reserved_alpha_version")
+    if (
+        isinstance(latest, str)
+        and latest.strip()
+        and isinstance(reserved, str)
+        and reserved.strip()
+        and _is_newer_version(reserved.strip(), latest.strip()) is True
+    ):
+        return (
+            f"HOL Guard is already current on PyPI ({latest.strip()}). "
+            f"GitHub reserved {reserved.strip()}, but that alpha is not published yet."
+        )
+    return "HOL Guard is already current."
+
+
+def select_reserved_alpha_version(refs: object, *, latest_pypi: str | None) -> str | None:
+    """Return the newest reserved alpha on the same series as the live PyPI alpha."""
+
+    if not isinstance(refs, list):
+        return None
+    latest_base: str | None = None
+    latest_text = latest_pypi.strip() if isinstance(latest_pypi, str) else ""
+    if latest_text:
+        try:
+            latest_base = Version(latest_text).base_version
+        except InvalidVersion:
+            latest_base = None
+    candidates: list[tuple[Version, str]] = []
+    for item in refs:
+        if not isinstance(item, dict):
+            continue
+        ref = item.get("ref")
+        if not isinstance(ref, str) or not ref.startswith("refs/tags/alpha/v"):
+            continue
+        version_text = ref.removeprefix("refs/tags/alpha/v")
+        try:
+            parsed_version = Version(version_text)
+        except InvalidVersion:
+            continue
+        if parsed_version.pre is None or parsed_version.pre[0] != "a":
+            continue
+        if latest_base is not None and parsed_version.base_version != latest_base:
+            continue
+        candidates.append((parsed_version, version_text))
+    if not candidates:
+        return None
+    newest = max(candidates, key=lambda candidate: candidate[0])[1]
+    if latest_text and _is_newer_version(newest, latest_text) is not True:
+        return None
+    return newest
+
+
+def _newest_reserved_alpha_version(*, latest_pypi: str | None) -> str | None:
+    request = urllib.request.Request(
+        _GITHUB_ALPHA_REFS_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "hol-guard-update",
+        },
+    )
+    deadline = time.monotonic() + _PYPI_TIMEOUT_SECONDS
+    try:
+        with managed_urlopen(
+            request,
+            timeout=_PYPI_TIMEOUT_SECONDS,
+            policy=_version_network_policy.get(),
+        ) as response:
+            raw_payload = _read_bounded_pypi_response(response, deadline=deadline)
+            payload = json.loads(raw_payload.decode("utf-8"))
+    except (
+        ManagedNetworkError,
+        OSError,
+        TimeoutError,
+        urllib.error.URLError,
+        http.client.IncompleteRead,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+    ):
+        return None
+    return select_reserved_alpha_version(payload, latest_pypi=latest_pypi)
 
 
 def _read_bounded_pypi_response(response: object, *, deadline: float) -> bytes:
@@ -1558,7 +1655,7 @@ def _is_frozen_runtime() -> bool:
 
 
 def _is_desktop_managed_runtime() -> bool:
-    return _is_frozen_runtime() and os.environ.get("HOL_GUARD_DESKTOP") == "1"
+    return is_desktop_managed_runtime()
 
 
 def _runtime_package_path() -> Path:
@@ -2012,12 +2109,6 @@ def _credential_safe_url(value: str) -> str:
     return parsed._replace(netloc=netloc, query="", fragment="").geturl()
 
 
-def _current_version_from_subprocess(update_context: TrustedUpdateContext) -> str:
-    """Return one validated version from the context's intended distribution."""
-
-    return update_context.query_distribution().version
-
-
 def _standalone_update_context(context: HarnessContext) -> TrustedUpdateContext:
     state = load_managed_policy()
     if state.status != "absent" and state.policy is None:
@@ -2108,7 +2199,7 @@ def refresh_guard_daemon_after_update(
     try:
         active_context = update_context or _standalone_update_context(context)
         result = active_context.run(
-            active_context.python_command(_DAEMON_REFRESH_SCRIPT),
+            active_context.python_command(_DAEMON_REFRESH_BOOTSTRAP_SCRIPT),
             input_text=json.dumps(
                 {
                     "guard_home": str(context.guard_home),
@@ -2219,15 +2310,14 @@ def _verified_newer_guard_daemon(
         method="GET",
     )
     try:
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(request, timeout=1.0) as response:
+        with managed_urlopen(request, timeout=1.0, policy=ManagedNetworkPolicy(proxy_mode="none")) as response:
             if response.status != 200:
                 return None
             response_bytes = response.read(65_537)
             if len(response_bytes) > 65_536:
                 return None
             details = json.loads(response_bytes.decode("utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError):
+    except (ManagedNetworkError, OSError, ValueError, json.JSONDecodeError, urllib.error.URLError):
         return None
     if not isinstance(details, dict) or details.get("ok") is not True:
         return None
@@ -2414,6 +2504,7 @@ def _repair_supported_harnesses_in_process(
         repaired_installs.append(repaired_cursor)
     if cursor_warning is not None:
         repair_notes.append(cursor_warning)
+    append_grok_repair(repaired_installs, repair_notes, context=context, store=store, workspace=workspace, now=now)
     legacy_omp_migration, legacy_omp_warning = _migrate_legacy_omp_install(
         context=context,
         store=store,
@@ -2474,7 +2565,7 @@ def _migrate_legacy_omp_install(
             repair_workspace or workspace,
             now,
         )
-    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         return None, f"Could not migrate verified Oh My Pi protection during update: {error}"
     migrated = payload.get("managed_install")
     if not isinstance(migrated, dict):
@@ -2491,13 +2582,7 @@ def _repair_pi_family_install(
     workspace: str | None,
     now: str,
 ) -> tuple[dict[str, object] | None, str | None]:
-    """Rewrite one managed Pi-family extension after package updates.
-
-    The extension embeds timeout and daemon-compat constants. Refreshing it after
-    update keeps the fast daemon path available and avoids cold CLI timeouts.
-    When the on-disk extension and settings already match the current package,
-    skip the rewrite so already-current updates stay silent.
-    """
+    """Rewrite one managed Pi-family extension after package updates."""
 
     try:
         managed_install = store.get_managed_install(harness)
@@ -2518,7 +2603,7 @@ def _repair_pi_family_install(
             repair_workspace or workspace,
             now,
         )
-    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         return None, f"Could not refresh {display_name} protection during update: {error}"
     repaired = payload.get("managed_install")
     if not isinstance(repaired, dict):
@@ -2578,17 +2663,20 @@ def _repair_cursor_install(
     if not isinstance(manifest, dict):
         return None, "Could not inspect Cursor protection during update: managed manifest is invalid"
     surface_value = manifest.get("surface")
-    surface = surface_value if surface_value in {"editor", "all"} else None
+    surface: str | None = (
+        surface_value if isinstance(surface_value, str) and surface_value in {"editor", "all"} else None
+    )
     if surface is None:
         return None, None
     try:
         repair_context, repair_workspace = _repair_context_from_managed_install(context, managed_install)
         hook_state = cursor_native_hook_state(repair_context)
-    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         return None, f"Could not inspect Cursor protection during update: {error}"
     if hook_state["protection_active"] is True:
         return None, None
     try:
+        repair_surface = None if surface == "all" else surface
         payload = apply_managed_install(
             "install",
             "cursor",
@@ -2597,9 +2685,9 @@ def _repair_cursor_install(
             store,
             repair_workspace or workspace,
             now,
-            surface=surface,
+            surface=repair_surface,
         )
-    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         return None, f"Could not repair Cursor protection during update: {error}"
     repaired = payload.get("managed_install")
     if not isinstance(repaired, dict):
@@ -2618,7 +2706,10 @@ def _refresh_opencode_pretool_plugin(
         return None
     if managed_install is None or not bool(managed_install.get("active")):
         return None
-    repair_context, _ = _repair_context_from_managed_install(context, managed_install)
+    try:
+        repair_context, _ = _repair_context_from_managed_install(context, managed_install)
+    except ValueError as error:
+        return f"Could not inspect OpenCode pretool plugin during update: {error}"
     global_path = global_plugin_path(repair_context)
     managed_path = managed_plugin_path(repair_context)
     try:
@@ -2639,60 +2730,6 @@ def _refresh_opencode_pretool_plugin(
     return "Refreshed the OpenCode pretool plugin during update. Restart OpenCode to load it."
 
 
-def _repair_context_from_managed_install(
-    context: HarnessContext,
-    managed_install: dict[str, object],
-) -> tuple[HarnessContext, str | None]:
-    managed_workspace = managed_install.get("workspace")
-    if isinstance(managed_workspace, str) and managed_workspace.strip():
-        workspace_path = Path(managed_workspace).expanduser().resolve()
-        manifest = managed_install.get("manifest")
-        explicit_value = manifest.get("hook_workspace_explicit") if isinstance(manifest, dict) else None
-        workspace_override_explicit = (
-            explicit_value
-            if isinstance(explicit_value, bool)
-            else _legacy_codex_workspace_was_explicit(context, managed_install, workspace_path)
-        )
-        return (
-            HarnessContext(
-                home_dir=context.home_dir,
-                workspace_dir=workspace_path,
-                guard_home=context.guard_home,
-                home_override_explicit=context.home_override_explicit,
-                workspace_override_explicit=workspace_override_explicit,
-            ),
-            str(workspace_path),
-        )
-    return (
-        HarnessContext(
-            home_dir=context.home_dir,
-            workspace_dir=None,
-            guard_home=context.guard_home,
-            home_override_explicit=context.home_override_explicit,
-        ),
-        None,
-    )
-
-
-def _legacy_codex_workspace_was_explicit(
-    context: HarnessContext,
-    managed_install: dict[str, object],
-    workspace_path: Path,
-) -> bool:
-    if managed_install.get("harness") != "codex":
-        return True
-    try:
-        authenticated = load_authenticated_hook_manifest(
-            context.guard_home,
-            CodexHarnessAdapter._hook_config_path(context),
-        )
-    except (CodexHookIntegrityError, OSError):
-        return False
-    manifest_context = authenticated.get("context")
-    bound_workspace = manifest_context.get("workspace_dir") if isinstance(manifest_context, dict) else None
-    return isinstance(bound_workspace, str) and Path(bound_workspace).resolve() == workspace_path
-
-
 def _repair_codex_install(
     *,
     context: HarnessContext,
@@ -2700,7 +2737,10 @@ def _repair_codex_install(
     workspace: str | None,
     now: str,
 ) -> tuple[dict[str, object] | None, str | None]:
-    repair_target = _codex_repair_target(context, store)
+    try:
+        repair_target = _codex_repair_target(context, store)
+    except ValueError as error:
+        return None, f"Could not inspect Codex protection during update: {error}"
     if repair_target is None:
         return None, None
     repair_context, repair_workspace = repair_target
@@ -2724,7 +2764,7 @@ def _repair_codex_install(
             repair_workspace,
             now,
         )
-    except (OSError, RuntimeError, json.JSONDecodeError, sqlite3.Error) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, sqlite3.Error) as error:
         return None, f"Could not repair Codex protection during update: {error}"
     try:
         repaired_state = codex_native_hook_state(repair_context)
@@ -2802,8 +2842,11 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
         auto_updatable = False
         blocked_reason = "An organization-configured package source is required."
     elif installer == "desktop":
-        auto_updatable = False
-        blocked_reason = "Updates are managed by HOL Guard Desktop."
+        desktop_version = installed_distribution.version if installed_distribution is not None else _current_version()
+        include_alpha, auto_updatable, blocked_reason = desktop_update_status_state(
+            current_version=desktop_version,
+            requested_alpha=include_alpha,
+        )
     else:
         try:
             installed_distribution = _status_installed_distribution(
@@ -2834,17 +2877,17 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
             network_policy=(managed_policy.network if managed_policy is not None else ManagedNetworkPolicy()),
             include_alpha=include_alpha,
         )
-        if installed_distribution is not None and installer != "desktop"
+        if installed_distribution is not None
         else {
             "source": source_kind,
-            "status": "managed" if installer == "desktop" else "unavailable",
+            "status": "unavailable",
             "current_version": current_version if current_version != "unknown" else None,
             "latest_version": None,
             "update_available": None,
         }
     )
 
-    if auto_updatable and _python_runtime_blocks_update(version_check):
+    if installer != "desktop" and auto_updatable and _python_runtime_blocks_update(version_check):
         auto_updatable = False
         blocked_reason = _python_runtime_block_message(version_check)
     elif auto_updatable and isinstance(direct_url, dict):
@@ -2890,14 +2933,14 @@ def build_guard_update_status_payload(*, guard_home: Path | None = None) -> dict
         "auto_updatable": auto_updatable,
         "update_available": update_available,
         "blocked_reason": blocked_reason,
-        "python_update_required": _python_runtime_blocks_update(version_check),
+        "python_update_required": False if installer == "desktop" else _python_runtime_blocks_update(version_check),
         "recovery_reinstall_available": recovery_reinstall_available,
         "recovery_reinstall_command": recovery_reinstall_command,
-        "release_channel": update_channel,
+        "release_channel": "alpha" if include_alpha else update_channel,
     }
     if trusted_failure_reason is not None:
         payload["reason_code"] = trusted_failure_reason
-    return payload
+    return finalize_desktop_update_status(payload, candidates=pypi_alpha_versions(_last_pypi_payload))
 
 
 def _status_installed_distribution(

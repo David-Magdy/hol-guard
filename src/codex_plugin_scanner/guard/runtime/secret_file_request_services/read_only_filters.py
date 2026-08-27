@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -20,6 +21,7 @@ def _read_only_lookup_filter_segment_is_safe(
     args: list[str],
     *,
     home_dir: Path | None = None,
+    require_explicit_rg_no_config: bool = False,
 ) -> bool:
     if command == "cat":
         return not args or all(arg == "-" or (arg.startswith("-") and ">" not in arg) for arg in args)
@@ -30,8 +32,39 @@ def _read_only_lookup_filter_segment_is_safe(
     if command in {"grep", "egrep", "fgrep"}:
         return _read_only_lookup_filter_grep_args_are_safe(args, home_dir=home_dir)
     if command == "rg":
-        return _read_only_lookup_filter_rg_args_are_safe(args)
+        return (
+            not require_explicit_rg_no_config or "--no-config" in args
+        ) and _read_only_lookup_filter_rg_args_are_safe(args)
     return False
+
+
+def _github_output_filter_segment_is_safe(
+    command: str,
+    args: list[str],
+    *,
+    home_dir: Path | None = None,
+    command_text: str | None = None,
+) -> bool:
+    """Require explicit config isolation for filters over remote output."""
+    require_no_config = command == "rg" and not _ripgrep_configuration_is_absent(command_text)
+    return _read_only_lookup_filter_segment_is_safe(
+        command, args, home_dir=home_dir, require_explicit_rg_no_config=require_no_config
+    )
+
+
+def _ripgrep_configuration_is_absent(command_text: str | None) -> bool:
+    if os.environ.get("RIPGREP_CONFIG_PATH") or command_text is None:
+        return False
+    return re.search(r"(?:^|[\s;&|])(?:export\s+)?RIPGREP_CONFIG_PATH\s*=", command_text) is None
+
+
+def _read_only_lookup_may_be_primary(
+    known_command: bool,
+    control_before: tuple[str, ...],
+    safe_pipe_filter: bool,
+) -> bool:
+    """Keep pipe filters on the stricter stdin-filter validation path."""
+    return known_command and (control_before != ("|",) or safe_pipe_filter)
 
 
 def _read_only_lookup_sed_args_are_safe(
@@ -290,6 +323,8 @@ def _read_only_lookup_filter_rg_args_are_safe(args: list[str]) -> bool:
     for arg in args:
         if _read_only_lookup_arg_is_redirection(arg):
             return False
+        if "`" in arg or re.search(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?!_-]|\{|\()", arg):
+            return False
         if expect_pattern:
             expect_pattern = False
             if not arg:
@@ -328,7 +363,8 @@ def _read_only_lookup_filter_rg_args_are_safe(args: list[str]) -> bool:
         if saw_pattern:
             return False
         saw_pattern = bool(arg)
-    return saw_pattern and saw_no_config and not expect_pattern
+    config_is_disabled = saw_no_config or not os.environ.get("RIPGREP_CONFIG_PATH", "").strip()
+    return saw_pattern and config_is_disabled and not expect_pattern
 
 
 def _read_only_lookup_arg_is_redirection(arg: str) -> bool:
@@ -396,6 +432,7 @@ __all__ = [
     "_GREP_PATTERN_OPTIONS",
     "_GREP_SKIP_NEXT_OPTIONS",
     "_attached_redirection_operator",
+    "_github_output_filter_segment_is_safe",
     "_read_only_lookup_arg_is_redirection",
     "_read_only_lookup_filter_grep_args_are_safe",
     "_read_only_lookup_filter_rg_args_are_safe",

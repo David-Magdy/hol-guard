@@ -19,9 +19,7 @@ SPEC.loader.exec_module(duration_manifest)
 
 
 def _write_report(path: Path, values: dict[str, float]) -> None:
-    path.write_text(
-        json.dumps({"schema_version": 1, "node_durations_seconds": values}), encoding="utf-8"
-    )
+    path.write_text(json.dumps({"schema_version": 1, "node_durations_seconds": values}), encoding="utf-8")
 
 
 def test_manifest_merges_reports_deterministically_and_rejects_duplicate_nodes(tmp_path: Path) -> None:
@@ -43,9 +41,7 @@ def test_manifest_merges_reports_deterministically_and_rejects_duplicate_nodes(t
 def test_manifest_round_trip_and_age_validation(tmp_path: Path) -> None:
     output = tmp_path / "manifest.json"
     observed_at = datetime(2026, 7, 26, 16, 0, tzinfo=timezone.utc)
-    duration_manifest.write_duration_manifest(
-        output, {"tests/test_a.py::test_a": 1.0}, observed_at
-    )
+    duration_manifest.write_duration_manifest(output, {"tests/test_a.py::test_a": 1.0}, observed_at)
 
     assert duration_manifest.load_duration_manifest(
         output, now=observed_at + timedelta(days=27), max_age=timedelta(days=28)

@@ -32,7 +32,10 @@ assert(resolveView("/apps/%2A") === "fleet", "encoded wildcard app route falls b
 assert(resolveView(PROTECT_ROUTE) === "fleet", "/protect resolves to protect workspace view");
 assert(resolveView("/about") === "about", "/about resolves to about view");
 assert(TODAY_EVIDENCE_ROUTE === "/evidence?time=today", "daily activity opens Evidence filtered to today");
+assert(resolveView("/extensions/command.git") === "extensions", "canonical extension detail route resolves to extensions view");
+assert(resolveView("/extensions/%2Fetc%2Fpasswd") === "extensions", "invalid nested extension route stays inside extensions fail-closed view");
 assert(viewTitle("about") === "About", "about view title is About");
+assert(viewTitle("extensions") === "Extensions", "extensions view uses Extensions title");
 assert(!shouldFetchArtifactDiff("package_request"), "package approvals do not request unsupported artifact diffs");
 assert(shouldFetchArtifactDiff("mcp_server"), "configuration approvals continue to request artifact diffs");
 assert(!shouldFetchArtifactDiff("future_request"), "unknown approval types do not request unsupported artifact diffs");

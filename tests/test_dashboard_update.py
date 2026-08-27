@@ -42,6 +42,10 @@ def _use_legacy_status_distribution(monkeypatch: pytest.MonkeyPatch) -> None:
         "codex_plugin_scanner.guard.cli.update_commands._status_installed_distribution",
         build_legacy_status_distribution,
     )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.manager._guard_daemon_process_inventory_for_guard_home",
+        lambda _guard_home: [],
+    )
 
 
 def _store(tmp_path: Path) -> GuardStore:
@@ -141,55 +145,6 @@ def test_build_guard_update_status_payload_shape(monkeypatch: pytest.MonkeyPatch
     assert payload["latest_version"] == "1.2.4"
     assert payload["auto_updatable"] is True
     assert payload["update_available"] is True
-
-
-def test_frozen_desktop_status_uses_embedded_version_without_package_probe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(update_commands, "_is_frozen_runtime", lambda: True)
-    monkeypatch.setenv("HOL_GUARD_DESKTOP", "1")
-    monkeypatch.setattr(update_commands.package_version, "__version__", "3.0.0a160")
-    monkeypatch.setattr(
-        update_commands.importlib.metadata,
-        "version",
-        MagicMock(side_effect=update_commands.importlib.metadata.PackageNotFoundError),
-    )
-    status_probe = MagicMock(side_effect=AssertionError("Desktop must not probe package metadata"))
-    monkeypatch.setattr(update_commands, "_status_installed_distribution", status_probe)
-    version_check = MagicMock(side_effect=AssertionError("Desktop manages Core updates"))
-    monkeypatch.setattr(update_commands, "_version_check_payload", version_check)
-
-    payload = build_guard_update_status_payload()
-
-    assert payload["installer"] == "desktop"
-    assert payload["current_version"] == "3.0.0a160"
-    assert payload["latest_version"] is None
-    assert payload["auto_updatable"] is False
-    assert payload["update_available"] is False
-    assert payload["blocked_reason"] == "Updates are managed by HOL Guard Desktop."
-    assert "reason_code" not in payload
-    assert payload["version_check"] == {
-        "source": "pypi",
-        "status": "managed",
-        "current_version": "3.0.0a160",
-        "latest_version": None,
-        "update_available": None,
-    }
-    status_probe.assert_not_called()
-    version_check.assert_not_called()
-
-
-def test_frozen_runtime_without_desktop_marker_keeps_installer_detection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(update_commands, "_is_frozen_runtime", lambda: True)
-    monkeypatch.delenv("HOL_GUARD_DESKTOP", raising=False)
-    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pip")
-
-    payload = update_commands.build_guard_install_surface_payload()
-
-    assert payload["installer"] == "pip"
-    assert cast(dict[str, object], payload["binary_diagnostics"])["path_status"] != "bundled"
 
 
 @pytest.mark.parametrize(
@@ -420,16 +375,10 @@ def test_alpha_update_channel_persists_and_schedules_alpha(tmp_path: Path, monke
         status, payload = _post_json_body(daemon, "/v1/update/channel", {"update_channel": "alpha"})
         assert status == 200
         assert payload["release_channel"] == "alpha"
+        refreshed_payload, refreshed_headers = _get_json_with_headers(daemon, "/v1/update/status")
+        status, payload = _post_json(daemon, "/v1/update")
     finally:
         daemon.stop()
-
-    restarted_daemon = GuardDaemonServer(GuardStore(store.guard_home), host="127.0.0.1", port=0)
-    restarted_daemon.start()
-    try:
-        refreshed_payload, refreshed_headers = _get_json_with_headers(restarted_daemon, "/v1/update/status")
-        status, payload = _post_json(restarted_daemon, "/v1/update")
-    finally:
-        restarted_daemon.stop()
 
     assert status == 200
     assert payload["scheduled"] is True

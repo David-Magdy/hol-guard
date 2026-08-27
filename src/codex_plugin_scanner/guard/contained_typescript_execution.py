@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
-from .runtime.containment_contract import ContainmentPolicy, ContainmentRequest
-from .runtime.containment_executor import ContainmentExecutionResult, execute_contained, file_sha256
-from .runtime.containment_health import (
-    ContainmentHealthEvidence,
-    contained_positive_proof,
+from .containment_execution_support import (
+    containment_positive_proof as _proof_from_result,
 )
+from .containment_execution_support import (
+    load_current_containment_health as _load_current_containment_health,
+)
+from .runtime.contained_execution_common import (
+    canonical_existing_directory as _canonical_directory,
+)
+from .runtime.contained_execution_common import (
+    clean_containment_environment as _clean_environment,
+)
+from .runtime.contained_execution_common import (
+    containment_binding_digest as _binding_digest,
+)
+from .runtime.containment_contract import ContainmentPolicy, ContainmentRequest
+from .runtime.containment_executor import execute_contained, file_sha256
 from .runtime.effect_contract import (
     ContainmentRequirement,
     DecisionBasis,
@@ -134,44 +142,6 @@ def try_execute_contained_typescript(
     return ContainedTypeScriptResult(result.exit_code, result.stdout, result.stderr, proof, decision)
 
 
-def _proof_from_result(
-    result: ContainmentExecutionResult,
-    request: ContainmentRequest,
-    health: ContainmentHealthEvidence,
-    runtime_fingerprint: str,
-) -> PositiveProof:
-    now = datetime.now(timezone.utc)
-    return contained_positive_proof(
-        result.attestation,
-        request,
-        health,
-        requirements=(
-            ProofRequirement.OPERATION_AND_TARGETS,
-            ProofRequirement.WORKSPACE_IDENTITY,
-            ProofRequirement.WORKING_DIRECTORY_IDENTITY,
-            ProofRequirement.EXECUTABLE_IDENTITY,
-            ProofRequirement.LAUNCH_CHAIN,
-            ProofRequirement.PARSER_CONFIDENCE,
-            ProofRequirement.EXPECTED_EFFECTS,
-        ),
-        now=now,
-        runtime_fingerprint=runtime_fingerprint,
-    )
-
-
-def _load_current_containment_health(guard_home: Path) -> tuple[ContainmentHealthEvidence, str]:
-    from .daemon.client import load_guard_surface_daemon_client
-    from .daemon.manager import current_guard_daemon_runtime_fingerprint
-
-    client = load_guard_surface_daemon_client(guard_home.resolve(strict=True))
-    evidence = ContainmentHealthEvidence.from_mapping(client.containment_health())
-    runtime_fingerprint = current_guard_daemon_runtime_fingerprint()
-    errors = evidence.compatibility_errors(now=datetime.now(timezone.utc), runtime_fingerprint=runtime_fingerprint)
-    if errors:
-        raise RuntimeError(f"containment health incompatible: {errors[0]}")
-    return evidence, runtime_fingerprint
-
-
 def _contained_decision(proof: PositiveProof) -> EffectDecision:
     requirements = frozenset(
         {
@@ -240,29 +210,6 @@ def _resolve_node(path_value: str, shim_directory: Path) -> str:
     ):
         raise ValueError("node executable is not path-pinned")
     return str(canonical)
-
-
-def _clean_environment(environment: dict[str, str]) -> tuple[tuple[str, str], ...]:
-    allowed: dict[str, str] = {}
-    for key in ("LANG", "LC_ALL", "LC_CTYPE", "NO_COLOR", "TERM"):
-        value = environment.get(key)
-        if value:
-            allowed[key] = value
-    return tuple(sorted(allowed.items()))
-
-
-def _canonical_directory(path: Path) -> Path:
-    if path.is_symlink() or not path.is_dir():
-        raise ValueError("workspace must be an existing canonical directory")
-    canonical = path.resolve(strict=True)
-    if canonical != Path(os.path.normpath(str(path))):
-        raise ValueError("workspace cannot contain aliases")
-    return canonical
-
-
-def _binding_digest(payload: dict[str, object]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-    return hashlib.sha256(len(encoded).to_bytes(8, "big") + encoded).hexdigest()
 
 
 def _shell_join(tokens: tuple[str, ...]) -> str:

@@ -129,6 +129,7 @@ def verify_totp_code(
     now_epoch: float,
     skew_steps: int,
     last_accepted_counter: int | None,
+    allow_last_counter: bool = False,
 ) -> int | None:
     normalized = code.strip()
     if len(normalized) != _TOTP_DIGITS or not normalized.isdigit():
@@ -138,7 +139,9 @@ def verify_totp_code(
         counter = current + offset
         if counter < 0:
             continue
-        if last_accepted_counter is not None and counter <= last_accepted_counter:
+        if last_accepted_counter is not None and counter < last_accepted_counter:
+            continue
+        if last_accepted_counter is not None and counter == last_accepted_counter and not allow_last_counter:
             continue
         if hmac.compare_digest(totp_code_at_counter(secret=secret, counter=counter), normalized):
             return counter

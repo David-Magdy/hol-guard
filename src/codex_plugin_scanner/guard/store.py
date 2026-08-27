@@ -6,6 +6,7 @@ from __future__ import annotations
 from .store_base import *
 from .store_base import (
     SystemKeyringSecretStore,
+    _global_runtime_scoped_exact_match_key,
     _is_runtime_scoped_exact_match_key,
     _runtime_scoped_exact_match_key,
     browser_mcp_exact_match_context,
@@ -14,6 +15,7 @@ from .store_base import (
     runtime_tool_action_portable_match_context,
 )
 from .store_approval_facade import StoreApprovalsMixin
+from .store_approval_queries import StoreApprovalQueriesMixin
 from .store_cloud_events import StoreCloudEventsMixin
 from .store_command_activity import StoreCommandActivityMixin
 from .store_command_activity_api import StoreCommandActivityApiMixin
@@ -22,11 +24,19 @@ from .store_command_activity_maintenance import StoreCommandActivityMaintenanceM
 from .store_command_activity_privacy import StoreCommandActivityPrivacyMixin
 from .store_command_shadow import StoreCommandShadowMixin
 from .store_connection_schema import StoreConnectionSchemaMixin
+from .store_continuation import StoreContinuationMixin
+from .store_custom_extension_continuity import StoreCustomExtensionContinuityMixin
 from .store_event_receipts import StoreEventReceiptsMixin
 from .store_extension_control_authority import StoreExtensionControlAuthorityMixin
+from .store_managed_controls_status import StoreManagedControlsStatusMixin
+from .store_local_cli import StoreLocalCliMixin
+from .store_local_mcp import StoreLocalMcpMixin
 from .store_evidence_facade import StoreEvidenceMixin
+from .store_exact_cloud_review import StoreExactCloudReviewMixin
 from .store_inventory import StoreInventoryMixin
-from .store_live_request_outbox import StoreLiveRequestOutboxMixin
+from .store_policy_document import StorePolicyDocumentMixin
+from .store_review_event_outbox import StoreReviewEventOutboxMixin
+from .store_review_policy_memory import StoreReviewPolicyMemoryMixin
 from .store_oauth import StoreOAuthConnectMixin
 from .store_portable_project_memory import StorePortableProjectMemoryMixin
 from .store_policy import StorePolicyMixin
@@ -54,7 +64,12 @@ class GuardStore(
     StoreSecretPolicyIntegrityMixin,
     StoreWorkflowCapabilitySecretControlMixin,
     StoreConnectionSchemaMixin,
+    StoreContinuationMixin,
+    StoreManagedControlsStatusMixin,
     StoreExtensionControlAuthorityMixin,
+    StoreCustomExtensionContinuityMixin,
+    StoreLocalCliMixin,
+    StoreLocalMcpMixin,
     StoreCommandActivityMixin,
     StoreCommandActivityApiMixin,
     StoreCommandActivityLifecycleMixin,
@@ -65,15 +80,19 @@ class GuardStore(
     StoreInventoryMixin,
     StorePortableProjectMemoryMixin,
     StorePolicyMixin,
+    StoreReviewPolicyMemoryMixin,
     StorePolicyIntegrityAdminMixin,
     StoreCloudEventsMixin,
     StoreReceiptsRuntimeMixin,
+    StoreApprovalQueriesMixin,
     StoreApprovalsMixin,
-    StoreLiveRequestOutboxMixin,
+    StoreExactCloudReviewMixin,
+    StoreReviewEventOutboxMixin,
     StoreEventReceiptsMixin,
     StoreOAuthConnectMixin,
     StoreSessionsMixin,
     StoreEvidenceMixin,
+    StorePolicyDocumentMixin,
     StoreReadStateMixin,
     StoreTemporaryMcpMixin,
     StoreWorkflowCapabilitiesMixin,

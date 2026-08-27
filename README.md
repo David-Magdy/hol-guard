@@ -1,5 +1,7 @@
 # HOL Guard: Open-Source Antivirus for AI Agents
 
+<!-- mcp-name: io.github.hashgraph-online/hol-guard -->
+
 [![HOL Guard Version](https://img.shields.io/pypi/v/hol-guard.svg?logo=pypi&logoColor=white&cacheSeconds=300)](https://pypi.org/project/hol-guard/)
 [![Plugin Scanner Version](https://img.shields.io/pypi/v/plugin-scanner.svg?logo=pypi&logoColor=white&cacheSeconds=300)](https://pypi.org/project/plugin-scanner/)
 [![HOL Guard Downloads](https://img.shields.io/pypi/dm/hol-guard?logo=pypi&logoColor=white)](https://pypi.org/project/hol-guard/)
@@ -29,7 +31,15 @@ hol-guard init
 
 `hol-guard init` discovers compatible AI agents, explains each setup change before applying it, and guides you through your first protected action.
 
-[Install guide](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/get-started.md) · [Supported agents](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/harness-support.md) · [Local vs. cloud](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/local-vs-cloud.md) · [Security policy](https://github.com/hashgraph-online/hol-guard/blob/main/SECURITY.md)
+Guard 3.x alphas are opt-in and do not replace the stable 2.x release selected by normal installers. To evaluate a published alpha, pin its exact version from the [GitHub prereleases](https://github.com/hashgraph-online/hol-guard/releases):
+
+```bash
+pipx install --force "hol-guard==3.0.0a1"
+```
+
+Return to the stable 2.x channel with `pipx install --force "hol-guard<3"`.
+
+[Install guide](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/get-started.md) · [GuardPolicy v1alpha1](https://github.com/hashgraph-online/hol-guard/blob/main/spec/guard-policy/v1alpha1/README.md) · [Supported agents](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/harness-support.md) · [Local vs. cloud](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/local-vs-cloud.md) · [Security policy](https://github.com/hashgraph-online/hol-guard/blob/main/SECURITY.md)
 
 ## What HOL Guard Protects
 
@@ -218,20 +228,19 @@ artifact and policy pipeline as existing command classifications.
 
 </details>
 
-## Guard: Protection Levels
+## Guard: Protection
 
 HOL Guard is antivirus for AI agents. It evaluates supported runtime events and local artifacts, then applies the active policy before execution where the agent provides a pre-action boundary. Other integrations use native approval, managed proxy, launch-time, or post-action evidence surfaces according to the [support matrix](https://github.com/hashgraph-online/hol-guard/blob/main/docs/guard/harness-support.md).
 
-Choose a protection level with `hol-guard settings set security-level <level>`:
+Choose a protection posture with `hol-guard settings set protection protected|extra-careful|watch`:
 
-| Level | Who it's for | What it blocks |
+| Posture | Who it's for | What happens |
 | :--- | :--- | :--- |
-| **Gentle** | Teams who want minimal friction; experienced users | High-confidence secrets and clear exfil only |
-| **Balanced** | Most users (default) | Secrets, shell exfil, prompt injections, supply-chain hooks |
-| **Strict** | Security-conscious teams | Everything above plus low-confidence signals and untrusted prompts |
-| **Paranoid** | High-security environments | All the above plus any unrecognized MCP server action |
+| **Protected** | Almost everyone (default) | Stops theft, wipes, and Guard bypass. Asks once about new tools or first-time secret access, then remembers. |
+| **Extra careful** | Sensitive repos and untrusted tools | Same as Protected, and also asks the first time this project talks to a new site or installs a new tool. |
+| **Watch** | Debugging a false positive | Records what Guard would have stopped, but does not stop anything. Use only while debugging. |
 
-If you are unsure, start with **Balanced**. You can promote to **Strict** after reviewing your first week of receipts.
+If you are unsure, start with **Protected**. Legacy `hol-guard settings set security-level` and `hol-guard settings set mode` still work as aliases.
 
 ## Guard: Troubleshooting
 

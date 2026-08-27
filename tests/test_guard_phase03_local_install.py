@@ -11,6 +11,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,7 +22,14 @@ from codex_plugin_scanner.guard.cli import update_artifact as update_artifact_mo
 from codex_plugin_scanner.guard.cli import update_commands
 from codex_plugin_scanner.guard.cli.approval_commands import run_approval_open_command
 from codex_plugin_scanner.guard.cli.install_commands import apply_managed_install
+from codex_plugin_scanner.guard.daemon import update_refresh_program
+from codex_plugin_scanner.guard.mdm.contracts import ManagedNetworkPolicy
 from codex_plugin_scanner.guard.models import GuardApprovalRequest
+from codex_plugin_scanner.guard.runtime.command_extensions import CommandSafetyExtensionRegistry
+from codex_plugin_scanner.guard.runtime.extension_control_authority import (
+    AuthorityHealth,
+    ExtensionControlAuthorityView,
+)
 from codex_plugin_scanner.guard.shims import _trusted_import_root, _trusted_python_flags
 from codex_plugin_scanner.guard.store import GuardStore
 from tests.update_context_test_support import (
@@ -51,13 +59,85 @@ def _context(tmp_path: Path) -> HarnessContext:
     return HarnessContext(home_dir=home, workspace_dir=workspace, guard_home=guard_home)
 
 
+@pytest.mark.parametrize(
+    ("health", "candidate_version", "expected"),
+    (
+        (AuthorityHealth.PROTECTED, "2.9.9", True),
+        (AuthorityHealth.TAMPERED, "2.9.9", True),
+        (AuthorityHealth.DEGRADED_ACKNOWLEDGED, "2.9.9", True),
+        (AuthorityHealth.UNENROLLED, "2.9.9", False),
+        (AuthorityHealth.PROTECTED, "3.0.0", False),
+        (AuthorityHealth.PROTECTED, "3.0.1", False),
+    ),
+)
+def test_extension_control_authority_blocks_only_downgrades_after_enrollment(
+    health: AuthorityHealth,
+    candidate_version: str,
+    expected: bool,
+    tmp_path: Path,
+) -> None:
+    class FakeStore:
+        def read_extension_control_authority_for_registry(
+            self, registry: CommandSafetyExtensionRegistry
+        ) -> ExtensionControlAuthorityView:
+            return ExtensionControlAuthorityView(health, 0, registry.catalog_digest, ())
+
+    store = cast(GuardStore, FakeStore())
+
+    assert (
+        update_commands._authority_blocks_downgrade(
+            store,
+            guard_home=tmp_path,
+            current_version="3.0.0",
+            candidate_version=candidate_version,
+        )
+        is expected
+    )
+
+
+def test_update_blocks_protected_authority_downgrade_before_installer_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wheel = tmp_path / "hol_guard-2.9.9-py3-none-any.whl"
+    wheel.write_bytes(b"fake-wheel")
+    guard_home = tmp_path / "guard-home"
+    monkeypatch.setattr(update_commands, "_current_version", lambda: "3.0.0")
+    monkeypatch.setattr(update_commands, "_latest_version_from_pypi", lambda: "3.0.0")
+    monkeypatch.setattr(update_commands, "_direct_url_payload", lambda: None)
+    monkeypatch.setattr(update_commands, "_installer_kind", lambda: "pipx")
+    monkeypatch.setattr(
+        update_commands.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("installer must not execute")),
+    )
+
+    class ProtectedAuthorityStore:
+        def read_extension_control_authority_for_registry(
+            self, registry: CommandSafetyExtensionRegistry
+        ) -> ExtensionControlAuthorityView:
+            return ExtensionControlAuthorityView(AuthorityHealth.PROTECTED, 1, registry.catalog_digest, ())
+
+    payload, exit_code = update_commands.run_guard_update(
+        dry_run=False,
+        wheel=str(wheel),
+        guard_home=guard_home,
+        store=cast(GuardStore, ProtectedAuthorityStore()),
+    )
+
+    assert exit_code == 1
+    assert payload["status"] == "blocked"
+    assert payload["changed"] is False
+    assert payload["reason_code"] == "extension_control_authority_downgrade_blocked"
+
+
 def test_daemon_refresh_after_update_uses_fresh_interpreter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     context = _context(tmp_path)
     context.guard_home.mkdir(parents=True)
     (context.guard_home / "daemon-state.json").write_text("{}", encoding="utf-8")
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert command[-2:] == ["-c", update_commands._DAEMON_REFRESH_SCRIPT]
+        assert command[-2:] == ["-c", update_commands._DAEMON_REFRESH_BOOTSTRAP_SCRIPT]
         assert json.loads(str(kwargs["input"])) == {
             "guard_home": str(context.guard_home),
             "home_dir": str(context.home_dir),
@@ -75,6 +155,17 @@ def test_daemon_refresh_after_update_uses_fresh_interpreter(tmp_path: Path, monk
 
     assert payload == {"status": "restarted", "retired": [123], "runtime_verified": True}
     assert note == "Restarted the Guard daemon to load the updated package."
+
+
+def test_daemon_refresh_bootstrap_loads_script_from_installed_module(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(update_refresh_program, "DAEMON_REFRESH_SCRIPT", "print('new-runtime-refresh')")
+
+    exec(update_commands._DAEMON_REFRESH_BOOTSTRAP_SCRIPT, {})
+
+    assert capsys.readouterr().out == "new-runtime-refresh\n"
 
 
 def test_daemon_refresh_after_update_skips_when_daemon_is_not_running(tmp_path: Path) -> None:
@@ -119,18 +210,15 @@ def test_daemon_refresh_retains_verified_newer_desktop_runtime(
             assert limit == 65_537
             return json.dumps({**state, "ok": True}).encode("utf-8")
 
-    class Opener:
-        def open(self, request: urllib.request.Request, *, timeout: float) -> Response:
-            assert request.full_url == "http://127.0.0.1:5245/v1/healthz/details"
-            assert request.headers["X-guard-token"] == "daemon-token"
-            assert timeout == 1.0
-            return Response()
+    def urlopen(request: urllib.request.Request, *, timeout: float, policy: ManagedNetworkPolicy) -> Response:
+        assert request.full_url == "http://127.0.0.1:5245/v1/healthz/details"
+        assert request.headers["X-guard-token"] == "daemon-token"
+        assert timeout == 1.0
+        assert policy.proxy_mode == "none"
+        assert policy.proxy_url is None
+        return Response()
 
-    def build_opener(handler: urllib.request.ProxyHandler) -> Opener:
-        assert handler.proxies == {}
-        return Opener()
-
-    monkeypatch.setattr(update_commands.urllib.request, "build_opener", build_opener)
+    monkeypatch.setattr(update_commands, "managed_urlopen", urlopen)
 
     payload, note = update_commands.refresh_guard_daemon_after_update(
         context,
@@ -181,8 +269,7 @@ def test_daemon_refresh_restarts_runtime_older_than_installed_target(
             assert limit == 65_537
             return json.dumps({**state, "ok": True}).encode("utf-8")
 
-    opener = SimpleNamespace(open=lambda *_args, **_kwargs: Response())
-    monkeypatch.setattr(update_commands.urllib.request, "build_opener", lambda *_args: opener)
+    monkeypatch.setattr(update_commands, "managed_urlopen", lambda *_args, **_kwargs: Response())
     restart = SimpleNamespace(
         returncode=0,
         stdout='{"status":"restarted","runtime_verified":true}',
@@ -242,8 +329,7 @@ def test_daemon_refresh_does_not_trust_newer_state_when_live_identity_differs(
             assert limit == 65_537
             return json.dumps({**state, "ok": True, "runtime_fingerprint": "different-live-fingerprint"}).encode()
 
-    opener = SimpleNamespace(open=lambda *_args, **_kwargs: Response())
-    monkeypatch.setattr(update_commands.urllib.request, "build_opener", lambda *_args: opener)
+    monkeypatch.setattr(update_commands, "managed_urlopen", lambda *_args, **_kwargs: Response())
     restart = SimpleNamespace(
         returncode=0,
         stdout='{"status":"restarted","runtime_verified":true}',
@@ -287,8 +373,8 @@ def test_daemon_refresh_falls_back_when_authenticated_host_is_malformed(
     }
     monkeypatch.setattr(discovery, "load_authenticated_daemon_state", lambda _home: state)
     monkeypatch.setattr(manager, "load_guard_daemon_auth_token", lambda _home: "daemon-token")
-    build_opener = MagicMock()
-    monkeypatch.setattr(update_commands.urllib.request, "build_opener", build_opener)
+    managed_urlopen = MagicMock()
+    monkeypatch.setattr(update_commands, "managed_urlopen", managed_urlopen)
     restart = SimpleNamespace(
         returncode=0,
         stdout='{"status":"restarted","runtime_verified":true}',
@@ -308,7 +394,7 @@ def test_daemon_refresh_falls_back_when_authenticated_host_is_malformed(
 
     assert payload == {"status": "restarted", "runtime_verified": True}
     assert note == "Restarted the Guard daemon to load the updated package."
-    build_opener.assert_not_called()
+    managed_urlopen.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -345,8 +431,8 @@ def test_daemon_refresh_falls_back_for_incomplete_or_incompatible_identity(
         state[field] = value
     monkeypatch.setattr(discovery, "load_authenticated_daemon_state", lambda _home: state)
     monkeypatch.setattr(manager, "load_guard_daemon_auth_token", lambda _home: "daemon-token")
-    build_opener = MagicMock()
-    monkeypatch.setattr(update_commands.urllib.request, "build_opener", build_opener)
+    managed_urlopen = MagicMock()
+    monkeypatch.setattr(update_commands, "managed_urlopen", managed_urlopen)
     restart = SimpleNamespace(
         returncode=0,
         stdout='{"status":"restarted","runtime_verified":true}',
@@ -366,7 +452,7 @@ def test_daemon_refresh_falls_back_for_incomplete_or_incompatible_identity(
 
     assert payload == {"status": "restarted", "runtime_verified": True}
     assert note == "Restarted the Guard daemon to load the updated package."
-    build_opener.assert_not_called()
+    managed_urlopen.assert_not_called()
 
 
 def test_daemon_refresh_authorizes_breakaway_only_for_restart_child(tmp_path: Path) -> None:
@@ -398,7 +484,7 @@ def test_daemon_refresh_authorizes_breakaway_only_for_restart_child(tmp_path: Pa
     assert note == "Restarted the Guard daemon to load the updated package."
     assert calls == [
         (
-            update_commands._DAEMON_REFRESH_SCRIPT,
+            update_commands._DAEMON_REFRESH_BOOTSTRAP_SCRIPT,
             {
                 "input_text": json.dumps(
                     {
@@ -423,7 +509,7 @@ def test_daemon_refresh_rejects_unverified_runtime_handoff(tmp_path: Path) -> No
             return ["/trusted/python", script]
 
         def run(self, command: list[str], **_kwargs: object) -> SimpleNamespace:
-            if command[-1] == update_commands._DAEMON_REFRESH_SCRIPT:
+            if command[-1] == update_commands._DAEMON_REFRESH_BOOTSTRAP_SCRIPT:
                 return SimpleNamespace(
                     returncode=0,
                     stdout='{"status":"restarted"}',
@@ -481,8 +567,8 @@ def test_daemon_refresh_script_retries_a_retirement_timeout(
     monkeypatch.setattr(manager, "guard_daemon_retirement_is_complete", lambda _home: next(retirement_checks))
     monkeypatch.setattr(manager, "clear_guard_daemon_state", lambda _home: None)
     monkeypatch.setattr(manager, "repair_approval_center_locator", lambda _home: None)
+    monkeypatch.setattr(manager, "publish_approval_center_locator", lambda _home, _url: None)
     monkeypatch.setattr(manager, "ensure_guard_daemon_after_update", fake_ensure)
-    monkeypatch.setattr(manager, "ensure_approval_center", lambda _home: None)
     monkeypatch.setattr(manager, "load_guard_daemon_url", lambda _home: "http://127.0.0.1:5474")
     monkeypatch.setattr(update_commands.time, "monotonic", lambda: next(monotonic_values))
     monkeypatch.setattr(update_commands.time, "sleep", lambda _seconds: None)
@@ -523,7 +609,7 @@ def test_daemon_refresh_failure_runs_contained_cleanup_without_breakaway(tmp_pat
         def run(self, command: list[str], **kwargs: object) -> SimpleNamespace:
             script = command[-1]
             calls.append((script, dict(kwargs)))
-            if script == update_commands._DAEMON_REFRESH_SCRIPT:
+            if script == update_commands._DAEMON_REFRESH_BOOTSTRAP_SCRIPT:
                 return SimpleNamespace(returncode=1, stdout="", stderr="failed", output_limited=False)
             return SimpleNamespace(
                 returncode=0,
@@ -539,7 +625,7 @@ def test_daemon_refresh_failure_runs_contained_cleanup_without_breakaway(tmp_pat
 
     assert payload is None
     assert note == "Could not restart the Guard daemon after update: failed"
-    assert calls[0][0] == update_commands._DAEMON_REFRESH_SCRIPT
+    assert calls[0][0] == update_commands._DAEMON_REFRESH_BOOTSTRAP_SCRIPT
     assert calls[0][1]["allow_windows_job_breakaway"] is True
     assert calls[1][0] == update_commands._DAEMON_REFRESH_CLEANUP_SCRIPT
     assert "allow_windows_job_breakaway" not in calls[1][1]

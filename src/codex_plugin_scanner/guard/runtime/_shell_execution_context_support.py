@@ -65,6 +65,20 @@ class ShellPathIdentity:
         )
 
 
+def shell_path_identity_payload(identity: ShellPathIdentity | None) -> dict[str, int] | None:
+    """Return the stable JSON payload for a captured shell path identity."""
+
+    if identity is None:
+        return None
+    return {
+        "change_time_ns": identity.change_time_ns,
+        "creation_time_ns": identity.creation_time_ns,
+        "device": identity.device,
+        "inode": identity.inode,
+        "mode": identity.mode,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class ShellPathProof:
     """A lexical directory path bound to the target observed during modeling."""

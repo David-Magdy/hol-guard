@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import os
@@ -15,6 +14,16 @@ from pathlib import Path
 from typing import Protocol
 
 from .launcher import merge_guard_launcher_env
+from .package_shim_frozen import (
+    FROZEN_PACKAGE_SHIM_SENTINEL,
+    classify_installed_package_shim_integrity,
+    frozen_package_shim_python_path,
+    installed_package_shim_attestation_bytes,
+    normalized_package_shim_content,
+    resolve_frozen_package_shim_path,
+    run_frozen_package_shim,
+    write_package_manager_shim_files,
+)
 from .package_shim_status import enrich_package_shim_status_payload
 from .shim_probe import (
     SHIM_PROBE_ENV_VALUE,
@@ -219,6 +228,15 @@ def _build_windows_script(posix_path: Path) -> str:
     return "\r\n".join(("@echo off", f'"{sys.executable}" "{posix_path}" %*', ""))
 
 
+def _write_package_manager_shim_files(context: HarnessContext, command: str, shim_dir: Path) -> Path:
+    return write_package_manager_shim_files(
+        shim_dir=shim_dir,
+        command=command,
+        python_source=_build_package_manager_python_shim(context, command),
+        windows_script=_build_windows_script,
+    )
+
+
 def _home_override_args(context: HarnessContextLike) -> list[str]:
     if not context.home_dir:
         return []
@@ -235,63 +253,7 @@ def build_shim_content_hash(content: bytes) -> str:
 
 
 def _normalized_package_shim_content(content: bytes) -> str:
-    """Return generated-shim content with install-specific paths masked."""
-    try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        return ""
-    normalized_lines: list[str] = []
-    for line in text.splitlines():
-        if line.startswith("#!"):
-            normalized_lines.append("#!<python>")
-            continue
-        if line.startswith("base_command = "):
-            normalized_lines.append(f"base_command = {_normalized_base_command_repr(line)}")
-            continue
-        if line.startswith("guard_cwd = ") or line.startswith("guard_cli_cwd = "):
-            normalized_lines.append("guard_cli_cwd = '<path>'")
-            continue
-        if line.startswith("guard_home = "):
-            normalized_lines.append("guard_home = '<path>'")
-            continue
-        if line.startswith("guard_workspace = "):
-            normalized_lines.append("guard_workspace = <workspace-path>")
-            continue
-        if line.startswith("guard_has_explicit_workspace = "):
-            normalized_lines.append("guard_has_explicit_workspace = <workspace-mode>")
-            continue
-        if line.startswith("shim_dir = "):
-            normalized_lines.append("shim_dir = '<path>'")
-            continue
-        normalized_lines.append(line)
-    return "\n".join(normalized_lines)
-
-
-def _normalized_base_command_repr(line: str) -> str:
-    raw_value = line.split("=", 1)[1].strip()
-    try:
-        value = ast.literal_eval(raw_value)
-    except (SyntaxError, ValueError):
-        return raw_value
-    if not isinstance(value, list):
-        return raw_value
-    normalized: list[object] = []
-    skip_path_after: str | None = None
-    for index, item in enumerate(value):
-        if index == 0 and isinstance(item, str):
-            normalized.append("<python>")
-            continue
-        if isinstance(item, str) and index + 1 < len(value) and value[index + 1] == "codex_plugin_scanner.cli":
-            normalized.append("<import-root>")
-            continue
-        if skip_path_after is not None:
-            normalized.append(f"<{skip_path_after}>")
-            skip_path_after = None
-            continue
-        normalized.append(item)
-        if item in {"--guard-home", "--home", "--workspace"}:
-            skip_path_after = str(item).lstrip("-")
-    return repr(normalized)
+    return normalized_package_shim_content(content)
 
 
 def get_real_binary_info(
@@ -505,13 +467,10 @@ def install_package_shims(
     content_hashes: dict[str, str] = dict(existing_hashes)
     for manager in normalized_managers:
         command = _PACKAGE_SHIM_COMMANDS[manager]
-        posix_path = shim_dir / command
-        windows_path = shim_dir / f"{command}.cmd"
-        content = _build_package_manager_python_shim(context, command)
-        posix_path.write_text(content, encoding="utf-8")
-        posix_path.chmod(posix_path.stat().st_mode | 0o755)
-        windows_path.write_text(_build_windows_script(posix_path), encoding="utf-8")
-        content_hashes[manager] = build_shim_content_hash(posix_path.read_bytes())
+        posix_path = _write_package_manager_shim_files(context, command, shim_dir)
+        content_hashes[manager] = build_shim_content_hash(
+            installed_package_shim_attestation_bytes(shim_dir, command, posix_path.read_bytes())
+        )
         installed.append(manager)
     manifest_payload: dict[str, object] = {
         "content_hashes": content_hashes,
@@ -566,7 +525,7 @@ def activate_package_shims(
 
 
 def package_shim_status(context: HarnessContext, *, path_env: str | None = None) -> dict[str, object]:
-    manifest = _load_package_shim_manifest(context)
+    manifest, manifest_state = _load_package_shim_manifest_with_state(context)
     installed_managers = [
         manager for manager in _string_items(manifest.get("installed_managers")) if manager in _PACKAGE_SHIM_COMMANDS
     ]
@@ -592,21 +551,15 @@ def package_shim_status(context: HarnessContext, *, path_env: str | None = None)
         path_status = get_path_order_status(context, manager=manager, path_env=path_env)
         if exists:
             active_managers.append(manager)
-            current_content = shim_path.read_bytes()
-            current_hash = build_shim_content_hash(current_content)
-            stored_hash = stored_hashes.get(manager)
-            expected_content = _build_package_manager_python_shim(context, command).encode("utf-8")
-            expected_hash = build_shim_content_hash(expected_content)
-            if current_hash == expected_hash or _normalized_package_shim_content(
-                current_content
-            ) == _normalized_package_shim_content(expected_content):
-                integrity = "ok"
-            elif stored_hash == current_hash:
-                integrity = "stale"
-            elif stored_hash is None:
-                integrity = "unknown"
-            else:
-                integrity = "tampered"
+            python_source = _build_package_manager_python_shim(context, command)
+            integrity = classify_installed_package_shim_integrity(
+                python_source=python_source,
+                shim_dir=shim_dir,
+                command=command,
+                installed_wrapper=shim_path.read_bytes(),
+                stored_hash=stored_hashes.get(manager),
+                hash_content=build_shim_content_hash,
+            )
         else:
             missing_managers.append(manager)
             integrity = "missing"
@@ -659,6 +612,7 @@ def package_shim_status(context: HarnessContext, *, path_env: str | None = None)
             "path_status": activation_path_status,
             "bypasses": bypasses,
             "manager_details": manager_details,
+            "manifest_state": manifest_state,
             "manifest_path": str(_package_shim_manifest_path(context)),
             "missing_managers": missing_managers,
             "restart_shell_required": activation_path_status == "restart_required",
@@ -779,6 +733,10 @@ def uninstall_package_shims(
             if candidate.exists():
                 candidate.unlink()
                 removed_paths.append(str(candidate))
+        sidecar = frozen_package_shim_python_path(shim_dir, command)
+        if sidecar.exists():
+            sidecar.unlink()
+            removed_paths.append(str(sidecar))
     remaining = [manager for manager in manifest_managers if manager not in requested_managers]
     manifest_path = _package_shim_manifest_path(context)
     if remaining:
@@ -1134,12 +1092,23 @@ def _profile_already_references_path(content: str, shim_dir: Path) -> bool:
     )
 
 
-def _build_package_manager_python_shim(context: HarnessContext, command: str) -> str:
-    workspace_args: list[str] = []
-    if context.workspace_dir is not None:
-        workspace_args = ["--workspace", str(context.workspace_dir)]
-    shim_dir = context.guard_home / "package-shims" / "bin"
-    command_args = [
+def _is_frozen_runtime() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _package_protect_command_args(context: HarnessContextLike, workspace_args: list[str]) -> list[str]:
+    home_dir = context.home_dir
+    protect_args = [
+        "protect",
+        "--package-shim-ui",
+        "--guard-home",
+        str(context.guard_home),
+        *(["--home", str(home_dir)] if home_dir else []),
+        *workspace_args,
+    ]
+    if _is_frozen_runtime():
+        return [sys.executable, *protect_args]
+    return [
         sys.executable,
         *_trusted_python_flags(),
         "-c",
@@ -1147,13 +1116,16 @@ def _build_package_manager_python_shim(context: HarnessContext, command: str) ->
         str(_trusted_import_root()),
         "codex_plugin_scanner.cli",
         "guard",
-        "protect",
-        "--package-shim-ui",
-        "--guard-home",
-        str(context.guard_home),
-        *_home_override_args(context),
-        *workspace_args,
+        *protect_args,
     ]
+
+
+def _build_package_manager_python_shim(context: HarnessContext, command: str) -> str:
+    workspace_args: list[str] = []
+    if context.workspace_dir is not None:
+        workspace_args = ["--workspace", str(context.workspace_dir)]
+    shim_dir = context.guard_home / "package-shims" / "bin"
+    command_args = _package_protect_command_args(context, workspace_args)
     return "\n".join(
         (
             f"#!{sys.executable}",
@@ -1164,6 +1136,7 @@ def _build_package_manager_python_shim(context: HarnessContext, command: str) ->
             "import sys",
             "import time",
             "from pathlib import Path",
+            f"{FROZEN_PACKAGE_SHIM_SENTINEL} = True",
             f"base_command = {command_args!r}",
             f"command_name = {command!r}",
             f"guard_cli_cwd = {str(_trusted_import_root())!r}",
@@ -1310,8 +1283,6 @@ def _build_package_manager_python_shim(context: HarnessContext, command: str) ->
             "        if remaining_seconds <= 0:",
             "            return result",
             "        time.sleep(min(store_lock_retry_delay_seconds, remaining_seconds))",
-            "        if time.monotonic() >= deadline:",
-            "            return result",
             "try:",
             "    guard_process = _run_guard_with_store_lock_retry(",
             "        [*guard_command, *guard_args], guard_kwargs",
@@ -1319,9 +1290,7 @@ def _build_package_manager_python_shim(context: HarnessContext, command: str) ->
             "except KeyboardInterrupt:",
             "    raise SystemExit(130)",
             "if guard_process.stdout:",
-            "    # Package-manager stdout belongs to the launched process. Keep Guard's",
-            "    # human-readable preflight output off protocol streams such as MCP stdio.",
-            "    (sys.stdout if shim_probe else sys.stderr).write(guard_process.stdout)",
+            "    sys.stdout.write(guard_process.stdout)",
             "if guard_process.stderr:",
             "    sys.stderr.write(guard_process.stderr)",
             "if shim_probe:",
@@ -1394,14 +1363,28 @@ def _detect_system_package_managers(
 
 
 def _load_package_shim_manifest(context: HarnessContext) -> dict[str, object]:
+    manifest, _state = _load_package_shim_manifest_with_state(context)
+    return manifest
+
+
+def _load_package_shim_manifest_with_state(
+    context: HarnessContext,
+) -> tuple[dict[str, object], str]:
     manifest_path = _package_shim_manifest_path(context)
     if not manifest_path.exists():
-        return {}
+        return {}, "absent"
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        return {}, "unreadable"
+    if not isinstance(payload, dict):
+        return {}, "invalid"
+    installed_managers = payload.get("installed_managers")
+    if not isinstance(installed_managers, list) or not installed_managers:
+        return {}, "invalid"
+    if any(not isinstance(manager, str) or manager not in _PACKAGE_SHIM_COMMANDS for manager in installed_managers):
+        return {}, "invalid"
+    return payload, "valid"
 
 
 def _dict_items(value: object) -> tuple[dict[str, object], ...]:
@@ -1593,6 +1576,7 @@ def probe_package_shim_intercepts(
 
 
 __all__ = [
+    "FROZEN_PACKAGE_SHIM_SENTINEL",
     "activate_package_shims",
     "ensure_guard_shim_path_in_shell_profile",
     "ensure_package_shim_path_in_shell_profile",
@@ -1605,5 +1589,7 @@ __all__ = [
     "probe_package_shim_intercepts",
     "remove_guard_profile_blocks",
     "remove_guard_shim",
+    "resolve_frozen_package_shim_path",
+    "run_frozen_package_shim",
     "uninstall_package_shims",
 ]

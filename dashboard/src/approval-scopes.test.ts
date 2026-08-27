@@ -2,6 +2,7 @@ import {
   approvalDecisionContractKey,
   approvalDecisionSubjectKey,
   ADVANCED_SCOPE_VALUES,
+  DEFAULT_SCOPE_CHOICES,
   advancedScopeChoicesForRequest,
   buildDecisionPayload,
   isAdvancedScope,
@@ -14,7 +15,7 @@ import {
   willPersistExactAction,
 } from "./approval-scopes";
 import type { GuardApprovalRequest } from "./guard-types";
-import { ReviewScopeControls } from "./review-scope-controls";
+import { ReviewScopeControls, allowButtonLabel } from "./review-scope-controls";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -298,32 +299,41 @@ assert(
     "artifact,workspace,harness",
   "T-AS-21: standard allow scopes expose project and app when eligible",
 );
-const refreshedContractRequest: GuardApprovalRequest = {
-  ...BASE_REQUEST,
-  scope_contract_digest: "digest-refreshed",
-};
 assert(
-  approvalDecisionSubjectKey(refreshedContractRequest) === approvalDecisionSubjectKey(BASE_REQUEST),
-  "T-AS-22: refreshing the contract does not reset a user's approval-duration choice",
+  recommendedScopeForAction(
+    {
+      ...BASE_REQUEST,
+      recommended_scope_by_action: { allow: "workspace", block: "artifact" },
+    },
+    "allow",
+  ) === "workspace",
+  "T-AS-22: recommended allow prefers project scope when the contract offers it",
 );
 assert(
-  approvalDecisionSubjectKey({ ...BASE_REQUEST, artifact_hash: "sha256-changed" }) !==
-    approvalDecisionSubjectKey(BASE_REQUEST),
-  "T-AS-23: changed action proof resets approval choices",
-);
-assert(
-  approvalDecisionSubjectKey({ ...BASE_REQUEST, raw_command_text: "rm changed-target" }) !==
-    approvalDecisionSubjectKey(BASE_REQUEST),
-  "T-AS-24: changed command text resets approval choices",
-);
-assert(
-  approvalDecisionContractKey(refreshedContractRequest) !== approvalDecisionContractKey(BASE_REQUEST),
-  "T-AS-25: refreshed contracts invalidate approval proof captured by an open modal",
-);
-assert(
-  approvalDecisionContractKey({ ...BASE_REQUEST, raw_command_text: "rm changed-target" }) !==
-    approvalDecisionContractKey(BASE_REQUEST),
-  "T-AS-26: changed action subjects invalidate approval proof captured by an open modal",
+  recommendedScopeForAction(
+    {
+      ...BASE_REQUEST,
+      allowed_scopes: ["artifact"],
+      allowed_scopes_by_action: { allow: ["artifact"], block: ["artifact"] },
+      recommended_scope_by_action: { allow: "artifact", block: "artifact" },
+    },
+    "allow",
+  ) === "artifact",
+  "T-AS-23: recommended allow stays once-only when project scope is unavailable",
 );
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+
+assert(
+  allowButtonLabel("workspace") === "Allow and remember for this project",
+  "T-AS-24: primary allow copy remembers the project",
+);
+assert(
+  allowButtonLabel("artifact") === "Allow just this once",
+  "T-AS-25: secondary allow copy stays once-only",
+);
+assert(
+  DEFAULT_SCOPE_CHOICES.find((choice) => choice.value === "workspace")?.label ===
+    "Allow and remember for this project",
+  "T-AS-26: workspace choice copy matches the primary allow button",
+);
