@@ -597,7 +597,7 @@
     "tests/test_action_runner.py": 707,
     "tests/test_bounded_cli_hook_bridge.py": 671,
     "tests/test_cli.py": 577,
-    "tests/test_codex_daemon_hook_bridge.py": 1003,
+    "tests/test_codex_daemon_hook_bridge.py": 1038,
     "tests/test_codex_hook_fallback_isolation.py": 583,
     "tests/test_command_keys_and_uri_schemes.py": 564,
     "tests/test_cursor_hooks.py": 2444,
