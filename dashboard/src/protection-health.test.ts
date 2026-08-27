@@ -184,6 +184,7 @@ assert.equal(
 const appSource = readFileSync(new URL("./app.tsx", import.meta.url), "utf8");
 const appDetailSource = readFileSync(new URL("./apps/app-detail-workspace.tsx", import.meta.url), "utf8");
 const fleetSource = readFileSync(new URL("./fleet-workspace.tsx", import.meta.url), "utf8");
+const harnessDetectionSource = readFileSync(new URL("./harness-detection.ts", import.meta.url), "utf8");
 const reviewStatesSource = readFileSync(new URL("./review-states.tsx", import.meta.url), "utf8");
 const homeSource = readFileSync(new URL("./home-dashboard.tsx", import.meta.url), "utf8");
 assert.match(appSource, /const handleRepairProtection = useCallback/);
@@ -254,8 +255,8 @@ assert.match(appDetailSource, /Install state" value=\{active \? "Installed"/);
 assert.match(appDetailSource, /protectionHealthFor\(runtime, harness\)/);
 assert.match(appDetailSource, /useProtectionPresentationState\(appProtection\)/);
 assert.match(fleetSource, /useProtectionPresentationState\(protectionHealth\)/);
-assert.match(fleetSource, /resolveAppStatus\(install, appProtection,/);
-assert.match(fleetSource, /hookCheck\?\.status === "fail"/);
+assert.match(fleetSource, /resolveDetectedAppStatus\(install, appProtection,/);
+assert.match(harnessDetectionSource, /hookCheck\?\.status === "fail"/);
 assert.match(reviewStatesSource, /useProtectionPresentationState\(protectionHealth\)/);
 assert.match(reviewStatesSource, /protectedAppsCount = protectionHealth\.apps\.filter/);
 assert.match(reviewStatesSource, /if \(runtime === null\)/);
