@@ -2,7 +2,7 @@ name: Rust PreToolUse adversarial integration
 
 on:
   pull_request:
-    branches: [release/3.0]
+    branches: [main]
     paths:
       - "rust/**"
       - "src/codex_plugin_scanner/guard/native_command_model.py"
@@ -11,7 +11,7 @@ on:
       - "scripts/integration/rust_pretool_adversarial.py"
       - ".github/workflows/rust-pretool-adversarial.yml"
   push:
-    branches: [release/3.0]
+    branches: [main]
     paths:
       - "rust/**"
       - "src/codex_plugin_scanner/guard/native_command_model.py"

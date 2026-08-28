@@ -122,11 +122,14 @@ in favor of direct output scanning:
 
 - `test_guard_hook_worker.py::TestHookWorkerAllHarnessFallback` — proves
   all harnesses (claude-code, codex, grok, zcode) get `allow_original`
-  for safe PostToolUse file reads via server-side output scanning
+  for safe PostToolUse file reads via the rollback Python engine when
+  `HOL_GUARD_NATIVE=off`
 - `test_guard_hook_worker.py::TestHookWorkerNonPostTool` — proves
-  PreToolUse falls back to legacy for all harnesses
+  non-command PreToolUse remains ineligible for the native fast path
 - `test_guard_hook_worker.py::TestHookWorkerReviewSafeSourceRef` — proves
   Pi's client-side `guard_source_ref` fast path still works
+- `test_rust_pretool_authority.py` / `test_rust_posttool_authority.py` —
+  prove `auto` and `force` fail closed when native is unavailable
 
 ### Integration Tests
 

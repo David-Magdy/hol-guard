@@ -54,6 +54,6 @@
 
 **Symptom**: CLI fallback returns an error or doesn't handle `guard_source_ref`.
 
-**Check**: Ensure you're running a recent version of `hol-guard` that includes `_try_source_ref_fast_path()` in `commands_hook.py`.
+**Check**: Ensure you're running a recent version of HOL Guard whose CLI routes command PreToolUse and PostToolUse through native hook authority. Python source-ref review remains for off/shadow rollback, and for file PreToolUse the native worker cannot handle. In that unsupported-file case the worker reports the event as unsupported, then the CLI uses the existing source-ref path. That path is not a native-runtime failure.
 
 **Resolution**: Update HOL Guard: `hol-guard update`.

@@ -9,9 +9,9 @@ Security:
 - Never falls back to legacy CLI after a worker exception for a
   request that supplied only ``guard_source_ref`` without full output.
 - Never calls ``run_guard_command()``.
-- Native PostToolUse is decided by Rust when the runtime is present or forced.
-  Native failure then fails closed instead of spilling into Python review.
-  Python remains only for ``off``/``shadow`` and for unit tests with no binary.
+- Native PostToolUse is decided by Rust for ``auto``/``force``. Native failure
+  fails closed instead of spilling into Python review. The Python engine is
+  constructed only for ``off``/``shadow``.
 - Supported command PreToolUse is decided by Rust. Native failure fails closed.
   Non-command PreToolUse still raises ``HookWorkerUnsupported`` for the CLI path.
 """
@@ -75,18 +75,22 @@ class HookWorker:
         self.store = store
         self.guard_home = store.guard_home
         self.activity_writer = activity_writer
-        self.scanner = ContentScanner()
-        self.cache = HookDecisionCache(store)
+        self._engine: HookReviewEngine | None = None
         from .hook_metrics import HookMetricsRecorder
 
         self.metrics = HookMetricsRecorder()
-        self.engine = HookReviewEngine(
-            store=store,
-            scanner=self.scanner,
-            cache=self.cache,
-            config_loader=self._load_config,
-            metrics=self.metrics,
-        )
+
+    @property
+    def engine(self) -> HookReviewEngine:
+        if self._engine is None:
+            self._engine = HookReviewEngine(
+                store=self.store,
+                scanner=ContentScanner(),
+                cache=HookDecisionCache(self.store),
+                config_loader=self._load_config,
+                metrics=self.metrics,
+            )
+        return self._engine
 
     def _load_config(self, guard_home: Path, workspace: Path | None):
         return load_guard_config(guard_home, workspace=workspace)
@@ -106,8 +110,9 @@ class HookWorker:
 
         ``off`` keeps the Python engine authoritative. ``shadow`` evaluates
         Python first and exercises native only as non-authoritative evidence.
-        ``auto`` and ``force`` try the native runtime first. When native is
-        present or forced and returns no result, PostToolUse fails closed.
+        ``auto`` and ``force`` require the native runtime. When native is
+        unavailable or returns no result, supported PreToolUse and PostToolUse
+        fail closed.
         """
         harness = self._runtime_harness(params) or default_harness
         event_name = self._hook_event_name(payload)
@@ -129,13 +134,13 @@ class HookWorker:
             status = native_runtime_status()
             if status.mode == "off":
                 raise HookWorkerUnsupported("native PreToolUse runtime is off")
-            if status.available or native_mode() == "force":
-                return post_tool_fail_safe_response(
-                    harness,
-                    reason="HOL Guard could not complete the native PreToolUse decision safely.",
-                    reason_code="native_pre_tool_unavailable",
-                )
-            raise HookWorkerUnsupported("native PreToolUse runtime is unavailable")
+            if status.mode == "shadow":
+                raise HookWorkerUnsupported("native PreToolUse runtime is unavailable")
+            return post_tool_fail_safe_response(
+                harness,
+                reason="HOL Guard could not complete the native PreToolUse decision safely.",
+                reason_code="native_pre_tool_unavailable",
+            )
         if event_name != "PostToolUse":
             raise HookWorkerUnsupported(f"fast path supports PreToolUse and PostToolUse, got event={event_name}")
         return self._review_post_tool_http(
@@ -170,7 +175,7 @@ class HookWorker:
             deadline=deadline,
         )
         mode = native_mode()
-        native_required = mode == "force" or (mode == "auto" and native_runtime_status().available)
+        native_required = mode in {"auto", "force"}
         if native_required:
             config = self._load_config(guard_home, workspace)
             response = review_post_tool_native(
@@ -178,6 +183,11 @@ class HookWorker:
                 observe_mode=config.mode == "observe",
             )
             if response is None:
+                self._record_post_tool_activity(
+                    harness=harness,
+                    payload=payload,
+                    succeeded=hook_post_succeeded(event_name, payload),
+                )
                 return post_tool_fail_safe_response(
                     harness,
                     reason="HOL Guard could not complete the native local hook review safely.",
@@ -189,24 +199,36 @@ class HookWorker:
                 with suppress(Exception):
                     _ = review_post_tool_native(request, observe_mode=response.observe_mode)
 
-        succeeded = hook_post_succeeded(event_name, payload)
+        self._record_post_tool_activity(
+            harness=harness,
+            payload=payload,
+            succeeded=hook_post_succeeded(event_name, payload),
+        )
+        return _harness_json_from_review_response(harness, event_name, response)
+
+    def _record_post_tool_activity(
+        self,
+        *,
+        harness: str,
+        payload: Mapping[str, object],
+        succeeded: bool,
+    ) -> None:
         if self.activity_writer is not None:
             _ = self.activity_writer.submit_command_activity(
                 harness=harness,
-                event=event_name,
+                event="PostToolUse",
                 payload=payload,
                 succeeded=succeeded,
             )
-        else:
-            _ = record_post_hook_command_activity_best_effort(
-                store=self.store,
-                guard_home=self.guard_home,
-                harness=harness,
-                event=event_name,
-                payload=payload,
-                succeeded=succeeded,
-            )
-        return _harness_json_from_review_response(harness, event_name, response)
+            return
+        _ = record_post_hook_command_activity_best_effort(
+            store=self.store,
+            guard_home=self.guard_home,
+            harness=harness,
+            event="PostToolUse",
+            payload=payload,
+            succeeded=succeeded,
+        )
 
     def _runtime_harness(self, params: Mapping[str, list[str]]) -> str | None:
         values = params.get("runtime-harness", [])

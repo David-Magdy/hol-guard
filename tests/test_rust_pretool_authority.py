@@ -76,8 +76,13 @@ def test_policy_floor_fails_closed_when_native_is_forced_unavailable(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "codex_plugin_scanner.guard.native_pretool.native_mode",
-        lambda: "force",
+        "codex_plugin_scanner.guard.native_pretool.native_runtime_status",
+        lambda: NativeRuntimeStatus(
+            mode="force",
+            available=False,
+            compatible=False,
+            reason="missing",
+        ),
     )
     assert (
         native_pre_tool_policy_floor(
@@ -143,8 +148,43 @@ def test_hook_worker_fails_closed_when_forced_native_is_missing(
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "codex_plugin_scanner.guard.daemon.hook_worker.native_mode",
-        lambda: "force",
+        "codex_plugin_scanner.guard.daemon.hook_worker.native_runtime_status",
+        lambda: NativeRuntimeStatus(
+            mode="force",
+            available=False,
+            compatible=False,
+            reason="missing",
+        ),
+    )
+    worker = HookWorker(store=GuardStore(tmp_path / "guard-home"))
+    result = worker.review_http_payload(
+        payload={"hook_event_name": "PreToolUse", "tool_input": {"command": "pwd"}},
+        params={},
+        default_harness="pi",
+        home_dir=tmp_path / "home",
+        guard_home=tmp_path / "guard-home",
+        workspace=tmp_path / "workspace",
+    )
+    assert result["decision"] == "deny"
+    assert result["reason_code"] == "native_pre_tool_unavailable"
+
+
+def test_hook_worker_fails_closed_when_auto_pretool_native_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.hook_worker.review_pre_tool_native",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.hook_worker.native_runtime_status",
+        lambda: NativeRuntimeStatus(
+            mode="auto",
+            available=False,
+            compatible=False,
+            reason="missing",
+        ),
     )
     worker = HookWorker(store=GuardStore(tmp_path / "guard-home"))
     result = worker.review_http_payload(

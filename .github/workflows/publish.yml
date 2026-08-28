@@ -1262,10 +1262,17 @@ jobs:
           shopt -s nullglob
           guard_files=(dist/hol_guard-* dist/hol-guard-*)
           scanner_files=(dist/plugin_scanner-* dist/plugin-scanner-*)
-          [[ "${#guard_files[@]}" -ge "2" && "${#scanner_files[@]}" == "2" ]]
+          [[ "${#guard_files[@]}" -ge "6" && "${#scanner_files[@]}" == "2" ]]
           mkdir dist-hol-guard dist-plugin-scanner
           cp "${guard_files[@]}" dist-hol-guard/
           cp "${scanner_files[@]}" dist-plugin-scanner/
+      - name: Validate native Guard release set
+        env:
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          uv run --with packaging==25.0 python scripts/verify_native_runtime_release.py \
+            validate-local --version "$VERSION" --source-sha "$SOURCE_SHA" --dist-dir dist-hol-guard --artifact-set full
       - name: Revalidate main publication
         env:
           SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
@@ -1322,6 +1329,9 @@ jobs:
           [[ "$scanner_status" == "absent" || "$scanner_status" == "exact" ]]
           [[ "$guard_status" == "absent" ]] && echo "hol_guard_upload=true" >> "$GITHUB_OUTPUT" || echo "hol_guard_upload=false" >> "$GITHUB_OUTPUT"
           [[ "$scanner_status" == "absent" ]] && echo "plugin_scanner_upload=true" >> "$GITHUB_OUTPUT" || echo "plugin_scanner_upload=false" >> "$GITHUB_OUTPUT"
+      - name: Refuse PyPI upload when the project is over quota
+        if: steps.pypi.outputs.hol_guard_upload == 'true'
+        run: uv run --with packaging==25.0 python scripts/pypi_project_storage.py --fail-if-over-limit --pending-dir dist-hol-guard
       - name: Publish HOL Guard to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b
         if: steps.pypi.outputs.hol_guard_upload == 'true'
@@ -1336,6 +1346,7 @@ jobs:
         run: rm -f dist-hol-guard/*.publish.attestation dist-plugin-scanner/*.publish.attestation
       - name: Download and verify exact PyPI artifacts
         env:
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           for attempt in {1..60}; do
@@ -1362,6 +1373,9 @@ jobs:
             fi
             sleep 5
           done
+          uv run --with packaging==25.0 python scripts/verify_native_runtime_release.py \
+            verify-published --registry pypi --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" --dist-dir dist-hol-guard --artifact-set full
           mapfile -t guard_wheels < <(
             jq -r '.install_paths[] | select(endswith("-py3-none-any.whl"))' <<< "$guard_result"
           )

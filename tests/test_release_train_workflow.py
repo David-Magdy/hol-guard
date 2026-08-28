@@ -223,6 +223,9 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     assert assemble["needs"] == ["build", "build-native-guard-wheels"]
     assert "needs.build.result == 'success'" in assemble["if"]
     assert "needs.build-native-guard-wheels.result == 'success'" in assemble["if"]
+    native_if = jobs["build-native-guard-wheels"]["if"]
+    assert "channel == 'stable'" in native_if
+    assert "refs/heads/main" in native_if
     assemble_steps = assemble["steps"]
     assert any(step.get("with", {}).get("name") == "distributions" for step in assemble_steps)
     assert any(
@@ -235,7 +238,7 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     assert "needs.publish-alpha-testpypi" not in jobs["publish-alpha-pypi"]["if"]
     assert "vars.ALPHA_TESTPYPI_ENABLED" not in jobs["publish-alpha-pypi"]["if"]
     assert "vars.ALPHA_TESTPYPI_ENABLED == 'true'" in jobs["publish-alpha-testpypi"]["if"]
-    for job_name in ("publish-alpha-testpypi", "publish-alpha-pypi"):
+    for job_name in ("publish-alpha-testpypi", "publish-alpha-pypi", "publish-main-pypi"):
         steps = jobs[job_name]["steps"]
         assert any(step.get("with", {}).get("name") == "distributions-native" for step in steps)
         assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in steps)
@@ -253,6 +256,10 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
     assert any(
         "sha256sum --check distribution-sha256-native.txt" in step.get("run", "") for step in release_alpha_steps
     )
+    release_main_steps = jobs["release-main"]["steps"]
+    assert any(step.get("with", {}).get("name") == "distributions-native" for step in release_main_steps)
+    assert any(step.get("with", {}).get("name") == "distribution-sha256-native" for step in release_main_steps)
+    assert any("sha256sum --check distribution-sha256-native.txt" in step.get("run", "") for step in release_main_steps)
     for job_name in ("publish-main-testpypi",):
         steps = jobs[job_name]["steps"]
         assert any(step.get("run") == "sha256sum --check distribution-sha256-native.txt" for step in steps)
@@ -285,7 +292,17 @@ def test_release_publication_reuses_one_hashed_build_artifact() -> None:
         for step in jobs["publish-main-pypi"]["steps"]
         if step.get("name") == "Prepare project-specific distributions"
     )
-    assert '"${#guard_files[@]}" -ge "2"' in stable_prepare["run"]
+    assert '"${#guard_files[@]}" -ge "6"' in stable_prepare["run"]
+    main_steps = jobs["publish-main-pypi"]["steps"]
+    native_validate = next(step for step in main_steps if step.get("name") == "Validate native Guard release set")
+    assert "validate-local" in native_validate["run"] and "--artifact-set full" in native_validate["run"]
+    main_quota = next(
+        step for step in main_steps if step.get("name") == "Refuse PyPI upload when the project is over quota"
+    )
+    assert "--pending-dir dist-hol-guard" in main_quota["run"]
+    main_verify = next(step for step in main_steps if step.get("name") == "Download and verify exact PyPI artifacts")
+    assert "--artifact-set full" in main_verify["run"]
+    assert "verify-published" in main_verify["run"]
 
     stable_native = jobs["build-native-guard-wheels"]["if"]
     assert "needs.build.outputs.channel == 'stable'" in stable_native

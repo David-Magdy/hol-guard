@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .codex_hook_launch_runtime import run_isolated_hook_process
-from .native_runtime import _isolated_environment, _native_error, native_mode, native_runtime_status
+from .native_runtime import _isolated_environment, _native_error, native_runtime_status
 from .native_runtime_resident import resident_native_request
 from .native_runtime_resilience import (
     native_oneshot_lease,
@@ -169,11 +169,9 @@ def native_pre_tool_policy_floor(
         action = native.get("minimum_action")
         return action if action in {"allow", "review", "block"} else "block"
     status = native_runtime_status()
-    if status.mode == "off":
+    if status.mode in {"off", "shadow"}:
         return None
-    if status.available or native_mode() == "force":
-        return "block"
-    return None
+    return "block"
 
 
 __all__ = [
