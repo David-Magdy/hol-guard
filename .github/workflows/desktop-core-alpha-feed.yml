@@ -11,6 +11,7 @@ on:
       - scripts/release/desktop_core_alpha_feed.py
       - scripts/release/stage_native_runtime_for_desktop_core.py
       - scripts/release/seal_pyinstaller_native_manifest.py
+      - scripts/release/fix_pyinstaller_macos_exe_headers.py
       - scripts/release/verify_pyinstaller_macos_signing.py
       - scripts/release/verify_pyinstaller_native_runtime.py
   push:
@@ -20,6 +21,7 @@ on:
       - scripts/release/desktop_core_alpha_feed.py
       - scripts/release/stage_native_runtime_for_desktop_core.py
       - scripts/release/seal_pyinstaller_native_manifest.py
+      - scripts/release/fix_pyinstaller_macos_exe_headers.py
       - scripts/release/verify_pyinstaller_macos_signing.py
       - scripts/release/verify_pyinstaller_native_runtime.py
   schedule:
@@ -360,7 +362,11 @@ jobs:
           BUILT="$DIST/hol-guard"
           ASSET="$DIST/hol-guard-core-${CORE_VERSION}-${RELEASE_TARGET}"
           chmod 0755 "$BUILT"
+          codesign --remove-signature "$BUILT"
           python3 -I scripts/release/seal_pyinstaller_native_manifest.py \
+            --binary "$BUILT"
+          uv run --directory "$SOURCE" --no-sync python \
+            "$GITHUB_WORKSPACE/scripts/release/fix_pyinstaller_macos_exe_headers.py" \
             --binary "$BUILT"
           codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$BUILT"
           python3 -I scripts/release/verify_pyinstaller_macos_signing.py \

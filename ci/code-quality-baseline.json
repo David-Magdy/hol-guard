@@ -437,7 +437,7 @@
   },
   "oversized_files": {
     ".github/workflows/ci.yml": 554,
-    ".github/workflows/desktop-core-alpha-feed.yml": 533,
+    ".github/workflows/desktop-core-alpha-feed.yml": 539,
     ".github/workflows/publish.yml": 1710,
     "dashboard/src/app.tsx": 1106,
     "dashboard/src/approval-center-primitives.tsx": 1049,
