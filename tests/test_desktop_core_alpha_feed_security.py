@@ -181,10 +181,12 @@ def test_frozen_sidecar_stages_attested_native_runtime() -> None:
     assert '--add-data "$NATIVE_RUNTIME:codex_plugin_scanner/_native"' in run
     assert '--add-data "$NATIVE_MANIFEST:codex_plugin_scanner/_native"' in run
     assert "--add-binary" not in run
+    assert "python3 -I scripts/release/seal_pyinstaller_native_manifest.py" in run
     assert "python3 -I scripts/release/verify_pyinstaller_native_runtime.py" in run
     native_verify = run.index("verify_pyinstaller_native_runtime.py")
     signing_verify = run.index("verify_pyinstaller_macos_signing.py")
-    assert signing_verify < native_verify
+    seal = run.index("seal_pyinstaller_native_manifest.py")
+    assert seal < signing_verify < native_verify
 
 
 def test_existing_asset_set_is_all_or_nothing(tmp_path: Path, capsys) -> None:
