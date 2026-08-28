@@ -89,7 +89,12 @@ def test_signing_identity_is_imported_before_pyinstaller_build() -> None:
     assert run.index(
         'codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$NATIVE_RUNTIME"'
     ) < run.index("uv run --no-sync pyinstaller")
-    assert run.index("seal_pyinstaller_native_manifest.py") < run.index("verify_pyinstaller_macos_signing.py")
+    assert run.index("seal_pyinstaller_native_manifest.py") < run.index(
+        'codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$BUILT"'
+    )
+    assert run.index(
+        'codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$BUILT"'
+    ) < run.index("verify_pyinstaller_macos_signing.py")
     assert run.index("verify_pyinstaller_macos_signing.py") < run.index("verify_pyinstaller_native_runtime.py")
 
 
