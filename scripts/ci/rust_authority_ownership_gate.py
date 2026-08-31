@@ -21,6 +21,7 @@ from scripts.ci.hook_data_plane_ownership_contract import (
     load_manifest,
     registered_harnesses,
 )
+from scripts.ci.rust_pretool_no_python_gate import _graph_failures
 
 MANIFEST = Path("docs/guard/contracts/hook-data-plane-ownership.v2.json")
 SELF_PROTECTED_PATHS: Final = frozenset(
@@ -215,6 +216,10 @@ def _coverage_narrowing_gate(
 
 
 def _pretool_gate() -> None:
+    graph_failures = _graph_failures(Path("."))
+    if graph_failures:
+        raise RuntimeError("; ".join(graph_failures))
+
     pretool = Path("src/codex_plugin_scanner/guard/native_pretool.py")
     if _python_imports_function(pretool, "command_evaluation", "evaluate_command"):
         raise RuntimeError("native PreToolUse transport imports the Python command evaluator")
@@ -253,7 +258,13 @@ def _pretool_gate() -> None:
         if "Python remains authoritative" in model:
             raise RuntimeError("command-model bridge still declares Python authority")
 
-    runtime = _read(Path("rust/crates/guard-runtime/src/main.rs"))
+    runtime = "\n".join(
+        _read(path)
+        for path in (
+            Path("rust/crates/guard-runtime/src/main.rs"),
+            Path("rust/crates/guard-runtime/src/resident_protocol.rs"),
+        )
+    )
     command = _read(Path("rust/crates/guard-command/src/lib.rs"))
     combined = runtime + "\n" + command
     if not re.search(r"PreToolUse|pre_tool|pre-tool", combined):
@@ -300,7 +311,13 @@ def _mode_gate() -> None:
 
 def _policy_and_identity_gate() -> None:
     cargo = _read(Path("rust/crates/guard-runtime/Cargo.toml"))
-    runtime = _read(Path("rust/crates/guard-runtime/src/main.rs"))
+    runtime = "\n".join(
+        _read(path)
+        for path in (
+            Path("rust/crates/guard-runtime/src/main.rs"),
+            Path("rust/crates/guard-runtime/src/resident_protocol.rs"),
+        )
+    )
     native = _read(Path("src/codex_plugin_scanner/guard/native_runtime.py"))
     release = _read(Path("scripts/verify_native_runtime_release.py"))
     if "guard-policy-snapshot" not in cargo:

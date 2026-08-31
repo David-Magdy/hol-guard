@@ -105,8 +105,10 @@ dependencies = [
 name = "guard-command"
 version = "0.1.0"
 dependencies = [
+ "guard-contracts",
  "guard-secure-fs",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -136,6 +138,7 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror",
 ]
@@ -201,6 +204,7 @@ dependencies = [
  "guard-rule-contract",
  "guard-runtime-windows-process",
  "guard-secure-fs",
+ "hex",
  "libc",
  "nix",
  "serde",

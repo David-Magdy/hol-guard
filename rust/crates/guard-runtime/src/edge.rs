@@ -6,6 +6,7 @@ use guard_contracts::{
     GUARD_HOOK_ENVELOPE_V2_SCHEMA, NATIVE_PROTOCOL_VERSION,
 };
 use guard_hook_core::review_post_tool;
+use guard_policy_snapshot::PolicySnapshotV3;
 use serde_json::Value;
 
 const MAX_HARNESS_BYTES: usize = 64;
@@ -67,7 +68,13 @@ fn canonical_event(value: &str) -> Result<String, String> {
     let compact = value.trim().to_ascii_lowercase().replace(['_', '-'], "");
     match compact.as_str() {
         "pretool" | "pretooluse" => Ok("PreToolUse".to_owned()),
+        "beforeshellexecution" | "beforereadfile" | "beforewritefile" | "beforemcpexecution" => {
+            Ok("PreToolUse".to_owned())
+        }
         "posttool" | "posttooluse" => Ok("PostToolUse".to_owned()),
+        "aftershellexecution" | "afterreadfile" | "afterwritefile" | "aftermcpexecution" => {
+            Ok("PostToolUse".to_owned())
+        }
         "prompt" | "userpromptsubmit" | "userpromptsubmitted" => Ok("UserPromptSubmit".to_owned()),
         "permissionrequest" => Ok("PermissionRequest".to_owned()),
         _ => Err("native_hook_event_unsupported".to_owned()),
@@ -134,7 +141,7 @@ fn payload_kind(payload: &Value) -> Result<GuardHookPayloadKindV2, String> {
     Ok(GuardHookPayloadKindV2::Inline)
 }
 
-fn validate_envelope(envelope: &GuardHookEnvelopeV2) -> Result<(), String> {
+fn validate_envelope_shape(envelope: &GuardHookEnvelopeV2) -> Result<(), String> {
     if envelope.schema != GUARD_HOOK_ENVELOPE_V2_SCHEMA {
         return Err("native_hook_envelope_schema_mismatch".to_owned());
     }
@@ -166,14 +173,13 @@ fn validate_envelope(envelope: &GuardHookEnvelopeV2) -> Result<(), String> {
     {
         bounded_nonempty(path, MAX_PATH_BYTES, "native_hook_source_metadata_invalid")?;
     }
-    crate::oneshot::validate_request_policy_snapshot(&serde_json::json!({
-        "guard_home": envelope.source.guard_home,
-        "policy_snapshot": envelope.policy_snapshot,
-    }))
+    Ok(())
 }
 
-pub(crate) fn evaluate_envelope(envelope: GuardHookEnvelopeV2) -> Result<Vec<u8>, String> {
-    validate_envelope(&envelope)?;
+fn evaluate_validated_envelope(
+    envelope: GuardHookEnvelopeV2,
+    policy_snapshot: Option<&PolicySnapshotV3>,
+) -> Result<Vec<u8>, String> {
     let harness = canonical_harness(&envelope.harness)?;
     let event_name = authoritative_event(&envelope)?;
     let kind = payload_kind(&envelope.raw_payload)?;
@@ -181,27 +187,57 @@ pub(crate) fn evaluate_envelope(envelope: GuardHookEnvelopeV2) -> Result<Vec<u8>
         return Err("native_hook_encrypted_payload_unsupported".to_owned());
     }
     let result = match event_name.as_str() {
-        "PreToolUse" => crate::oneshot::evaluate_pre_tool_value(&serde_json::json!({
-            "protocol_version": NATIVE_PROTOCOL_VERSION,
-            "request_id": envelope.request_id,
-            "event_name": event_name,
-            "payload": envelope.raw_payload,
-        }))?,
-        "PostToolUse" => serde_json::to_value(review_post_tool(&NativeHookRequestV1 {
-            protocol_version: NATIVE_PROTOCOL_VERSION,
-            request_id: envelope.request_id.clone(),
-            harness: harness.clone(),
-            event_name: event_name.clone(),
-            payload: envelope.raw_payload,
-            cwd: envelope.source.cwd,
-            home_dir: envelope.source.home_dir,
-            guard_home: envelope.source.guard_home,
-            source_ref_external_allowed: envelope.source.source_ref_external_allowed,
-            observe_mode: envelope.policy_snapshot.get("mode").and_then(Value::as_str)
-                == Some("observe"),
-            deadline_budget_ms: envelope.deadline_budget_ms,
-        }))
-        .map_err(|_| "native_hook_edge_response_invalid".to_owned())?,
+        "PreToolUse" => {
+            let native = guard_command::pretool::evaluate_pre_tool_envelope(
+                &harness,
+                &event_name,
+                &envelope.raw_payload,
+            );
+            let evaluated = if let Some(snapshot) = policy_snapshot {
+                crate::policy_enforcement::apply_pre_tool_policy(
+                    snapshot,
+                    &envelope.raw_payload,
+                    native,
+                )?
+            } else {
+                native
+            };
+            serde_json::to_value(evaluated)
+                .map_err(|_| "native_hook_edge_response_invalid".to_owned())?
+        }
+        "PostToolUse" => {
+            let payload_kind = kind.clone();
+            let request = NativeHookRequestV1 {
+                protocol_version: NATIVE_PROTOCOL_VERSION,
+                request_id: envelope.request_id.clone(),
+                harness: harness.clone(),
+                event_name: event_name.clone(),
+                payload: envelope.raw_payload,
+                cwd: envelope.source.cwd,
+                home_dir: envelope.source.home_dir,
+                guard_home: envelope.source.guard_home,
+                source_ref_external_allowed: envelope.source.source_ref_external_allowed,
+                // Keep the intrinsic result intact. The authenticated policy
+                // join below owns observe-mode semantics and suppresses only
+                // policy-only escalation; passing observe here would erase a
+                // native source/content block before that join runs.
+                observe_mode: false,
+                deadline_budget_ms: envelope.deadline_budget_ms,
+            };
+            let native = review_post_tool(&request);
+            let evaluated = if let Some(snapshot) = policy_snapshot {
+                crate::policy_enforcement::apply_post_tool_policy(
+                    snapshot,
+                    &request,
+                    payload_kind,
+                    native,
+                )?
+            } else {
+                native
+            };
+            serde_json::to_value(evaluated)
+                .map_err(|_| "native_hook_edge_response_invalid".to_owned())?
+        }
         _ => return Err("native_hook_event_unsupported".to_owned()),
     };
     crate::encode_response(&GuardHookEdgeResultV2 {
@@ -215,11 +251,19 @@ pub(crate) fn evaluate_envelope(envelope: GuardHookEnvelopeV2) -> Result<Vec<u8>
     })
 }
 
-pub(crate) fn evaluate_envelope_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let value = crate::strict_json_value(bytes)?;
-    let envelope = serde_json::from_value::<GuardHookEnvelopeV2>(value)
-        .map_err(|_| "native_hook_envelope_invalid".to_owned())?;
-    evaluate_envelope(envelope)
+/// Evaluate a resident hook envelope against the already-installed in-memory
+/// policy snapshot. No request can install, replace, or downgrade policy.
+pub(crate) fn evaluate_envelope_with_store(
+    envelope: GuardHookEnvelopeV2,
+    policy_store: &crate::policy_store::PolicySnapshotStore,
+) -> Result<Vec<u8>, String> {
+    validate_envelope_shape(&envelope)?;
+    let snapshot = policy_store.validate_request_snapshot(
+        &envelope.policy_snapshot,
+        &envelope.source.guard_home,
+        envelope.policy_generation,
+    )?;
+    evaluate_validated_envelope(envelope, Some(snapshot.as_ref()))
 }
 
 #[cfg(test)]
@@ -273,12 +317,8 @@ mod tests {
 
     fn evaluate_isolated(envelope: GuardHookEnvelopeV2) -> Result<Vec<u8>, String> {
         let guard_home = std::path::PathBuf::from(&envelope.source.guard_home);
-        let _guard = crate::oneshot::POLICY_TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        crate::oneshot::reset_policy_generation_for_test();
-        let result = evaluate_envelope(envelope);
-        crate::oneshot::reset_policy_generation_for_test();
+        let result = validate_envelope_shape(&envelope)
+            .and_then(|_| evaluate_validated_envelope(envelope, None));
         std::fs::remove_dir_all(guard_home).expect("remove edge generation fixture");
         result
     }
@@ -342,5 +382,77 @@ mod tests {
         ))
         .unwrap_err();
         assert_eq!(error, "native_hook_source_ref_invalid");
+    }
+
+    #[test]
+    fn evaluates_complete_cursor_file_envelope_as_native_generic_result() {
+        let bytes = evaluate_isolated(envelope(
+            "beforeReadFile",
+            serde_json::json!({
+                "event": "beforeReadFile",
+                "toolName": "read_file",
+                "toolInput": {"file_path": "README.md"}
+            }),
+        ))
+        .unwrap();
+        let result: GuardHookEdgeResultV2 = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(result.event_name, "PreToolUse");
+        assert_eq!(result.result["schema"], "guard-pre-tool-result.v1");
+        assert_eq!(result.result["authority"], "rust");
+        assert_eq!(result.result["action"]["action_type"], "file_read");
+        assert_eq!(result.result["minimum_action"], "review");
+        assert!(result.result.get("raw_payload").is_none());
+    }
+
+    #[test]
+    fn evaluates_generic_pretool_for_supported_harness_aliases() {
+        for (harness, expected) in [
+            ("Claude", "claude-code"),
+            ("Codex", "codex"),
+            ("Cline", "cline"),
+            ("Cursor", "cursor"),
+            ("Copilot", "copilot"),
+            ("Grok", "grok"),
+            ("Z-Code", "zcode"),
+        ] {
+            let mut request = envelope(
+                "PreToolUse",
+                serde_json::json!({
+                    "hook_event_name": "PreToolUse",
+                    "toolName": "read_file",
+                    "toolInput": {"file_path": "README.md"}
+                }),
+            );
+            request.harness = harness.to_owned();
+            let bytes = evaluate_isolated(request).unwrap();
+            let result: GuardHookEdgeResultV2 = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(result.harness, expected);
+            assert_eq!(result.result["action"]["harness"], expected);
+            assert_eq!(result.result["action"]["action_type"], "file_read");
+            assert_eq!(result.result["minimum_action"], "review");
+        }
+    }
+
+    #[test]
+    fn unknown_and_ambiguous_pretool_payloads_never_receive_an_allow_floor() {
+        let unknown = evaluate_isolated(envelope(
+            "PreToolUse",
+            serde_json::json!({"toolName": "future_tool", "opaque": true}),
+        ))
+        .unwrap();
+        let unknown_result: GuardHookEdgeResultV2 = serde_json::from_slice(&unknown).unwrap();
+        assert_eq!(unknown_result.result["minimum_action"], "review");
+
+        let ambiguous = evaluate_isolated(envelope(
+            "PreToolUse",
+            serde_json::json!({"command": "pwd", "cmd": "whoami"}),
+        ))
+        .unwrap();
+        let ambiguous_result: GuardHookEdgeResultV2 = serde_json::from_slice(&ambiguous).unwrap();
+        assert_eq!(ambiguous_result.result["minimum_action"], "block");
+        assert_eq!(
+            ambiguous_result.result["reason_code"],
+            "native_pre_tool_ambiguous_payload"
+        );
     }
 }
