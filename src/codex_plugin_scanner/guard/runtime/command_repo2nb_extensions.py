@@ -12,54 +12,64 @@ from .command_rules import AnyMatcher, CommandSafetyRule
 # argv[0], so no global options can precede it. Module invocation
 # (`python/-m repo2nb ...`) enforces the module name as literal subcommand
 # tokens because option-value tracking does not retain `-m` values.
+#
+# Conservative matching covers:
+# - Standard launcher variants: repo2nb, python -m repo2nb, python3 -m repo2nb, py -m repo2nb
+# - Shell wrappers: exec repo2nb ..., xargs repo2nb ...
+# - Flag abbreviations: Python argparse accepts unambiguous prefixes (--for, --forc, --force)
+# - Fail-secure option parsing: unknown options prevent unsafe dry-run bypasses
+
+_REPO2NB_LAUNCHERS: tuple[tuple[str, ...], ...] = (
+    ("repo2nb",),
+    ("python", "-m", "repo2nb"),
+    ("python3", "-m", "repo2nb"),
+    ("py", "-m", "repo2nb"),
+    ("exec", "repo2nb"),
+    ("exec", "python", "-m", "repo2nb"),
+    ("exec", "python3", "-m", "repo2nb"),
+    ("exec", "py", "-m", "repo2nb"),
+    ("xargs", "repo2nb"),
+    ("xargs", "python", "-m", "repo2nb"),
+    ("xargs", "python3", "-m", "repo2nb"),
+    ("xargs", "py", "-m", "repo2nb"),
+)
+_FORCE_FLAGS: tuple[str, ...] = ("--force", "--forc", "--for")
+
 _REPO2NB_REVERSE_FORCE = AnyMatcher(
-    matchers=(
+    matchers=tuple(
         executable_matcher(
-            "repo2nb",
+            *launcher,
             "reverse",
-            required_flags=frozenset({"--force"}),
+            required_flags=frozenset({force_flag}),
             options_with_values=frozenset({"--output", "-o"}),
-        ),
-        executable_matcher(
-            "python",
-            "-m",
-            "repo2nb",
-            "reverse",
-            required_flags=frozenset({"--force"}),
-            options_with_values=frozenset({"--output", "-o"}),
-        ),
-        executable_matcher(
-            "python3",
-            "-m",
-            "repo2nb",
-            "reverse",
-            required_flags=frozenset({"--force"}),
-            options_with_values=frozenset({"--output", "-o"}),
-        ),
+            allow_leading_options=launcher[0] in ("exec", "xargs") and len(launcher) == 2,
+            leading_options_with_values=(
+                frozenset({"-n", "-P", "-I", "-L", "-s"})
+                if launcher[0] in ("exec", "xargs") and len(launcher) == 2
+                else frozenset()
+            ),
+            fail_secure_unknown_options=True,
+        )
+        for launcher in _REPO2NB_LAUNCHERS
+        for force_flag in _FORCE_FLAGS
     )
 )
 
 _REPO2NB_SYNC = AnyMatcher(
-    matchers=(
+    matchers=tuple(
         executable_matcher(
-            "repo2nb",
+            *launcher,
             "sync",
             options_with_values=frozenset({"--notebook"}),
-        ),
-        executable_matcher(
-            "python",
-            "-m",
-            "repo2nb",
-            "sync",
-            options_with_values=frozenset({"--notebook"}),
-        ),
-        executable_matcher(
-            "python3",
-            "-m",
-            "repo2nb",
-            "sync",
-            options_with_values=frozenset({"--notebook"}),
-        ),
+            allow_leading_options=launcher[0] in ("exec", "xargs") and len(launcher) == 2,
+            leading_options_with_values=(
+                frozenset({"-n", "-P", "-I", "-L", "-s"})
+                if launcher[0] in ("exec", "xargs") and len(launcher) == 2
+                else frozenset()
+            ),
+            fail_secure_unknown_options=True,
+        )
+        for launcher in _REPO2NB_LAUNCHERS
     )
 )
 

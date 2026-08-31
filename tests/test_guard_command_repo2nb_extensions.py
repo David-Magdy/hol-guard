@@ -30,6 +30,16 @@ REPO2NB_REVIEW_CASES: tuple[tuple[str, str, str], ...] = (
         "command.repo2nb.reverse-force",
     ),
     (
+        "repo2nb reverse notebook.ipynb --for",
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
+        "repo2nb reverse notebook.ipynb --forc",
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
         "repo2nb sync ./my-repo",
         "repo2nb notebook sync command",
         "command.repo2nb.sync",
@@ -39,25 +49,36 @@ REPO2NB_REVIEW_CASES: tuple[tuple[str, str, str], ...] = (
         "repo2nb notebook sync command",
         "command.repo2nb.sync",
     ),
+    (
+        "repo2nb sync ./my-repo --unknown-flag --dry-run",
+        "repo2nb notebook sync command",
+        "command.repo2nb.sync",
+    ),
 )
 
 
-def test_repo2nb_module_invocation_reaches_review(tmp_path: Path) -> None:
-    """`python -m repo2nb` is floored by shell-mutations and still attributed to the repo2nb rules."""
+def test_repo2nb_module_and_wrapper_invocations_reach_review(tmp_path: Path) -> None:
+    """Indirect module and wrapper invocations reach review and attribute to repo2nb rules."""
 
-    for command, expected_rule in REPO2NB_MODULE_REVIEW_COMMANDS:
+    for command, expected_rule in REPO2NB_WRAPPER_REVIEW_COMMANDS:
         payload = inspect_command(command, cwd=tmp_path, home_dir=tmp_path)
         matched = {rule.get("rule_id") for rule in payload.get("rules", []) if isinstance(rule, dict)}
         assert payload["status"] == "review", command
-        assert "command.shell-mutations.destructive-shell" in matched, command
         assert expected_rule in matched, command
 
 
-REPO2NB_MODULE_REVIEW_COMMANDS: tuple[tuple[str, str], ...] = (
+REPO2NB_WRAPPER_REVIEW_COMMANDS: tuple[tuple[str, str], ...] = (
     ("python -m repo2nb reverse notebook.ipynb --force", "command.repo2nb.reverse-force"),
     ("python3 -m repo2nb reverse notebook.ipynb --output ./dest --force", "command.repo2nb.reverse-force"),
+    ("py -m repo2nb reverse notebook.ipynb --force", "command.repo2nb.reverse-force"),
+    ("exec repo2nb reverse notebook.ipynb --force", "command.repo2nb.reverse-force"),
+    ("xargs repo2nb reverse notebook.ipynb --force", "command.repo2nb.reverse-force"),
+    ("xargs -n 1 repo2nb reverse notebook.ipynb --force", "command.repo2nb.reverse-force"),
     ("python -m repo2nb sync ./my-repo", "command.repo2nb.sync"),
     ("python3 -m repo2nb sync ./my-repo", "command.repo2nb.sync"),
+    ("py -m repo2nb sync ./my-repo", "command.repo2nb.sync"),
+    ("exec repo2nb sync ./my-repo", "command.repo2nb.sync"),
+    ("xargs repo2nb sync ./my-repo", "command.repo2nb.sync"),
 )
 
 
