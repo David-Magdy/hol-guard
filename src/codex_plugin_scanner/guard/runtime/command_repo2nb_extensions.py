@@ -42,11 +42,9 @@ _REPO2NB_REVERSE_FORCE = AnyMatcher(
             "reverse",
             required_flags=frozenset({force_flag}),
             options_with_values=frozenset({"--output", "-o"}),
-            allow_leading_options=launcher[0] in ("exec", "xargs") and len(launcher) == 2,
+            allow_leading_options=launcher[0] in ("exec", "xargs"),
             leading_options_with_values=(
-                frozenset({"-n", "-P", "-I", "-L", "-s"})
-                if launcher[0] in ("exec", "xargs") and len(launcher) == 2
-                else frozenset()
+                frozenset({"-n", "-P", "-I", "-L", "-s"}) if launcher[0] in ("exec", "xargs") else frozenset()
             ),
             fail_secure_unknown_options=True,
         )
@@ -61,11 +59,9 @@ _REPO2NB_SYNC = AnyMatcher(
             *launcher,
             "sync",
             options_with_values=frozenset({"--notebook"}),
-            allow_leading_options=launcher[0] in ("exec", "xargs") and len(launcher) == 2,
+            allow_leading_options=launcher[0] in ("exec", "xargs"),
             leading_options_with_values=(
-                frozenset({"-n", "-P", "-I", "-L", "-s"})
-                if launcher[0] in ("exec", "xargs") and len(launcher) == 2
-                else frozenset()
+                frozenset({"-n", "-P", "-I", "-L", "-s"}) if launcher[0] in ("exec", "xargs") else frozenset()
             ),
             fail_secure_unknown_options=True,
         )

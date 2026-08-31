@@ -74,11 +74,13 @@ REPO2NB_WRAPPER_REVIEW_COMMANDS: tuple[tuple[str, str], ...] = (
     ("exec repo2nb reverse notebook.ipynb --force", "command.repo2nb.reverse-force"),
     ("xargs repo2nb reverse notebook.ipynb --force", "command.repo2nb.reverse-force"),
     ("xargs -n 1 repo2nb reverse notebook.ipynb --force", "command.repo2nb.reverse-force"),
+    ("xargs -n 1 python -m repo2nb reverse notebook.ipynb --force", "command.repo2nb.reverse-force"),
     ("python -m repo2nb sync ./my-repo", "command.repo2nb.sync"),
     ("python3 -m repo2nb sync ./my-repo", "command.repo2nb.sync"),
     ("py -m repo2nb sync ./my-repo", "command.repo2nb.sync"),
     ("exec repo2nb sync ./my-repo", "command.repo2nb.sync"),
     ("xargs repo2nb sync ./my-repo", "command.repo2nb.sync"),
+    ("xargs -n 1 python -m repo2nb sync ./my-repo", "command.repo2nb.sync"),
 )
 
 
