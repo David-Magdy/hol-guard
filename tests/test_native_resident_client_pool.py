@@ -79,6 +79,76 @@ def test_client_frame_write_is_bounded_when_pipe_writer_blocks() -> None:
     assert time.monotonic() - started < 0.5
 
 
+def test_client_close_can_interrupt_a_blocked_frame_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class BlockingStdin:
+        def __init__(self) -> None:
+            self.closed = False
+            self.released = threading.Event()
+
+        def close(self) -> None:
+            self.closed = True
+            self.released.set()
+
+    class Process:
+        def __init__(self) -> None:
+            self.stdin = BlockingStdin()
+            self.stdout = None
+
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.stdin.close()
+
+        def wait(self, timeout: float) -> None:
+            del timeout
+
+        def kill(self) -> None:
+            self.stdin.close()
+
+    client = _PersistentNativeClient(
+        executable=tmp_path / "runtime",
+        state_dir=tmp_path / "native-runtime",
+        environment={},
+    )
+    process = Process()
+    started = threading.Event()
+    result: list[bytes | None] = []
+
+    def fake_start() -> bool:
+        object.__setattr__(client, "_process", process)
+        return True
+
+    def blocked_write(
+        _stdin: object,
+        _frame: bytes,
+        *,
+        deadline_monotonic: float,
+    ) -> bool:
+        del deadline_monotonic
+        started.set()
+        process.stdin.released.wait(timeout=2)
+        return False
+
+    monkeypatch.setattr(client, "_start", fake_start)
+    monkeypatch.setattr(client, "_write_frame", blocked_write)
+    request_thread = threading.Thread(
+        target=lambda: result.append(client.request(b"payload", deadline_monotonic=time.monotonic() + 5)),
+        daemon=True,
+    )
+    request_thread.start()
+    assert started.wait(timeout=1)
+
+    started_closing = time.monotonic()
+    client.close()
+
+    assert time.monotonic() - started_closing < 0.5
+    request_thread.join(timeout=1)
+    assert not request_thread.is_alive()
+    assert result == [None]
+    assert process.stdin.closed
+
+
 def test_pool_dispatches_requests_across_persistent_streams(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

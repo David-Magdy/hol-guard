@@ -53,6 +53,33 @@ fn client_stream_rejects_truncated_and_oversized_frames() {
 }
 
 #[test]
+fn client_stream_returns_cleanly_when_input_is_already_exhausted() {
+    use std::io::Cursor;
+
+    let mut input = Cursor::new(Vec::<u8>::new());
+
+    assert_eq!(read_client_stream_frame(&mut input).unwrap(), None);
+}
+
+#[test]
+fn client_stream_propagates_header_read_errors() {
+    use std::io::{self, Read};
+
+    struct FailingReader;
+
+    impl Read for FailingReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::Other, "read failed"))
+        }
+    }
+
+    assert_eq!(
+        read_client_stream_frame(&mut FailingReader).unwrap_err(),
+        "native_client_stream_read_failed"
+    );
+}
+
+#[test]
 fn stale_process_identity_errors_are_platform_scoped() {
     let stale_unavailable =
         is_stale_process_identity_error("native_resident_process_identity_unavailable");

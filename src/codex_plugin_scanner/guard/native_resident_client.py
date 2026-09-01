@@ -93,6 +93,7 @@ class _PersistentNativeClient:
         self._responses: Queue[bytes | _StreamFailure] = Queue(maxsize=1)
         self._reader: threading.Thread | None = None
         self._lock = threading.Lock()
+        self._request_lock = threading.Lock()
 
     def _start(self) -> bool:
         if self._process is not None:
@@ -178,18 +179,20 @@ class _PersistentNativeClient:
         if not payload or len(payload) > _MAX_REQUEST_BYTES:
             _LAST_FAILURE_CODE.set("native_client_request_invalid")
             return None
-        with self._lock:
-            if not self._start():
-                _LAST_FAILURE_CODE.set("native_client_start_failed")
-                return None
-            process = self._process
-            stdin = process.stdin if process is not None else None
-            if stdin is None:
-                _LAST_FAILURE_CODE.set("native_client_stdin_unavailable")
-                return None
+        with self._request_lock:
+            with self._lock:
+                if not self._start():
+                    _LAST_FAILURE_CODE.set("native_client_start_failed")
+                    return None
+                process = self._process
+                stdin = process.stdin if process is not None else None
+                responses = self._responses
+                if stdin is None:
+                    _LAST_FAILURE_CODE.set("native_client_stdin_unavailable")
+                    return None
             frame = struct.pack(">I", len(payload)) + payload
             if not self._write_frame(stdin, frame, deadline_monotonic=deadline_monotonic):
-                self._close_locked()
+                self.close()
                 _LAST_FAILURE_CODE.set(
                     "native_client_timed_out"
                     if time.monotonic() >= deadline_monotonic
@@ -198,17 +201,17 @@ class _PersistentNativeClient:
                 return None
             remaining = deadline_monotonic - time.monotonic()
             if remaining <= 0:
-                self._close_locked()
+                self.close()
                 _LAST_FAILURE_CODE.set("native_client_timed_out")
                 return None
             try:
-                response = self._responses.get(timeout=remaining)
+                response = responses.get(timeout=remaining)
             except Empty:
-                self._close_locked()
+                self.close()
                 _LAST_FAILURE_CODE.set("native_client_timed_out")
                 return None
             if isinstance(response, _StreamFailure):
-                self._close_locked()
+                self.close()
                 _LAST_FAILURE_CODE.set("native_client_stream_failed")
                 return None
             return response

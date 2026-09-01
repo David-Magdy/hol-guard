@@ -47,10 +47,6 @@ def resolve_import(module_name_value: str, level: int, imported: str | None) -> 
     return ".".join(base)
 
 
-def _assignment_name(target: ast.AST) -> str | None:
-    return target.id if isinstance(target, ast.Name) else None
-
-
 def _assignment_targets(target: ast.AST, value: object) -> dict[str, object]:
     """Bind names in a static tuple assignment without evaluating code."""
 
@@ -118,64 +114,170 @@ def _static_strings(
     return None
 
 
-def _static_assignments(tree: ast.Module) -> tuple[dict[str, ast.AST], dict[str, frozenset[str]]]:
-    assignments: dict[str, ast.AST] = {}
-    for node in ast.walk(tree):
-        value: ast.AST | None = None
-        targets: list[ast.AST] = []
+def _assigned_names(target: ast.AST) -> tuple[str, ...]:
+    if isinstance(target, ast.Name):
+        return (target.id,)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: list[str] = []
+        for child in target.elts:
+            names.extend(_assigned_names(child))
+        return tuple(names)
+    return ()
+
+
+class _StaticScope:
+    __slots__ = (
+        "assignments",
+        "bindings",
+        "loop_nodes",
+        "merged_assignments",
+        "merged_bindings",
+        "node",
+        "parameters",
+        "parent",
+    )
+
+    def __init__(self, node: ast.AST | None, parent: _StaticScope | None) -> None:
+        self.node = node
+        self.parent = parent
+        self.assignments: dict[str, ast.AST] = {}
+        self.bindings: dict[str, frozenset[str]] = {}
+        self.loop_nodes: list[ast.For | ast.AsyncFor] = []
+        self.merged_assignments: dict[str, ast.AST] = {}
+        self.merged_bindings: dict[str, frozenset[str]] = {}
+        self.parameters: frozenset[str] = frozenset()
+
+
+def _function_parameters(node: ast.AST | None) -> frozenset[str]:
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return frozenset()
+    arguments = node.args
+    parameters = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+    if arguments.vararg is not None:
+        parameters.append(arguments.vararg)
+    if arguments.kwarg is not None:
+        parameters.append(arguments.kwarg)
+    return frozenset(argument.arg for argument in parameters)
+
+
+class _StaticScopeAnalysis:
+    """Collect static bindings without allowing sibling lexical scopes to leak."""
+
+    def __init__(self, tree: ast.Module) -> None:
+        self.tree = tree
+        self.root = _StaticScope(None, None)
+        self.scopes: list[_StaticScope] = [self.root]
+        self._node_scopes: dict[int, _StaticScope] = {}
+        self._walk(tree, self.root)
+        for scope in self.scopes:
+            self._finalize(scope)
+
+    def scope_for(self, node: ast.AST) -> _StaticScope:
+        return self._node_scopes.get(id(node), self.root)
+
+    def _walk(self, node: ast.AST, scope: _StaticScope) -> None:
+        self._node_scopes[id(node)] = scope
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in node.decorator_list:
+                self._walk(decorator, scope)
+            for default in [*node.args.defaults, *node.args.kw_defaults]:
+                if default is not None:
+                    self._walk(default, scope)
+            if node.returns is not None:
+                self._walk(node.returns, scope)
+            lexical_parent = scope.parent if isinstance(scope.node, ast.ClassDef) else scope
+            child = _StaticScope(node, lexical_parent)
+            self.scopes.append(child)
+            self._node_scopes[id(node)] = child
+            for statement in node.body:
+                self._walk(statement, child)
+            return
+        if isinstance(node, ast.ClassDef):
+            for decorator in node.decorator_list:
+                self._walk(decorator, scope)
+            for base in node.bases:
+                self._walk(base, scope)
+            for keyword in node.keywords:
+                self._walk(keyword, scope)
+            child = _StaticScope(node, scope)
+            self.scopes.append(child)
+            self._node_scopes[id(node)] = child
+            for statement in node.body:
+                self._walk(statement, child)
+            return
         if isinstance(node, ast.Assign):
-            value = node.value
-            targets = node.targets
+            for target in node.targets:
+                for name in _assigned_names(target):
+                    scope.assignments[name] = node.value
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
-            value = node.value
-            targets = [node.target]
-        if value is not None:
-            for target in targets:
-                name = _assignment_name(target)
-                if name is not None:
-                    assignments[name] = value
-    bindings: dict[str, frozenset[str]] = {}
-    for name, value in assignments.items():
-        resolved = _static_strings(value, assignments, bindings)
-        if resolved is not None:
-            bindings[name] = resolved
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.For, ast.AsyncFor)):
-            continue
-        sequence = _static_sequence(node.iter, assignments, set())
-        if sequence is None:
-            continue
-        target_values: dict[str, set[str]] = {}
-        for item in sequence:
-            for name, target_value in _assignment_targets(node.target, item).items():
-                if isinstance(target_value, str):
-                    target_values.setdefault(name, set()).add(target_value)
-        for name, values in target_values.items():
-            if values:
-                bindings[name] = frozenset(values)
-    return assignments, bindings
+            for name in _assigned_names(node.target):
+                scope.assignments[name] = node.value
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            scope.loop_nodes.append(node)
+        for child in ast.iter_child_nodes(node):
+            self._walk(child, scope)
+
+    def _finalize(self, scope: _StaticScope) -> None:
+        parent = scope.parent
+        merged_assignments = dict(parent.merged_assignments) if parent is not None else {}
+        merged_assignments.update(scope.assignments)
+        scope.parameters = _function_parameters(scope.node)
+        for parameter in scope.parameters:
+            merged_assignments.pop(parameter, None)
+        merged_bindings = dict(parent.merged_bindings) if parent is not None else {}
+        for name in scope.assignments:
+            merged_bindings.pop(name, None)
+        for parameter in scope.parameters:
+            merged_bindings.pop(parameter, None)
+        local_bindings: dict[str, frozenset[str]] = {}
+        for name, value in scope.assignments.items():
+            if name in scope.parameters:
+                continue
+            resolved = _static_strings(value, merged_assignments, merged_bindings)
+            if resolved is not None:
+                local_bindings[name] = resolved
+                merged_bindings[name] = resolved
+        for node in scope.loop_nodes:
+            sequence = _static_sequence(node.iter, merged_assignments, set())
+            if sequence is None:
+                continue
+            target_values: dict[str, set[str]] = {}
+            for item in sequence:
+                for name, target_value in _assignment_targets(node.target, item).items():
+                    if name not in scope.parameters and isinstance(target_value, str):
+                        target_values.setdefault(name, set()).add(target_value)
+            for name, values in target_values.items():
+                if values:
+                    resolved = frozenset(values)
+                    local_bindings[name] = resolved
+                    merged_bindings[name] = resolved
+        scope.bindings = local_bindings
+        scope.merged_assignments = merged_assignments
+        scope.merged_bindings = merged_bindings
 
 
-def _function_parameter_bindings(
-    tree: ast.Module,
-    assignments: dict[str, ast.AST],
-    bindings: dict[str, frozenset[str]],
-) -> dict[tuple[str, int], frozenset[str]]:
+def _static_assignments(tree: ast.Module) -> tuple[dict[str, ast.AST], dict[str, frozenset[str]]]:
+    analysis = _StaticScopeAnalysis(tree)
+    return analysis.root.assignments, analysis.root.bindings
+
+
+def _function_parameter_bindings(analysis: _StaticScopeAnalysis) -> dict[tuple[int, int], frozenset[str]]:
     """Prove direct helper parameters from all same-module callsites."""
 
-    functions = {
-        node.name: node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    calls: dict[str, list[ast.Call]] = {name: [] for name in functions}
-    for node in ast.walk(tree):
+    functions = [
+        scope.node for scope in analysis.scopes if isinstance(scope.node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    names = {function.name for function in functions}
+    calls: dict[str, list[ast.Call]] = {name: [] for name in names}
+    for node in ast.walk(analysis.tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in calls:
             calls[node.func.id].append(node)
-    result: dict[tuple[str, int], frozenset[str]] = {}
-    for name, function in functions.items():
-        function_calls = calls[name]
+    result: dict[tuple[int, int], frozenset[str]] = {}
+    for function in functions:
+        function_calls = calls[function.name]
         if not function_calls:
             continue
-        positional = list(function.args.posonlyargs) + list(function.args.args)
+        positional = [*function.args.posonlyargs, *function.args.args]
         for index, _parameter in enumerate(positional):
             values: set[str] = set()
             proven = True
@@ -183,13 +285,16 @@ def _function_parameter_bindings(
                 if index >= len(call.args):
                     proven = False
                     break
-                resolved = _static_strings(call.args[index], assignments, bindings)
+                caller_scope = analysis.scope_for(call)
+                resolved = _static_strings(
+                    call.args[index], caller_scope.merged_assignments, caller_scope.merged_bindings
+                )
                 if resolved is None:
                     proven = False
                     break
                 values.update(resolved)
             if proven and values:
-                result[(name, index)] = frozenset(values)
+                result[(id(function), index)] = frozenset(values)
     return result
 
 
@@ -208,46 +313,54 @@ class _DynamicImportVisitor(ast.NodeVisitor):
     def __init__(
         self,
         module: str,
-        assignments: dict[str, ast.AST],
-        bindings: dict[str, frozenset[str]],
-        parameter_bindings: dict[tuple[str, int], frozenset[str]],
+        analysis: _StaticScopeAnalysis,
+        parameter_bindings: dict[tuple[int, int], frozenset[str]],
         import_aliases: set[str],
         importlib_aliases: set[str],
     ) -> None:
         self._module = module
-        self._assignments = assignments
-        self._bindings = bindings
+        self._analysis = analysis
         self._parameter_bindings = parameter_bindings
         self._import_aliases = import_aliases
         self._importlib_aliases = importlib_aliases
-        self._function_stack: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+        self._scope_stack: list[_StaticScope] = [analysis.root]
         self.evidence: list[DynamicImport] = []
         self.unbounded: list[str] = []
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._function_stack.append(node)
+        self._scope_stack.append(self._analysis.scope_for(node))
         self.generic_visit(node)
-        self._function_stack.pop()
+        self._scope_stack.pop()
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._function_stack.append(node)
+        self._scope_stack.append(self._analysis.scope_for(node))
         self.generic_visit(node)
-        self._function_stack.pop()
+        self._scope_stack.pop()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._scope_stack.append(self._analysis.scope_for(node))
+        self.generic_visit(node)
+        self._scope_stack.pop()
 
     def visit_Call(self, node: ast.Call) -> None:
         if _import_module_call(node, self._import_aliases, self._importlib_aliases) and node.args:
             destination = node.args[0]
-            values = _static_strings(destination, self._assignments, self._bindings)
+            scope = self._scope_stack[-1]
+            values = _static_strings(destination, scope.merged_assignments, scope.merged_bindings)
             kind = "literal_or_static"
-            if values is None and isinstance(destination, ast.Name) and self._function_stack:
-                function = self._function_stack[-1]
+            if (
+                values is None
+                and isinstance(destination, ast.Name)
+                and isinstance(scope.node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ):
+                function = scope.node
                 positional = list(function.args.posonlyargs) + list(function.args.args)
                 try:
                     index = next(index for index, parameter in enumerate(positional) if parameter.arg == destination.id)
                 except StopIteration:
                     index = -1
                 if index >= 0:
-                    values = self._parameter_bindings.get((function.name, index))
+                    values = self._parameter_bindings.get((id(function), index))
                     kind = "bounded_callsite" if values is not None else "unbounded"
             if values is None:
                 kind = "unbounded"
@@ -259,7 +372,15 @@ class _DynamicImportVisitor(ast.NodeVisitor):
                     kind = "invalid_static"
                     self.unbounded.append(f"{self._module}:{node.lineno}")
                 count = len(values)
-            self.evidence.append(DynamicImport(self._module, node.lineno, kind, count, None))
+            self.evidence.append(
+                DynamicImport(
+                    self._module,
+                    node.lineno,
+                    kind,
+                    count,
+                    tuple(sorted(values)) if values is not None else None,
+                )
+            )
         self.generic_visit(node)
 
 
@@ -280,8 +401,8 @@ def dynamic_import_destinations(root: Path) -> tuple[list[DynamicImport], list[s
     for path in (root / "src").rglob("*.py"):
         module = module_name(root, path)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        assignments, bindings = _static_assignments(tree)
-        parameter_bindings = _function_parameter_bindings(tree, assignments, bindings)
+        analysis = _StaticScopeAnalysis(tree)
+        parameter_bindings = _function_parameter_bindings(analysis)
         importlib_aliases = {"importlib"}
         import_aliases: set[str] = set()
         for node in tree.body:
@@ -295,8 +416,7 @@ def dynamic_import_destinations(root: Path) -> tuple[list[DynamicImport], list[s
                         import_aliases.add(alias.asname or alias.name)
         visitor = _DynamicImportVisitor(
             module,
-            assignments,
-            bindings,
+            analysis,
             parameter_bindings,
             import_aliases,
             importlib_aliases,
@@ -329,18 +449,16 @@ def module_imports(root: Path) -> tuple[dict[str, set[str]], list[str]]:
                     candidate = f"{target}.{alias.name}" if target else alias.name
                     if candidate in modules:
                         targets.add(candidate)
-            elif (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "importlib"
-                and node.func.attr == "import_module"
-                and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and isinstance(node.args[0].value, str)
-            ):
-                dynamic.append(f"{name}:{node.lineno}:{node.args[0].value}")
         imports[name] = targets
+    dynamic_evidence, _unbounded = dynamic_import_destinations(root)
+    accepted_kinds = {"literal_or_static", "bounded_callsite"}
+    for item in dynamic_evidence:
+        if item.destination_kind not in accepted_kinds or item.destination_values is None:
+            continue
+        for destination in item.destination_values:
+            if destination in modules:
+                imports[item.module].add(destination)
+                dynamic.append(f"{item.module}:{item.line}:{destination}")
     return imports, dynamic
 
 

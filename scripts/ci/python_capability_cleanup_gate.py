@@ -245,8 +245,12 @@ def _run_inputs(
     excluded_candidates = contract.get("package_excluded_candidates")
     deletion_candidates = contract.get("deletion_candidates")
     oracle_tests = contract.get("oracle_tests")
-    if not isinstance(excluded_candidates, list) or not all(isinstance(item, str) for item in excluded_candidates):
-        raise RuntimeError("package_excluded_candidates must be a list")
+    if (
+        not isinstance(excluded_candidates, list)
+        or not excluded_candidates
+        or not all(isinstance(item, str) for item in excluded_candidates)
+    ):
+        raise RuntimeError("package_excluded_candidates must be a non-empty list")
     if not isinstance(deletion_candidates, list) or not deletion_candidates:
         raise RuntimeError("deletion candidates must be recorded")
     if not isinstance(oracle_tests, list) or not all(isinstance(item, str) for item in oracle_tests):

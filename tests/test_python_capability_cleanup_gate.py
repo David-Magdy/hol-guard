@@ -49,6 +49,66 @@ def test_dynamic_import_gate_rejects_unbounded_destination(tmp_path: Path) -> No
     assert unbounded == ["example:3"]
 
 
+def test_dynamic_import_gate_does_not_leak_sibling_function_bindings(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "example.py").write_text(
+        "import importlib\n"
+        "def unrelated():\n"
+        "    destination = 'example.allowed'\n"
+        "    return destination\n"
+        "def load(destination: str):\n"
+        "    return importlib.import_module(destination)\n",
+        encoding="utf-8",
+    )
+
+    _evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert unbounded == ["example:6"]
+
+
+def test_dynamic_import_gate_preserves_function_local_static_bindings(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "example.py").write_text(
+        "import importlib\n"
+        "def load():\n"
+        "    destination = 'example.allowed'\n"
+        "    return importlib.import_module(destination)\n",
+        encoding="utf-8",
+    )
+
+    evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert unbounded == []
+    assert evidence[0].destination_values == ("example.allowed",)
+
+
+def test_dynamic_import_graph_records_alias_and_static_expression(tmp_path: Path) -> None:
+    package = tmp_path / "src" / "codex_plugin_scanner" / "guard"
+    package.mkdir(parents=True)
+    (package / "native_runtime_resident.py").write_text("", encoding="utf-8")
+    (package / "loader.py").write_text(
+        "from importlib import import_module as load\n"
+        "prefix = 'codex_plugin_scanner.guard.'\n"
+        "destination = prefix + 'native_runtime_resident'\n"
+        "load(destination)\n",
+        encoding="utf-8",
+    )
+
+    importers = GATE._production_importers(tmp_path, "codex_plugin_scanner.guard.native_runtime_resident")
+
+    assert any(item.startswith("codex_plugin_scanner.guard.loader:") for item in importers)
+
+
+def test_cleanup_contract_rejects_empty_excluded_candidate_list() -> None:
+    contract = GATE._read_json(ROOT / GATE.CONTRACT)
+    contract["package_excluded_candidates"] = []
+
+    with pytest.raises(RuntimeError, match="non-empty list"):
+        GATE._run_inputs(ROOT, contract)
+
+
 def test_retained_python_oracle_is_loaded_only_by_explicit_test_surface(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOL_GUARD_NATIVE", "off")
     monkeypatch.setenv("HOL_GUARD_TEST_MODE", "1")

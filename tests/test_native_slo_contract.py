@@ -188,6 +188,28 @@ def test_safe_failure_rate_counts_only_native_fail_safe_routes() -> None:
     assert _safe_failure_rate(observations) == pytest.approx(1 / 3)
 
 
+def test_overloaded_fail_safe_is_reported_as_bounded_security_denial() -> None:
+    measurements = SloMeasurements(
+        warm=[Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True)],
+        sizes=[],
+        recovery=[],
+        cold=[],
+        concurrent_16=[Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True)],
+        concurrent_64=[Observation("codex", "PostToolUse", "1k", 1.0, "native_fail_safe", False, overloaded=True)],
+        errors_16=0,
+        errors_64=0,
+        readiness=[],
+        rss_baseline=1,
+        rss_peak=1,
+    )
+
+    summary = summarize_measurements(measurements)
+
+    assert summary.safe_failures == 0
+    assert summary.security_denials == 1
+    assert dict(summary.security_denials_by_size) == {"1k": 1}
+
+
 def test_summary_separates_expected_denials_from_warm_fail_safe_gate() -> None:
     measurements = SloMeasurements(
         warm=[Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True)],

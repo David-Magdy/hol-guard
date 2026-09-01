@@ -254,6 +254,7 @@ def _validate_reproducibility(payload: Mapping[str, object]) -> dict[str, object
 def _validate_signature(
     payload: Mapping[str, object],
     *,
+    canonical_payload: Mapping[str, object],
     require_signature: bool,
     trusted_public_key: bytes | None,
     trusted_key_id: str | None,
@@ -279,8 +280,9 @@ def _validate_signature(
             raise FinalEvidenceError("trusted evidence signer is not configured")
         if trusted_key_id is not None and key_id != trusted_key_id:
             raise FinalEvidenceError("evidence signer key ID is not trusted")
+        signed_bytes = canonical_bytes(canonical_payload)
         _hash(signature_payload.get("manifest_sha256"), label="evidence signed digest")
-        if signature_payload["manifest_sha256"] != hashlib.sha256(canonical_bytes(payload)).hexdigest():
+        if signature_payload["manifest_sha256"] != hashlib.sha256(signed_bytes).hexdigest():
             raise FinalEvidenceError("evidence signature digest does not bind canonical bytes")
         public_key_bytes = _encoded(signature_payload.get("public_key"), label="evidence public key", size=32)
         if public_key_bytes != trusted_public_key:
@@ -289,7 +291,7 @@ def _validate_signature(
             public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
             public_key.verify(
                 _encoded(signature_payload.get("signature"), label="evidence signature", size=64),
-                canonical_bytes(payload),
+                signed_bytes,
             )
         except (InvalidSignature, ValueError) as error:
             raise FinalEvidenceError("evidence signature is invalid") from error
@@ -322,12 +324,6 @@ def validate_final_evidence(
     coverage = _validate_coverage(payload)
     approval = _validate_approval(payload)
     reproducibility = _validate_reproducibility(payload)
-    signature_payload, signature_verified = _validate_signature(
-        payload,
-        require_signature=require_signature,
-        trusted_public_key=trusted_public_key,
-        trusted_key_id=trusted_key_id,
-    )
 
     normalized: dict[str, object] = {
         "schema": "hol-guard-final-release-evidence.v1",
@@ -339,6 +335,13 @@ def validate_final_evidence(
         "approval": approval,
         "reproducibility": reproducibility,
     }
+    signature_payload, signature_verified = _validate_signature(
+        payload,
+        canonical_payload=normalized,
+        require_signature=require_signature,
+        trusted_public_key=trusted_public_key,
+        trusted_key_id=trusted_key_id,
+    )
     normalized["signature"] = signature_payload if signature_verified else {"status": "external-signer-required"}
     normalized["release_ready"] = signature_verified
     return normalized

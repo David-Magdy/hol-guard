@@ -5,12 +5,15 @@ const FRAME_HEADER_BYTES: usize = 4;
 
 pub(super) fn read_frame(input: &mut impl Read) -> Result<Option<Vec<u8>>, String> {
     let mut header = [0u8; FRAME_HEADER_BYTES];
-    match input.read_exact(&mut header) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
-            return Err("native_client_stream_frame_truncated".to_owned())
+    let mut header_read = 0;
+    while header_read < FRAME_HEADER_BYTES {
+        match input.read(&mut header[header_read..]) {
+            Ok(0) if header_read == 0 => return Ok(None),
+            Ok(0) => return Err("native_client_stream_frame_truncated".to_owned()),
+            Ok(read) => header_read += read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err("native_client_stream_read_failed".to_owned()),
         }
-        Err(_) => return Ok(None),
     }
     let length = u32::from_be_bytes(header) as usize;
     if length == 0 || length > crate::MAX_NATIVE_REQUEST_BYTES {

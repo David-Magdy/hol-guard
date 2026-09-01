@@ -76,7 +76,9 @@ def safe_failure_rate(observations: Sequence[Observation]) -> float:
     retain all policy denials separately for diagnostic evidence.
     """
 
-    return sum(observation.route == "native_fail_safe" for observation in observations) / max(1, len(observations))
+    return sum(
+        observation.route == "native_fail_safe" and not observation.overloaded for observation in observations
+    ) / max(1, len(observations))
 
 
 def summarize_measurements(measurements: SloMeasurements) -> SloSummary:
@@ -100,17 +102,22 @@ def summarize_measurements(measurements: SloMeasurements) -> SloSummary:
         if measurements.rss_baseline
         else 1.0
     )
-    safe_failures = sum(observation.route == "native_fail_safe" for observation in all_observations)
+    safe_failures = sum(
+        observation.route == "native_fail_safe" and not observation.overloaded for observation in all_observations
+    )
     safe_failures_by_size = Counter(
-        observation.size_class for observation in all_observations if observation.route == "native_fail_safe"
+        observation.size_class
+        for observation in all_observations
+        if observation.route == "native_fail_safe" and not observation.overloaded
     )
     security_denials = sum(
-        not observation.allowed and observation.route != "native_fail_safe" for observation in all_observations
+        not observation.allowed and (observation.route != "native_fail_safe" or observation.overloaded)
+        for observation in all_observations
     )
     security_denials_by_size = Counter(
         observation.size_class
         for observation in all_observations
-        if not observation.allowed and observation.route != "native_fail_safe"
+        if not observation.allowed and (observation.route != "native_fail_safe" or observation.overloaded)
     )
     return SloSummary(
         all_observations=all_observations,

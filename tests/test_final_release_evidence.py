@@ -76,13 +76,15 @@ def _validate(
 
 def _signed_payload(private_key: Ed25519PrivateKey = TEST_PRIVATE_KEY) -> dict[str, object]:
     payload = _payload()
+    unsigned_projection = _validate(payload)
+    signed_bytes = canonical_bytes(unsigned_projection)
     payload["signature"] = {
         "status": "verified",
         "algorithm": "ed25519",
         "key_id": "release-evidence-key",
         "public_key": base64.b64encode(private_key.public_key().public_bytes_raw()).decode("ascii"),
-        "signature": base64.b64encode(private_key.sign(canonical_bytes(payload))).decode("ascii"),
-        "manifest_sha256": hashlib.sha256(canonical_bytes(payload)).hexdigest(),
+        "signature": base64.b64encode(private_key.sign(signed_bytes)).decode("ascii"),
+        "manifest_sha256": hashlib.sha256(signed_bytes).hexdigest(),
     }
     return payload
 
@@ -189,3 +191,12 @@ def test_final_evidence_normalization_drops_unvalidated_fields() -> None:
 
     assert "operator_note" not in normalized
     assert "future_field" not in normalized["release"]
+
+
+def test_final_evidence_signature_matches_normalized_output_projection() -> None:
+    payload = _signed_payload()
+    payload["operator_note"] = "ignored-after-signing"
+
+    normalized = _validate(payload, require_signature=True, trusted_public_key=TEST_PUBLIC_KEY)
+
+    assert normalized["signature"]["manifest_sha256"] == hashlib.sha256(canonical_bytes(normalized)).hexdigest()
