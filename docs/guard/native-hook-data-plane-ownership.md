@@ -35,7 +35,7 @@ harness launcher or managed hook
      -> explicit off: deterministic fail-safe disablement (no semantic fallback)
      -> explicit shadow diagnostic surface: Rust authority plus non-authoritative comparison
      -> explicit differential-test oracle: Python reference evaluator only
-  -> Python asynchronous evidence writer or synchronous CLI persistence
+  -> Python bounded asynchronous evidence handoff (non-authoritative)
 ```
 
 Native approval path (when a hook requires approval):
@@ -195,3 +195,19 @@ installed route and prove:
 - zero fail-safe results on the ordinary successful corpus;
 - no sensitive command, output, source, path, secret, or identity data in the
   ownership, route, performance, or fault artifacts.
+
+## NHD-079–085 reconstructed receipt contract
+
+The exact historical wording for NHD-079–085 was not recoverable. The
+implementation scope is therefore recorded explicitly in the versioned
+`docs/guard/contracts/native-hook-decision-receipt-persistence.v1.md` contract;
+that document is reconstructed scope, not verbatim task history.
+
+The Rust edge now emits a bounded, identity-bound
+`guard-native-hook-decision-receipt.v1` for every supported native decision.
+`HookWorker` hands that redacted value to the bounded background writer only
+after the Rust result is available. Queue admission, journaling, SQLite
+insertion, retries, restarts, busy/locked/corrupt storage, writer crashes, and
+queue saturation cannot alter the returned action or wait on the deadline.
+`decision_id` provides deterministic deduplication; aggregate degraded metrics
+make evidence loss visible without creating a fallback authority.

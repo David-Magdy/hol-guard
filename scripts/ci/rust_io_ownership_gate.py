@@ -78,9 +78,15 @@ _TRANSPORT_IDENTITY_PATHS: Final = frozenset(
 _TRANSPORT_DECODE_PATHS: Final = frozenset(
     {
         "src/codex_plugin_scanner/guard/native_hook_edge.py",
+        "src/codex_plugin_scanner/guard/native_decision_receipt.py",
         "src/codex_plugin_scanner/guard/native_pretool.py",
         "src/codex_plugin_scanner/guard/native_resident_client.py",
         "src/codex_plugin_scanner/guard/native_runtime.py",
+    }
+)
+_TRANSPORT_INTEGRITY_PATHS: Final = frozenset(
+    {
+        "src/codex_plugin_scanner/guard/native_decision_receipt.py",
     }
 )
 _ASYNC_POLICY_PATHS: Final = frozenset(
@@ -240,6 +246,8 @@ def _category(path: str, kind: str) -> str:
         return "transport_identity"
     if path in _TRANSPORT_DECODE_PATHS and kind == "decode":
         return "transport_decode"
+    if path in _TRANSPORT_INTEGRITY_PATHS and kind == "hash":
+        return "transport_integrity"
     if path in _ASYNC_POLICY_PATHS:
         return "asynchronous_policy"
     if path.startswith(_PERSISTENCE_PATH_PREFIXES):

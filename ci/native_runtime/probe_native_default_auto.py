@@ -143,8 +143,7 @@ def _installed_hook_request(
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")[:512]
         raise RuntimeError(
-            "installed hook corpus request failed: "
-            f"harness={harness} event={event} status={error.code} body={detail}"
+            f"installed hook corpus request failed: harness={harness} event={event} status={error.code} body={detail}"
         ) from error
 
 
@@ -164,6 +163,7 @@ def _installed_hook_corpus(root: Path) -> dict[str, object]:
     route_receipts: list[dict[str, str]] = []
     routes = _ownership_routes()
     daemon.start()
+    mode_invariants: dict[str, dict[str, object]] = {}
     try:
         readiness_started = time.monotonic()
         prepared_policy = daemon._server.hook_worker.prepare_workspace_policy(
@@ -222,15 +222,43 @@ def _installed_hook_corpus(root: Path) -> dict[str, object]:
         # route receipt instead of attributing native traffic to that idle
         # Python-only worker pool.
         worker_stats = daemon._server.hook_worker.metrics.snapshot()
+        writer = daemon._server.runtime_hook_evidence_writer
+        for mode in ("off", "shadow"):
+            os.environ["HOL_GUARD_NATIVE"] = mode
+            response = _installed_hook_request(
+                daemon,
+                guard_home,
+                workspace,
+                "claude-code",
+                "PostToolUse",
+                {
+                    "hook_event_name": "PostToolUse",
+                    "tool_name": "Read",
+                    "tool_response": [{"type": "text", "text": "mode invariant\n"}],
+                },
+            )
+            _require(isinstance(response, dict), {"mode": mode, "response": response})
+            _require(response.get("decision") == "deny", {"mode": mode, "response": response})
+            mode_invariants[mode] = {
+                "decision": response.get("decision"),
+                "reason_code": response.get("reason_code"),
+                "python_oracle": daemon._server.hook_worker.test_oracle is not None,
+            }
+            _require(mode_invariants[mode]["python_oracle"] is False, mode_invariants[mode])
     finally:
+        os.environ.pop("HOL_GUARD_NATIVE", None)
         daemon.stop()
 
     expected = len(route_receipts)
     observed_routes = worker_stats["routes"]
+    evidence_stats = writer.stats()
     _require(expected > 0, "installed hook corpus is empty")
     _require(expected == 21, {"expected": expected, "routes": routes})
     _require(sum(observed_routes.values()) == expected, worker_stats)
     _require(observed_routes.get("native_resident") == expected, worker_stats)
+    _require(evidence_stats["receipt_accepted"] == expected, evidence_stats)
+    _require(evidence_stats["receipt_processed"] == expected, evidence_stats)
+    _require(evidence_stats["receipt_dropped"] == 0, evidence_stats)
     return {
         "routes": route_receipts,
         "route_count": expected,
@@ -239,6 +267,15 @@ def _installed_hook_corpus(root: Path) -> dict[str, object]:
         "python_semantic_decisions": observed_routes.get("python_semantic", 0),
         "fail_safe_decisions": observed_routes.get("native_fail_safe", 0),
         "reason_code_counts": reason_codes,
+        "receipt_metrics": {
+            "accepted": evidence_stats["receipt_accepted"],
+            "processed": evidence_stats["receipt_processed"],
+            "deduped": evidence_stats["receipt_deduped"],
+            "dropped": evidence_stats["receipt_dropped"],
+            "failures": evidence_stats["receipt_failures"],
+            "durable_pending": evidence_stats["receipt_durable_pending"],
+        },
+        "mode_invariants": mode_invariants,
     }
 
 
@@ -254,6 +291,12 @@ def main(*, json_path: Path | None = None) -> int:
         _require(environment_name not in os.environ, f"{environment_name} must be unset")
     _require(native_mode() == "auto", f"unexpected native mode: {native_mode()}")
     _require(hook_fast_path_enabled(), "unset fast-path configuration must be enabled")
+
+    os.environ["HOL_GUARD_NATIVE"] = "invalid"
+    try:
+        _require(native_mode() == "auto", "invalid native mode must resolve to auto")
+    finally:
+        del os.environ["HOL_GUARD_NATIVE"]
 
     package_path = Path(codex_plugin_scanner.__file__).resolve()
     source_package = (Path.cwd() / "src" / "codex_plugin_scanner").resolve()
@@ -272,6 +315,21 @@ def main(*, json_path: Path | None = None) -> int:
     capabilities = status.capabilities
     if capabilities is None:
         raise RuntimeError(f"native_default_auto_probe_failed: {status}")
+
+    # An invalid binary override must not redirect automatic production
+    # selection away from the version-bound bundled resident runtime.
+    os.environ["HOL_GUARD_NATIVE_BINARY"] = "/definitely-missing/hol-guard-runtime"
+    try:
+        overridden = native_runtime_status()
+        _require(overridden.mode == "auto", overridden)
+        _require(overridden.available and overridden.compatible, overridden)
+        _require(overridden.reason == "native_ready", overridden)
+        _require(
+            overridden.identity is not None and overridden.identity.path == identity.path,
+            {"selected": overridden.identity, "expected": identity.path},
+        )
+    finally:
+        del os.environ["HOL_GUARD_NATIVE_BINARY"]
 
     with tempfile.TemporaryDirectory(prefix="hg-auto-", dir=_short_temp_parent()) as temporary:
         root = Path(temporary)
@@ -335,6 +393,8 @@ def main(*, json_path: Path | None = None) -> int:
         "python_semantic_decisions": installed_corpus["python_semantic_decisions"],
         "route_receipts": installed_corpus["routes"],
         "reason_code_counts": installed_corpus["reason_code_counts"],
+        "receipt_metrics": installed_corpus["receipt_metrics"],
+        "mode_invariants": installed_corpus["mode_invariants"],
     }
     rendered = json.dumps(receipt, sort_keys=True)
     if json_path is not None:

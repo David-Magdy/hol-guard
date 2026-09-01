@@ -123,6 +123,7 @@ class HookWorker:
             wait_until_ready = getattr(self.policy_snapshot_publisher, "wait_until_ready", None)
             if callable(wait_until_ready):
                 _ = wait_until_ready(time.monotonic() + 0.25)
+
     @property
     def test_oracle(self) -> PythonOracle | None:
         """Expose the injected differential oracle to test fixtures only."""
@@ -338,6 +339,7 @@ class HookWorker:
         if not isinstance(native_result, Mapping):
             self.metrics.record_route("native_fail_safe")
             return post_tool_fail_safe_response(harness, reason_code="native_hook_edge_invalid_response")
+        self._record_native_decision_receipt(edge.get("receipt"))
         self.metrics.record_route("native_resident")
         if native_event == "PreToolUse":
             return harness_json_from_native_pre_tool(native_harness, native_result)
@@ -347,6 +349,16 @@ class HookWorker:
             succeeded=hook_post_succeeded(native_event, payload),
         )
         return harness_json_from_native_post_tool(native_harness, native_result)
+
+    def _record_native_decision_receipt(self, receipt: object) -> None:
+        """Hand Rust evidence to the non-authoritative writer without waiting."""
+
+        writer = self.activity_writer
+        submit = getattr(writer, "submit_native_decision_receipt", None)
+        if not callable(submit) or not isinstance(receipt, Mapping):
+            return
+        with suppress(Exception):
+            _ = submit(receipt=receipt)
 
     def _review_post_tool_http(
         self,

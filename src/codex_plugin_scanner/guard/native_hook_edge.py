@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from .native_decision_receipt import receipt_matches_edge
 from .native_resident_client import native_resident_client_request
 from .native_route_receipt import record_native_hook_result
 from .native_runtime import _isolated_environment, native_runtime_status
@@ -178,6 +179,7 @@ def _decode_edge(payload: object) -> dict[str, Any] | None:
         "event_name",
         "payload_kind",
         "result",
+        "receipt",
     }
     allowed = required | {"request_id"}
     if not isinstance(payload, dict) or not required <= set(payload) or set(payload) - allowed:
@@ -200,6 +202,9 @@ def _decode_edge(payload: object) -> dict[str, Any] | None:
     if event_name == "PreToolUse" and not _decode_pre_tool_result(payload["result"], harness=payload["harness"]):
         return None
     if event_name == "PreToolUse" and payload_kind == "encrypted_payload_ref":
+        return None
+    receipt = payload.get("receipt")
+    if not receipt_matches_edge(payload, receipt):
         return None
     return payload
 

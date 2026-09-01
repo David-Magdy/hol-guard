@@ -48,6 +48,8 @@ jobs:
         run: uv run --no-sync python scripts/ci/native_approval_contract_gate.py --root .
       - name: Reject production Python semantic hook reachability
         run: uv run --no-sync python scripts/ci/python_hook_semantic_callgraph_gate.py --root .
+      - name: Enforce native receipt persistence contract at exact HEAD
+        run: uv run --no-sync python scripts/ci/native_receipt_persistence_gate.py --root . --json native-receipt-persistence.json
       - name: Compile and lint complete Rust workspace
         env:
           HOL_GUARD_BUILD_SHA: ${{ github.sha }}
@@ -105,5 +107,6 @@ jobs:
             rust-pretool-authority.json
             rust-posttool-authority.json
             rust-authority-performance.json
+            native-receipt-persistence.json
           if-no-files-found: error
           retention-days: 30

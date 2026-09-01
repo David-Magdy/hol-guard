@@ -2,13 +2,15 @@
 
 use guard_contracts::{
     GuardHookEdgeResultV2, GuardHookEnvelopeV2, GuardHookPayloadKindV2, HookOutputSummaryV1,
-    HookSourceFileRefV1, NativeHookRequestV1, GUARD_HOOK_EDGE_RESULT_V2_SCHEMA,
+    HookSourceFileRefV1, NativeHookRequestV1, PreToolResultV1, GUARD_HOOK_EDGE_RESULT_V2_SCHEMA,
     GUARD_HOOK_ENVELOPE_V2_SCHEMA, MAX_NATIVE_REQUEST_BYTES, NATIVE_PROTOCOL_VERSION,
 };
 use guard_hook_core::review_post_tool;
 use guard_policy_snapshot::PolicySnapshotV3;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+
+use crate::native_hook_receipt::{receipt_from_post_tool, receipt_from_pre_tool};
 
 const MAX_HARNESS_BYTES: usize = 64;
 const MAX_EVENT_BYTES: usize = 64;
@@ -306,11 +308,11 @@ fn evaluate_validated_envelope(
     let harness = canonical_harness(&envelope.harness)?;
     let event_name = authoritative_event(&envelope)?;
     let kind = payload_kind(&envelope.raw_payload)?;
-    let (request_id, _request_digest) = request_identity(&envelope)?;
+    let (request_id, request_digest) = request_identity(&envelope)?;
     if kind == GuardHookPayloadKindV2::EncryptedPayloadRef {
         return Err("native_hook_encrypted_payload_unsupported".to_owned());
     }
-    let result = match event_name.as_str() {
+    let (result, receipt) = match event_name.as_str() {
         "PreToolUse" => {
             let native = guard_command::pretool::evaluate_pre_tool_envelope(
                 &harness,
@@ -329,7 +331,18 @@ fn evaluate_validated_envelope(
             let value = serde_json::to_value(evaluated)
                 .map_err(|_| "native_hook_edge_response_invalid".to_owned())?;
             validate_pre_tool_result(&value)?;
-            value
+            let typed = serde_json::from_value::<PreToolResultV1>(value.clone())
+                .map_err(|_| "native_hook_pre_tool_result_invalid".to_owned())?;
+            let receipt = receipt_from_pre_tool(
+                &envelope,
+                policy_snapshot,
+                &request_id,
+                &request_digest,
+                &harness,
+                &kind,
+                &typed,
+            )?;
+            (value, receipt)
         }
         "PostToolUse" => {
             let payload_kind = kind.clone();
@@ -338,10 +351,10 @@ fn evaluate_validated_envelope(
                 request_id: envelope.request_id.clone(),
                 harness: harness.clone(),
                 event_name: event_name.clone(),
-                payload: envelope.raw_payload,
-                cwd: envelope.source.cwd,
-                home_dir: envelope.source.home_dir,
-                guard_home: envelope.source.guard_home,
+                payload: envelope.raw_payload.clone(),
+                cwd: envelope.source.cwd.clone(),
+                home_dir: envelope.source.home_dir.clone(),
+                guard_home: envelope.source.guard_home.clone(),
                 source_ref_external_allowed: envelope.source.source_ref_external_allowed,
                 // Keep the intrinsic result intact. The authenticated policy
                 // join below owns observe-mode semantics and suppresses only
@@ -361,8 +374,18 @@ fn evaluate_validated_envelope(
             } else {
                 native
             };
-            serde_json::to_value(evaluated)
-                .map_err(|_| "native_hook_edge_response_invalid".to_owned())?
+            let receipt = receipt_from_post_tool(
+                &envelope,
+                policy_snapshot,
+                &request_id,
+                &request_digest,
+                &harness,
+                &kind,
+                &evaluated,
+            )?;
+            let value = serde_json::to_value(evaluated)
+                .map_err(|_| "native_hook_edge_response_invalid".to_owned())?;
+            (value, receipt)
         }
         _ => return Err("native_hook_event_unsupported".to_owned()),
     };
@@ -374,6 +397,7 @@ fn evaluate_validated_envelope(
         event_name,
         payload_kind: kind,
         result,
+        receipt,
     })
 }
 

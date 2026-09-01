@@ -10,6 +10,7 @@ from ..adapters.base import HarnessContext
 from ..config import GuardConfig
 from ..daemon.hook_worker import HookWorker, HookWorkerUnsupported
 from ..daemon.hook_worker_responses import post_tool_fail_safe_response
+from ..daemon.runtime_hook_evidence_writer import RuntimeHookEvidenceWriter
 from ..native_mode import (
     native_mode_is_fail_safe_disabled,
     python_oracle_surface_enabled,
@@ -41,8 +42,13 @@ def try_native_hook_authority(
     if not _native_mode_requires_rust():
         return None
     worker: HookWorker | None = None
+    evidence_writer: RuntimeHookEvidenceWriter | None = None
     try:
-        worker = HookWorker(store=store)
+        # Short-lived CLI hooks use the same bounded, non-authoritative
+        # handoff as the resident daemon. Teardown drains it independently of
+        # the native decision result.
+        evidence_writer = RuntimeHookEvidenceWriter(store=store)
+        worker = HookWorker(store=store, activity_writer=evidence_writer)
         return worker.review_http_payload(
             payload=payload,
             params={},
@@ -64,6 +70,11 @@ def try_native_hook_authority(
             close = getattr(worker, "close", None)
             if callable(close):
                 close()
+        if evidence_writer is not None:
+            # A one-shot hook must not hold the harness response open for
+            # control-plane persistence. Persistence is best effort; the
+            # security result is already returned and never depends on it.
+            _ = evidence_writer.stop(timeout_seconds=0.0)
 
 
 def try_native_or_source_ref_hook(
@@ -120,9 +131,7 @@ def try_native_or_source_ref_hook(
         # second semantic evaluator. Shadow requires the same explicit test or
         # non-production diagnostic boundary before comparison is permitted.
         reason_code = (
-            "native_hook_disabled"
-            if native_mode_is_fail_safe_disabled()
-            else "native_shadow_diagnostic_disabled"
+            "native_hook_disabled" if native_mode_is_fail_safe_disabled() else "native_shadow_diagnostic_disabled"
         )
         _emit(
             "hook",

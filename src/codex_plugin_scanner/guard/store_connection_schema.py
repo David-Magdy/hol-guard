@@ -37,6 +37,7 @@ from .store_extension_control_authority_schema import ensure_extension_control_a
 from .store_local_cli_schema import ensure_local_cli_schema
 from .store_resume import ensure_resume_schema
 from .store_review_event_outbox_schema import ensure_review_event_outbox_schema
+from .store_native_decision_receipts import native_decision_receipt_schema_statement
 from .store_secret_policy_integrity import _POLICY_INTEGRITY_LOOKUP_UNSET
 from .store_storage_maintenance import (
     STORAGE_MAINTENANCE_MIGRATION_VERSION,
@@ -977,6 +978,7 @@ class StoreConnectionSchemaMixin:
             supply_chain_eval_cache_schema_statement(),
             threat_intel_bundle_schema_statement(),
             threat_intel_matches_schema_statement(),
+            native_decision_receipt_schema_statement(),
         )
         with self._connect() as connection:
             if initialize_incremental_vacuum:

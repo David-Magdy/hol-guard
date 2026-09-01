@@ -8,6 +8,7 @@ from codex_plugin_scanner.guard.runtime.hook_review_types import HookDecision, H
 
 from .native_approval_errors import NATIVE_APPROVAL_ERROR_CODES
 from .native_approval_protocol import decode_native_approval_challenge, decode_native_approval_result
+from .native_decision_receipt import receipt_matches_edge
 
 _NATIVE_ERROR_CODES = frozenset(
     {
@@ -36,15 +37,16 @@ def response_from_payload(payload: object) -> HookReviewResponse | None:
         return None
     decoded = cast(dict[str, object], payload)
     if decoded.get("schema") == "guard-hook-edge-result.v2":
-        if set(decoded) - {
+        required = {
             "schema",
             "authority",
-            "request_id",
             "harness",
             "event_name",
             "payload_kind",
             "result",
-        }:
+            "receipt",
+        }
+        if not required <= set(decoded) or set(decoded) - (required | {"request_id"}):
             return None
         harness = decoded.get("harness")
         if (
@@ -62,6 +64,9 @@ def response_from_payload(payload: object) -> HookReviewResponse | None:
             return None
         result = decoded.get("result")
         if not isinstance(result, dict):
+            return None
+        receipt = decoded.get("receipt")
+        if not receipt_matches_edge(decoded, receipt):
             return None
         decoded = cast(dict[str, object], result)
     decision = decoded.get("decision")

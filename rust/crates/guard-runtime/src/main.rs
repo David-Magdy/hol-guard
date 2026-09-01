@@ -4,6 +4,7 @@ mod approval;
 mod edge;
 mod hardening;
 mod managed_resident;
+mod native_hook_receipt;
 mod oneshot;
 mod policy_enforcement;
 mod policy_store;

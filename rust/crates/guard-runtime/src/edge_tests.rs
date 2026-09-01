@@ -67,6 +67,18 @@ fn normalizes_harness_event_and_extracts_pretool_command() {
     assert_eq!(result.harness, "claude-code");
     assert_eq!(result.event_name, "PreToolUse");
     assert_eq!(result.result["minimum_action"], "allow");
+    assert_eq!(
+        result.receipt.schema,
+        "guard-native-hook-decision-receipt.v1"
+    );
+    assert_eq!(result.receipt.authority, "rust");
+    assert_eq!(result.receipt.event_name, "PreToolUse");
+    assert_eq!(result.receipt.decision, "allow");
+    assert_eq!(result.receipt.decision_id.len(), 64);
+    assert!(result.receipt.runtime_identity.is_none());
+    let encoded = serde_json::to_value(result.receipt).unwrap();
+    assert!(encoded.get("raw_payload").is_none());
+    assert!(encoded.get("command").is_none());
 }
 
 #[test]
