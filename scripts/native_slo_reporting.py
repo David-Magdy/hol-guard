@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from scripts.native_slo_adapter import Observation
 from scripts.native_slo_contract import (
     MAX_COLD_P95_MS,
-    MAX_CONCURRENT_P99_MS,
+    MAX_INSTALLED_ADAPTER_P95_MS,
+    MAX_INSTALLED_ADAPTER_P99_MS,
+    MAX_READINESS_P95_MS,
     SAFE_ROUTE_NAMES,
     SIZE_CLASSES,
     SLO_SCHEMA,
@@ -56,6 +58,8 @@ class SloSummary:
     event_values: dict[str, list[float]]
     rss_growth: float
     concurrent_64_summary: dict[str, float]
+    concurrent_16_overloads: int
+    concurrent_64_overloads: int
 
 
 def _require(condition: bool, reason: object) -> None:
@@ -96,9 +100,17 @@ def summarize_measurements(measurements: SloMeasurements) -> SloSummary:
         if measurements.rss_baseline
         else 1.0
     )
-    security_denials = sum(not observation.allowed for observation in all_observations)
+    safe_failures = sum(observation.route == "native_fail_safe" for observation in all_observations)
+    safe_failures_by_size = Counter(
+        observation.size_class for observation in all_observations if observation.route == "native_fail_safe"
+    )
+    security_denials = sum(
+        not observation.allowed and observation.route != "native_fail_safe" for observation in all_observations
+    )
     security_denials_by_size = Counter(
-        observation.size_class for observation in all_observations if not observation.allowed
+        observation.size_class
+        for observation in all_observations
+        if not observation.allowed and observation.route != "native_fail_safe"
     )
     return SloSummary(
         all_observations=all_observations,
@@ -106,10 +118,10 @@ def summarize_measurements(measurements: SloMeasurements) -> SloSummary:
         warm_routes=Counter(observation.route for observation in measurements.warm),
         warm_failures=sum(not observation.allowed for observation in measurements.warm),
         warm_fail_safe=sum(observation.route == "native_fail_safe" for observation in measurements.warm),
-        safe_failures=security_denials,
+        safe_failures=safe_failures,
         security_denials=security_denials,
         safe_failure_rate=safe_failure_rate(measurements.warm),
-        safe_failures_by_size=security_denials_by_size,
+        safe_failures_by_size=safe_failures_by_size,
         security_denials_by_size=security_denials_by_size,
         size_values=size_values,
         warm_values=warm_values,
@@ -118,7 +130,23 @@ def summarize_measurements(measurements: SloMeasurements) -> SloSummary:
         event_values=event_values,
         rss_growth=rss_growth,
         concurrent_64_summary=summarize([item.latency_ms for item in measurements.concurrent_64]),
+        concurrent_16_overloads=sum(item.overloaded for item in measurements.concurrent_16),
+        concurrent_64_overloads=sum(item.overloaded for item in measurements.concurrent_64),
     )
+
+
+def _concurrent_observations_are_bounded(
+    observations: Sequence[Observation],
+    *,
+    allow_overload: bool,
+) -> bool:
+    """Require a resident decision or an explicitly bounded overload result."""
+
+    if not observations:
+        return False
+    if allow_overload:
+        return all(observation.overloaded or observation.route == "native_resident" for observation in observations)
+    return all(not observation.overloaded and observation.route == "native_resident" for observation in observations)
 
 
 def slo_gates(
@@ -146,9 +174,15 @@ def slo_gates(
         python_fallback_decisions=summary.route_counts["python_semantic"],
         installed_python_fallback_decisions=installed_corpus["python_semantic_decisions"],
     )
-    gates["recovery_latency"] = summarize(measurements.recovery)["p95_ms"] <= MAX_COLD_P95_MS
-    gates["concurrency_64_latency"] = (
-        include_capacity and summary.concurrent_64_summary["p99_ms"] <= MAX_CONCURRENT_P99_MS
+    gates["recovery_latency"] = summarize(measurements.recovery)["p95_ms"] <= MAX_INSTALLED_ADAPTER_P95_MS
+    gates["concurrency"] = gates["concurrency"] and _concurrent_observations_are_bounded(
+        measurements.concurrent_16,
+        allow_overload=False,
+    )
+    gates["concurrency_64_bounded"] = (
+        include_capacity
+        and measurements.errors_64 == 0
+        and _concurrent_observations_are_bounded(measurements.concurrent_64, allow_overload=True)
     )
     gates["installed_corpus"] = (
         installed_corpus["routes"] == route_count
@@ -159,7 +193,7 @@ def slo_gates(
     )
     if not include_capacity:
         gates["concurrency"] = False
-        gates["concurrency_64_latency"] = False
+        gates["concurrency_64_bounded"] = False
     return gates
 
 
@@ -215,12 +249,26 @@ def slo_result(
             "resident_recovery": summarize(measurements.recovery),
             "readiness": summarize(measurements.readiness),
         },
+        "thresholds": {
+            "installed_adapter_p95_ms": MAX_INSTALLED_ADAPTER_P95_MS,
+            "installed_adapter_concurrent_p99_ms": MAX_INSTALLED_ADAPTER_P99_MS,
+            "direct_cold_p95_ms": MAX_COLD_P95_MS,
+            "readiness_p95_ms": MAX_READINESS_P95_MS,
+        },
         "concurrency": {
-            "sixteen": {"latency": summarize(summary.concurrent_values), "errors": measurements.errors_16},
+            "sixteen": {
+                "latency": summarize(summary.concurrent_values),
+                "errors": measurements.errors_16,
+                "overloaded": summary.concurrent_16_overloads,
+                "deadline_ms": MAX_INSTALLED_ADAPTER_P99_MS,
+            },
             "sixty_four": {
                 "latency": summary.concurrent_64_summary,
                 "errors": measurements.errors_64,
+                "overloaded": summary.concurrent_64_overloads,
                 "fail_safe": sum(item.route == "native_fail_safe" for item in measurements.concurrent_64),
+                "latency_ceiling_ms": None,
+                "bounded": gates.get("concurrency_64_bounded", False),
             },
         },
         "gates": gates,

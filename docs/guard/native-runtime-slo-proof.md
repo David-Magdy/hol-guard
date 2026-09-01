@@ -6,14 +6,28 @@ installed route matrix (13 harnesses and 21 PreToolUse/PostToolUse routes),
 synthetic safe fixtures, and bounded aggregate output. It never writes command
 text, prompts, tool output, paths, tokens, or response bodies to evidence.
 
-The fixed contract is: at least 99% resident routing; zero unexpected
-fail-safe decisions in the ordinary warm corpus; warm p95 at most 20 ms; 250
-KiB, 1 MiB, and 5 MiB p95 at most 50, 120, and 350 ms; cold one-shot p95 at
-most 100 ms; readiness p95 at most 250 ms; and 16-request p99 at most 100 ms
-with no errors. A 64-request run must complete or return bounded fail-safe
-responses.
+There are two deliberately separate performance boundaries. The direct Rust
+release gate (`scripts/bench_guard_native_release_gate.py`) keeps the native
+runtime limits at warm p95 at most 20 ms, cold one-shot p95 at most 100 ms,
+readiness at most 250 ms, and measurable direct c16 p99 at most 100 ms. These
+limits exclude the Python adapter and HTTP scheduling overhead.
 
-Native wheel CI runs the no-environment installed-wheel probe and the enforced
+The installed proof measures the complete adapter-to-decision path. Its
+ordinary warm, size-class, resident-recovery, and c16 p99 limit is the existing
+production `HOOK_ENGINE_NORMAL_BUDGET_MS` of 1,000 ms; the installed cold
+one-shot and readiness checks retain the direct 100 ms and 250 ms limits. c16
+must complete resident allowed decisions with zero errors within that adapter
+budget. c64 has no latency ceiling: every result must be either a resident
+allowed decision or an explicitly classified bounded capacity/overload
+response, with zero request errors and no hang.
+
+RSS evidence fills the bounded sixteen-stream resident pool first, takes the
+baseline only after three short stabilization samples, and compares the
+post-c16/c64 peak against that steady-state baseline. The growth gate remains
+at most 10 percent, so one-time pool startup is not misreported as stress
+growth.
+
+Native wheel CI runs the no-environment installed-wheel probe and enforces the
 adapter SLO. Windows remains outside this wave. The stress script exposes
 bounded thread, descriptor, and RSS aggregates. CI runs its `--enforce-soak`
 profile for 100,000 requests over a populated 250,000-receipt store; local

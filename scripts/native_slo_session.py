@@ -20,6 +20,7 @@ from codex_plugin_scanner.guard.adapters.codex_daemon_hook_auth import _DaemonRe
 from codex_plugin_scanner.guard.adapters.codex_daemon_hook_transport import _daemon_response_once
 from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
 from codex_plugin_scanner.guard.native_resident_client import close_native_resident_clients
+from codex_plugin_scanner.guard.native_runtime import native_runtime_health
 from codex_plugin_scanner.guard.store import GuardStore
 from scripts.native_slo_adapter import Observation, is_allowed, payload, route_counts, route_delta
 from scripts.native_slo_contract import MAX_READINESS_P95_MS
@@ -31,6 +32,16 @@ _CAPACITY_FAIL_SAFE = {
     "policy_action": "deny",
     "reason_code": "daemon_capacity",
 }
+_CAPACITY_REASON_CODES = frozenset(
+    {
+        "daemon_capacity",
+        "daemon_overloaded",
+        "daemon_hook_queue_capacity",
+        "daemon_hook_queue_bytes",
+        "daemon_hook_deadline_exhausted",
+        "native_overloaded",
+    }
+)
 
 
 def stop_native_resident(runtime: Path, guard_home: Path) -> bool:
@@ -111,6 +122,13 @@ def _request(
     return response
 
 
+def _is_explicit_capacity_response(response: Mapping[str, object]) -> bool:
+    """Recognize only the daemon's bounded overload/capacity outcomes."""
+
+    reason_code = response.get("reason_code")
+    return isinstance(reason_code, str) and reason_code in _CAPACITY_REASON_CODES
+
+
 class AdapterSession:
     """One private daemon and workspace, with deterministic resident cleanup."""
 
@@ -180,8 +198,19 @@ class AdapterSession:
         elapsed_ms = (time.perf_counter() - started) * 1_000.0
         after = route_counts(self.daemon._server.hook_worker.metrics.snapshot())
         return Observation(
-            harness, event, size_class, elapsed_ms, route_delta(before, after), is_allowed(event, response)
+            harness,
+            event,
+            size_class,
+            elapsed_ms,
+            route_delta(before, after),
+            is_allowed(event, response),
+            _is_explicit_capacity_response(response),
         )
+
+    def native_overload_count(self) -> int:
+        """Return the process-local native overload counter for this session."""
+
+        return native_runtime_health(self.guard_home).overloads
 
     def close(self) -> None:
         try:

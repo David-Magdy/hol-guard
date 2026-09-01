@@ -33,6 +33,9 @@ class Observation:
     latency_ms: float
     route: str
     allowed: bool
+    # True only when the adapter returned an explicit bounded-capacity result;
+    # a generic native fail-safe must not be mistaken for accepted overload.
+    overloaded: bool = False
 
 
 @dataclass(frozen=True, slots=True)

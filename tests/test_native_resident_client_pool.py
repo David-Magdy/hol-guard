@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import io
+import struct
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from queue import Queue
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +24,59 @@ def _pool(tmp_path: Path) -> _PersistentNativeClientPool:
         state_dir=tmp_path / "native-runtime",
         environment={},
     )
+
+
+def test_client_reader_keeps_response_binding_with_the_captured_generation_queue(
+    tmp_path: Path,
+) -> None:
+    client = _PersistentNativeClient(
+        executable=tmp_path / "runtime",
+        state_dir=tmp_path / "native-runtime",
+        environment={},
+    )
+    old_queue: Queue[bytes | client_module._StreamFailure] = Queue(maxsize=1)
+    active_queue: Queue[bytes | client_module._StreamFailure] = Queue(maxsize=1)
+    response = b"old-generation-response"
+    process = SimpleNamespace(stdout=io.BytesIO(struct.pack(">I", len(response)) + response))
+
+    client._responses = active_queue  # pyright: ignore[reportPrivateUsage]
+    client._read_responses(process, old_queue)  # pyright: ignore[reportArgumentType]
+
+    assert old_queue.get_nowait() == response
+    assert active_queue.empty()
+
+
+def test_client_frame_write_is_bounded_when_pipe_writer_blocks() -> None:
+    class BlockingStdin:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+            self.released = threading.Event()
+            self.closed = False
+
+        def fileno(self) -> int:
+            raise OSError("selector unavailable")
+
+        def write(self, _frame: bytes) -> None:
+            self.started.set()
+            self.released.wait()
+
+        def flush(self) -> None:
+            return
+
+        def close(self) -> None:
+            self.closed = True
+            self.released.set()
+
+    stdin = BlockingStdin()
+    started = time.monotonic()
+    assert not _PersistentNativeClient._write_frame(  # pyright: ignore[reportPrivateUsage]
+        stdin,
+        b"frame",
+        deadline_monotonic=time.monotonic() + 0.05,
+    )
+    assert stdin.started.is_set()
+    assert stdin.closed
+    assert time.monotonic() - started < 0.5
 
 
 def test_pool_dispatches_requests_across_persistent_streams(
@@ -168,6 +225,7 @@ def test_pool_registry_cleanup_is_scoped_and_closes_idle_clients(
     home_a = tmp_path / "home-a"
     home_b = tmp_path / "home-b"
     pool_a = client_module._client_pool_for(runtime, home_a / "native-runtime", {})
+    assert client_module._client_pool_for(runtime, home_a / "nested" / ".." / "native-runtime", {}) is pool_a
     pool_b = client_module._client_pool_for(runtime, home_b / "native-runtime", {})
     closed: list[_PersistentNativeClientPool] = []
     monkeypatch.setattr(_PersistentNativeClientPool, "close", lambda pool: closed.append(pool))

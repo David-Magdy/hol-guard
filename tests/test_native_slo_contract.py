@@ -4,13 +4,17 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import TypedDict
 
 import pytest
 
-from scripts.bench_guard_native_installed_slo import _safe_failure_rate
+from codex_plugin_scanner.guard.runtime.hook_review_engine import HOOK_ENGINE_NORMAL_BUDGET_MS
+from scripts.bench_guard_native_installed_slo import _safe_failure_rate, _steady_state_rss_baseline
 from scripts.native_slo_adapter import Observation, payload, process_resources, route_matrix, source_payloads
 from scripts.native_slo_contract import (
     MAX_EVIDENCE_BYTES,
+    MAX_INSTALLED_ADAPTER_P95_MS,
+    MAX_INSTALLED_ADAPTER_P99_MS,
     SIZE_CLASSES,
     all_gates_pass,
     assert_privacy_safe,
@@ -21,7 +25,36 @@ from scripts.native_slo_contract import (
     sanitize_aggregate,
     summarize,
 )
-from scripts.native_slo_reporting import SloMeasurements, summarize_measurements
+from scripts.native_slo_reporting import SloMeasurements, slo_gates, summarize_measurements
+from scripts.native_slo_session import _is_explicit_capacity_response
+
+
+class _ConcurrencyGateKwargs(TypedDict):
+    resident_share: float
+    safe_fail_rate: float
+    warm_p95_ms: float
+    size_p95_ms: dict[str, float]
+    cold_p95_ms: float
+    readiness_p95_ms: float
+    concurrent_p99_ms: float
+    rss_growth: float
+    rss_baseline_bytes: int
+    python_fallback_decisions: int
+
+
+class _PythonSemanticGateKwargs(TypedDict):
+    resident_share: float
+    safe_fail_rate: float
+    warm_p95_ms: float
+    size_p95_ms: dict[str, float]
+    cold_p95_ms: float
+    readiness_p95_ms: float
+    concurrent_p99_ms: float
+    rss_growth: float
+    rss_baseline_bytes: int
+    errors: int
+    errors_64: int
+    python_fallback_decisions: int
 
 
 def test_percentiles_use_deterministic_nearest_rank() -> None:
@@ -102,11 +135,11 @@ def test_slo_gates_are_fixed_and_require_all_measurements() -> None:
     failing = gate_results(
         resident_share=0.98,
         safe_fail_rate=0.01,
-        warm_p95_ms=20.1,
+        warm_p95_ms=MAX_INSTALLED_ADAPTER_P95_MS + 0.1,
         size_p95_ms={},
         cold_p95_ms=100.1,
         readiness_p95_ms=250.1,
-        concurrent_p99_ms=100.1,
+        concurrent_p99_ms=MAX_INSTALLED_ADAPTER_P99_MS + 0.1,
         rss_growth=0.11,
         rss_baseline_bytes=1,
         errors=1,
@@ -115,6 +148,34 @@ def test_slo_gates_are_fixed_and_require_all_measurements() -> None:
     )
     assert not all_gates_pass(failing)
     assert all(not result for result in failing.values())
+
+
+def test_installed_latency_budget_is_the_existing_normal_hook_budget() -> None:
+    assert float(HOOK_ENGINE_NORMAL_BUDGET_MS) == MAX_INSTALLED_ADAPTER_P95_MS
+    assert MAX_INSTALLED_ADAPTER_P99_MS == MAX_INSTALLED_ADAPTER_P95_MS
+    passing = gate_results(
+        resident_share=1.0,
+        safe_fail_rate=0.0,
+        warm_p95_ms=MAX_INSTALLED_ADAPTER_P95_MS,
+        size_p95_ms={
+            "250k": MAX_INSTALLED_ADAPTER_P95_MS,
+            "1m": MAX_INSTALLED_ADAPTER_P95_MS,
+            "5m": MAX_INSTALLED_ADAPTER_P95_MS,
+        },
+        cold_p95_ms=100.0,
+        readiness_p95_ms=250.0,
+        concurrent_p99_ms=MAX_INSTALLED_ADAPTER_P99_MS,
+        rss_growth=0.10,
+        rss_baseline_bytes=1,
+        errors=0,
+        errors_64=0,
+        python_fallback_decisions=0,
+    )
+    assert passing["warm_latency"]
+    assert passing["250k_latency"]
+    assert passing["1m_latency"]
+    assert passing["5m_latency"]
+    assert passing["concurrency"]
 
 
 def test_safe_failure_rate_counts_only_native_fail_safe_routes() -> None:
@@ -145,8 +206,10 @@ def test_summary_separates_expected_denials_from_warm_fail_safe_gate() -> None:
     summary = summarize_measurements(measurements)
 
     assert summary.safe_failure_rate == 0.0
-    assert summary.security_denials == 3
-    assert dict(summary.security_denials_by_size) == {"1k": 2, "5m": 1}
+    assert summary.safe_failures == 2
+    assert dict(summary.safe_failures_by_size) == {"1k": 2}
+    assert summary.security_denials == 1
+    assert dict(summary.security_denials_by_size) == {"5m": 1}
 
 
 def test_proof_environment_clears_native_diagnostic_oracle_and_test_overrides() -> None:
@@ -174,8 +237,8 @@ def test_proof_environment_clears_native_diagnostic_oracle_and_test_overrides() 
     assert environment == {"UNRELATED_SETTING": "preserve"}
 
 
-def test_concurrency_gate_rejects_either_sixteen_or_sixty_four_errors() -> None:
-    kwargs = {
+def test_concurrency_gate_only_applies_error_and_deadline_to_sixteen() -> None:
+    kwargs: _ConcurrencyGateKwargs = {
         "resident_share": 1.0,
         "safe_fail_rate": 0.0,
         "warm_p95_ms": 20.0,
@@ -189,11 +252,78 @@ def test_concurrency_gate_rejects_either_sixteen_or_sixty_four_errors() -> None:
     }
     assert gate_results(errors=0, errors_64=0, **kwargs)["concurrency"]
     assert not gate_results(errors=1, errors_64=0, **kwargs)["concurrency"]
-    assert not gate_results(errors=0, errors_64=1, **kwargs)["concurrency"]
+    assert gate_results(errors=0, errors_64=1, **kwargs)["concurrency"]
+
+
+def test_sixty_four_gate_accepts_explicit_overload_without_latency_ceiling() -> None:
+    measurements = SloMeasurements(
+        warm=[Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True)],
+        sizes=[],
+        recovery=[],
+        cold=[],
+        concurrent_16=[Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True)],
+        concurrent_64=[Observation("codex", "PostToolUse", "1k", 60_000.0, "native_fail_safe", False, overloaded=True)],
+        errors_16=0,
+        errors_64=0,
+        readiness=[],
+        rss_baseline=1,
+        rss_peak=1,
+    )
+    summary = summarize_measurements(measurements)
+    gates = slo_gates(
+        measurements,
+        summary,
+        {
+            "routes": 1,
+            "resident": 1,
+            "oneshot": 0,
+            "fail_safe": 0,
+            "python_semantic_decisions": 0,
+        },
+        1,
+        include_capacity=True,
+    )
+
+    assert summary.concurrent_64_overloads == 1
+    assert gates["concurrency"]
+    assert gates["concurrency_64_bounded"]
+
+
+def test_sixty_four_gate_rejects_unclassified_fail_safe() -> None:
+    measurements = SloMeasurements(
+        warm=[Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True)],
+        sizes=[],
+        recovery=[],
+        cold=[],
+        concurrent_16=[Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True)],
+        concurrent_64=[Observation("codex", "PostToolUse", "1k", 1.0, "native_fail_safe", False)],
+        errors_16=0,
+        errors_64=0,
+        readiness=[],
+        rss_baseline=1,
+        rss_peak=1,
+    )
+    summary = summarize_measurements(measurements)
+    gates = slo_gates(
+        measurements,
+        summary,
+        {"routes": 1, "resident": 1, "oneshot": 0, "fail_safe": 0, "python_semantic_decisions": 0},
+        1,
+        include_capacity=True,
+    )
+
+    assert not gates["concurrency_64_bounded"]
+
+
+def test_capacity_classifier_accepts_only_explicit_daemon_or_native_overload() -> None:
+    assert _is_explicit_capacity_response({"reason_code": "daemon_capacity"})
+    assert _is_explicit_capacity_response({"reason_code": "native_overloaded"})
+    assert not _is_explicit_capacity_response({"reason_code": "native_fail_safe"})
+    assert not _is_explicit_capacity_response({"reason_code": "policy_denied"})
 
 
 def test_python_semantic_gate_includes_installed_corpus_count() -> None:
-    kwargs = {
+    kwargs: _PythonSemanticGateKwargs = {
         "resident_share": 1.0,
         "safe_fail_rate": 0.0,
         "warm_p95_ms": 20.0,
@@ -247,6 +377,28 @@ def test_rss_measurement_is_current_and_requires_ten_percent_bound() -> None:
         errors_64=0,
         python_fallback_decisions=0,
     )["rss"]
+
+
+def test_rss_baseline_warms_bounded_pool_but_keeps_stress_growth_visible() -> None:
+    events: list[str] = []
+    warmup_observations = [Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True) for _ in range(16)]
+
+    def run_pool_warmup() -> tuple[list[Observation], int]:
+        events.append("warmup")
+        return warmup_observations, 0
+
+    rss_samples = iter((100, 200, 200))
+
+    def sample_rss() -> int:
+        events.append("rss")
+        return next(rss_samples)
+
+    baseline = _steady_state_rss_baseline(run_pool_warmup, sample_rss=sample_rss)
+
+    assert events == ["warmup", "rss", "rss", "rss"]
+    assert baseline == 200
+    assert (220 - baseline) / baseline <= 0.10
+    assert (221 - baseline) / baseline > 0.10
 
 
 def test_installed_adapter_corpus_covers_all_declared_routes_and_sizes(

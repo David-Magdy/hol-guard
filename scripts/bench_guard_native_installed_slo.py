@@ -14,8 +14,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -62,6 +63,12 @@ _DEFAULT_COLD_ITERATIONS = 3
 _DEFAULT_RECOVERY_ITERATIONS = 3
 _MAX_READINESS_SAMPLES = 8
 _MAX_CONCURRENCY = 64
+# The resident client pool is bounded at sixteen streams. Fill that pool before
+# taking the RSS baseline so its one-time process/thread allocation is steady
+# state rather than stress growth.
+_POOL_WARMUP_CONCURRENCY = 16
+_RSS_STABILIZATION_SAMPLES = 3
+_RSS_STABILIZATION_INTERVAL_SECONDS = 0.1
 _INSTALLED_WHEEL_OWNERSHIP_CONTRACT = "installed_wheel_ownership_contract"
 
 # Keep the historical private import available to contract tests and downstream tooling.
@@ -237,6 +244,58 @@ def _run_concurrent(
     return observations, errors
 
 
+def _steady_state_rss_baseline(
+    run_pool_warmup: Callable[[], tuple[list[Observation], int]],
+    *,
+    sample_rss: Callable[[], int] = process_rss_bytes,
+) -> int:
+    """Measure RSS only after the bounded resident pool has reached steady state."""
+
+    observations, errors = run_pool_warmup()
+    _require(errors == 0, "resident pool warmup returned request errors")
+    _require(
+        len(observations) == _POOL_WARMUP_CONCURRENCY,
+        "resident pool warmup did not complete every request",
+    )
+    _require(
+        all(observation.allowed and observation.route == "native_resident" for observation in observations),
+        "resident pool warmup did not stay on the allowed native route",
+    )
+    samples = [sample_rss()]
+    for _ in range(_RSS_STABILIZATION_SAMPLES - 1):
+        time.sleep(_RSS_STABILIZATION_INTERVAL_SECONDS)
+        samples.append(sample_rss())
+    baseline = max(samples)
+    _require(baseline > 0, "resident RSS baseline was unavailable")
+    return baseline
+
+
+def _classify_native_overloads(
+    observations: list[Observation],
+    *,
+    overload_delta: int,
+) -> list[Observation]:
+    """Attach the native runtime's explicit overload count to fail-safe calls.
+
+    The native client deliberately turns ``native_overloaded`` into a generic
+    fail-safe hook response at the production adapter boundary.  The
+    process-local health counter preserves that explicit capacity signal for
+    this aggregate-only proof.  Require an exact one-to-one match; an
+    unexplained fail-safe remains unclassified and fails the c64 gate.
+    """
+
+    candidates = [
+        index
+        for index, observation in enumerate(observations)
+        if observation.route == "native_fail_safe" and not observation.overloaded
+    ]
+    if overload_delta != len(candidates):
+        return observations
+    for index in candidates:
+        observations[index] = replace(observations[index], overloaded=True)
+    return observations
+
+
 def _readiness_samples(runtime: Path, count: int) -> list[float]:
     values: list[float] = []
     for _ in range(count):
@@ -288,10 +347,25 @@ def _measure_slo(
         sizes = _run_sizes(session, routes)
         recovery = _run_recovery(session, recovery_iterations)
         cold = _run_cold(runtime, session, cold_iterations)
-        rss_baseline = process_rss_bytes()
+        rss_baseline = _steady_state_rss_baseline(lambda: _run_concurrent(session, routes, _POOL_WARMUP_CONCURRENCY))
         rss_peak = rss_baseline
+        native_overloads_before_16 = session.native_overload_count()
         concurrent_16, errors_16 = _run_concurrent(session, routes, 16) if include_capacity else ([], 0)
+        native_overloads_after_16 = session.native_overload_count()
+        native_overloads_before_64 = native_overloads_after_16
         concurrent_64, errors_64 = _run_concurrent(session, routes, 64) if include_capacity else ([], 0)
+        native_overloads_after_64 = session.native_overload_count()
+        if include_capacity:
+            concurrent_16 = _classify_native_overloads(
+                concurrent_16,
+                overload_delta=native_overloads_after_16 - native_overloads_before_16,
+            )
+            concurrent_64 = _classify_native_overloads(
+                concurrent_64,
+                overload_delta=native_overloads_after_64 - native_overloads_before_64,
+            )
+        # The post-stress sample keeps growth caused by the c16/c64 workload in
+        # the comparison while the baseline already includes bounded pool setup.
         rss_peak = max(rss_peak, process_rss_bytes())
         readiness = [session.readiness_ms]
     if readiness_samples > 1:

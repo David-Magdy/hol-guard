@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +36,7 @@ from codex_plugin_scanner.guard.native_runtime import (  # noqa: E402
     review_post_tool_native,
 )
 from codex_plugin_scanner.guard.runtime.hook_review_types import HookReviewRequest  # noqa: E402
+from scripts.native_slo_contract import MAX_DIRECT_CONCURRENT_P99_MS  # noqa: E402
 from scripts.native_slo_session import stop_native_resident  # noqa: E402
 
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -43,6 +45,7 @@ _MAX_WARM_P95_MS = 20.0
 _MIN_COLD_P95_SPEEDUP = 5.0
 _MAX_COLD_P95_MS = 100.0
 _MAX_NATIVE_READINESS_MS = 250.0
+_DIRECT_CONCURRENCY = 16
 
 
 def _percentile(values: list[float], quantile: float) -> float:
@@ -165,6 +168,35 @@ def _bench_native_warm(
     return values
 
 
+def _bench_native_concurrent(
+    *,
+    workspace: Path,
+    guard_home: Path,
+    policy_snapshot: Mapping[str, object],
+) -> tuple[list[float], int]:
+    """Measure direct resident native c16 latency and completed-call errors."""
+
+    def review(index: int) -> float:
+        request = _request(workspace=workspace, guard_home=guard_home, request_id=f"native-concurrent-{index}")
+        started = time.perf_counter()
+        response = review_post_tool_native(request, observe_mode=False, policy_snapshot=policy_snapshot)
+        elapsed_ms = (time.perf_counter() - started) * 1_000.0
+        if response is None or response.decision != "allow":
+            raise RuntimeError("Direct native concurrent runtime returned an unexpected decision")
+        return elapsed_ms
+
+    values: list[float] = []
+    errors = 0
+    with ThreadPoolExecutor(max_workers=_DIRECT_CONCURRENCY) as executor:
+        futures = [executor.submit(review, index) for index in range(_DIRECT_CONCURRENCY)]
+        for future in futures:
+            try:
+                values.append(future.result(timeout=5))
+            except Exception:
+                errors += 1
+    return values, errors
+
+
 def _bench_python_cold(*, workspace: Path, guard_home: Path, iterations: int) -> list[float]:
     values: list[float] = []
     for _ in range(iterations):
@@ -240,7 +272,15 @@ def _collect_measurements(
     *,
     warm_iterations: int,
     cold_iterations: int,
-) -> tuple[list[float], list[float], list[float], list[float], float]:
+) -> tuple[
+    list[float],
+    list[float],
+    list[float],
+    list[float],
+    float,
+    list[float],
+    int,
+]:
     with tempfile.TemporaryDirectory(prefix="hol-guard-native-bench-") as temp_dir:
         workspace = Path(temp_dir)
         guard_home = workspace / "guard-home"
@@ -272,6 +312,11 @@ def _collect_measurements(
                     iterations=warm_iterations,
                     policy_snapshot=snapshot,
                 )
+                native_concurrent, native_concurrent_errors = _bench_native_concurrent(
+                    workspace=workspace,
+                    guard_home=guard_home,
+                    policy_snapshot=snapshot,
+                )
         finally:
             python_runner.close()
             stop_native_resident(runtime, guard_home)
@@ -286,7 +331,15 @@ def _collect_measurements(
             guard_home=guard_home,
             iterations=cold_iterations,
         )
-    return python_warm, native_warm, python_cold, native_oneshot, native_readiness_ms
+    return (
+        python_warm,
+        native_warm,
+        python_cold,
+        native_oneshot,
+        native_readiness_ms,
+        native_concurrent,
+        native_concurrent_errors,
+    )
 
 
 def main() -> int:
@@ -300,7 +353,15 @@ def main() -> int:
     if args.warm_iterations < 10 or args.cold_iterations < 2:
         parser.error("benchmark iteration counts are too small")
     runtime = _validated_runtime(args.runtime)
-    python_warm, native_warm, python_cold, native_oneshot, native_readiness_ms = _collect_measurements(
+    (
+        python_warm,
+        native_warm,
+        python_cold,
+        native_oneshot,
+        native_readiness_ms,
+        native_concurrent,
+        native_concurrent_errors,
+    ) = _collect_measurements(
         runtime,
         warm_iterations=args.warm_iterations,
         cold_iterations=args.cold_iterations,
@@ -310,6 +371,16 @@ def main() -> int:
     native_warm_summary = _summary(native_warm)
     python_cold_summary = _summary(python_cold)
     native_oneshot_summary = _summary(native_oneshot)
+    native_concurrent_summary = (
+        _summary(native_concurrent)
+        if native_concurrent
+        else {
+            "p50_ms": 0.0,
+            "p95_ms": 0.0,
+            "p99_ms": 0.0,
+            "max_ms": 0.0,
+        }
+    )
     warm_speedup = _speedup(python_warm_summary["p95_ms"], native_warm_summary["p95_ms"])
     cold_speedup = _speedup(python_cold_summary["p95_ms"], native_oneshot_summary["p95_ms"])
     result = {
@@ -325,6 +396,11 @@ def main() -> int:
             "p95_speedup": cold_speedup,
         },
         "native_readiness_ms": round(native_readiness_ms, 3),
+        "direct_native_concurrency": {
+            "requests": _DIRECT_CONCURRENCY,
+            "latency": native_concurrent_summary,
+            "errors": native_concurrent_errors,
+        },
         "gates": {
             "warm_acceptance": "p95_ms_lte_maximum_or_speedup_gte_minimum",
             "minimum_warm_p95_speedup": _MIN_WARM_P95_SPEEDUP,
@@ -332,6 +408,7 @@ def main() -> int:
             "minimum_cold_p95_speedup": _MIN_COLD_P95_SPEEDUP,
             "maximum_cold_p95_ms": _MAX_COLD_P95_MS,
             "maximum_native_readiness_ms": _MAX_NATIVE_READINESS_MS,
+            "maximum_direct_native_concurrent_p99_ms": MAX_DIRECT_CONCURRENT_P99_MS,
         },
     }
     rendered = json.dumps(result, indent=2, sort_keys=True)
@@ -355,9 +432,15 @@ def main() -> int:
         failures.append(f"cold native one-shot p95 exceeds {_MAX_COLD_P95_MS:.0f}ms")
     if native_readiness_ms > _MAX_NATIVE_READINESS_MS:
         failures.append(f"native resident readiness exceeds {_MAX_NATIVE_READINESS_MS:.0f}ms")
+    if not native_concurrent:
+        failures.append("direct native concurrency returned no completed requests")
+    elif native_concurrent_errors:
+        failures.append(f"direct native concurrency returned {native_concurrent_errors} errors")
+    if native_concurrent and native_concurrent_summary["p99_ms"] > MAX_DIRECT_CONCURRENT_P99_MS:
+        failures.append(f"direct native concurrent p99 exceeds {MAX_DIRECT_CONCURRENT_P99_MS:.0f}ms")
     if failures:
         for failure in failures:
-            print(f"PERFORMANCE GATE: {failure}", file=os.sys.stderr)
+            print(f"PERFORMANCE GATE: {failure}", file=sys.stderr)
         return 1
     return 0
 

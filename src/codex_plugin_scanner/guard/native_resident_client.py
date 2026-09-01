@@ -26,6 +26,7 @@ from .codex_hook_launch_runtime import (
 from .codex_hook_launch_runtime import (
     run_isolated_hook_process as _legacy_run_isolated_hook_process,
 )
+from .native_resident_transport import write_frame
 
 # Retain the old runner name as a test seam. Production always leaves this
 # binding untouched and uses the persistent Rust client below.
@@ -94,15 +95,16 @@ class _PersistentNativeClient:
         self._lock = threading.Lock()
 
     def _start(self) -> bool:
-        if self._process is not None and self._process.poll() is None:
-            return True
-        while True:
-            try:
-                self._responses.get_nowait()
-            except Empty:
-                break
+        if self._process is not None:
+            if self._process.poll() is None:
+                return True
+            # Reap/close the previous generation before replacing its process
+            # and response queue. Its reader may still be draining EOF.
+            self._close_locked()
+        responses: Queue[bytes | _StreamFailure] = Queue(maxsize=1)
+        self._responses = responses
         try:
-            self._process = subprocess.Popen(
+            process = subprocess.Popen(
                 (
                     str(self._executable),
                     "resident-client-stream",
@@ -119,12 +121,21 @@ class _PersistentNativeClient:
         except OSError:
             self._process = None
             return False
-        self._reader = threading.Thread(target=self._read_responses, name="hol-guard-native-client", daemon=True)
+        self._process = process
+        self._reader = threading.Thread(
+            target=self._read_responses,
+            args=(process, responses),
+            name="hol-guard-native-client",
+            daemon=True,
+        )
         self._reader.start()
         return True
 
-    def _read_responses(self) -> None:
-        process = self._process
+    def _read_responses(
+        self,
+        process: subprocess.Popen[bytes],
+        responses: Queue[bytes | _StreamFailure],
+    ) -> None:
         stdout = process.stdout if process is not None else None
         if stdout is None:
             return
@@ -142,13 +153,26 @@ class _PersistentNativeClient:
                 if len(response) != length:
                     break
                 try:
-                    self._responses.put_nowait(response)
+                    responses.put_nowait(response)
                 except Full:
                     break
         except (OSError, ValueError):
             pass
         with suppress(Exception):
-            self._responses.put_nowait(_StreamFailure())
+            responses.put_nowait(_StreamFailure())
+
+    @staticmethod
+    def _write_frame(
+        stdin: object,
+        frame: bytes,
+        *,
+        deadline_monotonic: float,
+    ) -> bool:
+        return write_frame(
+            stdin,
+            frame,
+            deadline_monotonic=deadline_monotonic,
+        )
 
     def request(self, payload: bytes, *, deadline_monotonic: float) -> bytes | None:
         if not payload or len(payload) > _MAX_REQUEST_BYTES:
@@ -163,13 +187,14 @@ class _PersistentNativeClient:
             if stdin is None:
                 _LAST_FAILURE_CODE.set("native_client_stdin_unavailable")
                 return None
-            try:
-                stdin.write(struct.pack(">I", len(payload)))
-                stdin.write(payload)
-                stdin.flush()
-            except OSError:
+            frame = struct.pack(">I", len(payload)) + payload
+            if not self._write_frame(stdin, frame, deadline_monotonic=deadline_monotonic):
                 self._close_locked()
-                _LAST_FAILURE_CODE.set("native_client_frame_write_failed")
+                _LAST_FAILURE_CODE.set(
+                    "native_client_timed_out"
+                    if time.monotonic() >= deadline_monotonic
+                    else "native_client_frame_write_failed"
+                )
                 return None
             remaining = deadline_monotonic - time.monotonic()
             if remaining <= 0:
@@ -292,7 +317,8 @@ _CLIENT_POOLS: dict[tuple[str, str], _PersistentNativeClientPool] = {}
 
 
 def _client_pool_for(executable: Path, state_dir: Path, environment: Mapping[str, str]) -> _PersistentNativeClientPool:
-    key = (str(executable), str(state_dir))
+    normalized_state_dir = state_dir.expanduser().resolve()
+    key = (str(executable), str(normalized_state_dir))
     evicted: _PersistentNativeClientPool | None = None
     with _CLIENTS_LOCK:
         pool = _CLIENT_POOLS.get(key)
@@ -302,7 +328,7 @@ def _client_pool_for(executable: Path, state_dir: Path, environment: Mapping[str
                 evicted = _CLIENT_POOLS.pop(evicted_key)
             pool = _PersistentNativeClientPool(
                 executable=executable,
-                state_dir=state_dir,
+                state_dir=normalized_state_dir,
                 environment=environment,
             )
             _CLIENT_POOLS[key] = pool
