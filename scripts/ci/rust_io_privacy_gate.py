@@ -70,7 +70,7 @@ _SAFE_KEY_EXCEPTIONS: Final = frozenset(
 )
 _SERIALIZERS: Final = (
     (
-        "src/codex_plugin_scanner/guard/daemon/runtime_hook_evidence_writer.py",
+        "src/codex_plugin_scanner/guard/daemon/runtime_hook_evidence_journal.py",
         "serialized",
         "_CommandActivityRecord",
     ),

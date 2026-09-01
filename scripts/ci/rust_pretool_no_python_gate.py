@@ -359,19 +359,23 @@ def _bridge_failures(root: Path) -> list[str]:
 def _worker_failures(root: Path) -> list[str]:
     failures: list[str] = []
     hook_worker = root / "src/codex_plugin_scanner/guard/daemon/hook_worker.py"
+    native_hook = root / "src/codex_plugin_scanner/guard/daemon/hook_worker_native.py"
     failures.extend(
         required_tokens(
             hook_worker,
             (
                 "from ..native_hook_edge import review_raw_hook_native",
                 'if event_name == "PreToolUse":',
-                "native_pre_tool_unavailable",
             ),
         )
     )
-    native_edge_review = function_node(hook_worker, "_review_native_edge", class_name="HookWorker")
-    if "review_raw_hook_native" not in function_calls(native_edge_review):
-        failures.append("HookWorker._review_native_edge does not invoke review_raw_hook_native")
+    failures.extend(required_tokens(native_hook, ("native_pre_tool_unavailable",)))
+    native_edge_review = function_node(native_hook, "_review_native_edge", class_name="HookWorkerNativeMixin")
+    if "_review_raw_hook_native" not in function_calls(native_edge_review):
+        failures.append("HookWorkerNativeMixin._review_native_edge does not invoke the native hook edge")
+    raw_edge_review = function_node(hook_worker, "_review_raw_hook_native", class_name="HookWorker")
+    if "review_raw_hook_native" not in function_calls(raw_edge_review):
+        failures.append("HookWorker._review_raw_hook_native does not invoke review_raw_hook_native")
     return failures
 
 

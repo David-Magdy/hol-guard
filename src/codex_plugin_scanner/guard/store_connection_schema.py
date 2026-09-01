@@ -165,6 +165,7 @@ _REQUIRED_SCHEMA_MIGRATION_VERSIONS = (  # Keep retired-index databases on the p
     *store_native_decision_receipts.native_decision_receipt_migration_versions(),
 )
 
+
 @dataclass
 class _SchemaInitializationState:
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -976,7 +977,9 @@ class StoreConnectionSchemaMixin:
             supply_chain_bundle_schema_statement(),
             supply_chain_eval_cache_schema_statement(),
             threat_intel_bundle_schema_statement(),
-            *store_native_decision_receipts.native_decision_receipt_schema_statements(threat_intel_matches_schema_statement()),
+            *store_native_decision_receipts.native_decision_receipt_schema_statements(
+                threat_intel_matches_schema_statement()
+            ),
         )
         with self._connect() as connection:
             if initialize_incremental_vacuum:
