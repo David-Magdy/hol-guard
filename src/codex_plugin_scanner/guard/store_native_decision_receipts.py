@@ -6,9 +6,11 @@ import sqlite3
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
-from typing import Protocol, cast
+from typing import Final, Protocol, cast
 
 from .native_decision_receipt import validate_native_decision_receipt
+
+NATIVE_DECISION_RECEIPT_MIGRATION_VERSION: Final = 26
 
 
 class _ConnectionOwner(Protocol):
@@ -44,6 +46,15 @@ def native_decision_receipt_schema_statement() -> str:
       recorded_at text not null
     )
     """
+
+
+def native_decision_receipt_index_statements() -> tuple[str, ...]:
+    return (
+        """
+        create index if not exists idx_native_hook_decision_receipts_recorded_at
+        on native_hook_decision_receipts (recorded_at)
+        """,
+    )
 
 
 class StoreNativeDecisionReceiptsMixin:
@@ -111,4 +122,9 @@ def cast_bool(value: object) -> bool:
     return value
 
 
-__all__ = ["StoreNativeDecisionReceiptsMixin", "native_decision_receipt_schema_statement"]
+__all__ = [
+    "NATIVE_DECISION_RECEIPT_MIGRATION_VERSION",
+    "StoreNativeDecisionReceiptsMixin",
+    "native_decision_receipt_index_statements",
+    "native_decision_receipt_schema_statement",
+]

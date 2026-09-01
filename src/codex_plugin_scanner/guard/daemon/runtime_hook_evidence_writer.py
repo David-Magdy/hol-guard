@@ -9,12 +9,23 @@ import stat
 import threading
 import time
 from collections import OrderedDict, deque
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict, cast, final
 from uuid import uuid4
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - exercised only on Windows
+    fcntl = None  # type: ignore[assignment]
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - exercised only on Unix
+    msvcrt = None  # type: ignore[assignment]
 
 from ..cli.commands_support_command_activity import persist_deferred_post_hook_command_activity
 from ..native_decision_receipt import (
@@ -382,9 +393,6 @@ class RuntimeHookEvidenceWriter:
                 return
             for record in batch:
                 with self._condition:
-                    if self._drain_expired():
-                        self._degraded = True
-                        return
                     self._in_flight = True
                 with self._condition:
                     already_durable = record.record_id in self._durable
@@ -403,6 +411,15 @@ class RuntimeHookEvidenceWriter:
                         continue
                     with self._condition:
                         self._durable[record.record_id] = record
+                # A bounded shutdown may expire while the journal append is in
+                # flight. Keep the accepted record journal-durable, then leave
+                # it pending for recovery rather than discarding it before the
+                # append has completed.
+                with self._condition:
+                    if self._drain_expired():
+                        self._degraded = True
+                        self._in_flight = False
+                        return
                 try:
                     with sqlite_connect_timeout_override(self._sqlite_timeout_seconds):
                         if isinstance(record, _NativeDecisionReceiptRecord):
@@ -440,9 +457,8 @@ class RuntimeHookEvidenceWriter:
                             self._receipt_processed += 1
                         self._retry_attempts.pop(record.record_id, None)
                         _ = self._durable.pop(record.record_id, None)
-                        durable_records = tuple(self._durable.values())
                     try:
-                        self._rewrite_journal(durable_records)
+                        self._rewrite_journal(remove_record_id=record.record_id)
                     except OSError:
                         with self._condition:
                             self._failures += 1
@@ -471,34 +487,11 @@ class RuntimeHookEvidenceWriter:
 
     def _recover_journal(self) -> None:
         try:
-            descriptor = self._open_journal(os.O_RDONLY)
-        except FileNotFoundError:
-            return
+            with self._journal_lock():
+                records = self._read_journal_records_locked()
         except OSError:
-            self._degraded = True
-            self._failures += 1
             return
-        try:
-            metadata = os.fstat(descriptor)
-            if metadata.st_size > self._max_bytes:
-                self._degraded = True
-                self._failures += 1
-                return
-            raw_lines = os.read(descriptor, self._max_bytes + 1).splitlines()
-        finally:
-            os.close(descriptor)
-        for raw_line in raw_lines:
-            try:
-                decoded = cast(object, json.loads(raw_line))
-                record = _NativeDecisionReceiptRecord.from_json(decoded)
-                if record is None:
-                    record = _CommandActivityRecord.from_json(decoded)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                record = None
-            if record is None:
-                self._degraded = True
-                self._failures += 1
-                continue
+        for record in records:
             if len(self._records) >= self._max_records or self._queued_bytes + record.payload_bytes > self._max_bytes:
                 self._degraded = True
                 self._failures += 1
@@ -516,33 +509,110 @@ class RuntimeHookEvidenceWriter:
 
     def _append_journal(self, record: _EvidenceRecord) -> None:
         self._journal_path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor = self._open_journal(os.O_APPEND | os.O_CREAT | os.O_WRONLY)
-        original_size = os.fstat(descriptor).st_size
-        try:
-            os.fchmod(descriptor, 0o600)
-            self._write_all(descriptor, record.serialized())
-            os.fsync(descriptor)
-        except OSError:
-            os.ftruncate(descriptor, original_size)
-            raise
-        finally:
-            os.close(descriptor)
-
-    def _rewrite_journal(self, records: tuple[_EvidenceRecord, ...]) -> None:
-        temporary = self._journal_path.with_name(f".{self._journal_path.name}.{uuid4().hex}.tmp")
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(temporary, flags, 0o600)
-        try:
+        with self._journal_lock():
+            descriptor = self._open_journal(os.O_APPEND | os.O_CREAT | os.O_WRONLY)
+            original_size = os.fstat(descriptor).st_size
             try:
-                for record in records:
-                    self._write_all(descriptor, record.serialized())
+                os.fchmod(descriptor, 0o600)
+                self._write_all(descriptor, record.serialized())
                 os.fsync(descriptor)
+            except OSError:
+                os.ftruncate(descriptor, original_size)
+                raise
             finally:
                 os.close(descriptor)
-            os.replace(temporary, self._journal_path)
+
+    def _rewrite_journal(self, *, remove_record_id: str) -> None:
+        """Remove one completed record without erasing another writer's records."""
+
+        with self._journal_lock():
+            records = tuple(
+                record
+                for record in self._read_journal_records_locked()
+                if record.record_id != remove_record_id
+            )
+            temporary = self._journal_path.with_name(f".{self._journal_path.name}.{uuid4().hex}.tmp")
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(temporary, flags, 0o600)
+            try:
+                try:
+                    for record in records:
+                        self._write_all(descriptor, record.serialized())
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+                os.replace(temporary, self._journal_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+    def _read_journal_records_locked(self) -> list[_EvidenceRecord]:
+        try:
+            descriptor = self._open_journal(os.O_RDONLY)
+        except FileNotFoundError:
+            return []
+        except OSError:
+            self._degraded = True
+            self._failures += 1
+            raise
+        try:
+            metadata = os.fstat(descriptor)
+            if metadata.st_size > self._max_bytes:
+                self._degraded = True
+                self._failures += 1
+                raise OSError("evidence journal exceeds the configured size limit")
+            raw_lines = os.read(descriptor, self._max_bytes + 1).splitlines()
         finally:
-            temporary.unlink(missing_ok=True)
+            os.close(descriptor)
+        records: list[_EvidenceRecord] = []
+        for raw_line in raw_lines:
+            try:
+                decoded = cast(object, json.loads(raw_line))
+                record = _NativeDecisionReceiptRecord.from_json(decoded)
+                if record is None:
+                    record = _CommandActivityRecord.from_json(decoded)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                record = None
+            if record is None:
+                self._degraded = True
+                self._failures += 1
+                continue
+            records.append(record)
+        return records
+
+    @contextmanager
+    def _journal_lock(self) -> Iterator[None]:
+        """Serialize journal reads, appends, and rewrites across processes."""
+
+        self._journal_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self._journal_path.with_name(f".{self._journal_path.name}.lock")
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(lock_path, flags, 0o600)
+        locked = False
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise OSError("evidence journal lock is not a private regular file")
+            os.fchmod(descriptor, 0o600)
+            if fcntl is not None:
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                locked = True
+            elif msvcrt is not None:  # pragma: no cover - Windows CI is waived
+                os.ftruncate(descriptor, 1)
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+                locked = True
+            else:  # pragma: no cover - no supported platform takes this path
+                raise OSError("evidence journal locking is unavailable")
+            yield
+        finally:
+            if locked and fcntl is not None:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            elif locked and msvcrt is not None:  # pragma: no cover - Windows CI is waived
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+            os.close(descriptor)
 
     def _open_journal(self, flags: int) -> int:
         flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)

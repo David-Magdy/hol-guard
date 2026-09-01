@@ -35,9 +35,13 @@ from .store_command_activity_schema import ensure_command_activity_schema
 from .store_command_shadow_schema import ensure_command_shadow_schema
 from .store_extension_control_authority_schema import ensure_extension_control_authority_schema
 from .store_local_cli_schema import ensure_local_cli_schema
+from .store_native_decision_receipts import (
+    NATIVE_DECISION_RECEIPT_MIGRATION_VERSION,
+    native_decision_receipt_index_statements,
+    native_decision_receipt_schema_statement,
+)
 from .store_resume import ensure_resume_schema
 from .store_review_event_outbox_schema import ensure_review_event_outbox_schema
-from .store_native_decision_receipts import native_decision_receipt_schema_statement
 from .store_secret_policy_integrity import _POLICY_INTEGRITY_LOOKUP_UNSET
 from .store_storage_maintenance import (
     STORAGE_MAINTENANCE_MIGRATION_VERSION,
@@ -163,6 +167,7 @@ _REQUIRED_SCHEMA_MIGRATION_VERSIONS = (  # Keep retired-index databases on the p
     WORKFLOW_CAPABILITY_RECEIPT_EVENT_INDEX_MIGRATION_VERSION,
     WATCH_ONLY_APPROVAL_MIGRATION_VERSION,
     store_review_event_outbox_schema.REVIEW_EVENT_OUTBOX_MIGRATION_VERSION,
+    NATIVE_DECISION_RECEIPT_MIGRATION_VERSION,
 )
 
 
@@ -990,6 +995,8 @@ class StoreConnectionSchemaMixin:
             self._enable_wal_mode(connection)
             for statement in statements:
                 connection.execute(statement)
+            for statement in native_decision_receipt_index_statements():
+                connection.execute(statement)
             ensure_resume_schema(connection)
             ensure_command_activity_schema(connection, applied_at=_now())
             ensure_command_activity_health_schema(connection, applied_at=_now())
@@ -1115,6 +1122,10 @@ class StoreConnectionSchemaMixin:
             self._record_schema_version(
                 connection,
                 version=STORAGE_QUERY_INDEX_MIGRATION_VERSION,
+            )
+            self._record_schema_version(
+                connection,
+                version=NATIVE_DECISION_RECEIPT_MIGRATION_VERSION,
             )
             if not self._schema_version_applied(connection, version=2):
                 self._record_schema_version(connection, version=2)

@@ -133,7 +133,7 @@ macOS adds APFS case modes, aliases, symlinks, hardlinks, mounts, socket path li
 
 Linux adds static-runtime proof, secure path walks, bind/overlay mounts, namespaces/containers, low descriptor limits, cgroups, noexec, read-only Guard homes, and stale socket attacks.
 
-Unsupported platforms must provide actionable diagnosis and fail safe for supported hook events. Python semantic evaluation remains available only through explicit differential-test fixtures.
+Unsupported platforms must provide actionable diagnosis and fail-safe for supported hook events. Python semantic evaluation remains available only through explicit differential-test fixtures.
 
 ## Performance and resource SLOs
 

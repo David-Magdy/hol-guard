@@ -61,7 +61,7 @@ def run(root: Path, *, json_path: Path | None) -> int:
     if contract.get("contract_document") != "docs/guard/contracts/native-hook-decision-receipt-persistence.v1.md":
         raise RuntimeError("decision receipt provenance document is not pinned")
     excluded = contract.get("privacy_excluded_fields")
-    if not isinstance(excluded, list) or set(excluded) < FORBIDDEN_RECEIPT_FIELDS:
+    if not isinstance(excluded, list) or not set(excluded).issuperset(FORBIDDEN_RECEIPT_FIELDS):
         raise RuntimeError("decision receipt privacy exclusions are incomplete")
 
     rust_contract = _read(root, "rust/crates/guard-contracts/src/native_hook_receipt.rs")

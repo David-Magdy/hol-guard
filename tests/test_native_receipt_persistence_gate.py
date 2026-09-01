@@ -5,10 +5,12 @@ from pathlib import Path
 
 from scripts.ci.native_receipt_persistence_gate import run
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def test_native_receipt_persistence_gate_emits_exact_head_evidence(tmp_path: Path) -> None:
     output = tmp_path / "receipt-gate.json"
-    assert run(Path.cwd(), json_path=output) == 0
+    assert run(ROOT, json_path=output) == 0
     evidence = json.loads(output.read_text(encoding="utf-8"))
     assert evidence["schema"] == "hol-guard.native-hook-receipt-persistence-gate.v1"
     assert evidence["status"] == "passed"
