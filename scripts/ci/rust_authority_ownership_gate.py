@@ -69,14 +69,11 @@ TEMPORARY_PATHS: Final = (
     Path("rust/AUTHORITY_BATCH_2_FINAL"),
     Path("rust/AUTHORITY_FINAL"),
 )
-
-
 def _read(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise RuntimeError(f"required authority source is missing: {path}") from exc
-
 
 def _python_imports_function(path: Path, module_suffix: str, name: str) -> bool:
     tree = ast.parse(_read(path), filename=str(path))
@@ -229,13 +226,14 @@ def _pretool_gate() -> None:
         raise RuntimeError("native PreToolUse transport calls the Python command evaluator")
     _assert_policy_floor_fail_closed(pretool)
     hook = _read(Path("src/codex_plugin_scanner/guard/daemon/hook_worker.py"))
+    native_hook = _read(Path("src/codex_plugin_scanner/guard/daemon/hook_worker_native.py"))
     if "review_pre_tool_native" not in hook:
         raise RuntimeError("PreToolUse hook path is not bound to the native runtime")
     route = re.search(
         r'if event_name\s*==\s*"PreToolUse":[\s\S]*?return self\._review_pre_tool_http',
         hook,
     )
-    region = re.search(r'def _review_pre_tool_http\([\s\S]*?(?=\n    def _review_native_edge)', hook)
+    region = re.search(r'def _review_pre_tool_http\([\s\S]*?(?=\n    def _review_native_edge)', native_hook)
     if route is None or region is None:
         raise RuntimeError("daemon has no Rust PreToolUse authority route")
     if "self.engine.review(" in region.group(0):

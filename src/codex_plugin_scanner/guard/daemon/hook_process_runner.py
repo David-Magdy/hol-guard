@@ -311,12 +311,11 @@ class HookProcessRunner(HookProcessRunnerLifecycleMixin):
             return HookProcessReview(None, "daemon_hook_process_invalid_json")
         if time.monotonic() >= review_deadline:
             return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
-        receipt = as_string_object_dict(typed_result.get("receipt"))
         self._record_response_metrics(typed_response)
         self._record_route_metric(typed_result.get("route"))
         if time.monotonic() >= review_deadline:
             return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
-        return HookProcessReview(typed_response, None, receipt)
+        return HookProcessReview(typed_response, None, as_string_object_dict(typed_result.get("receipt")))
 
     def wait_for_capacity(self, *, minimum_workers: int, timeout_seconds: float) -> bool:
         if not 1 <= minimum_workers <= self._process_limit:

@@ -17,15 +17,15 @@ import ast
 import json
 import sys
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 if __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.ci.rust_io_ownership_resolver import resolve_call
+from scripts.ci.rust_io_ownership_resolver import FunctionRecordLike, resolve_call
 
 SCHEMA: Final = "hol-guard.decision-critical-io.v1"
 NATIVE_MODES: Final = frozenset({"auto", "force"})
@@ -78,15 +78,9 @@ _TRANSPORT_IDENTITY_PATHS: Final = frozenset(
 _TRANSPORT_DECODE_PATHS: Final = frozenset(
     {
         "src/codex_plugin_scanner/guard/native_hook_edge.py",
-        "src/codex_plugin_scanner/guard/native_decision_receipt.py",
         "src/codex_plugin_scanner/guard/native_pretool.py",
         "src/codex_plugin_scanner/guard/native_resident_client.py",
         "src/codex_plugin_scanner/guard/native_runtime.py",
-    }
-)
-_TRANSPORT_INTEGRITY_PATHS: Final = frozenset(
-    {
-        "src/codex_plugin_scanner/guard/native_decision_receipt.py",
     }
 )
 _ASYNC_POLICY_PATHS: Final = frozenset(
@@ -105,8 +99,6 @@ _PERSISTENCE_PATH_PREFIXES: Final = (
     "src/codex_plugin_scanner/guard/runtime/hook_enrichment_queue.py",
     "src/codex_plugin_scanner/guard/daemon/hook_metrics.py",
 )
-
-
 @dataclass(frozen=True, slots=True)
 class RootSpec:
     path: str
@@ -246,7 +238,7 @@ def _category(path: str, kind: str) -> str:
         return "transport_identity"
     if path in _TRANSPORT_DECODE_PATHS and kind == "decode":
         return "transport_decode"
-    if path in _TRANSPORT_INTEGRITY_PATHS and kind == "hash":
+    if path == "src/codex_plugin_scanner/guard/native_decision_receipt.py" and kind == "hash":
         return "transport_integrity"
     if path in _ASYNC_POLICY_PATHS:
         return "asynchronous_policy"
@@ -299,6 +291,7 @@ def _reachable_records(
     records: dict[tuple[str, str], list[FunctionRecord]],
 ) -> tuple[FunctionRecord, ...]:
     pending = [_root_record(root, spec, records) for spec in ROOTS]
+    records_view = cast(Mapping[tuple[str, str], list[FunctionRecordLike]], records)
     seen: set[tuple[str, str]] = set()
     result: list[FunctionRecord] = []
     while pending:
@@ -309,9 +302,9 @@ def _reachable_records(
         seen.add(identity)
         result.append(record)
         for name in _calls(record):
-            resolved = resolve_call(root, record, name, records)
+            resolved = resolve_call(root, cast(FunctionRecordLike, cast(object, record)), name, records_view)
             if resolved is not None:
-                pending.append(resolved)
+                pending.append(cast(FunctionRecord, cast(object, resolved)))
     return tuple(result)
 
 

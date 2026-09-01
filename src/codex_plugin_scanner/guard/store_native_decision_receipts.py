@@ -57,6 +57,20 @@ def native_decision_receipt_index_statements() -> tuple[str, ...]:
     )
 
 
+def native_decision_receipt_migration_versions() -> tuple[int, ...]:
+    return (NATIVE_DECISION_RECEIPT_MIGRATION_VERSION,)
+
+
+def native_decision_receipt_schema_statements(*prefix: str) -> tuple[str, ...]:
+    return (
+        *prefix,
+        native_decision_receipt_schema_statement(),
+        *native_decision_receipt_index_statements(),
+        "insert or ignore into schema_migrations (version, applied_at) values "
+        f"({NATIVE_DECISION_RECEIPT_MIGRATION_VERSION}, datetime('now'))",
+    )
+
+
 class StoreNativeDecisionReceiptsMixin:
     def record_native_decision_receipt(self: _ConnectionOwner, receipt: Mapping[str, object]) -> bool:
         """Store one validated receipt; duplicate decision IDs are harmless."""
@@ -126,5 +140,7 @@ __all__ = [
     "NATIVE_DECISION_RECEIPT_MIGRATION_VERSION",
     "StoreNativeDecisionReceiptsMixin",
     "native_decision_receipt_index_statements",
+    "native_decision_receipt_migration_versions",
     "native_decision_receipt_schema_statement",
+    "native_decision_receipt_schema_statements",
 ]

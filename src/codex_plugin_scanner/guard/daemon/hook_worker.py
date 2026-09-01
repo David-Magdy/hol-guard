@@ -36,8 +36,7 @@ from ..native_mode import python_oracle_enabled, python_oracle_surface_enabled
 from ..native_policy_snapshot import get_native_policy_snapshot_publisher
 from ..native_pretool import review_pre_tool_native
 from ..native_route_receipt import record_python_semantic_hook_route
-from ..native_runtime import native_mode, native_runtime_status, review_post_tool_native
-from ..protection_posture import protection_is_off
+from ..native_runtime import NativeRuntimeStatus, native_mode, native_runtime_status, review_post_tool_native
 from ..runtime.hook_review_types import (
     HookOutputSummary,
     HookPayloadKind,
@@ -50,12 +49,10 @@ from .hook_request_parsing import (
     parse_output_summary,
     parse_source_ref,
     payload_kind,
-    pre_tool_command,
     runtime_hook_event_name,
 )
+from .hook_worker_native import HookWorkerNativeMixin, HookWorkerUnsupported, PythonOracle
 from .hook_worker_responses import (
-    harness_json_from_native_post_tool,
-    harness_json_from_native_pre_tool,
     harness_json_from_review_response,
     post_tool_fail_safe_response,
     post_tool_native_block_response,
@@ -76,21 +73,11 @@ class CommandActivityWriter(Protocol):
     ) -> bool: ...
 
 
-class PythonOracle(Protocol):
-    """Minimal response surface accepted from an explicit test oracle."""
-
-    def review(self, request: HookReviewRequest) -> HookReviewResponse: ...
-
-
-class HookWorkerUnsupported(RuntimeError):  # noqa: N818
-    """Raised only for explicit off/shadow compatibility requests."""
-
-
 _NATIVE_POLICY_READY_TIMEOUT_SECONDS = 0.25
 
 
 @final
-class HookWorker:
+class HookWorker(HookWorkerNativeMixin):
     """Resident hook review worker for the daemon."""
 
     # The callback is installed by pytest's explicit differential-oracle
@@ -139,6 +126,46 @@ class HookWorker:
 
     def _load_config(self, guard_home: Path, workspace: Path | None):
         return load_guard_config(guard_home, workspace=workspace)
+
+    def _review_raw_hook_native(
+        self,
+        *,
+        payload: dict[str, object],
+        harness: str,
+        event: str,
+        guard_home: Path,
+        home_dir: Path,
+        cwd: Path | None,
+        source_ref_external_allowed: bool,
+        observe_mode: bool,
+        deadline: float | None,
+        policy_snapshot: Mapping[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        return review_raw_hook_native(
+            payload=payload,
+            harness=harness,
+            event=event,
+            guard_home=guard_home,
+            home_dir=home_dir,
+            cwd=cwd,
+            source_ref_external_allowed=source_ref_external_allowed,
+            observe_mode=observe_mode,
+            deadline=deadline,
+            policy_snapshot=policy_snapshot,
+        )
+
+    def _review_pre_tool_native(
+        self,
+        command: str,
+        *,
+        guard_home: Path,
+        cwd: Path | None,
+        home_dir: Path | None,
+    ) -> dict[str, object] | None:
+        return review_pre_tool_native(command, guard_home=guard_home, cwd=cwd, home_dir=home_dir)
+
+    def _native_runtime_status(self) -> NativeRuntimeStatus:
+        return native_runtime_status()
 
     def close(self) -> None:
         """Stop the asynchronous native policy publisher with the worker."""
@@ -241,134 +268,6 @@ class HookWorker:
             workspace=workspace,
             deadline=deadline,
         )
-
-    def _mode_surface_response(self, harness: str, event_name: str, mode: str) -> dict[str, object] | None:
-        oracle_surface = python_oracle_surface_enabled(mode)
-        if event_name not in {"PreToolUse", "PostToolUse"}:
-            if oracle_surface:
-                raise HookWorkerUnsupported(f"fast path supports PreToolUse and PostToolUse, got event={event_name}")
-            return post_tool_fail_safe_response(
-                harness,
-                reason="HOL Guard could not classify this hook event safely.",
-                reason_code="native_hook_event_unavailable",
-            )
-        reason_code = {"off": "native_hook_disabled", "shadow": "native_shadow_diagnostic_disabled"}.get(mode)
-        if reason_code is None or oracle_surface:
-            return None
-        reason = {
-            "off": "HOL Guard native hook review is explicitly disabled; the action is blocked safely.",
-            "shadow": "HOL Guard shadow comparison is unavailable outside its diagnostic surface.",
-        }[mode]
-        return post_tool_fail_safe_response(harness, reason=reason, reason_code=reason_code)
-
-    def _review_pre_tool_http(
-        self,
-        payload: dict[str, object],
-        *,
-        harness: str,
-        home_dir: Path,
-        guard_home: Path,
-        workspace: Path | None,
-    ) -> dict[str, object]:
-        command = pre_tool_command(payload)
-        if command is None:
-            raise HookWorkerUnsupported("fast path PreToolUse requires a command")
-        config = self._load_config(guard_home, workspace)
-        recording_only = protection_is_off(posture=config.protection_posture, mode=config.mode)
-        native = review_pre_tool_native(command, guard_home=guard_home, cwd=workspace, home_dir=home_dir)
-        if native is not None:
-            action = str(native.get("minimum_action") or "")
-            if action == "review" or (recording_only and action != "allow"):
-                # Native established the minimum floor, but the CLI approval
-                # path still owns the terminal semantic decision. Watch/observe
-                # also records through that path instead of harness deny.
-                record_python_semantic_hook_route()
-                raise HookWorkerUnsupported("native PreToolUse review uses CLI approval coordination")
-            return harness_json_from_native_pre_tool(harness, native)
-        if recording_only:
-            raise HookWorkerUnsupported("observe PreToolUse uses CLI recording")
-        status = native_runtime_status()
-        if status.mode == "off":
-            raise HookWorkerUnsupported("native PreToolUse runtime is off")
-        if status.mode == "shadow":
-            raise HookWorkerUnsupported("native PreToolUse runtime is unavailable")
-        return post_tool_fail_safe_response(
-            harness,
-            reason="HOL Guard could not complete the native PreToolUse decision safely.",
-            reason_code="native_pre_tool_unavailable",
-        )
-
-    def _review_native_edge(
-        self,
-        *,
-        payload: dict[str, object],
-        harness: str,
-        event_name: str,
-        default_harness: str,
-        home_dir: Path,
-        guard_home: Path,
-        workspace: Path | None,
-        deadline: float | None,
-    ) -> dict[str, object]:
-        policy_snapshot = self._native_policy_snapshot(workspace)
-        recording_only = policy_snapshot is not None and policy_snapshot.get("mode") == "observe"
-        edge = review_raw_hook_native(
-            payload=payload,
-            harness=harness,
-            event=event_name,
-            guard_home=guard_home,
-            home_dir=home_dir,
-            cwd=workspace,
-            source_ref_external_allowed=default_harness.strip().lower().replace("_", "-") in {"pi", "omp"},
-            observe_mode=recording_only,
-            deadline=deadline,
-            policy_snapshot=policy_snapshot,
-        )
-        if edge is None:
-            self.metrics.record_route("native_fail_safe")
-            if event_name == "PostToolUse":
-                self._record_post_tool_activity(
-                    harness=harness,
-                    payload=payload,
-                    succeeded=hook_post_succeeded(event_name, payload),
-                )
-            reason_code = {
-                "PostToolUse": "native_post_tool_unavailable",
-                "PreToolUse": "native_pre_tool_unavailable",
-            }.get(event_name, "native_hook_event_unavailable")
-            return post_tool_fail_safe_response(
-                harness,
-                reason="HOL Guard could not complete the native hook decision safely.",
-                reason_code=reason_code,
-            )
-        native_event = str(edge["event_name"])
-        native_harness = str(edge["harness"])
-        native_result = edge["result"]
-        if not isinstance(native_result, Mapping):
-            self.metrics.record_route("native_fail_safe")
-            return post_tool_fail_safe_response(harness, reason_code="native_hook_edge_invalid_response")
-        self._record_native_decision_receipt(edge.get("receipt"))
-        self.metrics.record_route("native_resident")
-        if native_event == "PreToolUse":
-            return harness_json_from_native_pre_tool(native_harness, native_result)
-        self._record_post_tool_activity(
-            harness=native_harness,
-            payload=payload,
-            succeeded=hook_post_succeeded(native_event, payload),
-        )
-        return harness_json_from_native_post_tool(native_harness, native_result)
-
-    def _record_native_decision_receipt(self, receipt: object) -> None:
-        """Hand Rust evidence to the non-authoritative writer without waiting."""
-
-        if isinstance(receipt, Mapping):
-            self._last_native_decision_receipt = dict(receipt)
-        writer = self.activity_writer
-        submit = getattr(writer, "submit_native_decision_receipt", None)
-        if not callable(submit) or not isinstance(receipt, Mapping):
-            return
-        with suppress(Exception):
-            _ = submit(receipt=receipt)
 
     def _review_post_tool_http(
         self,

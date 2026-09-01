@@ -53,7 +53,7 @@ def _submit_method_has_no_decision_io(source: str) -> None:
         raise RuntimeError("receipt handoff submit method performs decision-time I/O")
 
 
-def run(root: Path, *, json_path: Path | None) -> int:
+def _validate_contract(root: Path) -> None:
     manifest = load_manifest(root / "docs/guard/contracts/hook-data-plane-ownership.v2.json")
     contract = manifest["decision_receipt"]
     if not isinstance(contract, dict):
@@ -64,6 +64,8 @@ def run(root: Path, *, json_path: Path | None) -> int:
     if not isinstance(excluded, list) or not set(excluded).issuperset(FORBIDDEN_RECEIPT_FIELDS):
         raise RuntimeError("decision receipt privacy exclusions are incomplete")
 
+
+def _validate_rust_sources(root: Path) -> None:
     rust_contract = _read(root, "rust/crates/guard-contracts/src/native_hook_receipt.rs")
     rust_receipt_builder = _read(root, "rust/crates/guard-runtime/src/native_hook_receipt.rs")
     rust_edge = _read(root, "rust/crates/guard-runtime/src/edge.rs")
@@ -82,10 +84,11 @@ def run(root: Path, *, json_path: Path | None) -> int:
         ("receipt_from_pre_tool", "receipt_from_post_tool", "receipt,"),
         "Rust edge receipt wiring",
     )
-    for field in FORBIDDEN_RECEIPT_FIELDS:
-        if f"pub {field}:" in rust_contract:
-            raise RuntimeError(f"Rust receipt exposes forbidden field: {field}")
+    if any(f"pub {field}:" in rust_contract for field in FORBIDDEN_RECEIPT_FIELDS):
+        raise RuntimeError("Rust receipt exposes a forbidden field")
 
+
+def _validate_python_sources(root: Path) -> None:
     receipt = _read(root, "src/codex_plugin_scanner/guard/native_decision_receipt.py")
     _contains_all(
         receipt,
@@ -97,8 +100,8 @@ def run(root: Path, *, json_path: Path | None) -> int:
     required_fields = receipt[required_start:required_end] if required_start >= 0 and required_end >= 0 else ""
     if any(f'"{field}"' in required_fields for field in FORBIDDEN_RECEIPT_FIELDS):
         raise RuntimeError("Python receipt validator exposes a forbidden receipt field")
-
     writer = _read(root, "src/codex_plugin_scanner/guard/daemon/runtime_hook_evidence_writer.py")
+    journal = _read(root, "src/codex_plugin_scanner/guard/daemon/runtime_hook_evidence_journal.py")
     _contains_all(
         writer,
         (
@@ -107,23 +110,27 @@ def run(root: Path, *, json_path: Path | None) -> int:
             "max_bytes",
             "_receipt_deduped",
             "persist_native_decision_receipt",
-            "NATIVE_HOOK_DECISION_RECEIPT_SCHEMA",
         ),
         "bounded receipt handoff",
     )
+    _contains_all(journal, ("NATIVE_HOOK_DECISION_RECEIPT_SCHEMA",), "receipt journal schema")
     _submit_method_has_no_decision_io(writer)
 
-    worker = _read(root, "src/codex_plugin_scanner/guard/daemon/hook_worker.py")
-    _contains_all(worker, ("_record_native_decision_receipt", 'edge.get("receipt")'), "HookWorker receipt route")
+
+def _validate_hook_routes(root: Path) -> None:
+    native_worker = _read(root, "src/codex_plugin_scanner/guard/daemon/hook_worker_native.py")
+    _contains_all(native_worker, ("_record_native_decision_receipt", 'edge.get("receipt")'), "HookWorker receipt route")
     cli = _read(root, "src/codex_plugin_scanner/guard/cli/commands_hook_native_authority.py")
     _contains_all(cli, ("RuntimeHookEvidenceWriter", "activity_writer=evidence_writer"), "CLI receipt route")
-
     probe = _read(root, "ci/native_runtime/probe_native_default_auto.py")
     _contains_all(
         probe,
         ("receipt_metrics", "mode_invariants", '"invalid"', 'for mode in ("off", "shadow")'),
         "installed no-environment receipt proof",
     )
+
+
+def _validate_tests_and_provenance(root: Path) -> None:
     tests = _read(root, "tests/test_native_decision_receipt.py")
     _contains_all(
         tests,
@@ -141,6 +148,14 @@ def run(root: Path, *, json_path: Path | None) -> int:
         ("exact original wording", "reconstructed implementation scope", "Windows CI/CD", "decision-critical"),
         "receipt provenance document",
     )
+
+
+def run(root: Path, *, json_path: Path | None) -> int:
+    _validate_contract(root)
+    _validate_rust_sources(root)
+    _validate_python_sources(root)
+    _validate_hook_routes(root)
+    _validate_tests_and_provenance(root)
 
     head = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"],

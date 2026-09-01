@@ -102,6 +102,65 @@ def canonical_receipt_bytes(receipt: Mapping[str, object]) -> bytes:
     ).encode("utf-8")
 
 
+def _validate_receipt_identity(receipt: dict[str, object]) -> str | None:
+    if receipt["schema"] != NATIVE_HOOK_DECISION_RECEIPT_SCHEMA or receipt["version"] != 1:
+        return None
+    if receipt["authority"] != "rust":
+        return None
+    decision_id = _bounded_identifier(receipt["decision_id"], pattern=_HEX64, maximum=64)
+    request_id = _bounded_identifier(receipt["request_id"], pattern=_REQUEST_ID, maximum=256)
+    request_digest = _bounded_identifier(receipt["request_digest"], pattern=_HEX64, maximum=64)
+    harness = _bounded_identifier(receipt["harness"], pattern=_HARNESS, maximum=64)
+    if decision_id is None or request_id is None or request_digest is None or harness is None:
+        return None
+    event_name = receipt["event_name"]
+    payload_kind = receipt["payload_kind"]
+    if not isinstance(event_name, str) or event_name not in {"PreToolUse", "PostToolUse"}:
+        return None
+    if not isinstance(payload_kind, str) or payload_kind not in _PAYLOAD_KINDS:
+        return None
+    generation = receipt["policy_generation"]
+    if isinstance(generation, bool) or not isinstance(generation, int) or not 0 < generation <= 2**63 - 1:
+        return None
+    return decision_id
+
+
+def _validate_receipt_policy(receipt: dict[str, object]) -> bool:
+    for field in ("policy_digest", "rule_digest", "runtime_identity", "reviewed_output_sha256"):
+        if _optional_digest(receipt[field]) is _INVALID:
+            return False
+    decision = receipt["decision"]
+    model_output_action = receipt["model_output_action"]
+    if not isinstance(decision, str) or decision not in {"allow", "deny"}:
+        return False
+    if not isinstance(model_output_action, str) or model_output_action not in _MODEL_ACTIONS:
+        return False
+    for field in ("policy_action", "observed_policy_action"):
+        action = receipt[field]
+        if action is not None and (not isinstance(action, str) or action not in _ACTIONS):
+            return False
+    reason_code = _bounded_identifier(
+        receipt["reason_code"],
+        pattern=_IDENTIFIER,
+        maximum=NATIVE_HOOK_DECISION_RECEIPT_MAX_STRING_BYTES,
+    )
+    return reason_code is not None
+
+
+def _validate_receipt_limits(receipt: dict[str, object]) -> bool:
+    for field in ("workspace_bound", "source_ref_external_allowed", "observe_mode"):
+        if not isinstance(receipt[field], bool):
+            return False
+    budget = receipt["deadline_budget_ms"]
+    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or not 1 <= budget <= 9_000):
+        return False
+    try:
+        encoded = json.dumps(receipt, separators=(",", ":"), sort_keys=True, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return False
+    return len(encoded) <= NATIVE_HOOK_DECISION_RECEIPT_MAX_BYTES
+
+
 def validate_native_decision_receipt(value: object) -> dict[str, object] | None:
     """Validate and copy one Rust receipt without retaining request material."""
 
@@ -110,55 +169,8 @@ def validate_native_decision_receipt(value: object) -> dict[str, object] | None:
     receipt = dict(cast(Mapping[str, object], value))
     if set(receipt) != _REQUIRED_FIELDS:
         return None
-    if receipt["schema"] != NATIVE_HOOK_DECISION_RECEIPT_SCHEMA or receipt["version"] != 1:
-        return None
-    if receipt["authority"] != "rust":
-        return None
-    decision_id = _bounded_identifier(receipt["decision_id"], pattern=_HEX64, maximum=64)
-    if decision_id is None:
-        return None
-    request_id = _bounded_identifier(receipt["request_id"], pattern=_REQUEST_ID, maximum=256)
-    request_digest = _bounded_identifier(receipt["request_digest"], pattern=_HEX64, maximum=64)
-    harness = _bounded_identifier(receipt["harness"], pattern=_HARNESS, maximum=64)
-    if request_id is None or request_digest is None or harness is None:
-        return None
-    event_name = receipt["event_name"]
-    if not isinstance(event_name, str) or event_name not in {"PreToolUse", "PostToolUse"}:
-        return None
-    payload_kind = receipt["payload_kind"]
-    if not isinstance(payload_kind, str) or payload_kind not in _PAYLOAD_KINDS:
-        return None
-    generation = receipt["policy_generation"]
-    if isinstance(generation, bool) or not isinstance(generation, int) or not 0 < generation <= 2**63 - 1:
-        return None
-    for field in ("policy_digest", "rule_digest", "runtime_identity", "reviewed_output_sha256"):
-        if _optional_digest(receipt[field]) is _INVALID:
-            return None
-    decision = receipt["decision"]
-    if not isinstance(decision, str) or decision not in {"allow", "deny"}:
-        return None
-    model_output_action = receipt["model_output_action"]
-    if not isinstance(model_output_action, str) or model_output_action not in _MODEL_ACTIONS:
-        return None
-    for field in ("policy_action", "observed_policy_action"):
-        action = receipt[field]
-        if action is not None and (not isinstance(action, str) or action not in _ACTIONS):
-            return None
-    reason_code = _bounded_identifier(
-        receipt["reason_code"],
-        pattern=_IDENTIFIER,
-        maximum=NATIVE_HOOK_DECISION_RECEIPT_MAX_STRING_BYTES,
-    )
-    if reason_code is None:
-        return None
-    for field in ("workspace_bound", "source_ref_external_allowed", "observe_mode"):
-        if not isinstance(receipt[field], bool):
-            return None
-    budget = receipt["deadline_budget_ms"]
-    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or not 1 <= budget <= 9_000):
-        return None
-    encoded = json.dumps(receipt, separators=(",", ":"), sort_keys=True, allow_nan=False).encode("utf-8")
-    if len(encoded) > NATIVE_HOOK_DECISION_RECEIPT_MAX_BYTES:
+    decision_id = _validate_receipt_identity(receipt)
+    if decision_id is None or not _validate_receipt_policy(receipt) or not _validate_receipt_limits(receipt):
         return None
     expected_decision_id = hashlib.sha256(canonical_receipt_bytes(receipt)).hexdigest()
     if decision_id != expected_decision_id:
