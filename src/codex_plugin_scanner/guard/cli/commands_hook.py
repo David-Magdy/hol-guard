@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ..daemon.hook_worker_responses import post_tool_fail_safe_response
 from ..runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from ..runtime.extension_control_runtime import (
     ExtensionControlRuntimeSnapshot,
@@ -13,7 +14,19 @@ from ..runtime.extension_control_runtime import (
 )
 
 if TYPE_CHECKING:
+    from ..runtime.hook_payload_reference import hydrate_hook_payload_reference
     from ._commands_shared import _now, _require_guard_config, _require_guard_context, _require_guard_store
+    from .commands_hook_claude import (
+        _run_hook_claude_permission_prompt_notification,
+        _run_hook_claude_permission_request,
+    )
+    from .commands_hook_compatibility import maybe_handle_cursor_post_tool, prepare_compatibility_hook_payload
+    from .commands_hook_copilot import _run_hook_copilot_permission_request, _run_hook_copilot_pretool
+    from .commands_hook_generic import _run_hook_generic_payload
+    from .commands_hook_runtime_eval import _evaluate_runtime_artifact_hook
+    from .commands_hook_runtime_finish import _finalize_runtime_artifact_hook
+    from .commands_hook_runtime_review import _review_runtime_artifact_hook
+    from .commands_hook_runtime_state import RuntimeArtifactHookState
     from .commands_support_claude_approval import _persist_claude_guard_question_decision
     from .commands_support_connect import _synced_policy_payload
     from .commands_support_hook_payload import _hook_action_envelope, _load_hook_payload, _normalize_hook_payload
@@ -31,23 +44,26 @@ if TYPE_CHECKING:
 
 
 from ._commands_shared import *
-from .commands_hook_claude import (
-    _run_hook_claude_permission_prompt_notification,
-    _run_hook_claude_permission_request,
+from .commands_hook_compat_loader import (
+    COMPATIBILITY_SURFACE_NAMES,
+    load_hook_compatibility_surface,
 )
-from .commands_hook_compatibility import maybe_handle_cursor_post_tool, prepare_compatibility_hook_payload
-from .commands_hook_copilot import (
-    _run_hook_copilot_permission_request,
-    _run_hook_copilot_pretool,
-)
-from .commands_hook_generic import _run_hook_generic_payload
 from .commands_hook_native_authority import try_native_or_source_ref_hook
-from .commands_hook_runtime_eval import _evaluate_runtime_artifact_hook
-from .commands_hook_runtime_finish import _finalize_runtime_artifact_hook
-from .commands_hook_runtime_review import _review_runtime_artifact_hook
-from .commands_hook_runtime_state import RuntimeArtifactHookState
 from .commands_parser_helpers import *
+from .commands_support_interaction import _emit
 from .commands_support_workspace import _workspace_from_hook_payload
+
+
+def __getattr__(name: str) -> object:
+    """Expose legacy helpers to explicit oracle tests without eager imports."""
+
+    if name not in COMPATIBILITY_SURFACE_NAMES:
+        raise AttributeError(name)
+    surface = load_hook_compatibility_surface()
+    if surface is None or name not in surface:
+        raise AttributeError(name)
+    globals().update(surface)
+    return surface[name]
 
 
 def _run_guard_hook_command(
@@ -98,12 +114,23 @@ def _run_guard_hook_command(
     # Explicit off/shadow compatibility reaches this point after native has
     # declined authority.  Auto/force already returned a typed fail-safe
     # result above, so no hook request loads config here.
+    compatibility_surface = load_hook_compatibility_surface()
+    if compatibility_surface is None:
+        _emit(
+            "hook",
+            post_tool_fail_safe_response(
+                args.harness,
+                reason="HOL Guard could not enter the explicit Python hook oracle safely.",
+                reason_code="python_hook_oracle_unavailable",
+            ),
+            getattr(args, "json", False),
+        )
+        return 0
+    globals().update(compatibility_surface)
     config = _require_guard_config(config)
     # Explicit off/shadow compatibility owns reference hydration only after
     # native routing has declined authority. Auto/force therefore sends the
     # bounded reference envelope to Rust without Python file I/O.
-    from ..runtime.hook_payload_reference import hydrate_hook_payload_reference
-
     payload = hydrate_hook_payload_reference(payload)
     payload = _normalize_hook_payload(payload, harness=args.harness)
     payload = prepare_compatibility_hook_payload(payload, harness=args.harness)

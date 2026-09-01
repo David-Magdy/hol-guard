@@ -7,6 +7,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from .commands_hook_compat_bootstrap import bootstrap_compatibility_module
+
+bootstrap_compatibility_module(globals())
+
 
 def _coalesce_string(*values: object | None) -> str:
     """Return a display-safe fallback while CLI helper modules are importing."""

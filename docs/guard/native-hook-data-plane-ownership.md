@@ -103,6 +103,16 @@ never select it. The AST/call-graph gate
 imports and calls reachable from production hook entrypoints; the
 always-selected ownership workflow runs this gate.
 
+NHD-091–095 adds the complementary
+`scripts/ci/python_capability_cleanup_gate.py` and
+`docs/guard/contracts/python-capability-ownership.v1.json`. It classifies all
+80 scoped Python hook/runtime files as required control plane, named reference
+oracle, or dead duplicate. Legacy evaluators load only through the explicit
+oracle loader; the superseded Python resident source is retained but excluded
+from wheel and sdist output pending separate deletion authorization. The gate
+proves clean production imports, source import reachability, named oracle
+tests, language-neutral parity fixtures, and package content.
+
 `scripts/ci/rust_io_ownership_gate.py` builds an AST inventory of synchronous
 Python filesystem, hash, decode, and archive operations and walks supported
 hook entrypoints. `scripts/ci/rust_io_privacy_gate.py` statically checks route,
@@ -134,8 +144,9 @@ Current material gaps include:
   restart budget, circuit breaking, supervisor liveness, and shutdown. Unix
   uses owner-private sockets; Windows protects the token and state with an
   owner-and-SYSTEM-only DACL, verifies the exact package process, and mutually
-  authenticates loopback frames. The legacy Python resident module is not
-  reachable from the ordinary graph.
+  authenticates loopback frames. The legacy Python resident source is not
+  reachable from the ordinary graph and is excluded from built distributions;
+  its retained source is a separately recorded deletion candidate.
 - Python compiles and publishes authenticated policy snapshots asynchronously;
   the resident validates and applies the installed effective policy from memory
   for each hook request. Workspace and managed-policy overlays are composed

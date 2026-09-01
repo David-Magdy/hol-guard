@@ -67,7 +67,6 @@ from .commands_support_hook_payload_loader import (
     _normalize_hook_arguments,
     _normalize_hook_payload,
 )
-from ..runtime.hook_payload_reference import hydrate_hook_payload_reference
 
 
 def _load_hook_payload(
@@ -86,6 +85,8 @@ def _load_hook_payload(
         normalize=False,
     )
     if normalize:
+        from ..runtime.hook_payload_reference import hydrate_hook_payload_reference
+
         payload = hydrate_hook_payload_reference(payload)
         return _normalize_hook_payload(payload, harness=harness)
     return payload
