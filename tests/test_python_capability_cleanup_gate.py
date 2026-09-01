@@ -78,6 +78,19 @@ def test_excluded_dead_module_cannot_enter_a_package_artifact(tmp_path: Path) ->
         GATE.run(ROOT, sdist)
 
 
+def test_cleanup_candidate_requires_dead_duplicate_class() -> None:
+    candidate = "src/codex_plugin_scanner/guard/native_runtime_resident.py"
+
+    with pytest.raises(RuntimeError, match="not classified as dead_duplicate"):
+        GATE._candidate_evidence(
+            ROOT,
+            candidate,
+            {candidate: "hook_control_and_transport"},
+            {"hook_control_and_transport": "required_control_plane"},
+            [candidate],
+        )
+
+
 def test_parity_fixture_stays_language_neutral() -> None:
     fixture = GATE._validate_fixture(ROOT, "tests/fixtures/native-hook-parity/cases.v1.json")
 

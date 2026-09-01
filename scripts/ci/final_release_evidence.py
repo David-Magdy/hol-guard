@@ -125,58 +125,57 @@ def _platforms(value: object) -> list[str]:
     return sorted(labels)
 
 
-def validate_final_evidence(
+def _validate_release_identity(
     payload: Mapping[str, object],
     *,
     expected_version: str,
     expected_source_sha: str,
     expected_rule_digest: str,
-    require_signature: bool = False,
-) -> dict[str, object]:
-    """Validate and normalize a final evidence payload."""
-
-    _safe_strings(payload)
+) -> None:
     if payload.get("schema") != "hol-guard-final-release-evidence.v1":
         raise FinalEvidenceError("unsupported final evidence schema")
     release = payload.get("release")
     if not isinstance(release, dict):
         raise FinalEvidenceError("release identity is missing")
-    release = cast(dict[str, object], release)
     if release.get("version") != expected_version or release.get("source_sha") != expected_source_sha:
         raise FinalEvidenceError("release package identity does not match")
     if release.get("rule_digest") != expected_rule_digest:
         raise FinalEvidenceError("release rule identity does not match")
     _hash(expected_source_sha, label="release source", length=40)
     _hash(expected_rule_digest, label="release rule")
-    _hash(release.get("commit_sha"), label="release commit", length=40)
+    commit_sha = _hash(release.get("commit_sha"), label="release commit", length=40)
+    if commit_sha != expected_source_sha:
+        raise FinalEvidenceError("release commit does not match expected source")
     _hash(release.get("base_sha"), label="release base", length=40)
 
+
+def _validate_components_and_gates(payload: Mapping[str, object]) -> None:
     components = payload.get("evidence")
     if not isinstance(components, dict):
         raise FinalEvidenceError("component evidence is missing")
-    components = cast(dict[str, object], components)
     _component(components.get("artifacts"), label="artifact")
     _component(components.get("desktop_core"), label="Desktop Core")
     _component(components.get("installed_matrix"), label="installed matrix")
     gates = payload.get("gates")
     if not isinstance(gates, dict) or set(gates) != set(REQUIRED_GATES):
         raise FinalEvidenceError("final gate set is incomplete")
-    gates = cast(dict[str, object], gates)
     if any(value is not True for value in gates.values()):
         raise FinalEvidenceError("one or more final release gates did not pass")
 
+
+def _validate_review(payload: Mapping[str, object]) -> None:
     review = payload.get("review")
     if not isinstance(review, dict) or review.get("exact_head") is not True:
         raise FinalEvidenceError("exact-head review evidence is missing")
-    review = cast(dict[str, object], review)
     if review.get("unresolved_non_outdated") != 0 or review.get("pending_required") != 0:
         raise FinalEvidenceError("actionable review threads or required checks remain")
     _token(review.get("ci_run"), label="CI run")
 
+
+def _validate_coverage(payload: Mapping[str, object]) -> None:
     coverage = payload.get("coverage")
     if not isinstance(coverage, dict):
         raise FinalEvidenceError("platform coverage is missing")
-    coverage = cast(dict[str, object], coverage)
     platforms = _platforms(coverage.get("platforms"))
     windows_value = coverage.get("windows")
     if windows_value is not None and not isinstance(windows_value, dict):
@@ -186,27 +185,27 @@ def validate_final_evidence(
         if not isinstance(windows, dict) or windows.get("status") != "waived":
             raise FinalEvidenceError("Windows omission requires an explicit waiver")
         _token(windows.get("reason"), label="Windows waiver reason")
-    elif windows is not None and (not isinstance(windows, dict) or windows.get("status") != "verified"):
+    elif windows is not None and windows.get("status") != "verified":
         raise FinalEvidenceError("Windows evidence must be verified when included")
 
+
+def _validate_approval(payload: Mapping[str, object]) -> None:
     approval = payload.get("approval")
     if not isinstance(approval, dict) or type(approval.get("capable")) is not bool:
         raise FinalEvidenceError("approval capability status is missing")
-    approval = cast(dict[str, object], approval)
-    capable = bool(approval["capable"])
-    if capable:
+    if bool(approval["capable"]):
         if approval.get("root_configured") is not True or approval.get("signer_ceremony") is not True:
             raise FinalEvidenceError("approval-capable release lacks external root/signer ceremony")
         _hash(approval.get("root_fingerprint"), label="approval root fingerprint")
         _token(approval.get("signer_key_id"), label="approval signer key ID")
-    else:
-        if approval.get("status") != "fail_closed_external_provisioning_required":
-            raise FinalEvidenceError("non-capable approval status must state the external blocker")
+    elif approval.get("status") != "fail_closed_external_provisioning_required":
+        raise FinalEvidenceError("non-capable approval status must state the external blocker")
 
+
+def _validate_reproducibility(payload: Mapping[str, object]) -> None:
     reproducibility = payload.get("reproducibility")
     if not isinstance(reproducibility, dict) or reproducibility.get("deterministic") is not True:
         raise FinalEvidenceError("reproducibility evidence is missing")
-    reproducibility = cast(dict[str, object], reproducibility)
     commands_value = reproducibility.get("commands")
     if (
         not isinstance(commands_value, list)
@@ -214,10 +213,17 @@ def validate_final_evidence(
         or any(not isinstance(item, str) for item in commands_value)
     ):
         raise FinalEvidenceError("reproducible command set is missing")
-    commands = cast(list[str], commands_value)
-    if any(len(item) > 400 for item in commands):
+    if any(len(item) > 400 for item in commands_value):
         raise FinalEvidenceError("reproducible command is too long")
 
+
+def _validate_signature(
+    payload: Mapping[str, object],
+    *,
+    require_signature: bool,
+    trusted_public_key: bytes | None,
+    trusted_key_id: str | None,
+) -> tuple[dict[str, object] | None, bool]:
     signature = payload.get("signature")
     signature_payload = cast(dict[str, object], signature) if isinstance(signature, dict) else None
     signature_verified = signature_payload is not None and signature_payload.get("status") == "verified"
@@ -234,14 +240,19 @@ def validate_final_evidence(
             raise FinalEvidenceError("evidence signature record is incomplete")
         if signature_payload.get("algorithm") != "ed25519":
             raise FinalEvidenceError("evidence signature algorithm is not approved")
-        _token(signature_payload.get("key_id"), label="evidence signer key ID")
+        key_id = _token(signature_payload.get("key_id"), label="evidence signer key ID")
+        if trusted_public_key is None:
+            raise FinalEvidenceError("trusted evidence signer is not configured")
+        if trusted_key_id is not None and key_id != trusted_key_id:
+            raise FinalEvidenceError("evidence signer key ID is not trusted")
         _hash(signature_payload.get("manifest_sha256"), label="evidence signed digest")
         if signature_payload["manifest_sha256"] != hashlib.sha256(canonical_bytes(payload)).hexdigest():
             raise FinalEvidenceError("evidence signature digest does not bind canonical bytes")
+        public_key_bytes = _encoded(signature_payload.get("public_key"), label="evidence public key", size=32)
+        if public_key_bytes != trusted_public_key:
+            raise FinalEvidenceError("evidence signer is not trusted")
         try:
-            public_key = Ed25519PublicKey.from_public_bytes(
-                _encoded(signature_payload.get("public_key"), label="evidence public key", size=32)
-            )
+            public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
             public_key.verify(
                 _encoded(signature_payload.get("signature"), label="evidence signature", size=64),
                 canonical_bytes(payload),
@@ -250,6 +261,39 @@ def validate_final_evidence(
             raise FinalEvidenceError("evidence signature is invalid") from error
     elif require_signature:
         raise FinalEvidenceError("external evidence signature is required")
+    return signature_payload, signature_verified
+
+
+def validate_final_evidence(
+    payload: Mapping[str, object],
+    *,
+    expected_version: str,
+    expected_source_sha: str,
+    expected_rule_digest: str,
+    require_signature: bool = False,
+    trusted_public_key: bytes | None = None,
+    trusted_key_id: str | None = None,
+) -> dict[str, object]:
+    """Validate and normalize a final evidence payload."""
+
+    _safe_strings(payload)
+    _validate_release_identity(
+        payload,
+        expected_version=expected_version,
+        expected_source_sha=expected_source_sha,
+        expected_rule_digest=expected_rule_digest,
+    )
+    _validate_components_and_gates(payload)
+    _validate_review(payload)
+    _validate_coverage(payload)
+    _validate_approval(payload)
+    _validate_reproducibility(payload)
+    signature_payload, signature_verified = _validate_signature(
+        payload,
+        require_signature=require_signature,
+        trusted_public_key=trusted_public_key,
+        trusted_key_id=trusted_key_id,
+    )
 
     normalized: dict[str, object] = dict(payload)
     normalized["signature"] = signature_payload or {"status": "external-signer-required"}
@@ -277,6 +321,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--rule-digest", required=True)
     parser.add_argument("--require-signature", action="store_true")
+    parser.add_argument("--trusted-public-key", help="base64-encoded Ed25519 release signer key")
+    parser.add_argument("--trusted-key-id", help="expected purpose-specific release signer key ID")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--digest", type=Path)
     return parser
@@ -291,6 +337,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_source_sha=args.source_sha,
             expected_rule_digest=args.rule_digest,
             require_signature=args.require_signature,
+            trusted_public_key=(
+                _encoded(args.trusted_public_key, label="trusted evidence public key", size=32)
+                if args.trusted_public_key is not None
+                else None
+            ),
+            trusted_key_id=(
+                _token(args.trusted_key_id, label="trusted evidence signer key ID")
+                if args.trusted_key_id is not None
+                else None
+            ),
         )
     except FinalEvidenceError as error:
         print(f"Final release evidence failed: {error}", file=sys.stderr)

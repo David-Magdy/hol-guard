@@ -105,9 +105,10 @@ never claim an approval-capable release unless the dedicated enrollment root,
 root fingerprint, signer ceremony, and resident enrollment evidence are all
 present. No private key belongs in this repository or its CI logs.
 
-For a signed final record, pass `--require-signature`. The signature record
-must identify its purpose-specific key ID and bind the SHA-256 of the
-canonical unsigned evidence projection. It also carries the base64-encoded raw
-Ed25519 public key and detached signature; the validator verifies both before
-setting `release_ready=true`. The signing ceremony is external to the repository
-and is recorded by reference only.
+For a signed final record, pass `--require-signature` together with an
+independently configured `--trusted-public-key` and `--trusted-key-id`. The
+signature record must identify that purpose-specific key ID and bind the
+SHA-256 of the canonical unsigned evidence projection. Its embedded public key
+must match the independent trust anchor before the detached signature is
+verified and `release_ready=true` is set. The signing ceremony is external to
+the repository and is recorded by reference only.

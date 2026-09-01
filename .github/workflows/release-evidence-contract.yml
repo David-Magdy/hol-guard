@@ -6,10 +6,12 @@ on:
     paths:
       - ".github/workflows/release-evidence-contract.yml"
       - "scripts/ci/final_release_evidence.py"
+      - "scripts/ci/generate_release_evidence_contract.py"
       - "scripts/ci/validate_release_artifacts.py"
       - "scripts/ci/verify_installed_release_matrix.py"
       - "scripts/release/verify_desktop_core_attestation.py"
       - "tests/test_final_release_evidence.py"
+      - "tests/test_generate_release_evidence_contract.py"
       - "tests/test_validate_release_artifacts.py"
       - "tests/test_verify_desktop_core_attestation.py"
       - "tests/test_verify_installed_release_matrix.py"
@@ -19,10 +21,12 @@ on:
     paths:
       - ".github/workflows/release-evidence-contract.yml"
       - "scripts/ci/final_release_evidence.py"
+      - "scripts/ci/generate_release_evidence_contract.py"
       - "scripts/ci/validate_release_artifacts.py"
       - "scripts/ci/verify_installed_release_matrix.py"
       - "scripts/release/verify_desktop_core_attestation.py"
       - "tests/test_final_release_evidence.py"
+      - "tests/test_generate_release_evidence_contract.py"
       - "tests/test_validate_release_artifacts.py"
       - "tests/test_verify_desktop_core_attestation.py"
       - "tests/test_verify_installed_release_matrix.py"
@@ -52,10 +56,12 @@ jobs:
         run: >-
           uv run --no-sync python -m ruff format --check
           scripts/ci/final_release_evidence.py
+          scripts/ci/generate_release_evidence_contract.py
           scripts/ci/validate_release_artifacts.py
           scripts/ci/verify_installed_release_matrix.py
           scripts/release/verify_desktop_core_attestation.py
           tests/test_final_release_evidence.py
+          tests/test_generate_release_evidence_contract.py
           tests/test_validate_release_artifacts.py
           tests/test_verify_desktop_core_attestation.py
           tests/test_verify_installed_release_matrix.py
@@ -63,10 +69,12 @@ jobs:
         run: >-
           uv run --no-sync python -m ruff check
           scripts/ci/final_release_evidence.py
+          scripts/ci/generate_release_evidence_contract.py
           scripts/ci/validate_release_artifacts.py
           scripts/ci/verify_installed_release_matrix.py
           scripts/release/verify_desktop_core_attestation.py
           tests/test_final_release_evidence.py
+          tests/test_generate_release_evidence_contract.py
           tests/test_validate_release_artifacts.py
           tests/test_verify_desktop_core_attestation.py
           tests/test_verify_installed_release_matrix.py
@@ -74,7 +82,38 @@ jobs:
         run: >-
           uv run --no-sync pytest -q
           tests/test_final_release_evidence.py
+          tests/test_generate_release_evidence_contract.py
           tests/test_validate_release_artifacts.py
           tests/test_verify_desktop_core_attestation.py
           tests/test_verify_installed_release_matrix.py
           --tb=short
+      - name: Generate aggregate release-evidence fixtures
+        run: |
+          VERSION=$(uv run --no-sync python scripts/sync_repo_version.py --check)
+          RULE_DIGEST=$(sha256sum docs/guard/contracts/hook-data-plane-ownership.v2.json | cut -d' ' -f1)
+          uv run --no-sync python scripts/ci/generate_release_evidence_contract.py \
+            --version "$VERSION" \
+            --source-sha "${GITHUB_SHA:?}" \
+            --rule-digest "$RULE_DIGEST" \
+            --output-dir "$RUNNER_TEMP/hol-guard-release-evidence"
+      - name: Validate generated installed matrix
+        run: |
+          VERSION=$(uv run --no-sync python scripts/sync_repo_version.py --check)
+          RULE_DIGEST=$(sha256sum docs/guard/contracts/hook-data-plane-ownership.v2.json | cut -d' ' -f1)
+          uv run --no-sync python scripts/ci/verify_installed_release_matrix.py \
+            --matrix "$RUNNER_TEMP/hol-guard-release-evidence/installed-release-matrix.json" \
+            --version "$VERSION" \
+            --source-sha "${GITHUB_SHA:?}" \
+            --rule-digest "$RULE_DIGEST" \
+            --windows-waiver contract-fixture \
+            --output "$RUNNER_TEMP/hol-guard-release-evidence/installed-release-matrix.normalized.json"
+      - name: Validate generated final evidence
+        run: |
+          VERSION=$(uv run --no-sync python scripts/sync_repo_version.py --check)
+          RULE_DIGEST=$(sha256sum docs/guard/contracts/hook-data-plane-ownership.v2.json | cut -d' ' -f1)
+          uv run --no-sync python scripts/ci/final_release_evidence.py \
+            --evidence "$RUNNER_TEMP/hol-guard-release-evidence/final-release-evidence.json" \
+            --version "$VERSION" \
+            --source-sha "${GITHUB_SHA:?}" \
+            --rule-digest "$RULE_DIGEST" \
+            --output "$RUNNER_TEMP/hol-guard-release-evidence/final-release-evidence.normalized.json"

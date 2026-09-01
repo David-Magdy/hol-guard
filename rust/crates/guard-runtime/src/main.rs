@@ -175,6 +175,11 @@ fn run() -> Result<(), String> {
             )?;
             write_bytes_response(&response)
         }
+        [command, flag, state_dir]
+            if command == "resident-client-stream" && flag == "--stdin" =>
+        {
+            managed_resident::client_stream(std::path::Path::new(state_dir))
+        }
         [command, flag, state_dir] if command == "resident-stop" && flag == "--state-dir" => {
             managed_resident::stop_managed(std::path::Path::new(state_dir))
         }

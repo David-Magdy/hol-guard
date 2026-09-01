@@ -19,6 +19,7 @@ from typing import cast
 from codex_plugin_scanner.guard.adapters.codex_daemon_hook_auth import _DaemonResponseError
 from codex_plugin_scanner.guard.adapters.codex_daemon_hook_transport import _daemon_response_once
 from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
+from codex_plugin_scanner.guard.native_resident_client import close_native_resident_clients
 from codex_plugin_scanner.guard.store import GuardStore
 from scripts.native_slo_adapter import Observation, is_allowed, payload, route_counts, route_delta
 from scripts.native_slo_contract import MAX_READINESS_P95_MS
@@ -35,6 +36,7 @@ _CAPACITY_FAIL_SAFE = {
 def stop_native_resident(runtime: Path, guard_home: Path) -> bool:
     """Stop one Rust resident through its bounded lifecycle command."""
 
+    close_native_resident_clients(guard_home)
     with suppress(OSError, subprocess.TimeoutExpired):
         result = subprocess.run(
             (str(runtime), "resident-stop", "--state-dir", str(guard_home / "native-runtime")),

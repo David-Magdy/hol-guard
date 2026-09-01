@@ -17,6 +17,42 @@ fn client_deadline_is_bounded() {
 }
 
 #[test]
+fn client_stream_frames_are_bounded_and_binary_safe() {
+    use std::io::Cursor;
+
+    let payload = b"{\"raw_payload\":\"line\\nvalue\"}";
+    let mut framed = (payload.len() as u32).to_be_bytes().to_vec();
+    framed.extend_from_slice(payload);
+    let mut input = Cursor::new(framed);
+    assert_eq!(
+        read_client_stream_frame(&mut input).unwrap(),
+        Some(payload.to_vec())
+    );
+
+    let mut output = Vec::new();
+    write_client_stream_frame(&mut output, payload).unwrap();
+    assert_eq!(&output[..4], &(payload.len() as u32).to_be_bytes());
+    assert_eq!(&output[4..], payload);
+}
+
+#[test]
+fn client_stream_rejects_truncated_and_oversized_frames() {
+    use std::io::Cursor;
+
+    let mut truncated = Cursor::new((4u32).to_be_bytes().to_vec());
+    assert_eq!(
+        read_client_stream_frame(&mut truncated).unwrap_err(),
+        "native_client_stream_frame_truncated"
+    );
+    let oversized = (crate::MAX_NATIVE_REQUEST_BYTES as u32 + 1).to_be_bytes();
+    let mut input = Cursor::new(oversized);
+    assert_eq!(
+        read_client_stream_frame(&mut input).unwrap_err(),
+        "native_client_stream_request_too_large"
+    );
+}
+
+#[test]
 fn stale_process_identity_errors_are_platform_scoped() {
     let stale_unavailable =
         is_stale_process_identity_error("native_resident_process_identity_unavailable");

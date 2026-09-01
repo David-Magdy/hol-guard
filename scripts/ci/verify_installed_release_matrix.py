@@ -40,6 +40,11 @@ _SHA40 = re.compile(r"[0-9a-f]{40}\Z")
 _SHA64 = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_TEXT = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,95}\Z")
 _SAFE_WAIVER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,159}\Z")
+_FORBIDDEN_VALUE = re.compile(
+    r"(?:/Users/|/home/|/private/|\\Users\\|[A-Za-z]:\\|-----BEGIN|"
+    r"\b(?:api[_-]?key|password|private[_-]?key|secret|token)\b)",
+    re.IGNORECASE,
+)
 _FORBIDDEN_KEYS = frozenset(
     {
         "command",
@@ -79,6 +84,67 @@ def _reject_sensitive_keys(value: object) -> None:
     elif isinstance(value, list):
         for nested in value:
             _reject_sensitive_keys(nested)
+    elif isinstance(value, str) and _FORBIDDEN_VALUE.search(value):
+        raise InstalledMatrixError("matrix contains sensitive aggregate text")
+
+
+def _scenario_record(
+    value: object,
+    *,
+    platform: str,
+    expected_version: str,
+) -> tuple[str, dict[str, object]]:
+    if not isinstance(value, dict):
+        raise InstalledMatrixError("scenario entry must be an object")
+    name = _safe_text(value.get("name"), label="scenario")
+    if name not in REQUIRED_SCENARIOS:
+        raise InstalledMatrixError(f"scenario set is invalid for {platform}")
+    if value.get("package_version") != expected_version:
+        raise InstalledMatrixError(f"scenario version mismatch for {platform}/{name}")
+    fields = ("env_unset", "native_selected", "python_fallback", "path_search", "download_attempted")
+    if any(type(value.get(field)) is not bool for field in fields):
+        raise InstalledMatrixError(f"scenario field is not boolean for {platform}/{name}")
+    if value["env_unset"] is not True:
+        raise InstalledMatrixError(f"production environment is not unset for {platform}/{name}")
+    if value["python_fallback"] or value["path_search"] or value["download_attempted"]:
+        raise InstalledMatrixError(f"unsafe runtime behavior for {platform}/{name}")
+    outcome = _safe_text(value.get("outcome"), label="outcome")
+    if outcome not in OUTCOMES:
+        raise InstalledMatrixError(f"unsupported outcome for {platform}/{name}")
+    native_selected = value["native_selected"]
+    if name != "fault-injection" and native_selected is not True:
+        raise InstalledMatrixError(f"native runtime was not selected for {platform}/{name}")
+    if name == "fault-injection" and native_selected is False and outcome == "pass":
+        raise InstalledMatrixError(f"fault outcome is inconsistent for {platform}/{name}")
+    count = value.get("evidence_count")
+    harness_count = value.get("harness_count")
+    if type(count) is not int or not 1 <= count <= 1_000_000:
+        raise InstalledMatrixError(f"evidence count is invalid for {platform}/{name}")
+    if type(harness_count) is not int or not 1 <= harness_count <= 128:
+        raise InstalledMatrixError(f"harness count is invalid for {platform}/{name}")
+    harnesses = value.get("harnesses")
+    if (
+        not isinstance(harnesses, list)
+        or len(harnesses) != len(ALL_HARNESSES)
+        or any(not isinstance(item, str) for item in harnesses)
+        or len(set(harnesses)) != len(ALL_HARNESSES)
+        or set(harnesses) != _HARNESS_SET
+        or harness_count != len(ALL_HARNESSES)
+    ):
+        raise InstalledMatrixError(f"all-harness coverage is incomplete for {platform}/{name}")
+    return name, {
+        "name": name,
+        "package_version": expected_version,
+        "env_unset": True,
+        "native_selected": native_selected,
+        "python_fallback": False,
+        "path_search": False,
+        "download_attempted": False,
+        "outcome": outcome,
+        "evidence_count": count,
+        "harness_count": harness_count,
+        "harnesses": list(ALL_HARNESSES),
+    }
 
 
 def _platform_record(value: object, *, expected_version: str) -> tuple[str, dict[str, object]]:
@@ -97,56 +163,10 @@ def _platform_record(value: object, *, expected_version: str) -> tuple[str, dict
         raise InstalledMatrixError(f"scenarios are missing for {platform}")
     by_name: dict[str, dict[str, object]] = {}
     for scenario_value in scenarios:
-        if not isinstance(scenario_value, dict):
-            raise InstalledMatrixError("scenario entry must be an object")
-        name = _safe_text(scenario_value.get("name"), label="scenario")
-        if name not in REQUIRED_SCENARIOS or name in by_name:
+        name, record = _scenario_record(scenario_value, platform=platform, expected_version=expected_version)
+        if name in by_name:
             raise InstalledMatrixError(f"scenario set is invalid for {platform}")
-        if scenario_value.get("package_version") != expected_version:
-            raise InstalledMatrixError(f"scenario version mismatch for {platform}/{name}")
-        for field in ("env_unset", "native_selected", "python_fallback", "path_search", "download_attempted"):
-            if type(scenario_value.get(field)) is not bool:
-                raise InstalledMatrixError(f"scenario field {field} is not boolean")
-        if scenario_value["env_unset"] is not True:
-            raise InstalledMatrixError(f"production environment is not unset for {platform}/{name}")
-        if scenario_value["python_fallback"] or scenario_value["path_search"] or scenario_value["download_attempted"]:
-            raise InstalledMatrixError(f"unsafe runtime behavior for {platform}/{name}")
-        outcome = _safe_text(scenario_value.get("outcome"), label="outcome")
-        if outcome not in OUTCOMES:
-            raise InstalledMatrixError(f"unsupported outcome for {platform}/{name}")
-        if name != "fault-injection" and scenario_value["native_selected"] is not True:
-            raise InstalledMatrixError(f"native runtime was not selected for {platform}/{name}")
-        if name == "fault-injection" and scenario_value["native_selected"] is False and outcome == "pass":
-            raise InstalledMatrixError(f"fault outcome is inconsistent for {platform}/{name}")
-        count = scenario_value.get("evidence_count")
-        harness_count = scenario_value.get("harness_count")
-        if type(count) is not int or count < 1 or count > 1_000_000:
-            raise InstalledMatrixError(f"evidence count is invalid for {platform}/{name}")
-        if type(harness_count) is not int or harness_count < 1 or harness_count > 128:
-            raise InstalledMatrixError(f"harness count is invalid for {platform}/{name}")
-        harnesses = scenario_value.get("harnesses")
-        if (
-            not isinstance(harnesses, list)
-            or len(harnesses) != len(ALL_HARNESSES)
-            or any(not isinstance(item, str) for item in harnesses)
-            or len(set(harnesses)) != len(ALL_HARNESSES)
-            or set(harnesses) != _HARNESS_SET
-            or harness_count != len(ALL_HARNESSES)
-        ):
-            raise InstalledMatrixError(f"all-harness coverage is incomplete for {platform}/{name}")
-        by_name[name] = {
-            "name": name,
-            "package_version": expected_version,
-            "env_unset": True,
-            "native_selected": scenario_value["native_selected"],
-            "python_fallback": False,
-            "path_search": False,
-            "download_attempted": False,
-            "outcome": outcome,
-            "evidence_count": count,
-            "harness_count": harness_count,
-            "harnesses": list(ALL_HARNESSES),
-        }
+        by_name[name] = record
     if set(by_name) != REQUIRED_SCENARIOS:
         raise InstalledMatrixError(f"scenario set is incomplete for {platform}")
     return platform, {
@@ -227,6 +247,7 @@ def _load(path: Path) -> Mapping[str, object]:
 def matrix_digest(path: Path) -> str:
     """Return the evidence file digest for a final manifest reference."""
 
+    _load(path)
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 

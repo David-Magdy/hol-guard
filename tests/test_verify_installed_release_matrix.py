@@ -105,6 +105,14 @@ def test_matrix_rejects_sensitive_payload_fields() -> None:
         _validate(payload, windows_waiver="waived")
 
 
+def test_matrix_rejects_sensitive_text_values_even_with_safe_keys() -> None:
+    payload = _matrix()
+    payload["operator_note"] = "/Users/example/private-token"
+
+    with pytest.raises(InstalledMatrixError, match="sensitive aggregate text"):
+        _validate(payload, windows_waiver="waived")
+
+
 def test_matrix_does_not_allow_waiver_with_windows_evidence() -> None:
     with pytest.raises(InstalledMatrixError, match="waiver cannot"):
         _validate(_matrix(include_windows=True), windows_waiver="waived")

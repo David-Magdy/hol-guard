@@ -250,11 +250,11 @@ def validate_wheel_set(
     ]
     seen: set[str] = set()
     for wheel in sorted(dist_dir.glob("*.whl")):
+        if wheel.name == pure_name:
+            continue
         name, tag = _parse_wheel(wheel, version)
         if tag.platform == "any":
-            if wheel.name != pure_name:
-                raise ReleaseArtifactError(f"unexpected pure wheel: {wheel.name}")
-            continue
+            raise ReleaseArtifactError(f"unexpected pure wheel: {wheel.name}")
         if name.replace("-", "_") != "hol_guard" or tag.platform not in requested:
             raise ReleaseArtifactError(f"unexpected native wheel: {wheel.name}")
         if tag.platform in seen or tag.interpreter != "py3" or tag.abi != "none":
@@ -330,8 +330,14 @@ def validate_sbom(path: Path, *, version: str) -> dict[str, object]:
 def validate_provenance(path: Path) -> dict[str, object]:
     _regular_file(path, label="provenance bundle", maximum=64 * 1024 * 1024)
     try:
-        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        records = [json.loads(line) for line in lines] if len(lines) > 1 else [json.loads(lines[0])]
+        rendered = path.read_text(encoding="utf-8")
+        try:
+            decoded = json.loads(rendered)
+        except json.JSONDecodeError:
+            lines = [line for line in rendered.splitlines() if line.strip()]
+            records = [json.loads(line) for line in lines]
+        else:
+            records = decoded if isinstance(decoded, list) else [decoded]
     except (OSError, UnicodeDecodeError, IndexError, json.JSONDecodeError) as error:
         raise ReleaseArtifactError("provenance bundle is not valid JSON or JSONL") from error
     if not records or not all(isinstance(record, dict) for record in records):

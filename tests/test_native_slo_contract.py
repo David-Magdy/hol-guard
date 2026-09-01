@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts.native_slo_adapter import payload, process_resources, route_matrix, source_payloads
+from scripts.bench_guard_native_installed_slo import _safe_failure_rate
+from scripts.native_slo_adapter import Observation, payload, process_resources, route_matrix, source_payloads
 from scripts.native_slo_contract import (
     MAX_EVIDENCE_BYTES,
     SIZE_CLASSES,
@@ -112,6 +113,15 @@ def test_slo_gates_are_fixed_and_require_all_measurements() -> None:
     )
     assert not all_gates_pass(failing)
     assert all(not result for result in failing.values())
+
+
+def test_safe_failure_rate_includes_non_warm_observations() -> None:
+    observations = (
+        Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True),
+        Observation("codex", "PostToolUse", "5m", 1.0, "native_resident", False),
+    )
+
+    assert _safe_failure_rate(observations) == 0.5
 
 
 def test_proof_environment_clears_native_diagnostic_oracle_and_test_overrides() -> None:

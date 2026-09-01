@@ -10,12 +10,11 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import asdict, dataclass, field
 from http.client import HTTPResponse
 from pathlib import Path
 from typing import cast
@@ -214,6 +213,191 @@ def seed_receipts(store: GuardStore, *, count: int) -> None:
         connection.close()
 
 
+@dataclass
+class _StressExecution:
+    endpoint: str
+    auth_token: str
+    initial_pid: int
+    latencies_ms: list[float] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    health_checks: int = 0
+    health_failures: int = 0
+    pid_stable: bool = True
+    process_count: int | None = None
+    rss_baseline_bytes: int = 0
+    rss_peak_bytes: int = 0
+    max_threads: int = 0
+    max_file_descriptors: int = 0
+
+
+def _stress_request(endpoint: str, auth_token: str) -> float:
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "echo stress"},
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Guard-Token": auth_token},
+        method="POST",
+    )
+    started = time.monotonic()
+    with cast(HTTPResponse, urllib.request.urlopen(request, timeout=6)) as response:
+        body = response.read(_MAX_RESPONSE_BYTES + 1)
+    if len(body) > _MAX_RESPONSE_BYTES:
+        raise RuntimeError("Hook response exceeded the bounded stress limit.")
+    payload = cast(object, json.loads(body.decode("utf-8")))
+    if not isinstance(payload, dict):
+        raise RuntimeError("Hook response was not an object.")
+    return (time.monotonic() - started) * 1000
+
+
+def _stress_warmup(endpoint: str, auth_token: str, count: int) -> None:
+    with ThreadPoolExecutor(max_workers=count) as executor:
+        futures = [executor.submit(_stress_request, endpoint, auth_token) for _ in range(count)]
+        for future in futures:
+            future.result(timeout=6)
+
+
+def _record_resources(execution: _StressExecution, resources: tuple[int, int, int] | None) -> None:
+    if resources is None:
+        return
+    execution.rss_peak_bytes = max(execution.rss_peak_bytes, resources[0])
+    execution.max_threads = max(execution.max_threads, resources[1])
+    execution.max_file_descriptors = max(execution.max_file_descriptors, resources[2])
+
+
+def _sample_stress_runtime(execution: _StressExecution) -> None:
+    execution.health_checks += 1
+    if not _health_is_ready(execution.endpoint.split("/v1/", 1)[0]):
+        execution.health_failures += 1
+    _record_resources(execution, _process_resources(execution.initial_pid))
+
+
+def _collect_batch(execution: _StressExecution, futures: list[Future[float]]) -> None:
+    for future in futures:
+        try:
+            execution.latencies_ms.append(future.result())
+        except Exception as error:
+            execution.errors.append(type(error).__name__)
+
+
+def _run_stress_batches(execution: _StressExecution, request_count: int) -> None:
+    max_workers = min(request_count, 32)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for start in range(0, request_count, max_workers):
+            futures = [
+                executor.submit(_stress_request, execution.endpoint, execution.auth_token)
+                for _ in range(min(max_workers, request_count - start))
+            ]
+            while not all(future.done() for future in futures):
+                _sample_stress_runtime(execution)
+                time.sleep(0.05)
+            _collect_batch(execution, futures)
+
+
+def _initialize_stress_resources(execution: _StressExecution) -> None:
+    resources = _stabilized_process_resources(execution.initial_pid)
+    if resources is None:
+        return
+    execution.rss_baseline_bytes = resources[0]
+    execution.rss_peak_bytes = resources[0]
+    execution.max_threads = resources[1]
+    execution.max_file_descriptors = resources[2]
+
+
+def _update_pid_stability(execution: _StressExecution, guard_home: Path) -> None:
+    state = load_authenticated_daemon_state(guard_home)
+    execution.pid_stable = (
+        execution.pid_stable
+        and state is not None
+        and state.get("pid") == execution.initial_pid
+        and _pid_is_running(execution.initial_pid)
+    )
+
+
+def _settle_stress_runtime(execution: _StressExecution, guard_home: Path, settle_seconds: float) -> None:
+    deadline = time.monotonic() + settle_seconds
+    while time.monotonic() < deadline:
+        _sample_stress_runtime(execution)
+        _update_pid_stability(execution, guard_home)
+        time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
+
+
+def _finalize_stress_runtime(execution: _StressExecution, guard_home: Path) -> None:
+    _sample_stress_runtime(execution)
+    _update_pid_stability(execution, guard_home)
+    execution.process_count = guard_daemon_process_count(guard_home)
+    _record_resources(execution, _process_resources(execution.initial_pid))
+
+
+def _prepare_stress_execution(root: Path, receipt_count: int) -> tuple[GuardStore, _StressExecution, Path]:
+    guard_home = root / "guard-home"
+    home = root / "home"
+    workspace = root / "workspace"
+    home.mkdir()
+    workspace.mkdir()
+    store = GuardStore(guard_home, prime_policy_integrity=False)
+    seed_receipts(store, count=receipt_count)
+    committed_receipts = _count_fixture_receipts(store)
+    if committed_receipts != receipt_count:
+        raise RuntimeError(
+            f"Stress fixture count mismatch: requested={receipt_count} committed={committed_receipts}."
+        )
+    daemon_url = ensure_guard_daemon(guard_home, home_dir=home)
+    state = load_authenticated_daemon_state(guard_home)
+    auth_token = load_guard_daemon_auth_token(guard_home)
+    if state is None or auth_token is None:
+        raise RuntimeError("Fresh daemon did not publish authenticated state.")
+    query = urllib.parse.urlencode({"guard-home": guard_home, "home": home, "workspace": workspace})
+    execution = _StressExecution(
+        endpoint=f"{daemon_url}/v1/hooks/pi?{query}",
+        auth_token=auth_token,
+        initial_pid=cast(int, state["pid"]),
+    )
+    return store, execution, guard_home
+
+
+def _stress_result(
+    execution: _StressExecution,
+    store: GuardStore,
+    guard_home: Path,
+    *,
+    request_count: int,
+    receipt_count: int,
+    max_hook_latency_ms: float,
+) -> StressResult:
+    latencies = sorted(execution.latencies_ms)
+    p95_index = min(len(latencies) - 1, int(len(latencies) * 0.95))
+    events = load_daemon_lifecycle_events(guard_home)
+    return StressResult(
+        requests=request_count,
+        receipts=receipt_count,
+        responses=len(latencies),
+        errors=len(execution.errors),
+        p95_ms=round(latencies[p95_index], 2) if latencies else 0.0,
+        max_ms=round(max(latencies), 2) if latencies else 0.0,
+        health_checks=execution.health_checks,
+        health_failures=execution.health_failures,
+        pid_stable=execution.pid_stable,
+        daemon_process_count=execution.process_count,
+        max_hook_latency_ms=max_hook_latency_ms,
+        database_bytes=store.path.stat().st_size,
+        lifecycle_events=tuple(str(event["event"]) for event in events),
+        max_threads=execution.max_threads,
+        max_file_descriptors=execution.max_file_descriptors,
+        rss_baseline_bytes=execution.rss_baseline_bytes,
+        rss_peak_bytes=execution.rss_peak_bytes,
+        rss_growth=(
+            round(max(0, execution.rss_peak_bytes - execution.rss_baseline_bytes) / execution.rss_baseline_bytes, 6)
+            if execution.rss_baseline_bytes
+            else 0.0
+        ),
+    )
+
+
 def run_stress(
     *,
     request_count: int,
@@ -232,193 +416,27 @@ def run_stress(
 
     with tempfile.TemporaryDirectory(prefix="hol-guard-daemon-stress-") as temporary:
         root = Path(temporary)
-        guard_home = root / "guard-home"
-        home = root / "home"
-        workspace = root / "workspace"
-        home.mkdir()
-        workspace.mkdir()
-        store = GuardStore(guard_home, prime_policy_integrity=False)
-        seed_receipts(store, count=receipt_count)
-        committed_receipts = _count_fixture_receipts(store)
-        if committed_receipts != receipt_count:
-            raise RuntimeError(
-                f"Stress fixture count mismatch: requested={receipt_count} committed={committed_receipts}."
-            )
-        daemon_url = ensure_guard_daemon(guard_home, home_dir=home)
-        state = load_authenticated_daemon_state(guard_home)
-        auth_token = load_guard_daemon_auth_token(guard_home)
-        if state is None or auth_token is None:
-            raise RuntimeError("Fresh daemon did not publish authenticated state.")
-        initial_pid = cast(int, state["pid"])
-        query = urllib.parse.urlencode(
-            {
-                "guard-home": str(guard_home),
-                "home": str(home),
-                "workspace": str(workspace),
-            }
-        )
-        endpoint = f"{daemon_url}/v1/hooks/pi?{query}"
-        latencies_ms: list[float] = []
-        errors: list[str] = []
-        response_count = 0
-        response_lock = threading.Lock()
-
-        rss_baseline_bytes = 0
-        rss_peak_bytes = 0
-        max_threads = 0
-        max_file_descriptors = 0
-
-        def review(index: int) -> None:
-            nonlocal response_count
-            request = urllib.request.Request(
-                endpoint,
-                data=json.dumps(
-                    {
-                        "hook_event_name": "PreToolUse",
-                        "tool_name": "Bash",
-                        "tool_input": {"command": "echo stress"},
-                    }
-                ).encode("utf-8"),
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Guard-Token": auth_token,
-                },
-                method="POST",
-            )
-            started = time.monotonic()
-            try:
-                with cast(HTTPResponse, urllib.request.urlopen(request, timeout=6)) as response:
-                    body = response.read(_MAX_RESPONSE_BYTES + 1)
-                    if len(body) > _MAX_RESPONSE_BYTES:
-                        raise RuntimeError("Hook response exceeded the bounded stress limit.")
-                    payload = cast(object, json.loads(body.decode("utf-8")))
-                if not isinstance(payload, dict):
-                    raise RuntimeError("Hook response was not an object.")
-                elapsed_ms = (time.monotonic() - started) * 1000
-                with response_lock:
-                    latencies_ms.append(elapsed_ms)
-                    response_count += 1
-            except Exception as error:
-                with response_lock:
-                    errors.append(type(error).__name__)
-
-        def warmup() -> None:
-            request = urllib.request.Request(
-                endpoint,
-                data=json.dumps(
-                    {
-                        "hook_event_name": "PreToolUse",
-                        "tool_name": "Bash",
-                        "tool_input": {"command": "echo stress"},
-                    }
-                ).encode("utf-8"),
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Guard-Token": auth_token,
-                },
-                method="POST",
-            )
-            with cast(HTTPResponse, urllib.request.urlopen(request, timeout=6)) as response:
-                body = response.read(_MAX_RESPONSE_BYTES + 1)
-            if len(body) > _MAX_RESPONSE_BYTES or not isinstance(json.loads(body.decode("utf-8")), dict):
-                raise RuntimeError("Warmup response was not a bounded object.")
-
-        health_checks = 0
-        health_failures = 0
-        pid_stable = True
-        process_count: int | None = None
+        store, execution, guard_home = _prepare_stress_execution(root, receipt_count)
         try:
-            health_checks += 1
-            if not _health_is_ready(daemon_url):
-                health_failures += 1
+            execution.health_checks += 1
+            if not _health_is_ready(execution.endpoint.split("/v1/", 1)[0]):
+                execution.health_failures += 1
             warmup_count = min(_WARMUP_CONCURRENCY, max(4, request_count))
-            with ThreadPoolExecutor(max_workers=warmup_count) as executor:
-                warmup_futures = [executor.submit(warmup) for _ in range(warmup_count)]
-                for future in warmup_futures:
-                    future.result(timeout=6)
-            initial_resources = _stabilized_process_resources(initial_pid)
-            rss_baseline_bytes = initial_resources[0] if initial_resources is not None else 0
-            rss_peak_bytes = rss_baseline_bytes
-            max_threads = initial_resources[1] if initial_resources is not None else 0
-            max_file_descriptors = initial_resources[2] if initial_resources is not None else 0
-            max_workers = min(request_count, 32)
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                next_index = 0
-                while next_index < request_count:
-                    batch_end = min(request_count, next_index + max_workers)
-                    futures = [executor.submit(review, index) for index in range(next_index, batch_end)]
-                    while any(not future.done() for future in futures):
-                        health_checks += 1
-                        if not _health_is_ready(daemon_url):
-                            health_failures += 1
-                        resources = _process_resources(initial_pid)
-                        if resources is not None:
-                            rss_peak_bytes = max(rss_peak_bytes, resources[0])
-                            max_threads = max(max_threads, resources[1])
-                            max_file_descriptors = max(max_file_descriptors, resources[2])
-                        time.sleep(0.05)
-                    for future in futures:
-                        future.result()
-                    next_index = batch_end
-            settle_deadline = time.monotonic() + settle_seconds
-            while time.monotonic() < settle_deadline:
-                health_checks += 1
-                if not _health_is_ready(daemon_url):
-                    health_failures += 1
-                current_state = load_authenticated_daemon_state(guard_home)
-                pid_stable = (
-                    pid_stable
-                    and current_state is not None
-                    and current_state.get("pid") == initial_pid
-                    and _pid_is_running(initial_pid)
-                )
-                time.sleep(min(0.25, max(0.0, settle_deadline - time.monotonic())))
-            health_checks += 1
-            if not _health_is_ready(daemon_url):
-                health_failures += 1
-            final_state = load_authenticated_daemon_state(guard_home)
-            pid_stable = (
-                pid_stable
-                and final_state is not None
-                and final_state.get("pid") == initial_pid
-                and _pid_is_running(initial_pid)
-            )
-            process_count = guard_daemon_process_count(guard_home)
-            resources = _process_resources(initial_pid)
-            if resources is not None:
-                rss_peak_bytes = max(rss_peak_bytes, resources[0])
-                max_threads = max(max_threads, resources[1])
-                max_file_descriptors = max(max_file_descriptors, resources[2])
+            _stress_warmup(execution.endpoint, execution.auth_token, warmup_count)
+            _initialize_stress_resources(execution)
+            _run_stress_batches(execution, request_count)
+            _settle_stress_runtime(execution, guard_home, settle_seconds)
+            _finalize_stress_runtime(execution, guard_home)
         finally:
             _stop_native_runtime(guard_home)
             _ = retire_all_guard_daemons_for_home(guard_home)
-
-        sorted_latencies = sorted(latencies_ms)
-        p95_index = min(len(sorted_latencies) - 1, int(len(sorted_latencies) * 0.95))
-        events = load_daemon_lifecycle_events(guard_home)
-        return StressResult(
-            requests=request_count,
-            receipts=committed_receipts,
-            responses=response_count,
-            errors=len(errors),
-            p95_ms=round(sorted_latencies[p95_index], 2) if sorted_latencies else 0.0,
-            max_ms=round(max(sorted_latencies), 2) if sorted_latencies else 0.0,
-            health_checks=health_checks,
-            health_failures=health_failures,
-            pid_stable=pid_stable,
-            daemon_process_count=process_count,
+        return _stress_result(
+            execution,
+            store,
+            guard_home,
+            request_count=request_count,
+            receipt_count=receipt_count,
             max_hook_latency_ms=max_hook_latency_ms,
-            database_bytes=store.path.stat().st_size,
-            lifecycle_events=tuple(str(event["event"]) for event in events),
-            max_threads=max_threads,
-            max_file_descriptors=max_file_descriptors,
-            rss_baseline_bytes=rss_baseline_bytes,
-            rss_peak_bytes=rss_peak_bytes,
-            rss_growth=(
-                round(max(0, rss_peak_bytes - rss_baseline_bytes) / rss_baseline_bytes, 6)
-                if rss_baseline_bytes
-                else 0.0
-            ),
         )
 
 

@@ -203,3 +203,19 @@ def test_identity_sbom_and_provenance_are_hashable_aggregate_inputs(tmp_path: Pa
     )
     assert validate_sbom(sbom, version=VERSION)["format"] == "CycloneDX"
     assert validate_provenance(provenance)["records"] == 1
+
+
+def test_validate_provenance_accepts_multiline_json_array(tmp_path: Path) -> None:
+    provenance = tmp_path / "provenance.json"
+    provenance.write_text(
+        json.dumps(
+            [
+                {"subject": [{"name": "hol-guard"}]},
+                {"predicateType": "https://slsa.dev/provenance/v1"},
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    assert validate_provenance(provenance)["records"] == 2

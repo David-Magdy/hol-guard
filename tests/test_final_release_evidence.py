@@ -5,6 +5,7 @@ import copy
 import hashlib
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from scripts.ci.final_release_evidence import (
     REQUIRED_GATES,
@@ -16,8 +17,8 @@ from scripts.ci.final_release_evidence import (
 VERSION = "3.0.1"
 SOURCE_SHA = "a" * 40
 RULE_DIGEST = "b" * 64
-TEST_PUBLIC_KEY = "4s8FXRRiHjLQx2JLSYifiS9DhnGayvk7l0hRDYDSpCI="
-TEST_SIGNATURE = "71lMU3wIWnOu2IJ49aXaR6Xu4HElxLBB9WsqUV/TQ1QR/grQeUSTlaO4vrIRGz0PS0nFiGTyMEps11o/0ZkSAA=="
+TEST_PRIVATE_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+TEST_PUBLIC_KEY = base64.b64encode(TEST_PRIVATE_KEY.public_key().public_bytes_raw()).decode("ascii")
 
 
 def _payload() -> dict[str, object]:
@@ -27,7 +28,7 @@ def _payload() -> dict[str, object]:
             "version": VERSION,
             "source_sha": SOURCE_SHA,
             "rule_digest": RULE_DIGEST,
-            "commit_sha": "c" * 40,
+            "commit_sha": SOURCE_SHA,
             "base_sha": "d" * 40,
         },
         "evidence": {
@@ -59,14 +60,31 @@ def _payload() -> dict[str, object]:
     }
 
 
-def _validate(payload: dict[str, object], *, require_signature: bool = False) -> dict[str, object]:
+def _validate(
+    payload: dict[str, object], *, require_signature: bool = False, trusted_public_key: str | None = None
+) -> dict[str, object]:
     return validate_final_evidence(
         payload,
         expected_version=VERSION,
         expected_source_sha=SOURCE_SHA,
         expected_rule_digest=RULE_DIGEST,
         require_signature=require_signature,
+        trusted_public_key=base64.b64decode(trusted_public_key) if trusted_public_key is not None else None,
+        trusted_key_id="release-evidence-key" if trusted_public_key is not None else None,
     )
+
+
+def _signed_payload(private_key: Ed25519PrivateKey = TEST_PRIVATE_KEY) -> dict[str, object]:
+    payload = _payload()
+    payload["signature"] = {
+        "status": "verified",
+        "algorithm": "ed25519",
+        "key_id": "release-evidence-key",
+        "public_key": base64.b64encode(private_key.public_key().public_bytes_raw()).decode("ascii"),
+        "signature": base64.b64encode(private_key.sign(canonical_bytes(payload))).decode("ascii"),
+        "manifest_sha256": hashlib.sha256(canonical_bytes(payload)).hexdigest(),
+    }
+    return payload
 
 
 def test_final_evidence_records_windows_waiver_and_external_approval_blocker() -> None:
@@ -114,50 +132,43 @@ def test_final_evidence_rejects_local_paths() -> None:
 
 
 def test_final_evidence_can_bind_external_detached_signature() -> None:
-    payload = _payload()
-    unsigned_digest = hashlib.sha256(canonical_bytes(payload)).hexdigest()
-    payload["signature"] = {
-        "status": "verified",
-        "algorithm": "ed25519",
-        "key_id": "release-evidence-key",
-        "public_key": TEST_PUBLIC_KEY,
-        "signature": TEST_SIGNATURE,
-        "manifest_sha256": unsigned_digest,
-    }
+    payload = _signed_payload()
 
-    normalized = _validate(payload, require_signature=True)
+    normalized = _validate(payload, require_signature=True, trusted_public_key=TEST_PUBLIC_KEY)
 
     assert normalized["release_ready"] is True
 
 
 def test_final_evidence_rejects_invalid_detached_signature() -> None:
-    payload = _payload()
-    payload["signature"] = {
-        "status": "verified",
-        "algorithm": "ed25519",
-        "key_id": "release-evidence-key",
-        "public_key": TEST_PUBLIC_KEY,
-        "signature": base64.b64encode(b"x" * 64).decode("ascii"),
-        "manifest_sha256": hashlib.sha256(canonical_bytes(payload)).hexdigest(),
-    }
+    payload = _signed_payload()
+    payload["signature"]["signature"] = base64.b64encode(b"x" * 64).decode("ascii")
 
     with pytest.raises(FinalEvidenceError, match="signature is invalid"):
-        _validate(payload, require_signature=True)
+        _validate(payload, require_signature=True, trusted_public_key=TEST_PUBLIC_KEY)
 
 
 def test_final_evidence_signature_binds_canonical_unsigned_projection() -> None:
-    payload = _payload()
-    payload["signature"] = {
-        "status": "verified",
-        "algorithm": "ed25519",
-        "key_id": "release-evidence-key",
-        "public_key": TEST_PUBLIC_KEY,
-        "signature": TEST_SIGNATURE,
-        "manifest_sha256": "e" * 64,
-    }
+    payload = _signed_payload()
+    payload["signature"]["manifest_sha256"] = "e" * 64
 
     with pytest.raises(FinalEvidenceError, match="does not bind"):
-        _validate(payload, require_signature=True)
+        _validate(payload, require_signature=True, trusted_public_key=TEST_PUBLIC_KEY)
+
+
+def test_final_evidence_rejects_commit_from_another_source() -> None:
+    payload = _payload()
+    payload["release"]["commit_sha"] = "c" * 40
+
+    with pytest.raises(FinalEvidenceError, match="commit does not match"):
+        _validate(payload)
+
+
+def test_final_evidence_rejects_untrusted_embedded_signer() -> None:
+    attacker = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+    payload = _signed_payload(attacker)
+
+    with pytest.raises(FinalEvidenceError, match="signer is not trusted"):
+        _validate(payload, require_signature=True, trusted_public_key=TEST_PUBLIC_KEY)
 
 
 def test_final_evidence_validation_does_not_mutate_source() -> None:

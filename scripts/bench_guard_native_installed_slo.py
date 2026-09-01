@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections import Counter
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -45,17 +44,16 @@ from scripts.native_slo_adapter import (  # noqa: E402
     source_payloads,
 )
 from scripts.native_slo_contract import (  # noqa: E402
-    MAX_COLD_P95_MS,
-    MAX_CONCURRENT_P99_MS,
-    SAFE_ROUTE_NAMES,
     SIZE_CLASSES,
-    SLO_SCHEMA,
-    all_gates_pass,
-    assert_privacy_safe,
     clear_proof_environment,
-    gate_results,
     proof_environment_violations,
-    summarize,
+)
+from scripts.native_slo_reporting import (  # noqa: E402
+    SloMeasurements,
+    safe_failure_rate,
+    slo_gates,
+    slo_result,
+    summarize_measurements,
 )
 from scripts.native_slo_session import AdapterSession, stop_native_resident  # noqa: E402
 
@@ -64,6 +62,10 @@ _DEFAULT_COLD_ITERATIONS = 3
 _DEFAULT_RECOVERY_ITERATIONS = 3
 _MAX_READINESS_SAMPLES = 8
 _MAX_CONCURRENCY = 64
+_INSTALLED_WHEEL_OWNERSHIP_CONTRACT = "installed_wheel_ownership_contract"
+
+# Keep the historical private import available to contract tests and downstream tooling.
+_safe_failure_rate = safe_failure_rate
 
 
 def _require(condition: bool, reason: object) -> None:
@@ -269,6 +271,47 @@ def _runtime_summary(runtime: Path) -> dict[str, object]:
     }
 
 
+def _measure_slo(
+    runtime: Path,
+    routes: tuple[tuple[str, str], ...],
+    *,
+    warm_iterations: int,
+    cold_iterations: int,
+    recovery_iterations: int,
+    readiness_samples: int,
+    include_capacity: bool,
+) -> SloMeasurements:
+    rss_baseline = 0
+    rss_peak = 0
+    with AdapterSession(runtime) as session:
+        warm = _run_warm(session, routes, warm_iterations)
+        sizes = _run_sizes(session, routes)
+        recovery = _run_recovery(session, recovery_iterations)
+        cold = _run_cold(runtime, session, cold_iterations)
+        rss_baseline = process_rss_bytes()
+        rss_peak = rss_baseline
+        concurrent_16, errors_16 = _run_concurrent(session, routes, 16) if include_capacity else ([], 0)
+        concurrent_64, errors_64 = _run_concurrent(session, routes, 64) if include_capacity else ([], 0)
+        rss_peak = max(rss_peak, process_rss_bytes())
+        readiness = [session.readiness_ms]
+    if readiness_samples > 1:
+        readiness.extend(_readiness_samples(runtime, readiness_samples - 1))
+    rss_peak = max(rss_peak, process_rss_bytes())
+    return SloMeasurements(
+        warm=warm,
+        sizes=sizes,
+        recovery=recovery,
+        cold=cold,
+        concurrent_16=concurrent_16,
+        concurrent_64=concurrent_64,
+        errors_16=errors_16,
+        errors_64=errors_64,
+        readiness=readiness,
+        rss_baseline=rss_baseline,
+        rss_peak=rss_peak,
+    )
+
+
 def run_slo(
     runtime: Path,
     *,
@@ -282,126 +325,32 @@ def run_slo(
     runtime_summary = _runtime_summary(runtime)
     routes = route_matrix()
     installed_corpus = _installed_corpus(runtime, len(routes))
-    rss_baseline = 0
-    rss_peak = 0
-    with AdapterSession(runtime) as session:
-        warm = _run_warm(session, routes, warm_iterations)
-        sizes = _run_sizes(session, routes)
-        recovery = _run_recovery(session, recovery_iterations)
-        cold = _run_cold(runtime, session, cold_iterations)
-        # Establish the current RSS baseline after fixture setup and cold
-        # recovery. Growth below therefore measures sustained concurrent load,
-        # not one-time interpreter or fixture allocation.
-        rss_baseline = process_rss_bytes()
-        rss_peak = rss_baseline
-        concurrent_16, errors_16 = _run_concurrent(session, routes, 16) if include_capacity else ([], 0)
-        concurrent_64, errors_64 = _run_concurrent(session, routes, 64) if include_capacity else ([], 0)
-        rss_peak = max(rss_peak, process_rss_bytes())
-        readiness = [session.readiness_ms]
-    if readiness_samples > 1:
-        readiness.extend(_readiness_samples(runtime, readiness_samples - 1))
-    rss_peak = max(rss_peak, process_rss_bytes())
-
-    all_observations = warm + sizes + concurrent_16 + concurrent_64
-    route_counts = Counter(observation.route for observation in all_observations)
-    _require(
-        not (set(route_counts) - SAFE_ROUTE_NAMES),
-        {"unexpected_routes": sorted(set(route_counts) - SAFE_ROUTE_NAMES)},
+    measurements = _measure_slo(
+        runtime,
+        routes,
+        warm_iterations=warm_iterations,
+        cold_iterations=cold_iterations,
+        recovery_iterations=recovery_iterations,
+        readiness_samples=readiness_samples,
+        include_capacity=include_capacity,
     )
-    warm_failures = sum(not observation.allowed for observation in warm)
-    warm_fail_safe = sum(observation.route == "native_fail_safe" for observation in warm)
-    safe_failures_by_size = Counter(
-        observation.size_class for observation in all_observations if not observation.allowed
+    summary = summarize_measurements(measurements)
+    gates = slo_gates(
+        measurements,
+        summary,
+        installed_corpus,
+        len(routes),
+        include_capacity=include_capacity,
     )
-    size_values = {
-        size_class: [observation.latency_ms for observation in all_observations if observation.size_class == size_class]
-        for size_class in SIZE_CLASSES
-    }
-    warm_values = [observation.latency_ms for observation in warm]
-    concurrent_values = [observation.latency_ms for observation in concurrent_16]
-    size_p95 = {size_class: summarize(values)["p95_ms"] for size_class, values in size_values.items() if values}
-    event_values = {
-        event: [observation.latency_ms for observation in warm if observation.event == event]
-        for event in ("PreToolUse", "PostToolUse")
-    }
-    warm_routes = Counter(observation.route for observation in warm)
-    rss_growth = round(max(0, rss_peak - rss_baseline) / rss_baseline, 6) if rss_baseline else 1.0
-    gates = gate_results(
-        resident_share=warm_routes["native_resident"] / max(1, len(warm)),
-        safe_fail_rate=warm_fail_safe / max(1, len(warm)),
-        warm_p95_ms=summarize(warm_values)["p95_ms"],
-        size_p95_ms=size_p95,
-        cold_p95_ms=summarize(cold)["p95_ms"],
-        readiness_p95_ms=summarize(readiness)["p95_ms"],
-        concurrent_p99_ms=summarize(concurrent_values)["p99_ms"] if concurrent_values else float("inf"),
-        rss_growth=rss_growth,
-        rss_baseline_bytes=rss_baseline,
-        errors=errors_16,
-        errors_64=errors_64,
-        python_fallback_decisions=route_counts["python_semantic"],
-        installed_python_fallback_decisions=installed_corpus["python_semantic_decisions"],
+    return slo_result(
+        runtime_summary,
+        routes,
+        installed_corpus,
+        measurements,
+        summary,
+        gates,
+        corpus_origin=_INSTALLED_WHEEL_OWNERSHIP_CONTRACT,
     )
-    gates["recovery_latency"] = summarize(recovery)["p95_ms"] <= MAX_COLD_P95_MS
-    concurrent_64_summary = summarize([item.latency_ms for item in concurrent_64])
-    gates["concurrency_64_latency"] = include_capacity and concurrent_64_summary["p99_ms"] <= MAX_CONCURRENT_P99_MS
-    gates["installed_corpus"] = (
-        installed_corpus["routes"] == len(routes)
-        and installed_corpus["resident"] == len(routes)
-        and installed_corpus["oneshot"] == 0
-        and installed_corpus["fail_safe"] == 0
-        and installed_corpus["python_semantic_decisions"] == 0
-    )
-    if not include_capacity:
-        gates["concurrency"] = False
-        gates["concurrency_64_latency"] = False
-    result: dict[str, object] = {
-        "schema": SLO_SCHEMA,
-        "scope": "installed_adapter_to_decision",
-        "runtime": runtime_summary,
-        "corpus": {
-            "harnesses": len({harness for harness, _ in routes}),
-            "routes": len(routes),
-            "observations": len(all_observations),
-            "corpus_origin": "installed_wheel_ownership_contract",
-            "route_corpus": "installed_routes",
-            "safe_failures": warm_failures,
-            "safe_failure_rate": round(warm_failures / max(1, len(warm)), 6),
-            "fail_safe_decisions": warm_fail_safe,
-            "fail_safe_rate": round(warm_fail_safe / max(1, len(warm)), 6),
-            "resident_share": round(warm_routes["native_resident"] / max(1, len(warm)), 6),
-            "python_fallback_decisions": warm_routes["python_semantic"],
-            "python_semantic_decisions": route_counts["python_semantic"],
-            "oneshot_decisions": warm_routes["native_oneshot"],
-            "safe_failures_by_size": dict(sorted(safe_failures_by_size.items())),
-            "rss_baseline_bytes": rss_baseline,
-            "rss_peak_bytes": rss_peak,
-            "rss_growth": rss_growth,
-            "installed": installed_corpus,
-        },
-        "routes": dict(sorted(route_counts.items())),
-        "python_semantic_decisions": route_counts["python_semantic"],
-        "errors_16": errors_16,
-        "errors_64": errors_64,
-        "latency": {
-            "warm_all_harnesses": summarize(warm_values),
-            "warm_by_event": {event: summarize(values) for event, values in event_values.items() if values},
-            "size_classes": {size_class: summarize(values) for size_class, values in size_values.items()},
-            "cold_native_oneshot": summarize(cold),
-            "resident_recovery": summarize(recovery),
-            "readiness": summarize(readiness),
-        },
-        "concurrency": {
-            "sixteen": {"latency": summarize(concurrent_values), "errors": errors_16},
-            "sixty_four": {
-                "latency": concurrent_64_summary,
-                "errors": errors_64,
-                "fail_safe": sum(item.route == "native_fail_safe" for item in concurrent_64),
-            },
-        },
-        "gates": gates,
-        "passed": all_gates_pass(gates),
-    }
-    return assert_privacy_safe(result)
 
 
 def main() -> int:

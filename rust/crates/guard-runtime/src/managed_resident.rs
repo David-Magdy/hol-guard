@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[path = "managed_resident_client_stream.rs"]
+mod client_stream;
 #[path = "managed_resident_transport.rs"]
 mod managed_resident_transport;
 #[cfg(windows)]
@@ -17,6 +19,14 @@ mod managed_resident_transport;
 mod managed_resident_windows;
 #[path = "resident_restart_budget.rs"]
 mod restart_budget;
+
+pub(crate) fn client_stream(state_base: &Path) -> Result<(), String> {
+    client_stream::run(state_base)
+}
+#[cfg(test)]
+use client_stream::{
+    read_frame as read_client_stream_frame, write_frame as write_client_stream_frame,
+};
 
 #[cfg(not(windows))]
 use crate::resident_state::validate_package_process_identity;
