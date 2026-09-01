@@ -127,6 +127,14 @@ jobs:
             --settle-seconds 0 \
             --enforce-soak \
             --json native-soak.json
+          uv run --no-sync python scripts/ci/validate_release_artifacts.py \
+            --dist-dir native-dist \
+            --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --rule-digest "$RULE_DIGEST" \
+            --platform manylinux_2_17_x86_64 \
+            --windows-waiver "validated by the platform matrix" \
+            --output native-artifact-evidence.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hol-guard-native-wheel-linux-x64
@@ -135,6 +143,7 @@ jobs:
             native-default-auto.json
             native-installed-slo.json
             native-soak.json
+            native-artifact-evidence.json
           if-no-files-found: error
 
   macos:
@@ -234,6 +243,14 @@ jobs:
             --readiness-samples 2 \
             --json native-installed-slo.json \
             --enforce
+          uv run --no-sync python scripts/ci/validate_release_artifacts.py \
+            --dist-dir native-dist \
+            --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" \
+            --rule-digest "$RULE_DIGEST" \
+            --platform "$PLATFORM_TAG" \
+            --windows-waiver "validated by the platform matrix" \
+            --output native-artifact-evidence.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hol-guard-native-wheel-${{ matrix.target }}
@@ -241,6 +258,7 @@ jobs:
             native-dist/*.whl
             native-default-auto.json
             native-installed-slo.json
+            native-artifact-evidence.json
           if-no-files-found: error
 
   windows-x64:
