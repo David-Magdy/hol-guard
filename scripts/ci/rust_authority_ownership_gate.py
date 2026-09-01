@@ -30,7 +30,9 @@ SELF_PROTECTED_PATHS: Final = frozenset(
         ".github/workflows/rust-authority-ownership.yml",
         "docs/guard/contracts/hook-data-plane-ownership.v2.json",
         "scripts/ci/hook_data_plane_ownership_contract.py",
+        "scripts/ci/native_approval_contract_gate.py",
         "scripts/ci/rust_authority_ownership_gate.py",
+        ".github/workflows/publish.yml",
     }
 )
 
@@ -226,7 +228,6 @@ def _pretool_gate() -> None:
     if "evaluate_command(" in _read(pretool):
         raise RuntimeError("native PreToolUse transport calls the Python command evaluator")
     _assert_policy_floor_fail_closed(pretool)
-
     hook = _read(Path("src/codex_plugin_scanner/guard/daemon/hook_worker.py"))
     if "review_pre_tool_native" not in hook:
         raise RuntimeError("PreToolUse hook path is not bound to the native runtime")

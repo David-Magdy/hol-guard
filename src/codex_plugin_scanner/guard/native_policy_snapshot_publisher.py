@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -83,15 +84,17 @@ class NativePolicySnapshotPublisher(NativePolicySnapshotPublisherInputs):
             if self._started or self._closed:
                 return
             self._started = True
-        # Provision the verifier before the first client request can start a
-        # managed resident.  Publication still happens asynchronously, but a
-        # shadow/diagnostic caller cannot race resident startup against key
-        # creation.  Failures remain a barrier miss and are retried by the
-        # publisher thread; they never become a Python semantic fallback.
+        # Provision the verifier before the worker can publish.  GuardStore has
+        # completed its schema setup by the time a publisher is constructed;
+        # keeping this one-time key bootstrap synchronous prevents the worker
+        # from racing a partially initialized ``sync_state`` table.  Effective
+        # policy compilation and resident publication remain asynchronous.
         try:
             self._provision_verifier_key()
-        except (NativePolicySnapshotError, OSError, RuntimeError, TypeError, ValueError) as error:
-            self._record_error(str(error) or type(error).__name__)
+        except NativePolicySnapshotError as error:
+            self._record_error(str(error))
+        except (OSError, RuntimeError, TypeError, ValueError, AttributeError, sqlite3.Error) as error:
+            self._record_error(type(error).__name__)
         with self._condition:
             if self._closed:
                 return
@@ -377,6 +380,11 @@ class NativePolicySnapshotPublisher(NativePolicySnapshotPublisherInputs):
                 renew_after_generation = self._renewal_after_generation
             publish_epoch = self._epoch
         try:
+            # Keep effective-policy compilation and snapshot key validation in
+            # the asynchronous publication worker. A failure is a barrier miss
+            # and is retried; it never becomes a Python semantic fallback.
+            # ``native_policy_snapshot_v3`` owns the authoritative verifier-key
+            # check, while ``start`` bootstraps it before this worker runs.
             context = self._publication_context()
             if context is None:
                 return
@@ -416,7 +424,7 @@ class NativePolicySnapshotPublisher(NativePolicySnapshotPublisherInputs):
                 self._condition.notify_all()
         except NativePolicySnapshotError as error:
             self._record_error(str(error))
-        except (OSError, RuntimeError, TypeError, ValueError, AttributeError) as error:
+        except (OSError, RuntimeError, TypeError, ValueError, AttributeError, sqlite3.Error) as error:
             self._record_error(type(error).__name__)
 
     def _publication_context(

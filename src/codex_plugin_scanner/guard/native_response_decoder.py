@@ -6,6 +6,9 @@ from typing import Literal, cast
 
 from codex_plugin_scanner.guard.runtime.hook_review_types import HookDecision, HookReviewResponse, ModelOutputAction
 
+from .native_approval_errors import NATIVE_APPROVAL_ERROR_CODES
+from .native_approval_protocol import decode_native_approval_challenge, decode_native_approval_result
+
 _NATIVE_ERROR_CODES = frozenset(
     {
         "native_overloaded",
@@ -17,6 +20,13 @@ _NATIVE_ERROR_CODES = frozenset(
         "native_runtime_panicked",
     }
 )
+_NATIVE_APPROVAL_ERROR_CODES = NATIVE_APPROVAL_ERROR_CODES
+
+
+def _string_dict(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        return None
+    return cast(dict[str, object], value)
 
 
 def response_from_payload(payload: object) -> HookReviewResponse | None:
@@ -94,15 +104,21 @@ def response_from_payload(payload: object) -> HookReviewResponse | None:
 def native_error(payload: object) -> str | None:
     """Return a known native transport error from a strict error envelope."""
 
-    if not isinstance(payload, dict) or set(payload) - {"error", "retryable"}:
+    decoded = _string_dict(payload)
+    if decoded is None or set(decoded) - {"error", "retryable"}:
         return None
-    error = payload.get("error")
-    if not isinstance(error, str) or error not in _NATIVE_ERROR_CODES:
+    error = decoded.get("error")
+    if not isinstance(error, str) or error not in (_NATIVE_ERROR_CODES | _NATIVE_APPROVAL_ERROR_CODES):
         return None
-    retryable = payload.get("retryable")
+    retryable = decoded.get("retryable")
     if retryable is not None and not isinstance(retryable, bool):
         return None
     return error
 
 
-__all__ = ["native_error", "response_from_payload"]
+__all__ = [
+    "decode_native_approval_challenge",
+    "decode_native_approval_result",
+    "native_error",
+    "response_from_payload",
+]
