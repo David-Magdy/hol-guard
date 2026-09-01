@@ -60,6 +60,11 @@ _INHERIT_ENV_KEYS = (
     "HOL_GUARD_NATIVE",
     "HOL_GUARD_NATIVE_BINARY",
     "HOL_GUARD_SRC",
+    # These markers are forwarded only when an explicit test harness requests
+    # the differential oracle; production installations leave them unset.
+    "HOL_GUARD_TEST_MODE",
+    "HOL_GUARD_PYTHON_ORACLE",
+    "HOL_GUARD_NATIVE_DIAGNOSTIC",
 )
 
 

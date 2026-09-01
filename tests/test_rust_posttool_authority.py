@@ -217,6 +217,56 @@ def test_cli_auto_posttool_uses_native_worker_not_python_engine(
     assert result["reason_code"] == "native_post_tool_unavailable"
 
 
+def test_cli_native_authority_drains_receipt_writer_before_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop_timeouts: list[float] = []
+
+    class _Writer:
+        def __init__(self, *, store: GuardStore) -> None:
+            del store
+
+        def stop(self, *, timeout_seconds: float) -> bool:
+            stop_timeouts.append(timeout_seconds)
+            return True
+
+    class _Worker:
+        def __init__(self, *, store: GuardStore, activity_writer: object) -> None:
+            del store, activity_writer
+
+        def review_http_payload(self, **_kwargs: object) -> dict[str, object]:
+            return {"decision": "deny", "reason_code": "test_native_decision"}
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.commands_hook_native_authority._native_mode_requires_rust",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.commands_hook_native_authority.RuntimeHookEvidenceWriter",
+        _Writer,
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.cli.commands_hook_native_authority.HookWorker",
+        _Worker,
+    )
+
+    result = try_native_hook_authority(
+        payload=_post_tool_payload(),
+        harness="pi",
+        home_dir=tmp_path / "home",
+        guard_home=tmp_path / "guard-home",
+        workspace=tmp_path / "workspace",
+        store=GuardStore(tmp_path / "guard-home"),
+    )
+
+    assert result == {"decision": "deny", "reason_code": "test_native_decision"}
+    assert stop_timeouts == [pytest.approx(0.25)]
+
+
 def test_cli_off_mode_leaves_python_source_ref_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "codex_plugin_scanner.guard.cli.commands_hook_native_authority._native_mode_requires_rust",

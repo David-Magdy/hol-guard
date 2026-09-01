@@ -102,6 +102,7 @@ class HookWorker:
         self.store = store
         self.guard_home = store.guard_home
         self.activity_writer = activity_writer
+        self._last_native_decision_receipt: dict[str, object] | None = None
         self._python_oracle: Callable[[HookReviewRequest], HookReviewResponse] | None = None
         self._python_oracle_object: PythonOracle | None = None
         from .hook_metrics import HookMetricsRecorder
@@ -129,6 +130,12 @@ class HookWorker:
         """Expose the injected differential oracle to test fixtures only."""
 
         return self._python_oracle_object
+
+    @property
+    def last_native_decision_receipt(self) -> dict[str, object] | None:
+        """Return the receipt produced by the most recent native review."""
+
+        return self._last_native_decision_receipt
 
     def _load_config(self, guard_home: Path, workspace: Path | None):
         return load_guard_config(guard_home, workspace=workspace)
@@ -196,6 +203,7 @@ class HookWorker:
         fail closed. ``off`` and ``shadow`` can use only an explicit test
         oracle; production requests remain fail-safe.
         """
+        self._last_native_decision_receipt = None
         harness = self._runtime_harness(params) or default_harness
         event_name = self._hook_event_name(payload)
         mode = native_mode()
@@ -353,6 +361,8 @@ class HookWorker:
     def _record_native_decision_receipt(self, receipt: object) -> None:
         """Hand Rust evidence to the non-authoritative writer without waiting."""
 
+        if isinstance(receipt, Mapping):
+            self._last_native_decision_receipt = dict(receipt)
         writer = self.activity_writer
         submit = getattr(writer, "submit_native_decision_receipt", None)
         if not callable(submit) or not isinstance(receipt, Mapping):

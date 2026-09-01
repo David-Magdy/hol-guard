@@ -37,7 +37,6 @@ _coerce_resident_hook_request = coerce_resident_hook_request
 if TYPE_CHECKING:
     from ..store import GuardStore
     from .hook_worker import HookWorker
-    from .runtime_hook_evidence_writer import RuntimeHookEvidenceWriter
 
 _HOOK_SQLITE_TIMEOUT_ENV = "HOL_GUARD_INTERNAL_HOOK_SQLITE_TIMEOUT_MS"
 _HOOK_EVALUATOR_READY_TIMEOUT_SECONDS = 12.0
@@ -136,7 +135,6 @@ def _hook_evaluator_main(connection: Connection, configured_guard_home: str | No
         _ = importlib.import_module(module_name)
     stores: dict[str, GuardStore] = {}
     hook_workers: dict[str, HookWorker] = {}
-    evidence_writers: dict[str, RuntimeHookEvidenceWriter] = {}
     if configured_guard_home is not None:
         from ..store import GuardStore
 
@@ -154,16 +152,12 @@ def _hook_evaluator_main(connection: Connection, configured_guard_home: str | No
             connection,
             stores=stores,
             hook_workers=hook_workers,
-            evidence_writers=evidence_writers,
             configured_guard_home=configured_guard_home,
         )
     finally:
         for worker in tuple(hook_workers.values()):
             with suppress(Exception):
                 worker.close()
-        for writer in tuple(evidence_writers.values()):
-            with suppress(Exception):
-                _ = writer.stop(timeout_seconds=1.0)
 
 
 def _hook_evaluator_loop(
@@ -171,7 +165,6 @@ def _hook_evaluator_loop(
     *,
     stores: dict[str, GuardStore],
     hook_workers: dict[str, HookWorker],
-    evidence_writers: dict[str, RuntimeHookEvidenceWriter] | None = None,
     configured_guard_home: str | None,
 ) -> None:
     try:
@@ -204,7 +197,6 @@ def _hook_evaluator_loop(
                 typed_request,
                 stores=stores,
                 hook_workers=hook_workers,
-                evidence_writers=evidence_writers,
                 configured_guard_home=configured_guard_home,
             )
         except BaseException as error:
@@ -223,14 +215,12 @@ def _run_resident_hook_request(
     *,
     stores: dict[str, GuardStore],
     hook_workers: dict[str, HookWorker],
-    evidence_writers: dict[str, RuntimeHookEvidenceWriter] | None = None,
     configured_guard_home: str | None,
 ) -> dict[str, object]:
     from ..cli.commands_hook import _run_guard_hook_command
     from ..cli.commands_support_connect import _synced_policy_payload
     from ..config import load_guard_config, overlay_synced_guard_policy
     from .hook_worker import HookWorker, HookWorkerUnsupported, post_tool_fail_safe_response, runtime_hook_event_name
-    from .runtime_hook_evidence_writer import RuntimeHookEvidenceWriter
 
     parsed = coerce_resident_hook_request(request)
     if parsed is None:
@@ -248,11 +238,7 @@ def _run_resident_hook_request(
     ):
         worker = hook_workers.get(store_key)
         if worker is None:
-            writer = None
-            if evidence_writers is not None:
-                writer = RuntimeHookEvidenceWriter(store=store)
-                evidence_writers[store_key] = writer
-            worker = HookWorker(store=store) if writer is None else HookWorker(store=store, activity_writer=writer)
+            worker = HookWorker(store=store)
             hook_workers[store_key] = worker
         try:
             worker_payload = worker.review_http_payload(
@@ -289,11 +275,15 @@ def _run_resident_hook_request(
                 }
             raise
         else:
-            return {
+            response: dict[str, object] = {
                 "payload": worker_payload,
                 "reason_code": None,
                 "route": _current_decision_route(),
             }
+            receipt = getattr(worker, "last_native_decision_receipt", None)
+            if isinstance(receipt, dict):
+                response["receipt"] = receipt
+            return response
     with applied_hook_environment(request):
         config = overlay_synced_guard_policy(
             load_guard_config(parsed.guard_home, workspace=parsed.workspace),

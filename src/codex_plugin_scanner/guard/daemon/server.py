@@ -6192,6 +6192,11 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             queued=scheduler_stats["queued"],
         )
         if review.payload is not None and time.monotonic() < process_deadline:
+            if review.receipt is not None:
+                with suppress(Exception):
+                    _ = daemon_server.runtime_hook_evidence_writer.submit_native_decision_receipt(
+                        receipt=review.receipt,
+                    )
             self._write_json(review.payload)
             return
         reason_code = (

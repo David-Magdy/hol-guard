@@ -75,7 +75,7 @@ jobs:
             --source-sha "$SOURCE_SHA" \
             --rule-digest "$RULE_DIGEST"
           uv pip install --python .venv/bin/python --no-deps --force-reinstall native-dist/*.whl
-          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH
+          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH HOL_GUARD_PYTHON_ORACLE HOL_GUARD_TEST_MODE HOL_GUARD_NATIVE_DIAGNOSTIC
           uv run --no-sync python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -146,7 +146,7 @@ jobs:
             --source-sha "$SOURCE_SHA" \
             --rule-digest "$RULE_DIGEST"
           uv pip install --python .venv/bin/python --no-deps --force-reinstall native-dist/*.whl
-          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH
+          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH HOL_GUARD_PYTHON_ORACLE HOL_GUARD_TEST_MODE HOL_GUARD_NATIVE_DIAGNOSTIC
           uv run --no-sync python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -209,6 +209,9 @@ jobs:
           Remove-Item Env:HOL_GUARD_NATIVE -ErrorAction SilentlyContinue
           Remove-Item Env:HOL_GUARD_NATIVE_BINARY -ErrorAction SilentlyContinue
           Remove-Item Env:HOL_GUARD_HOOK_FAST_PATH -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_PYTHON_ORACLE -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_TEST_MODE -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_NATIVE_DIAGNOSTIC -ErrorAction SilentlyContinue
           uv run --no-sync python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

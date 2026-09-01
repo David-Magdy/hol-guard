@@ -23,6 +23,8 @@ from ..store import GuardStore
 from .commands_hook_source_ref import _try_source_ref_fast_path
 from .commands_support_interaction import _emit
 
+_NATIVE_RECEIPT_DRAIN_TIMEOUT_SECONDS = 0.25
+
 
 def try_native_hook_authority(
     *,
@@ -74,7 +76,7 @@ def try_native_hook_authority(
             # A one-shot hook must not hold the harness response open for
             # control-plane persistence. Persistence is best effort; the
             # security result is already returned and never depends on it.
-            _ = evidence_writer.stop(timeout_seconds=0.0)
+            _ = evidence_writer.stop(timeout_seconds=_NATIVE_RECEIPT_DRAIN_TIMEOUT_SECONDS)
 
 
 def try_native_or_source_ref_hook(
