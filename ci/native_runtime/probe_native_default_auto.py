@@ -243,15 +243,15 @@ def _installed_hook_corpus(root: Path) -> dict[str, object]:
 
 
 def main(*, json_path: Path | None = None) -> int:
-    _require("HOL_GUARD_NATIVE" not in os.environ, "HOL_GUARD_NATIVE must be unset")
-    _require(
-        "HOL_GUARD_NATIVE_BINARY" not in os.environ,
-        "HOL_GUARD_NATIVE_BINARY must be unset",
-    )
-    _require(
-        "HOL_GUARD_HOOK_FAST_PATH" not in os.environ,
-        "HOL_GUARD_HOOK_FAST_PATH must be unset",
-    )
+    for environment_name in (
+        "HOL_GUARD_NATIVE",
+        "HOL_GUARD_NATIVE_BINARY",
+        "HOL_GUARD_HOOK_FAST_PATH",
+        "HOL_GUARD_PYTHON_ORACLE",
+        "HOL_GUARD_TEST_MODE",
+        "HOL_GUARD_NATIVE_DIAGNOSTIC",
+    ):
+        _require(environment_name not in os.environ, f"{environment_name} must be unset")
     _require(native_mode() == "auto", f"unexpected native mode: {native_mode()}")
     _require(hook_fast_path_enabled(), "unset fast-path configuration must be enabled")
 

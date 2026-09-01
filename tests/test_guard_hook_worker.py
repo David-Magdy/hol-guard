@@ -239,7 +239,7 @@ class TestHookWorkerException:
         def broken_review_inner(request, *, start):
             raise RuntimeError("engine crashed")
 
-        monkeypatch.setattr(worker.engine, "_review_inner", broken_review_inner)
+        monkeypatch.setattr(worker.test_oracle, "_review_inner", broken_review_inner)
 
         payload = {
             "hook_event_name": "PostToolUse",

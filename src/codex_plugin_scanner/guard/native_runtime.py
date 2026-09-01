@@ -103,9 +103,10 @@ class NativeRuntimeStatus:
 def native_mode() -> NativeMode:
     """Return the configured native mode, defaulting to bundled auto selection.
 
-    Explicit ``off`` remains the emergency rollback. Invalid or empty values do
-    not silently disable the native safety path; they resolve to the product
-    default. Supported PreToolUse and PostToolUse fail closed when native is unavailable.
+    Explicit ``off`` is a fail-safe disablement, not a semantic Python fallback.
+    Invalid or empty values do not silently disable the native safety path; they
+    resolve to the product default. Supported PreToolUse and PostToolUse fail
+    closed when native is unavailable.
     """
 
     raw_value = os.environ.get(_NATIVE_MODE_ENV)

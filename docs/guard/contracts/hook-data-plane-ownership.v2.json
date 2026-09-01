@@ -153,7 +153,7 @@
       "id": "http_post_tool_use",
       "event": "PostToolUse",
       "entry": "src/codex_plugin_scanner/guard/daemon/server.py",
-      "current_authority": "rust_raw_edge_python_off_shadow",
+      "current_authority": "rust_raw_edge_fail_safe_disabled",
       "target_authority": "rust",
       "native_failure": "fail_closed",
       "python_semantic_fallback_target": false
@@ -171,7 +171,7 @@
       "id": "cli_post_tool_use",
       "event": "PostToolUse",
       "entry": "src/codex_plugin_scanner/guard/cli/commands_hook.py",
-      "current_authority": "rust_raw_edge_python_off_shadow",
+      "current_authority": "rust_raw_edge_fail_safe_disabled",
       "target_authority": "rust",
       "native_failure": "fail_closed",
       "python_semantic_fallback_target": false
@@ -262,7 +262,7 @@
         "src/codex_plugin_scanner/guard/runtime/hook_payload_reference.py",
         "src/codex_plugin_scanner/guard/runtime/hook_review_types.py"
       ],
-      "current": "off and shadow retain explicit compatibility request projection; auto and force route complete raw payloads to the native edge",
+      "current": "native hook requests use mechanical projection; only explicit test-oracle fixtures may construct a semantic request",
       "target": "unreachable from ordinary production hook semantics"
     },
     {
@@ -291,7 +291,7 @@
         "src/codex_plugin_scanner/guard/runtime/source_paths.py",
         "src/codex_plugin_scanner/guard/native_command_model.py"
       ],
-      "current": "explicit off and shadow compatibility plus differential-test oracle",
+      "current": "differential-test oracle only; production off is fail-safe and shadow is diagnostic-only",
       "target": "differential tests only"
     },
     {
@@ -371,6 +371,7 @@
         "scripts/ci/rust_pretool_no_python_gate.py",
         "scripts/ci/rust_authority_ownership_gate.py",
         "scripts/ci/native_approval_contract_gate.py",
+        "scripts/ci/python_hook_semantic_callgraph_gate.py",
         ".github/workflows/publish.yml",
         "scripts/verify_native_runtime_release.py",
         "tests/test_rust_io_ownership_gate.py",
@@ -452,6 +453,7 @@
     "scripts/ci/rust_pretool_no_python_gate.py",
     "scripts/ci/rust_authority_ownership_gate.py",
     "scripts/ci/native_approval_contract_gate.py",
+    "scripts/ci/python_hook_semantic_callgraph_gate.py",
     ".github/workflows/publish.yml",
     "scripts/ci/rust_io_ownership_gate.py",
     "scripts/ci/rust_io_ownership_resolver.py",

@@ -187,7 +187,13 @@ def _resident_graph_failures(root: Path) -> list[str]:
     )
     if not has_unknown_event_native_route:
         failures.append("resident entrypoint does not send unknown events to native authority")
-    elif _guard_if_before(resident, "_native_mode_requires_rust", fallback.lineno) is None:
+    elif not any(
+        isinstance(child, ast.If)
+        and child.lineno < fallback.lineno
+        and "_native_mode_requires_rust" in function_calls(child.test)
+        and any(isinstance(item, ast.Return) for item in ast.walk(child))
+        for child in resident.body
+    ):
         failures.append("resident entrypoint can reach Python CLI without a native-mode return guard")
     elif "post_tool_fail_safe_response" not in function_calls(unsupported):
         failures.append("resident HookWorkerUnsupported native branch has no fail-safe response")

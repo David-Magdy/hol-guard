@@ -10,7 +10,13 @@ from ..adapters.base import HarnessContext
 from ..config import GuardConfig
 from ..daemon.hook_worker import HookWorker, HookWorkerUnsupported
 from ..daemon.hook_worker_responses import post_tool_fail_safe_response
-from ..native_mode import native_mode_requires_rust as _native_mode_requires_rust
+from ..native_mode import (
+    native_mode_is_fail_safe_disabled,
+    python_oracle_surface_enabled,
+)
+from ..native_mode import (
+    native_mode_requires_rust as _native_mode_requires_rust,
+)
 from ..native_route_receipt import record_python_semantic_hook_route
 from ..store import GuardStore
 from .commands_hook_source_ref import _try_source_ref_fast_path
@@ -70,12 +76,14 @@ def try_native_or_source_ref_hook(
     store: GuardStore,
     allow_compatibility: bool = True,
 ) -> int | None:
-    """Prefer native authority, then Python source-ref when native does not apply.
+    """Prefer native authority, then an explicitly injected test oracle.
 
-    ``off`` and ``shadow`` stay on the Python source-ref path. ``auto`` and
-    ``force`` keep every hook result native or fail-safe. Callers that have
-    not yet performed compatibility normalization set ``allow_compatibility``
-    to false so no native request can escape into a Python source-ref path.
+    ``auto`` and ``force`` keep every hook result native or fail-safe. An
+    explicit ``off`` is also fail-safe in production; only the differential
+    test oracle can continue to the compatibility source-ref seam. Callers
+    that have not yet performed compatibility normalization set
+    ``allow_compatibility`` to false so no native request can escape into a
+    Python source-ref path.
     """
     native_result = try_native_hook_authority(
         payload=payload,
@@ -96,6 +104,25 @@ def try_native_or_source_ref_hook(
             "native_hook_worker_unavailable"
             if allow_compatibility
             else "native_hook_worker_unavailable_before_compatibility"
+        )
+        _emit(
+            "hook",
+            post_tool_fail_safe_response(
+                args.harness,
+                reason="HOL Guard could not complete the native hook decision safely.",
+                reason_code=reason_code,
+            ),
+            getattr(args, "json", False),
+        )
+        return 0
+    if not python_oracle_surface_enabled():
+        # ``off`` is an explicit disablement, not permission to restore a
+        # second semantic evaluator. Shadow requires the same explicit test or
+        # non-production diagnostic boundary before comparison is permitted.
+        reason_code = (
+            "native_hook_disabled"
+            if native_mode_is_fail_safe_disabled()
+            else "native_shadow_diagnostic_disabled"
         )
         _emit(
             "hook",

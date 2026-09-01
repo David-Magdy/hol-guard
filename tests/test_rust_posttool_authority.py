@@ -153,6 +153,9 @@ def test_hook_worker_records_activity_when_auto_native_is_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("HOL_GUARD_TEST_MODE", raising=False)
+    monkeypatch.delenv("HOL_GUARD_PYTHON_ORACLE", raising=False)
+    monkeypatch.delenv("HOL_GUARD_NATIVE_DIAGNOSTIC", raising=False)
     monkeypatch.setattr(
         "codex_plugin_scanner.guard.daemon.hook_worker.review_post_tool_native",
         lambda *_args, **_kwargs: None,
@@ -176,7 +179,7 @@ def test_hook_worker_records_activity_when_auto_native_is_unavailable(
         workspace=tmp_path / "workspace",
     )
     assert result["reason_code"] == "native_post_tool_unavailable"
-    assert worker._engine is None
+    assert worker.test_oracle is None
     assert len(writer.calls) == 1
     assert writer.calls[0]["event"] == "PostToolUse"
     assert writer.calls[0]["harness"] == "pi"

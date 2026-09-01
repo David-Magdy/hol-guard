@@ -4,6 +4,7 @@ import os
 import stat
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -174,6 +175,15 @@ def _allow_response(reason_code: str) -> HookReviewResponse:
     )
 
 
+def _install_test_oracle(worker: HookWorker, review: Callable[..., object]) -> None:
+    class _Oracle:
+        def __init__(self, callback: Callable[..., object]) -> None:
+            self.review: Callable[..., object] = callback
+
+    worker._python_oracle_object = _Oracle(review)
+    worker._python_oracle = review
+
+
 def test_hook_worker_auto_is_native_first(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = GuardStore(tmp_path / "guard-home")
     worker = HookWorker(store=store)
@@ -200,8 +210,6 @@ def test_hook_worker_auto_is_native_first(tmp_path: Path, monkeypatch: pytest.Mo
 
     monkeypatch.setattr("codex_plugin_scanner.guard.daemon.hook_worker.native_mode", lambda: "auto")
     monkeypatch.setattr("codex_plugin_scanner.guard.daemon.hook_worker.review_raw_hook_native", fake_native)
-    monkeypatch.setattr(worker.engine, "review", fail_python)
-
     result = worker.review_http_payload(
         payload={"hook_event_name": "PostToolUse", "tool_response": "clean output"},
         params={},
@@ -238,8 +246,6 @@ def test_hook_worker_auto_fails_closed_when_native_unavailable(tmp_path: Path, m
         "codex_plugin_scanner.guard.daemon.hook_worker.review_raw_hook_native",
         lambda *args, **kwargs: None,
     )
-    monkeypatch.setattr(worker.engine, "review", fake_python)
-
     result = worker.review_http_payload(
         payload={"hook_event_name": "PostToolUse", "tool_response": "clean output"},
         params={},
@@ -253,7 +259,7 @@ def test_hook_worker_auto_fails_closed_when_native_unavailable(tmp_path: Path, m
     assert result["reason_code"] == "native_post_tool_unavailable"
 
 
-def test_hook_worker_shadow_keeps_python_authoritative(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hook_worker_shadow_compares_explicit_python_oracle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = GuardStore(tmp_path / "guard-home")
     worker = HookWorker(store=store)
     native_calls = 0
@@ -277,7 +283,10 @@ def test_hook_worker_shadow_keeps_python_authoritative(tmp_path: Path, monkeypat
 
     monkeypatch.setattr("codex_plugin_scanner.guard.daemon.hook_worker.native_mode", lambda: "shadow")
     monkeypatch.setattr("codex_plugin_scanner.guard.daemon.hook_worker.review_post_tool_native", fake_native)
-    monkeypatch.setattr(worker.engine, "review", fake_python)
+    monkeypatch.setenv("HOL_GUARD_TEST_MODE", "1")
+    monkeypatch.setenv("HOL_GUARD_PYTHON_ORACLE", "1")
+    monkeypatch.setenv("HOL_GUARD_NATIVE_DIAGNOSTIC", "1")
+    _install_test_oracle(worker, fake_python)
 
     result = worker.review_http_payload(
         payload={"hook_event_name": "PostToolUse", "tool_response": "clean output"},
@@ -297,7 +306,10 @@ def test_hook_worker_shadow_ignores_native_exception(tmp_path: Path, monkeypatch
     worker = HookWorker(store=store)
 
     monkeypatch.setattr("codex_plugin_scanner.guard.daemon.hook_worker.native_mode", lambda: "shadow")
-    monkeypatch.setattr(worker.engine, "review", lambda *args, **kwargs: _allow_response("python_authoritative"))
+    monkeypatch.setenv("HOL_GUARD_TEST_MODE", "1")
+    monkeypatch.setenv("HOL_GUARD_PYTHON_ORACLE", "1")
+    monkeypatch.setenv("HOL_GUARD_NATIVE_DIAGNOSTIC", "1")
+    _install_test_oracle(worker, lambda *args, **kwargs: _allow_response("python_authoritative"))
 
     def fail_native(*args: object, **kwargs: object) -> HookReviewResponse:
         raise RuntimeError("synthetic native failure")
