@@ -17,20 +17,25 @@ import argparse
 import json
 import os
 import statistics
+import sys
 import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from codex_plugin_scanner.guard.codex_hook_launch_runtime import run_isolated_hook_process
-from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessRunner
-from codex_plugin_scanner.guard.native_policy_test_support import native_policy_snapshot
-from codex_plugin_scanner.guard.native_runtime import (
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.append(str(_REPO_ROOT))
+
+from codex_plugin_scanner.guard.codex_hook_launch_runtime import run_isolated_hook_process  # noqa: E402
+from codex_plugin_scanner.guard.daemon.hook_process_runner import HookProcessRunner  # noqa: E402
+from codex_plugin_scanner.guard.native_policy_test_support import native_policy_snapshot  # noqa: E402
+from codex_plugin_scanner.guard.native_runtime import (  # noqa: E402
     native_runtime_status,
     review_post_tool_native,
 )
-from codex_plugin_scanner.guard.native_runtime_resident import close_resident_native_runtimes
-from codex_plugin_scanner.guard.runtime.hook_review_types import HookReviewRequest
+from codex_plugin_scanner.guard.runtime.hook_review_types import HookReviewRequest  # noqa: E402
+from scripts.native_slo_session import stop_native_resident  # noqa: E402
 
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _MIN_WARM_P95_SPEEDUP = 1.15
@@ -244,7 +249,7 @@ def _collect_measurements(
         python_runner.start()
         try:
             _python_review(python_runner, workspace=workspace, guard_home=guard_home)
-            close_resident_native_runtimes()
+            stop_native_resident(runtime, guard_home)
             readiness_started = time.perf_counter()
             with native_policy_snapshot(guard_home) as snapshot:
                 readiness_response = review_post_tool_native(
@@ -269,7 +274,7 @@ def _collect_measurements(
                 )
         finally:
             python_runner.close()
-            close_resident_native_runtimes()
+            stop_native_resident(runtime, guard_home)
         python_cold = _bench_python_cold(
             workspace=workspace,
             guard_home=guard_home,

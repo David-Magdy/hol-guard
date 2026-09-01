@@ -17,7 +17,6 @@ import time
 from collections import Counter
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
 from pathlib import Path
 from typing import cast
 
@@ -38,7 +37,6 @@ _PROBE_SPEC.loader.exec_module(_PROBE_MODULE)
 _installed_hook_corpus = _PROBE_MODULE._installed_hook_corpus
 from codex_plugin_scanner.guard.config import hook_fast_path_enabled  # noqa: E402
 from codex_plugin_scanner.guard.native_runtime import native_mode, native_runtime_status  # noqa: E402
-from codex_plugin_scanner.guard.native_runtime_resident import close_resident_native_runtimes  # noqa: E402
 from scripts.native_slo_adapter import (  # noqa: E402
     Observation,
     payload,
@@ -59,7 +57,7 @@ from scripts.native_slo_contract import (  # noqa: E402
     proof_environment_violations,
     summarize,
 )
-from scripts.native_slo_session import AdapterSession  # noqa: E402
+from scripts.native_slo_session import AdapterSession, stop_native_resident  # noqa: E402
 
 _DEFAULT_WARM_ITERATIONS = 2
 _DEFAULT_COLD_ITERATIONS = 3
@@ -91,14 +89,7 @@ def _installed_corpus(runtime: Path, expected_routes: int) -> dict[str, int]:
             if isinstance(candidate, Mapping):
                 report = candidate
         finally:
-            close_resident_native_runtimes()
-            with suppress(OSError, subprocess.TimeoutExpired):
-                _ = subprocess.run(
-                    (str(runtime), "resident-stop", "--state-dir", str(root / "hook-home" / "native-runtime")),
-                    check=False,
-                    capture_output=True,
-                    timeout=2,
-                )
+            stop_native_resident(runtime, root / "hook-home")
         if report is None:
             raise RuntimeError("native_installed_slo_failed: installed all-harness corpus returned no aggregate")
         values_by_name: dict[str, object] = {}
@@ -187,7 +178,7 @@ def _run_cold(runtime: Path, session: AdapterSession, iterations: int) -> list[f
     }
     request = _wire_request(session.workspace, session.guard_home, "native-slo-cold")
     for _ in range(iterations):
-        close_resident_native_runtimes()
+        stop_native_resident(runtime, session.guard_home)
         started = time.perf_counter()
         completed = subprocess.run(
             (str(runtime), "hook", "--stdin"),
@@ -213,19 +204,10 @@ def _run_recovery(session: AdapterSession, iterations: int) -> list[float]:
     values: list[float] = []
     for index in range(iterations):
         _ = session.observe("claude-code", "PostToolUse", "1k")
-        close_resident_native_runtimes()
-        stopped = subprocess.run(
-            (
-                str(session.runtime),
-                "resident-stop",
-                "--state-dir",
-                str(session.guard_home / "native-runtime"),
-            ),
-            capture_output=True,
-            check=False,
-            timeout=2,
+        _require(
+            stop_native_resident(session.runtime, session.guard_home),
+            f"resident stop failed during recovery sample {index}",
         )
-        _require(stopped.returncode == 0, f"resident stop failed during recovery sample {index}")
         started = time.perf_counter()
         observation = session.observe("claude-code", "PostToolUse", "1k")
         values.append((time.perf_counter() - started) * 1_000.0)
@@ -361,9 +343,7 @@ def run_slo(
     )
     gates["recovery_latency"] = summarize(recovery)["p95_ms"] <= MAX_COLD_P95_MS
     concurrent_64_summary = summarize([item.latency_ms for item in concurrent_64])
-    gates["concurrency_64_latency"] = (
-        include_capacity and concurrent_64_summary["p99_ms"] <= MAX_CONCURRENT_P99_MS
-    )
+    gates["concurrency_64_latency"] = include_capacity and concurrent_64_summary["p99_ms"] <= MAX_CONCURRENT_P99_MS
     gates["installed_corpus"] = (
         installed_corpus["routes"] == len(routes)
         and installed_corpus["resident"] == len(routes)
