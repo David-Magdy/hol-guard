@@ -7,12 +7,12 @@ the always-selected Rust authority workflow runs
 
 ## Ownership result
 
-The inventory covers 80 hook/runtime Python files. Every scoped file has one
+The inventory covers 82 hook/runtime Python files. Every scoped file has one
 and only one owner:
 
 | Class | Files | Responsibility |
 |---|---:|---|
-| Required control plane | 62 | adapters, byte transport, native launch, supervision, presentation, and non-authoritative receipts |
+| Required control plane | 60 | adapters, byte transport, native launch, supervision, presentation, and non-authoritative receipts |
 | Named reference oracle | 17 | explicit differential tests and the documented pure-Python rollback oracle |
 | Dead duplicate | 1 | superseded Python resident transport |
 
@@ -36,6 +36,14 @@ through the test-only namespace bootstrap. A clean subprocess import of the
 production CLI facade proves that the legacy evaluator modules and the
 retired resident module are absent from `sys.modules`. The AST graph check
 also proves that no source module imports the retired resident module.
+
+Every `importlib.import_module` call is inspected by the cleanup gate,
+including aliases imported directly from `importlib`. A destination must be a
+bounded literal/static expression, a value from a bounded literal loop, or a
+same-module helper call whose callsites are all statically bounded. Empty,
+oversized, malformed, and caller-controlled destinations fail the gate; the
+aggregate report records the check and any unbounded locations without
+recording destination values.
 
 ## Retained deletion candidate
 
@@ -63,9 +71,9 @@ The gate's snapshot at this change is:
 
 | Surface | LOC |
 |---|---:|
-| Required control plane | 15,570 |
+| Required control plane | 16,033 |
 | Named reference oracle | 6,619 |
-| Evidence persistence | included in control plane; 816 LOC subset |
+| Evidence persistence | included in control plane; 762 LOC subset |
 | Retained dead candidate | 569 |
 
 No project dependency, public script, or runtime flag was removed: no safe

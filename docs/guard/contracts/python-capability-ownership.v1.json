@@ -2,6 +2,11 @@
   "schema": "hol-guard.python-capability-ownership.v1",
   "slice": "NHD-091-NHD-095",
   "decision_authority": "rust_native_runtime",
+  "dynamic_import_policy": {
+    "mode": "literal_or_bounded",
+    "max_destination_length": 256,
+    "provenance": "module constants, static expressions, bounded literal loops, or same-module literal callsites"
+  },
   "classes": [
     "required_control_plane",
     "named_reference_oracle",

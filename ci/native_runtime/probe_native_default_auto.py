@@ -207,6 +207,15 @@ def _exercise_installed_routes(
             response_payload = _installed_hook_request(daemon, guard_home, workspace, harness, event, payload)
             if response_payload is None:
                 raise RuntimeError(f"empty response for {harness} {event}")
+            _require(
+                is_allowed(event, response_payload),
+                {
+                    "harness": harness,
+                    "event": event,
+                    "decision": response_payload.get("decision"),
+                    "permission_decision": _permission_decision(response_payload),
+                },
+            )
             reason = response_payload.get("reason_code")
             if isinstance(reason, str):
                 reason_codes[reason] = reason_codes.get(reason, 0) + 1
@@ -353,6 +362,7 @@ def _require_clean_probe_environment() -> None:
         f"probe imported source tree package: {package_path}",
     )
 
+
 def _probe_native_identity() -> tuple[NativeRuntimeStatus, NativeRuntimeIdentity, NativeRuntimeCapabilities]:
     status = native_runtime_status()
     _require(status.mode == "auto", status)
@@ -387,8 +397,7 @@ def _run_native_smoke(root: Path) -> None:
         )
         if clean is None:
             raise RuntimeError(
-                "native_default_auto_probe_failed: clean response missing: "
-                f"{native_resident_client_failure_code()}"
+                f"native_default_auto_probe_failed: clean response missing: {native_resident_client_failure_code()}"
             )
         _require(clean.decision == "allow", clean)
         secret = review_post_tool_native(

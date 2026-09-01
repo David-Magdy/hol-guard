@@ -106,7 +106,7 @@ always-selected ownership workflow runs this gate.
 NHD-091–095 adds the complementary
 `scripts/ci/python_capability_cleanup_gate.py` and
 `docs/guard/contracts/python-capability-ownership.v1.json`. It classifies all
-80 scoped Python hook/runtime files as required control plane, named reference
+82 scoped Python hook/runtime files as required control plane, named reference
 oracle, or dead duplicate. Legacy evaluators load only through the explicit
 oracle loader; the superseded Python resident source is retained but excluded
 from wheel and sdist output pending separate deletion authorization. The gate
@@ -119,6 +119,12 @@ hook entrypoints. `scripts/ci/rust_io_privacy_gate.py` statically checks route,
 metrics, journal, and enrichment serializers and dynamically probes raw source,
 command, secret, and private-path payloads. Both gates emit versioned,
 aggregate-only JSON evidence.
+
+The Python cleanup gate also audits every dynamic import destination, including
+direct `from importlib import import_module` aliases. Only bounded static
+provenance is accepted, and the report exposes a boolean check plus aggregate
+counts; unbounded destinations fail CI before production reachability is
+claimed.
 
 Route and evidence artifacts contain only bounded dimensions, reason codes,
 counts, hashes, and booleans. They exclude raw payloads, source, commands,

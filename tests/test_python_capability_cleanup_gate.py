@@ -20,7 +20,7 @@ def test_cleanup_contract_covers_every_scoped_hook_capability() -> None:
 
     assert payload["schema"] == "hol-guard.python-capability-cleanup.v1"
     assert payload["status"] == "passed"
-    assert payload["scope_files"] == 80
+    assert payload["scope_files"] == 82
     assert payload["capabilities"]["legacy_python_resident_transport"] == 1
     assert payload["candidate_evidence"] == [
         {
@@ -31,6 +31,22 @@ def test_cleanup_contract_covers_every_scoped_hook_capability() -> None:
             "package_excluded": True,
         }
     ]
+    assert payload["dynamic_import_destinations_checked"] is True
+    assert payload["dynamic_import_unbounded"] == []
+    assert payload["dynamic_import_count"] == len(payload["dynamic_import_evidence"])
+
+
+def test_dynamic_import_gate_rejects_unbounded_destination(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "example.py").write_text(
+        "import importlib\ndef load(destination: str):\n    return importlib.import_module(destination)\n",
+        encoding="utf-8",
+    )
+
+    _evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert unbounded == ["example:3"]
 
 
 def test_retained_python_oracle_is_loaded_only_by_explicit_test_surface(monkeypatch: pytest.MonkeyPatch) -> None:
