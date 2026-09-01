@@ -16,11 +16,8 @@ from typing import Final
 if __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.ci.hook_data_plane_ownership_contract import (
-    SCHEMA,
-    load_manifest,
-    registered_harnesses,
-)
+from scripts.ci.hook_data_plane_ownership_contract import SCHEMA, load_manifest, registered_harnesses
+from scripts.ci.python_hook_semantic_callgraph_gate import _graph_failures as _python_semantic_graph_failures
 from scripts.ci.rust_pretool_no_python_gate import _graph_failures
 
 MANIFEST = Path("docs/guard/contracts/hook-data-plane-ownership.v2.json")
@@ -31,11 +28,11 @@ SELF_PROTECTED_PATHS: Final = frozenset(
         "docs/guard/contracts/hook-data-plane-ownership.v2.json",
         "scripts/ci/hook_data_plane_ownership_contract.py",
         "scripts/ci/native_approval_contract_gate.py",
+        "scripts/ci/python_hook_semantic_callgraph_gate.py",
         "scripts/ci/rust_authority_ownership_gate.py",
         ".github/workflows/publish.yml",
     }
 )
-
 TEMPORARY_PATHS: Final = (
     Path(".github/workflows/rust-local-toolchain-export.yml"),
     Path(".github/workflows/rust-pretool-authority-bootstrap.yml"),
@@ -72,14 +69,11 @@ TEMPORARY_PATHS: Final = (
     Path("rust/AUTHORITY_BATCH_2_FINAL"),
     Path("rust/AUTHORITY_FINAL"),
 )
-
-
 def _read(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise RuntimeError(f"required authority source is missing: {path}") from exc
-
 
 def _python_imports_function(path: Path, module_suffix: str, name: str) -> bool:
     tree = ast.parse(_read(path), filename=str(path))
@@ -221,6 +215,9 @@ def _pretool_gate() -> None:
     graph_failures = _graph_failures(Path("."))
     if graph_failures:
         raise RuntimeError("; ".join(graph_failures))
+    semantic_graph_failures = _python_semantic_graph_failures(Path("."))
+    if semantic_graph_failures:
+        raise RuntimeError("; ".join(semantic_graph_failures))
 
     pretool = Path("src/codex_plugin_scanner/guard/native_pretool.py")
     if _python_imports_function(pretool, "command_evaluation", "evaluate_command"):
@@ -229,13 +226,15 @@ def _pretool_gate() -> None:
         raise RuntimeError("native PreToolUse transport calls the Python command evaluator")
     _assert_policy_floor_fail_closed(pretool)
     hook = _read(Path("src/codex_plugin_scanner/guard/daemon/hook_worker.py"))
+    native_hook = _read(Path("src/codex_plugin_scanner/guard/daemon/hook_worker_native.py"))
     if "review_pre_tool_native" not in hook:
         raise RuntimeError("PreToolUse hook path is not bound to the native runtime")
-    region = re.search(
-        r'if event_name\s*==\s*"PreToolUse":[\s\S]*?(?=\n\s*if event_name\s*!=\s*"PostToolUse")',
+    route = re.search(
+        r'if event_name\s*==\s*"PreToolUse":[\s\S]*?return self\._review_pre_tool_http',
         hook,
     )
-    if region is None:
+    region = re.search(r'def _review_pre_tool_http\([\s\S]*?(?=\n    def _review_native_edge)', native_hook)
+    if route is None or region is None:
         raise RuntimeError("daemon has no Rust PreToolUse authority route")
     if "self.engine.review(" in region.group(0):
         raise RuntimeError("PreToolUse can reach the Python HookReviewEngine")
@@ -353,6 +352,7 @@ def _workflow_gate() -> None:
         "test_guard_native_runtime_mutation_differential.py",
         "bench_guard_native_release_gate.py",
         "test_native_hol_guard_wheel.py",
+        "python_hook_semantic_callgraph_gate.py",
     )
     missing_commands = [value for value in required_commands if value not in source]
     if missing_commands:

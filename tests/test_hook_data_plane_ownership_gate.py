@@ -193,10 +193,10 @@ def test_pretool_graph_gate_rejects_unknown_event_compatibility_escape(tmp_path:
     _copy_pretool_graph_sources(tmp_path)
     entrypoint = tmp_path / "src/codex_plugin_scanner/guard/daemon/hook_process_entrypoint.py"
     source = entrypoint.read_text(encoding="utf-8")
-    marker = '    if _native_mode_requires_rust() or event_name in {"PreToolUse", "PostToolUse"}:\n'
+    marker = "        _native_mode_requires_rust()\n"
     assert marker in source
     entrypoint.write_text(
-        source.replace(marker, '    if event_name in {"PreToolUse", "PostToolUse"}:\n', 1),
+        source.replace(marker, "        False\n", 1),
         encoding="utf-8",
     )
 

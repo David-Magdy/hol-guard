@@ -52,6 +52,7 @@ class HookProcessReview:
 
     payload: dict[str, object] | None
     reason_code: str | None
+    receipt: dict[str, object] | None = None
 
 
 def terminate_worker_tree(process: WorkerProcess, signal_number: int) -> bool:

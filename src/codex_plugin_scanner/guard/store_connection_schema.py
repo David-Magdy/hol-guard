@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import ClassVar
 from uuid import uuid4
 
-from . import store_review_event_outbox_schema
+from . import store_native_decision_receipts, store_review_event_outbox_schema
 from .mcp.policy_store import ensure_mcp_policy_request_schema
 from .sqlite_profile import (
     SQLiteMigrationGateReport,
@@ -162,6 +162,7 @@ _REQUIRED_SCHEMA_MIGRATION_VERSIONS = (  # Keep retired-index databases on the p
     WORKFLOW_CAPABILITY_RECEIPT_EVENT_INDEX_MIGRATION_VERSION,
     WATCH_ONLY_APPROVAL_MIGRATION_VERSION,
     store_review_event_outbox_schema.REVIEW_EVENT_OUTBOX_MIGRATION_VERSION,
+    *store_native_decision_receipts.native_decision_receipt_migration_versions(),
 )
 
 
@@ -976,7 +977,9 @@ class StoreConnectionSchemaMixin:
             supply_chain_bundle_schema_statement(),
             supply_chain_eval_cache_schema_statement(),
             threat_intel_bundle_schema_statement(),
-            threat_intel_matches_schema_statement(),
+            *store_native_decision_receipts.native_decision_receipt_schema_statements(
+                threat_intel_matches_schema_statement()
+            ),
         )
         with self._connect() as connection:
             if initialize_incremental_vacuum:

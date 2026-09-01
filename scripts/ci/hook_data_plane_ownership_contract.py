@@ -34,6 +34,7 @@ HARNESS_ROUTE_STATUSES: Final = frozenset(
 )
 DECISION_IO_SCHEMA: Final = "hol-guard.decision-critical-io.v1"
 PRIVACY_IO_SCHEMA: Final = "hol-guard.native-hook-io-privacy.v1"
+DECISION_RECEIPT_SCHEMA: Final = "guard-native-hook-decision-receipt.v1"
 
 
 def _read(path: Path) -> str:
@@ -177,6 +178,35 @@ def _validate_privacy_artifacts(value: dict[str, object]) -> None:
         raise RuntimeError("hook route/evidence serializer inventory is missing")
 
 
+def _validate_decision_receipt(value: dict[str, object]) -> None:
+    contract = value.get("decision_receipt")
+    if not isinstance(contract, dict) or contract.get("schema") != DECISION_RECEIPT_SCHEMA:
+        raise RuntimeError("native hook decision receipt contract is missing")
+    if contract.get("version") != 1 or contract.get("authority") != "rust":
+        raise RuntimeError("native hook decision receipt version or authority is invalid")
+    if contract.get("idempotency_key") != "decision_id":
+        raise RuntimeError("native hook decision receipt idempotency key is invalid")
+    if contract.get("persistence") != "python_control_plane_async_non_authoritative":
+        raise RuntimeError("native hook decision receipt persistence is authoritative")
+    if contract.get("decision_critical_path") is not False:
+        raise RuntimeError("native hook decision receipt persistence is on the decision path")
+    queue = contract.get("queue")
+    if (
+        not isinstance(queue, dict)
+        or queue.get("max_records") != 2_000
+        or queue.get("max_bytes") != 16 * 1024 * 1024
+        or queue.get("drop_policy") != "drop_and_degrade_metrics"
+        or queue.get("wait_for_persistence") is not False
+    ):
+        raise RuntimeError("native hook decision receipt queue contract is invalid")
+    if contract.get("retry_restart_safe") is not True:
+        raise RuntimeError("native hook decision receipt retries are not restart-safe")
+    excluded = contract.get("privacy_excluded_fields")
+    required = {"raw_payload", "command", "prompt", "path", "url", "secret", "private_path", "content"}
+    if not isinstance(excluded, list) or not required <= set(excluded):
+        raise RuntimeError("native hook decision receipt privacy exclusions are incomplete")
+
+
 def _validate_nodes(value: dict[str, object]) -> None:
     nodes = value.get("nodes")
     if not isinstance(nodes, list) or not nodes:
@@ -210,5 +240,6 @@ def load_manifest(path: Path) -> dict[str, object]:
     _validate_defaults(value)
     _validate_decision_critical_io(value)
     _validate_privacy_artifacts(value)
+    _validate_decision_receipt(value)
     _validate_nodes(value)
     return value

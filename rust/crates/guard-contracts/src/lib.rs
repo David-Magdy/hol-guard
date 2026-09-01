@@ -5,6 +5,8 @@ use serde_json::Value;
 
 mod approval_contracts;
 pub use approval_contracts::*;
+mod native_hook_receipt;
+pub use native_hook_receipt::*;
 
 pub const NATIVE_PROTOCOL_VERSION: u16 = 1;
 pub const GUARD_HOOK_ENVELOPE_V2_SCHEMA: &str = "guard-hook-envelope.v2";
@@ -65,6 +67,9 @@ pub struct GuardHookEdgeResultV2 {
     pub event_name: String,
     pub payload_kind: GuardHookPayloadKindV2,
     pub result: Value,
+    /// Rust-owned decision evidence.  The Python edge may only transport it
+    /// to a non-authoritative asynchronous consumer.
+    pub receipt: NativeHookDecisionReceiptV1,
 }
 
 /// Result-safe action classes understood by the native PreToolUse edge.

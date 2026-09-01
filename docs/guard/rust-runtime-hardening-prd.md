@@ -8,7 +8,7 @@ Make the bundled Rust runtime a cross-platform, low-latency safety kernel for ca
 
 The native kernel must reliably pause or block secret exfiltration, prompt injection, broad deletion, destructive production database or infrastructure actions, supply-chain compromise, and Guard tampering. Routine reads, tests, builds, linting, bounded workspace edits, and exact low-impact cleanup must remain quiet and autonomous.
 
-Eligible PostToolUse review uses the verified bundled Rust runtime in `auto` mode by default. Python remains the control plane and fail-safe fallback, explicit `HOL_GUARD_NATIVE=off` remains the emergency rollback, and PreToolUse authority remains Python-only.
+Eligible PostToolUse and supported PreToolUse review use the verified bundled Rust runtime in `auto` mode by default. Python remains the control plane and explicit differential-test oracle; it is never a production semantic fallback. `HOL_GUARD_NATIVE=off` is an explicit fail-safe disablement, and shadow comparison is diagnostic-only.
 
 ## Security invariants
 
@@ -31,7 +31,7 @@ Internally preserve three outcomes:
 
 During native failure:
 
-`resident Rust -> bounded verified one-shot Rust or Python reference while still supported -> fail-safe pause/block`
+`resident Rust -> bounded verified one-shot Rust -> fail-safe pause/block`
 
 A resident crash must not retire a healthy Python daemon. Restart occurs outside the requesting hook under a single-flight supervisor. Repeated crashes open a circuit.
 
@@ -45,7 +45,7 @@ During Python daemon failure:
 ## Target architecture
 
 - **Harness adapters:** authenticate the daemon and enforce daemon-unavailable fail-safe behavior.
-- **Python daemon:** policy, approvals, receipts, containment, durable correlation, health orchestration, and reference evaluation.
+- **Python daemon:** policy, approvals, receipts, containment, durable correlation, health orchestration, and explicit differential-test oracle support.
 - **Rust resident runtime:** bounded parsing, output traversal, secret and prompt-injection fast paths, secure source reads, hashing, effect extraction, and eligible decisions.
 - **Native supervisor:** child identity, health, prewarm, restart, rotation, circuit breaking, and fallback budgeting.
 - **Authenticated policy snapshot:** immutable, versioned native inputs bound to package/rule/policy identity.
@@ -80,7 +80,7 @@ Requirements:
 - retain and monitor the actual child handle;
 - asynchronous restart with exponential backoff, jitter, and bounded budget;
 - one half-open probe after cooldown;
-- bounded one-shot and Python fallback queues;
+- bounded one-shot queue;
 - no fallback process storm;
 - zero-downtime generation rotation after bounded uptime or request count;
 - stale sockets, ports, binaries, manifests, policy snapshots, and generation responses rejected;
@@ -133,7 +133,7 @@ macOS adds APFS case modes, aliases, symlinks, hardlinks, mounts, socket path li
 
 Linux adds static-runtime proof, secure path walks, bind/overlay mounts, namespaces/containers, low descriptor limits, cgroups, noexec, read-only Guard homes, and stale socket attacks.
 
-Unsupported platforms must select the pure-Python fallback and provide actionable diagnosis.
+Unsupported platforms must provide actionable diagnosis and fail-safe for supported hook events. Python semantic evaluation remains available only through explicit differential-test fixtures.
 
 ## Performance and resource SLOs
 
@@ -178,12 +178,12 @@ Maintain `docs/guard/contracts/hook-data-plane-ownership.v2.json`.
 For every capability, classify Python code as:
 
 1. required control plane;
-2. active named supported reference/compatibility backend exercised in CI;
+2. active named differential-test oracle exercised in CI;
 3. dead duplicate.
 
 Delete category 3. Replaced, unreachable, or untested Python runtime implementations are dead code, not dormant rollback. Deletion includes implementation files, tests, imports, dependencies, package entries, flags, and shims. Move reusable cases to language-neutral fixtures. Add package-content/import tests and record Python LOC/dependency deltas.
 
-Do not remove the active Python reference backend while this PRD requires it. An untested fallback is dead code and must be removed.
+Do not remove the active Python differential-test oracle while this PRD requires it. A production semantic fallback is forbidden; an untested oracle is dead code and must be removed.
 
 ## Rollout gates
 
@@ -210,4 +210,4 @@ Do not remove the active Python reference backend while this PRD requires it. An
 - Native doctor/status/repair are accurate and privacy safe.
 - Dead replaced Python code is deleted; active Python control/reference code is explicitly retained and tested.
 - Cargo lock/fmt/Clippy/tests/audit/deny/SBOM/provenance, CodeQL, Security Gates, fuzz, differential, chaos, soak, CI, and review gates pass.
-- Eligible PostToolUse source default is `auto`; explicit `off`, pure-Python unsupported-platform fallback, and Python control/reference ownership remain tested rollback paths.
+- Eligible supported-hook source default is `auto`; explicit `off` is a fail-safe disablement, shadow is diagnostic-only, and Python control/oracle ownership remains covered by differential tests.

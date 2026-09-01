@@ -16,6 +16,7 @@ from codex_plugin_scanner.guard.config import GuardConfig
 from codex_plugin_scanner.guard.daemon import hook_process_entrypoint
 from codex_plugin_scanner.guard.daemon.hook_worker import HookWorker
 from codex_plugin_scanner.guard.daemon.hook_worker_responses import harness_json_from_native_pre_tool
+from codex_plugin_scanner.guard.native_decision_receipt import canonical_receipt_bytes
 from codex_plugin_scanner.guard.native_hook_edge import _decode_edge
 from codex_plugin_scanner.guard.native_pretool import _decode_pre_tool
 from codex_plugin_scanner.guard.runtime import hook_payload_reference as payload_reference_module
@@ -23,7 +24,7 @@ from codex_plugin_scanner.guard.store import GuardStore
 
 
 def _edge(harness: str, event: str, action_type: str = "unknown") -> dict[str, object]:
-    return {
+    edge: dict[str, object] = {
         "schema": "guard-hook-edge-result.v2",
         "authority": "rust",
         "harness": harness,
@@ -51,6 +52,51 @@ def _edge(harness: str, event: str, action_type: str = "unknown") -> dict[str, o
             "explicitly_benign": False,
         },
     }
+    result = edge["result"]
+    assert isinstance(result, dict)
+    receipt: dict[str, object] = {
+        "schema": "guard-native-hook-decision-receipt.v1",
+        "version": 1,
+        "authority": "rust",
+        "decision_id": "0" * 64,
+        "request_id": "request-1",
+        "request_digest": "a" * 64,
+        "harness": harness,
+        "event_name": "PreToolUse",
+        "payload_kind": "inline",
+        "policy_generation": 1,
+        "policy_digest": None,
+        "rule_digest": None,
+        "runtime_identity": None,
+        "decision": result["decision"],
+        "model_output_action": "not_applicable",
+        "policy_action": result["policy_action"],
+        "observed_policy_action": None,
+        "reason_code": result["reason_code"],
+        "workspace_bound": False,
+        "source_ref_external_allowed": False,
+        "reviewed_output_sha256": None,
+        "observe_mode": False,
+        "deadline_budget_ms": 100,
+    }
+    receipt["decision_id"] = hashlib.sha256(canonical_receipt_bytes(receipt)).hexdigest()
+    edge["receipt"] = receipt
+    return edge
+
+
+def _sync_receipt(edge: dict[str, object]) -> None:
+    result = edge["result"]
+    receipt = edge["receipt"]
+    assert isinstance(result, dict)
+    assert isinstance(receipt, dict)
+    receipt.update(
+        {
+            "decision": result["decision"],
+            "policy_action": result["policy_action"],
+            "reason_code": result["reason_code"],
+        }
+    )
+    receipt["decision_id"] = hashlib.sha256(canonical_receipt_bytes(receipt)).hexdigest()
 
 
 @pytest.mark.parametrize("harness", ("claude-code", "codex", "cline", "cursor", "copilot", "grok", "zcode"))
@@ -104,6 +150,7 @@ def test_generic_warning_result_is_allow_with_warning_and_renders_mechanically()
             "explicitly_benign": False,
         }
     )
+    _sync_receipt(edge)
     assert _decode_edge(edge) == edge
     rendered = harness_json_from_native_pre_tool("codex", result)
     assert rendered["continue"] is True

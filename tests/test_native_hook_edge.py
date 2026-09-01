@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -8,6 +9,7 @@ import pytest
 
 from codex_plugin_scanner.guard import native_command_model
 from codex_plugin_scanner.guard.codex_hook_launch_runtime import BoundedHookProcessResult
+from codex_plugin_scanner.guard.native_decision_receipt import canonical_receipt_bytes
 from codex_plugin_scanner.guard.native_hook_edge import _decode_edge, review_raw_hook_native
 from codex_plugin_scanner.guard.native_resident_client import (
     native_resident_client_failure_code,
@@ -21,7 +23,7 @@ from codex_plugin_scanner.guard.native_runtime import (
 
 
 def _edge_result() -> dict[str, object]:
-    return {
+    edge = {
         "schema": "guard-hook-edge-result.v2",
         "authority": "rust",
         "harness": "claude-code",
@@ -49,6 +51,34 @@ def _edge_result() -> dict[str, object]:
             "explicitly_benign": True,
         },
     }
+    receipt: dict[str, object] = {
+        "schema": "guard-native-hook-decision-receipt.v1",
+        "version": 1,
+        "authority": "rust",
+        "decision_id": "0" * 64,
+        "request_id": "request-1",
+        "request_digest": "a" * 64,
+        "harness": "claude-code",
+        "event_name": "PreToolUse",
+        "payload_kind": "inline",
+        "policy_generation": 1,
+        "policy_digest": None,
+        "rule_digest": None,
+        "runtime_identity": None,
+        "decision": "allow",
+        "model_output_action": "not_applicable",
+        "policy_action": "allow",
+        "observed_policy_action": None,
+        "reason_code": "native_exact_safe_command",
+        "workspace_bound": False,
+        "source_ref_external_allowed": False,
+        "reviewed_output_sha256": None,
+        "observe_mode": False,
+        "deadline_budget_ms": 100,
+    }
+    receipt["decision_id"] = hashlib.sha256(canonical_receipt_bytes(receipt)).hexdigest()
+    edge["receipt"] = receipt
+    return edge
 
 
 def test_edge_decoder_accepts_omitted_optional_request_id() -> None:
@@ -56,6 +86,18 @@ def test_edge_decoder_accepts_omitted_optional_request_id() -> None:
     with_extra = _edge_result()
     with_extra["semantic_override"] = "allow"
     assert _decode_edge(with_extra) is None
+
+
+def test_edge_decoder_requires_receipt_bound_to_result() -> None:
+    missing_receipt = _edge_result()
+    del missing_receipt["receipt"]
+    assert _decode_edge(missing_receipt) is None
+
+    mutated_result = _edge_result()
+    result = mutated_result["result"]
+    assert isinstance(result, dict)
+    result["reason_code"] = "native_other_reason"
+    assert _decode_edge(mutated_result) is None
 
 
 def test_python_launcher_only_invokes_package_bound_native_client(
