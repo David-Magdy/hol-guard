@@ -5963,6 +5963,20 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 "reason_code": reason_code,
                 "observed_review_failure": True,
             }
+        if event == "PreToolUse":
+            from .hook_availability_policy import availability_harness_response
+
+            payload_dict = dict(payload) if isinstance(payload, Mapping) else {}
+            workspace_path, home_path = self._validated_fail_safe_hook_paths(params)
+            return availability_harness_response(
+                payload_dict,
+                harness=harness,
+                event_name="PreToolUse",
+                reason_code=reason_code,
+                reason=reason,
+                workspace=workspace_path,
+                home_dir=home_path,
+            )
         if harness in {"pi", "omp"}:
             return {
                 "decision": "deny",
@@ -5982,21 +5996,41 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     },
                 },
             }
-        if event == "PreToolUse":
-            return {
-                "reason_code": reason_code,
-                "hookSpecificOutput": {
-                    "hookEventName": event,
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": reason,
-                },
-            }
         return {
             "continue": False,
             "stopReason": reason,
             "systemMessage": reason,
             "reason_code": reason_code,
         }
+
+    def _validated_fail_safe_hook_paths(
+        self,
+        params: Mapping[str, list[str]],
+    ) -> tuple[Path | None, Path | None]:
+        """Return workspace and home directories that passed hook path validation."""
+
+        return (
+            self._validated_fail_safe_directory(params, "workspace"),
+            self._validated_fail_safe_directory(params, "home"),
+        )
+
+    def _validated_fail_safe_directory(
+        self,
+        params: Mapping[str, list[str]],
+        parameter: str,
+    ) -> Path | None:
+        value = self._optional_string(params.get(parameter, [None])[-1])
+        if not value:
+            return None
+        try:
+            validated = self._validated_hook_directory_string(
+                parameter,
+                value,
+                roots=self._hook_safe_roots(),
+            )
+        except _HookPathValidationError:
+            return None
+        return Path(validated) if validated else None
 
     def _execute_runtime_hook(
         self,
