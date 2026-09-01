@@ -36,6 +36,7 @@ _MAX_REQUEST_BYTES = 6 * 1024 * 1024
 _STREAM_FRAME_HEADER_BYTES = 4
 _CLIENT_CLOSE_TIMEOUT_SECONDS = 0.5
 _MAX_PERSISTENT_CLIENTS = 16
+_MAX_PERSISTENT_POOLS = 16
 _MAX_FAILURE_CODE_LENGTH = 128
 _FAILURE_CODE_PATTERN = re.compile(r"native_[a-z0-9_]+")
 _LAST_FAILURE_CODE: ContextVar[str | None] = ContextVar(
@@ -216,24 +217,98 @@ class _PersistentNativeClient:
             self._close_locked()
 
 
-_CLIENTS_LOCK = threading.Lock()
-_CLIENTS: dict[tuple[str, str], _PersistentNativeClient] = {}
+class _PersistentNativeClientPool:
+    """Bounded lazy pool of streams for one executable and Guard state root.
 
+    A stream carries one request at a time because its response frames have no
+    request identifier. Multiple persistent streams therefore provide bounded
+    parallel dispatch without changing the authenticated wire protocol.
+    """
 
-def _client_for(executable: Path, state_dir: Path, environment: Mapping[str, str]) -> _PersistentNativeClient:
-    key = (str(executable), str(state_dir))
-    evicted: _PersistentNativeClient | None = None
-    with _CLIENTS_LOCK:
-        client = _CLIENTS.get(key)
+    def __init__(self, *, executable: Path, state_dir: Path, environment: Mapping[str, str]) -> None:
+        self._executable = executable
+        self._state_dir = state_dir
+        self._environment = environment
+        self._clients: set[_PersistentNativeClient] = set()
+        self._idle: list[_PersistentNativeClient] = []
+        self._condition = threading.Condition()
+        self._closed = False
+
+    def _lease(self, *, deadline_monotonic: float) -> _PersistentNativeClient | None:
+        with self._condition:
+            while not self._closed:
+                if self._idle:
+                    return self._idle.pop()
+                if len(self._clients) < _MAX_PERSISTENT_CLIENTS:
+                    client = _PersistentNativeClient(
+                        executable=self._executable,
+                        state_dir=self._state_dir,
+                        environment=self._environment,
+                    )
+                    self._clients.add(client)
+                    return client
+                remaining = deadline_monotonic - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._condition.wait(timeout=remaining)
+        _LAST_FAILURE_CODE.set("native_client_pool_exhausted")
+        return None
+
+    def request(self, payload: bytes, *, deadline_monotonic: float) -> bytes | None:
+        client = self._lease(deadline_monotonic=deadline_monotonic)
         if client is None:
-            if len(_CLIENTS) >= _MAX_PERSISTENT_CLIENTS:
-                evicted_key = next(iter(_CLIENTS))
-                evicted = _CLIENTS.pop(evicted_key)
-            client = _PersistentNativeClient(executable=executable, state_dir=state_dir, environment=environment)
-            _CLIENTS[key] = client
+            return None
+        response: bytes | None = None
+        try:
+            response = client.request(payload, deadline_monotonic=deadline_monotonic)
+            return response
+        finally:
+            close_client = False
+            with self._condition:
+                if client not in self._clients:
+                    close_client = True
+                elif self._closed or response is None:
+                    self._clients.remove(client)
+                    close_client = True
+                else:
+                    self._idle.append(client)
+                self._condition.notify()
+            if close_client:
+                client.close()
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            clients = tuple(self._clients)
+            self._clients.clear()
+            self._idle.clear()
+            self._condition.notify_all()
+        for client in clients:
+            client.close()
+
+
+_CLIENTS_LOCK = threading.Lock()
+_CLIENT_POOLS: dict[tuple[str, str], _PersistentNativeClientPool] = {}
+
+
+def _client_pool_for(executable: Path, state_dir: Path, environment: Mapping[str, str]) -> _PersistentNativeClientPool:
+    key = (str(executable), str(state_dir))
+    evicted: _PersistentNativeClientPool | None = None
+    with _CLIENTS_LOCK:
+        pool = _CLIENT_POOLS.get(key)
+        if pool is None:
+            if len(_CLIENT_POOLS) >= _MAX_PERSISTENT_POOLS:
+                evicted_key = next(iter(_CLIENT_POOLS))
+                evicted = _CLIENT_POOLS.pop(evicted_key)
+            pool = _PersistentNativeClientPool(
+                executable=executable,
+                state_dir=state_dir,
+                environment=environment,
+            )
+            _CLIENT_POOLS[key] = pool
     if evicted is not None:
         evicted.close()
-    return client
+    return pool
 
 
 def close_native_resident_clients(guard_home: Path | None = None) -> None:
@@ -241,14 +316,14 @@ def close_native_resident_clients(guard_home: Path | None = None) -> None:
 
     with _CLIENTS_LOCK:
         selected = [
-            (key, client)
-            for key, client in _CLIENTS.items()
+            (key, pool)
+            for key, pool in _CLIENT_POOLS.items()
             if guard_home is None or Path(key[1]).parent == guard_home.expanduser().resolve()
         ]
-        for key, _client in selected:
-            _CLIENTS.pop(key, None)
-    for _key, client in selected:
-        client.close()
+        for key, _pool in selected:
+            _CLIENT_POOLS.pop(key, None)
+    for _key, pool in selected:
+        pool.close()
 
 
 atexit.register(close_native_resident_clients)
@@ -349,7 +424,7 @@ def native_resident_client_request(
     if deadline is None:
         assert timeout_seconds is not None
         deadline = time.monotonic() + timeout_seconds
-    return _client_for(executable, guard_home / "native-runtime", environment).request(
+    return _client_pool_for(executable, guard_home / "native-runtime", environment).request(
         payload,
         deadline_monotonic=deadline,
     )
