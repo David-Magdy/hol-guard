@@ -1,0 +1,255 @@
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+
+from scripts.native_slo_adapter import payload, process_resources, route_matrix, source_payloads
+from scripts.native_slo_contract import (
+    MAX_EVIDENCE_BYTES,
+    SIZE_CLASSES,
+    all_gates_pass,
+    assert_privacy_safe,
+    clear_proof_environment,
+    gate_results,
+    percentile,
+    proof_environment_violations,
+    sanitize_aggregate,
+    summarize,
+)
+
+
+def test_percentiles_use_deterministic_nearest_rank() -> None:
+    samples = [1.0, 2.0, 3.0, 4.0]
+    assert percentile(samples, 0.5) == 2.0
+    assert percentile(samples, 0.95) == 4.0
+    assert summarize(samples) == {
+        "count": 4,
+        "p50_ms": 2.5,
+        "p95_ms": 4.0,
+        "p99_ms": 4.0,
+        "max_ms": 4.0,
+    }
+
+
+def test_sanitizer_drops_payload_bearing_fields_and_bounds_collections() -> None:
+    value = {
+        "schema": "aggregate",
+        "command": "printf private",
+        "nested": {"raw_payload": {"token": "private"}, "count": 3},
+        "items": list(range(300)),
+    }
+    sanitized = sanitize_aggregate(value)
+    assert sanitized == {
+        "schema": "aggregate",
+        "nested": {"count": 3},
+        "items": list(range(256)),
+    }
+
+
+def test_sanitizer_handles_camel_case_fields_and_redacts_free_form_values() -> None:
+    sanitized = sanitize_aggregate(
+        {
+            "rawPayload": "private",
+            "safe_label": "contains spaces and a path /Users/private",
+            "safe_secret": "secret:abc",
+            "schema": "hol-guard.native-installed-slo.v1",
+        }
+    )
+    assert sanitized == {
+        "safe_label": "redacted",
+        "schema": "hol-guard.native-installed-slo.v1",
+    }
+
+
+def test_privacy_contract_bounds_unbounded_evidence() -> None:
+    report = assert_privacy_safe({"safe": "x" * (MAX_EVIDENCE_BYTES + 1)})
+    assert len(json.dumps(report).encode("utf-8")) < MAX_EVIDENCE_BYTES
+
+
+def test_privacy_contract_returns_json_safe_aggregate() -> None:
+    report = assert_privacy_safe(
+        {
+            "schema": "hol-guard.native-installed-slo.v1",
+            "size_classes": {size: {"count": 1, "p95_ms": 1.0} for size in SIZE_CLASSES},
+            "routes": {"native_resident": 4},
+        }
+    )
+    assert json.loads(json.dumps(report)) == report
+
+
+def test_slo_gates_are_fixed_and_require_all_measurements() -> None:
+    passing = gate_results(
+        resident_share=1.0,
+        safe_fail_rate=0.0,
+        warm_p95_ms=20.0,
+        size_p95_ms={"250k": 50.0, "1m": 120.0, "5m": 350.0},
+        cold_p95_ms=100.0,
+        readiness_p95_ms=250.0,
+        concurrent_p99_ms=100.0,
+        rss_growth=0.10,
+        rss_baseline_bytes=1,
+        errors=0,
+        errors_64=0,
+        python_fallback_decisions=0,
+    )
+    assert all_gates_pass(passing)
+    failing = gate_results(
+        resident_share=0.98,
+        safe_fail_rate=0.01,
+        warm_p95_ms=20.1,
+        size_p95_ms={},
+        cold_p95_ms=100.1,
+        readiness_p95_ms=250.1,
+        concurrent_p99_ms=100.1,
+        rss_growth=0.11,
+        rss_baseline_bytes=1,
+        errors=1,
+        errors_64=1,
+        python_fallback_decisions=1,
+    )
+    assert not all_gates_pass(failing)
+    assert all(not result for result in failing.values())
+
+
+def test_proof_environment_clears_native_diagnostic_oracle_and_test_overrides() -> None:
+    environment = {
+        "HOL_GUARD_NATIVE_ORACLE": "1",
+        "HOL_GUARD_HOOK_FAST_PATH_SHADOW": "1",
+        "HOL_GUARD_TEST_CUSTOM": "1",
+        "HOL_GUARD_RUN_SYSTEM_KEYCHAIN_TEST": "1",
+        "GUARD_DIAGNOSTIC_MODE": "1",
+        "PYTEST_ADDOPTS": "-q",
+        "PYTHONPATH": "src",
+        "UNRELATED_SETTING": "preserve",
+    }
+    removed = clear_proof_environment(environment)
+    assert set(removed) == {
+        "HOL_GUARD_NATIVE_ORACLE",
+        "HOL_GUARD_HOOK_FAST_PATH_SHADOW",
+        "HOL_GUARD_TEST_CUSTOM",
+        "HOL_GUARD_RUN_SYSTEM_KEYCHAIN_TEST",
+        "GUARD_DIAGNOSTIC_MODE",
+        "PYTEST_ADDOPTS",
+        "PYTHONPATH",
+    }
+    assert proof_environment_violations(environment) == ()
+    assert environment == {"UNRELATED_SETTING": "preserve"}
+
+
+def test_concurrency_gate_rejects_either_sixteen_or_sixty_four_errors() -> None:
+    kwargs = {
+        "resident_share": 1.0,
+        "safe_fail_rate": 0.0,
+        "warm_p95_ms": 20.0,
+        "size_p95_ms": {"250k": 50.0, "1m": 120.0, "5m": 350.0},
+        "cold_p95_ms": 100.0,
+        "readiness_p95_ms": 250.0,
+        "concurrent_p99_ms": 100.0,
+        "rss_growth": 0.10,
+        "rss_baseline_bytes": 1,
+        "python_fallback_decisions": 0,
+    }
+    assert gate_results(errors=0, errors_64=0, **kwargs)["concurrency"]
+    assert not gate_results(errors=1, errors_64=0, **kwargs)["concurrency"]
+    assert not gate_results(errors=0, errors_64=1, **kwargs)["concurrency"]
+
+
+def test_python_semantic_gate_includes_installed_corpus_count() -> None:
+    kwargs = {
+        "resident_share": 1.0,
+        "safe_fail_rate": 0.0,
+        "warm_p95_ms": 20.0,
+        "size_p95_ms": {"250k": 50.0, "1m": 120.0, "5m": 350.0},
+        "cold_p95_ms": 100.0,
+        "readiness_p95_ms": 250.0,
+        "concurrent_p99_ms": 100.0,
+        "rss_growth": 0.10,
+        "rss_baseline_bytes": 1,
+        "errors": 0,
+        "errors_64": 0,
+        "python_fallback_decisions": 0,
+    }
+    assert gate_results(installed_python_fallback_decisions=0, **kwargs)["python_fallback"]
+    assert not gate_results(installed_python_fallback_decisions=1, **kwargs)["python_fallback"]
+
+
+def test_rss_measurement_is_current_and_requires_ten_percent_bound() -> None:
+    resources = process_resources()
+    assert resources is not None
+    assert resources.rss_bytes > 0
+    assert resources.threads > 0
+    assert resources.file_descriptors > 0
+    passing = gate_results(
+        resident_share=1.0,
+        safe_fail_rate=0.0,
+        warm_p95_ms=20.0,
+        size_p95_ms={"250k": 50.0, "1m": 120.0, "5m": 350.0},
+        cold_p95_ms=100.0,
+        readiness_p95_ms=250.0,
+        concurrent_p99_ms=100.0,
+        rss_growth=0.10,
+        rss_baseline_bytes=resources.rss_bytes,
+        errors=0,
+        errors_64=0,
+        python_fallback_decisions=0,
+    )
+    assert passing["rss"]
+    assert not gate_results(
+        resident_share=1.0,
+        safe_fail_rate=0.0,
+        warm_p95_ms=20.0,
+        size_p95_ms={"250k": 50.0, "1m": 120.0, "5m": 350.0},
+        cold_p95_ms=100.0,
+        readiness_p95_ms=250.0,
+        concurrent_p99_ms=100.0,
+        rss_growth=0.1001,
+        rss_baseline_bytes=resources.rss_bytes,
+        errors=0,
+        errors_64=0,
+        python_fallback_decisions=0,
+    )["rss"]
+
+
+def test_installed_adapter_corpus_covers_all_declared_routes_and_sizes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    routes = route_matrix()
+    assert len(routes) == 21
+    assert len({harness for harness, _ in routes}) == 13
+    assert {event for _, event in routes} == {"PreToolUse", "PostToolUse"}
+    for size_class in SIZE_CLASSES:
+        encoded = json.dumps(payload("PostToolUse", size_class), separators=(",", ":"))
+        assert (
+            len(encoded.encode("utf-8")) >= {"1k": 1_000, "250k": 250_000, "1m": 1_000_000, "5m": 5_000_000}[size_class]
+        )
+
+
+def test_large_classes_use_bounded_local_source_references(tmp_path: Path) -> None:
+    fixtures = source_payloads(tmp_path)
+    for size_class, expected_bytes in (("250k", 250 * 1024), ("1m", 1 * 1024 * 1024), ("5m", 5 * 1024 * 1024)):
+        fixture = fixtures[size_class]
+        reference = fixture["guard_source_ref"]
+        assert isinstance(reference, dict)
+        assert Path(str(reference["path"])).stat().st_size == expected_bytes
+        assert reference["version"] == 1
+        assert reference["output_chars"] == expected_bytes
+        assert "tool_response" not in fixture
+
+
+def test_installed_proof_and_soak_contract_are_wired_without_force_defaults() -> None:
+    workflow = Path(".github/workflows/native-wheel-ci.yml").read_text(encoding="utf-8")
+    documentation = Path("docs/guard/native-runtime-slo-proof.md").read_text(encoding="utf-8").lower()
+    assert "--enforce" in workflow
+    assert "--requests 100000" in workflow
+    assert "--receipts 250000" in workflow
+    assert "--enforce-soak" in workflow
+    assert "native-installed-slo.json" in workflow
+    assert "native-soak.json" in workflow
+    assert re.search(r"\bforce\b", documentation) is None
+    assert "installed_wheel_ownership_contract" in Path("scripts/bench_guard_native_installed_slo.py").read_text(
+        encoding="utf-8"
+    )

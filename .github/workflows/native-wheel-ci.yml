@@ -17,7 +17,7 @@ concurrency:
 jobs:
   linux-x64:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
@@ -74,15 +74,67 @@ jobs:
             --target x86_64-unknown-linux-musl \
             --source-sha "$SOURCE_SHA" \
             --rule-digest "$RULE_DIGEST"
+          uv pip uninstall --python .venv/bin/python hol-guard
           uv pip install --python .venv/bin/python --no-deps --force-reinstall native-dist/*.whl
-          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH HOL_GUARD_PYTHON_ORACLE HOL_GUARD_TEST_MODE HOL_GUARD_NATIVE_DIAGNOSTIC
-          uv run --no-sync python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
+          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_NATIVE_MODE HOL_GUARD_NATIVE_ORACLE HOL_GUARD_NATIVE_DIAGNOSTIC
+          unset HOL_GUARD_HOOK_FAST_PATH HOL_GUARD_HOOK_FAST_PATH_SHADOW HOL_GUARD_HOOK_SOURCE_REF HOL_GUARD_HOOK_BINARY
+          unset HOL_GUARD_FAST_PATH HOL_GUARD_BINARY HOL_GUARD_ORACLE HOL_GUARD_DIAGNOSTIC HOL_GUARD_TEST_MODE
+          unset HOL_GUARD_PYTHON_ORACLE
+          unset HOL_GUARD_TEST_KEYRING_FILE HOL_GUARD_TEST_SYNC_AUTH_CONTEXT_JSON
+          unset HOL_GUARD_RUN_SYSTEM_KEYCHAIN_TEST
+          unset GUARD_NATIVE GUARD_NATIVE_BINARY GUARD_NATIVE_MODE GUARD_NATIVE_ORACLE GUARD_NATIVE_DIAGNOSTIC
+          unset GUARD_HOOK_FAST_PATH GUARD_HOOK_FAST_PATH_SHADOW GUARD_HOOK_SOURCE_REF GUARD_HOOK_BINARY
+          unset GUARD_FAST_PATH GUARD_BINARY GUARD_ORACLE GUARD_DIAGNOSTIC GUARD_TEST_MODE
+          unset GUARD_TEST_KEYRING_FILE GUARD_TEST_SYNC_AUTH_CONTEXT_JSON GUARD_PYTEST_DURATION_OUTPUT
+          unset PYTEST_CURRENT_TEST PYTEST_ADDOPTS PYTEST_PLUGINS PYTHONPATH
+          .venv/bin/python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
+      - name: Measure installed adapter-to-decision SLOs
+        run: |
+          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_NATIVE_MODE HOL_GUARD_NATIVE_ORACLE HOL_GUARD_NATIVE_DIAGNOSTIC
+          unset HOL_GUARD_HOOK_FAST_PATH HOL_GUARD_HOOK_FAST_PATH_SHADOW HOL_GUARD_HOOK_SOURCE_REF HOL_GUARD_HOOK_BINARY
+          unset HOL_GUARD_FAST_PATH HOL_GUARD_BINARY HOL_GUARD_ORACLE HOL_GUARD_DIAGNOSTIC HOL_GUARD_TEST_MODE
+          unset HOL_GUARD_TEST_KEYRING_FILE HOL_GUARD_TEST_SYNC_AUTH_CONTEXT_JSON
+          unset HOL_GUARD_RUN_SYSTEM_KEYCHAIN_TEST
+          unset GUARD_NATIVE GUARD_NATIVE_BINARY GUARD_NATIVE_MODE GUARD_NATIVE_ORACLE GUARD_NATIVE_DIAGNOSTIC
+          unset GUARD_HOOK_FAST_PATH GUARD_HOOK_FAST_PATH_SHADOW GUARD_HOOK_SOURCE_REF GUARD_HOOK_BINARY
+          unset GUARD_FAST_PATH GUARD_BINARY GUARD_ORACLE GUARD_DIAGNOSTIC GUARD_TEST_MODE
+          unset GUARD_TEST_KEYRING_FILE GUARD_TEST_SYNC_AUTH_CONTEXT_JSON GUARD_PYTEST_DURATION_OUTPUT
+          unset PYTEST_CURRENT_TEST PYTEST_ADDOPTS PYTEST_PLUGINS PYTHONPATH
+          runtime=$(.venv/bin/python -c 'from codex_plugin_scanner.guard.native_runtime import native_runtime_status; status = native_runtime_status(); assert status.identity is not None; print(status.identity.path)')
+          .venv/bin/python scripts/bench_guard_native_installed_slo.py \
+            --runtime "$runtime" \
+            --warm-iterations 2 \
+            --cold-iterations 2 \
+            --recovery-iterations 2 \
+            --readiness-samples 2 \
+            --json native-installed-slo.json \
+            --enforce
+      - name: Enforce installed native soak
+        run: |
+          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_NATIVE_MODE HOL_GUARD_NATIVE_ORACLE HOL_GUARD_NATIVE_DIAGNOSTIC
+          unset HOL_GUARD_HOOK_FAST_PATH HOL_GUARD_HOOK_FAST_PATH_SHADOW HOL_GUARD_HOOK_SOURCE_REF HOL_GUARD_HOOK_BINARY
+          unset HOL_GUARD_FAST_PATH HOL_GUARD_BINARY HOL_GUARD_ORACLE HOL_GUARD_DIAGNOSTIC HOL_GUARD_TEST_MODE
+          unset HOL_GUARD_TEST_KEYRING_FILE HOL_GUARD_TEST_SYNC_AUTH_CONTEXT_JSON
+          unset HOL_GUARD_RUN_SYSTEM_KEYCHAIN_TEST
+          unset GUARD_NATIVE GUARD_NATIVE_BINARY GUARD_NATIVE_MODE GUARD_NATIVE_ORACLE GUARD_NATIVE_DIAGNOSTIC
+          unset GUARD_HOOK_FAST_PATH GUARD_HOOK_FAST_PATH_SHADOW GUARD_HOOK_SOURCE_REF GUARD_HOOK_BINARY
+          unset GUARD_FAST_PATH GUARD_BINARY GUARD_ORACLE GUARD_DIAGNOSTIC GUARD_TEST_MODE
+          unset GUARD_TEST_KEYRING_FILE GUARD_TEST_SYNC_AUTH_CONTEXT_JSON GUARD_PYTEST_DURATION_OUTPUT
+          unset PYTEST_CURRENT_TEST PYTEST_ADDOPTS PYTEST_PLUGINS PYTHONPATH
+          .venv/bin/python scripts/stress_guard_daemon.py \
+            --requests 100000 \
+            --receipts 250000 \
+            --settle-seconds 0 \
+            --enforce-soak \
+            --json native-soak.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hol-guard-native-wheel-linux-x64
           path: |
             native-dist/*.whl
             native-default-auto.json
+            native-installed-slo.json
+            native-soak.json
           if-no-files-found: error
 
   macos:
@@ -99,7 +151,7 @@ jobs:
             target: aarch64-apple-darwin
             deployment_target: "11.0"
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
@@ -145,15 +197,50 @@ jobs:
             --target "$TARGET" \
             --source-sha "$SOURCE_SHA" \
             --rule-digest "$RULE_DIGEST"
+          uv pip uninstall --python .venv/bin/python hol-guard
           uv pip install --python .venv/bin/python --no-deps --force-reinstall native-dist/*.whl
-          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH HOL_GUARD_PYTHON_ORACLE HOL_GUARD_TEST_MODE HOL_GUARD_NATIVE_DIAGNOSTIC
-          uv run --no-sync python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
+          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_NATIVE_MODE HOL_GUARD_NATIVE_ORACLE HOL_GUARD_NATIVE_DIAGNOSTIC
+          unset HOL_GUARD_HOOK_FAST_PATH HOL_GUARD_HOOK_FAST_PATH_SHADOW HOL_GUARD_HOOK_SOURCE_REF HOL_GUARD_HOOK_BINARY
+          unset HOL_GUARD_FAST_PATH HOL_GUARD_BINARY HOL_GUARD_ORACLE HOL_GUARD_DIAGNOSTIC HOL_GUARD_TEST_MODE
+          unset HOL_GUARD_PYTHON_ORACLE
+          unset HOL_GUARD_TEST_KEYRING_FILE HOL_GUARD_TEST_SYNC_AUTH_CONTEXT_JSON
+          unset HOL_GUARD_RUN_SYSTEM_KEYCHAIN_TEST
+          unset GUARD_NATIVE GUARD_NATIVE_BINARY GUARD_NATIVE_MODE GUARD_NATIVE_ORACLE GUARD_NATIVE_DIAGNOSTIC
+          unset GUARD_HOOK_FAST_PATH GUARD_HOOK_FAST_PATH_SHADOW GUARD_HOOK_SOURCE_REF GUARD_HOOK_BINARY
+          unset GUARD_FAST_PATH GUARD_BINARY GUARD_ORACLE GUARD_DIAGNOSTIC GUARD_TEST_MODE
+          unset GUARD_TEST_KEYRING_FILE GUARD_TEST_SYNC_AUTH_CONTEXT_JSON GUARD_PYTEST_DURATION_OUTPUT
+          unset PYTEST_CURRENT_TEST PYTEST_ADDOPTS PYTEST_PLUGINS PYTHONPATH
+          .venv/bin/python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
+      - name: Measure installed adapter-to-decision SLOs
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+        run: |
+          unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_NATIVE_MODE HOL_GUARD_NATIVE_ORACLE HOL_GUARD_NATIVE_DIAGNOSTIC
+          unset HOL_GUARD_HOOK_FAST_PATH HOL_GUARD_HOOK_FAST_PATH_SHADOW HOL_GUARD_HOOK_SOURCE_REF HOL_GUARD_HOOK_BINARY
+          unset HOL_GUARD_FAST_PATH HOL_GUARD_BINARY HOL_GUARD_ORACLE HOL_GUARD_DIAGNOSTIC HOL_GUARD_TEST_MODE
+          unset HOL_GUARD_TEST_KEYRING_FILE HOL_GUARD_TEST_SYNC_AUTH_CONTEXT_JSON
+          unset HOL_GUARD_RUN_SYSTEM_KEYCHAIN_TEST
+          unset GUARD_NATIVE GUARD_NATIVE_BINARY GUARD_NATIVE_MODE GUARD_NATIVE_ORACLE GUARD_NATIVE_DIAGNOSTIC
+          unset GUARD_HOOK_FAST_PATH GUARD_HOOK_FAST_PATH_SHADOW GUARD_HOOK_SOURCE_REF GUARD_HOOK_BINARY
+          unset GUARD_FAST_PATH GUARD_BINARY GUARD_ORACLE GUARD_DIAGNOSTIC GUARD_TEST_MODE
+          unset GUARD_TEST_KEYRING_FILE GUARD_TEST_SYNC_AUTH_CONTEXT_JSON GUARD_PYTEST_DURATION_OUTPUT
+          unset PYTEST_CURRENT_TEST PYTEST_ADDOPTS PYTEST_PLUGINS PYTHONPATH
+          runtime=$(.venv/bin/python -c 'from codex_plugin_scanner.guard.native_runtime import native_runtime_status; status = native_runtime_status(); assert status.identity is not None; print(status.identity.path)')
+          .venv/bin/python scripts/bench_guard_native_installed_slo.py \
+            --runtime "$runtime" \
+            --warm-iterations 2 \
+            --cold-iterations 2 \
+            --recovery-iterations 2 \
+            --readiness-samples 2 \
+            --json native-installed-slo.json \
+            --enforce
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: hol-guard-native-wheel-${{ matrix.target }}
           path: |
             native-dist/*.whl
             native-default-auto.json
+            native-installed-slo.json
           if-no-files-found: error
 
   windows-x64:
@@ -205,13 +292,47 @@ jobs:
             --source-sha $env:SOURCE_SHA `
             --rule-digest $caps.rule_digest
           $wheel = (Get-ChildItem native-dist\*.whl).FullName
+          uv pip uninstall --python .venv\Scripts\python.exe hol-guard
           uv pip install --python .venv\Scripts\python.exe --no-deps --force-reinstall $wheel
           Remove-Item Env:HOL_GUARD_NATIVE -ErrorAction SilentlyContinue
           Remove-Item Env:HOL_GUARD_NATIVE_BINARY -ErrorAction SilentlyContinue
-          Remove-Item Env:HOL_GUARD_HOOK_FAST_PATH -ErrorAction SilentlyContinue
-          Remove-Item Env:HOL_GUARD_PYTHON_ORACLE -ErrorAction SilentlyContinue
-          Remove-Item Env:HOL_GUARD_TEST_MODE -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_NATIVE_MODE -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_NATIVE_ORACLE -ErrorAction SilentlyContinue
           Remove-Item Env:HOL_GUARD_NATIVE_DIAGNOSTIC -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_HOOK_FAST_PATH -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_HOOK_FAST_PATH_SHADOW -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_HOOK_SOURCE_REF -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_HOOK_BINARY -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_FAST_PATH -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_BINARY -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_ORACLE -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_DIAGNOSTIC -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_TEST_MODE -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_TEST_KEYRING_FILE -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_TEST_SYNC_AUTH_CONTEXT_JSON -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_RUN_SYSTEM_KEYCHAIN_TEST -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_NATIVE -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_NATIVE_BINARY -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_NATIVE_MODE -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_NATIVE_ORACLE -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_NATIVE_DIAGNOSTIC -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_HOOK_FAST_PATH -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_HOOK_FAST_PATH_SHADOW -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_HOOK_SOURCE_REF -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_HOOK_BINARY -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_FAST_PATH -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_BINARY -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_ORACLE -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_DIAGNOSTIC -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_TEST_MODE -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_TEST_KEYRING_FILE -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_TEST_SYNC_AUTH_CONTEXT_JSON -ErrorAction SilentlyContinue
+          Remove-Item Env:GUARD_PYTEST_DURATION_OUTPUT -ErrorAction SilentlyContinue
+          Remove-Item Env:PYTEST_CURRENT_TEST -ErrorAction SilentlyContinue
+          Remove-Item Env:PYTEST_ADDOPTS -ErrorAction SilentlyContinue
+          Remove-Item Env:PYTEST_PLUGINS -ErrorAction SilentlyContinue
+          Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+          Remove-Item Env:HOL_GUARD_PYTHON_ORACLE -ErrorAction SilentlyContinue
           uv run --no-sync python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
