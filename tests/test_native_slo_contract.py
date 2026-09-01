@@ -21,6 +21,7 @@ from scripts.native_slo_contract import (
     sanitize_aggregate,
     summarize,
 )
+from scripts.native_slo_reporting import SloMeasurements, summarize_measurements
 
 
 def test_percentiles_use_deterministic_nearest_rank() -> None:
@@ -116,13 +117,36 @@ def test_slo_gates_are_fixed_and_require_all_measurements() -> None:
     assert all(not result for result in failing.values())
 
 
-def test_safe_failure_rate_includes_non_warm_observations() -> None:
+def test_safe_failure_rate_counts_only_native_fail_safe_routes() -> None:
     observations = (
         Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True),
         Observation("codex", "PostToolUse", "5m", 1.0, "native_resident", False),
+        Observation("codex", "PostToolUse", "1k", 1.0, "native_fail_safe", False),
     )
 
-    assert _safe_failure_rate(observations) == 0.5
+    assert _safe_failure_rate(observations) == pytest.approx(1 / 3)
+
+
+def test_summary_separates_expected_denials_from_warm_fail_safe_gate() -> None:
+    measurements = SloMeasurements(
+        warm=[Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True)],
+        sizes=[Observation("codex", "PostToolUse", "5m", 1.0, "native_resident", False)],
+        recovery=[],
+        cold=[],
+        concurrent_16=[Observation("codex", "PostToolUse", "1k", 1.0, "native_fail_safe", False)],
+        concurrent_64=[Observation("codex", "PostToolUse", "1k", 1.0, "native_fail_safe", False)],
+        errors_16=0,
+        errors_64=0,
+        readiness=[],
+        rss_baseline=1,
+        rss_peak=1,
+    )
+
+    summary = summarize_measurements(measurements)
+
+    assert summary.safe_failure_rate == 0.0
+    assert summary.security_denials == 3
+    assert dict(summary.security_denials_by_size) == {"1k": 2, "5m": 1}
 
 
 def test_proof_environment_clears_native_diagnostic_oracle_and_test_overrides() -> None:

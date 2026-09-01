@@ -203,8 +203,7 @@ class NativePolicySnapshotPublisherInputs:
         if changed_paths:
             config_path = str(self.guard_home / "config.toml")
             database_paths = {
-                str(self.guard_home / name)
-                for name in ("guard.db", "guard.db-wal", "guard.db-shm", "guard.db-journal")
+                str(self.guard_home / name) for name in ("guard.db", "guard.db-wal", "guard.db-shm", "guard.db-journal")
             }
             database_only_change = all(path in database_paths for path in changed_paths)
             if not database_only_change and any(path != config_path for path in changed_paths):

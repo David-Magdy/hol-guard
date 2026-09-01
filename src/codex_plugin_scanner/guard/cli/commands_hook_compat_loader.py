@@ -31,9 +31,7 @@ _COMPATIBILITY_EXPORTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (".commands_hook_runtime_state", ("RuntimeArtifactHookState",)),
     ("..runtime.hook_payload_reference", ("hydrate_hook_payload_reference",)),
 )
-COMPATIBILITY_SURFACE_NAMES = frozenset(
-    name for _, names in _COMPATIBILITY_EXPORTS for name in names
-)
+COMPATIBILITY_SURFACE_NAMES = frozenset(name for _, names in _COMPATIBILITY_EXPORTS for name in names)
 
 
 def load_hook_compatibility_surface() -> dict[str, object] | None:

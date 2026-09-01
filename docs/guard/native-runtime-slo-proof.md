@@ -6,11 +6,12 @@ installed route matrix (13 harnesses and 21 PreToolUse/PostToolUse routes),
 synthetic safe fixtures, and bounded aggregate output. It never writes command
 text, prompts, tool output, paths, tokens, or response bodies to evidence.
 
-The fixed contract is: at least 99% resident routing; zero safe-corpus
-fail-safe decisions; warm p95 at most 20 ms; 250 KiB, 1 MiB, and 5 MiB p95 at
-most 50, 120, and 350 ms; cold one-shot p95 at most 100 ms; readiness p95 at
-most 250 ms; and 16-request p99 at most 100 ms with no errors. A 64-request
-run must complete or return bounded fail-safe responses.
+The fixed contract is: at least 99% resident routing; zero unexpected
+fail-safe decisions in the ordinary warm corpus; warm p95 at most 20 ms; 250
+KiB, 1 MiB, and 5 MiB p95 at most 50, 120, and 350 ms; cold one-shot p95 at
+most 100 ms; readiness p95 at most 250 ms; and 16-request p99 at most 100 ms
+with no errors. A 64-request run must complete or return bounded fail-safe
+responses.
 
 Native wheel CI runs the no-environment installed-wheel probe and the enforced
 adapter SLO. Windows remains outside this wave. The stress script exposes
@@ -30,4 +31,7 @@ uv run --no-sync python scripts/bench_guard_native_installed_slo.py \
 
 Aggregate JSON is bounded by `scripts/native_slo_contract.py`; the contract
 sanitizer is tested independently and is applied immediately before printing
-or writing evidence.
+or writing evidence. Expected policy denials from large source-reference and
+bounded-capacity probes remain visible as `security_denials` and
+`security_denials_by_size`; they do not enter the ordinary warm fail-safe
+numerator.

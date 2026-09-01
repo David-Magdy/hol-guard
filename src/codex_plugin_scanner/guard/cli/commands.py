@@ -66,12 +66,36 @@ def _support_overrides() -> Iterator[None]:
             if name not in module_export_names[module] or name in override_names
         }
         targets.append((module, affected_names))
+    # The compatibility hook modules are intentionally lazy and therefore are
+    # not members of ``commands_support._SOURCE_MODULES``.  When an explicit
+    # oracle test has imported one, propagate facade monkeypatches into that
+    # already-loaded module for the duration of the scoped call.  Do not
+    # import the compatibility surface here: production hook startup must
+    # remain independent of the Python evaluator.
+    compatibility_prefix = f"{__package__}.commands_hook_"
+    known_targets = {id(module) for module, _ in targets}
+    for module in tuple(sys.modules.values()):
+        if module is None or id(module) in known_targets:
+            continue
+        module_name = getattr(module, "__name__", "")
+        if not module_name.startswith(compatibility_prefix):
+            continue
+        affected_names = {name for name in override_names if hasattr(module, name)}
+        if affected_names:
+            targets.append((module, affected_names))
     snapshots = [
         (module, {name: getattr(module, name, missing) for name in affected_names})
         for module, affected_names in targets
     ]
     try:
         _support._apply_overrides(overrides)
+        # ``_apply_overrides`` knows only about the eager support registry;
+        # apply the same scoped values to any lazy compatibility modules we
+        # discovered above.
+        for module, affected_names in targets:
+            for name in affected_names:
+                if name in export_map:
+                    setattr(module, name, export_map[name])
         yield
     finally:
         for module, bindings in snapshots:

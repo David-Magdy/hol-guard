@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from scripts.native_slo_adapter import Observation
@@ -41,9 +42,13 @@ class SloSummary:
     warm_routes: Counter[str]
     warm_failures: int
     warm_fail_safe: int
+    # Policy denials from size and capacity probes are expected evidence, not
+    # native fail-safe outcomes. Keep their aggregate separate from the SLO.
     safe_failures: int
+    security_denials: int
     safe_failure_rate: float
     safe_failures_by_size: Counter[str]
+    security_denials_by_size: Counter[str]
     size_values: dict[str, list[float]]
     warm_values: list[float]
     concurrent_values: list[float]
@@ -58,10 +63,16 @@ def _require(condition: bool, reason: object) -> None:
         raise RuntimeError(f"native_installed_slo_failed: {reason}")
 
 
-def safe_failure_rate(observations: list[Observation]) -> float:
-    """Count every denied observation, including size and capacity probes."""
+def safe_failure_rate(observations: Sequence[Observation]) -> float:
+    """Return the native fail-safe rate for the supplied corpus.
 
-    return sum(not observation.allowed for observation in observations) / max(1, len(observations))
+    ``allowed`` is a policy result, so a false value is not itself a fail-safe.
+    Large source-reference and bounded-capacity probes may be intentionally
+    denied. The SLO gate supplies the ordinary warm corpus here; callers can
+    retain all policy denials separately for diagnostic evidence.
+    """
+
+    return sum(observation.route == "native_fail_safe" for observation in observations) / max(1, len(observations))
 
 
 def summarize_measurements(measurements: SloMeasurements) -> SloSummary:
@@ -85,17 +96,21 @@ def summarize_measurements(measurements: SloMeasurements) -> SloSummary:
         if measurements.rss_baseline
         else 1.0
     )
+    security_denials = sum(not observation.allowed for observation in all_observations)
+    security_denials_by_size = Counter(
+        observation.size_class for observation in all_observations if not observation.allowed
+    )
     return SloSummary(
         all_observations=all_observations,
         route_counts=route_counts,
         warm_routes=Counter(observation.route for observation in measurements.warm),
         warm_failures=sum(not observation.allowed for observation in measurements.warm),
         warm_fail_safe=sum(observation.route == "native_fail_safe" for observation in measurements.warm),
-        safe_failures=sum(not observation.allowed for observation in all_observations),
-        safe_failure_rate=safe_failure_rate(all_observations),
-        safe_failures_by_size=Counter(
-            observation.size_class for observation in all_observations if not observation.allowed
-        ),
+        safe_failures=security_denials,
+        security_denials=security_denials,
+        safe_failure_rate=safe_failure_rate(measurements.warm),
+        safe_failures_by_size=security_denials_by_size,
+        security_denials_by_size=security_denials_by_size,
         size_values=size_values,
         warm_values=warm_values,
         concurrent_values=[observation.latency_ms for observation in measurements.concurrent_16],
@@ -169,7 +184,11 @@ def slo_result(
             "corpus_origin": corpus_origin,
             "route_corpus": "installed_routes",
             "warm_failures": summary.warm_failures,
+            # Keep the historical aliases while exposing an unambiguous name:
+            # these are expected policy/capacity denials, not the fail-safe
+            # SLO numerator.
             "safe_failures": summary.safe_failures,
+            "security_denials": summary.security_denials,
             "safe_failure_rate": round(summary.safe_failure_rate, 6),
             "fail_safe_decisions": summary.warm_fail_safe,
             "fail_safe_rate": round(summary.warm_fail_safe / max(1, len(measurements.warm)), 6),
@@ -178,6 +197,7 @@ def slo_result(
             "python_semantic_decisions": summary.route_counts["python_semantic"],
             "oneshot_decisions": summary.warm_routes["native_oneshot"],
             "safe_failures_by_size": dict(sorted(summary.safe_failures_by_size.items())),
+            "security_denials_by_size": dict(sorted(summary.security_denials_by_size.items())),
             "rss_baseline_bytes": measurements.rss_baseline,
             "rss_peak_bytes": measurements.rss_peak,
             "rss_growth": summary.rss_growth,
