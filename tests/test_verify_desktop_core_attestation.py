@@ -101,6 +101,7 @@ def test_verify_rejects_marker_binary_drift(tmp_path: Path, monkeypatch: pytest.
             source_commit=SOURCE_COMMIT,
             source_tag=SOURCE_TAG,
             target=TARGET,
+            expected_team_id="TEAM1234",
         )
 
 

@@ -131,7 +131,7 @@ def _validate_release_identity(
     expected_version: str,
     expected_source_sha: str,
     expected_rule_digest: str,
-) -> None:
+) -> dict[str, object]:
     if payload.get("schema") != "hol-guard-final-release-evidence.v1":
         raise FinalEvidenceError("unsupported final evidence schema")
     release = payload.get("release")
@@ -147,32 +147,50 @@ def _validate_release_identity(
     if commit_sha != expected_source_sha:
         raise FinalEvidenceError("release commit does not match expected source")
     _hash(release.get("base_sha"), label="release base", length=40)
+    return {
+        "version": expected_version,
+        "source_sha": expected_source_sha,
+        "rule_digest": expected_rule_digest,
+        "commit_sha": commit_sha,
+        "base_sha": release["base_sha"],
+    }
 
 
-def _validate_components_and_gates(payload: Mapping[str, object]) -> None:
+def _validate_components_and_gates(payload: Mapping[str, object]) -> dict[str, object]:
     components = payload.get("evidence")
     if not isinstance(components, dict):
         raise FinalEvidenceError("component evidence is missing")
-    _component(components.get("artifacts"), label="artifact")
-    _component(components.get("desktop_core"), label="Desktop Core")
-    _component(components.get("installed_matrix"), label="installed matrix")
+    artifacts = _component(components.get("artifacts"), label="artifact")
+    desktop_core = _component(components.get("desktop_core"), label="Desktop Core")
+    installed_matrix = _component(components.get("installed_matrix"), label="installed matrix")
     gates = payload.get("gates")
     if not isinstance(gates, dict) or set(gates) != set(REQUIRED_GATES):
         raise FinalEvidenceError("final gate set is incomplete")
     if any(value is not True for value in gates.values()):
         raise FinalEvidenceError("one or more final release gates did not pass")
+    return {
+        "artifacts": artifacts,
+        "desktop_core": desktop_core,
+        "installed_matrix": installed_matrix,
+    }
 
 
-def _validate_review(payload: Mapping[str, object]) -> None:
+def _validate_review(payload: Mapping[str, object]) -> dict[str, object]:
     review = payload.get("review")
     if not isinstance(review, dict) or review.get("exact_head") is not True:
         raise FinalEvidenceError("exact-head review evidence is missing")
     if review.get("unresolved_non_outdated") != 0 or review.get("pending_required") != 0:
         raise FinalEvidenceError("actionable review threads or required checks remain")
-    _token(review.get("ci_run"), label="CI run")
+    ci_run = _token(review.get("ci_run"), label="CI run")
+    return {
+        "ci_run": ci_run,
+        "exact_head": True,
+        "unresolved_non_outdated": 0,
+        "pending_required": 0,
+    }
 
 
-def _validate_coverage(payload: Mapping[str, object]) -> None:
+def _validate_coverage(payload: Mapping[str, object]) -> dict[str, object]:
     coverage = payload.get("coverage")
     if not isinstance(coverage, dict):
         raise FinalEvidenceError("platform coverage is missing")
@@ -184,25 +202,40 @@ def _validate_coverage(payload: Mapping[str, object]) -> None:
     if "windows-x64" not in platforms:
         if not isinstance(windows, dict) or windows.get("status") != "waived":
             raise FinalEvidenceError("Windows omission requires an explicit waiver")
-        _token(windows.get("reason"), label="Windows waiver reason")
+        reason = _token(windows.get("reason"), label="Windows waiver reason")
+        windows_projection: dict[str, object] = {"status": "waived", "reason": reason}
     elif windows is not None and windows.get("status") != "verified":
         raise FinalEvidenceError("Windows evidence must be verified when included")
+    else:
+        windows_projection = {"status": "verified"} if windows is not None else {}
+    projection: dict[str, object] = {"platforms": platforms}
+    if windows_projection:
+        projection["windows"] = windows_projection
+    return projection
 
 
-def _validate_approval(payload: Mapping[str, object]) -> None:
+def _validate_approval(payload: Mapping[str, object]) -> dict[str, object]:
     approval = payload.get("approval")
     if not isinstance(approval, dict) or type(approval.get("capable")) is not bool:
         raise FinalEvidenceError("approval capability status is missing")
     if bool(approval["capable"]):
         if approval.get("root_configured") is not True or approval.get("signer_ceremony") is not True:
             raise FinalEvidenceError("approval-capable release lacks external root/signer ceremony")
-        _hash(approval.get("root_fingerprint"), label="approval root fingerprint")
-        _token(approval.get("signer_key_id"), label="approval signer key ID")
+        root_fingerprint = _hash(approval.get("root_fingerprint"), label="approval root fingerprint")
+        signer_key_id = _token(approval.get("signer_key_id"), label="approval signer key ID")
+        return {
+            "capable": True,
+            "root_configured": True,
+            "signer_ceremony": True,
+            "root_fingerprint": root_fingerprint,
+            "signer_key_id": signer_key_id,
+        }
     elif approval.get("status") != "fail_closed_external_provisioning_required":
         raise FinalEvidenceError("non-capable approval status must state the external blocker")
+    return {"capable": False, "status": "fail_closed_external_provisioning_required"}
 
 
-def _validate_reproducibility(payload: Mapping[str, object]) -> None:
+def _validate_reproducibility(payload: Mapping[str, object]) -> dict[str, object]:
     reproducibility = payload.get("reproducibility")
     if not isinstance(reproducibility, dict) or reproducibility.get("deterministic") is not True:
         raise FinalEvidenceError("reproducibility evidence is missing")
@@ -215,6 +248,7 @@ def _validate_reproducibility(payload: Mapping[str, object]) -> None:
         raise FinalEvidenceError("reproducible command set is missing")
     if any(len(item) > 400 for item in commands_value):
         raise FinalEvidenceError("reproducible command is too long")
+    return {"deterministic": True, "commands": list(commands_value)}
 
 
 def _validate_signature(
@@ -277,17 +311,17 @@ def validate_final_evidence(
     """Validate and normalize a final evidence payload."""
 
     _safe_strings(payload)
-    _validate_release_identity(
+    release = _validate_release_identity(
         payload,
         expected_version=expected_version,
         expected_source_sha=expected_source_sha,
         expected_rule_digest=expected_rule_digest,
     )
-    _validate_components_and_gates(payload)
-    _validate_review(payload)
-    _validate_coverage(payload)
-    _validate_approval(payload)
-    _validate_reproducibility(payload)
+    evidence = _validate_components_and_gates(payload)
+    review = _validate_review(payload)
+    coverage = _validate_coverage(payload)
+    approval = _validate_approval(payload)
+    reproducibility = _validate_reproducibility(payload)
     signature_payload, signature_verified = _validate_signature(
         payload,
         require_signature=require_signature,
@@ -295,8 +329,17 @@ def validate_final_evidence(
         trusted_key_id=trusted_key_id,
     )
 
-    normalized: dict[str, object] = dict(payload)
-    normalized["signature"] = signature_payload or {"status": "external-signer-required"}
+    normalized: dict[str, object] = {
+        "schema": "hol-guard-final-release-evidence.v1",
+        "release": release,
+        "evidence": evidence,
+        "gates": {key: True for key in REQUIRED_GATES},
+        "review": review,
+        "coverage": coverage,
+        "approval": approval,
+        "reproducibility": reproducibility,
+    }
+    normalized["signature"] = signature_payload if signature_verified else {"status": "external-signer-required"}
     normalized["release_ready"] = signature_verified
     return normalized
 

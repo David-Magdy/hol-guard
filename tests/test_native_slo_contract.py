@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -186,6 +187,7 @@ def test_python_semantic_gate_includes_installed_corpus_count() -> None:
     assert not gate_results(installed_python_fallback_decisions=1, **kwargs)["python_fallback"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="process resource measurement is not implemented on Windows")
 def test_rss_measurement_is_current_and_requires_ten_percent_bound() -> None:
     resources = process_resources()
     assert resources is not None

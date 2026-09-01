@@ -233,10 +233,7 @@ def validate_matrix(
 
 def _load(path: Path) -> Mapping[str, object]:
     try:
-        metadata = path.lstat()
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode) or metadata.st_size > _MAX_MATRIX_BYTES:
-            raise InstalledMatrixError("matrix file is not a bounded regular file")
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(_bounded_bytes(path).decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise InstalledMatrixError("matrix file is not valid JSON") from error
     if not isinstance(value, dict):
@@ -244,11 +241,30 @@ def _load(path: Path) -> Mapping[str, object]:
     return value
 
 
+def _bounded_bytes(path: Path) -> bytes:
+    """Read a bounded regular evidence file without following a symlink."""
+
+    metadata = path.lstat()
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode) or metadata.st_size > _MAX_MATRIX_BYTES:
+        raise InstalledMatrixError("matrix file is not a bounded regular file")
+    with path.open("rb") as handle:
+        content = handle.read(_MAX_MATRIX_BYTES + 1)
+    if len(content) > _MAX_MATRIX_BYTES:
+        raise InstalledMatrixError("matrix file is not a bounded regular file")
+    return content
+
+
 def matrix_digest(path: Path) -> str:
     """Return the evidence file digest for a final manifest reference."""
 
-    _load(path)
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    content = _bounded_bytes(path)
+    try:
+        value = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise InstalledMatrixError("matrix file is not valid JSON") from error
+    if not isinstance(value, dict):
+        raise InstalledMatrixError("matrix root must be an object")
+    return hashlib.sha256(content).hexdigest()
 
 
 def _parser() -> argparse.ArgumentParser:

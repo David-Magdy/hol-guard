@@ -178,3 +178,14 @@ def test_final_evidence_validation_does_not_mutate_source() -> None:
     _validate(payload)
 
     assert payload == original
+
+
+def test_final_evidence_normalization_drops_unvalidated_fields() -> None:
+    payload = _payload()
+    payload["operator_note"] = "untrusted-but-not-sensitive"
+    payload["release"]["future_field"] = "also-not-validated"
+
+    normalized = _validate(payload)
+
+    assert "operator_note" not in normalized
+    assert "future_field" not in normalized["release"]

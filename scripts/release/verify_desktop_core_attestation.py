@@ -90,7 +90,7 @@ def verify(
     source_commit: str,
     source_tag: str,
     target: str,
-    expected_team_id: str | None = None,
+    expected_team_id: str,
 ) -> dict[str, object]:
     """Verify the post-sign bytes and return a privacy-safe evidence record."""
 
@@ -132,9 +132,8 @@ def verify(
     _require_signing_identity(marker_payload.get("appleSigningIdentity"), label="attestation appleSigningIdentity")
     for key in ("appleTeamId", "workflowRun", "attestedAt"):
         _require_token(marker_payload.get(key), label=f"attestation {key}")
-    if expected_team_id is not None:
-        _require_token(expected_team_id, label="expected Apple team ID")
-    if expected_team_id is not None and marker_payload["appleTeamId"] != expected_team_id:
+    _require_token(expected_team_id, label="expected Apple team ID")
+    if marker_payload["appleTeamId"] != expected_team_id:
         raise DesktopAttestationError("Desktop Core attestation team identity mismatch")
     verifier = _native_verifier()
     try:
@@ -163,7 +162,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--source-tag", required=True)
     parser.add_argument("--target", required=True)
-    parser.add_argument("--team-id")
+    parser.add_argument("--team-id", required=True)
     parser.add_argument("--output", type=Path)
     return parser
 

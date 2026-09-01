@@ -12,7 +12,7 @@ and only one owner:
 
 | Class | Files | Responsibility |
 |---|---:|---|
-| Required control plane | 60 | adapters, byte transport, native launch, supervision, presentation, and non-authoritative receipts |
+| Required control plane | 64 | adapters, byte transport, native launch, supervision, presentation, and non-authoritative receipts |
 | Named reference oracle | 17 | explicit differential tests and the documented pure-Python rollback oracle |
 | Dead duplicate | 1 | superseded Python resident transport |
 
@@ -71,7 +71,7 @@ The gate's snapshot at this change is:
 
 | Surface | LOC |
 |---|---:|
-| Required control plane | 16,033 |
+| Required control plane | 16,336 |
 | Named reference oracle | 6,619 |
 | Evidence persistence | included in control plane; 762 LOC subset |
 | Retained dead candidate | 569 |

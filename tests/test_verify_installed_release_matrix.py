@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import os
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +10,7 @@ from scripts.ci.verify_installed_release_matrix import (
     ALL_HARNESSES,
     REQUIRED_SCENARIOS,
     InstalledMatrixError,
+    matrix_digest,
     validate_matrix,
 )
 
@@ -130,3 +133,14 @@ def test_matrix_normalization_does_not_mutate_source() -> None:
     _validate(payload, windows_waiver="waived")
 
     assert payload == original
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink test requires Unix file semantics")
+def test_matrix_digest_rejects_symlinked_evidence(tmp_path: Path) -> None:
+    target = tmp_path / "matrix.json"
+    target.write_text("{}", encoding="utf-8")
+    link = tmp_path / "matrix-link.json"
+    link.symlink_to(target)
+
+    with pytest.raises(InstalledMatrixError, match="bounded regular file"):
+        matrix_digest(link)
