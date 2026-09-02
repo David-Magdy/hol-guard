@@ -91,7 +91,7 @@ jobs:
           .venv/bin/python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
       - name: Measure installed adapter-to-decision SLOs
         env:
-          HOL_GUARD_NATIVE_STOP_DIAGNOSTIC: native-stop-diagnostic.json
+          NATIVE_STOP_DIAGNOSTIC_PATH: native-stop-diagnostic.json
         run: |
           unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH
           unset HOL_GUARD_NATIVE_MODE HOL_GUARD_NATIVE_ORACLE HOL_GUARD_NATIVE_DIAGNOSTIC
@@ -237,7 +237,7 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
           PLATFORM_TAG: ${{ matrix.platform_tag }}
-          HOL_GUARD_NATIVE_STOP_DIAGNOSTIC: native-stop-diagnostic.json
+          NATIVE_STOP_DIAGNOSTIC_PATH: native-stop-diagnostic.json
         run: |
           unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH
           unset HOL_GUARD_NATIVE_MODE HOL_GUARD_NATIVE_ORACLE HOL_GUARD_NATIVE_DIAGNOSTIC

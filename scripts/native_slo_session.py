@@ -47,7 +47,7 @@ _CAPACITY_REASON_CODES = frozenset(
     }
 )
 _STOP_DIAGNOSTIC_SCHEMA = "hol-guard.native-resident-stop-diagnostic.v1"
-_STOP_DIAGNOSTIC_PATH_ENV = "HOL_GUARD_NATIVE_STOP_DIAGNOSTIC"
+_STOP_DIAGNOSTIC_PATH_ENV = "NATIVE_STOP_DIAGNOSTIC_PATH"
 _STOP_DIAGNOSTIC_FIELDS = (
     "acknowledged",
     "authenticated",
