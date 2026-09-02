@@ -231,10 +231,42 @@ fn run() -> Result<(), String> {
                 std::path::Path::new(state_dir),
                 managed_resident::parse_generation(generation)?,
                 digest,
+                None,
+            )
+        }
+        [
+            command,
+            state_flag,
+            state_dir,
+            generation_flag,
+            generation,
+            digest_flag,
+            digest,
+            parent_flag,
+            parent_process_id,
+            marker_flag,
+            parent_start_marker,
+        ] if command == "supervise-managed"
+            && state_flag == "--state-dir"
+            && generation_flag == "--generation"
+            && digest_flag == "--runtime-sha256"
+            && parent_flag == "--parent-process-id"
+            && marker_flag == "--parent-process-start-marker" =>
+        {
+            managed_resident::supervise_managed(
+                std::path::Path::new(state_dir),
+                managed_resident::parse_generation(generation)?,
+                digest,
+                Some(managed_resident::ParentIdentity {
+                    process_id: managed_resident::parse_process_id(parent_process_id)?,
+                    start_marker: managed_resident::parse_process_start_marker(
+                        parent_start_marker,
+                    )?,
+                }),
             )
         }
         _ => Err(
-            "usage: hol-guard-runtime capabilities --json | rule-contract --json | self-test --json | hook --stdin | migrate-policy --state-dir STATE_DIR | prepare-approval-enrollment --state-dir STATE_DIR | enroll-approval-authority --state-dir STATE_DIR --record RECORD | prepare-approval-v4-enrollment --state-dir STATE_DIR --rp-id RP_ID --origin ORIGIN | enroll-approval-v4-authority --state-dir STATE_DIR --record RECORD | hook-client --stdin STATE_DIR | resident-client --stdin STATE_DIR | resident-client-stream --stdin STATE_DIR | command-model --stdin | pre-tool --stdin | serve --socket PATH | serve --tcp-loopback 127.0.0.1:PORT | resident-stop --state-dir STATE_DIR | serve-managed --state-dir STATE_DIR --generation N --owner-process-id PID --runtime-sha256 SHA | supervise-managed --state-dir STATE_DIR --generation N --runtime-sha256 SHA"
+            "usage: hol-guard-runtime capabilities --json | rule-contract --json | self-test --json | hook --stdin | migrate-policy --state-dir STATE_DIR | prepare-approval-enrollment --state-dir STATE_DIR | enroll-approval-authority --state-dir STATE_DIR --record RECORD | prepare-approval-v4-enrollment --state-dir STATE_DIR --rp-id RP_ID --origin ORIGIN | enroll-approval-v4-authority --state-dir STATE_DIR --record RECORD | hook-client --stdin STATE_DIR | resident-client --stdin STATE_DIR | resident-client-stream --stdin STATE_DIR | command-model --stdin | pre-tool --stdin | serve --socket PATH | serve --tcp-loopback 127.0.0.1:PORT | resident-stop --state-dir STATE_DIR | serve-managed --state-dir STATE_DIR --generation N --owner-process-id PID --runtime-sha256 SHA | supervise-managed --state-dir STATE_DIR --generation N --runtime-sha256 SHA [--parent-process-id PID --parent-process-start-marker MARKER]"
                 .into(),
         ),
     }

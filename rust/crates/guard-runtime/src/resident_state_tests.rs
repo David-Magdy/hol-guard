@@ -96,6 +96,21 @@ fn publishing_generations_retires_superseded_state() {
     fs::remove_dir_all(scope).unwrap();
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn process_start_marker_uses_darwin_native_start_time() {
+    let marker = process_start_marker(std::process::id()).unwrap();
+    let mut parts = marker.split(':');
+    assert_eq!(parts.next(), Some("darwin"));
+    assert!(parts
+        .next()
+        .is_some_and(|value| value.parse::<u64>().is_ok()));
+    assert!(parts
+        .next()
+        .is_some_and(|value| value.parse::<u32>().is_ok()));
+    assert!(parts.next().is_none());
+}
+
 #[cfg(unix)]
 #[test]
 fn process_is_alive_reaps_an_unreaped_child() {

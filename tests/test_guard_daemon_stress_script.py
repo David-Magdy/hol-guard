@@ -8,6 +8,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
+import pytest
+
+import scripts.stress_guard_daemon as stress_script
 from scripts.stress_guard_daemon import StressResult
 
 
@@ -40,8 +43,10 @@ def test_daemon_stress_gate_keeps_fresh_process_alive_with_populated_store() -> 
     assert isinstance(result["database_bytes"], int)
     assert result["database_bytes"] > 0
     if os.name != "nt":
-        assert result["rss_baseline_bytes"] > 0
-        assert result["rss_peak_bytes"] >= result["rss_baseline_bytes"]
+        rss_baseline = cast(int, result["rss_baseline_bytes"])
+        rss_peak = cast(int, result["rss_peak_bytes"])
+        assert rss_baseline > 0
+        assert rss_peak >= rss_baseline
     lifecycle_events = result["lifecycle_events"]
     assert isinstance(lifecycle_events, list)
     assert "ready" in lifecycle_events
@@ -91,3 +96,62 @@ def test_enforced_soak_rejects_a_short_run_instead_of_claiming_proof() -> None:
     )
     assert completed.returncode == 2
     assert "requires at least 100000 requests and 250000 receipts" in completed.stderr
+
+
+def test_soak_baseline_stabilizes_bounded_worker_capacity_before_measurement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution = stress_script._StressExecution(
+        daemon_url="http://127.0.0.1:1",
+        endpoint="http://127.0.0.1:1/v1/hooks/pi",
+        auth_token="token",
+        initial_pid=123,
+        guard_home=Path("guard-home"),
+    )
+    reports = iter(
+        (
+            {"hook_workers": {"configured": 4, "target": 2, "workers": 2, "ready": 2, "busy": 0}},
+            {"hook_workers": {"configured": 4, "target": 2, "workers": 1, "ready": 1, "busy": 1}},
+            {"hook_workers": {"configured": 4, "target": 4, "workers": 4, "ready": 4, "busy": 0}},
+        )
+    )
+    requests: list[str] = []
+
+    monkeypatch.setattr(stress_script, "_WARMUP_CONCURRENCY", 4)
+    monkeypatch.setattr(stress_script, "_healthz_details", lambda _execution: next(reports))
+    monkeypatch.setattr(stress_script, "_stress_request", lambda *_args: requests.append("request") or 1.0)
+
+    stress_script._stabilize_full_worker_capacity(execution)
+
+    assert len(requests) == 4
+    assert execution.latencies_ms == []
+
+
+def test_stress_cleanup_preserves_resident_before_daemon_retirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    monkeypatch.setattr(stress_script, "_stop_native_runtime", lambda _guard_home: events.append("resident-stop"))
+    monkeypatch.setattr(
+        stress_script,
+        "_request_graceful_daemon_stop",
+        lambda _guard_home: events.append("daemon-worker-close"),
+    )
+    monkeypatch.setattr(
+        stress_script,
+        "retire_all_guard_daemons_for_home",
+        lambda _guard_home: events.append("daemon-retire") or [],
+    )
+    monkeypatch.setattr(stress_script, "guard_daemon_retirement_is_complete", lambda _guard_home: True)
+
+    assert stress_script._cleanup_stress_runtime(Path("guard-home")) is True
+    assert events == ["resident-stop", "daemon-worker-close", "daemon-retire"]
+
+
+def test_stress_cleanup_reports_leftover_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(stress_script, "_stop_native_runtime", lambda _guard_home: None)
+    monkeypatch.setattr(stress_script, "_request_graceful_daemon_stop", lambda _guard_home: None)
+    monkeypatch.setattr(stress_script, "retire_all_guard_daemons_for_home", lambda _guard_home: [])
+    monkeypatch.setattr(stress_script, "guard_daemon_retirement_is_complete", lambda _guard_home: False)
+
+    assert stress_script._cleanup_stress_runtime(Path("guard-home")) is False

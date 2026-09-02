@@ -6,16 +6,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.parse
-import urllib.request
-from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field
-from http.client import HTTPResponse
+from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
 
@@ -27,14 +27,27 @@ from codex_plugin_scanner.guard.daemon.discovery import load_authenticated_daemo
 from codex_plugin_scanner.guard.daemon.lifecycle_journal import load_daemon_lifecycle_events  # noqa: E402
 from codex_plugin_scanner.guard.daemon.manager import (  # noqa: E402
     ensure_guard_daemon,
-    guard_daemon_process_count,
+    guard_daemon_retirement_is_complete,
     load_guard_daemon_auth_token,
     retire_all_guard_daemons_for_home,
 )
 from codex_plugin_scanner.guard.native_runtime import native_runtime_status  # noqa: E402
 from codex_plugin_scanner.guard.store import GuardStore  # noqa: E402
-from scripts.native_slo_adapter import process_resources  # noqa: E402
 from scripts.native_slo_contract import clear_proof_environment, proof_environment_violations  # noqa: E402
+from scripts.stress_guard_daemon_runtime import StressExecution as _StressExecution  # noqa: E402
+from scripts.stress_guard_daemon_runtime import collect_batch as _collect_batch  # noqa: E402
+from scripts.stress_guard_daemon_runtime import finalize_stress_runtime as _finalize_stress_runtime  # noqa: E402
+from scripts.stress_guard_daemon_runtime import health_is_ready as _health_is_ready  # noqa: E402
+from scripts.stress_guard_daemon_runtime import healthz_details as _healthz_details  # noqa: E402
+from scripts.stress_guard_daemon_runtime import pid_is_running as _pid_is_running  # noqa: E402
+from scripts.stress_guard_daemon_runtime import run_stress_batches as _run_stress_batches  # noqa: E402
+from scripts.stress_guard_daemon_runtime import sample_stress_runtime as _sample_stress_runtime  # noqa: E402
+from scripts.stress_guard_daemon_runtime import settle_stress_runtime as _settle_stress_runtime  # noqa: E402
+from scripts.stress_guard_daemon_runtime import stabilized_process_resources as _stabilized_resources  # noqa: E402
+from scripts.stress_guard_daemon_runtime import stress_request as _stress_request  # noqa: E402
+from scripts.stress_guard_daemon_runtime import stress_warmup as _stress_warmup  # noqa: E402
+from scripts.stress_guard_daemon_runtime import update_pid_stability as _update_pid_stability  # noqa: E402
+from scripts.stress_guard_daemon_runtime import worker_capacity as _worker_capacity  # noqa: E402
 
 _SOAK_MIN_REQUESTS = 100_000
 _SOAK_MIN_RECEIPTS = 250_000
@@ -42,6 +55,8 @@ _SOAK_MAX_THREADS = 128
 _SOAK_MAX_FILE_DESCRIPTORS = 512
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _WARMUP_CONCURRENCY = 64
+_CAPACITY_STABILIZATION_TIMEOUT_SECONDS = 45.0
+_DAEMON_SHUTDOWN_TIMEOUT_SECONDS = 20.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,45 +107,6 @@ class StressResult:
         )
 
 
-def _process_resources(pid: int) -> tuple[int, int, int] | None:
-    """Read current aggregate process-tree resources without retaining command data."""
-
-    resources = process_resources(pid)
-    if resources is None:
-        return None
-    return resources.rss_bytes, resources.threads, resources.file_descriptors
-
-
-def _wait_for_process_resources(pid: int, *, timeout_seconds: float = 2.0) -> tuple[int, int, int] | None:
-    """Wait briefly for a newly spawned daemon to publish measurable resources."""
-
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        resources = _process_resources(pid)
-        if resources is not None:
-            return resources
-        time.sleep(0.01)
-    return _process_resources(pid)
-
-
-def _stabilized_process_resources(pid: int) -> tuple[int, int, int] | None:
-    """Capture a post-warmup ceiling so lazy worker startup is not counted as a leak."""
-
-    samples: list[tuple[int, int, int]] = []
-    for _ in range(3):
-        resources = _wait_for_process_resources(pid)
-        if resources is not None:
-            samples.append(resources)
-        time.sleep(0.1)
-    if not samples:
-        return None
-    return (
-        max(sample[0] for sample in samples),
-        max(sample[1] for sample in samples),
-        max(sample[2] for sample in samples),
-    )
-
-
 def _count_fixture_receipts(store: GuardStore) -> int:
     """Return the committed fixture count; never trust the requested count alone."""
 
@@ -167,6 +143,33 @@ def _stop_native_runtime(guard_home: Path) -> None:
         # The stress result is still evaluated from the daemon's observed
         # state. Never allow cleanup diagnostics to mask that result.
         return
+
+
+def _request_graceful_daemon_stop(guard_home: Path) -> None:
+    """Let the daemon close worker-owned streams before retirement fallback."""
+
+    if os.name == "nt":
+        return
+    state = load_authenticated_daemon_state(guard_home)
+    pid = state.get("pid") if isinstance(state, Mapping) else None
+    if not isinstance(pid, int) or pid <= 0 or not _pid_is_running(pid):
+        return
+    try:
+        os.kill(pid, signal.SIGINT)
+    except OSError:
+        return
+    deadline = time.monotonic() + _DAEMON_SHUTDOWN_TIMEOUT_SECONDS
+    while _pid_is_running(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
+def _cleanup_stress_runtime(guard_home: Path) -> bool:
+    """Stop resident streams first, then contain the daemon and its workers."""
+
+    _stop_native_runtime(guard_home)
+    _request_graceful_daemon_stop(guard_home)
+    _ = retire_all_guard_daemons_for_home(guard_home)
+    return guard_daemon_retirement_is_complete(guard_home)
 
 
 def seed_receipts(store: GuardStore, *, count: int) -> None:
@@ -211,124 +214,53 @@ def seed_receipts(store: GuardStore, *, count: int) -> None:
         connection.close()
 
 
-@dataclass
-class _StressExecution:
-    endpoint: str
-    auth_token: str
-    initial_pid: int
-    latencies_ms: list[float] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
-    health_checks: int = 0
-    health_failures: int = 0
-    pid_stable: bool = True
-    process_count: int | None = None
-    rss_baseline_bytes: int = 0
-    rss_peak_bytes: int = 0
-    max_threads: int = 0
-    max_file_descriptors: int = 0
+def _stabilize_full_worker_capacity(execution: _StressExecution) -> None:
+    """Fill the bounded daemon worker pool before taking the RSS baseline."""
 
-
-def _stress_request(endpoint: str, auth_token: str) -> float:
-    request = urllib.request.Request(
-        endpoint,
-        data=json.dumps(
-            {
-                "hook_event_name": "PreToolUse",
-                "tool_name": "Bash",
-                "tool_input": {"command": "echo stress"},
-            }
-        ).encode("utf-8"),
-        headers={"Content-Type": "application/json", "X-Guard-Token": auth_token},
-        method="POST",
-    )
-    started = time.monotonic()
-    with cast(HTTPResponse, urllib.request.urlopen(request, timeout=6)) as response:
-        body = response.read(_MAX_RESPONSE_BYTES + 1)
-    if len(body) > _MAX_RESPONSE_BYTES:
-        raise RuntimeError("Hook response exceeded the bounded stress limit.")
-    payload = cast(object, json.loads(body.decode("utf-8")))
-    if not isinstance(payload, dict):
-        raise RuntimeError("Hook response was not an object.")
-    return (time.monotonic() - started) * 1000
-
-
-def _stress_warmup(endpoint: str, auth_token: str, count: int) -> None:
-    with ThreadPoolExecutor(max_workers=count) as executor:
-        futures = [executor.submit(_stress_request, endpoint, auth_token) for _ in range(count)]
-        for future in futures:
-            future.result(timeout=6)
-
-
-def _record_resources(execution: _StressExecution, resources: tuple[int, int, int] | None) -> None:
-    if resources is None:
-        return
-    execution.rss_peak_bytes = max(execution.rss_peak_bytes, resources[0])
-    execution.max_threads = max(execution.max_threads, resources[1])
-    execution.max_file_descriptors = max(execution.max_file_descriptors, resources[2])
-
-
-def _sample_stress_runtime(execution: _StressExecution) -> None:
-    execution.health_checks += 1
-    if not _health_is_ready(execution.endpoint.split("/v1/", 1)[0]):
-        execution.health_failures += 1
-    _record_resources(execution, _process_resources(execution.initial_pid))
-
-
-def _collect_batch(execution: _StressExecution, futures: list[Future[float]]) -> None:
-    for future in futures:
-        try:
-            execution.latencies_ms.append(future.result())
-        except Exception as error:
-            execution.errors.append(type(error).__name__)
-
-
-def _run_stress_batches(execution: _StressExecution, request_count: int) -> None:
-    max_workers = min(request_count, 32)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for start in range(0, request_count, max_workers):
+    initial_capacity = _worker_capacity(_healthz_details(execution))
+    if initial_capacity is None:
+        raise RuntimeError("Stress daemon did not publish authenticated worker capacity.")
+    configured, initial_target, _workers, _ready, _busy = initial_capacity
+    if not 1 <= configured <= _WARMUP_CONCURRENCY:
+        raise RuntimeError("Stress daemon published an invalid worker capacity.")
+    if not 1 <= initial_target <= configured:
+        raise RuntimeError("Stress daemon published an invalid worker target.")
+    deadline = time.monotonic() + _CAPACITY_STABILIZATION_TIMEOUT_SECONDS
+    with ThreadPoolExecutor(max_workers=_WARMUP_CONCURRENCY) as executor:
+        while time.monotonic() < deadline:
+            current = _worker_capacity(_healthz_details(execution))
+            if current is not None:
+                current_configured, target, workers, ready, busy = current
+                if (
+                    current_configured == configured
+                    and target >= initial_target
+                    and workers == target
+                    and ready == target
+                    and busy == 0
+                ):
+                    return
             futures = [
                 executor.submit(_stress_request, execution.endpoint, execution.auth_token)
-                for _ in range(min(max_workers, request_count - start))
+                for _ in range(_WARMUP_CONCURRENCY)
             ]
             while not all(future.done() for future in futures):
                 _sample_stress_runtime(execution)
+                _update_pid_stability(execution, execution.guard_home)
                 time.sleep(0.05)
-            _collect_batch(execution, futures)
+            _collect_batch(execution, futures, retain_latencies=False)
+            if execution.errors:
+                raise RuntimeError("Stress worker-capacity stabilization returned request errors.")
+    raise RuntimeError("Stress daemon did not reach full worker capacity before the bounded deadline.")
 
 
 def _initialize_stress_resources(execution: _StressExecution) -> None:
-    resources = _stabilized_process_resources(execution.initial_pid)
+    resources = _stabilized_resources(execution.initial_pid)
     if resources is None:
         return
     execution.rss_baseline_bytes = resources[0]
     execution.rss_peak_bytes = resources[0]
     execution.max_threads = resources[1]
     execution.max_file_descriptors = resources[2]
-
-
-def _update_pid_stability(execution: _StressExecution, guard_home: Path) -> None:
-    state = load_authenticated_daemon_state(guard_home)
-    execution.pid_stable = (
-        execution.pid_stable
-        and state is not None
-        and state.get("pid") == execution.initial_pid
-        and _pid_is_running(execution.initial_pid)
-    )
-
-
-def _settle_stress_runtime(execution: _StressExecution, guard_home: Path, settle_seconds: float) -> None:
-    deadline = time.monotonic() + settle_seconds
-    while time.monotonic() < deadline:
-        _sample_stress_runtime(execution)
-        _update_pid_stability(execution, guard_home)
-        time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
-
-
-def _finalize_stress_runtime(execution: _StressExecution, guard_home: Path) -> None:
-    _sample_stress_runtime(execution)
-    _update_pid_stability(execution, guard_home)
-    execution.process_count = guard_daemon_process_count(guard_home)
-    _record_resources(execution, _process_resources(execution.initial_pid))
 
 
 def _prepare_stress_execution(root: Path, receipt_count: int) -> tuple[GuardStore, _StressExecution, Path]:
@@ -349,9 +281,11 @@ def _prepare_stress_execution(root: Path, receipt_count: int) -> tuple[GuardStor
         raise RuntimeError("Fresh daemon did not publish authenticated state.")
     query = urllib.parse.urlencode({"guard-home": guard_home, "home": home, "workspace": workspace})
     execution = _StressExecution(
+        daemon_url=daemon_url,
         endpoint=f"{daemon_url}/v1/hooks/pi?{query}",
         auth_token=auth_token,
         initial_pid=cast(int, state["pid"]),
+        guard_home=guard_home,
     )
     return store, execution, guard_home
 
@@ -419,13 +353,14 @@ def run_stress(
                 execution.health_failures += 1
             warmup_count = min(_WARMUP_CONCURRENCY, max(4, request_count))
             _stress_warmup(execution.endpoint, execution.auth_token, warmup_count)
+            if request_count >= _SOAK_MIN_REQUESTS:
+                _stabilize_full_worker_capacity(execution)
             _initialize_stress_resources(execution)
             _run_stress_batches(execution, request_count)
             _settle_stress_runtime(execution, guard_home, settle_seconds)
             _finalize_stress_runtime(execution, guard_home)
         finally:
-            _stop_native_runtime(guard_home)
-            _ = retire_all_guard_daemons_for_home(guard_home)
+            _ = _cleanup_stress_runtime(guard_home)
         return _stress_result(
             execution,
             store,
@@ -434,28 +369,6 @@ def run_stress(
             receipt_count=receipt_count,
             max_hook_latency_ms=max_hook_latency_ms,
         )
-
-
-def _health_is_ready(daemon_url: str) -> bool:
-    try:
-        with cast(
-            HTTPResponse,
-            urllib.request.urlopen(f"{daemon_url}/healthz", timeout=0.5),
-        ) as response:
-            payload = cast(object, json.loads(response.read().decode("utf-8")))
-    except Exception:
-        return False
-    if not isinstance(payload, dict):
-        return False
-    return cast(dict[object, object], payload).get("ok") is True
-
-
-def _pid_is_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
 
 
 def main() -> int:

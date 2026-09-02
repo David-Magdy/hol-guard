@@ -18,7 +18,8 @@ mod stop;
 mod supervisor;
 
 pub(crate) fn client_stream(state_base: &Path) -> Result<(), String> {
-    client_stream::run(state_base)
+    let parent_identity = crate::resident_state::package_process_start_marker(std::process::id())?;
+    client_stream::run(state_base, &parent_identity)
 }
 pub(crate) use client_stream::client_timeout;
 #[cfg(test)]
@@ -31,6 +32,7 @@ use crate::resident_state::{
 };
 
 pub(crate) use stop::stop_managed;
+pub(crate) use supervisor::ParentIdentity;
 
 #[cfg(test)]
 fn is_stale_process_identity_error(error: &str) -> bool {
@@ -206,6 +208,15 @@ pub(crate) fn client_request(
     payload: &[u8],
     timeout: Duration,
 ) -> Result<Vec<u8>, String> {
+    client_request_with_parent(state_base, payload, timeout, None)
+}
+
+pub(crate) fn client_request_with_parent(
+    state_base: &Path,
+    payload: &[u8],
+    timeout: Duration,
+    parent_start_marker: Option<&str>,
+) -> Result<Vec<u8>, String> {
     if timeout.is_zero() {
         return Err("native_client_deadline_exceeded".to_owned());
     }
@@ -245,7 +256,16 @@ pub(crate) fn client_request(
     let generation = next_generation(&scope, &digest)?;
     let mut token = [0u8; crate::AUTH_TOKEN_BYTES];
     getrandom::fill(&mut token).map_err(|_| "native_client_random_failed".to_owned())?;
-    supervisor::spawn_managed(state_base, generation, &digest, &token)?;
+    supervisor::spawn_managed(
+        state_base,
+        generation,
+        &digest,
+        &token,
+        parent_start_marker.map(|start_marker| supervisor::ParentIdentity {
+            process_id: std::process::id(),
+            start_marker: start_marker.to_owned(),
+        }),
+    )?;
     let deadline = overall_deadline.min(Instant::now() + CLIENT_START_TIMEOUT);
     while Instant::now() < deadline {
         if let Some(response) = stop::try_states(&scope, &digest, payload, overall_deadline)? {
@@ -322,12 +342,19 @@ pub(crate) fn supervise_managed(
     state_base: &Path,
     generation: u64,
     expected_digest: &str,
+    parent_identity: Option<supervisor::ParentIdentity>,
 ) -> Result<(), String> {
     if generation == 0 || runtime_digest()? != expected_digest {
         return Err("native_resident_runtime_identity_mismatch".to_owned());
     }
     let token = crate::read_resident_auth_token()?;
-    supervisor::supervise_managed(state_base, generation, expected_digest, &token)
+    supervisor::supervise_managed(
+        state_base,
+        generation,
+        expected_digest,
+        &token,
+        parent_identity,
+    )
 }
 
 pub(crate) fn parse_generation(value: &str) -> Result<u64, String> {
@@ -344,6 +371,13 @@ pub(crate) fn parse_process_id(value: &str) -> Result<u32, String> {
         .ok()
         .filter(|process_id| *process_id > 0)
         .ok_or_else(|| "native_resident_owner_process_invalid".to_owned())
+}
+
+pub(crate) fn parse_process_start_marker(value: &str) -> Result<String, String> {
+    if value.is_empty() || value.len() > 128 || !value.is_ascii() {
+        return Err("native_resident_parent_identity_invalid".to_owned());
+    }
+    Ok(value.to_owned())
 }
 
 #[cfg(test)]

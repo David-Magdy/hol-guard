@@ -58,6 +58,13 @@ _STOP_DIAGNOSTIC_FIELDS = (
     "serving_shutdown",
 )
 _STOP_FAILURE_STATUSES = frozenset({"failed", "contained_client_cleanup_failed"})
+_TRANSIENT_STOP_ERRORS = frozenset(
+    {
+        "native_resident_stop_unavailable",
+        "native_resident_stop_in_progress",
+    }
+)
+_STOP_RETRY_DELAY_SECONDS = 0.1
 _STOP_DIAGNOSTIC_RE = re.compile(
     rb"\b(?P<code>native_resident_[a-z0-9_]+)"
     rb"(?P<fields>(?::[a-z_]+=(?:true|false|free|busy|unverified|absent|present))*)"
@@ -153,30 +160,37 @@ def stop_native_resident(
 
     state_dir = guard_home / "native-runtime"
     if _resident_state_may_exist(state_dir):
-        try:
-            result = subprocess.run(
-                (str(runtime), "resident-stop", "--state-dir", str(state_dir)),
-                check=False,
-                capture_output=True,
-                timeout=2,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            diagnostic = _build_stop_diagnostic(
-                "failed",
-                error="native_resident_stop_process_failed",
-            )
-            if write_diagnostic:
-                _write_stop_diagnostic(diagnostic)
-            return NativeStopResult(False, diagnostic)
-        if result.returncode != 0:
+        diagnostic: dict[str, object] | None = None
+        for attempt in range(2):
+            try:
+                result = subprocess.run(
+                    (str(runtime), "resident-stop", "--state-dir", str(state_dir)),
+                    check=False,
+                    capture_output=True,
+                    timeout=2,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                diagnostic = _build_stop_diagnostic(
+                    "failed",
+                    error="native_resident_stop_process_failed",
+                )
+                break
+            if result.returncode == 0:
+                diagnostic = _build_stop_diagnostic(
+                    "contained",
+                    fields={field: "verified" for field in _STOP_DIAGNOSTIC_FIELDS},
+                )
+                break
             diagnostic = _stop_diagnostic_from_stderr(result.stderr)
+            if attempt == 0 and diagnostic.get("error") in _TRANSIENT_STOP_ERRORS:
+                time.sleep(_STOP_RETRY_DELAY_SECONDS)
+                continue
+            break
+        assert diagnostic is not None
+        if diagnostic.get("status") != "contained":
             if write_diagnostic:
                 _write_stop_diagnostic(diagnostic)
             return NativeStopResult(False, diagnostic)
-        diagnostic = _build_stop_diagnostic(
-            "contained",
-            fields={field: "verified" for field in _STOP_DIAGNOSTIC_FIELDS},
-        )
     else:
         diagnostic = _build_stop_diagnostic("already-stopped")
     # Keep persistent client processes alive until the Rust stop command has

@@ -143,6 +143,38 @@ def test_stop_native_resident_closes_clients_after_verified_stop(
     assert events == ["stop", "close"]
 
 
+def test_stop_native_resident_retries_one_transient_unavailable_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[str] = []
+
+    monkeypatch.setattr(native_slo_session, "_resident_state_may_exist", lambda _state_dir: True)
+
+    def fake_run(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        attempts.append("stop")
+        if len(attempts) == 1:
+            return SimpleNamespace(
+                returncode=1,
+                stderr=b"native_resident_stop_unavailable:owner_lock=busy",
+            )
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr(native_slo_session.subprocess, "run", fake_run)
+    monkeypatch.setattr(native_slo_session.time, "sleep", lambda _seconds: attempts.append("backoff"))
+    monkeypatch.setattr(
+        native_slo_session,
+        "close_native_resident_clients",
+        lambda _guard_home: attempts.append("close"),
+    )
+
+    result = native_slo_session.stop_native_resident(tmp_path / "runtime", tmp_path / "home")
+
+    assert result
+    assert attempts == ["stop", "backoff", "stop", "close"]
+    assert result.diagnostic["status"] == "contained"
+
+
 def test_adapter_session_stops_before_broadcasting_worker_client_close(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

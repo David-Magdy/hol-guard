@@ -11,6 +11,7 @@ pub(crate) fn spawn_managed(
     generation: u64,
     digest: &str,
     token: &[u8],
+    parent_identity: Option<super::ParentIdentity>,
 ) -> Result<(), String> {
     let executable =
         std::env::current_exe().map_err(|_| "native_resident_runtime_path_failed".to_owned())?;
@@ -23,6 +24,15 @@ pub(crate) fn spawn_managed(
         OsString::from("--runtime-sha256"),
         OsString::from(digest),
     ];
+    let mut arguments = arguments;
+    if let Some(parent_identity) = parent_identity {
+        arguments.extend([
+            OsString::from("--parent-process-id"),
+            OsString::from(parent_identity.process_id.to_string()),
+            OsString::from("--parent-process-start-marker"),
+            OsString::from(parent_identity.start_marker),
+        ]);
+    }
     let argument_refs: Vec<&OsStr> = arguments.iter().map(OsString::as_os_str).collect();
     let mut child = spawn_managed_child(&executable, &argument_refs)
         .map_err(|_| "native_resident_spawn_failed".to_owned())?;
@@ -46,6 +56,7 @@ pub(crate) fn supervise_managed(
     generation: u64,
     expected_digest: &str,
     token: &[u8],
+    parent_identity: Option<super::ParentIdentity>,
 ) -> Result<(), String> {
     let executable =
         std::env::current_exe().map_err(|_| "native_resident_runtime_path_failed".to_owned())?;
@@ -60,7 +71,7 @@ pub(crate) fn supervise_managed(
         OsString::from("--runtime-sha256"),
         OsString::from(expected_digest),
     ];
-    supervise_managed_child(&executable, &arguments, token)
+    supervise_managed_child_with_parent(&executable, &arguments, token, parent_identity.as_ref())
 }
 
 fn supervise_managed_child(
@@ -68,24 +79,51 @@ fn supervise_managed_child(
     arguments: &[OsString],
     token: &[u8],
 ) -> Result<(), String> {
+    supervise_managed_child_with_parent(executable, arguments, token, None)
+}
+
+fn supervise_managed_child_with_parent(
+    executable: &Path,
+    arguments: &[OsString],
+    token: &[u8],
+    parent_identity: Option<&super::ParentIdentity>,
+) -> Result<(), String> {
     let argument_refs: Vec<&OsStr> = arguments.iter().map(OsString::as_os_str).collect();
     let mut child = spawn_managed_child(executable, &argument_refs)
         .map_err(|_| "native_resident_spawn_failed".to_owned())?;
-    let mut liveness_writer = child
-        .take_stdin()
-        .ok_or_else(|| "native_resident_spawn_stdin_failed".to_owned())?;
+    let mut liveness_writer = match child.take_stdin() {
+        Some(stdin) => stdin,
+        None => return super::fail_spawn(child, "native_resident_spawn_stdin_failed"),
+    };
     let write_result = liveness_writer
         .write_all(hex_token(token).as_bytes())
         .and_then(|()| liveness_writer.write_all(b"\n"))
         .and_then(|()| liveness_writer.flush());
     if write_result.is_err() {
-        let _ = child.terminate();
-        return Err("native_resident_spawn_auth_failed".to_owned());
+        drop(liveness_writer);
+        return match child.terminate() {
+            Ok(()) => Err("native_resident_spawn_auth_failed".to_owned()),
+            Err(_) => Err("native_resident_spawn_containment_failed".to_owned()),
+        };
     }
-    let status_result = child.wait_success();
+    let status_result = loop {
+        match child.try_wait_success() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) => {
+                if parent_identity.is_some_and(|identity| !super::parent_is_alive(identity)) {
+                    drop(liveness_writer);
+                    return match child.terminate() {
+                        Ok(()) => Err("native_resident_parent_exit_contained".to_owned()),
+                        Err(_) => Err("native_resident_spawn_containment_failed".to_owned()),
+                    };
+                }
+                std::thread::sleep(super::SUPERVISOR_POLL_INTERVAL);
+            }
+            Err(_) => break Err("native_resident_supervisor_wait_failed".to_owned()),
+        }
+    };
     drop(liveness_writer);
-    let status_success =
-        status_result.map_err(|_| "native_resident_supervisor_wait_failed".to_owned())?;
+    let status_success = status_result?;
     if status_success {
         Ok(())
     } else {

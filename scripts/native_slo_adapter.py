@@ -125,7 +125,17 @@ def process_resources(pid: int | None = None) -> ProcessResources | None:
     resolved_pid = os.getpid() if pid is None else pid
     if resolved_pid <= 0:
         return None
-    rss_bytes = process_tree_rss_bytes((resolved_pid,)) or _single_process_rss_bytes(resolved_pid)
+    tree_rss_bytes = process_tree_rss_bytes((resolved_pid,))
+    if tree_rss_bytes is None or tree_rss_bytes <= 0:
+        # Linux soak evidence must account for every daemon worker.  A root
+        # process reading is not an equivalent measurement, so report the
+        # resource as unavailable when process-tree enumeration is missing.
+        # Other supported POSIX platforms retain their existing root fallback.
+        if sys.platform.startswith("linux"):
+            return None
+        rss_bytes = _single_process_rss_bytes(resolved_pid)
+    else:
+        rss_bytes = tree_rss_bytes
     threads = _process_threads(resolved_pid)
     file_descriptors = _process_file_descriptors(resolved_pid)
     if rss_bytes <= 0:

@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -46,6 +46,7 @@ from scripts.native_slo_adapter import (  # noqa: E402
     route_matrix,
     source_payloads,
 )
+from scripts.native_slo_baseline import steady_state_rss_baseline as _steady_state_rss_baseline  # noqa: E402
 from scripts.native_slo_contract import SIZE_CLASSES  # noqa: E402
 from scripts.native_slo_reporting import (  # noqa: E402
     SloMeasurements,
@@ -66,8 +67,6 @@ _MAX_CONCURRENCY = 64
 # state rather than stress growth.
 _POOL_WARMUP_CONCURRENCY = 16
 _HOOK_WORKER_STABILIZATION_TIMEOUT_SECONDS = 30.0
-_RSS_STABILIZATION_SAMPLES = 3
-_RSS_STABILIZATION_INTERVAL_SECONDS = 0.1
 _INSTALLED_WHEEL_OWNERSHIP_CONTRACT = "installed_wheel_ownership_contract"
 
 # Keep the historical private import available to contract tests and downstream tooling.
@@ -283,37 +282,6 @@ def _prewarm_ready_hook_workers(
     return observations, errors
 
 
-def _steady_state_rss_baseline(
-    run_pool_warmup: Callable[[], tuple[list[Observation], int]],
-    *,
-    sample_rss: Callable[[], int] = process_rss_bytes,
-    expected_warmup_count: int = _POOL_WARMUP_CONCURRENCY,
-) -> int:
-    """Measure RSS only after the bounded resident pool has reached steady state."""
-
-    _require(
-        0 < expected_warmup_count <= _MAX_CONCURRENCY,
-        "resident pool warmup count exceeded the bounded benchmark limit",
-    )
-    observations, errors = run_pool_warmup()
-    _require(errors == 0, "resident pool warmup returned request errors")
-    _require(
-        len(observations) == expected_warmup_count,
-        "resident pool warmup did not complete every request",
-    )
-    _require(
-        all(observation.allowed and observation.route == "native_resident" for observation in observations),
-        "resident pool warmup did not stay on the allowed native route",
-    )
-    samples = [sample_rss()]
-    for _ in range(_RSS_STABILIZATION_SAMPLES - 1):
-        time.sleep(_RSS_STABILIZATION_INTERVAL_SECONDS)
-        samples.append(sample_rss())
-    baseline = max(samples)
-    _require(baseline > 0, "resident RSS baseline was unavailable")
-    return baseline
-
-
 def _classify_native_overloads(
     observations: list[Observation],
     *,
@@ -370,6 +338,7 @@ def _measure_slo(
         ready_workers = _stabilize_ready_hook_workers(session)
         rss_baseline = _steady_state_rss_baseline(
             lambda: _prewarm_ready_hook_workers(session, routes, ready_workers),
+            sample_capacity=session.daemon._server.hook_process_runner.stats,
             expected_warmup_count=ready_workers,
         )
         rss_peak = rss_baseline

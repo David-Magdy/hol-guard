@@ -13,7 +13,6 @@ from codex_plugin_scanner.guard.runtime.hook_review_engine import HOOK_ENGINE_NO
 from scripts.bench_guard_native_installed_slo import (
     _safe_failure_rate,
     _stabilize_ready_hook_workers,
-    _steady_state_rss_baseline,
 )
 from scripts.native_slo_adapter import Observation, payload, process_resources, route_matrix, source_payloads
 from scripts.native_slo_contract import (
@@ -404,28 +403,6 @@ def test_rss_measurement_is_current_and_requires_ten_percent_bound() -> None:
         errors_64=0,
         python_fallback_decisions=0,
     )["rss"]
-
-
-def test_rss_baseline_warms_bounded_pool_but_keeps_stress_growth_visible() -> None:
-    events: list[str] = []
-    warmup_observations = [Observation("codex", "PostToolUse", "1k", 1.0, "native_resident", True) for _ in range(16)]
-
-    def run_pool_warmup() -> tuple[list[Observation], int]:
-        events.append("warmup")
-        return warmup_observations, 0
-
-    rss_samples = iter((100, 200, 200))
-
-    def sample_rss() -> int:
-        events.append("rss")
-        return next(rss_samples)
-
-    baseline = _steady_state_rss_baseline(run_pool_warmup, sample_rss=sample_rss)
-
-    assert events == ["warmup", "rss", "rss", "rss"]
-    assert baseline == 200
-    assert (220 - baseline) / baseline <= 0.10
-    assert (221 - baseline) / baseline > 0.10
 
 
 def test_worker_stabilization_forces_and_verifies_ready_target() -> None:

@@ -51,7 +51,7 @@ pub(super) fn write_frame(output: &mut impl Write, response: &[u8]) -> Result<()
         .map_err(|_| "native_client_stream_write_failed".to_owned())
 }
 
-pub(super) fn run(state_base: &Path) -> Result<(), String> {
+pub(super) fn run(state_base: &Path, parent_start_marker: &str) -> Result<(), String> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut input = stdin.lock();
@@ -61,7 +61,12 @@ pub(super) fn run(state_base: &Path) -> Result<(), String> {
             return Ok(());
         };
         let timeout = client_timeout(&payload);
-        let response = match super::client_request(state_base, &payload, timeout) {
+        let response = match super::client_request_with_parent(
+            state_base,
+            &payload,
+            timeout,
+            Some(parent_start_marker),
+        ) {
             Ok(response) => response,
             Err(_) => crate::resident_protocol::error_response(
                 "native_client_stream_request_failed",
