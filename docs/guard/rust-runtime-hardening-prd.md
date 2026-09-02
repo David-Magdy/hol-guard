@@ -181,7 +181,16 @@ For every capability, classify Python code as:
 2. active named differential-test oracle exercised in CI;
 3. dead duplicate.
 
-Delete category 3. Replaced, unreachable, or untested Python runtime implementations are dead code, not dormant rollback. Deletion includes implementation files, tests, imports, dependencies, package entries, flags, and shims. Move reusable cases to language-neutral fixtures. Add package-content/import tests and record Python LOC/dependency deltas.
+Delete category 3 only in a separately authorized deletion change. Replaced, unreachable, or untested Python runtime implementations are dead code, not
+dormant rollback. NHD-091–095 makes the first package boundary explicit:
+`docs/guard/contracts/python-capability-ownership.v1.json` classifies the full
+hook/runtime scope, `scripts/ci/python_capability_cleanup_gate.py` proves
+source/runtime reachability and package content, and the six-case parity
+fixture is language-neutral. The superseded Python resident source is retained
+but excluded from wheels/sdists and recorded as the sole deletion candidate;
+source deletion, tests/imports/dependencies/flags/shims removal, and any other
+category-3 cleanup remain separate until their rollback boundary is reviewed.
+Record Python LOC/dependency deltas for each authorized removal.
 
 Do not remove the active Python differential-test oracle while this PRD requires it. A production semantic fallback is forbidden; an untested oracle is dead code and must be removed.
 

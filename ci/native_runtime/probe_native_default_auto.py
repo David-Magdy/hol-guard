@@ -1,5 +1,10 @@
 """Installed-wheel proof for normalized native hook ingress defaults."""
 
+# The probe deliberately adds the repository root to sys.path so that it can
+# validate the installed package against the checked-in ownership contract.
+# Keep the import guard explicit instead of relying on the caller's cwd.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse
@@ -12,8 +17,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.append(str(_REPO_ROOT))
 
 import codex_plugin_scanner
 from codex_plugin_scanner.guard.adapters.codex_daemon_hook_transport import (
@@ -34,6 +44,8 @@ from codex_plugin_scanner.guard.native_runtime import (
 )
 from codex_plugin_scanner.guard.runtime.hook_review_types import HookReviewRequest
 from codex_plugin_scanner.guard.store import GuardStore
+from scripts.native_slo_adapter import is_allowed
+from scripts.native_slo_contract import proof_environment_violations
 
 
 def _request(root: Path, text: str, request_id: str) -> HookReviewRequest:
@@ -77,6 +89,14 @@ def _require(condition: bool, detail: object) -> None:
         raise RuntimeError(f"native_default_auto_probe_failed: {detail}")
 
 
+def _permission_decision(response: Mapping[str, object]) -> str | None:
+    specific = response.get("hookSpecificOutput")
+    if not isinstance(specific, Mapping):
+        return None
+    value = specific.get("permissionDecision")
+    return value if isinstance(value, str) else None
+
+
 def _native_state_files(guard_home: Path) -> list[Path]:
     return list((guard_home / "native-runtime").glob("resident-v3-*/generation-*.json"))
 
@@ -100,7 +120,7 @@ def _stop_native_runtime(runtime: Path, guard_home: Path) -> None:
 
 
 def _ownership_routes() -> dict[str, dict[str, str]]:
-    path = Path("docs/guard/contracts/hook-data-plane-ownership.v2.json")
+    path = _REPO_ROOT / "docs/guard/contracts/hook-data-plane-ownership.v2.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     routes = payload.get("harness_routes") if isinstance(payload, dict) else None
     if not isinstance(routes, dict):
@@ -187,6 +207,15 @@ def _exercise_installed_routes(
             response_payload = _installed_hook_request(daemon, guard_home, workspace, harness, event, payload)
             if response_payload is None:
                 raise RuntimeError(f"empty response for {harness} {event}")
+            _require(
+                is_allowed(event, response_payload),
+                {
+                    "harness": harness,
+                    "event": event,
+                    "decision": response_payload.get("decision"),
+                    "permission_decision": _permission_decision(response_payload),
+                },
+            )
             reason = response_payload.get("reason_code")
             if isinstance(reason, str):
                 reason_codes[reason] = reason_codes.get(reason, 0) + 1
@@ -307,6 +336,8 @@ def _installed_hook_corpus(root: Path) -> dict[str, object]:
 
 
 def _require_clean_probe_environment() -> None:
+    violations = proof_environment_violations()
+    _require(not violations, {"unexpected_proof_environment": violations})
     for environment_name in (
         "HOL_GUARD_NATIVE",
         "HOL_GUARD_NATIVE_BINARY",
@@ -323,6 +354,13 @@ def _require_clean_probe_environment() -> None:
         _require(native_mode() == "auto", "invalid native mode must resolve to auto")
     finally:
         os.environ.pop("HOL_GUARD_NATIVE", None)
+
+    package_path = Path(codex_plugin_scanner.__file__).resolve()
+    source_package = (_REPO_ROOT / "src" / "codex_plugin_scanner").resolve()
+    _require(
+        not package_path.is_relative_to(source_package),
+        f"probe imported source tree package: {package_path}",
+    )
 
 
 def _probe_native_identity() -> tuple[NativeRuntimeStatus, NativeRuntimeIdentity, NativeRuntimeCapabilities]:
@@ -359,8 +397,7 @@ def _run_native_smoke(root: Path) -> None:
         )
         if clean is None:
             raise RuntimeError(
-                "native_default_auto_probe_failed: clean response missing: "
-                f"{native_resident_client_failure_code()}"
+                f"native_default_auto_probe_failed: clean response missing: {native_resident_client_failure_code()}"
             )
         _require(clean.decision == "allow", clean)
         secret = review_post_tool_native(

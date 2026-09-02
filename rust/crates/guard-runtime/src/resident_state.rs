@@ -9,15 +9,24 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
 #[path = "resident_state_files.rs"]
 mod resident_state_files;
+#[path = "resident_state_identity.rs"]
+mod resident_state_identity;
 
 use resident_state_files::{ensure_private_directory, private_file};
 #[cfg(windows)]
 pub(crate) use resident_state_files::{
     open_private_read, protect_windows_private_path, verify_windows_private_path,
+};
+#[cfg(test)]
+pub(crate) use resident_state_identity::process_is_terminal;
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use resident_state_identity::process_start_marker;
+pub(crate) use resident_state_identity::{
+    package_process_start_marker, validate_package_process_identity,
+    validate_package_process_identity_with_marker,
 };
 
 const STATE_SCHEMA: &str = "hol-guard-resident-state.v3";
@@ -98,29 +107,6 @@ pub(crate) fn runtime_digest() -> Result<String, String> {
     let executable =
         std::env::current_exe().map_err(|_| "native_resident_runtime_path_failed".to_owned())?;
     executable_digest(&executable)
-}
-
-pub(crate) fn validate_package_process_identity(process_id: u32) -> Result<(), String> {
-    let pid = Pid::from_u32(process_id);
-    let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
-    );
-    let executable = system
-        .process(pid)
-        .and_then(|process| process.exe())
-        .ok_or_else(|| "native_resident_process_identity_unavailable".to_owned())?;
-    let expected_path = std::env::current_exe()
-        .and_then(fs::canonicalize)
-        .map_err(|_| "native_resident_runtime_path_failed".to_owned())?;
-    let process_path = fs::canonicalize(executable)
-        .map_err(|_| "native_resident_process_identity_unavailable".to_owned())?;
-    if process_path != expected_path {
-        return Err("native_resident_process_identity_mismatch".to_owned());
-    }
-    Ok(())
 }
 
 pub(crate) fn state_scope(base: &Path, digest: &str) -> Result<PathBuf, String> {

@@ -154,6 +154,25 @@ def test_process_tree_rss_rejects_path_shadowed_ps(
     assert process_tree_rss_bytes((10,)) is None
 
 
+def test_process_tree_rss_reports_unavailable_when_root_is_not_enumerated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(capacity_module.shutil, "which", lambda _name: "/usr/bin/ps")
+    monkeypatch.setattr(capacity_module, "is_trusted_absolute_command_path", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        capacity_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: capacity_module.subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="99 1 1000\n",
+            stderr="",
+        ),
+    )
+
+    assert process_tree_rss_bytes((10,)) is None
+
+
 def test_scale_up_requires_ten_continuous_seconds_and_one_second_spacing() -> None:
     clock = _Clock()
     policy = HookProcessCapacityPolicy(

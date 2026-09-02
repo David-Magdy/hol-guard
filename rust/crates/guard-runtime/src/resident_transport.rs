@@ -258,7 +258,13 @@ fn handle_pending_request(
             }
         }
     };
+    let is_shutdown_request = crate::strict_json_value(&request).is_ok_and(|value| {
+        value.get("operation").and_then(serde_json::Value::as_str) == Some("shutdown")
+    });
     let _ = write_bound_response(&mut *pending.stream, &pending.request_id, &response);
+    if is_shutdown_request {
+        crate::managed_resident::shutdown_response_sent();
+    }
 }
 
 fn spawn_workers<T, F>(count: usize, receiver: Receiver<T>, handler: F)

@@ -205,9 +205,8 @@ class NativePolicySnapshotPublisherInputs:
             database_paths = {
                 str(self.guard_home / name) for name in ("guard.db", "guard.db-wal", "guard.db-shm", "guard.db-journal")
             }
-            if any(path != config_path and path in database_paths for path in changed_paths):
-                return True
-            if any(path != config_path for path in changed_paths):
+            database_only_change = all(path in database_paths for path in changed_paths)
+            if not database_only_change and any(path != config_path for path in changed_paths):
                 # Workspace overrides, MDM policy files, and verifier state
                 # are all effective-input boundaries. Republish before the
                 # resident is used even when this Python projection cannot
@@ -215,8 +214,16 @@ class NativePolicySnapshotPublisherInputs:
                 return True
         try:
             effective_policy = self._compiled_effective_policy()
+            # ``_compiled_effective_policy`` carries the raw mode beside the
+            # bounded policy so snapshot generation can derive enforce versus
+            # observe. ``config_digest`` deliberately covers only the
+            # bounded policy fields, however; comparing the whole mapping
+            # would make every database heartbeat look like a policy change
+            # and continuously revoke the ACKed snapshot.
+            policy_for_digest = dict(effective_policy)
+            policy_for_digest.pop("mode", None)
             current_fingerprint = (
-                cast(str, _digest_v3(effective_policy)),
+                cast(str, _digest_v3(policy_for_digest)),
                 cast(str, effective_policy["mode"]),
             )
         except (OSError, NativePolicySnapshotError, TypeError, ValueError, RuntimeError):

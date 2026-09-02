@@ -1,11 +1,15 @@
 """Guard CLI runtime artifact hook final response flow."""
 
 # fmt: off
-# ruff: noqa: F403, F405, I001
+# ruff: noqa: E402, F403, F405, I001
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+from .commands_hook_compat_bootstrap import bootstrap_compatibility_module
+
+bootstrap_compatibility_module(globals())
 
 if TYPE_CHECKING:
     from .commands_support_claude_approval import _claude_native_pretooluse_terminal_notice

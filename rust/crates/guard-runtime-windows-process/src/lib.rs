@@ -20,6 +20,9 @@ mod windows;
 pub use windows::ManagedChild;
 
 #[cfg(windows)]
+pub use windows::process_start_marker;
+
+#[cfg(windows)]
 pub fn spawn_managed_child(executable: &Path, args: &[&OsStr]) -> io::Result<ManagedChild> {
     windows::spawn_managed_child(executable, args)
 }
@@ -32,5 +35,13 @@ pub fn spawn_managed_child(_executable: &Path, _args: &[&OsStr]) -> io::Result<M
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Windows managed process support is unavailable",
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn process_start_marker(_process_id: u32) -> io::Result<String> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Windows process support is unavailable",
     ))
 }

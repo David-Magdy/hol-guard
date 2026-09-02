@@ -160,6 +160,9 @@ def process_tree_rss_bytes(process_ids: tuple[int, ...]) -> int | None:
             process_rows.append((int(fields[0]), int(fields[1]), int(fields[2])))
         except ValueError:
             continue
+    observed_process_ids = {process_id for process_id, _parent_process_id, _rss_kib in process_rows}
+    if not root_process_ids.issubset(observed_process_ids):
+        return None
     included_process_ids = set(root_process_ids)
     while True:
         descendants = {

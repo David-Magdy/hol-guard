@@ -8276,6 +8276,9 @@ class GuardDaemonServer:
             self._server.serve_forever()
             if self._shutdown_started.is_set():
                 stop_reason = "requested_shutdown"
+        except KeyboardInterrupt:
+            self._shutdown_started.set()
+            stop_reason = "requested_shutdown"
         except BaseException:
             stop_reason = "serve_loop_failed"
             self._record_lifecycle("serve_failed", reason="unexpected_exception")

@@ -63,12 +63,18 @@ def review_hook_worker_slot(
 
 
 def _send_review_to_slot(slot: HookWorkerSlot, request: dict[str, object], review_deadline: float) -> object:
-    slot.connection.send(("review", request))
-    slot.request_exposed = True
     remaining_seconds = max(0.0, review_deadline - time.monotonic())
-    if not slot.connection.poll(remaining_seconds):
+    if not slot.handshake_lock.acquire(timeout=remaining_seconds):
         raise TimeoutError
-    return slot.connection.recv()
+    try:
+        slot.connection.send(("review", request))
+        slot.request_exposed = True
+        remaining_seconds = max(0.0, review_deadline - time.monotonic())
+        if not slot.connection.poll(remaining_seconds):
+            raise TimeoutError
+        return slot.connection.recv()
+    finally:
+        slot.handshake_lock.release()
 
 
 def _retry_slot_for_idempotent_review(

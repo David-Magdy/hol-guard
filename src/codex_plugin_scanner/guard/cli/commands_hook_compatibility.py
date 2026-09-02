@@ -1,10 +1,16 @@
 """Compatibility-only payload preparation for explicitly non-native hooks."""
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import os
 from argparse import Namespace
 from pathlib import Path
+
+from .commands_hook_compat_bootstrap import bootstrap_compatibility_module
+
+bootstrap_compatibility_module(globals())
 
 from ..adapters.base import HarnessContext
 from ..cli.commands_support_command_activity import (
