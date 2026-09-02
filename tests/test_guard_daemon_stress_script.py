@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -11,7 +12,104 @@ from typing import cast
 import pytest
 
 import scripts.stress_guard_daemon as stress_script
+import scripts.stress_guard_daemon_runtime as stress_runtime
 from scripts.stress_guard_daemon import StressResult
+
+
+class _HealthResponse:
+    def __init__(self, payload: object, *, status: int = 200) -> None:
+        self.status = status
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self) -> _HealthResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, _limit: int = -1) -> bytes:
+        return self._body
+
+
+@pytest.mark.parametrize(
+    "first_error",
+    (TimeoutError("temporary timeout"), urllib.error.URLError("connection failed")),
+)
+def test_health_probe_retries_transient_transport_failure_then_succeeds(
+    first_error: Exception,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[float] = []
+    responses = iter((first_error, _HealthResponse({"ok": True})))
+
+    def open_health(_url: str, *, timeout: float) -> object:
+        calls.append(timeout)
+        result = next(responses)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(stress_runtime.urllib.request, "urlopen", open_health)
+
+    assert stress_runtime.health_is_ready("http://127.0.0.1:1") is True
+    assert len(calls) == 2
+    assert 0 < calls[0] <= 0.5
+    assert 0 < calls[1] <= calls[0]
+
+
+def test_health_probe_retries_persistent_transport_failure_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls = 0
+
+    def open_health(_url: str, *, timeout: float) -> object:
+        del timeout
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("contains-secret-token")
+
+    monkeypatch.setattr(stress_runtime.urllib.request, "urlopen", open_health)
+
+    assert stress_runtime.health_is_ready("http://127.0.0.1:1") is False
+    assert calls == 2
+    assert "contains-secret-token" not in capsys.readouterr().out
+
+
+def test_health_probe_does_not_retry_an_explicitly_unhealthy_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def open_health(_url: str, *, timeout: float) -> _HealthResponse:
+        del timeout
+        nonlocal calls
+        calls += 1
+        return _HealthResponse({"ok": False})
+
+    monkeypatch.setattr(stress_runtime.urllib.request, "urlopen", open_health)
+
+    assert stress_runtime.health_is_ready("http://127.0.0.1:1") is False
+    assert calls == 1
+
+
+def test_health_probe_stops_when_total_deadline_is_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    clock = iter((100.0, 100.0, 101.01))
+
+    def open_health(_url: str, *, timeout: float) -> object:
+        del timeout
+        nonlocal calls
+        calls += 1
+        raise urllib.error.URLError("temporary connection failure")
+
+    monkeypatch.setattr(stress_runtime.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(stress_runtime.urllib.request, "urlopen", open_health)
+
+    assert stress_runtime.health_is_ready("http://127.0.0.1:1") is False
+    assert calls == 1
 
 
 def test_daemon_stress_gate_keeps_fresh_process_alive_with_populated_store() -> None:

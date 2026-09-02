@@ -19,6 +19,9 @@ from codex_plugin_scanner.guard.daemon.manager import guard_daemon_process_count
 from scripts.native_slo_adapter import process_resources
 
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+_HEALTH_PROBE_ATTEMPTS = 2
+_HEALTH_PROBE_TOTAL_TIMEOUT_SECONDS = 1.0
+_HEALTH_PROBE_ATTEMPT_TIMEOUT_SECONDS = _HEALTH_PROBE_TOTAL_TIMEOUT_SECONDS / _HEALTH_PROBE_ATTEMPTS
 
 
 @dataclass
@@ -161,14 +164,48 @@ def record_resources(execution: StressExecution, resources: tuple[int, int, int]
 
 
 def health_is_ready(daemon_url: str) -> bool:
-    try:
-        with cast(HTTPResponse, urllib.request.urlopen(f"{daemon_url}/healthz", timeout=0.5)) as response:
-            payload = cast(object, json.loads(response.read().decode("utf-8")))
-    except Exception:
-        return False
-    if not isinstance(payload, dict):
-        return False
-    return cast(dict[object, object], payload).get("ok") is True
+    """Probe liveness with bounded transport retry and no diagnostic leakage.
+
+    A response is authoritative: malformed or explicitly unhealthy payloads fail
+    immediately. Only failures establishing or reading the HTTP connection may
+    consume the one retry, and both attempts share a strict one-second budget.
+    """
+
+    deadline = time.monotonic() + _HEALTH_PROBE_TOTAL_TIMEOUT_SECONDS
+    for attempt in range(_HEALTH_PROBE_ATTEMPTS):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        timeout = min(_HEALTH_PROBE_ATTEMPT_TIMEOUT_SECONDS, remaining)
+        try:
+            with cast(
+                HTTPResponse,
+                urllib.request.urlopen(f"{daemon_url}/healthz", timeout=timeout),
+            ) as response:
+                if getattr(response, "status", 200) != 200:
+                    return False
+                body = response.read(_MAX_RESPONSE_BYTES + 1)
+        except urllib.error.HTTPError:
+            return False
+        except (OSError, urllib.error.URLError):
+            if attempt + 1 < _HEALTH_PROBE_ATTEMPTS:
+                continue
+            return False
+        except Exception:
+            return False
+
+        if not isinstance(body, bytes) or time.monotonic() > deadline or len(body) > _MAX_RESPONSE_BYTES:
+            return False
+        try:
+            payload = cast(object, json.loads(body.decode("utf-8")))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        if time.monotonic() > deadline:
+            return False
+        return cast(dict[object, object], payload).get("ok") is True
+    return False
 
 
 def pid_is_running(pid: int) -> bool:
