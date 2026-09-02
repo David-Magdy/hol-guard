@@ -102,6 +102,34 @@ fn stale_process_identity_errors_are_platform_scoped() {
 
 #[cfg(unix)]
 #[test]
+fn shutdown_containment_ignores_live_supervisor_owner_after_server_exit() {
+    use crate::resident_state::ResidentState;
+
+    let endpoint = std::env::temp_dir().join(format!(
+        "hol-guard-managed-resident-containment-{}-missing.sock",
+        std::process::id()
+    ));
+    let state = ResidentState {
+        schema: String::new(),
+        generation: 1,
+        // An impossible PID models a serving process that has exited.
+        process_id: u32::MAX,
+        // The supervisor may still be live or unreaped while its serving child
+        // has released the owner lock and removed the endpoint.
+        owner_process_id: std::process::id(),
+        runtime_sha256: String::new(),
+        transport: "unix".to_owned(),
+        endpoint: endpoint.to_string_lossy().into_owned(),
+        token_hex: String::new(),
+        created_ms: 0,
+        state_mac: String::new(),
+    };
+
+    assert!(stop::serving_process_and_endpoint_are_contained(&state));
+}
+
+#[cfg(unix)]
+#[test]
 fn managed_owner_lock_is_exclusive_for_resident_lifetime() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;

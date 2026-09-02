@@ -104,6 +104,10 @@ fn endpoint_is_contained(state: &ResidentState) -> bool {
     )
 }
 
+pub(super) fn serving_process_and_endpoint_are_contained(state: &ResidentState) -> bool {
+    process_is_contained(state.process_id) && endpoint_is_contained(state)
+}
+
 #[cfg(not(unix))]
 fn endpoint_is_contained(state: &ResidentState) -> bool {
     // Windows residents use an authenticated loopback endpoint. Process
@@ -129,12 +133,16 @@ fn verify_managed_shutdown(
         };
         let states = discover_states(scope, digest)?;
         let state_is_present = states.iter().any(|state| state.generation == generation);
+        // The serving process and published endpoint are the authoritative
+        // resident-containment evidence. The owner PID identifies the
+        // supervise-managed helper, which can remain an ephemeral or zombie
+        // process after the serving child has released its lock and endpoint;
+        // supervise-managed never restarts a contained server. Requiring that
+        // helper to disappear turns successful shutdown into a false timeout.
         let processes_and_endpoints_are_contained = !states.is_empty()
-            && states.iter().all(|state| {
-                process_is_contained(state.process_id)
-                    && process_is_contained(state.owner_process_id)
-                    && endpoint_is_contained(state)
-            });
+            && states
+                .iter()
+                .all(serving_process_and_endpoint_are_contained);
         if owner_lock_available && state_is_present && processes_and_endpoints_are_contained {
             return Ok(());
         }
