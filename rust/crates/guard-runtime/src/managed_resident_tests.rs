@@ -69,7 +69,7 @@ fn client_stream_propagates_header_read_errors() {
 
     impl Read for FailingReader {
         fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
-            Err(io::Error::new(io::ErrorKind::Other, "read failed"))
+            Err(io::Error::other("read failed"))
         }
     }
 

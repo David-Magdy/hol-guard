@@ -93,6 +93,11 @@ class _PersistentNativeClient:
         self._responses: Queue[bytes | _StreamFailure] = Queue(maxsize=1)
         self._reader: threading.Thread | None = None
         self._lock = threading.Lock()
+        # Keep process teardown out of the response wait.  The process-state
+        # lock protects snapshots; this lock protects the response queue and
+        # process snapshot until the response is consumed. Writes stay
+        # outside it so close() can interrupt a blocked platform pipe writer.
+        self._lifecycle_lock = threading.RLock()
         self._request_lock = threading.Lock()
 
     def _start(self) -> bool:
@@ -175,21 +180,32 @@ class _PersistentNativeClient:
             deadline_monotonic=deadline_monotonic,
         )
 
+    def _request_snapshot(
+        self,
+    ) -> tuple[subprocess.Popen[bytes], object, Queue[bytes | _StreamFailure]] | None:
+        with self._lifecycle_lock, self._lock:
+            if not self._start():
+                _LAST_FAILURE_CODE.set("native_client_start_failed")
+                return None
+            process = self._process
+            stdin = process.stdin if process is not None else None
+            if stdin is None or process is None:
+                _LAST_FAILURE_CODE.set("native_client_stdin_unavailable")
+                return None
+            return process, stdin, self._responses
+
     def request(self, payload: bytes, *, deadline_monotonic: float) -> bytes | None:
         if not payload or len(payload) > _MAX_REQUEST_BYTES:
             _LAST_FAILURE_CODE.set("native_client_request_invalid")
             return None
         with self._request_lock:
-            with self._lock:
-                if not self._start():
-                    _LAST_FAILURE_CODE.set("native_client_start_failed")
-                    return None
-                process = self._process
-                stdin = process.stdin if process is not None else None
-                responses = self._responses
-                if stdin is None:
-                    _LAST_FAILURE_CODE.set("native_client_stdin_unavailable")
-                    return None
+            snapshot = self._request_snapshot()
+            if snapshot is None:
+                return None
+            process, stdin, responses = snapshot
+            if not self._request_is_current(process, responses):
+                _LAST_FAILURE_CODE.set("native_client_stream_failed")
+                return None
             frame = struct.pack(">I", len(payload)) + payload
             if not self._write_frame(stdin, frame, deadline_monotonic=deadline_monotonic):
                 self.close()
@@ -199,30 +215,56 @@ class _PersistentNativeClient:
                     else "native_client_frame_write_failed"
                 )
                 return None
-            remaining = deadline_monotonic - time.monotonic()
-            if remaining <= 0:
-                self.close()
-                _LAST_FAILURE_CODE.set("native_client_timed_out")
-                return None
-            try:
-                response = responses.get(timeout=remaining)
-            except Empty:
-                self.close()
-                _LAST_FAILURE_CODE.set("native_client_timed_out")
-                return None
-            if isinstance(response, _StreamFailure):
-                self.close()
+            if not self._request_is_current(process, responses):
                 _LAST_FAILURE_CODE.set("native_client_stream_failed")
                 return None
-            return response
+            # A pool teardown may call close() while this request waits for
+            # its response. Hold the lifecycle lock for that wait so teardown
+            # cannot close the captured process or queue mid-read. The lock is
+            # intentionally acquired after the write, allowing close() to
+            # interrupt a blocked write on platforms that need a stoppable
+            # writer fallback.
+            with self._lifecycle_lock:
+                if not self._request_is_current(process, responses):
+                    _LAST_FAILURE_CODE.set("native_client_stream_failed")
+                    return None
+                remaining = deadline_monotonic - time.monotonic()
+                if remaining <= 0:
+                    self.close()
+                    _LAST_FAILURE_CODE.set("native_client_timed_out")
+                    return None
+                try:
+                    response = responses.get(timeout=remaining)
+                except Empty:
+                    self.close()
+                    _LAST_FAILURE_CODE.set("native_client_timed_out")
+                    return None
+                if isinstance(response, _StreamFailure):
+                    self.close()
+                    _LAST_FAILURE_CODE.set("native_client_stream_failed")
+                    return None
+                return response
+
+    def _request_is_current(
+        self,
+        process: subprocess.Popen[bytes],
+        responses: Queue[bytes | _StreamFailure],
+    ) -> bool:
+        """Reject a snapshot invalidated by concurrent client teardown."""
+
+        with self._lifecycle_lock, self._lock:
+            return self._process is process and self._responses is responses and process.poll() is None
 
     def _close_locked(self) -> None:
         process = self._process
         reader = self._reader
+        responses = self._responses
         self._process = None
         self._reader = None
         if process is None:
             return
+        with suppress(Full):
+            responses.put_nowait(_StreamFailure())
         if process.poll() is None:
             with suppress(OSError):
                 process.terminate()
@@ -241,7 +283,7 @@ class _PersistentNativeClient:
             reader.join(timeout=_CLIENT_CLOSE_TIMEOUT_SECONDS)
 
     def close(self) -> None:
-        with self._lock:
+        with self._lifecycle_lock, self._lock:
             self._close_locked()
 
 

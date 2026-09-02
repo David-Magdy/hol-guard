@@ -185,6 +185,18 @@ def _hook_evaluator_loop(
         message_type, raw_request = raw_message
         if message_type == "stop":
             return
+        if message_type == "close_native_resident_clients":
+            from ..native_resident_client import close_native_resident_clients
+
+            guard_home = (
+                Path(configured_guard_home).resolve(strict=False) if configured_guard_home is not None else None
+            )
+            close_native_resident_clients(guard_home)
+            try:
+                connection.send(("closed_native_resident_clients", None))
+            except (BrokenPipeError, EOFError, OSError):
+                return
+            continue
         typed_request = as_string_object_dict(raw_request)
         if message_type != "review" or typed_request is None:
             try:

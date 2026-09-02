@@ -37,6 +37,7 @@ use crate::resident_state::{
 
 const CLIENT_START_TIMEOUT: Duration = Duration::from_millis(600);
 const CLIENT_RETRY_DELAY: Duration = Duration::from_millis(5);
+const MANAGED_STOP_TIMEOUT: Duration = Duration::from_millis(750);
 const MANAGED_IDLE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const MANAGED_OWNER_LOCK_FILE_NAME: &str = "managed-resident-owner.v1.lock";
 static MANAGED_SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -321,6 +322,16 @@ pub(crate) fn client_request(
 pub(crate) fn stop_managed(state_base: &Path) -> Result<(), String> {
     let digest = runtime_digest()?;
     let scope = state_scope(state_base, &digest)?;
+    // Serialize stop with a concurrent starter.  A resident leaves its
+    // authenticated generation file behind after shutdown, so the lock plus
+    // a successful owner-lock probe lets us distinguish an already-stopped
+    // resident from a never-created (or currently-starting) one.
+    let mut startup_lock = acquire_startup_lock(&scope)?;
+    if startup_lock.is_none() && clear_stale_startup_lock(&scope, &digest)? {
+        startup_lock = acquire_startup_lock(&scope)?;
+    }
+    let _startup_lock =
+        startup_lock.ok_or_else(|| "native_resident_stop_unavailable".to_owned())?;
     let request = br#"{"operation":"shutdown","request":{}}"#;
     if try_states(
         &scope,
@@ -330,7 +341,34 @@ pub(crate) fn stop_managed(state_base: &Path) -> Result<(), String> {
     )?
     .is_some()
     {
-        return Ok(());
+        let deadline = Instant::now() + MANAGED_STOP_TIMEOUT;
+        while Instant::now() < deadline {
+            match acquire_managed_owner_lock(&scope) {
+                Ok(lock) => {
+                    drop(lock);
+                    return Ok(());
+                }
+                Err(error) if error == "native_resident_owner_busy" => {
+                    thread::sleep(CLIENT_RETRY_DELAY);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        return Err("native_resident_stop_timeout".to_owned());
+    }
+    // Idempotent stop is only successful for a scope with a previously
+    // authenticated state and an owner lock that is now available.  Empty or
+    // malformed scopes remain an unavailable-stop failure, and a busy owner
+    // remains a safe failure.
+    if !discover_states(&scope, &digest)?.is_empty() {
+        match acquire_managed_owner_lock(&scope) {
+            Ok(lock) => {
+                drop(lock);
+                return Ok(());
+            }
+            Err(error) if error == "native_resident_owner_busy" => {}
+            Err(error) => return Err(error),
+        }
     }
     Err("native_resident_stop_unavailable".to_owned())
 }

@@ -33,6 +33,21 @@ def test_native_hook_client_reuses_one_authenticated_generation(
     assert len(_state_files(state_dir)) == 1
 
 
+def test_native_resident_stop_is_idempotent_after_verified_shutdown(
+    native_runtime: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    runtime, state_dir = native_runtime
+    _invoke(runtime, state_dir, _request(runtime, tmp_path))
+    command = (str(runtime), "resident-stop", "--state-dir", str(state_dir))
+
+    first = subprocess.run(command, check=False, capture_output=True, timeout=3)
+    assert first.returncode == 0
+    second = subprocess.run(command, check=False, capture_output=True, timeout=3)
+    assert second.returncode == 0
+    assert len(_state_files(state_dir)) == 1
+
+
 def test_release_resident_starts_without_authority_and_rejects_approval(
     native_runtime: tuple[Path, Path],
     tmp_path: Path,

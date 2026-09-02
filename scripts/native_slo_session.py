@@ -226,5 +226,13 @@ class AdapterSession:
                 stop_native_resident(self.runtime, self.guard_home)
                 self.temporary.cleanup()
 
+    def stop_resident(self) -> bool:
+        """Close serving-worker clients before a linearizable resident stop."""
+
+        close_clients = getattr(self.daemon._server.hook_process_runner, "close_native_resident_clients", None)
+        if callable(close_clients) and close_clients() is False:
+            return False
+        return stop_native_resident(self.runtime, self.guard_home)
+
 
 __all__ = ["AdapterSession", "stop_native_resident"]

@@ -4,12 +4,17 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import TypedDict
+from types import SimpleNamespace
+from typing import TypedDict, cast
 
 import pytest
 
 from codex_plugin_scanner.guard.runtime.hook_review_engine import HOOK_ENGINE_NORMAL_BUDGET_MS
-from scripts.bench_guard_native_installed_slo import _safe_failure_rate, _steady_state_rss_baseline
+from scripts.bench_guard_native_installed_slo import (
+    _safe_failure_rate,
+    _stabilize_ready_hook_workers,
+    _steady_state_rss_baseline,
+)
 from scripts.native_slo_adapter import Observation, payload, process_resources, route_matrix, source_payloads
 from scripts.native_slo_contract import (
     MAX_EVIDENCE_BYTES,
@@ -26,7 +31,7 @@ from scripts.native_slo_contract import (
     summarize,
 )
 from scripts.native_slo_reporting import SloMeasurements, slo_gates, summarize_measurements
-from scripts.native_slo_session import _is_explicit_capacity_response
+from scripts.native_slo_session import AdapterSession, _is_explicit_capacity_response
 
 
 class _ConcurrencyGateKwargs(TypedDict):
@@ -421,6 +426,36 @@ def test_rss_baseline_warms_bounded_pool_but_keeps_stress_growth_visible() -> No
     assert baseline == 200
     assert (220 - baseline) / baseline <= 0.10
     assert (221 - baseline) / baseline > 0.10
+
+
+def test_worker_stabilization_forces_and_verifies_ready_target() -> None:
+    events: list[tuple[str, object]] = []
+
+    class FakeRunner:
+        def notify_queued_work(self) -> None:
+            events.append(("notify", None))
+
+        def enable_full_capacity(self, *, delay_seconds: float, active_deferral_seconds: float) -> None:
+            events.append(("enable", (delay_seconds, active_deferral_seconds)))
+
+        def wait_for_capacity(self, *, minimum_workers: int, timeout_seconds: float) -> bool:
+            events.append(("wait", (minimum_workers, timeout_seconds)))
+            return True
+
+        def stats(self) -> dict[str, object]:
+            return {"target": 4, "workers": 4, "ready": 4, "busy": 0}
+
+    def fake_session() -> object:
+        return SimpleNamespace(daemon=SimpleNamespace(_server=SimpleNamespace(hook_process_runner=FakeRunner())))
+
+    session = cast(AdapterSession, fake_session())
+
+    assert _stabilize_ready_hook_workers(session) == 4
+    assert events == [
+        ("notify", None),
+        ("enable", (0.0, 0.0)),
+        ("wait", (4, 30.0)),
+    ]
 
 
 def test_installed_adapter_corpus_covers_all_declared_routes_and_sizes(

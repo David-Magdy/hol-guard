@@ -67,6 +67,7 @@ _MAX_CONCURRENCY = 64
 # taking the RSS baseline so its one-time process/thread allocation is steady
 # state rather than stress growth.
 _POOL_WARMUP_CONCURRENCY = 16
+_HOOK_WORKER_STABILIZATION_TIMEOUT_SECONDS = 30.0
 _RSS_STABILIZATION_SAMPLES = 3
 _RSS_STABILIZATION_INTERVAL_SECONDS = 0.1
 _INSTALLED_WHEEL_OWNERSHIP_CONTRACT = "installed_wheel_ownership_contract"
@@ -187,7 +188,7 @@ def _run_cold(runtime: Path, session: AdapterSession, iterations: int) -> list[f
     }
     request = _wire_request(session.workspace, session.guard_home, "native-slo-cold")
     for _ in range(iterations):
-        stop_native_resident(runtime, session.guard_home)
+        _require(session.stop_resident(), "cold native resident stop was not contained")
         started = time.perf_counter()
         completed = subprocess.run(
             (str(runtime), "hook", "--stdin"),
@@ -214,7 +215,7 @@ def _run_recovery(session: AdapterSession, iterations: int) -> list[float]:
     for index in range(iterations):
         _ = session.observe("claude-code", "PostToolUse", "1k")
         _require(
-            stop_native_resident(session.runtime, session.guard_home),
+            session.stop_resident(),
             f"resident stop failed during recovery sample {index}",
         )
         started = time.perf_counter()
@@ -244,17 +245,74 @@ def _run_concurrent(
     return observations, errors
 
 
+def _stabilize_ready_hook_workers(session: AdapterSession) -> int:
+    """Bring every configured steady-state hook worker to ready before RSS sampling."""
+
+    runner = session.daemon._server.hook_process_runner
+    # AdapterSession starts with a two-worker floor and defers backfill. Clear
+    # that startup deferral, then request the normal target explicitly. The
+    # bounded wait below proves that target is actually ready before measuring.
+    runner.notify_queued_work()
+    runner.enable_full_capacity(delay_seconds=0.0, active_deferral_seconds=0.0)
+    initial = runner.stats()
+    target = initial["target"]
+    _require(
+        isinstance(target, int) and not isinstance(target, bool) and 1 <= target <= _MAX_CONCURRENCY,
+        "hook worker stabilization target was invalid",
+    )
+    _require(
+        runner.wait_for_capacity(
+            minimum_workers=target,
+            timeout_seconds=_HOOK_WORKER_STABILIZATION_TIMEOUT_SECONDS,
+        ),
+        "hook worker stabilization did not reach the configured target",
+    )
+    stabilized = runner.stats()
+    _require(
+        stabilized["target"] == target
+        and stabilized["workers"] == target
+        and stabilized["ready"] == target
+        and stabilized["busy"] == 0,
+        "hook worker capacity changed while stabilizing",
+    )
+    return target
+
+
+def _prewarm_ready_hook_workers(
+    session: AdapterSession,
+    routes: tuple[tuple[str, str], ...],
+    concurrency: int,
+) -> tuple[list[Observation], int]:
+    """Exercise one request on each ready worker and prove the pool stayed steady."""
+
+    observations, errors = _run_concurrent(session, routes, concurrency)
+    stats = session.daemon._server.hook_process_runner.stats()
+    _require(
+        stats["target"] == concurrency
+        and stats["workers"] == concurrency
+        and stats["ready"] == concurrency
+        and stats["busy"] == 0,
+        "hook worker capacity was not steady after prewarm",
+    )
+    return observations, errors
+
+
 def _steady_state_rss_baseline(
     run_pool_warmup: Callable[[], tuple[list[Observation], int]],
     *,
     sample_rss: Callable[[], int] = process_rss_bytes,
+    expected_warmup_count: int = _POOL_WARMUP_CONCURRENCY,
 ) -> int:
     """Measure RSS only after the bounded resident pool has reached steady state."""
 
+    _require(
+        0 < expected_warmup_count <= _MAX_CONCURRENCY,
+        "resident pool warmup count exceeded the bounded benchmark limit",
+    )
     observations, errors = run_pool_warmup()
     _require(errors == 0, "resident pool warmup returned request errors")
     _require(
-        len(observations) == _POOL_WARMUP_CONCURRENCY,
+        len(observations) == expected_warmup_count,
         "resident pool warmup did not complete every request",
     )
     _require(
@@ -342,12 +400,26 @@ def _measure_slo(
 ) -> SloMeasurements:
     rss_baseline = 0
     rss_peak = 0
+    # Cold probes stop the session's resident before each one-shot call. Keep
+    # them in a separate session so this lifecycle exercise does not consume
+    # the bounded restart budget used by warmup and recovery.
+    with AdapterSession(runtime) as cold_session:
+        cold = _run_cold(runtime, cold_session, cold_iterations)
     with AdapterSession(runtime) as session:
         warm = _run_warm(session, routes, warm_iterations)
         sizes = _run_sizes(session, routes)
         recovery = _run_recovery(session, recovery_iterations)
-        cold = _run_cold(runtime, session, cold_iterations)
-        rss_baseline = _steady_state_rss_baseline(lambda: _run_concurrent(session, routes, _POOL_WARMUP_CONCURRENCY))
+        warmup_harness, warmup_event = routes[0]
+        serialized_warmup = session.observe(warmup_harness, warmup_event, "1k")
+        _require(
+            serialized_warmup.allowed and serialized_warmup.route == "native_resident",
+            "serialized resident pool warmup did not stay on the allowed native route",
+        )
+        ready_workers = _stabilize_ready_hook_workers(session)
+        rss_baseline = _steady_state_rss_baseline(
+            lambda: _prewarm_ready_hook_workers(session, routes, ready_workers),
+            expected_warmup_count=ready_workers,
+        )
         rss_peak = rss_baseline
         native_overloads_before_16 = session.native_overload_count()
         concurrent_16, errors_16 = _run_concurrent(session, routes, 16) if include_capacity else ([], 0)

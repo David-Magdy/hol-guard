@@ -84,6 +84,138 @@ def test_dynamic_import_gate_preserves_function_local_static_bindings(tmp_path: 
     assert evidence[0].destination_values == ("example.allowed",)
 
 
+def test_dynamic_import_gate_resolves_statement_order_and_control_flow_conservatively(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "example.py").write_text(
+        "import importlib\n"
+        "importlib.import_module(destination)\n"
+        "destination = 'example.late'\n"
+        "def load_branch(flag):\n"
+        "    if flag:\n"
+        "        branch_destination = user_supplied\n"
+        "    else:\n"
+        "        branch_destination = 'example.allowed'\n"
+        "    return importlib.import_module(branch_destination)\n",
+        encoding="utf-8",
+    )
+
+    evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert evidence[0].destination_kind == "unbounded"
+    assert evidence[1].destination_kind == "unbounded"
+    assert unbounded == ["example:2", "example:9"]
+
+
+def test_dynamic_import_gate_does_not_use_future_loop_source_assignments(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "example.py").write_text(
+        "import importlib\n"
+        "for destination in destinations:\n"
+        "    importlib.import_module(destination)\n"
+        "destinations = ('example.allowed',)\n",
+        encoding="utf-8",
+    )
+
+    evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert evidence[0].destination_kind == "unbounded"
+    assert unbounded == ["example:3"]
+
+
+def test_dynamic_import_gate_requires_proof_from_cross_module_callers(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "example.py").write_text(
+        "import importlib\n"
+        "def load(destination):\n"
+        "    return importlib.import_module(destination)\n"
+        "load('example.allowed')\n",
+        encoding="utf-8",
+    )
+    (source / "caller.py").write_text(
+        "from example import load\nload(user_supplied)\n",
+        encoding="utf-8",
+    )
+
+    _evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert unbounded == ["example:3"]
+
+
+def test_dynamic_import_gate_does_not_merge_same_name_functions_across_modules(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "first.py").write_text(
+        "import importlib\ndef load(destination):\n    return importlib.import_module(destination)\n",
+        encoding="utf-8",
+    )
+    (source / "second.py").write_text(
+        "def load(destination):\n    return destination\nload('example.allowed')\n",
+        encoding="utf-8",
+    )
+
+    _evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert unbounded == ["first:3"]
+
+
+def test_dynamic_import_gate_does_not_merge_nested_same_name_functions(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "example.py").write_text(
+        "import importlib\n"
+        "def load(destination):\n"
+        "    return importlib.import_module(destination)\n"
+        "def wrapper():\n"
+        "    def load(destination):\n"
+        "        return destination\n"
+        "    return load('example.allowed')\n",
+        encoding="utf-8",
+    )
+
+    _evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert unbounded == ["example:3"]
+
+
+def test_dynamic_import_gate_does_not_inherit_conditional_parent_bindings(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "example.py").write_text(
+        "import importlib\n"
+        "if user_supplied:\n"
+        "    destination = 'example.allowed'\n"
+        "def load():\n"
+        "    return importlib.import_module(destination)\n",
+        encoding="utf-8",
+    )
+
+    _evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert unbounded == ["example:5"]
+
+
+def test_dynamic_import_gate_collects_function_local_import_aliases(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "example.py").write_text(
+        "def load_with_module_alias():\n"
+        "    import importlib as local_importlib\n"
+        "    return local_importlib.import_module('example.allowed')\n"
+        "def load_with_function_alias():\n"
+        "    from importlib import import_module as local_load\n"
+        "    return local_load('example.other')\n",
+        encoding="utf-8",
+    )
+
+    evidence, unbounded = GATE._dynamic_import_destinations(tmp_path)
+
+    assert unbounded == []
+    assert [item.destination_values for item in evidence] == [("example.allowed",), ("example.other",)]
+
+
 def test_dynamic_import_graph_records_alias_and_static_expression(tmp_path: Path) -> None:
     package = tmp_path / "src" / "codex_plugin_scanner" / "guard"
     package.mkdir(parents=True)

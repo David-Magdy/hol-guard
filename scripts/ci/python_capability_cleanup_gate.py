@@ -27,9 +27,12 @@ from scripts.ci.python_capability_cleanup_analysis import (  # noqa: E402
     DynamicImport as _DynamicImport,
 )
 from scripts.ci.python_capability_cleanup_analysis import (  # noqa: E402
+    _analyze_import_graph as _analyze_import_graph,
+)
+from scripts.ci.python_capability_cleanup_analysis import (  # noqa: E402, F401
     dynamic_import_destinations as _dynamic_import_destinations,
 )
-from scripts.ci.python_capability_cleanup_analysis import (  # noqa: E402
+from scripts.ci.python_capability_cleanup_analysis import (  # noqa: E402, F401
     module_imports as _module_imports,
 )
 from scripts.ci.python_capability_cleanup_analysis import (  # noqa: E402
@@ -298,8 +301,7 @@ def _source_analysis(
         source_loc[capability_id] = source_loc.get(capability_id, 0) + len(
             (root / path).read_text(encoding="utf-8").splitlines()
         )
-    import_graph, _ = _module_imports(root)
-    dynamic_imports, dynamic_unbounded = _dynamic_import_destinations(root)
+    import_graph, _dynamic, dynamic_imports, dynamic_unbounded = _analyze_import_graph(root)
     if dynamic_unbounded:
         raise RuntimeError(
             "dynamic import destination is not literal or statically bounded: " + ", ".join(sorted(dynamic_unbounded))

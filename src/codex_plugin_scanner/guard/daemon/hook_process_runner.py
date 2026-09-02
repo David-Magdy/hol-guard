@@ -31,6 +31,7 @@ _HOOK_PROCESS_RETRY_READY_SECONDS = 0.75
 _HOOK_PROCESS_TRANSIENT_NOT_READY_RETRIES = 8
 _HOOK_PROCESS_TRANSIENT_NOT_READY_BACKOFF_SECONDS = 0.025
 _HOOK_PROCESS_CLOSE_CONTAINMENT_GRACE_SECONDS = 4.0
+_NATIVE_CLIENT_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
 @final
@@ -378,6 +379,37 @@ class HookProcessRunner(HookProcessRunnerLifecycleMixin):
 
     def close(self) -> None:
         _ = self.close_contained()
+
+    def close_native_resident_clients(self, *, timeout_seconds: float = _NATIVE_CLIENT_CLOSE_TIMEOUT_SECONDS) -> bool:
+        """Close native client pools in every serving worker before a resident stop."""
+
+        if timeout_seconds <= 0:
+            return False
+        with self._state_lock:
+            if self._closed or not self._started:
+                return True
+            slots = tuple(self._all_slots.values())
+        deadline = time.monotonic() + timeout_seconds
+        for slot in slots:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if not slot.handshake_lock.acquire(timeout=remaining):
+                return False
+            try:
+                if not slot.process.is_alive():
+                    continue
+                slot.connection.send(("close_native_resident_clients", None))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not slot.connection.poll(remaining):
+                    return False
+                if slot.connection.recv() != ("closed_native_resident_clients", None):
+                    return False
+            except (BrokenPipeError, EOFError, OSError):
+                return False
+            finally:
+                slot.handshake_lock.release()
+        return True
 
     def close_contained(self) -> bool:
         with self._state_lock:
