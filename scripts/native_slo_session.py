@@ -73,19 +73,24 @@ def _resident_state_may_exist(state_dir: Path) -> bool:
 def stop_native_resident(runtime: Path, guard_home: Path) -> bool:
     """Stop one Rust resident through its bounded lifecycle command."""
 
-    close_native_resident_clients(guard_home)
     state_dir = guard_home / "native-runtime"
-    if not _resident_state_may_exist(state_dir):
-        return True
-    with suppress(OSError, subprocess.TimeoutExpired):
-        result = subprocess.run(
-            (str(runtime), "resident-stop", "--state-dir", str(state_dir)),
-            check=False,
-            capture_output=True,
-            timeout=2,
-        )
-        return result.returncode == 0
-    return False
+    if _resident_state_may_exist(state_dir):
+        try:
+            result = subprocess.run(
+                (str(runtime), "resident-stop", "--state-dir", str(state_dir)),
+                check=False,
+                capture_output=True,
+                timeout=2,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if result.returncode != 0:
+            return False
+    # Keep persistent client processes alive until the Rust stop command has
+    # verified containment. Their resident supervisor reaper must remain
+    # runnable while it waits for the serving process to exit.
+    close_native_resident_clients(guard_home)
+    return True
 
 
 def _request(
@@ -246,6 +251,10 @@ class AdapterSession:
             if self._connection is not None:
                 self._connection.close()
         finally:
+            # Stop the native resident while worker-owned persistent clients
+            # still exist so their supervisor reapers can verify containment.
+            with suppress(Exception):
+                self.stop_resident()
             try:
                 self.daemon.stop()
             finally:
@@ -256,12 +265,12 @@ class AdapterSession:
                 self.temporary.cleanup()
 
     def stop_resident(self) -> bool:
-        """Close serving-worker clients before a linearizable resident stop."""
+        """Stop the resident before closing serving-worker client streams."""
 
-        close_clients = getattr(self.daemon._server.hook_process_runner, "close_native_resident_clients", None)
-        if callable(close_clients) and close_clients() is False:
+        if not stop_native_resident(self.runtime, self.guard_home):
             return False
-        return stop_native_resident(self.runtime, self.guard_home)
+        close_clients = getattr(self.daemon._server.hook_process_runner, "close_native_resident_clients", None)
+        return not (callable(close_clients) and close_clients() is False)
 
 
 __all__ = ["AdapterSession", "stop_native_resident"]
