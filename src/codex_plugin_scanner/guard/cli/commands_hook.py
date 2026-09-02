@@ -129,6 +129,8 @@ def _run_guard_hook_command(
         return 0
     globals().update(compatibility_surface)
     config = _require_guard_config(config)
+    payload = hydrate_hook_payload_reference(payload)
+    payload = _normalize_hook_payload(payload, harness=args.harness)
     (
         payload,
         managed_install,
@@ -144,8 +146,6 @@ def _run_guard_hook_command(
         context=context,
         store=store,
         workspace=workspace,
-        hydrate_hook_payload_reference=hydrate_hook_payload_reference,
-        normalize_hook_payload=_normalize_hook_payload,
         prepare_compatibility_hook_payload=prepare_compatibility_hook_payload,
         managed_install_for=_managed_install_for,
         workspace_from_hook_payload=_workspace_from_hook_payload,
@@ -158,6 +158,16 @@ def _run_guard_hook_command(
     )
     if cursor_result is not None:
         return cursor_result
+    routed = try_native_or_source_ref_hook(
+        args,
+        config=config,
+        context=context,
+        payload=payload,
+        runtime_workspace=runtime_workspace,
+        store=store,
+    )
+    if routed is not None:
+        return routed
 
     def fresh_copilot_tool_call_authority():
         fresh_config = overlay_synced_guard_policy(

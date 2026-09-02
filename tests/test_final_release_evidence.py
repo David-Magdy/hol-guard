@@ -74,7 +74,7 @@ def _validate(
     )
 
 
-def _signed_payload(signing_key: Ed25519PrivateKey = TEST_PRIVATE_KEY) -> dict[str, object]:
+def _signed_payload(signer: Ed25519PrivateKey = TEST_PRIVATE_KEY) -> dict[str, object]:
     payload = _payload()
     unsigned_projection = _validate(payload)
     signed_bytes = canonical_bytes(unsigned_projection)
@@ -82,8 +82,8 @@ def _signed_payload(signing_key: Ed25519PrivateKey = TEST_PRIVATE_KEY) -> dict[s
         "status": "verified",
         "algorithm": "ed25519",
         "key_id": "release-evidence-key",
-        "public_key": base64.b64encode(signing_key.public_key().public_bytes_raw()).decode("ascii"),
-        "signature": base64.b64encode(signing_key.sign(signed_bytes)).decode("ascii"),
+        "public_key": base64.b64encode(signer.public_key().public_bytes_raw()).decode("ascii"),
+        "signature": base64.b64encode(signer.sign(signed_bytes)).decode("ascii"),
         "manifest_sha256": hashlib.sha256(signed_bytes).hexdigest(),
     }
     return payload

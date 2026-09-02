@@ -24,8 +24,6 @@ def prepare_compatibility_hook_state(
     context: HarnessContext,
     store: GuardStore,
     workspace: Path | None,
-    hydrate_hook_payload_reference: Callable[[dict[str, object]], dict[str, object]],
-    normalize_hook_payload: Callable[..., dict[str, object]],
     prepare_compatibility_hook_payload: Callable[..., dict[str, object]],
     managed_install_for: Callable[..., dict[str, object] | None],
     workspace_from_hook_payload: Callable[..., Path | None],
@@ -45,13 +43,8 @@ def prepare_compatibility_hook_state(
     str | None,
     tuple[GuardArtifact, str, object] | None,
 ]:
-    """Hydrate and route the payload after native authority declines."""
+    """Prepare the normalized payload after native authority declines."""
 
-    # Explicit off/shadow compatibility owns reference hydration only after
-    # native routing has declined authority. Auto/force therefore sends the
-    # bounded reference envelope to Rust without Python file I/O.
-    payload = hydrate_hook_payload_reference(payload)
-    payload = normalize_hook_payload(payload, harness=args.harness)
     payload = prepare_compatibility_hook_payload(payload, harness=args.harness)
     managed_install = managed_install_for(store, args.harness)
     workspace_was_explicit = workspace is not None
