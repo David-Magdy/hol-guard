@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(unix)]
+static MANAGED_OWNER_LOCK_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn generation_parser_rejects_zero_and_non_numeric() {
     assert!(parse_generation("0").is_err());
@@ -135,6 +138,9 @@ fn managed_owner_lock_is_exclusive_for_resident_lifetime() {
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    let _test_guard = MANAGED_OWNER_LOCK_TEST_GUARD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let root = std::env::temp_dir().join(format!(
         "hol-guard-managed-owner-lock-{}-{}",
         std::process::id(),
@@ -175,6 +181,9 @@ fn managed_owner_lock_rejects_second_process() {
     use std::process::{Command, Stdio};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    let _test_guard = MANAGED_OWNER_LOCK_TEST_GUARD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(root) = std::env::var_os("HOL_GUARD_OWNER_LOCK_CHILD") {
         let root = PathBuf::from(root);
         let _lock = acquire_managed_owner_lock(&root).unwrap();
