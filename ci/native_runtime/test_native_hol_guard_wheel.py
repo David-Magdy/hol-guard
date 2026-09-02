@@ -144,6 +144,24 @@ def test_adapter_session_stops_before_broadcasting_worker_client_close(
     assert events == ["stop", "close"]
 
 
+def test_adapter_session_keeps_containment_when_worker_client_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = SimpleNamespace(close_native_resident_clients=lambda: False)
+    daemon = SimpleNamespace(_server=SimpleNamespace(hook_process_runner=runner))
+    session = object.__new__(AdapterSession)
+    session.daemon = cast(GuardDaemonServer, cast(object, daemon))
+    session.runtime = tmp_path / "runtime"
+    session.guard_home = tmp_path / "home"
+    contained = native_slo_session.NativeStopResult(True, {"status": "contained"})
+
+    monkeypatch.setattr(native_slo_session, "stop_native_resident", lambda *_args: contained)
+
+    assert session.stop_resident()
+    assert session.last_stop_diagnostic["status"] == "contained_client_cleanup_failed"
+
+
 def test_adapter_session_close_stops_resident_before_daemon_shutdown(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

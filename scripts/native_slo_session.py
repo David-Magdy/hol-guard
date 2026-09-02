@@ -371,7 +371,10 @@ class AdapterSession:
             diagnostic["client_cleanup"] = "failed"
             self.last_stop_diagnostic = diagnostic
             _write_stop_diagnostic(diagnostic)
-            return False
+            # The Rust command has already verified resident containment. A
+            # worker-side stale-stream cleanup failure must remain diagnostic
+            # only and cannot change that containment decision.
+            return True
         return True
 
 
