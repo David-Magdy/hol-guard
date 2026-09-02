@@ -25,6 +25,7 @@ from typing import Final, cast
 if __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from scripts.ci.rust_io_ownership_contract import capability_contract
 from scripts.ci.rust_io_ownership_resolver import FunctionRecordLike, resolve_call
 
 SCHEMA: Final = "hol-guard.decision-critical-io.v1"
@@ -395,55 +396,7 @@ def _inventory(root: Path, reachable: tuple[FunctionRecord, ...]) -> list[IoObse
 
 
 def _capability_contract() -> list[dict[str, object]]:
-    return [
-        {
-            "id": "post_tool_source_read",
-            "authority": "rust",
-            "rust_symbols": ["guard_secure_fs::read_bounded", "guard_hook_core::review_post_tool"],
-            "python_semantic_fallback": False,
-            "compatibility_modes": sorted(COMPATIBILITY_MODES),
-            "failure": "fail_closed",
-        },
-        {
-            "id": "sensitive_path_and_symlink_classification",
-            "authority": "rust",
-            "rust_symbols": ["guard_secure_fs::classify_source_path", "guard_secure_fs::contains_symlink_component"],
-            "python_semantic_fallback": False,
-            "compatibility_modes": sorted(COMPATIBILITY_MODES),
-            "failure": "fail_closed",
-        },
-        {
-            "id": "pre_post_identity_and_equivalence",
-            "authority": "rust",
-            "rust_symbols": ["guard_secure_fs::FileIdentity", "guard_hook_core::review_post_tool"],
-            "python_semantic_fallback": False,
-            "compatibility_modes": sorted(COMPATIBILITY_MODES),
-            "failure": "fail_closed",
-        },
-        {
-            "id": "archive_decode_package_inspection",
-            "authority": "rust_when_hook_reachable",
-            "rust_symbols": [
-                "guard_command::pretool::evaluate_pre_tool_envelope",
-                "guard_runtime::strict_json::parse",
-                "guard_hook_core::extract_payload_output",
-            ],
-            "python_semantic_fallback": False,
-            "compatibility_modes": sorted(COMPATIBILITY_MODES),
-            "failure": "fail_closed",
-        },
-        {
-            "id": "policy_snapshot_admission",
-            "authority": "rust",
-            "rust_symbols": [
-                "guard_runtime::policy_store::PolicySnapshotStore",
-                "guard_runtime::edge::evaluate_envelope_with_store",
-            ],
-            "python_semantic_fallback": False,
-            "python_decision_time_disk_io": False,
-            "failure": "fail_closed",
-        },
-    ]
+    return capability_contract(COMPATIBILITY_MODES)
 
 
 def validate(root: Path) -> dict[str, object]:

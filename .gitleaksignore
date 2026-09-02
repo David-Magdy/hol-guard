@@ -1,3 +1,3 @@
 47e80fd309a92b2a495aaeac60cb4cebbf952f6a:tests/guard_review_signing_helpers.py:private-key:16
 # Synthetic deterministic Ed25519 test key; no literal private key is stored.
-441a0f24fb4865b3c6f1118789377cd6829c760e:tests/test_final_release_evidence.py:generic-api-key:77
+1e4e87e64c3ccfb870fb45de285d88b59e38a755:tests/test_final_release_evidence.py:generic-api-key:77

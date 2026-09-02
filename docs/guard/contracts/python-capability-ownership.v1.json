@@ -33,6 +33,7 @@
       "patterns": [
         "src/codex_plugin_scanner/guard/adapters/*hook*.py",
         "src/codex_plugin_scanner/guard/cli/commands_hook.py",
+        "src/codex_plugin_scanner/guard/cli/commands_hook_payload_preparation.py",
         "src/codex_plugin_scanner/guard/cli/commands_hook_github_workflow.py",
         "src/codex_plugin_scanner/guard/cli/commands_hook_local_cli.py",
         "src/codex_plugin_scanner/guard/cli/commands_hook_native_*.py",

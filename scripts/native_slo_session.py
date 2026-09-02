@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import subprocess
 import tempfile
 import threading
@@ -44,13 +45,41 @@ _CAPACITY_REASON_CODES = frozenset(
 )
 
 
+def _resident_state_may_exist(state_dir: Path) -> bool:
+    """Return whether a bounded resident-stop probe has state to contain."""
+
+    try:
+        metadata = state_dir.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        return True
+    try:
+        for scope in state_dir.iterdir():
+            if stat.S_ISLNK(scope.lstat().st_mode) or not scope.is_dir():
+                continue
+            if any(
+                stat.S_ISREG(candidate.lstat().st_mode) and candidate.name.startswith("generation-")
+                for candidate in scope.iterdir()
+            ):
+                return True
+    except OSError:
+        return True
+    return False
+
+
 def stop_native_resident(runtime: Path, guard_home: Path) -> bool:
     """Stop one Rust resident through its bounded lifecycle command."""
 
     close_native_resident_clients(guard_home)
+    state_dir = guard_home / "native-runtime"
+    if not _resident_state_may_exist(state_dir):
+        return True
     with suppress(OSError, subprocess.TimeoutExpired):
         result = subprocess.run(
-            (str(runtime), "resident-stop", "--state-dir", str(guard_home / "native-runtime")),
+            (str(runtime), "resident-stop", "--state-dir", str(state_dir)),
             check=False,
             capture_output=True,
             timeout=2,

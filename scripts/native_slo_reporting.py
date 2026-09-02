@@ -81,44 +81,62 @@ def safe_failure_rate(observations: Sequence[Observation]) -> float:
     ) / max(1, len(observations))
 
 
+def _all_observations(measurements: SloMeasurements) -> list[Observation]:
+    return measurements.warm + measurements.sizes + measurements.concurrent_16 + measurements.concurrent_64
+
+
+def _latencies_by_size(observations: Sequence[Observation]) -> dict[str, list[float]]:
+    return {
+        size_class: [observation.latency_ms for observation in observations if observation.size_class == size_class]
+        for size_class in SIZE_CLASSES
+    }
+
+
+def _latencies_by_event(observations: Sequence[Observation]) -> dict[str, list[float]]:
+    return {
+        event: [observation.latency_ms for observation in observations if observation.event == event]
+        for event in ("PreToolUse", "PostToolUse")
+    }
+
+
+def _failure_counts(
+    observations: Sequence[Observation],
+) -> tuple[int, Counter[str], int, Counter[str]]:
+    safe = [
+        observation
+        for observation in observations
+        if observation.route == "native_fail_safe" and not observation.overloaded
+    ]
+    denials = [
+        observation
+        for observation in observations
+        if not observation.allowed and (observation.route != "native_fail_safe" or observation.overloaded)
+    ]
+    return (
+        len(safe),
+        Counter(observation.size_class for observation in safe),
+        len(denials),
+        Counter(observation.size_class for observation in denials),
+    )
+
+
+def _rss_growth(measurements: SloMeasurements) -> float:
+    if not measurements.rss_baseline:
+        return 1.0
+    return round(max(0, measurements.rss_peak - measurements.rss_baseline) / measurements.rss_baseline, 6)
+
+
 def summarize_measurements(measurements: SloMeasurements) -> SloSummary:
-    all_observations = measurements.warm + measurements.sizes + measurements.concurrent_16 + measurements.concurrent_64
+    all_observations = _all_observations(measurements)
     route_counts = Counter(observation.route for observation in all_observations)
     _require(
         not (set(route_counts) - SAFE_ROUTE_NAMES),
         {"unexpected_routes": sorted(set(route_counts) - SAFE_ROUTE_NAMES)},
     )
     warm_values = [observation.latency_ms for observation in measurements.warm]
-    size_values = {
-        size_class: [observation.latency_ms for observation in all_observations if observation.size_class == size_class]
-        for size_class in SIZE_CLASSES
-    }
-    event_values = {
-        event: [observation.latency_ms for observation in measurements.warm if observation.event == event]
-        for event in ("PreToolUse", "PostToolUse")
-    }
-    rss_growth = (
-        round(max(0, measurements.rss_peak - measurements.rss_baseline) / measurements.rss_baseline, 6)
-        if measurements.rss_baseline
-        else 1.0
-    )
-    safe_failures = sum(
-        observation.route == "native_fail_safe" and not observation.overloaded for observation in all_observations
-    )
-    safe_failures_by_size = Counter(
-        observation.size_class
-        for observation in all_observations
-        if observation.route == "native_fail_safe" and not observation.overloaded
-    )
-    security_denials = sum(
-        not observation.allowed and (observation.route != "native_fail_safe" or observation.overloaded)
-        for observation in all_observations
-    )
-    security_denials_by_size = Counter(
-        observation.size_class
-        for observation in all_observations
-        if not observation.allowed and (observation.route != "native_fail_safe" or observation.overloaded)
-    )
+    size_values = _latencies_by_size(all_observations)
+    event_values = _latencies_by_event(measurements.warm)
+    safe_failures, safe_failures_by_size, security_denials, security_denials_by_size = _failure_counts(all_observations)
     return SloSummary(
         all_observations=all_observations,
         route_counts=route_counts,
@@ -135,7 +153,7 @@ def summarize_measurements(measurements: SloMeasurements) -> SloSummary:
         concurrent_values=[observation.latency_ms for observation in measurements.concurrent_16],
         size_p95={size_class: summarize(values)["p95_ms"] for size_class, values in size_values.items() if values},
         event_values=event_values,
-        rss_growth=rss_growth,
+        rss_growth=_rss_growth(measurements),
         concurrent_64_summary=summarize([item.latency_ms for item in measurements.concurrent_64]),
         concurrent_16_overloads=sum(item.overloaded for item in measurements.concurrent_16),
         concurrent_64_overloads=sum(item.overloaded for item in measurements.concurrent_64),

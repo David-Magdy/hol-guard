@@ -1,7 +1,21 @@
 use std::io::{self, Read, Write};
 use std::path::Path;
+use std::time::Duration;
 
 const FRAME_HEADER_BYTES: usize = 4;
+
+pub(crate) fn client_timeout(payload: &[u8]) -> Duration {
+    let budget = crate::strict_json_value(payload)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("deadline_budget_ms")
+                .and_then(serde_json::Value::as_u64)
+        })
+        .unwrap_or(750)
+        .clamp(1, 9_000);
+    Duration::from_millis(budget)
+}
 
 pub(super) fn read_frame(input: &mut impl Read) -> Result<Option<Vec<u8>>, String> {
     let mut header = [0u8; FRAME_HEADER_BYTES];
@@ -46,7 +60,7 @@ pub(super) fn run(state_base: &Path) -> Result<(), String> {
         let Some(payload) = read_frame(&mut input)? else {
             return Ok(());
         };
-        let timeout = super::client_timeout(&payload);
+        let timeout = client_timeout(&payload);
         let response = match super::client_request(state_base, &payload, timeout) {
             Ok(response) => response,
             Err(_) => crate::resident_protocol::error_response(

@@ -131,6 +131,7 @@ jobs:
             --enforce-soak \
             --json native-soak.json
           VERSION=$(uv run --no-sync python scripts/sync_repo_version.py --check)
+          cp "pure-dist/hol_guard-${VERSION}-py3-none-any.whl" native-dist/
           SOURCE_SHA="${GITHUB_SHA:?missing GitHub source SHA}"
           runtime="rust/target/x86_64-unknown-linux-musl/release/hol-guard-runtime"
           RULE_DIGEST=$("$runtime" capabilities --json | python -c 'import json,sys; print(json.load(sys.stdin)["rule_digest"])')
@@ -254,6 +255,7 @@ jobs:
             --json native-installed-slo.json \
             --enforce
           VERSION=$(uv run --no-sync python scripts/sync_repo_version.py --check)
+          cp "pure-dist/hol_guard-${VERSION}-py3-none-any.whl" native-dist/
           SOURCE_SHA="${GITHUB_SHA:?missing GitHub source SHA}"
           runtime="rust/target/release/hol-guard-runtime"
           RULE_DIGEST=$("$runtime" capabilities --json | python -c 'import json,sys; print(json.load(sys.stdin)["rule_digest"])')

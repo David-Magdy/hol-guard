@@ -49,6 +49,7 @@ from .commands_hook_compat_loader import (
     load_hook_compatibility_surface,
 )
 from .commands_hook_native_authority import try_native_or_source_ref_hook
+from .commands_hook_payload_preparation import prepare_compatibility_hook_state
 from .commands_parser_helpers import *
 from .commands_support_interaction import _emit
 from .commands_support_workspace import _workspace_from_hook_payload
@@ -128,59 +129,35 @@ def _run_guard_hook_command(
         return 0
     globals().update(compatibility_surface)
     config = _require_guard_config(config)
-    # Explicit off/shadow compatibility owns reference hydration only after
-    # native routing has declined authority. Auto/force therefore sends the
-    # bounded reference envelope to Rust without Python file I/O.
-    payload = hydrate_hook_payload_reference(payload)
-    payload = _normalize_hook_payload(payload, harness=args.harness)
-    payload = prepare_compatibility_hook_payload(payload, harness=args.harness)
-    managed_install = _managed_install_for(store, args.harness)
-    workspace_was_explicit = workspace is not None
-    runtime_workspace = _workspace_from_hook_payload(payload, workspace)
-    if runtime_workspace is None and args.harness == "copilot":
-        with suppress(OSError):
-            current_workspace = Path.cwd().resolve()
-            if current_workspace.is_dir():
-                runtime_workspace = current_workspace
-    runtime_workspace, cursor_result = maybe_handle_cursor_post_tool(
-        args=args,
+    (
+        payload,
+        managed_install,
+        workspace_was_explicit,
+        runtime_workspace,
+        cursor_result,
+        action_envelope,
+        copilot_hook_stage,
+        copilot_runtime_tool_call,
+    ) = prepare_compatibility_hook_state(
+        args,
         payload=payload,
         context=context,
         store=store,
-        runtime_workspace=runtime_workspace,
+        workspace=workspace,
+        hydrate_hook_payload_reference=hydrate_hook_payload_reference,
+        normalize_hook_payload=_normalize_hook_payload,
+        prepare_compatibility_hook_payload=prepare_compatibility_hook_payload,
+        managed_install_for=_managed_install_for,
+        workspace_from_hook_payload=_workspace_from_hook_payload,
+        maybe_handle_cursor_post_tool=maybe_handle_cursor_post_tool,
+        resolve_copilot_workspace_root=_resolve_copilot_workspace_root,
+        action_envelope_for=_hook_action_envelope,
+        copilot_hook_stage_for=_copilot_hook_stage,
+        copilot_runtime_tool_call_for=_copilot_runtime_tool_call,
+        config=config,
     )
     if cursor_result is not None:
         return cursor_result
-    if args.harness == "copilot":
-        runtime_workspace = _resolve_copilot_workspace_root(runtime_workspace)
-    routed = try_native_or_source_ref_hook(
-        args,
-        config=config,
-        context=context,
-        payload=payload,
-        runtime_workspace=runtime_workspace,
-        store=store,
-    )
-    if routed is not None:
-        return routed
-    action_envelope = _hook_action_envelope(
-        harness=args.harness,
-        payload=payload,
-        home_dir=context.home_dir,
-        workspace=runtime_workspace,
-    )
-    copilot_hook_stage = _copilot_hook_stage(payload) if args.harness == "copilot" else None
-    copilot_runtime_tool_call = (
-        _copilot_runtime_tool_call(
-            payload=payload,
-            home_dir=context.home_dir,
-            workspace=runtime_workspace,
-            config=config,
-            preferred_workspace_config="ide" if workspace_was_explicit else "cli",
-        )
-        if args.harness == "copilot"
-        else None
-    )
 
     def fresh_copilot_tool_call_authority():
         fresh_config = overlay_synced_guard_policy(

@@ -23,6 +23,7 @@ mod restart_budget;
 pub(crate) fn client_stream(state_base: &Path) -> Result<(), String> {
     client_stream::run(state_base)
 }
+pub(crate) use client_stream::client_timeout;
 #[cfg(test)]
 use client_stream::{
     read_frame as read_client_stream_frame, write_frame as write_client_stream_frame,
@@ -487,19 +488,6 @@ pub(crate) fn parse_process_id(value: &str) -> Result<u32, String> {
         .ok()
         .filter(|process_id| *process_id > 0)
         .ok_or_else(|| "native_resident_owner_process_invalid".to_owned())
-}
-
-pub(crate) fn client_timeout(payload: &[u8]) -> Duration {
-    let budget = crate::strict_json_value(payload)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("deadline_budget_ms")
-                .and_then(serde_json::Value::as_u64)
-        })
-        .unwrap_or(750)
-        .clamp(1, 9_000);
-    Duration::from_millis(budget)
 }
 
 #[cfg(test)]

@@ -36,16 +36,14 @@ from codex_plugin_scanner.guard.native_runtime import (  # noqa: E402
     review_post_tool_native,
 )
 from codex_plugin_scanner.guard.runtime.hook_review_types import HookReviewRequest  # noqa: E402
-from scripts.native_slo_contract import MAX_DIRECT_CONCURRENT_P99_MS  # noqa: E402
+from scripts import native_release_reporting as _native_release_reporting  # noqa: E402
 from scripts.native_slo_session import stop_native_resident  # noqa: E402
 
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-_MIN_WARM_P95_SPEEDUP = 1.15
-_MAX_WARM_P95_MS = 20.0
-_MIN_COLD_P95_SPEEDUP = 5.0
-_MAX_COLD_P95_MS = 100.0
-_MAX_NATIVE_READINESS_MS = 250.0
-_DIRECT_CONCURRENCY = 16
+_DIRECT_CONCURRENCY = _native_release_reporting.DIRECT_CONCURRENCY
+_build_result = _native_release_reporting.build_result
+_measurement_summaries = _native_release_reporting.measurement_summaries
+_performance_failures = _native_release_reporting.performance_failures
 
 
 def _percentile(values: list[float], quantile: float) -> float:
@@ -197,6 +195,23 @@ def _bench_native_concurrent(
     return values, errors
 
 
+def _prewarm_native_concurrent(
+    *,
+    workspace: Path,
+    guard_home: Path,
+    policy_snapshot: Mapping[str, object],
+) -> None:
+    """Start every resident stream before collecting the direct c16 sample."""
+
+    values, errors = _bench_native_concurrent(
+        workspace=workspace,
+        guard_home=guard_home,
+        policy_snapshot=policy_snapshot,
+    )
+    if errors or len(values) != _DIRECT_CONCURRENCY:
+        raise RuntimeError("Native resident concurrency prewarm did not fill the client pool")
+
+
 def _bench_python_cold(*, workspace: Path, guard_home: Path, iterations: int) -> list[float]:
     values: list[float] = []
     for _ in range(iterations):
@@ -236,10 +251,6 @@ def _bench_native_oneshot(
         if response.get("decision") != "allow":
             raise RuntimeError("Cold native one-shot runtime returned an unexpected decision")
     return values
-
-
-def _speedup(slower_p95: float, faster_p95: float) -> float:
-    return round(slower_p95 / max(faster_p95, 0.001), 2)
 
 
 def _validated_runtime(path: Path) -> Path:
@@ -312,6 +323,11 @@ def _collect_measurements(
                     iterations=warm_iterations,
                     policy_snapshot=snapshot,
                 )
+                _prewarm_native_concurrent(
+                    workspace=workspace,
+                    guard_home=guard_home,
+                    policy_snapshot=snapshot,
+                )
                 native_concurrent, native_concurrent_errors = _bench_native_concurrent(
                     workspace=workspace,
                     guard_home=guard_home,
@@ -367,50 +383,22 @@ def main() -> int:
         cold_iterations=args.cold_iterations,
     )
 
-    python_warm_summary = _summary(python_warm)
-    native_warm_summary = _summary(native_warm)
-    python_cold_summary = _summary(python_cold)
-    native_oneshot_summary = _summary(native_oneshot)
-    native_concurrent_summary = (
-        _summary(native_concurrent)
-        if native_concurrent
-        else {
-            "p50_ms": 0.0,
-            "p95_ms": 0.0,
-            "p99_ms": 0.0,
-            "max_ms": 0.0,
-        }
+    (
+        python_warm_summary,
+        native_warm_summary,
+        python_cold_summary,
+        native_oneshot_summary,
+        native_concurrent_summary,
+    ) = _measurement_summaries(_summary, python_warm, native_warm, python_cold, native_oneshot, native_concurrent)
+    result, warm_speedup, cold_speedup = _build_result(
+        python_warm_summary=python_warm_summary,
+        native_warm_summary=native_warm_summary,
+        python_cold_summary=python_cold_summary,
+        native_oneshot_summary=native_oneshot_summary,
+        native_concurrent_summary=native_concurrent_summary,
+        native_readiness_ms=native_readiness_ms,
+        native_concurrent_errors=native_concurrent_errors,
     )
-    warm_speedup = _speedup(python_warm_summary["p95_ms"], native_warm_summary["p95_ms"])
-    cold_speedup = _speedup(python_cold_summary["p95_ms"], native_oneshot_summary["p95_ms"])
-    result = {
-        "schema": "hol-guard-native-performance.v1",
-        "warm": {
-            "python_hook_process": python_warm_summary,
-            "native_resident": native_warm_summary,
-            "p95_speedup": warm_speedup,
-        },
-        "cold": {
-            "python_hook_process": python_cold_summary,
-            "native_oneshot": native_oneshot_summary,
-            "p95_speedup": cold_speedup,
-        },
-        "native_readiness_ms": round(native_readiness_ms, 3),
-        "direct_native_concurrency": {
-            "requests": _DIRECT_CONCURRENCY,
-            "latency": native_concurrent_summary,
-            "errors": native_concurrent_errors,
-        },
-        "gates": {
-            "warm_acceptance": "p95_ms_lte_maximum_or_speedup_gte_minimum",
-            "minimum_warm_p95_speedup": _MIN_WARM_P95_SPEEDUP,
-            "maximum_warm_p95_ms": _MAX_WARM_P95_MS,
-            "minimum_cold_p95_speedup": _MIN_COLD_P95_SPEEDUP,
-            "maximum_cold_p95_ms": _MAX_COLD_P95_MS,
-            "maximum_native_readiness_ms": _MAX_NATIVE_READINESS_MS,
-            "maximum_direct_native_concurrent_p99_ms": MAX_DIRECT_CONCURRENT_P99_MS,
-        },
-    }
     rendered = json.dumps(result, indent=2, sort_keys=True)
     print(rendered)
     if args.json is not None:
@@ -419,25 +407,16 @@ def main() -> int:
 
     if not args.enforce:
         return 0
-    failures: list[str] = []
-    if warm_speedup < _MIN_WARM_P95_SPEEDUP and native_warm_summary["p95_ms"] > _MAX_WARM_P95_MS:
-        failures.append(
-            "warm native resident p95 neither meets the "
-            f"{_MAX_WARM_P95_MS:.0f}ms ceiling nor improves by "
-            f"{_MIN_WARM_P95_SPEEDUP:.2f}x"
-        )
-    if cold_speedup < _MIN_COLD_P95_SPEEDUP:
-        failures.append(f"cold native one-shot p95 speedup is below {_MIN_COLD_P95_SPEEDUP:.0f}x")
-    if native_oneshot_summary["p95_ms"] > _MAX_COLD_P95_MS:
-        failures.append(f"cold native one-shot p95 exceeds {_MAX_COLD_P95_MS:.0f}ms")
-    if native_readiness_ms > _MAX_NATIVE_READINESS_MS:
-        failures.append(f"native resident readiness exceeds {_MAX_NATIVE_READINESS_MS:.0f}ms")
-    if not native_concurrent:
-        failures.append("direct native concurrency returned no completed requests")
-    elif native_concurrent_errors:
-        failures.append(f"direct native concurrency returned {native_concurrent_errors} errors")
-    if native_concurrent and native_concurrent_summary["p99_ms"] > MAX_DIRECT_CONCURRENT_P99_MS:
-        failures.append(f"direct native concurrent p99 exceeds {MAX_DIRECT_CONCURRENT_P99_MS:.0f}ms")
+    failures = _performance_failures(
+        warm_speedup=warm_speedup,
+        native_warm_summary=native_warm_summary,
+        cold_speedup=cold_speedup,
+        native_oneshot_summary=native_oneshot_summary,
+        native_readiness_ms=native_readiness_ms,
+        native_concurrent=native_concurrent,
+        native_concurrent_errors=native_concurrent_errors,
+        native_concurrent_summary=native_concurrent_summary,
+    )
     if failures:
         for failure in failures:
             print(f"PERFORMANCE GATE: {failure}", file=sys.stderr)
