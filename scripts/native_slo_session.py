@@ -279,6 +279,7 @@ class AdapterSession:
         self._connection: HTTPConnection | None = None
         self._owner_thread_id = 0
         self.last_stop_diagnostic = _build_stop_diagnostic("not-run")
+        self._stop_diagnostic_written = False
 
     def __enter__(self) -> AdapterSession:
         try:
@@ -368,14 +369,17 @@ class AdapterSession:
                 prior_diagnostic = getattr(self, "last_stop_diagnostic", {})
                 if final_diagnostic.get("status") in _STOP_FAILURE_STATUSES:
                     diagnostic = final_diagnostic
-                    _write_stop_diagnostic(diagnostic)
                 elif prior_diagnostic.get("status") in _STOP_FAILURE_STATUSES:
                     # stop_resident already emitted this failure diagnostic;
                     # preserve that artifact instead of writing it twice.
                     diagnostic = prior_diagnostic
                 else:
                     diagnostic = final_diagnostic
+
+                final_failure = final_diagnostic.get("status") in _STOP_FAILURE_STATUSES
+                if final_failure or not getattr(self, "_stop_diagnostic_written", False):
                     _write_stop_diagnostic(diagnostic)
+                    self._stop_diagnostic_written = True
                 self.last_stop_diagnostic = diagnostic
                 self.temporary.cleanup()
 
@@ -383,6 +387,7 @@ class AdapterSession:
         """Stop the resident before closing serving-worker client streams."""
 
         result = stop_native_resident(self.runtime, self.guard_home)
+        self._stop_diagnostic_written = True
         if isinstance(result, NativeStopResult):
             self.last_stop_diagnostic = result.diagnostic
         else:
