@@ -8,7 +8,6 @@ generation state, response binding, and resident lifecycle.
 from __future__ import annotations
 
 import atexit
-import re
 import threading
 import time
 from collections.abc import Mapping
@@ -21,6 +20,7 @@ from .codex_hook_launch_runtime import (
 from .codex_hook_launch_runtime import (
     run_isolated_hook_process as _legacy_run_isolated_hook_process,
 )
+from .native_approval_errors import NATIVE_RESIDENT_LIFECYCLE_ERROR_CODES
 from .native_resident_stream import _PersistentNativeClient, _StreamFailure
 
 # Retain the old runner name as a test seam. Production always leaves this
@@ -32,11 +32,12 @@ _MAX_REQUEST_BYTES = 6 * 1024 * 1024
 _MAX_PERSISTENT_CLIENTS = 16
 _MAX_PERSISTENT_POOLS = 16
 _MAX_FAILURE_CODE_LENGTH = 128
-_FAILURE_CODE_PATTERN = re.compile(r"native_[a-z0-9_]+")
 _LAST_FAILURE_CODE: ContextVar[str | None] = ContextVar(
     "native_resident_client_failure_code",
     default=None,
 )
+_RESIDENTS_LOCK = threading.Lock()
+_RESIDENTS: dict[tuple[Path, Path], Mapping[str, str]] = {}
 
 
 def native_resident_client_failure_code() -> str | None:
@@ -44,9 +45,14 @@ def native_resident_client_failure_code() -> str | None:
     return _LAST_FAILURE_CODE.get()
 
 
+def record_native_resident_client_failure_code(code: str) -> None:
+    """Record a privacy-safe failure code for the current native client request."""
+    _LAST_FAILURE_CODE.set(code)
+
+
 def _allowlisted_failure_code(stderr: str) -> str | None:
     for line in stderr.splitlines():
-        if len(line) <= _MAX_FAILURE_CODE_LENGTH and _FAILURE_CODE_PATTERN.fullmatch(line):
+        if len(line) <= _MAX_FAILURE_CODE_LENGTH and line in NATIVE_RESIDENT_LIFECYCLE_ERROR_CODES:
             return line
     return None
 
@@ -140,6 +146,8 @@ class _PersistentNativeClientPool:
             self._condition.notify_all()
         for client in clients:
             client.close()
+        for client in clients:
+            _contain_persistent_resident(client)
 
 
 _CLIENTS_LOCK = threading.Lock()
@@ -167,14 +175,50 @@ def _client_pool_for(executable: Path, state_dir: Path, environment: Mapping[str
     return pool
 
 
+def _state_files(state_dir: Path) -> tuple[Path, ...]:
+    try:
+        return tuple(state_dir.glob("resident-v3-*/generation-*.json"))
+    except (OSError, RuntimeError):
+        return ()
+
+
+def _has_client_for_state(state_dir: Path) -> bool:
+    state_key = str(state_dir)
+    with _CLIENTS_LOCK:
+        return any(key[1] == state_key for key in _CLIENT_POOLS)
+
+
+def _contain_persistent_resident(client: _PersistentNativeClient) -> None:
+    """Authenticate shutdown after stream close, then await state retirement.
+
+    A different executable may have adopted the same Guard-home resident. In
+    that case its persistent client remains the owner of the shared service,
+    so this client only closes its own stream and does not send shutdown.
+    """
+    state_files = _state_files(client._state_dir)
+    if not state_files or _has_client_for_state(client._state_dir):
+        return
+    stop_native_resident(
+        executable=client._executable,
+        state_dir=client._state_dir,
+        environment=client._environment,
+        timeout_seconds=0.5,
+    )
+    deadline = time.monotonic() + 2.5
+    while _state_files(client._state_dir) and time.monotonic() < deadline:
+        time.sleep(0.025)
+
+
 def close_native_resident_clients(guard_home: Path | None = None) -> None:
     """Close persistent Rust clients, optionally limited to one Guard home."""
+
+    resolved_guard_home = guard_home.expanduser().resolve() if guard_home is not None else None
 
     with _CLIENTS_LOCK:
         selected = [
             (key, pool)
             for key, pool in _CLIENT_POOLS.items()
-            if guard_home is None or Path(key[1]).parent == guard_home.expanduser().resolve()
+            if resolved_guard_home is None or Path(key[1]).parent == resolved_guard_home
         ]
         for key, _pool in selected:
             _CLIENT_POOLS.pop(key, None)
@@ -183,6 +227,55 @@ def close_native_resident_clients(guard_home: Path | None = None) -> None:
 
 
 atexit.register(close_native_resident_clients)
+
+
+def _track_resident(executable: Path, state_dir: Path, environment: Mapping[str, str]) -> None:
+    if not state_dir.is_dir():
+        return
+    with _RESIDENTS_LOCK:
+        _RESIDENTS[(executable, state_dir)] = dict(environment)
+
+
+def stop_native_resident(
+    *,
+    executable: Path,
+    state_dir: Path,
+    environment: Mapping[str, str],
+    timeout_seconds: float = 3.0,
+) -> bool:
+    """Stop one Rust-managed resident and wait for its state retirement."""
+    result = run_isolated_hook_process(
+        (str(executable), "resident-stop", "--state-dir", str(state_dir)),
+        input_text="",
+        cwd=executable.parent,
+        environment=dict(environment),
+        timeout_seconds=timeout_seconds,
+        output_limit=_MAX_RESPONSE_BYTES,
+    )
+    return (
+        result.returncode == 0
+        and not result.timed_out
+        and not result.containment_failed
+        and not _state_files(state_dir)
+    )
+
+
+def close_native_residents() -> None:
+    """Stop Rust-managed residents created by this Python process."""
+    close_native_resident_clients()
+    with _RESIDENTS_LOCK:
+        residents = list(_RESIDENTS.items())
+    remaining: dict[tuple[Path, Path], Mapping[str, str]] = {}
+    for (executable, state_dir), environment in residents:
+        if _state_files(state_dir) and not stop_native_resident(
+            executable=executable,
+            state_dir=state_dir,
+            environment=environment,
+        ):
+            remaining[(executable, state_dir)] = environment
+    with _RESIDENTS_LOCK:
+        _RESIDENTS.clear()
+        _RESIDENTS.update(remaining)
 
 
 def _legacy_native_resident_client_request(
@@ -196,7 +289,6 @@ def _legacy_native_resident_client_request(
     deadline_monotonic: float | None,
 ) -> bytes | None:
     """Exercise the former one-shot seam for isolated unit-test fakes only."""
-
     try:
         input_text = payload.decode("utf-8")
     except UnicodeDecodeError:
@@ -239,6 +331,7 @@ def _legacy_native_resident_client_request(
     ):
         _record_failure_code(result)
         return None
+    _track_resident(executable=executable, state_dir=state_dir, environment=environment)
     return result.stdout.encode("utf-8")
 
 
@@ -252,7 +345,7 @@ def native_resident_client_request(
     raw_hook_envelope: bool = False,
     deadline_monotonic: float | None = None,
 ) -> bytes | None:
-    """Send bounded bytes through a persistent Rust resident client."""
+    """Send bounded bytes through a persistent Rust client stream."""
     _LAST_FAILURE_CODE.set(None)
     if not payload or (deadline_monotonic is None and (timeout_seconds is None or timeout_seconds <= 0)):
         _LAST_FAILURE_CODE.set("native_client_request_invalid")
@@ -290,6 +383,9 @@ __all__ = [
     "_PersistentNativeClient",
     "_StreamFailure",
     "close_native_resident_clients",
+    "close_native_residents",
     "native_resident_client_failure_code",
     "native_resident_client_request",
+    "record_native_resident_client_failure_code",
+    "stop_native_resident",
 ]

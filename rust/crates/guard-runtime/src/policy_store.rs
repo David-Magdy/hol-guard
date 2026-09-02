@@ -1,11 +1,5 @@
 #![forbid(unsafe_code)]
 
-//! Native resident policy-snapshot state.
-//!
-//! The store is intentionally owned by the resident process. Hook requests
-//! can only compare their envelope to this already-installed snapshot; they
-//! cannot install or mutate policy while a decision is in flight.
-
 use guard_policy_snapshot::{
     snapshot_bytes, validate_v3, PolicySnapshotAckV1, PolicySnapshotPushV1, PolicySnapshotV3,
     POLICY_SNAPSHOT_ACK_REQUIRES_NEW_GENERATION, POLICY_SNAPSHOT_MAX_BYTES,
@@ -39,12 +33,15 @@ mod policy_store_authority;
 mod policy_store_migration;
 #[path = "policy_store_persistence.rs"]
 mod policy_store_persistence;
+#[path = "policy_store_validation.rs"]
+mod policy_store_validation;
 
 use approval_authority::ApprovalAuthority;
 use approval_v4_authority::ApprovalV4Authority;
 pub(crate) use policy_store_approval::ApprovalPolicyFence;
 use policy_store_authority::*;
 use policy_store_persistence::*;
+use policy_store_validation::{read_verifier_key, validate_private_directory};
 
 #[cfg(test)]
 #[path = "policy_store_tests.rs"]
@@ -58,6 +55,11 @@ const MAX_FLOOR_BYTES: u64 = 8 * 1024;
 const GENERATION_FLOOR_SCHEMA: &str = "guard-policy-snapshot-generation-floor.v1";
 const AUTHORITY_RECORD_SCHEMA: &str = "guard-policy-snapshot-authority.v3";
 const AUTHORITY_RECORD_MAX_BYTES: u64 = POLICY_SNAPSHOT_MAX_BYTES as u64 + 16 * 1024;
+
+#[cfg(test)]
+pub(crate) fn scope_digest_for_test(state_base: &Path) -> String {
+    scope_binding_for_state_base(state_base).1
+}
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -91,10 +93,8 @@ fn persistence_fault(boundary: PersistBoundary) -> Result<(), String> {
     Ok(())
 }
 
-/// One atomically replaced record is the durable source of truth for both the
-/// accepted generation floor and the corresponding snapshot.  The old floor
-/// and snapshot files are read only during migration; no push writes either
-/// file independently.
+/// One atomically replaced record durably binds the accepted generation floor and snapshot.
+/// Legacy files are read only during migration; push never writes either independently.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PolicyAuthorityRecordV3 {
@@ -118,10 +118,8 @@ struct PolicyState {
     pub(super) snapshot: Option<Arc<PolicySnapshotV3>>,
     pub(super) canonical_bytes: Vec<u8>,
     pub(super) generation_floor: u64,
-    /// Digest authenticated together with `generation_floor`.  It remains
-    /// available when a restart recovered only the monotonic floor, so a
-    /// retry can receive a typed, bounded recovery ACK without trusting the
-    /// incoming snapshot as authority.
+    /// Digest authenticated with `generation_floor`; it survives floor-only restart recovery.
+    /// Typed, bounded recovery ACKs never trust incoming snapshots as authority.
     pub(super) policy_digest: Option<String>,
     pub(super) invalid_on_startup: bool,
 }

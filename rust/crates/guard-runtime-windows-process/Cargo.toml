@@ -14,6 +14,7 @@ winapi = { workspace = true, features = [
     "errhandlingapi",
     "fileapi",
     "handleapi",
+    "jobapi2",
     "namedpipeapi",
     "processthreadsapi",
     "synchapi",
@@ -21,6 +22,7 @@ winapi = { workspace = true, features = [
     "winerror",
     "winnt",
 ] }
+windows-permissions.workspace = true
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

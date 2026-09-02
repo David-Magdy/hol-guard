@@ -136,7 +136,7 @@ def test_windows_service_rotates_auth_secret_and_stays_closed(
     monkeypatch.setattr(
         service,
         "_transport_accepts_authenticated_connections",
-        lambda: False,
+        lambda *, timeout_seconds: timeout_seconds < 0,
     )
     monkeypatch.setattr(
         service,
@@ -170,6 +170,7 @@ def test_windows_native_runtime_reuses_authenticated_resident_service(
     assert status.capabilities is not None
     assert "authenticated-loopback-resident-v1" in status.capabilities.features
     assert "resident-command-model-shadow-v1" in status.capabilities.features
+    assert "pre-tool-command-model-shadow-v1" in status.capabilities.features
 
     first_request = _request(tmp_path, "windows-resident-first")
     second_request = _request(tmp_path, "windows-resident-second")
@@ -178,17 +179,18 @@ def test_windows_native_runtime_reuses_authenticated_resident_service(
             first = review_post_tool_native(first_request, observe_mode=False, policy_snapshot=snapshot)
             first_state = _rust_resident_state_signature(first_request.guard_home)
             second = review_post_tool_native(second_request, observe_mode=False, policy_snapshot=snapshot)
+            command_model = review_command_model_native(
+                "git status --short",
+                guard_home=first_request.guard_home,
+            )
+            command_failure = native_resident_client_failure_code()
         second_state = _rust_resident_state_signature(first_request.guard_home)
-        command_model = review_command_model_native(
-            "git status --short",
-            guard_home=first_request.guard_home,
-        )
         assert first is not None, native_resident_client_failure_code()
         assert first.decision == "allow"
         assert second is not None and second.decision == "allow"
         assert len(first_state) == 1
         assert second_state == first_state
-        assert command_model is not None
+        assert command_model is not None, command_failure
         assert command_model["confidence"] == "exact"
         assert command_model["segments"][0]["executable"] == "git"
     finally:

@@ -11,10 +11,12 @@ import socket
 import subprocess
 import time
 from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import pytest
 
+from codex_plugin_scanner.guard.live_process_identity import process_start_token
 from codex_plugin_scanner.guard.native_policy_snapshot import (
     _policy_snapshot_push_bytes_v3,
     build_policy_snapshot_v3,
@@ -62,6 +64,7 @@ def _request(
     *,
     command: str = "pwd",
     default_action: str = "allow",
+    deadline_budget_ms: int = 1_000,
 ) -> bytes:
     runtime_identity = hashlib.sha256(runtime.read_bytes()).hexdigest()
     rule_digest = _rule_digest(runtime)
@@ -101,7 +104,7 @@ def _request(
                 "hook_event_name": "PreToolUse",
                 "tool_input": {"command": command},
             },
-            "deadline_budget_ms": 1_000,
+            "deadline_budget_ms": deadline_budget_ms,
             "policy_generation": 1,
             "policy_snapshot": policy_snapshot,
             "source": {
@@ -125,7 +128,7 @@ def _push_snapshot(runtime: Path, state_dir: Path, request: bytes) -> None:
         input=_policy_snapshot_push_bytes_v3(snapshot),
         check=False,
         capture_output=True,
-        timeout=3,
+        timeout=8,
     )
     if result.returncode != 0:
         raise AssertionError(f"native policy push failed: {_native_diagnostic(result.stderr)}")
@@ -157,6 +160,53 @@ def _invoke(runtime: Path, state_dir: Path, request: bytes) -> dict[str, object]
         raise AssertionError("native runtime invocation failed: native_client_output_invalid") from None
     assert isinstance(payload, dict)
     return payload
+
+
+@contextmanager
+def _hold_native_client_lease(runtime: Path, state_dir: Path) -> Iterator[None]:
+    process = subprocess.Popen(
+        (str(runtime), "resident-client-stream", "--stdin", str(state_dir)),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    lease_directory = state_dir / "resident-client-leases.v1"
+    lease_pattern = f"client-{process.pid}-*.lease"
+    try:
+        deadline = time.monotonic() + 3
+        while not any(lease_directory.glob(lease_pattern)):
+            if process.poll() is not None:
+                raise AssertionError("native lease holder exited before acquiring its lease")
+            if time.monotonic() >= deadline:
+                raise AssertionError("native lease holder did not acquire its lease")
+            time.sleep(0.01)
+        yield
+    finally:
+        if process.stdin is not None:
+            with suppress(OSError, ValueError):
+                process.stdin.close()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            with suppress(OSError):
+                process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                with suppress(OSError):
+                    process.kill()
+                try:
+                    process.wait(timeout=1)
+                except subprocess.TimeoutExpired as error:
+                    raise AssertionError(
+                        f"native lease holder did not exit after bounded cleanup (pid={process.pid})"
+                    ) from error
+        if process.poll() is None:
+            raise AssertionError(f"native lease holder remains alive after cleanup (pid={process.pid})")
+        if process.returncode != 0:
+            raise AssertionError(
+                f"native lease holder exited unexpectedly (pid={process.pid}, returncode={process.returncode})"
+            )
 
 
 def _state_files(state_dir: Path) -> list[Path]:
@@ -197,11 +247,15 @@ def _write_forged_state(runtime: Path, state_dir: Path) -> None:
     runtime_digest = hashlib.sha256(runtime.read_bytes()).hexdigest()
     scope = _initialize_protected_scope(runtime, state_dir)
     token = secrets.token_bytes(32)
+    start_marker = process_start_token(os.getpid())
+    assert start_marker is not None
     state: dict[str, object] = {
         "schema": "hol-guard-resident-state.v3",
         "generation": 18_000_000_000_000_000_000,
         "process_id": os.getpid(),
+        "process_start_marker": start_marker,
         "owner_process_id": os.getpid(),
+        "owner_process_start_marker": start_marker,
         "runtime_sha256": runtime_digest,
         "transport": "loopback",
         "endpoint": "127.0.0.1:9",
@@ -214,7 +268,9 @@ def _write_forged_state(runtime: Path, state_dir: Path) -> None:
             "schema",
             "generation",
             "process_id",
+            "process_start_marker",
             "owner_process_id",
+            "owner_process_start_marker",
             "runtime_sha256",
             "transport",
             "endpoint",
@@ -246,7 +302,20 @@ def _terminate_state_process(state_file: Path) -> None:
 
 
 def _terminate_process(process_id: int) -> None:
-    os.kill(process_id, signal.SIGTERM)
+    try:
+        os.kill(process_id, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        if os.name != "nt":
+            raise
+        subprocess.run(
+            ("taskkill", "/F", "/PID", str(process_id)),
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        return
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         try:

@@ -5,12 +5,13 @@ use guard_contracts::{
     PreToolOperationV1, GUARD_HOOK_ENVELOPE_V2_SCHEMA, NATIVE_APPROVAL_CHALLENGE_V3_SCHEMA,
 };
 use guard_policy_snapshot::{
-    config_digest, digest_bytes, integrity_mac, policy_digest, verifier_key_id,
-    EffectiveNativePolicyV3, PolicySnapshotV3, ScopeContractV3, SnapshotIntegrityV3,
-    POLICY_SNAPSHOT_INTEGRITY_ALGORITHM, POLICY_SNAPSHOT_PUSH_SCHEMA, POLICY_SNAPSHOT_SCHEMA,
+    config_digest, integrity_mac, policy_digest, verifier_key_id, EffectiveNativePolicyV3,
+    PolicySnapshotV3, ScopeContractV3, SnapshotIntegrityV3, POLICY_SNAPSHOT_INTEGRITY_ALGORITHM,
+    POLICY_SNAPSHOT_PUSH_SCHEMA, POLICY_SNAPSHOT_SCHEMA,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
+#[cfg(not(windows))]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -34,7 +35,7 @@ fn policy() -> EffectiveNativePolicyV3 {
 }
 
 fn scope_digest(root: &Path) -> String {
-    digest_bytes(root.to_string_lossy().as_bytes())
+    crate::policy_store::scope_digest_for_test(root)
 }
 
 pub(super) fn root(label: &str) -> PathBuf {
@@ -43,6 +44,9 @@ pub(super) fn root(label: &str) -> PathBuf {
         std::process::id(),
         now_ms().unwrap()
     ));
+    #[cfg(windows)]
+    let path = crate::resident_state::ensure_private_directory(&path, true).unwrap();
+    #[cfg(not(windows))]
     fs::create_dir(&path).unwrap();
     #[cfg(unix)]
     {
@@ -113,7 +117,15 @@ fn store_and_envelope_with_runtime(
 ) {
     let root = root(label);
     let key = [7u8; 32];
-    fs::write(root.join("policy-verifier.key"), key).unwrap();
+    let verifier_path = root.join("policy-verifier.key");
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        let mut file = crate::resident_state::private_file(&verifier_path, true, &root).unwrap();
+        file.write_all(&key).unwrap();
+    }
+    #[cfg(not(windows))]
+    fs::write(&verifier_path, key).unwrap();
     let approval_seed = [17u8; 32];
     let approval_key = approval_public_key_for_tests(&approval_seed);
     crate::policy_store::approval_authority::write_test_record(&root, &approval_key, 1);

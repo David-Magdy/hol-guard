@@ -20,7 +20,12 @@ mod windows;
 pub use windows::ManagedChild;
 
 #[cfg(windows)]
-pub use windows::process_start_marker;
+pub use windows::{
+    bind_directory, bind_private_directory, create_private_directory, create_private_file,
+    delete_private_file_handle, open_private_directory, open_private_file, process_start_marker,
+    remove_file_if_same, terminate_process, terminate_process_verified, wait_for_process_exit,
+    PrivateDirectoryBinding,
+};
 
 #[cfg(windows)]
 pub fn spawn_managed_child(executable: &Path, args: &[&OsStr]) -> io::Result<ManagedChild> {
@@ -39,7 +44,35 @@ pub fn spawn_managed_child(_executable: &Path, _args: &[&OsStr]) -> io::Result<M
 }
 
 #[cfg(not(windows))]
+pub fn wait_for_process_exit(_process_id: u32, _timeout: std::time::Duration) -> io::Result<bool> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Windows process support is unavailable",
+    ))
+}
+
+#[cfg(not(windows))]
 pub fn process_start_marker(_process_id: u32) -> io::Result<String> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Windows process support is unavailable",
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn terminate_process(_process_id: u32) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Windows process support is unavailable",
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn terminate_process_verified(
+    _process_id: u32,
+    _expected_start_marker: Option<&str>,
+    _timeout: std::time::Duration,
+) -> io::Result<bool> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "Windows process support is unavailable",

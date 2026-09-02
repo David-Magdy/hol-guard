@@ -12,7 +12,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .native_resident_client import native_resident_client_request
+from .native_resident_client import (
+    native_resident_client_request,
+    record_native_resident_client_failure_code,
+)
 from .native_runtime import _isolated_environment, _native_error, native_runtime_status
 from .native_runtime_resilience import (
     native_record_overload,
@@ -287,6 +290,9 @@ def review_command_model_native(
             if decoded is not None:
                 native_record_resident_success(status.identity.sha256, guard_home)
                 return decoded
+            error = _native_error(resident_payload)
+            if error:
+                record_native_resident_client_failure_code(error)
         native_record_resident_failure(
             status.identity.sha256,
             guard_home,

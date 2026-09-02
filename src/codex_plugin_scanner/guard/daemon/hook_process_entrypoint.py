@@ -40,6 +40,18 @@ if TYPE_CHECKING:
 
 _HOOK_SQLITE_TIMEOUT_ENV = "HOL_GUARD_INTERNAL_HOOK_SQLITE_TIMEOUT_MS"
 _HOOK_EVALUATOR_READY_TIMEOUT_SECONDS = 12.0
+_TRANSIENT_HOOK_STORAGE_TIMEOUTS = frozenset(
+    {
+        "Timed out waiting for Guard storage access.",
+        "Timed out waiting for the Guard schema migration lock.",
+    }
+)
+
+
+def _hook_process_error_is_transient(error: BaseException) -> bool:
+    return sqlite_error_is_busy_locked(error) or (
+        isinstance(error, TimeoutError) and str(error) in _TRANSIENT_HOOK_STORAGE_TIMEOUTS
+    )
 
 
 def hook_worker_main(connection: Connection, configured_guard_home: str | None) -> None:
@@ -135,18 +147,9 @@ def _hook_evaluator_main(connection: Connection, configured_guard_home: str | No
         _ = importlib.import_module(module_name)
     stores: dict[str, GuardStore] = {}
     hook_workers: dict[str, HookWorker] = {}
-    if configured_guard_home is not None:
-        from ..store import GuardStore
-
-        guard_home = Path(configured_guard_home).resolve(strict=False)
-        # The worker can become ready while a concurrent daemon migration
-        # finishes; the first request retries store construction lazily.
-        with suppress(Exception):
-            stores[str(guard_home)] = GuardStore(
-                guard_home,
-                prime_policy_integrity=False,
-                daemon_managed_schema=True,
-            )
+    # Store construction stays on the first request. Readiness must only prove
+    # process isolation and evaluator bootstrap; eager schema work can expose
+    # transient SQLite WAL files as a false state mutation to the daemon.
     try:
         _hook_evaluator_loop(
             connection,
@@ -213,7 +216,9 @@ def _hook_evaluator_loop(
             )
         except BaseException as error:
             reason_code = (
-                "daemon_hook_process_not_ready" if sqlite_error_is_busy_locked(error) else "daemon_hook_process_failed"
+                "daemon_hook_process_not_ready"
+                if _hook_process_error_is_transient(error)
+                else "daemon_hook_process_failed"
             )
             response = {"payload": None, "reason_code": reason_code}
         try:

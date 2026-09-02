@@ -1,15 +1,13 @@
 #![forbid(unsafe_code)]
 
 //! OS-protected enrollment state for the external approval authority.
-//!
-//! This module stores only enrollment provenance and per-install/device
-//! bindings. It deliberately contains no replay secret: request replay state
-//! lives in the resident process and is invalidated by its random epoch.
+//! This module stores enrollment provenance and per-install/device bindings only; it contains no replay secret.
+//! Request replay state lives in the resident process and is invalidated by its random epoch.
 
 use guard_policy_snapshot::canonical_json_bytes;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::path::Path;
 
 #[path = "approval_enrollment_platform.rs"]
@@ -27,6 +25,7 @@ pub(super) fn write_platform_secret_for_v4(account: &str, value: &str) -> Result
 }
 
 const STATE_VERSION: u16 = 4;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const SERVICE_NAME: &str = "org.hashgraphonline.hol-guard.native-approval-enrollment.v1";
 const ACCOUNT_DOMAIN: &[u8] = b"hol-guard-native-approval-enrollment-account-v1\0";
 const DEVICE_ACCOUNT_DOMAIN: &[u8] = b"hol-guard-native-approval-device-v1\0";
@@ -36,10 +35,17 @@ const MAX_SECRET_TEXT_BYTES: usize = 16 * 1024;
 const TRANSITION_LOCK_FILE_NAME: &str = "approval-authority-transition.v1.lock";
 
 /// Owner-private inter-process fence for enrollment and authority changes.
-/// The inode is retained permanently; ownership is provided by the OS lock,
-/// not by a writable PID or a same-UID marker.
+/// The inode is retained; the OS lock, not a writable PID/same-UID marker, supplies ownership.
 pub(crate) struct TransitionLock {
     _file: File,
+    #[cfg(windows)]
+    _directory_binding: guard_runtime_windows_process::PrivateDirectoryBinding,
+}
+
+struct OpenedTransitionLock {
+    file: File,
+    #[cfg(windows)]
+    directory_binding: guard_runtime_windows_process::PrivateDirectoryBinding,
 }
 
 fn transition_lock_path(state_base: &Path) -> Result<std::path::PathBuf, String> {
@@ -81,57 +87,29 @@ fn validate_transition_lock(path: &Path, file: &File) -> Result<(), String> {
         if opened.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
             return Err("native_approval_authority_lock_invalid".to_owned());
         }
-        crate::resident_state::verify_windows_private_path(path, false)?;
+        let private_root = path
+            .parent()
+            .ok_or_else(|| "native_approval_authority_lock_invalid".to_owned())
+            .and_then(crate::resident_state::private_root_for_state_base)?;
+        crate::resident_state::verify_windows_private_path(path, false, &private_root)?;
     }
     Ok(())
 }
 
-fn open_transition_lock(path: &Path) -> Result<File, String> {
-    let mut create = OpenOptions::new();
-    create.read(true).write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        create
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    }
+fn open_transition_lock(path: &Path) -> Result<OpenedTransitionLock, String> {
+    let private_root = path
+        .parent()
+        .ok_or_else(|| "native_approval_authority_lock_invalid".to_owned())
+        .and_then(crate::resident_state::private_root_for_state_base)?;
     #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        const FILE_SHARE_READ: u32 = 0x0000_0001;
-        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
-        create
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
-    match create.open(path) {
-        Ok(file) => Ok(file),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let mut existing = OpenOptions::new();
-            existing.read(true).write(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                existing.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-            }
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::OpenOptionsExt;
-                const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-                const FILE_SHARE_READ: u32 = 0x0000_0001;
-                const FILE_SHARE_WRITE: u32 = 0x0000_0002;
-                existing
-                    .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-            }
-            existing
-                .open(path)
-                .map_err(|_| "native_approval_authority_lock_failed".to_owned())
-        }
-        Err(_) => Err("native_approval_authority_lock_failed".to_owned()),
-    }
+    let (file, directory_binding) = crate::resident_state::private_lock_file(path, &private_root)?;
+    #[cfg(not(windows))]
+    let file = crate::resident_state::private_lock_file(path, &private_root)?;
+    Ok(OpenedTransitionLock {
+        file,
+        #[cfg(windows)]
+        directory_binding,
+    })
 }
 
 pub(crate) fn with_transition_lock<T, F>(state_base: &Path, operation: F) -> Result<T, String>
@@ -139,16 +117,20 @@ where
     F: FnOnce() -> Result<T, String>,
 {
     let path = transition_lock_path(state_base)?;
-    let file = open_transition_lock(&path)?;
-    validate_transition_lock(&path, &file)?;
-    fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::WouldBlock {
+    let opened = open_transition_lock(&path)?;
+    validate_transition_lock(&path, &opened.file)?;
+    fs2::FileExt::try_lock_exclusive(&opened.file).map_err(|error| {
+        if crate::resident_state::is_lock_contention(&error) {
             "native_approval_authority_busy".to_owned()
         } else {
             "native_approval_authority_lock_failed".to_owned()
         }
     })?;
-    let _lock = TransitionLock { _file: file };
+    let _lock = TransitionLock {
+        _file: opened.file,
+        #[cfg(windows)]
+        _directory_binding: opened.directory_binding,
+    };
     operation()
 }
 
@@ -160,9 +142,8 @@ pub(crate) struct SecureApprovalState {
     pub(crate) key_id: String,
     pub(crate) status: String,
     pub(crate) pending: bool,
-    /// Digest of the exact canonical, root-signed authority record awaiting
-    /// installation. It makes an interrupted transition retryable only for
-    /// the same authenticated candidate.
+    /// Digest of the exact canonical, root-signed authority record awaiting installation.
+    /// It makes interrupted transitions retryable only for the same authenticated candidate.
     pub(crate) pending_record_digest: String,
 }
 
@@ -310,9 +291,7 @@ fn load_or_create_device_binding() -> Result<String, String> {
     Ok(binding_for_secret(DEVICE_BINDING_DOMAIN, &secret))
 }
 
-/// Begin an enrollment ceremony. The returned bindings are public ceremony
-/// inputs; the underlying random identities never enter Python or the state
-/// directory.
+/// Begin an enrollment ceremony; public bindings leave the random identities outside Python and the state directory.
 pub(crate) fn prepare_enrollment(state_base: &Path) -> Result<(String, String), String> {
     with_transition_lock(state_base, || prepare_enrollment_unlocked(state_base))
 }
@@ -477,6 +456,8 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         }
+        #[cfg(windows)]
+        crate::resident_state::protect_windows_private_path(&root, true, &root).unwrap();
         root
     }
 
@@ -484,15 +465,15 @@ mod tests {
     fn transition_lock_rejects_concurrent_owner_and_recovers_on_release() {
         let root = test_root();
         let path = transition_lock_path(&root).unwrap();
-        let file = open_transition_lock(&path).unwrap();
-        validate_transition_lock(&path, &file).unwrap();
-        fs2::FileExt::try_lock_exclusive(&file).unwrap();
+        let opened = open_transition_lock(&path).unwrap();
+        validate_transition_lock(&path, &opened.file).unwrap();
+        fs2::FileExt::try_lock_exclusive(&opened.file).unwrap();
 
         assert_eq!(
             with_transition_lock(&root, || Ok::<(), String>(())).unwrap_err(),
             "native_approval_authority_busy"
         );
-        drop(file);
+        drop(opened);
         with_transition_lock(&root, || Ok::<(), String>(())).unwrap();
     }
 }

@@ -262,7 +262,6 @@ from .managed_controls_api import managed_policy_rows
 from .managed_policy_delivery import daemon_managed_controls_candidate
 from .manager import (
     GUARD_DAEMON_COMPATIBILITY_VERSION,
-    acquire_guard_daemon_owner_lock,
     clear_guard_daemon_state_if_current,
     current_guard_daemon_runtime_fingerprint,
     load_guard_daemon_auth_token,
@@ -276,6 +275,12 @@ from .runtime_heartbeat import RuntimeHeartbeatWriter
 from .runtime_hook_deadline import RuntimeHookDeadline
 from .runtime_hook_evidence_writer import RuntimeHookEvidenceWriter
 from .runtime_hook_scheduler import RuntimeHookAdmissionReason, RuntimeHookLane, RuntimeHookScheduler
+from .service_lifecycle import (
+    begin_service,
+    contain_failed_service_start,
+    enable_full_capacity_for_generation,
+    start_serve_thread,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -507,6 +512,7 @@ class _GuardDaemonHTTPServer(BoundedThreadingHTTPServer):
     request_executors_stopped: bool
     diagnostics: DaemonDiagnostics
     auth_audit_lock: threading.Lock
+    denial_audit_lock: threading.Lock
     auth_audit_windows: dict[_AuthAuditKey, _AuthAuditWindow]
     command_queue_lifecycle: GuardDaemonServer | None
     home_dir: Path
@@ -567,7 +573,7 @@ class _GuardDaemonHTTPServer(BoundedThreadingHTTPServer):
         self.active_stream_clients_lock = threading.Lock()
         self.shutdown_started = shutdown_started
         self.diagnostics = diagnostics
-        self.auth_audit_lock = threading.Lock()
+        self.auth_audit_lock, self.denial_audit_lock = threading.Lock(), threading.Lock()
         self.auth_audit_windows = {}
         self.command_queue_lifecycle = None
         self.package_firewall_connect_state = None
@@ -6577,11 +6583,24 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
 
     def _record_bounded_denial_event(self, event_name: str, payload: dict[str, object]) -> None:
         daemon_server = self._daemon_server()
-        try:
-            with sqlite_connect_timeout_override(_AUTH_AUDIT_SQLITE_TIMEOUT_SECONDS):
-                daemon_server.store.add_event(event_name, payload, _now())
-        except Exception:
-            daemon_server.diagnostics.record_exception("auth_audit_persistence_failed")
+        with daemon_server.denial_audit_lock:
+            for attempt in range(2):
+                try:
+                    with sqlite_connect_timeout_override(_AUTH_AUDIT_SQLITE_TIMEOUT_SECONDS):
+                        daemon_server.store.add_event(event_name, payload, _now())
+                except TimeoutError:
+                    daemon_server.diagnostics.record_exception("auth_audit_persistence_timeout")
+                    return
+                except sqlite3.OperationalError as error:
+                    if attempt == 0 and any(
+                        marker in str(error).lower() for marker in ("database is locked", "database table is locked")
+                    ):
+                        continue
+                    daemon_server.diagnostics.record_exception("auth_audit_persistence_failed")
+                except sqlite3.DatabaseError:
+                    daemon_server.diagnostics.record_exception("auth_audit_persistence_failed")
+                else:
+                    return
 
     def _header_token_is_valid(self, *, payload: dict[str, object] | None = None) -> bool:
         token = self.headers.get("X-Guard-Token")
@@ -7962,7 +7981,11 @@ class GuardDaemonServer:
             self._diagnostics.close(timeout_seconds=0.5)
             raise
         self._shutdown_started = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._lifecycle_generation = 0
+        self._active_start_generation: int | None = None
         self._finish_service_lock = threading.Lock()
+        self._finish_service_completed = False
         self._owner_lock: BinaryIO | None = None
         try:
             self._server = _GuardDaemonHttpServer(
@@ -8017,78 +8040,67 @@ class GuardDaemonServer:
             return
         self._thread = None
         self._begin_service()
+        generation = self._active_start_generation
         serve_thread_started = False
         try:
-            self._serve_loop_started.clear()
-            self._thread = threading.Thread(target=self._serve_forever, daemon=True)
-            self._thread.start()
+            start_serve_thread(self)
             serve_thread_started = True
             if not self._serve_loop_started.wait(timeout=_DAEMON_SERVE_THREAD_START_TIMEOUT_SECONDS):
                 raise RuntimeError("Guard daemon serve thread did not become ready")
-            self._server.hook_process_runner.enable_full_capacity()
+            enable_full_capacity_for_generation(self, generation)
         except BaseException as error:
-            self._diagnostics.record_exception("daemon_start_thread_failed")
-            serve_thread_contained = True
-            if serve_thread_started and self._thread is not None:
-                self._server.shutdown()
-                self._thread.join(timeout=5)
-                serve_thread_contained = not self._thread.is_alive()
-            else:
-                try:
-                    self._server.server_close()
-                except Exception:
-                    serve_thread_contained = False
-            if serve_thread_contained:
-                self._thread = None
-            if not self._finish_service() or not serve_thread_contained:
-                add_note = getattr(error, "add_note", None)
-                if callable(add_note):
-                    add_note("Guard retained daemon ownership because startup containment was unconfirmed.")
+            contain_failed_service_start(
+                self,
+                error,
+                serve_thread_started=serve_thread_started,
+            )
             raise
 
     def serve(self) -> None:
         self._begin_service()
-        self._server.hook_process_runner.enable_full_capacity()
-        self._serve_forever()
+        generation = self._active_start_generation
+        try:
+            enable_full_capacity_for_generation(self, generation)
+            self._serve_forever()
+        except BaseException as error:
+            contain_failed_service_start(
+                self,
+                error,
+                serve_thread_started=False,
+            )
+            raise
 
     def stop(self) -> None:
         self._record_lifecycle("shutdown_requested", reason="explicit_stop")
         self._diagnostics.record("daemon_shutdown_requested")
-        self._shutdown_started.set()
-        self._server.shutdown()
-        self._server.server_close()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            if not self._thread.is_alive():
-                self._thread = None
+        with self._lifecycle_lock:
+            self._lifecycle_generation += 1
+            self._shutdown_started.set()
+        with self._finish_service_lock:
+            serve_thread = self._thread
+            self._server.request_serve_stop()
+            if serve_thread is None:
+                self._server.server_close()
         _ = self._finish_service()
+        if (
+            self._join_service_thread(serve_thread, deadline=time.monotonic() + 5) is None
+            and self._thread is serve_thread
+        ):
+            self._thread = None
 
     def _begin_service(self) -> None:
-        self._record_lifecycle("start_requested")
-        if self._is_quarantined():
-            if self._aibom_refresh_thread is not None and self._aibom_refresh_thread.is_alive():
-                raise RuntimeError("AIBOM inventory refresh is still stopping")
-            self._require_command_activity_maintenance_stopped()
-            raise RuntimeError("This Guard daemon is quarantined after unconfirmed containment.")
-        self._owner_lock = acquire_guard_daemon_owner_lock(self._server.store.guard_home)
-        try:
-            self._begin_owned_service()
-        except BaseException as error:
-            self._diagnostics.record_exception("daemon_start_failed")
-            self._record_lifecycle("start_failed", reason="initialization_failed")
-            if not self._finish_service():
-                add_note = getattr(error, "add_note", None)
-                if callable(add_note):
-                    add_note("Guard retained daemon ownership because partial-start containment was unconfirmed.")
-            raise
+        begin_service(self)
 
-    def _begin_owned_service(self) -> None:
+    def _begin_owned_service(self, generation: int | None = None) -> None:
+        generation = generation if generation is not None else self._active_start_generation
+        with self._lifecycle_lock:
+            if generation != self._lifecycle_generation or self._shutdown_started.is_set():
+                raise RuntimeError("Guard daemon stopped during startup")
         if self._aibom_refresh_thread is not None:
             if self._aibom_refresh_thread.is_alive():
                 raise RuntimeError("AIBOM inventory refresh is still stopping")
             self._aibom_refresh_thread = None
         self._require_command_activity_maintenance_stopped()
-        self._shutdown_started.clear()
         self._server.hook_process_runner.start(defer_backfill=True)
         self._server.hook_process_runner.require_initial_capacity()
         self._reconcile_runtime_artifacts_best_effort()
@@ -8267,6 +8279,8 @@ class GuardDaemonServer:
             self._server.server_close()
             _ = self._finish_service()
             self._record_lifecycle("stopped", reason=stop_reason)
+            if self._thread is threading.current_thread():
+                self._thread = None
 
     def _record_lifecycle(self, event: str, *, reason: str | None = None) -> None:
         with suppress(Exception):
@@ -8287,7 +8301,12 @@ class GuardDaemonServer:
                     finish_lock = threading.Lock()
                     self._finish_service_lock = finish_lock
         with finish_lock:
-            return self._finish_service_locked()
+            if getattr(self, "_finish_service_completed", False):
+                return True
+            contained = self._finish_service_locked()
+            if contained:
+                self._finish_service_completed = True
+            return contained
 
     def _finish_service_locked(self) -> bool:
         self._shutdown_started.set()

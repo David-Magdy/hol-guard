@@ -13,6 +13,22 @@ fn test_enrollment_signature(record: &ApprovalAuthorityV4) -> Result<String, Str
 /// Test-only fixture writer. Production accepts only externally supplied
 /// records and never exposes an enrollment private key.
 #[cfg(test)]
+fn write_fixture_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        let private_root = path.parent().unwrap_or(path);
+        let mut file = crate::resident_state::private_file(path, true, private_root)
+            .map_err(|_| "native_approval_v4_authority_invalid".to_owned())?;
+        file.write_all(bytes)
+            .map_err(|_| "native_approval_v4_authority_invalid".to_owned())?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    fs::write(path, bytes).map_err(|_| "native_approval_v4_authority_invalid".to_owned())
+}
+
+#[cfg(test)]
 pub(crate) fn test_record_bytes(record: &ApprovalAuthorityV4) -> Result<Vec<u8>, String> {
     let mut signed = record.clone();
     signed.enrollment_signature = test_enrollment_signature(&signed)?;
@@ -28,7 +44,7 @@ pub(crate) fn write_test_record(
 ) -> Result<(), String> {
     let bytes = test_record_bytes(record)?;
     let path = state_base.join(AUTHORITY_FILE_NAME);
-    fs::write(&path, &bytes).map_err(|_| "native_approval_v4_authority_invalid".to_owned())?;
+    write_fixture_file(&path, &bytes)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -74,6 +90,9 @@ fn test_root() -> PathBuf {
         "hol-guard-approval-v4-authority-{}-{suffix}",
         std::process::id()
     ));
+    #[cfg(windows)]
+    let path = crate::resident_state::ensure_private_directory(&path, true).unwrap();
+    #[cfg(not(windows))]
     fs::create_dir(&path).unwrap();
     #[cfg(unix)]
     {
@@ -117,7 +136,7 @@ fn record(
 
 fn write_candidate(root: &Path, name: &str, record: &ApprovalAuthorityV4) -> PathBuf {
     let path = root.join(name);
-    fs::write(&path, test_record_bytes(record).unwrap()).unwrap();
+    write_fixture_file(&path, &test_record_bytes(record).unwrap()).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -220,7 +239,8 @@ fn malformed_cose_and_missing_secure_state_never_load() {
     let valid_cose = cose_for(33);
     let valid = record(1, &valid_cose, 1, None, "active");
     let valid_bytes = test_record_bytes(&valid).unwrap();
-    fs::write(root.join(AUTHORITY_FILE_NAME), valid_bytes).unwrap();
+    let authority_path = root.join(AUTHORITY_FILE_NAME);
+    write_fixture_file(&authority_path, &valid_bytes).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
