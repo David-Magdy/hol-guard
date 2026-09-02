@@ -136,9 +136,7 @@ def _count_fixture_receipts(store: GuardStore) -> int:
 
     connection = sqlite3.connect(store.path, timeout=30)
     try:
-        row = connection.execute(
-            "select count(*) from runtime_receipts where receipt_id like 'stress-%'"
-        ).fetchone()
+        row = connection.execute("select count(*) from runtime_receipts where receipt_id like 'stress-%'").fetchone()
     finally:
         connection.close()
     if not row or not isinstance(row[0], int):
@@ -343,9 +341,7 @@ def _prepare_stress_execution(root: Path, receipt_count: int) -> tuple[GuardStor
     seed_receipts(store, count=receipt_count)
     committed_receipts = _count_fixture_receipts(store)
     if committed_receipts != receipt_count:
-        raise RuntimeError(
-            f"Stress fixture count mismatch: requested={receipt_count} committed={committed_receipts}."
-        )
+        raise RuntimeError(f"Stress fixture count mismatch: requested={receipt_count} committed={committed_receipts}.")
     daemon_url = ensure_guard_daemon(guard_home, home_dir=home)
     state = load_authenticated_daemon_state(guard_home)
     auth_token = load_guard_daemon_auth_token(guard_home)
