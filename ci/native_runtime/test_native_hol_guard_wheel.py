@@ -8,13 +8,19 @@ import json
 import os
 import stat
 import subprocess
+import tempfile
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 import scripts.build_native_hol_guard_wheel as wheel_builder
+import scripts.native_slo_session as native_slo_session
+from codex_plugin_scanner.guard.daemon.server import GuardDaemonServer
 from scripts.build_native_hol_guard_wheel import NativeWheelError, build_native_wheel
+from scripts.native_slo_session import AdapterSession
 
 _VERSION = "3.0.0a7"
 _SOURCE_SHA = "a" * 40
@@ -101,6 +107,81 @@ def _build(tmp_path: Path, *, wheel: Path | None = None, runtime: Path | None = 
         source_sha=_SOURCE_SHA,
         rule_digest=_RULE_DIGEST,
     )
+
+
+def test_stop_native_resident_closes_clients_after_verified_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    monkeypatch.setattr(native_slo_session, "_resident_state_may_exist", lambda _state_dir: True)
+
+    def fake_run(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        events.append("stop")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(native_slo_session.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        native_slo_session,
+        "close_native_resident_clients",
+        lambda _guard_home: events.append("close"),
+    )
+
+    assert native_slo_session.stop_native_resident(tmp_path / "runtime", tmp_path / "home")
+    assert events == ["stop", "close"]
+
+
+def test_adapter_session_stops_before_broadcasting_worker_client_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    runner = SimpleNamespace(close_native_resident_clients=lambda: events.append("close") or True)
+    daemon = SimpleNamespace(_server=SimpleNamespace(hook_process_runner=runner))
+    session = object.__new__(AdapterSession)
+    session.daemon = cast(GuardDaemonServer, cast(object, daemon))
+    session.runtime = tmp_path / "runtime"
+    session.guard_home = tmp_path / "home"
+
+    monkeypatch.setattr(
+        native_slo_session,
+        "stop_native_resident",
+        lambda _runtime, _guard_home: events.append("stop") or True,
+    )
+
+    assert session.stop_resident()
+    assert events == ["stop", "close"]
+
+
+def test_adapter_session_close_stops_resident_before_daemon_shutdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    daemon = SimpleNamespace(
+        _server=SimpleNamespace(active_hook_requests=0),
+        stop=lambda: events.append("daemon-stop"),
+    )
+    session = object.__new__(AdapterSession)
+    session._connection = None
+    session.daemon = cast(GuardDaemonServer, cast(object, daemon))
+    session.runtime = tmp_path / "runtime"
+    session.guard_home = tmp_path / "home"
+    session.temporary = cast(
+        tempfile.TemporaryDirectory[str],
+        cast(object, SimpleNamespace(cleanup=lambda: events.append("cleanup"))),
+    )
+
+    monkeypatch.setattr(AdapterSession, "stop_resident", lambda _session: events.append("resident-stop") or True)
+    monkeypatch.setattr(
+        native_slo_session,
+        "stop_native_resident",
+        lambda _runtime, _guard_home: events.append("stale-stop") or True,
+    )
+
+    session.close()
+    assert events == ["resident-stop", "daemon-stop", "stale-stop", "cleanup"]
 
 
 def _set_runtime_capabilities(
