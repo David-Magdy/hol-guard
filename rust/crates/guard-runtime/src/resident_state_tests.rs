@@ -56,6 +56,26 @@ fn publishing_generations_retires_superseded_state() {
     fs::remove_dir_all(scope).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn process_is_alive_reaps_an_unreaped_child() {
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let process_id = child.id();
+    let mut contained = false;
+    for _ in 0..200 {
+        if !process_is_alive(process_id) {
+            contained = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(contained, "terminated child remained live");
+    assert!(
+        child.wait().is_err(),
+        "process_is_alive did not reap the child"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_state_scope_and_token_state_are_owner_private() {
