@@ -102,7 +102,7 @@ fn stale_process_identity_errors_are_platform_scoped() {
 
 #[cfg(unix)]
 #[test]
-fn shutdown_containment_ignores_live_supervisor_owner_after_server_exit() {
+fn shutdown_containment_ignores_recorded_processes_after_server_exit() {
     use crate::resident_state::ResidentState;
 
     let endpoint = std::env::temp_dir().join(format!(
@@ -125,7 +125,7 @@ fn shutdown_containment_ignores_live_supervisor_owner_after_server_exit() {
         state_mac: String::new(),
     };
 
-    assert!(stop::serving_process_and_endpoint_are_contained(&state));
+    assert!(stop::published_endpoints_are_contained(&[state]));
 }
 
 #[cfg(unix)]

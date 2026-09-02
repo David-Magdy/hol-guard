@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
 use crate::resident_state_encoding::{decode_hex, hex_bytes};
-#[cfg(unix)]
+#[cfg(all(unix, test))]
 use nix::errno::Errno;
-#[cfg(unix)]
+#[cfg(all(unix, test))]
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-#[cfg(unix)]
+#[cfg(all(unix, test))]
 use nix::unistd::Pid as UnixPid;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -134,11 +134,12 @@ pub(crate) fn validate_package_process_identity(process_id: u32) -> Result<(), S
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn process_is_alive(process_id: u32) -> bool {
     if process_id == 0 {
         return false;
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, test))]
     if let Some(alive) = wait_for_owned_process(process_id) {
         return alive;
     }
@@ -158,7 +159,7 @@ fn process_is_terminal(status: ProcessStatus) -> bool {
     matches!(status, ProcessStatus::Zombie)
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, test))]
 fn wait_for_owned_process(process_id: u32) -> Option<bool> {
     let process_id = i32::try_from(process_id).ok()?;
     match waitpid(UnixPid::from_raw(process_id), Some(WaitPidFlag::WNOHANG)) {

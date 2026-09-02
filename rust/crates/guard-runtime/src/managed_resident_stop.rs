@@ -7,8 +7,7 @@ use std::thread;
 use std::time::Instant;
 
 use crate::resident_state::{
-    discover_states, process_is_alive, token_from_state, validate_package_process_identity,
-    ResidentState,
+    discover_states, token_from_state, validate_package_process_identity, ResidentState,
 };
 
 pub(super) fn is_stale_process_identity_error(error: &str) -> bool {
@@ -72,27 +71,6 @@ pub(super) fn try_states(
     Ok(try_states_with_state(scope, digest, payload, deadline)?.map(|(_, response)| response))
 }
 
-fn process_is_contained(process_id: u32) -> bool {
-    if process_id == 0 {
-        return false;
-    }
-    match validate_package_process_identity(process_id) {
-        // A runtime process with the expected identity is still part of the
-        // resident. Do not confuse a released owner lock with full teardown.
-        Ok(()) => false,
-        // sysinfo can report an unavailable executable for a process that is
-        // still alive. Require a second liveness probe before treating that
-        // identity as contained; all other identity errors fail closed.
-        Err(error)
-            if error == "native_resident_process_identity_unavailable"
-                && !process_is_alive(process_id) =>
-        {
-            true
-        }
-        Err(_) => false,
-    }
-}
-
 #[cfg(unix)]
 fn endpoint_is_contained(state: &ResidentState) -> bool {
     if state.transport != "unix" {
@@ -104,16 +82,17 @@ fn endpoint_is_contained(state: &ResidentState) -> bool {
     )
 }
 
-pub(super) fn serving_process_and_endpoint_are_contained(state: &ResidentState) -> bool {
-    process_is_contained(state.process_id) && endpoint_is_contained(state)
-}
-
 #[cfg(not(unix))]
 fn endpoint_is_contained(state: &ResidentState) -> bool {
-    // Windows residents use an authenticated loopback endpoint. Process
-    // identity is the authoritative listener-containment check there.
+    // Windows residents use an authenticated loopback endpoint. The
+    // authenticated stopped acknowledgement and owner-lock probe above are
+    // the authoritative listener-containment checks there.
     let _ = state;
     true
+}
+
+pub(super) fn published_endpoints_are_contained(states: &[ResidentState]) -> bool {
+    !states.is_empty() && states.iter().all(endpoint_is_contained)
 }
 
 fn verify_managed_shutdown(
@@ -133,17 +112,13 @@ fn verify_managed_shutdown(
         };
         let states = discover_states(scope, digest)?;
         let state_is_present = states.iter().any(|state| state.generation == generation);
-        // The serving process and published endpoint are the authoritative
-        // resident-containment evidence. The owner PID identifies the
-        // supervise-managed helper, which can remain an ephemeral or zombie
-        // process after the serving child has released its lock and endpoint;
-        // supervise-managed never restarts a contained server. Requiring that
-        // helper to disappear turns successful shutdown into a false timeout.
-        let processes_and_endpoints_are_contained = !states.is_empty()
-            && states
-                .iter()
-                .all(serving_process_and_endpoint_are_contained);
-        if owner_lock_available && state_is_present && processes_and_endpoints_are_contained {
+        // The authenticated shutdown acknowledgement is emitted only after
+        // the serving listener has stopped and its owner lock is released.
+        // Require the persisted generation, both lock probes, and endpoint
+        // removal. Recorded serving and supervisor PIDs are informational:
+        // either process can be an ephemeral or zombie child after teardown,
+        // and neither process can restart a contained server.
+        if owner_lock_available && state_is_present && published_endpoints_are_contained(&states) {
             return Ok(());
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
