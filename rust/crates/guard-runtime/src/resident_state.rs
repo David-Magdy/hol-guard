@@ -20,12 +20,14 @@ use resident_state_files::{ensure_private_directory, private_file};
 pub(crate) use resident_state_files::{
     open_private_read, protect_windows_private_path, verify_windows_private_path,
 };
+#[cfg(test)]
+pub(crate) use resident_state_identity::process_is_terminal;
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use resident_state_identity::process_start_marker;
 pub(crate) use resident_state_identity::{
     package_process_start_marker, validate_package_process_identity,
     validate_package_process_identity_with_marker,
 };
-#[cfg(test)]
-pub(crate) use resident_state_identity::{process_is_terminal, process_start_marker};
 
 const STATE_SCHEMA: &str = "hol-guard-resident-state.v3";
 const STATE_FILE_PREFIX: &str = "generation-";

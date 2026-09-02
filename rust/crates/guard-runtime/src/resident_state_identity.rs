@@ -20,8 +20,8 @@ pub(crate) fn process_start_marker(process_id: u32) -> Result<String, String> {
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        return linux_process_start_marker(process_id)
-            .ok_or_else(|| "native_resident_process_identity_unavailable".to_owned());
+        linux_process_start_marker(process_id)
+            .ok_or_else(|| "native_resident_process_identity_unavailable".to_owned())
     }
     #[cfg(target_os = "macos")]
     {
