@@ -57,6 +57,7 @@ _STOP_DIAGNOSTIC_FIELDS = (
     "endpoint",
     "serving_shutdown",
 )
+_STOP_FAILURE_STATUSES = frozenset({"failed", "contained_client_cleanup_failed"})
 _STOP_DIAGNOSTIC_RE = re.compile(
     rb"\b(?P<code>native_resident_[a-z0-9_]+)"
     rb"(?P<fields>(?::[a-z_]+=(?:true|false|free|busy|unverified|absent|present))*)"
@@ -142,7 +143,12 @@ def _resident_state_may_exist(state_dir: Path) -> bool:
     return False
 
 
-def stop_native_resident(runtime: Path, guard_home: Path) -> NativeStopResult:
+def stop_native_resident(
+    runtime: Path,
+    guard_home: Path,
+    *,
+    write_diagnostic: bool = True,
+) -> NativeStopResult:
     """Stop one Rust resident and retain bounded containment evidence."""
 
     state_dir = guard_home / "native-runtime"
@@ -159,11 +165,13 @@ def stop_native_resident(runtime: Path, guard_home: Path) -> NativeStopResult:
                 "failed",
                 error="native_resident_stop_process_failed",
             )
-            _write_stop_diagnostic(diagnostic)
+            if write_diagnostic:
+                _write_stop_diagnostic(diagnostic)
             return NativeStopResult(False, diagnostic)
         if result.returncode != 0:
             diagnostic = _stop_diagnostic_from_stderr(result.stderr)
-            _write_stop_diagnostic(diagnostic)
+            if write_diagnostic:
+                _write_stop_diagnostic(diagnostic)
             return NativeStopResult(False, diagnostic)
         diagnostic = _build_stop_diagnostic(
             "contained",
@@ -175,7 +183,8 @@ def stop_native_resident(runtime: Path, guard_home: Path) -> NativeStopResult:
     # verified containment. Their resident supervisor reaper must remain
     # runnable while it waits for the serving process to exit.
     close_native_resident_clients(guard_home)
-    _write_stop_diagnostic(diagnostic)
+    if write_diagnostic:
+        _write_stop_diagnostic(diagnostic)
     return NativeStopResult(True, diagnostic)
 
 
@@ -348,14 +357,26 @@ class AdapterSession:
                 deadline = time.monotonic() + 2.0
                 while getattr(self.daemon._server, "active_hook_requests", 0) > 0 and time.monotonic() < deadline:
                     time.sleep(0.01)
-                final_result = stop_native_resident(self.runtime, self.guard_home)
-                diagnostic = getattr(self, "last_stop_diagnostic", {})
-                if diagnostic.get("status") in {"failed", "contained_client_cleanup_failed"}:
-                    # Final stale-client cleanup must not erase the bounded
-                    # evidence from the failed containment attempt.
+                # The final pass must not overwrite an earlier worker-cleanup
+                # failure before we decide which bounded diagnostic to retain.
+                final_result = stop_native_resident(
+                    self.runtime,
+                    self.guard_home,
+                    write_diagnostic=False,
+                )
+                final_diagnostic = final_result.diagnostic
+                prior_diagnostic = getattr(self, "last_stop_diagnostic", {})
+                if final_diagnostic.get("status") in _STOP_FAILURE_STATUSES:
+                    diagnostic = final_diagnostic
                     _write_stop_diagnostic(diagnostic)
-                elif isinstance(final_result, NativeStopResult):
-                    self.last_stop_diagnostic = final_result.diagnostic
+                elif prior_diagnostic.get("status") in _STOP_FAILURE_STATUSES:
+                    # stop_resident already emitted this failure diagnostic;
+                    # preserve that artifact instead of writing it twice.
+                    diagnostic = prior_diagnostic
+                else:
+                    diagnostic = final_diagnostic
+                    _write_stop_diagnostic(diagnostic)
+                self.last_stop_diagnostic = diagnostic
                 self.temporary.cleanup()
 
     def stop_resident(self) -> bool:

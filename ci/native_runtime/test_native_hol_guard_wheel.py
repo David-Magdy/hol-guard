@@ -8,11 +8,10 @@ import json
 import os
 import stat
 import subprocess
-import tempfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
 
 import pytest
 
@@ -27,6 +26,28 @@ _SOURCE_SHA = "a" * 40
 _RULE_DIGEST = "b" * 64
 _PLATFORM_TAG = "manylinux_2_28_x86_64"
 _TARGET = "x86_64-unknown-linux-gnu"
+
+
+class _DaemonStub(GuardDaemonServer):
+    """Typed daemon shell for lifecycle tests without starting a server."""
+
+    def __init__(self, server: SimpleNamespace, on_stop: Callable[[], None] | None = None) -> None:
+        self._server = server
+        self._on_stop = on_stop
+
+    def stop(self) -> None:
+        if self._on_stop is not None:
+            self._on_stop()
+
+
+class _TemporaryDirectoryStub:
+    """Minimal typed cleanup surface used by close-order tests."""
+
+    def __init__(self, on_cleanup: Callable[[], None]) -> None:
+        self._on_cleanup = on_cleanup
+
+    def cleanup(self) -> None:
+        self._on_cleanup()
 
 
 @pytest.fixture(autouse=True)
@@ -128,9 +149,9 @@ def test_adapter_session_stops_before_broadcasting_worker_client_close(
 ) -> None:
     events: list[str] = []
     runner = SimpleNamespace(close_native_resident_clients=lambda: events.append("close") or True)
-    daemon = SimpleNamespace(_server=SimpleNamespace(hook_process_runner=runner))
+    daemon = _DaemonStub(SimpleNamespace(hook_process_runner=runner))
     session = object.__new__(AdapterSession)
-    session.daemon = cast(GuardDaemonServer, cast(object, daemon))
+    session.daemon = daemon
     session.runtime = tmp_path / "runtime"
     session.guard_home = tmp_path / "home"
 
@@ -149,9 +170,9 @@ def test_adapter_session_keeps_containment_when_worker_client_cleanup_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runner = SimpleNamespace(close_native_resident_clients=lambda: False)
-    daemon = SimpleNamespace(_server=SimpleNamespace(hook_process_runner=runner))
+    daemon = _DaemonStub(SimpleNamespace(hook_process_runner=runner))
     session = object.__new__(AdapterSession)
-    session.daemon = cast(GuardDaemonServer, cast(object, daemon))
+    session.daemon = daemon
     session.runtime = tmp_path / "runtime"
     session.guard_home = tmp_path / "home"
     contained = native_slo_session.NativeStopResult(True, {"status": "contained"})
@@ -168,24 +189,22 @@ def test_adapter_session_close_stops_resident_before_daemon_shutdown(
 ) -> None:
     events: list[str] = []
     daemon = SimpleNamespace(
-        _server=SimpleNamespace(active_hook_requests=0),
-        stop=lambda: events.append("daemon-stop"),
+        active_hook_requests=0,
     )
     session = object.__new__(AdapterSession)
     session._connection = None
-    session.daemon = cast(GuardDaemonServer, cast(object, daemon))
+    session.daemon = _DaemonStub(daemon, lambda: events.append("daemon-stop"))
     session.runtime = tmp_path / "runtime"
     session.guard_home = tmp_path / "home"
-    session.temporary = cast(
-        tempfile.TemporaryDirectory[str],
-        cast(object, SimpleNamespace(cleanup=lambda: events.append("cleanup"))),
-    )
+    session.temporary = _TemporaryDirectoryStub(lambda: events.append("cleanup"))
 
     monkeypatch.setattr(AdapterSession, "stop_resident", lambda _session: events.append("resident-stop") or True)
     monkeypatch.setattr(
         native_slo_session,
         "stop_native_resident",
-        lambda _runtime, _guard_home: events.append("stale-stop") or True,
+        lambda _runtime, _guard_home, **_kwargs: (
+            events.append("stale-stop") or native_slo_session.NativeStopResult(True, {"status": "contained"})
+        ),
     )
 
     session.close()
@@ -198,18 +217,14 @@ def test_adapter_session_close_preserves_failed_stop_diagnostic(
 ) -> None:
     events: list[str] = []
     daemon = SimpleNamespace(
-        _server=SimpleNamespace(active_hook_requests=0),
-        stop=lambda: events.append("daemon-stop"),
+        active_hook_requests=0,
     )
     session = object.__new__(AdapterSession)
     session._connection = None
-    session.daemon = cast(GuardDaemonServer, cast(object, daemon))
+    session.daemon = _DaemonStub(daemon, lambda: events.append("daemon-stop"))
     session.runtime = tmp_path / "runtime"
     session.guard_home = tmp_path / "home"
-    session.temporary = cast(
-        tempfile.TemporaryDirectory[str],
-        cast(object, SimpleNamespace(cleanup=lambda: events.append("cleanup"))),
-    )
+    session.temporary = _TemporaryDirectoryStub(lambda: events.append("cleanup"))
 
     def failed_stop(current: AdapterSession) -> bool:
         current.last_stop_diagnostic = {"status": "failed", "error": "native_resident_owner_busy"}
@@ -220,11 +235,49 @@ def test_adapter_session_close_preserves_failed_stop_diagnostic(
     monkeypatch.setattr(
         native_slo_session,
         "stop_native_resident",
-        lambda _runtime, _guard_home: native_slo_session.NativeStopResult(True, {"status": "contained"}),
+        lambda _runtime, _guard_home, **_kwargs: native_slo_session.NativeStopResult(True, {"status": "contained"}),
     )
 
     session.close()
     assert session.last_stop_diagnostic["status"] == "failed"
+    assert events == ["resident-stop", "daemon-stop", "cleanup"]
+
+
+def test_adapter_session_close_prefers_final_failed_stop_diagnostic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    session = object.__new__(AdapterSession)
+    session._connection = None
+    session.daemon = _DaemonStub(
+        SimpleNamespace(active_hook_requests=0),
+        lambda: events.append("daemon-stop"),
+    )
+    session.runtime = tmp_path / "runtime"
+    session.guard_home = tmp_path / "home"
+    session.temporary = _TemporaryDirectoryStub(lambda: events.append("cleanup"))
+
+    def contained_stop(current: AdapterSession) -> bool:
+        current.last_stop_diagnostic = {"status": "contained"}
+        events.append("resident-stop")
+        return True
+
+    monkeypatch.setattr(AdapterSession, "stop_resident", contained_stop)
+    monkeypatch.setattr(
+        native_slo_session,
+        "stop_native_resident",
+        lambda _runtime, _guard_home, **_kwargs: native_slo_session.NativeStopResult(
+            False,
+            {"status": "failed", "error": "native_resident_marker_busy"},
+        ),
+    )
+
+    session.close()
+    assert session.last_stop_diagnostic == {
+        "status": "failed",
+        "error": "native_resident_marker_busy",
+    }
     assert events == ["resident-stop", "daemon-stop", "cleanup"]
 
 
