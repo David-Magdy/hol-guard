@@ -148,7 +148,7 @@ fn acquire_managed_owner_lock(scope: &Path) -> Result<ManagedOwnerLock, String> 
     crate::resident_state::verify_windows_private_path(&path, false)?;
     fs2::FileExt::try_lock_exclusive(&file).map_err(|error| {
         if error.kind() == std::io::ErrorKind::WouldBlock {
-            "native_resident_owner_busy".to_owned()
+            "native_resident_marker_busy".to_owned()
         } else {
             "native_resident_owner_lock_failed".to_owned()
         }

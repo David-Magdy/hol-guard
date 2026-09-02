@@ -1,5 +1,45 @@
 use super::*;
 
+#[cfg(unix)]
+use nix::errno::Errno;
+#[cfg(unix)]
+use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+#[cfg(unix)]
+use nix::unistd::Pid as UnixPid;
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+fn process_is_alive(process_id: u32) -> bool {
+    if process_id == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    if let Some(alive) = wait_for_owned_process(process_id) {
+        return alive;
+    }
+    let pid = Pid::from_u32(process_id);
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    system
+        .process(pid)
+        .is_some_and(|process| !super::process_is_terminal(process.status()))
+}
+
+#[cfg(unix)]
+fn wait_for_owned_process(process_id: u32) -> Option<bool> {
+    let process_id = i32::try_from(process_id).ok()?;
+    match waitpid(UnixPid::from_raw(process_id), Some(WaitPidFlag::WNOHANG)) {
+        Ok(WaitStatus::StillAlive) => Some(true),
+        Ok(WaitStatus::Exited(_, _) | WaitStatus::Signaled(_, _, _)) => Some(false),
+        Ok(_) => Some(true),
+        Err(Errno::ECHILD | Errno::ESRCH) => None,
+        Err(_) => None,
+    }
+}
+
 fn test_scope(label: &str) -> PathBuf {
     let unique = format!(
         "hol-guard-resident-{label}-{}-{}",

@@ -1,12 +1,6 @@
 #![forbid(unsafe_code)]
 
 use crate::resident_state_encoding::{decode_hex, hex_bytes};
-#[cfg(all(unix, test))]
-use nix::errno::Errno;
-#[cfg(all(unix, test))]
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-#[cfg(all(unix, test))]
-use nix::unistd::Pid as UnixPid;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(not(windows))]
@@ -134,41 +128,8 @@ pub(crate) fn validate_package_process_identity(process_id: u32) -> Result<(), S
     Ok(())
 }
 
-#[cfg(test)]
-pub(crate) fn process_is_alive(process_id: u32) -> bool {
-    if process_id == 0 {
-        return false;
-    }
-    #[cfg(all(unix, test))]
-    if let Some(alive) = wait_for_owned_process(process_id) {
-        return alive;
-    }
-    let pid = Pid::from_u32(process_id);
-    let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::Some(&[pid]),
-        true,
-        ProcessRefreshKind::nothing(),
-    );
-    system
-        .process(pid)
-        .is_some_and(|process| !process_is_terminal(process.status()))
-}
-
 fn process_is_terminal(status: ProcessStatus) -> bool {
     matches!(status, ProcessStatus::Zombie)
-}
-
-#[cfg(all(unix, test))]
-fn wait_for_owned_process(process_id: u32) -> Option<bool> {
-    let process_id = i32::try_from(process_id).ok()?;
-    match waitpid(UnixPid::from_raw(process_id), Some(WaitPidFlag::WNOHANG)) {
-        Ok(WaitStatus::StillAlive) => Some(true),
-        Ok(WaitStatus::Exited(_, _) | WaitStatus::Signaled(_, _, _)) => Some(false),
-        Ok(_) => Some(true),
-        Err(Errno::ECHILD | Errno::ESRCH) => None,
-        Err(_) => None,
-    }
 }
 
 pub(crate) fn state_scope(base: &Path, digest: &str) -> Result<PathBuf, String> {

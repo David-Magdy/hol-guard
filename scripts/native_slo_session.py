@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -13,6 +15,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 from contextlib import suppress
+from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPResponse
 from pathlib import Path
 from typing import cast
@@ -43,6 +46,75 @@ _CAPACITY_REASON_CODES = frozenset(
         "native_overloaded",
     }
 )
+_STOP_DIAGNOSTIC_SCHEMA = "hol-guard.native-resident-stop-diagnostic.v1"
+_STOP_DIAGNOSTIC_PATH_ENV = "HOL_GUARD_NATIVE_STOP_DIAGNOSTIC"
+_STOP_DIAGNOSTIC_FIELDS = (
+    "acknowledged",
+    "authenticated",
+    "generation_present",
+    "owner_lock",
+    "marker_lock",
+    "endpoint",
+    "serving_shutdown",
+)
+_STOP_DIAGNOSTIC_RE = re.compile(
+    rb"\b(?P<code>native_resident_[a-z0-9_]+)"
+    rb"(?P<fields>(?::[a-z_]+=(?:true|false|free|busy|unverified|absent|present))*)"
+)
+
+
+@dataclass(frozen=True)
+class NativeStopResult:
+    """Bounded resident-stop outcome and privacy-safe containment evidence."""
+
+    contained: bool
+    diagnostic: dict[str, object]
+
+    def __bool__(self) -> bool:
+        return self.contained
+
+
+def _build_stop_diagnostic(
+    status: str,
+    *,
+    error: str | None = None,
+    fields: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    diagnostic: dict[str, object] = {
+        "schema": _STOP_DIAGNOSTIC_SCHEMA,
+        "operation": "resident-stop",
+        "status": status,
+    }
+    if error is not None:
+        diagnostic["error"] = error
+    for field in _STOP_DIAGNOSTIC_FIELDS:
+        diagnostic[field] = (fields or {}).get(field, "unknown")
+    return diagnostic
+
+
+def _write_stop_diagnostic(diagnostic: Mapping[str, object]) -> None:
+    path_value = os.environ.get(_STOP_DIAGNOSTIC_PATH_ENV)
+    if not path_value:
+        return
+    try:
+        Path(path_value).write_text(json.dumps(diagnostic, separators=(",", ":")), encoding="utf-8")
+    except OSError:
+        return
+
+
+def _stop_diagnostic_from_stderr(stderr: bytes) -> dict[str, object]:
+    match = _STOP_DIAGNOSTIC_RE.search(stderr[:8192])
+    if match is None:
+        return _build_stop_diagnostic("failed", error="native_resident_stop_process_failed")
+    code = match.group("code").decode("ascii")
+    if not code.startswith("native_resident_stop_"):
+        code = "native_resident_stop_process_failed"
+    fields = {
+        key.decode("ascii"): value.decode("ascii")
+        for key, value in re.findall(rb":([a-z_]+)=([a-z]+)", match.group("fields"))
+        if key.decode("ascii") in _STOP_DIAGNOSTIC_FIELDS
+    }
+    return _build_stop_diagnostic("failed", error=code, fields=fields)
 
 
 def _resident_state_may_exist(state_dir: Path) -> bool:
@@ -70,8 +142,8 @@ def _resident_state_may_exist(state_dir: Path) -> bool:
     return False
 
 
-def stop_native_resident(runtime: Path, guard_home: Path) -> bool:
-    """Stop one Rust resident through its bounded lifecycle command."""
+def stop_native_resident(runtime: Path, guard_home: Path) -> NativeStopResult:
+    """Stop one Rust resident and retain bounded containment evidence."""
 
     state_dir = guard_home / "native-runtime"
     if _resident_state_may_exist(state_dir):
@@ -83,14 +155,28 @@ def stop_native_resident(runtime: Path, guard_home: Path) -> bool:
                 timeout=2,
             )
         except (OSError, subprocess.TimeoutExpired):
-            return False
+            diagnostic = _build_stop_diagnostic(
+                "failed",
+                error="native_resident_stop_process_failed",
+            )
+            _write_stop_diagnostic(diagnostic)
+            return NativeStopResult(False, diagnostic)
         if result.returncode != 0:
-            return False
+            diagnostic = _stop_diagnostic_from_stderr(result.stderr)
+            _write_stop_diagnostic(diagnostic)
+            return NativeStopResult(False, diagnostic)
+        diagnostic = _build_stop_diagnostic(
+            "contained",
+            fields={field: "verified" for field in _STOP_DIAGNOSTIC_FIELDS},
+        )
+    else:
+        diagnostic = _build_stop_diagnostic("already-stopped")
     # Keep persistent client processes alive until the Rust stop command has
     # verified containment. Their resident supervisor reaper must remain
     # runnable while it waits for the serving process to exit.
     close_native_resident_clients(guard_home)
-    return True
+    _write_stop_diagnostic(diagnostic)
+    return NativeStopResult(True, diagnostic)
 
 
 def _request(
@@ -183,6 +269,7 @@ class AdapterSession:
         self.readiness_ms = 0.0
         self._connection: HTTPConnection | None = None
         self._owner_thread_id = 0
+        self.last_stop_diagnostic = _build_stop_diagnostic("not-run")
 
     def __enter__(self) -> AdapterSession:
         try:
@@ -267,10 +354,25 @@ class AdapterSession:
     def stop_resident(self) -> bool:
         """Stop the resident before closing serving-worker client streams."""
 
-        if not stop_native_resident(self.runtime, self.guard_home):
+        result = stop_native_resident(self.runtime, self.guard_home)
+        if isinstance(result, NativeStopResult):
+            self.last_stop_diagnostic = result.diagnostic
+        else:
+            self.last_stop_diagnostic = _build_stop_diagnostic(
+                "contained" if result else "failed",
+                error=None if result else "native_resident_stop_process_failed",
+            )
+        if not result:
             return False
         close_clients = getattr(self.daemon._server.hook_process_runner, "close_native_resident_clients", None)
-        return not (callable(close_clients) and close_clients() is False)
+        if callable(close_clients) and close_clients() is False:
+            diagnostic = dict(result.diagnostic)
+            diagnostic["status"] = "contained_client_cleanup_failed"
+            diagnostic["client_cleanup"] = "failed"
+            self.last_stop_diagnostic = diagnostic
+            _write_stop_diagnostic(diagnostic)
+            return False
+        return True
 
 
-__all__ = ["AdapterSession", "stop_native_resident"]
+__all__ = ["AdapterSession", "NativeStopResult", "stop_native_resident"]

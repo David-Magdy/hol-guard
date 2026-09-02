@@ -90,6 +90,8 @@ jobs:
           unset PYTEST_CURRENT_TEST PYTEST_ADDOPTS PYTEST_PLUGINS PYTHONPATH
           .venv/bin/python ci/native_runtime/probe_native_default_auto.py --json native-default-auto.json
       - name: Measure installed adapter-to-decision SLOs
+        env:
+          HOL_GUARD_NATIVE_STOP_DIAGNOSTIC: native-stop-diagnostic.json
         run: |
           unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH
           unset HOL_GUARD_NATIVE_MODE HOL_GUARD_NATIVE_ORACLE HOL_GUARD_NATIVE_DIAGNOSTIC
@@ -144,6 +146,7 @@ jobs:
             --windows-waiver "validated by the platform matrix" \
             --output native-artifact-evidence.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
           name: hol-guard-native-wheel-linux-x64
           path: |
@@ -152,7 +155,8 @@ jobs:
             native-installed-slo.json
             native-soak.json
             native-artifact-evidence.json
-          if-no-files-found: error
+            native-stop-diagnostic.json
+          if-no-files-found: warn
 
   macos:
     strategy:
@@ -233,6 +237,7 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
           PLATFORM_TAG: ${{ matrix.platform_tag }}
+          HOL_GUARD_NATIVE_STOP_DIAGNOSTIC: native-stop-diagnostic.json
         run: |
           unset HOL_GUARD_NATIVE HOL_GUARD_NATIVE_BINARY HOL_GUARD_HOOK_FAST_PATH
           unset HOL_GUARD_NATIVE_MODE HOL_GUARD_NATIVE_ORACLE HOL_GUARD_NATIVE_DIAGNOSTIC
@@ -268,6 +273,7 @@ jobs:
             --windows-waiver "validated by the platform matrix" \
             --output native-artifact-evidence.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
           name: hol-guard-native-wheel-${{ matrix.target }}
           path: |
@@ -275,7 +281,8 @@ jobs:
             native-default-auto.json
             native-installed-slo.json
             native-artifact-evidence.json
-          if-no-files-found: error
+            native-stop-diagnostic.json
+          if-no-files-found: warn
 
   windows-x64:
     runs-on: windows-latest

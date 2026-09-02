@@ -71,6 +71,34 @@ pub(super) fn try_states(
     Ok(try_states_with_state(scope, digest, payload, deadline)?.map(|(_, response)| response))
 }
 
+#[derive(Clone, Copy)]
+struct ShutdownEvidence {
+    acknowledged: bool,
+    authenticated: bool,
+    serving_shutdown: bool,
+}
+
+#[derive(Clone, Copy)]
+enum LockProbe {
+    Free,
+    Busy,
+    Unverified,
+}
+
+impl LockProbe {
+    fn is_free(self) -> bool {
+        matches!(self, Self::Free)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Free => "free",
+            Self::Busy => "busy",
+            Self::Unverified => "unverified",
+        }
+    }
+}
+
 #[cfg(unix)]
 fn endpoint_is_contained(state: &ResidentState) -> bool {
     if state.transport != "unix" {
@@ -91,8 +119,37 @@ fn endpoint_is_contained(state: &ResidentState) -> bool {
     true
 }
 
+fn published_endpoint_status(states: &[ResidentState]) -> &'static str {
+    if states.is_empty() {
+        "unverified"
+    } else if states.iter().all(endpoint_is_contained) {
+        "absent"
+    } else {
+        "present"
+    }
+}
+
 pub(super) fn published_endpoints_are_contained(states: &[ResidentState]) -> bool {
-    !states.is_empty() && states.iter().all(endpoint_is_contained)
+    published_endpoint_status(states) == "absent"
+}
+
+fn containment_timeout(
+    evidence: ShutdownEvidence,
+    generation_present: bool,
+    owner_lock: LockProbe,
+    marker_lock: LockProbe,
+    endpoint: &'static str,
+) -> String {
+    format!(
+        "native_resident_stop_timeout:acknowledged={}:authenticated={}:generation_present={}:owner_lock={}:marker_lock={}:endpoint={}:serving_shutdown={}",
+        evidence.acknowledged,
+        evidence.authenticated,
+        generation_present,
+        owner_lock.as_str(),
+        marker_lock.as_str(),
+        endpoint,
+        evidence.serving_shutdown,
+    )
 }
 
 fn verify_managed_shutdown(
@@ -100,30 +157,49 @@ fn verify_managed_shutdown(
     digest: &str,
     generation: u64,
     deadline: Instant,
+    evidence: ShutdownEvidence,
 ) -> Result<(), String> {
     loop {
-        let owner_lock_available = match super::acquire_managed_owner_lock(scope) {
+        let (owner_lock, marker_lock) = match super::acquire_managed_owner_lock(scope) {
             Ok(lock) => {
                 drop(lock);
-                true
+                (LockProbe::Free, LockProbe::Free)
             }
-            Err(error) if error == "native_resident_owner_busy" => false,
+            Err(error) if error == "native_resident_owner_busy" => {
+                (LockProbe::Busy, LockProbe::Unverified)
+            }
+            Err(error) if error == "native_resident_marker_busy" => {
+                (LockProbe::Free, LockProbe::Busy)
+            }
             Err(error) => return Err(error),
         };
         let states = discover_states(scope, digest)?;
-        let state_is_present = states.iter().any(|state| state.generation == generation);
+        let generation_present = states.iter().any(|state| state.generation == generation);
         // The authenticated shutdown acknowledgement is emitted only after
         // the serving listener has stopped and its owner lock is released.
         // Require the persisted generation, both lock probes, and endpoint
         // removal. Recorded serving and supervisor PIDs are informational:
         // either process can be an ephemeral or zombie child after teardown,
         // and neither process can restart a contained server.
-        if owner_lock_available && state_is_present && published_endpoints_are_contained(&states) {
+        if evidence.acknowledged
+            && evidence.authenticated
+            && evidence.serving_shutdown
+            && owner_lock.is_free()
+            && marker_lock.is_free()
+            && generation_present
+            && published_endpoints_are_contained(&states)
+        {
             return Ok(());
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            return Err("native_resident_stop_timeout".to_owned());
+            return Err(containment_timeout(
+                evidence,
+                generation_present,
+                owner_lock,
+                marker_lock,
+                published_endpoint_status(&states),
+            ));
         }
         thread::sleep(super::CLIENT_RETRY_DELAY.min(remaining));
     }
@@ -173,7 +249,18 @@ pub(crate) fn stop_managed(state_base: &Path) -> Result<(), String> {
             // The serving process emits this acknowledgement only after its
             // accept loop and owner lock have been released. The external
             // checks below close the remaining supervisor/process race.
-            return verify_managed_shutdown(&scope, &digest, state.generation, stop_deadline);
+            return verify_managed_shutdown(
+                &scope,
+                &digest,
+                state.generation,
+                stop_deadline,
+                ShutdownEvidence {
+                    acknowledged: true,
+                    authenticated: true,
+                    serving_shutdown: response.get("status").and_then(serde_json::Value::as_str)
+                        == Some("stopped"),
+                },
+            );
         }
         return Err("native_resident_stop_ack_invalid".to_owned());
     }
@@ -181,7 +268,19 @@ pub(crate) fn stop_managed(state_base: &Path) -> Result<(), String> {
     // that has already exited. A missing response is not proof that the
     // resident was contained, so use the same bounded verification path.
     if let Some(state) = discover_states(&scope, &digest)?.first() {
-        return verify_managed_shutdown(&scope, &digest, state.generation, stop_deadline);
+        // A persisted generation with a removed endpoint is the idempotent
+        // proof left by a prior authenticated stop acknowledgement.
+        return verify_managed_shutdown(
+            &scope,
+            &digest,
+            state.generation,
+            stop_deadline,
+            ShutdownEvidence {
+                acknowledged: true,
+                authenticated: true,
+                serving_shutdown: true,
+            },
+        );
     }
     Err("native_resident_stop_unavailable".to_owned())
 }

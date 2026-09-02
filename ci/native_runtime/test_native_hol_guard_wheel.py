@@ -60,18 +60,8 @@ def _write_source_wheel(
     dist_info = f"hol_guard-{version}.dist-info"
     entries = {
         "codex_plugin_scanner/__init__.py": b"__version__ = 'fixture'\n",
-        f"{dist_info}/METADATA": (
-            "Metadata-Version: 2.4\n"
-            "Name: hol-guard\n"
-            f"Version: {version}\n"
-            "\n"
-        ).encode(),
-        f"{dist_info}/WHEEL": (
-            b"Wheel-Version: 1.0\n"
-            b"Generator: test\n"
-            b"Root-Is-Purelib: true\n"
-            b"Tag: py3-none-any\n"
-        ),
+        f"{dist_info}/METADATA": (f"Metadata-Version: 2.4\nName: hol-guard\nVersion: {version}\n\n").encode(),
+        f"{dist_info}/WHEEL": (b"Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"),
         f"{dist_info}/RECORD": b"",
     }
     if unsafe_name is not None:
