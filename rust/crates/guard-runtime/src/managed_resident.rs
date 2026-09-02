@@ -1,11 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::fs::{File, OpenOptions};
-#[cfg(not(windows))]
-use std::io::Write;
 use std::path::Path;
-#[cfg(not(windows))]
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -14,13 +10,12 @@ use std::time::{Duration, Instant};
 mod client_stream;
 #[path = "managed_resident_transport.rs"]
 mod managed_resident_transport;
-#[cfg(windows)]
-#[path = "managed_resident_windows.rs"]
-mod managed_resident_windows;
 #[path = "resident_restart_budget.rs"]
 mod restart_budget;
 #[path = "managed_resident_stop.rs"]
 mod stop;
+#[path = "managed_resident_supervisor.rs"]
+mod supervisor;
 
 pub(crate) fn client_stream(state_base: &Path) -> Result<(), String> {
     client_stream::run(state_base)
@@ -206,55 +201,6 @@ fn shutdown_requested() -> bool {
     MANAGED_SHUTDOWN_REQUESTED.load(Ordering::Acquire)
 }
 
-fn spawn_managed(
-    state_base: &Path,
-    generation: u64,
-    digest: &str,
-    token: &[u8],
-) -> Result<(), String> {
-    #[cfg(windows)]
-    return managed_resident_windows::spawn_managed(state_base, generation, digest, token);
-    #[cfg(not(windows))]
-    {
-        let executable = std::env::current_exe()
-            .map_err(|_| "native_resident_runtime_path_failed".to_owned())?;
-        let mut command = Command::new(executable);
-        command
-            .arg("supervise-managed")
-            .arg("--state-dir")
-            .arg(state_base)
-            .arg("--generation")
-            .arg(generation.to_string())
-            .arg("--runtime-sha256")
-            .arg(digest)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        let mut child = command
-            .spawn()
-            .map_err(|_| "native_resident_spawn_failed".to_owned())?;
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "native_resident_spawn_stdin_failed".to_owned())?;
-        stdin
-            .write_all(hex_token(token).as_bytes())
-            .and_then(|()| stdin.write_all(b"\n"))
-            .and_then(|()| stdin.flush())
-            .map_err(|_| "native_resident_spawn_auth_failed".to_owned())?;
-        Ok(())
-    }
-}
-
-fn hex_token(token: &[u8]) -> String {
-    let mut output = String::with_capacity(token.len() * 2);
-    for byte in token {
-        use std::fmt::Write as _;
-        let _ = write!(output, "{byte:02x}");
-    }
-    output
-}
-
 pub(crate) fn client_request(
     state_base: &Path,
     payload: &[u8],
@@ -299,7 +245,7 @@ pub(crate) fn client_request(
     let generation = next_generation(&scope, &digest)?;
     let mut token = [0u8; crate::AUTH_TOKEN_BYTES];
     getrandom::fill(&mut token).map_err(|_| "native_client_random_failed".to_owned())?;
-    spawn_managed(state_base, generation, &digest, &token)?;
+    supervisor::spawn_managed(state_base, generation, &digest, &token)?;
     let deadline = overall_deadline.min(Instant::now() + CLIENT_START_TIMEOUT);
     while Instant::now() < deadline {
         if let Some(response) = stop::try_states(&scope, &digest, payload, overall_deadline)? {
@@ -381,51 +327,7 @@ pub(crate) fn supervise_managed(
         return Err("native_resident_runtime_identity_mismatch".to_owned());
     }
     let token = crate::read_resident_auth_token()?;
-    #[cfg(windows)]
-    return managed_resident_windows::supervise_managed(
-        state_base,
-        generation,
-        expected_digest,
-        &token,
-    );
-    #[cfg(not(windows))]
-    {
-        let executable = std::env::current_exe()
-            .map_err(|_| "native_resident_runtime_path_failed".to_owned())?;
-        let mut child = Command::new(executable)
-            .arg("serve-managed")
-            .arg("--state-dir")
-            .arg(state_base)
-            .arg("--generation")
-            .arg(generation.to_string())
-            .arg("--owner-process-id")
-            .arg(std::process::id().to_string())
-            .arg("--runtime-sha256")
-            .arg(expected_digest)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| "native_resident_spawn_failed".to_owned())?;
-        let mut liveness_writer = child
-            .stdin
-            .take()
-            .ok_or_else(|| "native_resident_spawn_stdin_failed".to_owned())?;
-        liveness_writer
-            .write_all(hex_token(&token).as_bytes())
-            .and_then(|()| liveness_writer.write_all(b"\n"))
-            .and_then(|()| liveness_writer.flush())
-            .map_err(|_| "native_resident_spawn_auth_failed".to_owned())?;
-        let status = child
-            .wait()
-            .map_err(|_| "native_resident_supervisor_wait_failed".to_owned())?;
-        drop(liveness_writer);
-        if status.success() {
-            Ok(())
-        } else {
-            Err("native_resident_managed_exit_failed".to_owned())
-        }
-    }
+    supervisor::supervise_managed(state_base, generation, expected_digest, &token)
 }
 
 pub(crate) fn parse_generation(value: &str) -> Result<u64, String> {

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
+import selectors
 import subprocess
+import time
 from pathlib import Path
+from typing import IO
 
+import pytest
 from native_hook_client_support import (
     _invoke,
+    _push_snapshot,
     _request,
     _result,
     _state_files,
@@ -46,6 +52,95 @@ def test_native_resident_stop_is_idempotent_after_verified_shutdown(
     second = subprocess.run(command, check=False, capture_output=True, timeout=3)
     assert second.returncode == 0
     assert len(_state_files(state_dir)) == 1
+
+
+def test_separate_process_stop_reaps_supervisor_and_serving_process(
+    native_runtime: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    """A resident starter that stays alive must reap its stopped supervisor."""
+    if os.name == "nt":
+        pytest.skip("the local PID disappearance probe is POSIX-only")
+
+    runtime, state_dir = native_runtime
+    request = _request(runtime, tmp_path)
+    _push_snapshot(runtime, state_dir, request)
+    stream = subprocess.Popen(
+        (str(runtime), "resident-client-stream", "--stdin", str(state_dir)),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        assert stream.stdin is not None
+        stream.stdin.write(len(request).to_bytes(4, "big") + request)
+        stream.stdin.flush()
+        response = _read_stream_frame(stream)
+        assert response["authority"] == "rust"
+
+        state_files = _state_files(state_dir)
+        assert len(state_files) == 1
+        state = json.loads(state_files[0].read_text(encoding="utf-8"))
+        process_id = state["process_id"]
+        supervisor_id = state["owner_process_id"]
+        assert isinstance(process_id, int) and process_id > 0
+        assert isinstance(supervisor_id, int) and supervisor_id > 0
+        assert process_id != stream.pid
+        assert supervisor_id != stream.pid
+
+        command = (str(runtime), "resident-stop", "--state-dir", str(state_dir))
+        first = subprocess.run(command, check=False, capture_output=True, timeout=3)
+        assert first.returncode == 0
+        _wait_for_pid_disappearance(process_id)
+        _wait_for_pid_disappearance(supervisor_id)
+
+        second = subprocess.run(command, check=False, capture_output=True, timeout=3)
+        assert second.returncode == 0
+    finally:
+        if stream.stdin is not None:
+            stream.stdin.close()
+        try:
+            stream.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            stream.kill()
+            stream.wait(timeout=3)
+
+
+def _read_stream_frame(stream: subprocess.Popen[bytes]) -> dict[str, object]:
+    assert stream.stdout is not None
+    header = _read_stream_bytes(stream.stdout, 4)
+    length = int.from_bytes(header, "big")
+    assert 0 < length <= 16 * 1024 * 1024
+    return json.loads(_read_stream_bytes(stream.stdout, length))
+
+
+def _read_stream_bytes(stream: IO[bytes], length: int) -> bytes:
+    selector = selectors.DefaultSelector()
+    selector.register(stream, selectors.EVENT_READ)
+    deadline = time.monotonic() + 3
+    output = bytearray()
+    try:
+        while len(output) < length:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, "timed out waiting for resident stream response"
+            assert selector.select(remaining), "resident stream response was not readable"
+            chunk = os.read(stream.fileno(), length - len(output))
+            assert chunk, "resident stream closed before its response completed"
+            output.extend(chunk)
+    finally:
+        selector.close()
+    return bytes(output)
+
+
+def _wait_for_pid_disappearance(process_id: int) -> None:
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            os.kill(process_id, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"process {process_id} remained present after resident stop")
 
 
 def test_release_resident_starts_without_authority_and_rejects_approval(

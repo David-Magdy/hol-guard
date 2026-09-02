@@ -26,20 +26,19 @@ pub(crate) fn spawn_managed(
     let argument_refs: Vec<&OsStr> = arguments.iter().map(OsString::as_os_str).collect();
     let mut child = spawn_managed_child(&executable, &argument_refs)
         .map_err(|_| "native_resident_spawn_failed".to_owned())?;
-    let write_result = {
-        let mut stdin = child
-            .take_stdin()
-            .ok_or_else(|| "native_resident_spawn_stdin_failed".to_owned())?;
-        stdin
-            .write_all(hex_token(token).as_bytes())
-            .and_then(|()| stdin.write_all(b"\n"))
-            .and_then(|()| stdin.flush())
+    let mut stdin = match child.take_stdin() {
+        Some(stdin) => stdin,
+        None => return super::fail_spawn(child, "native_resident_spawn_stdin_failed"),
     };
+    let write_result = stdin
+        .write_all(hex_token(token).as_bytes())
+        .and_then(|()| stdin.write_all(b"\n"))
+        .and_then(|()| stdin.flush());
+    drop(stdin);
     if write_result.is_err() {
-        let _ = child.terminate();
-        return Err("native_resident_spawn_auth_failed".to_owned());
+        return super::fail_spawn(child, "native_resident_spawn_auth_failed");
     }
-    Ok(())
+    super::retain_supervisor(child)
 }
 
 pub(crate) fn supervise_managed(
