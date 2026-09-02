@@ -176,7 +176,11 @@ pub(crate) fn evaluate_resident_bytes(
             })),
             ResidentOperationV1::Shutdown(_request) => {
                 crate::managed_resident::request_shutdown();
-                encode_response(&serde_json::json!({"status": "stopping"}))
+                if crate::managed_resident::wait_for_shutdown() {
+                    encode_response(&serde_json::json!({"status": "stopped"}))
+                } else {
+                    Err("native_resident_stop_timeout".to_owned())
+                }
             }
         },
         ResidentRequestV1::Hook(request) => {
@@ -213,6 +217,7 @@ pub(crate) fn error_response(code: &'static str, retryable: bool) -> Vec<u8> {
 
 pub(crate) fn safe_error_response(code: &str, retryable: bool) -> Vec<u8> {
     if code.starts_with("native_policy_snapshot_")
+        || code.starts_with("native_resident_stop_")
         || NATIVE_APPROVAL_ERROR_CODES.contains(&code)
         || code.starts_with("snapshot_")
     {

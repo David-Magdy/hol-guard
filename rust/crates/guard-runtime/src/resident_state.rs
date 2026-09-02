@@ -123,6 +123,20 @@ pub(crate) fn validate_package_process_identity(process_id: u32) -> Result<(), S
     Ok(())
 }
 
+pub(crate) fn process_is_alive(process_id: u32) -> bool {
+    if process_id == 0 {
+        return false;
+    }
+    let pid = Pid::from_u32(process_id);
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing(),
+    );
+    system.process(pid).is_some()
+}
+
 pub(crate) fn state_scope(base: &Path, digest: &str) -> Result<PathBuf, String> {
     if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("native_resident_runtime_digest_invalid".to_owned());
