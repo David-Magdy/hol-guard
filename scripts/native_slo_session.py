@@ -348,7 +348,14 @@ class AdapterSession:
                 deadline = time.monotonic() + 2.0
                 while getattr(self.daemon._server, "active_hook_requests", 0) > 0 and time.monotonic() < deadline:
                     time.sleep(0.01)
-                stop_native_resident(self.runtime, self.guard_home)
+                final_result = stop_native_resident(self.runtime, self.guard_home)
+                diagnostic = getattr(self, "last_stop_diagnostic", {})
+                if diagnostic.get("status") in {"failed", "contained_client_cleanup_failed"}:
+                    # Final stale-client cleanup must not erase the bounded
+                    # evidence from the failed containment attempt.
+                    _write_stop_diagnostic(diagnostic)
+                elif isinstance(final_result, NativeStopResult):
+                    self.last_stop_diagnostic = final_result.diagnostic
                 self.temporary.cleanup()
 
     def stop_resident(self) -> bool:
