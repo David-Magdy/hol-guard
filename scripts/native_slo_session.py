@@ -367,7 +367,8 @@ class AdapterSession:
                 )
                 final_diagnostic = final_result.diagnostic
                 prior_diagnostic = getattr(self, "last_stop_diagnostic", {})
-                if final_diagnostic.get("status") in _STOP_FAILURE_STATUSES:
+                final_failure = final_diagnostic.get("status") in _STOP_FAILURE_STATUSES
+                if final_failure:
                     diagnostic = final_diagnostic
                 elif prior_diagnostic.get("status") in _STOP_FAILURE_STATUSES:
                     # stop_resident already emitted this failure diagnostic;
@@ -376,7 +377,6 @@ class AdapterSession:
                 else:
                     diagnostic = final_diagnostic
 
-                final_failure = final_diagnostic.get("status") in _STOP_FAILURE_STATUSES
                 if final_failure or not getattr(self, "_stop_diagnostic_written", False):
                     _write_stop_diagnostic(diagnostic)
                     self._stop_diagnostic_written = True
