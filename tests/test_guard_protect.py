@@ -1349,6 +1349,11 @@ class TestGuardProtect:
             "http://127.0.0.1:5474/requests/"
         )
         assert "hol-guard connect" in user_copy["harness_message"]
+        # The actionable approval link must be the final instruction, after the
+        # reconnect guidance, so copy refactors cannot bury it.
+        harness_message = user_copy["harness_message"]
+        assert harness_message.index("hol-guard connect") < harness_message.index("Open HOL Guard")
+        assert harness_message.rstrip().endswith("retry the same package install action.")
         pending = GuardStore(home_dir).list_approval_requests(status="pending", limit=5)
         assert len(pending) == 1
         assert pending[0]["policy_action"] == "require-reapproval"

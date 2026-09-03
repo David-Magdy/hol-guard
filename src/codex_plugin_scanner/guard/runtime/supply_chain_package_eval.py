@@ -1256,8 +1256,10 @@ def _evaluate_with_cloud(
                 workspace_fingerprint=workspace_fingerprint,
                 bundle_meta=bundle_meta,
                 # A trusted-session failure (typically a cloud token refresh
-                # error) is availability, not a package verdict: keep the install
-                # stopped but actionable in the approval queue.
+                # error) is availability, not a package verdict, so it gets the
+                # same treatment as cloud timeouts: the install stays stopped,
+                # but every security level routes the request to the approval
+                # queue so a human can decide remotely.
                 fail_closed_decision="ask",
             ),
             None,
