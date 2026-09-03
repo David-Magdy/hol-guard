@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from .command_extension_matchers import executable_matcher, safe_flag_variant
 from .command_extension_specs import CommandExtensionSpec
-from .command_rules import AnyMatcher, CommandSafetyRule
+from .command_matcher_contracts import MatcherEvidence
+from .command_model import CanonicalCommand
+from .command_rules import (
+    AnyMatcher,
+    CommandSafetyRule,
+    _after_leading_options,
+    _segment_matches_executable,
+)
 
 # Flag surface verified against repo2nb 0.2.1 (PyPI wheel, cli.py): `reverse`
 # accepts --force (store_true, no -f alias) and --output/-o; `sync` accepts
@@ -16,7 +25,8 @@ from .command_rules import AnyMatcher, CommandSafetyRule
 # Conservative matching covers:
 # - Standard launcher variants: repo2nb, python -m repo2nb, python3 -m repo2nb, py -m repo2nb
 # - Shell wrappers: exec repo2nb ..., xargs repo2nb ...
-# - Flag abbreviations: Python argparse accepts unambiguous prefixes (--for, --forc, --force)
+# - Flag abbreviations: Python argparse accepts unambiguous prefixes (--f, --fo, ..., --force)
+# - Unresolved shell expansions ($VAR, ${VAR}, $(...), backticks) that may supply --force
 # - Fail-secure option parsing: unknown options prevent unsafe dry-run bypasses
 
 _REPO2NB_LAUNCHERS: tuple[tuple[str, ...], ...] = (
@@ -33,7 +43,11 @@ _REPO2NB_LAUNCHERS: tuple[tuple[str, ...], ...] = (
     ("xargs", "python3", "-m", "repo2nb"),
     ("xargs", "py", "-m", "repo2nb"),
 )
-_FORCE_FLAGS: tuple[str, ...] = ("--force", "--forc", "--for")
+_WRAPPER_LEADING_OPTIONS_WITH_VALUES = frozenset({"-n", "-P", "-I", "-L", "-s"})
+# argparse resolves any unambiguous long-option prefix, so every prefix of
+# --force is the destructive flag itself.
+_FORCE_FLAGS: tuple[str, ...] = ("--force", "--forc", "--for", "--fo", "--f")
+_EXPANSION_MARKERS: frozenset[str] = frozenset({"$", "`"})
 
 _REPO2NB_REVERSE_FORCE = AnyMatcher(
     matchers=tuple(
@@ -44,7 +58,7 @@ _REPO2NB_REVERSE_FORCE = AnyMatcher(
             options_with_values=frozenset({"--output", "-o"}),
             allow_leading_options=launcher[0] in ("exec", "xargs"),
             leading_options_with_values=(
-                frozenset({"-n", "-P", "-I", "-L", "-s"}) if launcher[0] in ("exec", "xargs") else frozenset()
+                _WRAPPER_LEADING_OPTIONS_WITH_VALUES if launcher[0] in ("exec", "xargs") else frozenset()
             ),
             fail_secure_unknown_options=True,
         )
@@ -61,12 +75,69 @@ _REPO2NB_SYNC = AnyMatcher(
             options_with_values=frozenset({"--notebook"}),
             allow_leading_options=launcher[0] in ("exec", "xargs"),
             leading_options_with_values=(
-                frozenset({"-n", "-P", "-I", "-L", "-s"}) if launcher[0] in ("exec", "xargs") else frozenset()
+                _WRAPPER_LEADING_OPTIONS_WITH_VALUES if launcher[0] in ("exec", "xargs") else frozenset()
             ),
             fail_secure_unknown_options=True,
         )
         for launcher in _REPO2NB_LAUNCHERS
     )
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Repo2nbUnresolvedExpansionMatcher:
+    """Match repo2nb commands whose flags may be supplied by shell expansion.
+
+    A `$VAR`, `${VAR}`, `$(...)`, or backtick token can expand to `--force` at
+    execution time, so its presence in a `reverse` invocation means the
+    destructive flag cannot be proven absent.
+    """
+
+    subcommand: str = "reverse"
+    launchers: tuple[tuple[str, ...], ...] = _REPO2NB_LAUNCHERS
+    leading_options_with_values: frozenset[str] = _WRAPPER_LEADING_OPTIONS_WITH_VALUES
+    expansion_markers: frozenset[str] = _EXPANSION_MARKERS
+
+    def match(self, command: CanonicalCommand) -> tuple[MatcherEvidence, ...]:
+        evidence: list[MatcherEvidence] = []
+        for index, segment in enumerate(command.segments):
+            if segment.executable is None:
+                continue
+            lowered_arguments = tuple(argument.lower() for argument in segment.arguments)
+            for launcher in self.launchers:
+                if not _segment_matches_executable(segment, frozenset({launcher[0]})):
+                    continue
+                candidate_arguments = lowered_arguments
+                if launcher[0] in ("exec", "xargs"):
+                    candidate_arguments = _after_leading_options(
+                        candidate_arguments,
+                        self.leading_options_with_values,
+                        frozenset(),
+                    )
+                prefix = (*launcher[1:], self.subcommand)
+                if candidate_arguments[: len(prefix)] != prefix:
+                    continue
+                remaining_arguments = candidate_arguments[len(prefix) :]
+                if any(
+                    any(marker in argument for marker in self.expansion_markers)
+                    for argument in remaining_arguments
+                ):
+                    evidence.append(
+                        MatcherEvidence(
+                            segment_index=index,
+                            executable=segment.executable,
+                            detail="Matched repo2nb arguments that may expand to destructive flags.",
+                        )
+                    )
+                break
+        return tuple(evidence)
+
+
+# The literal-flag matcher stays free of custom children so `--help` safe
+# variants keep cloning pure executable matchers; the rule itself adds the
+# unresolved-expansion overlay on top.
+_REPO2NB_REVERSE_FORCE_WITH_EXPANSIONS = AnyMatcher(
+    matchers=(*_REPO2NB_REVERSE_FORCE.matchers, Repo2nbUnresolvedExpansionMatcher()),
 )
 
 REPO2NB_COMMAND_RULES = (
@@ -77,7 +148,9 @@ REPO2NB_COMMAND_RULES = (
             "Identifies `repo2nb reverse --force`, which can overwrite an "
             "existing non-empty destination directory. A symlink inside the "
             "destination can cause writes to land outside the intended root "
-            "even with --force's existing non-empty-directory check."
+            "even with --force's existing non-empty-directory check. Reverse "
+            "invocations carrying unresolved shell expansions are reviewed "
+            "because they cannot prove --force absent."
         ),
         severity="critical",
         risk_classes=("destructive_shell",),
@@ -85,8 +158,9 @@ REPO2NB_COMMAND_RULES = (
         safer_alternatives=(
             "Run repo2nb reverse without --force first and review what it reports about the existing directory.",
             "Confirm the destination path is not a sensitive system or home directory before forcing.",
+            "Expand shell variables and command substitutions before running repo2nb reverse.",
         ),
-        matcher=_REPO2NB_REVERSE_FORCE,
+        matcher=_REPO2NB_REVERSE_FORCE_WITH_EXPANSIONS,
         default_mode="review",
         safe_variants=(
             safe_flag_variant(

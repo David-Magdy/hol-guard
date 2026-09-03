@@ -40,6 +40,46 @@ REPO2NB_REVIEW_CASES: tuple[tuple[str, str, str], ...] = (
         "command.repo2nb.reverse-force",
     ),
     (
+        "repo2nb reverse notebook.ipynb --fo",
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
+        "repo2nb reverse notebook.ipynb --f",
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
+        "repo2nb reverse notebook.ipynb $FORCE_FLAG",
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
+        'repo2nb reverse notebook.ipynb "$FORCE_FLAG"',
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
+        "repo2nb reverse notebook.ipynb ${FORCE_FLAG}",
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
+        "repo2nb reverse notebook.ipynb $(echo --force)",
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
+        "repo2nb reverse notebook.ipynb `echo --force`",
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
+        "repo2nb reverse notebook.ipynb --output $DEST --force",
+        "repo2nb forced directory overwrite command",
+        "command.repo2nb.reverse-force",
+    ),
+    (
         "repo2nb sync ./my-repo",
         "repo2nb notebook sync command",
         "command.repo2nb.sync",
@@ -81,6 +121,10 @@ REPO2NB_WRAPPER_REVIEW_COMMANDS: tuple[tuple[str, str], ...] = (
     ("exec repo2nb sync ./my-repo", "command.repo2nb.sync"),
     ("xargs repo2nb sync ./my-repo", "command.repo2nb.sync"),
     ("xargs -n 1 python -m repo2nb sync ./my-repo", "command.repo2nb.sync"),
+    ("exec repo2nb reverse notebook.ipynb $FORCE_FLAG", "command.repo2nb.reverse-force"),
+    ("xargs -n 1 repo2nb reverse notebook.ipynb $FORCE_FLAG", "command.repo2nb.reverse-force"),
+    ("python -m repo2nb reverse notebook.ipynb $(echo --force)", "command.repo2nb.reverse-force"),
+    ("py -m repo2nb reverse notebook.ipynb ${FORCE_FLAG}", "command.repo2nb.reverse-force"),
 )
 
 
@@ -91,6 +135,7 @@ def test_repo2nb_rules_feed_runtime_hooks(tmp_path: Path) -> None:
 REPO2NB_SAFE_COMMANDS: tuple[str, ...] = (
     "repo2nb reverse notebook.ipynb",  # no --force: never reviewed, by design
     "repo2nb reverse notebook.ipynb --output ./dest",
+    "repo2nb reverse ./notebooks/release-1.ipynb",  # plain paths stay unreviewed
     "repo2nb sync ./my-repo --dry-run",
     "repo2nb sync --dry-run",
     "repo2nb --help",
