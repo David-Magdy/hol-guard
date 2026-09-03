@@ -388,6 +388,24 @@ def test_authenticated_daemon_failure_denies_without_local_fallback(
     assert "authentication failed" in payload["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def test_authenticated_failure_denies_permission_request_behavior() -> None:
+    payload = json.loads(
+        bridge._authenticated_control_plane_failure(
+            "invalid daemon token",
+            json.dumps({"hook_event_name": "PermissionRequest"}),
+        )
+    )
+    assert payload["hookSpecificOutput"]["decision"]["behavior"] == "deny"
+    v2 = json.loads(
+        bridge._authenticated_control_plane_failure(
+            "invalid daemon token",
+            json.dumps({"hook_event_name": "PermissionRequestV2"}),
+        )
+    )
+    assert v2["hookSpecificOutput"]["decision"]["behavior"] == "deny"
+
+
+
 def test_recovery_only_restarts_for_transport_and_server_failures() -> None:
     assert not bridge._daemon_failure_is_recoverable(ValueError("invalid loopback URL"))
     assert not bridge._daemon_failure_is_recoverable(
