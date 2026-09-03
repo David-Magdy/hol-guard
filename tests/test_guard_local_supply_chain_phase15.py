@@ -299,7 +299,24 @@ def test_guard_protect_routes_package_requests_through_supply_chain_eval_and_red
     assert "another-secret-token" not in json.dumps(stored_receipt)
 
 
-def test_guard_protect_receipt_keeps_matched_policy_rule_metadata(tmp_path: Path) -> None:
+def test_guard_protect_receipt_keeps_matched_policy_rule_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from codex_plugin_scanner.guard.adapters.zcode_config import ZCODE_ENV_HINTS
+    from codex_plugin_scanner.guard.runtime.harness_attribution import (
+        _CLAUDE_CODE_ENV_MARKERS,
+        _CODEX_ENV_MARKERS,
+        _CURSOR_ENV_MARKERS,
+    )
+
+    for marker in (
+        *ZCODE_ENV_HINTS,
+        *_CLAUDE_CODE_ENV_MARKERS,
+        *_CODEX_ENV_MARKERS,
+        *_CURSOR_ENV_MARKERS,
+        "__CFBundleIdentifier",
+    ):
+        monkeypatch.delenv(marker, raising=False)
     home_dir = tmp_path / "guard-home"
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()

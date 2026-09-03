@@ -715,6 +715,143 @@ class TestGuardProtect:
         assert output.get("dry_run") is True
         assert rc == 2
 
+    def test_guard_protect_attributes_package_requests_to_invoking_harness(
+        self,
+        tmp_path,
+        capsys,
+        monkeypatch,
+    ) -> None:
+        from codex_plugin_scanner.guard.cli import commands_dispatch_local
+
+        home_dir = tmp_path / "home"
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir(parents=True)
+        store = GuardStore(home_dir)
+        store.cache_advisories(
+            [
+                {
+                    "id": "adv-review-pkg",
+                    "ecosystem": "npm",
+                    "package": "reviewpkg",
+                    "severity": "medium",
+                    "action": "review",
+                    "headline": "Provenance requires review.",
+                }
+            ],
+            _now(),
+        )
+        monkeypatch.setenv("ZCODE_ENV", "production")
+        monkeypatch.setattr(
+            commands_dispatch_local,
+            "ensure_guard_daemon",
+            lambda _guard_home: "http://127.0.0.1:4455",
+        )
+
+        rc = main(
+            [
+                "guard",
+                "protect",
+                "--home",
+                str(home_dir),
+                "--workspace",
+                str(workspace_dir),
+                "--json",
+                "--dry-run",
+                "npm",
+                "install",
+                "reviewpkg",
+            ]
+        )
+
+        output = json.loads(capsys.readouterr().out)
+
+        assert output["request"]["harness"] == "zcode"
+        assert output["receipt"]["harness"] == "zcode"
+        assert output["targets"]
+        assert all(target.get("harness") == "zcode" for target in output["targets"])
+        assert str(output["receipt"]["artifact_id"]).startswith("guard-cli:")
+
+        queued = store.list_approval_requests(status="pending", limit=10)
+        assert queued
+        assert all(item["harness"] == "zcode" for item in queued)
+        assert all(str(item["artifact_id"]).startswith("guard-cli:") for item in queued)
+        assert any("ZCode" in str(item.get("trigger_summary") or "") for item in queued)
+        assert rc == 2
+
+    def test_guard_protect_keeps_guard_cli_attribution_outside_harness_env(
+        self,
+        tmp_path,
+        capsys,
+        monkeypatch,
+    ) -> None:
+        for marker in (
+            "ZCODE_BASE_URL",
+            "ZCODE_APP_VERSION",
+            "ZCODE_ENV",
+            "ZCODE_RUNTIME_ENV",
+            "ZCODE_PROCESS_LABEL",
+            "ZCODE_RG_BINARY",
+            "ZAI_OAUTH_ORIGIN",
+            "ZAI_OAUTH_CLIENT_ID",
+            "__CFBundleIdentifier",
+            "CLAUDECODE",
+            "CLAUDE_CODE_ENTRYPOINT",
+            "CODEX_SANDBOX",
+            "CURSOR_VERSION",
+            "CURSOR_PROJECT_DIR",
+            "CURSOR_TRACE_ID",
+            "CURSOR_SESSION_ID",
+            "CURSOR_TRANSCRIPT_PATH",
+        ):
+            monkeypatch.delenv(marker, raising=False)
+        from codex_plugin_scanner.guard.cli import commands_dispatch_local
+
+        monkeypatch.setattr(
+            commands_dispatch_local,
+            "ensure_guard_daemon",
+            lambda _guard_home: "http://127.0.0.1:4455",
+        )
+        home_dir = tmp_path / "home"
+        workspace_dir = tmp_path / "workspace"
+        workspace_dir.mkdir(parents=True)
+        store = GuardStore(home_dir)
+        store.cache_advisories(
+            [
+                {
+                    "id": "adv-review-cli",
+                    "ecosystem": "npm",
+                    "package": "reviewpkg",
+                    "severity": "medium",
+                    "action": "review",
+                    "headline": "Provenance requires review.",
+                }
+            ],
+            _now(),
+        )
+
+        main(
+            [
+                "guard",
+                "protect",
+                "--home",
+                str(home_dir),
+                "--workspace",
+                str(workspace_dir),
+                "--json",
+                "--dry-run",
+                "npm",
+                "install",
+                "reviewpkg",
+            ]
+        )
+
+        output = json.loads(capsys.readouterr().out)
+        assert output["request"]["harness"] == "guard-cli"
+        assert output["receipt"]["harness"] == "guard-cli"
+        queued = store.list_approval_requests(status="pending", limit=10)
+        assert queued
+        assert all(item["harness"] == "guard-cli" for item in queued)
+
     def test_guard_protect_honors_cached_package_url_blocks_for_package_installs(self, tmp_path, capsys) -> None:
         home_dir = tmp_path / "home"
         workspace_dir = tmp_path / "workspace"

@@ -80,6 +80,22 @@ from .stable_digest import stable_digest_hex
 from .store import GuardStore
 
 _LOCAL_SUPPLY_CHAIN_HARNESS = "guard-cli"
+
+
+def _resolve_local_supply_chain_harness() -> str:
+    """Attribute intercepted package commands to the harness that invoked them.
+
+    Package shims spawn ``hol-guard protect`` inside the environment of the
+    shell that ran the command, so an AI harness that executed it leaves its
+    runtime env markers there. The resolved slug feeds request identity,
+    receipts, and user-facing attribution only; policy scoping stays keyed on
+    the synthetic guard-cli artifact harness, which the invoking process
+    cannot influence.
+    """
+
+    from .runtime.harness_attribution import resolve_environment_harness
+
+    return resolve_environment_harness(os.environ) or _LOCAL_SUPPLY_CHAIN_HARNESS
 _MANIFEST_CANDIDATES = (
     "package.json",
     "requirements.txt",
@@ -1245,6 +1261,7 @@ class _PackageProtectAuthority:
     additional_current_action: object | None
     additional_policy_context: dict[str, object] | None
     observe_mode: bool
+    invoking_harness: str = _LOCAL_SUPPLY_CHAIN_HARNESS
 
 
 _PackageApprovalClaimDisposition = Literal["consumed", "retained"]
@@ -1501,6 +1518,7 @@ def _build_package_protect_authority(
             additional_current_action=additional_current_action,
             additional_policy_context=additional_policy_context,
             observe_mode=config is not None and config.mode == "observe",
+            invoking_harness=_resolve_local_supply_chain_harness(),
         )
     except BaseException:
         _cleanup_external_archive_downloads(evaluation)
@@ -1760,8 +1778,10 @@ def _apply_package_protect_projection(
         receipt_policy_metadata["additional_policy_context"] = authority.additional_policy_context
     if approval_reuse_evidence:
         receipt_policy_metadata["approval_reuse"] = list(approval_reuse_evidence)
+    if authority.invoking_harness != _LOCAL_SUPPLY_CHAIN_HARNESS:
+        receipt_policy_metadata["invoking_harness"] = authority.invoking_harness
     receipt = _build_guard_receipt(
-        harness=_LOCAL_SUPPLY_CHAIN_HARNESS,
+        harness=authority.invoking_harness,
         artifact_id=artifact.artifact_id,
         artifact_hash=artifact_hash,
         policy_decision=verdict_action,
@@ -1782,13 +1802,15 @@ def _apply_package_protect_projection(
         "install_kind": intent.intent_kind,
         "executor": str(command[0]) if command else _LOCAL_SUPPLY_CHAIN_HARNESS,
         "package_manager": intent.package_manager,
-        "harness": _LOCAL_SUPPLY_CHAIN_HARNESS,
+        "harness": authority.invoking_harness,
         "targets": public_targets,
         "manifest_paths": list(intent.manifest_paths),
         "lockfile_paths": list(intent.lockfile_paths),
         "package_execution_context": authority.execution_context.to_evidence(),
     }
-    payload["targets"] = [_protect_target_payload(target) for target in intent.targets]
+    payload["targets"] = [
+        _protect_target_payload(target, harness=authority.invoking_harness) for target in intent.targets
+    ]
     payload["verdict"] = {
         "action": verdict_action,
         "reason": verdict_reason,
@@ -4359,7 +4381,7 @@ def _matched_advisories(evaluation: object) -> list[dict[str, object]]:
     return advisories
 
 
-def _protect_target_payload(target: PackageIntentTarget) -> dict[str, object]:
+def _protect_target_payload(target: PackageIntentTarget, *, harness: str) -> dict[str, object]:
     public_target = target.to_dict()
     raw_spec = str(public_target.get("raw_spec") or "")
     source_url = _string_value(public_target.get("source_url"))
@@ -4373,7 +4395,7 @@ def _protect_target_payload(target: PackageIntentTarget) -> dict[str, object]:
         "raw_spec": raw_spec,
         "version": target.requested_specifier,
         "source_url": source_url,
-        "harness": _LOCAL_SUPPLY_CHAIN_HARNESS,
+        "harness": harness,
     }
 
 

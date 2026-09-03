@@ -140,6 +140,7 @@ def _native_approval_center_context(response_payload: dict[str, object], *, harn
         "grok": "Grok",
         "pi": "Pi",
         "omp": "Oh My Pi",
+        "zcode": "ZCode",
     }.get(canonical_harness, "the harness")
     if canonical_harness in {
         "npm",

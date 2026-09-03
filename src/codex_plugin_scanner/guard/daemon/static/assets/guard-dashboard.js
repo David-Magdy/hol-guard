@@ -15041,6 +15041,8 @@ function harnessDisplayName(harness) {
       return "Grok";
     case "omp":
       return "Oh My Pi";
+    case "zcode":
+      return "ZCode";
     default:
       return capitalizeHarness(normalized);
   }

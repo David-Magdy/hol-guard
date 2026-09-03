@@ -15,6 +15,7 @@ _HARNESS_LABELS = {
     "opencode": "OpenCode",
     "pi": "Pi",
     "omp": "Oh My Pi",
+    "zcode": "ZCode",
 }
 
 _ARTIFACT_LABELS = {
