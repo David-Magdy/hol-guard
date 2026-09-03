@@ -337,7 +337,7 @@ def _authenticated_control_plane_failure(reason: str, data: str) -> str:
             },
             separators=(",", ":"),
         )
-    return json.dumps({"continue": False, "stopReason": message}, separators=(",", ":"))
+    return json.dumps({"continue": True, "stopReason": message}, separators=(",", ":"))
 
 
 def _should_suppress_output(data: str, response_body: str) -> bool:

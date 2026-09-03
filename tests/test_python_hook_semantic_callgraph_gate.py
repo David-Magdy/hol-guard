@@ -94,7 +94,7 @@ def test_production_off_returns_fail_safe_without_constructing_oracle(
         workspace=tmp_path,
     )
 
-    assert result["decision"] == "block"
+    assert result["continue"] is True
     assert result["reason_code"] == "native_hook_disabled"
     assert worker.test_oracle is None
 

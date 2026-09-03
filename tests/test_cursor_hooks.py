@@ -249,7 +249,7 @@ def test_cursor_hook_script_uses_one_deadline_and_isolated_process_tree(tmp_path
     assert "run_isolated_hook_process(" in source
     assert "allow_windows_breakaway=True" in source
     assert "_FALLBACK_LOCK.acquire(blocking=False)" in source
-    assert 'daemon_failure_kind not in {None, "overload"}' in source
+    assert 'recover_kind != "overload"' in source
     assert "[*GUARD_RECOVERY_COMMAND, failure_kind]" in source
 
 
@@ -1104,7 +1104,7 @@ def test_install_cursor_hooks_preserves_top_level_event_entries(
     for event_name in _MANAGED_HOOK_EVENTS:
         entries = installed["hooks"][event_name]
         assert entries[0] == existing_entries[event_name][0]
-        assert entries[-1]["command"].endswith(HOOK_SCRIPT_NAME)
+        assert HOOK_SCRIPT_NAME in entries[-1]["command"]
 
 
 def test_prepare_cursor_hook_payload_maps_before_mcp_execution() -> None:

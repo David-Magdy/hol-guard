@@ -59,6 +59,17 @@ def lifecycle_event_is_observe_only(event_name: str) -> bool:
     return _compact_hook_event_name(event_name) in _LIFECYCLE_CANONICAL_BY_COMPACT
 
 
+def hook_event_pauses_when_unavailable(event_name: str) -> bool:
+    """True when native miss must pause the harness instead of continuing the turn."""
+
+    compact = _compact_hook_event_name(event_name)
+    if compact in _LIFECYCLE_CANONICAL_BY_COMPACT:
+        return False
+    if compact in {"posttooluse", "posttool"} or compact.startswith("after"):
+        return False
+    return compact in {"permissionrequest", "pretooluse", "pretool"} or compact.startswith("before")
+
+
 def hook_review_is_recording_only(
     *,
     guard_home: Path | None = None,
@@ -144,8 +155,10 @@ def availability_harness_response(
         workspace=workspace,
         recording_only=recording_only,
     )
+    compact = _compact_hook_event_name(event_name)
+    pre_tool_event = compact in {"pretooluse", "pretool"} or compact.startswith("before")
     if watch_only:
-        if event_name != "PreToolUse":
+        if not pre_tool_event:
             return observe_lifecycle_fail_safe_response(
                 harness,
                 event_name=event_name,
@@ -156,7 +169,11 @@ def availability_harness_response(
             reason_code=reason_code,
             reason=reason,
         )
-    if event_name != "PreToolUse":
+    if compact == "permissionrequest":
+        from .hook_worker_responses import post_tool_fail_safe_response
+
+        return post_tool_fail_safe_response(harness, reason=reason, reason_code=reason_code)
+    if not hook_event_pauses_when_unavailable(event_name):
         return observe_lifecycle_fail_safe_response(
             harness,
             event_name=event_name,
@@ -232,7 +249,7 @@ def cursor_unparseable_input_permission(
     compact = hook_event_name.strip().lower().replace("_", "").replace("-", "")
     if compact in {"aftershellexecution", "aftermcpexecution"}:
         return {}, 0
-    if recording_only or compact in {"beforereadfile", ""}:
+    if recording_only or compact == "beforereadfile":
         return {"permission": "allow"}, 0
     return dict(_CURSOR_UNAVAILABLE_DENY), 2
 
@@ -245,6 +262,7 @@ __all__ = [
     "cursor_fallback_permission",
     "cursor_unparseable_input_permission",
     "hook_action_is_emergency_safe",
+    "hook_event_pauses_when_unavailable",
     "hook_review_is_recording_only",
     "lifecycle_event_is_observe_only",
     "recording_only_pre_tool_response",

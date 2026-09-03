@@ -403,9 +403,7 @@ def _main_inner() -> int:
             hook_event_name=hook_event_name,
             workspace=workspace,
         )
-        recover_kind = "overload" if daemon_failure_kind == "overload" else (
-            daemon_failure_kind or "transport-failure"
-        )
+        recover_kind = daemon_failure_kind or "transport-failure"
         if availability_code == 0 and availability.get("permission") == "allow":
             if recover_kind != "overload":
                 threading.Thread(

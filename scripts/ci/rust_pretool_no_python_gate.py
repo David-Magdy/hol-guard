@@ -49,6 +49,20 @@ def function_calls(node: ast.AST) -> set[str]:
     return calls
 
 
+_TYPED_FAIL_SAFE = frozenset(
+    {
+        "post_tool_fail_safe_response",
+        "availability_harness_response",
+        "_native_worker_fail_safe_result",
+        "_runtime_hook_fail_safe_response",
+    }
+)
+
+
+def _has_typed_fail_safe(node: ast.AST) -> bool:
+    return bool(_TYPED_FAIL_SAFE.intersection(function_calls(node)))
+
+
 def function_strings(node: ast.AST) -> set[str]:
     return {child.value for child in ast.walk(node) if isinstance(child, ast.Constant) and isinstance(child.value, str)}
 
@@ -195,7 +209,7 @@ def _resident_graph_failures(root: Path) -> list[str]:
         for child in resident.body
     ):
         failures.append("resident entrypoint can reach Python CLI without a native-mode return guard")
-    elif "post_tool_fail_safe_response" not in function_calls(unsupported):
+    elif not _has_typed_fail_safe(unsupported):
         failures.append("resident HookWorkerUnsupported native branch has no fail-safe response")
     return failures
 
@@ -213,7 +227,7 @@ def _native_cli_graph_failures(root: Path) -> list[str]:
         failures.append("CLI source-ref path is reachable before native authority")
     if "_native_mode_requires_rust" not in function_calls(native_route):
         failures.append("CLI native/source-ref route has no native-mode guard")
-    if "post_tool_fail_safe_response" not in function_calls(native_route):
+    if not _has_typed_fail_safe(native_route):
         failures.append("CLI native/source-ref route has no fail-safe native terminal")
     return failures
 

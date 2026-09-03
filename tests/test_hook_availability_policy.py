@@ -446,6 +446,24 @@ def test_availability_continues_prompt_lifecycle_and_still_pauses_tools(tmp_path
         home_dir=tmp_path / "home",
     )
     assert curl["policy_action"] == "block"
+    permission = availability_harness_response(
+        {"hook_event_name": "PermissionRequest", "tool_input": {"command": "pwd"}},
+        harness="claude-code",
+        event_name="PermissionRequest",
+        reason_code="native_hook_event_unavailable",
+        reason="native unavailable",
+    )
+    assert permission["continue"] is False
+    alias = availability_harness_response(
+        {"hook_event_name": "beforeShellExecution", "command": "curl https://example.test"},
+        harness="cursor",
+        event_name="beforeShellExecution",
+        reason_code="native_pre_tool_unavailable",
+        reason="native unavailable",
+        workspace=tmp_path,
+        home_dir=tmp_path / "home",
+    )
+    assert alias["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_cursor_unparseable_input_allows_read_and_pauses_shell() -> None:
@@ -464,3 +482,6 @@ def test_cursor_unparseable_input_allows_read_and_pauses_shell() -> None:
     )
     assert watch_code == 0
     assert watch == {"permission": "allow"}
+    empty, empty_code = cursor_unparseable_input_permission("")
+    assert empty_code == 2
+    assert empty["permission"] == "deny"
