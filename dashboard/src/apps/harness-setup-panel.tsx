@@ -116,7 +116,9 @@ export function HarnessSetupPanel(props: {
               dryRun: options.dryRun,
               confirmationPhrase: options.confirmationPhrase,
             });
-        setDisconnectArmed(false);
+        if (!(action === "uninstall" && options.dryRun === true)) {
+          setDisconnectArmed(false);
+        }
         setSetupState({ kind: "success", action, result });
         if (action !== "verify" && options.dryRun !== true) {
           await refreshAfterMutation();
@@ -444,7 +446,6 @@ function SetupMetric(props: { label: string; value: string; active?: boolean }) 
     </div>
   );
 }
-
 function installStateLabel(
   active: boolean,
   status: "active" | "needs_setup" | "observed" | "unknown",
@@ -462,7 +463,6 @@ function setupStepsFor(result: GuardHarnessActionResult | null, active: boolean)
   if (active && result.contract?.verify_steps) return result.contract.verify_steps;
   return [];
 }
-
 function setupNotesFor(result: GuardHarnessActionResult | null): string[] {
   const manifest = result?.managed_install?.manifest;
   const notes = manifest?.["notes"];
@@ -491,7 +491,6 @@ function setupActionErrorMessage(error: GuardHarnessActionError): string {
   }
   return error.payload?.error ?? error.message;
 }
-
 function setupSuccessTitle(action: GuardHarnessAction, displayName: string): string {
   if (action === "install") return `${displayName} connected`;
   if (action === "verify") return `${displayName} test complete`;

@@ -62,7 +62,9 @@ function HarnessSetupPanel(props) {
           dryRun: options.dryRun,
           confirmationPhrase: options.confirmationPhrase
         });
-        setDisconnectArmed(false);
+        if (!(action === "uninstall" && options.dryRun === true)) {
+          setDisconnectArmed(false);
+        }
         setSetupState({ kind: "success", action, result });
         if (action !== "verify" && options.dryRun !== true) {
           await refreshAfterMutation();

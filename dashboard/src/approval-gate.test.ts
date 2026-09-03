@@ -322,6 +322,10 @@ function testDisconnectWaitsForApprovalSettingsBeforeConfirm(): void {
     harnessSetupPanel.includes("requireFreshTotp={approvalGate.totp_enabled === true}"),
     "disconnect must require a fresh authenticator code when MFA is on",
   );
+  assert(
+    harnessSetupPanel.includes('if (!(action === "uninstall" && options.dryRun === true))'),
+    "disconnect dry-run must keep the confirm step armed",
+  );
 }
 
 const tests: Array<[string, () => void]> = [
