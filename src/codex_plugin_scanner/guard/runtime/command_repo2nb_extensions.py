@@ -119,8 +119,7 @@ class Repo2nbUnresolvedExpansionMatcher:
                     continue
                 remaining_arguments = candidate_arguments[len(prefix) :]
                 if any(
-                    any(marker in argument for marker in self.expansion_markers)
-                    for argument in remaining_arguments
+                    any(marker in argument for marker in self.expansion_markers) for argument in remaining_arguments
                 ):
                     evidence.append(
                         MatcherEvidence(
