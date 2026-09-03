@@ -14734,6 +14734,26 @@ function stripDuplicateReviewContextPrefix(value) {
   );
   return stripped === value ? null : stripped;
 }
+const HARNESS_SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
+const HEX_TOKEN_HARNESS_PATTERN = /^[a-f0-9]{16,64}$/;
+const UUID_HARNESS_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const NON_APP_HARNESS_SLUGS = /* @__PURE__ */ new Set(["*", "all", "any", "global"]);
+function capitalizeHarness(harness) {
+  if (harness.length === 0) {
+    return harness;
+  }
+  return `${harness.charAt(0).toUpperCase()}${harness.slice(1)}`;
+}
+function normalizeHarnessSlug(harness) {
+  const slug = typeof harness === "string" ? harness.trim().toLowerCase() : "";
+  if (slug.length === 0 || NON_APP_HARNESS_SLUGS.has(slug) || HEX_TOKEN_HARNESS_PATTERN.test(slug) || UUID_HARNESS_PATTERN.test(slug) || !HARNESS_SLUG_PATTERN.test(slug)) {
+    return null;
+  }
+  return slug;
+}
+function isDisplayableHarness(harness) {
+  return normalizeHarnessSlug(harness) !== null;
+}
 const QUEUE_CONNECTION_ERROR_HEADLINE = "Guard daemon not reachable: approval links work when Guard is running on this device.";
 const QUEUE_CONNECTION_ERROR_INSTRUCTION = "Start Guard on this machine, then reload to continue approving or blocking.";
 function isWatchOnlyObservation(item) {
@@ -14928,26 +14948,6 @@ function requestResolutionBlockReason(item) {
     return "Policy terminally blocked this action. This queue record is diagnostic and cannot be overridden by an approval.";
   }
   return null;
-}
-function capitalizeHarness(harness) {
-  if (harness.length === 0) {
-    return harness;
-  }
-  return `${harness.charAt(0).toUpperCase()}${harness.slice(1)}`;
-}
-const HARNESS_SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
-const HEX_TOKEN_HARNESS_PATTERN = /^[a-f0-9]{16,64}$/;
-const UUID_HARNESS_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-const NON_APP_HARNESS_SLUGS = /* @__PURE__ */ new Set(["*", "all", "any", "global"]);
-function normalizeHarnessSlug(harness) {
-  const slug = typeof harness === "string" ? harness.trim().toLowerCase() : "";
-  if (slug.length === 0 || NON_APP_HARNESS_SLUGS.has(slug) || HEX_TOKEN_HARNESS_PATTERN.test(slug) || UUID_HARNESS_PATTERN.test(slug) || !HARNESS_SLUG_PATTERN.test(slug)) {
-    return null;
-  }
-  return slug;
-}
-function isDisplayableHarness(harness) {
-  return normalizeHarnessSlug(harness) !== null;
 }
 function resolveDecisionV2Title(item) {
   const title = item.decision_v2_json?.user_title;
