@@ -49,6 +49,9 @@ test_auto_hook_uses_barrier_without_loading_config_per_request = (
 test_prepare_workspace_policy_uses_bounded_first_workspace_handshake = (
     _publisher_tests.test_prepare_workspace_policy_uses_bounded_first_workspace_handshake
 )
+test_prepare_workspace_policy_waits_publish_budget_without_caller_deadline = (
+    _publisher_tests.test_prepare_workspace_policy_waits_publish_budget_without_caller_deadline
+)
 test_publisher_does_not_ack_snapshot_after_concurrent_mutation = (
     _publisher_tests.test_publisher_does_not_ack_snapshot_after_concurrent_mutation
 )
@@ -127,6 +130,7 @@ __all__ = [
     "test_lost_ack_retries_identical_payload",
     "test_policy_merge_never_downgrades_enforcing_posture_to_watch",
     "test_prepare_workspace_policy_uses_bounded_first_workspace_handshake",
+    "test_prepare_workspace_policy_waits_publish_budget_without_caller_deadline",
     "test_publisher_does_not_ack_snapshot_after_concurrent_mutation",
     "test_publisher_does_not_republish_for_generation_created_by_own_ack",
     "test_publisher_process_restart_reuses_cached_payload",

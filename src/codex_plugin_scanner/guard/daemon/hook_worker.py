@@ -36,6 +36,7 @@ from ..config import load_guard_config
 from ..native_hook_edge import review_raw_hook_native
 from ..native_mode import python_oracle_enabled, python_oracle_surface_enabled
 from ..native_policy_snapshot import get_native_policy_snapshot_publisher
+from ..native_policy_snapshot_constants import _PUBLISH_TIMEOUT_SECONDS
 from ..native_pretool import review_pre_tool_native
 from ..native_route_receipt import record_python_semantic_hook_route
 from ..native_runtime import NativeRuntimeStatus, native_mode, native_runtime_status, review_post_tool_native
@@ -75,7 +76,7 @@ class CommandActivityWriter(Protocol):
     ) -> bool: ...
 
 
-_NATIVE_POLICY_READY_TIMEOUT_SECONDS = 0.25
+_NATIVE_POLICY_READY_TIMEOUT_SECONDS = _PUBLISH_TIMEOUT_SECONDS
 
 
 @final
@@ -112,7 +113,7 @@ class HookWorker(HookWorkerNativeMixin):
         if mode in {"auto", "force"}:
             wait_until_ready = getattr(self.policy_snapshot_publisher, "wait_until_ready", None)
             if callable(wait_until_ready):
-                _ = wait_until_ready(time.monotonic() + 0.25)
+                _ = wait_until_ready(time.monotonic() + _NATIVE_POLICY_READY_TIMEOUT_SECONDS)
 
     @property
     def test_oracle(self) -> PythonOracle | None:

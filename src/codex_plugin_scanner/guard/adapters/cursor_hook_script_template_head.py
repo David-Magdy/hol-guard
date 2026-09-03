@@ -473,7 +473,7 @@ def _cursor_read_file_permission(permission: str) -> str:
 def _cursor_reason(guard_payload: dict[str, object]) -> str:
     primary_url = guard_payload.get("primary_approval_url")
     reason: str | None = None
-    for key in ("review_hint", "risk_summary", "why_now", "risk_headline"):
+    for key in ("reason", "stopReason", "systemMessage", "review_hint", "risk_summary", "why_now", "risk_headline"):
         value = guard_payload.get(key)
         if isinstance(value, str) and value.strip():
             reason = value.strip()

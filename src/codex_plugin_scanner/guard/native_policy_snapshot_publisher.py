@@ -146,7 +146,7 @@ class NativePolicySnapshotPublisher(NativePolicySnapshotPublisherInputs):
 
         if workspace is None:
             return False
-        candidate = workspace.expanduser()
+        candidate = self._resolved_workspace(workspace)
         with self._condition:
             if candidate in self._workspace_paths:
                 return False
@@ -330,8 +330,6 @@ class NativePolicySnapshotPublisher(NativePolicySnapshotPublisherInputs):
                 if self._acked and self._renewal_due_monotonic is not None and now >= self._renewal_due_monotonic:
                     snapshot = self._snapshot
                     generation = snapshot.get("generation") if snapshot is not None else None
-                    self._acked = False
-                    self._last_error = None
                     self._renewal_due_monotonic = None
                     self._renewal_after_generation = (
                         generation if isinstance(generation, int) and generation > 0 else None
@@ -340,7 +338,7 @@ class NativePolicySnapshotPublisher(NativePolicySnapshotPublisherInputs):
                     self._failure_count = 0
                 should_publish = (
                     not self._closed
-                    and not self._acked
+                    and (not self._acked or self._renewal_after_generation is not None)
                     and (self._retry_not_before_monotonic is None or now >= self._retry_not_before_monotonic)
                 )
                 renewal_after_generation = self._renewal_after_generation
@@ -353,7 +351,9 @@ class NativePolicySnapshotPublisher(NativePolicySnapshotPublisherInputs):
             safe = "native_policy_snapshot_publish_failed"
         with self._condition:
             self._last_error = safe
-            self._acked = False
+            expires = self._snapshot.get("expires_at_ms") if self._snapshot else None
+            if not (self._acked and isinstance(expires, int) and expires > int(self._wall_clock() * 1_000)):
+                self._acked = False
             self._failure_count += 1
             delay = min(
                 _PUBLISH_RETRY_MAX_SECONDS,

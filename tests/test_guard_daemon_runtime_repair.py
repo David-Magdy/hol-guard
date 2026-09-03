@@ -139,7 +139,7 @@ def test_repair_retains_equal_version_peer_runtime(
     assert result["cli_version"] == "3.0.34"
 
 
-def test_repair_retains_older_desktop_core_sidecar(
+def test_repair_restarts_older_desktop_core_sidecar(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -156,26 +156,34 @@ def test_repair_retains_older_desktop_core_sidecar(
             "source_root": source_root,
         },
     )
+    monkeypatch.setattr(
+        runtime_repair,
+        "_verified_live_runtime",
+        lambda _state: (runtime_repair.Version("3.0.45"), "3.0.45", "desktop-sidecar"),
+    )
     monkeypatch.setattr(runtime_repair, "__version__", "3.0.46")
     monkeypatch.setattr(
         runtime_repair,
         "repair_approval_center_locator",
         lambda _home: {"repaired": True, "cleared": []},
     )
+    monkeypatch.setattr(runtime_repair, "retire_all_guard_daemons_for_home", lambda _home: [321])
+    monkeypatch.setattr(runtime_repair, "guard_daemon_retirement_is_complete", lambda _home: True)
+    monkeypatch.setattr(runtime_repair, "clear_guard_daemon_state", lambda _home: None)
     monkeypatch.setattr(
         runtime_repair,
-        "retire_all_guard_daemons_for_home",
-        lambda _home: (_ for _ in ()).throw(AssertionError("desktop sidecar must remain active")),
+        "ensure_guard_daemon_after_update",
+        lambda _home, *, home_dir: "http://127.0.0.1:5474",
     )
 
     result = runtime_repair.repair_guard_daemon_runtime(guard_home, home_dir=home_dir)
 
-    assert result["runtime_status"] == "retained_desktop_runtime"
+    assert result["runtime_status"] == "restarted"
     assert result["daemon_version"] == "3.0.45"
     assert result["cli_version"] == "3.0.46"
 
 
-def test_repair_retains_desktop_sidecar_with_invalid_package_version(
+def test_repair_restarts_desktop_sidecar_with_invalid_package_version(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -198,15 +206,18 @@ def test_repair_retains_desktop_sidecar_with_invalid_package_version(
         "repair_approval_center_locator",
         lambda _home: {"repaired": True, "cleared": []},
     )
+    monkeypatch.setattr(runtime_repair, "retire_all_guard_daemons_for_home", lambda _home: [321])
+    monkeypatch.setattr(runtime_repair, "guard_daemon_retirement_is_complete", lambda _home: True)
+    monkeypatch.setattr(runtime_repair, "clear_guard_daemon_state", lambda _home: None)
     monkeypatch.setattr(
         runtime_repair,
-        "retire_all_guard_daemons_for_home",
-        lambda _home: (_ for _ in ()).throw(AssertionError("desktop sidecar must remain active")),
+        "ensure_guard_daemon_after_update",
+        lambda _home, *, home_dir: "http://127.0.0.1:5474",
     )
 
     result = runtime_repair.repair_guard_daemon_runtime(guard_home, home_dir=home_dir)
 
-    assert result["runtime_status"] == "retained_desktop_runtime"
+    assert result["runtime_status"] == "restarted"
     assert result["daemon_version"] == "not-a-version"
     assert result["cli_version"] == "3.0.46"
 

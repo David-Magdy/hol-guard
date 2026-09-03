@@ -32,8 +32,19 @@ def daemon_desktop_core_source_available(source_root: object) -> bool:
     return path.exists()
 
 
+def _package_version_is_current_or_newer(package_version: object, current_version: str) -> bool:
+    if not isinstance(package_version, str) or not package_version.strip():
+        return False
+    try:
+        from packaging.version import InvalidVersion, Version
+
+        return Version(package_version) >= Version(current_version)
+    except InvalidVersion:
+        return False
+
+
 def daemon_state_matches_current_runtime(payload: dict[str, object]) -> bool:
-    """Accept the live current-protocol daemon when identity or Desktop Core matches."""
+    """Accept the live current-protocol daemon when identity or a current Desktop Core matches."""
 
     from .manager import (
         GUARD_DAEMON_COMPATIBILITY_VERSION,
@@ -50,4 +61,6 @@ def daemon_state_matches_current_runtime(payload: dict[str, object]) -> bool:
         return True
     if payload.get("package_version") == __version__:
         return True
-    return daemon_desktop_core_source_available(payload.get("source_root"))
+    if not daemon_desktop_core_source_available(payload.get("source_root")):
+        return False
+    return _package_version_is_current_or_newer(payload.get("package_version"), __version__)
