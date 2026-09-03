@@ -88,7 +88,13 @@ class HookWorker(HookWorkerNativeMixin):
     # Python semantic reviewer from this worker.
     _test_python_oracle_factory: ClassVar[Callable[[HookWorker], PythonOracle] | None] = None
 
-    def __init__(self, *, store: GuardStore, activity_writer: CommandActivityWriter | None = None):
+    def __init__(
+        self,
+        *,
+        store: GuardStore,
+        activity_writer: CommandActivityWriter | None = None,
+        wait_for_native_policy: bool = True,
+    ):
         self.store = store
         self.guard_home = store.guard_home
         self.activity_writer = activity_writer
@@ -110,6 +116,10 @@ class HookWorker(HookWorkerNativeMixin):
         mode = native_mode()
         if mode in {"auto", "force", "shadow"}:
             self.policy_snapshot_publisher.start()
+        if wait_for_native_policy and mode in {"auto", "force"}:
+            wait_until_ready = getattr(self.policy_snapshot_publisher, "wait_until_ready", None)
+            if callable(wait_until_ready):
+                _ = wait_until_ready(time.monotonic() + _NATIVE_POLICY_READY_TIMEOUT_SECONDS)
 
     @property
     def test_oracle(self) -> PythonOracle | None:

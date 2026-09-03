@@ -255,7 +255,7 @@ def _run_resident_hook_request(
     ):
         worker = hook_workers.get(store_key)
         if worker is None:
-            worker = HookWorker(store=store)
+            worker = HookWorker(store=store, wait_for_native_policy=False)
             hook_workers[store_key] = worker
         try:
             worker_payload = worker.review_http_payload(

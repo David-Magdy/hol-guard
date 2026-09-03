@@ -292,7 +292,7 @@ def test_auto_hook_uses_barrier_without_loading_config_per_request(
         workspace=tmp_path / "workspace",
     )
     assert result["reason_code"] == "native_pre_tool_unavailable"
-    assert len(wait_deadlines) == 1
+    assert len(wait_deadlines) == 2
     assert 0 < wait_deadlines[0] - started_at <= hook_worker_module._NATIVE_POLICY_READY_TIMEOUT_SECONDS + 0.05
 
 
@@ -338,7 +338,7 @@ def test_prepare_workspace_policy_uses_bounded_first_workspace_handshake(
 
     assert binding is not None
     assert registered == [workspace]
-    assert len(wait_deadlines) == 1
+    assert len(wait_deadlines) == 2
     assert wait_deadlines[-1] <= started_at + 0.25
 
 
@@ -382,7 +382,7 @@ def test_prepare_workspace_policy_waits_publish_budget_without_caller_deadline(
     finished_at = time.monotonic()
 
     assert binding is not None
-    assert len(wait_deadlines) == 1
+    assert len(wait_deadlines) == 2
     budget = hook_worker_module._NATIVE_POLICY_READY_TIMEOUT_SECONDS
     assert wait_deadlines[-1] >= started_at + budget - 0.05
     assert wait_deadlines[-1] <= finished_at + budget + 0.05
@@ -420,10 +420,12 @@ def test_prepare_workspace_policy_skips_wait_after_publisher_error(
     monkeypatch.setattr(hook_worker_module, "get_native_policy_snapshot_publisher", lambda _store: _Publisher())
 
     worker = hook_worker_module.HookWorker(store=GuardStore(tmp_path / "guard-home"))
+    constructor_waits = len(wait_deadlines)
     binding = worker.prepare_workspace_policy(tmp_path / "workspace")
 
     assert binding is None
-    assert wait_deadlines == []
+    assert constructor_waits == 1
+    assert len(wait_deadlines) == 1
 
 
 def test_same_generation_retries_reuse_exact_signed_snapshot_bytes(
