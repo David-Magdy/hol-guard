@@ -387,6 +387,46 @@ def test_prepare_workspace_policy_waits_publish_budget_without_caller_deadline(
     assert wait_deadlines[-1] <= started_at + budget + 0.05
 
 
+def test_prepare_workspace_policy_skips_wait_after_publisher_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import codex_plugin_scanner.guard.daemon.hook_worker as hook_worker_module
+
+    wait_deadlines: list[float] = []
+
+    class _Publisher:
+        last_error = "native_policy_snapshot_runtime_unavailable"
+
+        def start(self) -> None:
+            return
+
+        def register_workspace(self, workspace: Path | None) -> bool:
+            del workspace
+            return False
+
+        def wait_until_ready(self, deadline_monotonic: float) -> bool:
+            wait_deadlines.append(deadline_monotonic)
+            return False
+
+        def current_snapshot_binding(self) -> dict[str, object] | None:
+            return None
+
+        def close(self) -> None:
+            return
+
+    monkeypatch.setattr(hook_worker_module, "native_mode", lambda: "auto")
+    monkeypatch.setattr(hook_worker_module, "get_native_policy_snapshot_publisher", lambda _store: _Publisher())
+
+    worker = hook_worker_module.HookWorker(store=GuardStore(tmp_path / "guard-home"))
+    constructor_waits = len(wait_deadlines)
+    binding = worker.prepare_workspace_policy(tmp_path / "workspace")
+
+    assert binding is None
+    assert constructor_waits >= 1
+    assert len(wait_deadlines) == constructor_waits
+
+
 def test_same_generation_retries_reuse_exact_signed_snapshot_bytes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

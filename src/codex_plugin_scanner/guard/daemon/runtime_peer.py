@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from packaging.version import InvalidVersion, Version
+
 _DESKTOP_CORE_PARTS = ("org.hol.guard.desktop", "core", "versions")
 
 
@@ -36,8 +38,6 @@ def _package_version_is_current_or_newer(package_version: object, current_versio
     if not isinstance(package_version, str) or not package_version.strip():
         return False
     try:
-        from packaging.version import InvalidVersion, Version
-
         return Version(package_version) >= Version(current_version)
     except InvalidVersion:
         return False
