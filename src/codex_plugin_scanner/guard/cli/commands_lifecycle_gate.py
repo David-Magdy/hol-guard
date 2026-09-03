@@ -98,7 +98,11 @@ def enforce_lifecycle_gate(
     elif desktop_proof is not None:
         gate_input = desktop_proof
     else:
-        gate_input = prompt_for_approval_gate(authority_home, use_cooldown=False)
+        gate_input = prompt_for_approval_gate(
+            authority_home,
+            use_cooldown=False,
+            require_fresh_totp=require_fresh_totp,
+        )
     if require_fresh_totp and not ((gate_input.totp_code if gate_input is not None else None) or "").strip():
         raise ApprovalGateError("approval_gate_totp_required", "TOTP code is required.")
     _ = require_high_risk(
