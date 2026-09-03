@@ -27,6 +27,7 @@ def build_hook_process_review_request(
     claimed_saved_allow_hash: str | None,
     claimed_trusted_request_override: bool,
     claimed_approval_request_id: str | None,
+    deadline: float | None = None,
 ) -> dict[str, object]:
     return {
         "payload": dict(payload),
@@ -39,6 +40,7 @@ def build_hook_process_review_request(
         "claimed_saved_allow_hash": claimed_saved_allow_hash,
         "claimed_trusted_request_override": claimed_trusted_request_override,
         "claimed_approval_request_id": claimed_approval_request_id,
+        "deadline": deadline,
     }
 
 
@@ -63,6 +65,7 @@ class ResidentHookRequest:
     claimed_saved_allow_hash: str | None
     claimed_trusted_request_override: bool
     claimed_approval_request_id: str | None
+    deadline: float | None = None
 
 
 def coerce_resident_hook_request(request: dict[str, object]) -> ResidentHookRequest | None:
@@ -75,6 +78,7 @@ def coerce_resident_hook_request(request: dict[str, object]) -> ResidentHookRequ
     claimed_saved_allow_hash = request.get("claimed_saved_allow_hash")
     claimed_trusted_request_override = request.get("claimed_trusted_request_override", False)
     claimed_approval_request_id = request.get("claimed_approval_request_id")
+    raw_deadline = request.get("deadline")
     typed_payload = as_string_object_dict(payload)
     if typed_payload is None or not isinstance(harness, str):
         return None
@@ -98,6 +102,11 @@ def coerce_resident_hook_request(request: dict[str, object]) -> ResidentHookRequ
         claimed_saved_allow_hash=claimed_saved_allow_hash,
         claimed_trusted_request_override=claimed_trusted_request_override,
         claimed_approval_request_id=claimed_approval_request_id,
+        deadline=(
+            float(raw_deadline)
+            if isinstance(raw_deadline, (int, float)) and not isinstance(raw_deadline, bool)
+            else None
+        ),
     )
 
 

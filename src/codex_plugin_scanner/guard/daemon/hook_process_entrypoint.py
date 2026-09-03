@@ -265,6 +265,7 @@ def _run_resident_hook_request(
                 home_dir=parsed.home_dir,
                 guard_home=parsed.guard_home,
                 workspace=parsed.workspace,
+                deadline=parsed.deadline,
             )
         except HookWorkerUnsupported:
             if _native_mode_requires_rust() or not python_oracle_surface_enabled():

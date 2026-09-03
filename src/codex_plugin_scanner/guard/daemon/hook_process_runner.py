@@ -217,7 +217,7 @@ class HookProcessRunner(HookProcessRunnerLifecycleMixin):
             claim_saved_approval=claim_saved_approval,
             claimed_saved_allow_hash=claimed_saved_allow_hash,
             claimed_trusted_request_override=claimed_trusted_request_override,
-            claimed_approval_request_id=claimed_approval_request_id,
+            claimed_approval_request_id=claimed_approval_request_id, deadline=review_deadline,
         )
         try:
             if review_deadline <= time.monotonic():
