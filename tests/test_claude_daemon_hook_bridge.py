@@ -230,6 +230,22 @@ def test_run_local_fallback_degrades_invalid_json() -> None:
     assert "malformed hook JSON" in payload["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+def test_degraded_pretool_allows_emergency_safe_read() -> None:
+    response = bridge._degraded(
+        "daemon unavailable",
+        json.dumps(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": "src/app.ts"},
+            }
+        ),
+    )
+
+    payload = json.loads(response)
+    assert payload["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+
 def test_valid_hook_json_degrades_empty_daemon_body() -> None:
     response = bridge._valid_hook_json_or_degraded(
         "",
@@ -340,7 +356,7 @@ def test_main_recovers_missing_daemon_and_retries_hook(
     assert len(set(phase_deadlines)) == 1
     assert len(recovery_commands) == 1
     assert recovery_commands[0][1:3] == ("-I", "-c")
-    assert "recover_guard_daemon_after_hook_failure" in recovery_commands[0][3]
+    assert "schedule_guard_daemon_recovery" in recovery_commands[0][3]
     assert json.loads(capsys.readouterr().out)["hookSpecificOutput"]["permissionDecision"] == "allow"
 
 
@@ -370,6 +386,24 @@ def test_authenticated_daemon_failure_denies_without_local_fallback(
     assert result == 0
     assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert "authentication failed" in payload["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_authenticated_failure_denies_permission_request_behavior() -> None:
+    payload = json.loads(
+        bridge._authenticated_control_plane_failure(
+            "invalid daemon token",
+            json.dumps({"hook_event_name": "PermissionRequest"}),
+        )
+    )
+    assert payload["hookSpecificOutput"]["decision"]["behavior"] == "deny"
+    v2 = json.loads(
+        bridge._authenticated_control_plane_failure(
+            "invalid daemon token",
+            json.dumps({"hook_event_name": "PermissionRequestV2"}),
+        )
+    )
+    assert v2["hookSpecificOutput"]["decision"]["behavior"] == "deny"
+
 
 
 def test_recovery_only_restarts_for_transport_and_server_failures() -> None:
@@ -425,7 +459,7 @@ def test_recovery_command_preserves_custom_home_and_guard_home(tmp_path: Path) -
     )
 
     assert command[1:3] == ("-I", "-c")
-    assert "recover_guard_daemon_after_hook_failure" in command[3]
+    assert "schedule_guard_daemon_recovery" in command[3]
     assert str(guard_home) in command[3]
     assert str(home_dir) in command[3]
 

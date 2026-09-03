@@ -29,6 +29,7 @@ class StorageMaintenanceResult:
     ran: bool
     completed: bool
     receipts_archived: int
+    native_decision_receipts_deleted: int
     guard_events_deleted: int
     cloud_events_deleted: int
     pages_reclaimed: int
@@ -82,6 +83,12 @@ class StoreStorageMaintenanceMixin:
                 detail_limit=receipt_detail_limit,
                 batch_size=batch_size,
             )
+            native_decision_receipts_deleted = _delete_native_decision_receipt_batch(
+                connection,
+                cutoff=now - timedelta(days=detail_retain_days),
+                detail_limit=receipt_detail_limit,
+                batch_size=batch_size,
+            )
             guard_events_deleted = _delete_guard_event_batch(
                 connection,
                 cutoff=now - timedelta(days=detail_retain_days),
@@ -99,6 +106,7 @@ class StoreStorageMaintenanceMixin:
                 count < batch_size
                 for count in (
                     receipts_archived,
+                    native_decision_receipts_deleted,
                     guard_events_deleted,
                     cloud_events_deleted,
                 )
@@ -129,6 +137,7 @@ class StoreStorageMaintenanceMixin:
             ran=True,
             completed=completed,
             receipts_archived=receipts_archived,
+            native_decision_receipts_deleted=native_decision_receipts_deleted,
             guard_events_deleted=guard_events_deleted,
             cloud_events_deleted=cloud_events_deleted,
             pages_reclaimed=pages_reclaimed,
@@ -218,6 +227,34 @@ def _delete_guard_event_batch(
               where transition.event_id = event.event_id
             )
           order by event.occurred_at
+          limit ?
+        )
+        """,
+        (cutoff.isoformat(), boundary, boundary, batch_size),
+    )
+    return max(result.rowcount, 0)
+
+
+def _delete_native_decision_receipt_batch(
+    connection: sqlite3.Connection,
+    *,
+    cutoff: datetime,
+    detail_limit: int,
+    batch_size: int,
+) -> int:
+    boundary = _rowid_boundary(
+        connection,
+        table="native_hook_decision_receipts",
+        detail_limit=detail_limit,
+    )
+    result = connection.execute(
+        """
+        delete from native_hook_decision_receipts
+        where rowid in (
+          select rowid
+          from native_hook_decision_receipts
+          where recorded_at < ? or (? is not null and rowid <= ?)
+          order by recorded_at, rowid
           limit ?
         )
         """,

@@ -150,6 +150,7 @@ exclude = [
     ".venv/**",
     ".venv-*/**",
     "dashboard/node_modules/**",
+    "src/codex_plugin_scanner/guard/native_runtime_resident.py",
 ]
 
 [tool.ruff.lint]

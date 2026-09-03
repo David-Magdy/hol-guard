@@ -14734,6 +14734,26 @@ function stripDuplicateReviewContextPrefix(value) {
   );
   return stripped === value ? null : stripped;
 }
+const HARNESS_SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
+const HEX_TOKEN_HARNESS_PATTERN = /^[a-f0-9]{16,64}$/;
+const UUID_HARNESS_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const NON_APP_HARNESS_SLUGS = /* @__PURE__ */ new Set(["*", "all", "any", "global"]);
+function capitalizeHarness(harness) {
+  if (harness.length === 0) {
+    return harness;
+  }
+  return `${harness.charAt(0).toUpperCase()}${harness.slice(1)}`;
+}
+function normalizeHarnessSlug(harness) {
+  const slug = typeof harness === "string" ? harness.trim().toLowerCase() : "";
+  if (slug.length === 0 || NON_APP_HARNESS_SLUGS.has(slug) || HEX_TOKEN_HARNESS_PATTERN.test(slug) || UUID_HARNESS_PATTERN.test(slug) || !HARNESS_SLUG_PATTERN.test(slug)) {
+    return null;
+  }
+  return slug;
+}
+function isDisplayableHarness(harness) {
+  return normalizeHarnessSlug(harness) !== null;
+}
 const QUEUE_CONNECTION_ERROR_HEADLINE = "Guard daemon not reachable: approval links work when Guard is running on this device.";
 const QUEUE_CONNECTION_ERROR_INSTRUCTION = "Start Guard on this machine, then reload to continue approving or blocking.";
 function isWatchOnlyObservation(item) {
@@ -14929,26 +14949,6 @@ function requestResolutionBlockReason(item) {
   }
   return null;
 }
-function capitalizeHarness(harness) {
-  if (harness.length === 0) {
-    return harness;
-  }
-  return `${harness.charAt(0).toUpperCase()}${harness.slice(1)}`;
-}
-const HARNESS_SLUG_PATTERN = /^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/;
-const HEX_TOKEN_HARNESS_PATTERN = /^[a-f0-9]{16,64}$/;
-const UUID_HARNESS_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-const NON_APP_HARNESS_SLUGS = /* @__PURE__ */ new Set(["*", "all", "any", "global"]);
-function normalizeHarnessSlug(harness) {
-  const slug = typeof harness === "string" ? harness.trim().toLowerCase() : "";
-  if (slug.length === 0 || NON_APP_HARNESS_SLUGS.has(slug) || HEX_TOKEN_HARNESS_PATTERN.test(slug) || UUID_HARNESS_PATTERN.test(slug) || !HARNESS_SLUG_PATTERN.test(slug)) {
-    return null;
-  }
-  return slug;
-}
-function isDisplayableHarness(harness) {
-  return normalizeHarnessSlug(harness) !== null;
-}
 function resolveDecisionV2Title(item) {
   const title = item.decision_v2_json?.user_title;
   return title !== void 0 && title.trim().length > 0 ? title : null;
@@ -15041,6 +15041,8 @@ function harnessDisplayName(harness) {
       return "Grok";
     case "omp":
       return "Oh My Pi";
+    case "zcode":
+      return "ZCode";
     default:
       return capitalizeHarness(normalized);
   }
@@ -19350,11 +19352,11 @@ function approvalProofRecentlySatisfied(gate) {
 function approvalProofRequiresPassword(gate) {
   return gate?.totp_enabled !== true;
 }
-function isApprovalProofSubmitDisabled(gate, credentials, busy) {
+function isApprovalProofSubmitDisabled(gate, credentials, busy, requireFreshTotp = false) {
   if (busy) {
     return true;
   }
-  if (approvalProofRecentlySatisfied(gate)) {
+  if (!requireFreshTotp && approvalProofRecentlySatisfied(gate)) {
     return false;
   }
   if (approvalProofRequiresPassword(gate)) {
@@ -19362,8 +19364,8 @@ function isApprovalProofSubmitDisabled(gate, credentials, busy) {
   }
   return credentials.approvalTotpCode.trim() === "";
 }
-function buildApprovalProofCredentials(gate, credentials) {
-  if (approvalProofRecentlySatisfied(gate)) {
+function buildApprovalProofCredentials(gate, credentials, requireFreshTotp = false) {
+  if (!requireFreshTotp && approvalProofRecentlySatisfied(gate)) {
     return {};
   }
   if (approvalProofRequiresPassword(gate)) {
@@ -19377,7 +19379,7 @@ function ApprovalProofFieldInputs(props) {
     event.target.value = digits;
     props.onApprovalTotpCodeChange(event);
   }, [props]);
-  if (approvalProofRecentlySatisfied(props.approvalGate)) {
+  if (!props.requireFreshTotp && approvalProofRecentlySatisfied(props.approvalGate)) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm leading-6 text-brand-dark/75", children: "Recently confirmed with your authenticator. A new code is not needed yet." });
   }
   const needsPassword = approvalProofRequiresPassword(props.approvalGate);
@@ -30873,7 +30875,7 @@ const ExtensionsWorkspace = lazyWorkspace(
   "extensions-workspace",
   () => __vitePreload(() => import("./chunks/extensions-workspace.js"), true ? __vite__mapDeps([7,8]) : void 0).then((module) => ({ default: module.ExtensionsWorkspace }))
 );
-const AppDetailWorkspace = lazyWorkspace("app-detail-workspace", () => __vitePreload(() => import("./chunks/app-detail-workspace.js"), true ? __vite__mapDeps([9,2,5]) : void 0).then((m) => ({ default: m.AppDetailWorkspace })));
+const AppDetailWorkspace = lazyWorkspace("app-detail-workspace", () => __vitePreload(() => import("./chunks/app-detail-workspace.js"), true ? __vite__mapDeps([9,8,2,5]) : void 0).then((m) => ({ default: m.AppDetailWorkspace })));
 const HelpModal = lazyWorkspace("help-modal", () => __vitePreload(() => import("./chunks/help-modal.js"), true ? [] : void 0).then((m) => ({ default: m.HelpModal })));
 const SupplyChainHubWorkspace = lazyWorkspace(
   "supply-chain-hub-workspace",
@@ -31715,7 +31717,7 @@ export {
   HiMiniWrenchScrewdriver as Z,
   HiMiniExclamationCircle as _,
   EvidenceActivityHeatmapMini as a,
-  sortEvidence as a$,
+  formatHarnessCommand as a$,
   HiMiniEye as a0,
   HiMiniXCircle as a1,
   HiMiniClipboardDocumentCheck as a2,
@@ -31747,12 +31749,12 @@ export {
   HiMiniNoSymbol as aS,
   HiMiniArrowTopRightOnSquare as aT,
   guardAwareHref as aU,
-  fetchApprovalPage as aV,
-  fetchPolicy as aW,
-  HiMiniHome as aX,
-  guardActionPresentation as aY,
-  DEFAULT_FILTER_STATE as aZ,
-  filterEvidence as a_,
+  runHarnessAction as aV,
+  GuardHarnessActionError as aW,
+  HiMiniRocketLaunch as aX,
+  HiMiniTrash as aY,
+  isGuardDemoMode as aZ,
+  fetchGuardApi as a_,
   HiMiniBellAlert as aa,
   HiMiniAdjustmentsHorizontal as ab,
   HiMiniCircleStack as ac,
@@ -31781,16 +31783,16 @@ export {
   approvalGateCooldownLabel as az,
   HiMiniCommandLine as b,
   Surface as b$,
-  computeMetrics as b0,
-  CommandActivityWorkspace as b1,
-  EvidenceFilterBar as b2,
-  EvidenceInsightStrip as b3,
-  EvidenceActionList as b4,
-  EvidenceActionDetail as b5,
-  policyIdentityKey as b6,
-  HiMiniChartBar as b7,
-  runHarnessAction as b8,
-  GuardHarnessActionError as b9,
+  fetchApprovalPage as b0,
+  fetchPolicy as b1,
+  HiMiniHome as b2,
+  guardActionPresentation as b3,
+  DEFAULT_FILTER_STATE as b4,
+  filterEvidence as b5,
+  sortEvidence as b6,
+  computeMetrics as b7,
+  CommandActivityWorkspace as b8,
+  EvidenceFilterBar as b9,
   repairSupplyChainProtection as bA,
   runPackageFirewallAction as bB,
   parseInterceptProofSnapshot as bC,
@@ -31818,12 +31820,12 @@ export {
   PaginationControls as bY,
   HiMiniArrowDownTray as bZ,
   HiMiniQueueList as b_,
-  HiMiniRocketLaunch as ba,
-  HiMiniTrash as bb,
-  clearLabelForScope as bc,
-  formatHarnessCommand as bd,
-  isGuardDemoMode as be,
-  fetchGuardApi as bf,
+  EvidenceInsightStrip as ba,
+  EvidenceActionList as bb,
+  EvidenceActionDetail as bc,
+  policyIdentityKey as bd,
+  HiMiniChartBar as be,
+  clearLabelForScope as bf,
   isSupplyChainAuditIncomplete as bg,
   isSupplyChainAuditEvidence as bh,
   readString$1 as bi,

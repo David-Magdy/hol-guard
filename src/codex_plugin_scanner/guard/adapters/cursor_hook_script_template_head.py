@@ -21,7 +21,10 @@ import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
 
-from codex_plugin_scanner.guard.codex_hook_launch_runtime import run_isolated_hook_process
+try:
+    from codex_plugin_scanner.guard.codex_hook_launch_runtime import run_isolated_hook_process
+except Exception:
+    run_isolated_hook_process = None
 
 GUARD_HOME = __GUARD_HOME__
 GUARD_CLI = __GUARD_CLI__
@@ -239,11 +242,6 @@ def _daemon_hook_result(
         return (None, "authenticated-control-plane-failure")
     if not isinstance(parsed_body, dict):
         return (None, "authenticated-control-plane-failure")
-    if parsed_body.get("reason_code") in {
-        "native_pre_tool_unavailable",
-        "native_post_tool_unavailable",
-    }:
-        return (None, None)
     raw_event_name = _raw_hook_event_name(request_payload)
     if raw_event_name not in {"aftershellexecution", "aftermcpexecution"}:
         policy_action = parsed_body.get("policy_action")
@@ -265,6 +263,8 @@ def _run_guard_fallback(
         remaining = _remaining_seconds(deadline_monotonic)
         if remaining <= 0:
             raise subprocess.TimeoutExpired([*GUARD_CLI, *guard_argv], GUARD_HOOK_TIMEOUT_SECONDS)
+        if run_isolated_hook_process is None:
+            raise RuntimeError("HOL Guard isolated hook runtime is unavailable")
         result = run_isolated_hook_process(
             [*GUARD_CLI, *guard_argv],
             cwd=GUARD_HOME,
@@ -295,6 +295,8 @@ def _run_guard_recovery(
     try:
         remaining = min(_remaining_seconds(deadline_monotonic), 5.0)
         if remaining <= 0:
+            return
+        if run_isolated_hook_process is None:
             return
         _ = run_isolated_hook_process(
             [*GUARD_RECOVERY_COMMAND, failure_kind],
@@ -471,7 +473,7 @@ def _cursor_read_file_permission(permission: str) -> str:
 def _cursor_reason(guard_payload: dict[str, object]) -> str:
     primary_url = guard_payload.get("primary_approval_url")
     reason: str | None = None
-    for key in ("review_hint", "risk_summary", "why_now", "risk_headline"):
+    for key in ("reason", "stopReason", "systemMessage", "review_hint", "risk_summary", "why_now", "risk_headline"):
         value = guard_payload.get(key)
         if isinstance(value, str) and value.strip():
             reason = value.strip()
@@ -494,6 +496,5 @@ def _cursor_reason(guard_payload: dict[str, object]) -> str:
             return reason
         return f"{reason} Review: {url_str}"
     return reason
-
 
 '''

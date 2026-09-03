@@ -35,6 +35,12 @@ _HOOK_ENVIRONMENT_KEYS = frozenset(
         "HOL_GUARD_HOOK_FAILURE_KIND",
         "HOL_GUARD_NATIVE",
         "HOL_GUARD_NATIVE_BINARY",
+        # Test-only differential and non-production diagnostic markers. They
+        # are forwarded solely so an explicitly configured test oracle keeps
+        # the same boundary in contained hook processes.
+        "HOL_GUARD_TEST_MODE",
+        "HOL_GUARD_PYTHON_ORACLE",
+        "HOL_GUARD_NATIVE_DIAGNOSTIC",
         "LANG",
         "PATH",
         "PATHEXT",
@@ -198,12 +204,12 @@ def isolated_daemon_start_command(
         "import os,sys;"
         f"sys.path.insert(0, {str(package_root.resolve())!r});"
         "from pathlib import Path;"
-        "from codex_plugin_scanner.guard.daemon import recover_guard_daemon_after_hook_failure;"
+        "from codex_plugin_scanner.guard.daemon import schedule_guard_daemon_recovery;"
         "failure_kind=os.environ.get('HOL_GUARD_HOOK_FAILURE_KIND','transport-failure');"
         "failure_kind=failure_kind if failure_kind in"
         " {'overload','transport-failure','authenticated-control-plane-failure'}"
         " else 'transport-failure';"
-        f"recover_guard_daemon_after_hook_failure(Path({str(guard_home)!r}),"
+        f"schedule_guard_daemon_recovery(Path({str(guard_home)!r}),"
         f"home_dir=Path({str(resolved_home_dir)!r}),failure_kind=failure_kind)"
     )
     return (python_executable, "-I", "-c", bootstrap)
