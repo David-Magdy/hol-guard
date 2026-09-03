@@ -3086,7 +3086,7 @@ def test_evaluate_unlisted_package_still_requires_review_when_registry_identity_
     assert any(reason["code"] == "unidentified_package" for reason in result.reasons)
 
 
-def test_evaluate_unlisted_package_fails_closed_on_unexpected_auth_context_error(
+def test_evaluate_unlisted_package_queues_review_on_unexpected_auth_context_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3116,8 +3116,40 @@ def test_evaluate_unlisted_package_fails_closed_on_unexpected_auth_context_error
         now="2026-05-19T00:00:00Z",
     )
 
-    assert result.decision == "block"
-    assert result.policy_action == "block"
+    # A trusted-session failure is an availability failure, not a package
+    # verdict: the install stays stopped, but the request must stay actionable
+    # through the approval queue so a human can review it remotely.
+    assert result.decision == "ask"
+    assert result.policy_action == "require-reapproval"
+    assert any(reason["code"] == "cloud_auth_error" for reason in result.reasons)
+
+
+def test_evaluate_trusted_session_failure_queues_review_even_in_strict_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home_dir = tmp_path / "guard-home"
+    home_dir.mkdir(parents=True)
+    (home_dir / "config.toml").write_text('security_level = "strict"\n', encoding="utf-8")
+    store = GuardStore(home_dir)
+    _seed_guard_cloud(store, workspace_id=WORKSPACE_ID, plan_id="team")
+
+    def raise_unexpected_error(_store: GuardStore, **_kwargs: object) -> dict[str, object]:
+        raise RuntimeError("unexpected auth context failure")
+
+    monkeypatch.setattr(evaluator_module, "_resolve_guard_sync_auth_context", raise_unexpected_error)
+    result = evaluate_package_request_artifact(
+        artifact=_artifact_for_targets("left-pad@1.0.0"),
+        store=store,
+        workspace_dir=tmp_path / "workspace",
+        now="2026-05-19T00:00:00Z",
+    )
+
+    # Deliberate policy parity with cloud timeouts: strict mode keeps the
+    # install stopped but still routes the availability failure to review
+    # instead of a terminal block that offers no actionable path.
+    assert result.decision == "ask"
+    assert result.policy_action == "require-reapproval"
     assert any(reason["code"] == "cloud_auth_error" for reason in result.reasons)
 
 
