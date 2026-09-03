@@ -277,4 +277,32 @@ def test_hook_worker_watch_posttool_native_unavailable_continues(
     )
     assert result["policy_action"] == "allow"
     assert result["reason_code"] == "native_post_tool_unavailable"
+
+
+def test_hook_worker_watch_native_off_pretool_continues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    guard_home = tmp_path / "guard-home"
+    _write_watch_config(guard_home)
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.hook_worker.native_mode",
+        lambda: "off",
+    )
+    monkeypatch.setattr(
+        "codex_plugin_scanner.guard.daemon.hook_worker_native.python_oracle_surface_enabled",
+        lambda _mode=None: False,
+    )
+    worker = HookWorker(store=GuardStore(guard_home))
+    result = worker.review_http_payload(
+        payload={"hook_event_name": "PreToolUse", "tool_input": {"command": "pwd"}},
+        params={},
+        default_harness="codex",
+        home_dir=tmp_path / "home",
+        guard_home=guard_home,
+        workspace=tmp_path / "workspace",
+    )
+    assert result["continue"] is True
+    assert result["reason_code"] == "native_hook_disabled"
+
     assert result.get("continue") is True

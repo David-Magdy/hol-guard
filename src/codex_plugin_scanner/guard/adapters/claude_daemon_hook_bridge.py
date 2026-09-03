@@ -325,12 +325,12 @@ def _degraded(reason: str, data: str) -> str:
 
 def _authenticated_control_plane_failure(reason: str, data: str) -> str:
     message = f"HOL Guard denied the action because daemon authentication failed: {reason}"
-    if _event_name(data) == "PreToolUse":
+    if (event := _event_name(data)) == "PreToolUse" or event.startswith("Permission"):
         return json.dumps(
             {
                 "systemMessage": message,
                 "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
+                    "hookEventName": event,
                     "permissionDecision": "deny",
                     "permissionDecisionReason": message,
                 },

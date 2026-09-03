@@ -123,17 +123,25 @@ class HookWorkerNativeMixin:
         harness: str,
         event_name: str,
         mode: str,
+        *,
+        payload: dict[str, object],
+        workspace: Path | None,
+        home_dir: Path,
+        guard_home: Path,
     ) -> dict[str, object] | None:
         oracle_surface = python_oracle_surface_enabled(mode)
         if event_name not in {"PreToolUse", "PostToolUse"}:
             if oracle_surface:
                 raise HookWorkerUnsupported(f"fast path supports PreToolUse and PostToolUse, got event={event_name}")
             return availability_harness_response(
-                {},
+                payload,
                 harness=harness,
                 event_name=event_name,
                 reason_code="native_hook_event_unavailable",
                 reason="HOL Guard could not classify this hook event safely.",
+                workspace=workspace,
+                home_dir=home_dir,
+                guard_home=guard_home,
             )
         reason_code = {"off": "native_hook_disabled", "shadow": "native_shadow_diagnostic_disabled"}.get(mode)
         if reason_code is None or oracle_surface:
@@ -143,11 +151,14 @@ class HookWorkerNativeMixin:
             "shadow": "HOL Guard shadow comparison is unavailable outside its diagnostic surface.",
         }[mode]
         return availability_harness_response(
-            {},
+            payload,
             harness=harness,
             event_name=event_name,
             reason_code=reason_code,
             reason=reason,
+            workspace=workspace,
+            home_dir=home_dir,
+            guard_home=guard_home,
         )
 
     def _review_pre_tool_http(

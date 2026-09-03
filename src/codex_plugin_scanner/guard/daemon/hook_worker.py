@@ -287,7 +287,15 @@ class HookWorker(HookWorkerNativeMixin):
                 workspace=workspace,
                 deadline=deadline,
             )
-        mode_response = self._mode_surface_response(harness, event_name, mode)
+        mode_response = self._mode_surface_response(
+            harness,
+            event_name,
+            mode,
+            payload=payload,
+            workspace=workspace,
+            home_dir=home_dir,
+            guard_home=guard_home,
+        )
         if mode_response is not None:
             return mode_response
         if event_name == "PreToolUse":

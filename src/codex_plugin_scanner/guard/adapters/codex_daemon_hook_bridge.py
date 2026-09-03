@@ -196,7 +196,7 @@ def main(
 
     hook_input = _bound_hook_input(hook_timeouts)
     if hook_input is None:
-        sys.stdout.write(json.dumps(_fail_closed("Unknown"), separators=(",", ":")))
+        sys.stdout.write(json.dumps(_fail_closed("PreToolUse"), separators=(",", ":")))
         return 0
     event_name, data, timeout_seconds = hook_input
     deadline = time.monotonic() + timeout_seconds

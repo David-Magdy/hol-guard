@@ -67,7 +67,7 @@ def hook_event_pauses_when_unavailable(event_name: str) -> bool:
         return False
     if compact in {"posttooluse", "posttool"} or compact.startswith("after"):
         return False
-    return compact in {"permissionrequest", "pretooluse", "pretool"} or compact.startswith("before")
+    return compact not in {"posttooluse", "posttool"} and not compact.startswith("after")
 
 
 def hook_review_is_recording_only(
@@ -169,7 +169,7 @@ def availability_harness_response(
             reason_code=reason_code,
             reason=reason,
         )
-    if compact == "permissionrequest":
+    if compact.startswith("permission"):
         from .hook_worker_responses import post_tool_fail_safe_response
 
         return post_tool_fail_safe_response(harness, reason=reason, reason_code=reason_code)

@@ -454,6 +454,14 @@ def test_availability_continues_prompt_lifecycle_and_still_pauses_tools(tmp_path
         reason="native unavailable",
     )
     assert permission["continue"] is False
+    permission_v2 = availability_harness_response(
+        {"hook_event_name": "PermissionRequestV2", "tool_input": {"command": "pwd"}},
+        harness="claude-code",
+        event_name="PermissionRequestV2",
+        reason_code="native_hook_event_unavailable",
+        reason="native unavailable",
+    )
+    assert permission_v2["continue"] is False
     alias = availability_harness_response(
         {"hook_event_name": "beforeShellExecution", "command": "curl https://example.test"},
         harness="cursor",
