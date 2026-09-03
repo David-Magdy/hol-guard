@@ -3086,7 +3086,7 @@ def test_evaluate_unlisted_package_still_requires_review_when_registry_identity_
     assert any(reason["code"] == "unidentified_package" for reason in result.reasons)
 
 
-def test_evaluate_unlisted_package_fails_closed_on_unexpected_auth_context_error(
+def test_evaluate_unlisted_package_queues_review_on_unexpected_auth_context_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3116,8 +3116,11 @@ def test_evaluate_unlisted_package_fails_closed_on_unexpected_auth_context_error
         now="2026-05-19T00:00:00Z",
     )
 
-    assert result.decision == "block"
-    assert result.policy_action == "block"
+    # A trusted-session failure is an availability failure, not a package
+    # verdict: the install stays stopped, but the request must stay actionable
+    # through the approval queue so a human can review it remotely.
+    assert result.decision == "ask"
+    assert result.policy_action == "require-reapproval"
     assert any(reason["code"] == "cloud_auth_error" for reason in result.reasons)
 
 

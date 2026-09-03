@@ -1255,7 +1255,10 @@ def _evaluate_with_cloud(
                 workspace_dir=workspace_dir,
                 workspace_fingerprint=workspace_fingerprint,
                 bundle_meta=bundle_meta,
-                fail_closed_decision=resolve_cloud_failure_decision(),
+                # A trusted-session failure (typically a cloud token refresh
+                # error) is availability, not a package verdict: keep the install
+                # stopped but actionable in the approval queue.
+                fail_closed_decision="ask",
             ),
             None,
         )
