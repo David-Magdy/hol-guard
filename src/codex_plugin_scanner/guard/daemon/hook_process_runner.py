@@ -218,6 +218,7 @@ class HookProcessRunner(HookProcessRunnerLifecycleMixin):
             claimed_saved_allow_hash=claimed_saved_allow_hash,
             claimed_trusted_request_override=claimed_trusted_request_override,
             claimed_approval_request_id=claimed_approval_request_id,
+            deadline=review_deadline,
         )
         try:
             if review_deadline <= time.monotonic():
@@ -321,8 +322,6 @@ class HookProcessRunner(HookProcessRunnerLifecycleMixin):
         typed_response = as_string_object_dict(response)
         if typed_response is None:
             return HookProcessReview(None, "daemon_hook_process_invalid_json")
-        if time.monotonic() >= review_deadline:
-            return HookProcessReview(None, "daemon_hook_process_deadline_exhausted")
         self._record_response_metrics(typed_response)
         self._record_route_metric(typed_result.get("route"))
         if time.monotonic() >= review_deadline:

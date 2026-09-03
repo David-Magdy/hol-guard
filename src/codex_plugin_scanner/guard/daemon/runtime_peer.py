@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from packaging.version import InvalidVersion, Version
+
 _DESKTOP_CORE_PARTS = ("org.hol.guard.desktop", "core", "versions")
 
 
@@ -32,8 +34,21 @@ def daemon_desktop_core_source_available(source_root: object) -> bool:
     return path.exists()
 
 
-def daemon_state_matches_current_runtime(payload: dict[str, object]) -> bool:
-    """Accept the live current-protocol daemon when identity or Desktop Core matches."""
+def _package_version_is_current_or_newer(package_version: object, current_version: str) -> bool:
+    if not isinstance(package_version, str) or not package_version.strip():
+        return False
+    try:
+        return Version(package_version) >= Version(current_version)
+    except InvalidVersion:
+        return False
+
+
+def daemon_state_matches_current_runtime(
+    payload: dict[str, object],
+    *,
+    current_version: str | None = None,
+) -> bool:
+    """Accept the live current-protocol daemon when identity or a current Desktop Core matches."""
 
     from .manager import (
         GUARD_DAEMON_COMPATIBILITY_VERSION,
@@ -41,6 +56,7 @@ def daemon_state_matches_current_runtime(payload: dict[str, object]) -> bool:
         _current_guard_daemon_runtime_fingerprint,
     )
 
+    installed_version = current_version if current_version is not None else __version__
     fingerprint = payload.get("runtime_fingerprint")
     if payload.get("compatibility_version") != GUARD_DAEMON_COMPATIBILITY_VERSION:
         return False
@@ -48,6 +64,8 @@ def daemon_state_matches_current_runtime(payload: dict[str, object]) -> bool:
         return False
     if fingerprint == _current_guard_daemon_runtime_fingerprint():
         return True
-    if payload.get("package_version") == __version__:
+    if payload.get("package_version") == installed_version:
         return True
-    return daemon_desktop_core_source_available(payload.get("source_root"))
+    if not daemon_desktop_core_source_available(payload.get("source_root")):
+        return False
+    return _package_version_is_current_or_newer(payload.get("package_version"), installed_version)

@@ -229,3 +229,7 @@ class NativePolicySnapshotPublisherInputs:
         except (OSError, NativePolicySnapshotError, TypeError, ValueError, RuntimeError):
             return True
         return self._published_policy_fingerprint != current_fingerprint
+
+    @staticmethod
+    def _resolved_workspace(workspace: Path) -> Path:
+        return workspace.expanduser().absolute()

@@ -36,6 +36,7 @@ from ..config import load_guard_config
 from ..native_hook_edge import review_raw_hook_native
 from ..native_mode import python_oracle_enabled, python_oracle_surface_enabled
 from ..native_policy_snapshot import get_native_policy_snapshot_publisher
+from ..native_policy_snapshot_constants import _PUBLISH_TIMEOUT_SECONDS
 from ..native_pretool import review_pre_tool_native
 from ..native_route_receipt import record_python_semantic_hook_route
 from ..native_runtime import NativeRuntimeStatus, native_mode, native_runtime_status, review_post_tool_native
@@ -75,7 +76,7 @@ class CommandActivityWriter(Protocol):
     ) -> bool: ...
 
 
-_NATIVE_POLICY_READY_TIMEOUT_SECONDS = 0.25
+_NATIVE_POLICY_READY_TIMEOUT_SECONDS = _PUBLISH_TIMEOUT_SECONDS
 
 
 @final
@@ -87,7 +88,13 @@ class HookWorker(HookWorkerNativeMixin):
     # Python semantic reviewer from this worker.
     _test_python_oracle_factory: ClassVar[Callable[[HookWorker], PythonOracle] | None] = None
 
-    def __init__(self, *, store: GuardStore, activity_writer: CommandActivityWriter | None = None):
+    def __init__(
+        self,
+        *,
+        store: GuardStore,
+        activity_writer: CommandActivityWriter | None = None,
+        wait_for_native_policy: bool = True,
+    ):
         self.store = store
         self.guard_home = store.guard_home
         self.activity_writer = activity_writer
@@ -109,10 +116,10 @@ class HookWorker(HookWorkerNativeMixin):
         mode = native_mode()
         if mode in {"auto", "force", "shadow"}:
             self.policy_snapshot_publisher.start()
-        if mode in {"auto", "force"}:
+        if wait_for_native_policy and mode in {"auto", "force"}:
             wait_until_ready = getattr(self.policy_snapshot_publisher, "wait_until_ready", None)
             if callable(wait_until_ready):
-                _ = wait_until_ready(time.monotonic() + 0.25)
+                _ = wait_until_ready(time.monotonic() + _NATIVE_POLICY_READY_TIMEOUT_SECONDS)
 
     @property
     def test_oracle(self) -> PythonOracle | None:
@@ -197,7 +204,8 @@ class HookWorker(HookWorkerNativeMixin):
         self.policy_snapshot_publisher.start()
         if native_mode() in {"auto", "force"}:
             wait_until_ready = getattr(self.policy_snapshot_publisher, "wait_until_ready", None)
-            if callable(wait_until_ready):
+            last_error = getattr(self.policy_snapshot_publisher, "last_error", None)
+            if callable(wait_until_ready) and not (isinstance(last_error, str) and last_error.strip()):
                 readiness_deadline = time.monotonic() + _NATIVE_POLICY_READY_TIMEOUT_SECONDS
                 if deadline is not None:
                     readiness_deadline = min(readiness_deadline, deadline)
@@ -210,10 +218,15 @@ class HookWorker(HookWorkerNativeMixin):
         snapshot = self.policy_snapshot_publisher.current_snapshot()
         return snapshot if isinstance(snapshot, dict) else None
 
-    def _native_policy_snapshot(self, workspace: Path | None = None) -> dict[str, object] | None:
+    def _native_policy_snapshot(
+        self,
+        workspace: Path | None = None,
+        *,
+        deadline: float | None = None,
+    ) -> dict[str, object] | None:
         """Return only the last resident-ACKed snapshot for native hooks."""
 
-        return self.prepare_workspace_policy(workspace)
+        return self.prepare_workspace_policy(workspace, deadline=deadline)
 
     def review_http_payload(
         self,
@@ -297,7 +310,7 @@ class HookWorker(HookWorkerNativeMixin):
         mode = native_mode()
         native_required = mode in {"auto", "force"}
         if native_required:
-            policy_snapshot = self._native_policy_snapshot(workspace)
+            policy_snapshot = self._native_policy_snapshot(workspace, deadline=deadline)
             recording_only = policy_snapshot is not None and policy_snapshot.get("mode") == "observe"
             response = review_post_tool_native(
                 request,
@@ -335,7 +348,7 @@ class HookWorker(HookWorkerNativeMixin):
                     _ = review_post_tool_native(
                         request,
                         observe_mode=response.observe_mode,
-                        policy_snapshot=self._native_policy_snapshot(workspace),
+                        policy_snapshot=self._native_policy_snapshot(workspace, deadline=deadline),
                     )
         elif python_oracle_enabled() and python_oracle_surface_enabled(mode):
             raise HookWorkerUnsupported("explicit test oracle is not installed in this process")

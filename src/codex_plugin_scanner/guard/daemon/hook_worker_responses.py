@@ -35,12 +35,21 @@ def prepare_native_hook_policy(
             payload,
             params,
             default_harness=default_harness,
-            reason="HOL Guard could not prepare the native policy safely.",
+            reason=_native_policy_not_ready_reason(daemon_server),
             reason_code="native_policy_not_ready",
             native_authoritative=True,
         )
     )
     return False
+
+
+def _native_policy_not_ready_reason(daemon_server: Any) -> str:
+    reason = "HOL Guard could not prepare the native policy safely."
+    publisher = getattr(getattr(daemon_server, "hook_worker", None), "policy_snapshot_publisher", None)
+    last_error = getattr(publisher, "last_error", None)
+    if isinstance(last_error, str) and last_error.strip():
+        return f"{reason} {last_error.strip()}."
+    return reason
 
 
 def _canonical_hook_harness(harness: str) -> str:

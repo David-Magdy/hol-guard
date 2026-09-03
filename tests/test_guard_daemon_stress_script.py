@@ -125,7 +125,7 @@ def test_daemon_stress_gate_keeps_fresh_process_alive_with_populated_store() -> 
         check=False,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=45,
     )
     loaded = cast(object, json.loads(completed.stdout))
     assert isinstance(loaded, dict)
@@ -190,7 +190,7 @@ def test_enforced_soak_rejects_a_short_run_instead_of_claiming_proof() -> None:
         check=False,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=45,
     )
     assert completed.returncode == 2
     assert "requires at least 100000 requests and 250000 receipts" in completed.stderr

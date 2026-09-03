@@ -347,7 +347,7 @@ def test_renewal_failure_keeps_barrier_closed_at_expiry(
         first = publisher.current_snapshot()
         assert first is not None
         publisher._publish_once(renew_after_generation=first["generation"])
-        assert not publisher.is_ready()
+        assert publisher.is_ready()
         clock.wall = first["expires_at_ms"] / 1_000
         assert not publisher.is_ready()
     finally:

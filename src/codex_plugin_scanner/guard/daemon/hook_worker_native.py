@@ -67,7 +67,7 @@ class _HookWorkerNativeHost(Protocol):
     def activity_writer(self) -> object | None: ...
 
     _last_native_decision_receipt: dict[str, object] | None
-    _native_policy_snapshot: Callable[[Path | None], dict[str, object] | None]
+    _native_policy_snapshot: Callable[..., dict[str, object] | None]
     _review_pre_tool_native: Callable[..., dict[str, object] | None]
     _native_runtime_status: Callable[[], NativeRuntimeStatus]
     _review_raw_hook_native: Callable[..., dict[str, object] | None]
@@ -210,7 +210,7 @@ class HookWorkerNativeMixin:
         workspace: Path | None,
         deadline: float | None,
     ) -> dict[str, object]:
-        policy_snapshot = self._native_policy_snapshot(workspace)
+        policy_snapshot = self._native_policy_snapshot(workspace, deadline=deadline)
         recording_only = hook_review_is_recording_only(guard_home=guard_home, workspace=workspace) or (
             policy_snapshot is not None and policy_snapshot.get("mode") == "observe"
         )

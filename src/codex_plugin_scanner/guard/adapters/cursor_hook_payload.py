@@ -214,7 +214,7 @@ def _cursor_read_file_permission(permission: str) -> str:
 
 
 def _cursor_block_reason(guard_payload: Mapping[str, object]) -> str:
-    for key in ("review_hint", "risk_summary", "why_now", "risk_headline"):
+    for key in ("reason", "stopReason", "systemMessage", "review_hint", "risk_summary", "why_now", "risk_headline"):
         value = guard_payload.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()

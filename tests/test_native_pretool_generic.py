@@ -235,8 +235,9 @@ def test_resident_entrypoint_sends_both_tool_events_to_hook_worker(
     calls: list[str] = []
 
     class FakeWorker:
-        def __init__(self, *, store: object) -> None:
+        def __init__(self, *, store: object, **_kwargs: object) -> None:
             del store
+            del _kwargs
 
         def review_http_payload(self, *, payload: dict[str, object], **_kwargs: object) -> dict[str, object]:
             calls.append(str(payload.get("hook_event_name")))
@@ -272,8 +273,9 @@ def test_resident_entrypoint_routes_unknown_event_to_native_in_auto(
     calls: list[str] = []
 
     class FakeWorker:
-        def __init__(self, *, store: object) -> None:
+        def __init__(self, *, store: object, **_kwargs: object) -> None:
             del store
+            del _kwargs
 
         def review_http_payload(self, *, payload: dict[str, object], **_kwargs: object) -> dict[str, object]:
             calls.append(str(payload.get("hook_event_name")))
@@ -348,8 +350,9 @@ def test_supported_cli_pretool_worker_exception_is_fail_safe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class BrokenWorker:
-        def __init__(self, *, store: object) -> None:
+        def __init__(self, *, store: object, **_kwargs: object) -> None:
             del store
+            del _kwargs
 
         def review_http_payload(self, **_kwargs: object) -> dict[str, object]:
             raise RuntimeError("worker fixture failure")

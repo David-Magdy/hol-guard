@@ -15,7 +15,7 @@ from .manager import (
     repair_approval_center_locator,
     retire_all_guard_daemons_for_home,
 )
-from .runtime_peer import daemon_desktop_core_source_available
+from .runtime_peer import daemon_state_matches_current_runtime
 from .start_lock import guard_daemon_start_lock as _guard_daemon_start_lock
 
 
@@ -48,22 +48,15 @@ def _keep_live_runtime_result(
     verified_runtime: tuple[Version, str, str] | None,
     current_version: Version,
 ) -> dict[str, object] | None:
-    desktop_sidecar = identity is not None and daemon_desktop_core_source_available(identity.get("source_root"))
-    if verified_runtime is not None and (verified_runtime[0] >= current_version or desktop_sidecar):
-        daemon_version, daemon_version_text, _ = verified_runtime
-        return {
-            **result,
-            "runtime_status": _retained_runtime_status(daemon_version, current_version),
-            "daemon_version": daemon_version_text,
-            "cli_version": __version__,
-        }
-    if not desktop_sidecar:
+    if verified_runtime is None or identity is None:
         return None
-    raw_version = identity.get("package_version") if identity is not None else None
+    if not daemon_state_matches_current_runtime(identity, current_version=str(current_version)):
+        return None
+    daemon_version, daemon_version_text, _ = verified_runtime
     return {
         **result,
-        "runtime_status": "retained_desktop_runtime",
-        "daemon_version": raw_version if isinstance(raw_version, str) else "unknown",
+        "runtime_status": _retained_runtime_status(daemon_version, current_version),
+        "daemon_version": daemon_version_text,
         "cli_version": __version__,
     }
 

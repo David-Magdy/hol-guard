@@ -59,7 +59,7 @@ def test_guard_daemon_state_rejects_different_package_version_peer() -> None:
     assert not daemon_manager_module._guard_daemon_state_matches_current_runtime(payload)
 
 
-def test_guard_daemon_state_matches_older_desktop_core_sidecar() -> None:
+def test_guard_daemon_state_rejects_older_desktop_core_sidecar() -> None:
     payload = {
         "compatibility_version": daemon_manager_module.GUARD_DAEMON_COMPATIBILITY_VERSION,
         "package_version": "0.0.1",
@@ -67,14 +67,14 @@ def test_guard_daemon_state_matches_older_desktop_core_sidecar() -> None:
         "runtime_fingerprint": "desktop-sidecar-fingerprint",
     }
 
-    assert daemon_manager_module._guard_daemon_state_matches_current_runtime(payload)
+    assert not daemon_manager_module._guard_daemon_state_matches_current_runtime(payload)
 
 
-def test_guard_daemon_state_matches_windows_desktop_core_sidecar() -> None:
+def test_guard_daemon_state_matches_newer_windows_desktop_core_sidecar() -> None:
     payload = {
         "compatibility_version": daemon_manager_module.GUARD_DAEMON_COMPATIBILITY_VERSION,
-        "package_version": "0.0.1",
-        "source_root": r"AppData\Roaming\org.hol.guard.desktop\core\versions\0.0.1\hol-guard",
+        "package_version": "99.0.0",
+        "source_root": r"AppData\Roaming\org.hol.guard.desktop\core\versions\99.0.0\hol-guard",
         "runtime_fingerprint": "desktop-sidecar-fingerprint",
     }
 
@@ -148,13 +148,13 @@ def test_guard_daemon_state_rejects_missing_absolute_desktop_core_tree(tmp_path:
     assert not daemon_manager_module._guard_daemon_state_matches_current_runtime(payload)
 
 
-def test_guard_daemon_state_matches_existing_absolute_desktop_core_tree(tmp_path: Path) -> None:
-    sidecar = tmp_path / "org.hol.guard.desktop" / "core" / "versions" / "0.0.1" / "hol-guard"
+def test_guard_daemon_state_matches_existing_absolute_newer_desktop_core_tree(tmp_path: Path) -> None:
+    sidecar = tmp_path / "org.hol.guard.desktop" / "core" / "versions" / "99.0.0" / "hol-guard"
     sidecar.parent.mkdir(parents=True)
     sidecar.write_text("placeholder", encoding="utf-8")
     payload = {
         "compatibility_version": daemon_manager_module.GUARD_DAEMON_COMPATIBILITY_VERSION,
-        "package_version": "0.0.1",
+        "package_version": "99.0.0",
         "source_root": str(sidecar),
         "runtime_fingerprint": "desktop-sidecar-fingerprint",
     }
@@ -196,7 +196,7 @@ def test_load_guard_daemon_url_rejects_older_package_version(
     assert daemon_manager_module.load_guard_daemon_url(guard_home) is None
 
 
-def test_load_guard_daemon_url_accepts_older_desktop_core_sidecar(
+def test_load_guard_daemon_url_rejects_older_desktop_core_sidecar(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -231,7 +231,7 @@ def test_load_guard_daemon_url_accepts_older_desktop_core_sidecar(
         lambda request, timeout=1: _HealthzResponse(),
     )
 
-    assert daemon_manager_module.load_guard_daemon_url(guard_home) == "http://127.0.0.1:5530"
+    assert daemon_manager_module.load_guard_daemon_url(guard_home) is None
 
 
 def test_load_guard_daemon_url_accepts_same_release_peer_fingerprint(
