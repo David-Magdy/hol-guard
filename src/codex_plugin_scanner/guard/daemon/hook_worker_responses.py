@@ -21,7 +21,7 @@ def prepare_native_hook_policy(
     """Apply the production native-policy barrier before hook admission."""
 
     harness = _canonical_managed_harness(default_harness)
-    if _hook_harness_is_explicitly_inactive(daemon_server, harness):
+    if _hook_harness_is_unmanaged(daemon_server, harness):
         _write_unmanaged_harness_passthrough(handler, payload, harness)
         return False
     workspace_path = Path(workspace) if workspace is not None else None
@@ -56,18 +56,37 @@ def _canonical_managed_harness(harness: str) -> str:
         return _canonical_hook_harness(harness)
 
 
-def _hook_harness_is_explicitly_inactive(daemon_server: Any, harness: str) -> bool:
-    """True only when Guard recorded this app as disconnected."""
+def _hook_harness_is_unmanaged(daemon_server: Any, harness: str) -> bool:
+    """True when leftover hooks belong to an app Guard is not currently protecting."""
 
     store = getattr(daemon_server, "store", None)
     getter = getattr(store, "get_managed_install", None)
     if not callable(getter):
         return False
+    canonical = _canonical_managed_harness(harness)
     try:
-        managed = getter(_canonical_managed_harness(harness))
+        managed = getter(canonical)
     except Exception:
         return False
-    return isinstance(managed, dict) and managed.get("active") is False
+    if isinstance(managed, dict) and managed.get("active") is False:
+        return True
+    if managed is not None:
+        return False
+    lister = getattr(store, "list_managed_installs", None)
+    if not callable(lister):
+        return False
+    try:
+        installs = lister()
+    except Exception:
+        return False
+    if not isinstance(installs, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("active") is True
+        and _canonical_managed_harness(str(item.get("harness") or "")) != canonical
+        for item in installs
+    )
 
 
 def _write_unmanaged_harness_passthrough(

@@ -5972,9 +5972,9 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                     "hookSpecificOutput": {"hookEventName": event, "permissionDecision": "allow"},
                 }
             return {"continue": True, "reason_code": reason_code, "observed_review_failure": True}
-        from .hook_availability_policy import availability_harness_response, lifecycle_event_is_observe_only
+        from .hook_availability_policy import availability_harness_response
 
-        if event == "PreToolUse" or lifecycle_event_is_observe_only(event):
+        if event != "PermissionRequest":
             payload_dict = dict(payload) if isinstance(payload, Mapping) else {}
             return availability_harness_response(
                 payload_dict,

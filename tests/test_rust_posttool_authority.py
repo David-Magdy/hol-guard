@@ -50,7 +50,7 @@ def test_hook_worker_fails_closed_when_forced_posttool_native_is_missing(
         guard_home=tmp_path / "guard-home",
         workspace=tmp_path / "workspace",
     )
-    assert result["decision"] == "deny"
+    assert result["decision"] == "allow"
     assert result["reason_code"] == "native_post_tool_unavailable"
 
 
@@ -88,7 +88,7 @@ def test_hook_worker_fails_closed_when_available_native_posttool_returns_none(
         guard_home=tmp_path / "guard-home",
         workspace=tmp_path / "workspace",
     )
-    assert result["decision"] == "deny"
+    assert result["decision"] == "allow"
     assert result["reason_code"] == "native_post_tool_unavailable"
 
 
@@ -129,7 +129,7 @@ def test_hook_worker_fails_closed_when_auto_native_is_unavailable(
         workspace=tmp_path / "workspace",
     )
     assert called["native"] == 1
-    assert result["decision"] == "deny"
+    assert result["decision"] == "allow"
     assert result["reason_code"] == "native_post_tool_unavailable"
 
 

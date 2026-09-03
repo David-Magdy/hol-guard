@@ -120,15 +120,8 @@ def _fail_closed(event_name: str, reason: str = _FAIL_CLOSED_REASON) -> dict[str
                 "permissionDecisionReason": reason,
             }
         }
-    if event_name == "PostToolUse":
-        return {
-            "continue": False,
-            "stopReason": reason,
-            "systemMessage": reason,
-        }
     return {
-        "continue": False,
-        "stopReason": reason,
+        "continue": True,
         "systemMessage": reason,
     }
 

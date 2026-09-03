@@ -26,13 +26,19 @@ _MANAGED_HOOK_EVENTS = _BLOCKING_MANAGED_HOOK_EVENTS + _OBSERVER_MANAGED_HOOK_EV
 _MANAGED_HOOK_TIMEOUT_SECONDS = 45
 
 
-def _managed_hook_command(*, python_executable: Path | None, script_path: Path) -> str:
+def _managed_hook_command(
+    *,
+    python_executable: Path | None,
+    script_path: Path,
+    event_name: str,
+) -> str:
     script = str(script_path.resolve())
+    event_args = ["--cursor-hook-event", event_name]
     if python_executable is not None:
-        return shlex.join([str(python_executable), script])
+        return shlex.join([str(python_executable), script, *event_args])
     if bool(getattr(sys, "frozen", False)):
-        return shlex.join([sys.executable, FROZEN_CURSOR_HOOK_COMMAND, script])
-    return shlex.join([sys.executable, script])
+        return shlex.join([sys.executable, FROZEN_CURSOR_HOOK_COMMAND, script, *event_args])
+    return shlex.join([sys.executable, script, *event_args])
 
 
 def _is_managed_cursor_hook_script(path: Path) -> bool:
@@ -67,7 +73,7 @@ def _cursor_hook_path_contains_symlink(path: Path) -> bool:
 def run_frozen_cursor_hook(argv: Sequence[str]) -> int:
     """Execute the installed Cursor hook script from a frozen Guard binary."""
 
-    if len(argv) != 1:
+    if not argv:
         return 2
     script = Path(argv[0])
     if not _is_managed_cursor_hook_script(script) or not script.is_file() or _cursor_hook_path_contains_symlink(script):
@@ -95,7 +101,11 @@ def _managed_hook_entry(
 ) -> dict[str, object]:
     del context
     entry: dict[str, object] = {
-        "command": _managed_hook_command(python_executable=python_executable, script_path=script_path),
+        "command": _managed_hook_command(
+            python_executable=python_executable,
+            script_path=script_path,
+            event_name=event_name,
+        ),
         "timeout": _MANAGED_HOOK_TIMEOUT_SECONDS,
         "failClosed": event_name in _BLOCKING_MANAGED_HOOK_EVENTS,
     }

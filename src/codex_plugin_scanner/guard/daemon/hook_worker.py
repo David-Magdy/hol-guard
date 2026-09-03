@@ -242,10 +242,11 @@ class HookWorker(HookWorkerNativeMixin):
         """Review a hook HTTP payload and return harness JSON.
 
         ``auto`` and ``force`` require the native runtime. When native is
-        unavailable or returns no result, PostToolUse and high-impact
-        PreToolUse fail closed. Emergency-safe local inspection continues
-        with an explicit degraded reason code. ``off`` and ``shadow`` can use
-        only an explicit test oracle; production requests remain fail-safe.
+        unavailable or returns no result, high-impact PreToolUse pauses.
+        PostToolUse continues so the turn does not freeze. Emergency-safe
+        local inspection continues with an explicit degraded reason code.
+        ``off`` and ``shadow`` can use only an explicit test oracle;
+        production requests remain fail-safe.
         """
         self._last_native_decision_receipt = None
         harness = self._runtime_harness(params) or default_harness

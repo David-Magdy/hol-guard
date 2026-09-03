@@ -13,8 +13,8 @@ Eligible PostToolUse and supported PreToolUse review use the verified bundled Ru
 ## Security invariants
 
 1. Rust never lowers the canonical action, approval floor, or output restriction.
-2. Unreviewed PostToolUse output never reaches the model.
-3. Unknown parsing, stale policy, exhausted scan budget, overload, or daemon unavailability never becomes an unsafe allow.
+2. When native PostToolUse review completes, blocked output never reaches the model. When that review cannot complete, the turn continues because the tool already ran.
+3. Unknown parsing, stale policy, exhausted scan budget, overload, or daemon unavailability never becomes an unsafe high-impact PreToolUse allow.
 4. Same-user local processes are untrusted until message-level authentication succeeds.
 5. Every connection, frame, allocation, parser, scanner, worker, queue, subprocess, log, restart, and fallback is bounded.
 6. The resident Rust child remains outside the Python process and runs through the existing containment and process-tree cleanup boundary.
@@ -37,7 +37,7 @@ A resident crash must not retire a healthy Python daemon. Restart occurs outside
 
 During Python daemon failure:
 
-- PostToolUse output is withheld or blocked.
+- PostToolUse output is withheld when native review blocks it. When the daemon cannot complete PostToolUse review, the turn continues because the tool already ran.
 - Mutating, network, secret-capable, destructive, package-executing, process-control, policy-tampering, and uncertain PreToolUse operations pause.
 - Only the authenticated exact emergency-safe profile may continue.
 - Empty or malformed responses are never treated as successful execution.

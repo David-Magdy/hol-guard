@@ -93,3 +93,56 @@ def test_generated_cursor_watch_after_shell_exception_prints_empty(
     assert callable(main)
     assert main() == 0
     assert capsys.readouterr().out.strip() == "{}"
+
+
+def test_empty_stdin_before_read_allows_when_event_is_baked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard_home = tmp_path / "guard"
+    guard_home.mkdir()
+    (guard_home / "config.toml").write_text(
+        'mode = "prompt"\nprotection_posture = "protected"\n',
+        encoding="utf-8",
+    )
+    context = HarnessContext(
+        home_dir=tmp_path / "home",
+        guard_home=guard_home,
+        workspace_dir=tmp_path,
+    )
+    script_globals: dict[str, object] = {"__name__": "cursor_hook"}
+    exec(compile(cursor_hook_script_source(context), "hol-guard-cursor-hook.py", "exec"), script_globals)
+    monkeypatch.setattr(sys, "argv", ["hol-guard-cursor-hook.py", "--cursor-hook-event", "beforeReadFile"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    main = script_globals["main"]
+    assert callable(main)
+    assert main() == 0
+    assert json.loads(capsys.readouterr().out) == {"permission": "allow"}
+
+
+def test_empty_stdin_before_shell_pauses_when_event_is_baked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard_home = tmp_path / "guard"
+    guard_home.mkdir()
+    (guard_home / "config.toml").write_text(
+        'mode = "prompt"\nprotection_posture = "protected"\n',
+        encoding="utf-8",
+    )
+    context = HarnessContext(
+        home_dir=tmp_path / "home",
+        guard_home=guard_home,
+        workspace_dir=tmp_path,
+    )
+    script_globals: dict[str, object] = {"__name__": "cursor_hook"}
+    exec(compile(cursor_hook_script_source(context), "hol-guard-cursor-hook.py", "exec"), script_globals)
+    monkeypatch.setattr(sys, "argv", ["hol-guard-cursor-hook.py", "--cursor-hook-event", "beforeShellExecution"])
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    main = script_globals["main"]
+    assert callable(main)
+    assert main() == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["permission"] == "deny"

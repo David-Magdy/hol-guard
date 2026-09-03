@@ -227,6 +227,31 @@ def _hook_evaluator_loop(
             return
 
 
+def _native_worker_fail_safe_result(
+    parsed: ResidentHookRequest,
+    *,
+    event_name: str,
+    reason_code: str,
+) -> dict[str, object]:
+    from .hook_availability_policy import availability_harness_response
+
+    record_native_hook_route("native_fail_safe")
+    return {
+        "payload": availability_harness_response(
+            parsed.payload,
+            harness=parsed.harness,
+            event_name=event_name,
+            reason_code=reason_code,
+            reason="HOL Guard could not complete the native hook decision safely.",
+            workspace=parsed.workspace,
+            home_dir=parsed.home_dir,
+            guard_home=parsed.guard_home,
+        ),
+        "reason_code": reason_code,
+        "route": "native_fail_safe",
+    }
+
+
 def _run_resident_hook_request(
     request: dict[str, object],
     *,
@@ -237,7 +262,7 @@ def _run_resident_hook_request(
     from ..cli.commands_hook import _run_guard_hook_command
     from ..cli.commands_support_connect import _synced_policy_payload
     from ..config import load_guard_config, overlay_synced_guard_policy
-    from .hook_worker import HookWorker, HookWorkerUnsupported, post_tool_fail_safe_response, runtime_hook_event_name
+    from .hook_worker import HookWorker, HookWorkerUnsupported, runtime_hook_event_name
 
     parsed = coerce_resident_hook_request(request)
     if parsed is None:
@@ -269,28 +294,18 @@ def _run_resident_hook_request(
             )
         except HookWorkerUnsupported:
             if _native_mode_requires_rust() or not python_oracle_surface_enabled():
-                record_native_hook_route("native_fail_safe")
-                return {
-                    "payload": post_tool_fail_safe_response(
-                        parsed.harness,
-                        reason="HOL Guard could not complete the native hook decision safely.",
-                        reason_code="native_hook_worker_unsupported",
-                    ),
-                    "reason_code": "native_hook_worker_unsupported",
-                    "route": "native_fail_safe",
-                }
+                return _native_worker_fail_safe_result(
+                    parsed,
+                    event_name=event_name,
+                    reason_code="native_hook_worker_unsupported",
+                )
         except Exception:
             if _native_mode_requires_rust() or not python_oracle_surface_enabled():
-                record_native_hook_route("native_fail_safe")
-                return {
-                    "payload": post_tool_fail_safe_response(
-                        parsed.harness,
-                        reason="HOL Guard could not complete the native hook decision safely.",
-                        reason_code="native_hook_worker_exception",
-                    ),
-                    "reason_code": "native_hook_worker_exception",
-                    "route": "native_fail_safe",
-                }
+                return _native_worker_fail_safe_result(
+                    parsed,
+                    event_name=event_name,
+                    reason_code="native_hook_worker_exception",
+                )
             raise
         else:
             response: dict[str, object] = {

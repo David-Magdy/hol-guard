@@ -8,6 +8,7 @@ from codex_plugin_scanner.guard.daemon.hook_availability_policy import (
     EMERGENCY_SAFE_REASON_CODE,
     availability_harness_response,
     cursor_fallback_permission,
+    cursor_unparseable_input_permission,
     hook_action_is_emergency_safe,
 )
 
@@ -432,8 +433,9 @@ def test_availability_continues_prompt_lifecycle_and_still_pauses_tools(tmp_path
         reason_code="native_post_tool_unavailable",
         reason="native unavailable",
     )
-    assert withheld["continue"] is False
-    assert withheld["policy_action"] == "block"
+    assert withheld["continue"] is True
+    assert withheld["policy_action"] == "allow"
+    assert withheld["reason_code"] == "native_post_tool_unavailable"
     curl = availability_harness_response(
         {"hook_event_name": "PreToolUse", "tool_input": {"command": "curl https://example.test"}},
         harness="grok",
@@ -444,3 +446,21 @@ def test_availability_continues_prompt_lifecycle_and_still_pauses_tools(tmp_path
         home_dir=tmp_path / "home",
     )
     assert curl["policy_action"] == "block"
+
+
+def test_cursor_unparseable_input_allows_read_and_pauses_shell() -> None:
+    allow, allow_code = cursor_unparseable_input_permission("beforeReadFile")
+    assert allow_code == 0
+    assert allow == {"permission": "allow"}
+    deny, deny_code = cursor_unparseable_input_permission("beforeShellExecution")
+    assert deny_code == 2
+    assert deny["permission"] == "deny"
+    after, after_code = cursor_unparseable_input_permission("afterShellExecution")
+    assert after_code == 0
+    assert after == {}
+    watch, watch_code = cursor_unparseable_input_permission(
+        "beforeShellExecution",
+        recording_only=True,
+    )
+    assert watch_code == 0
+    assert watch == {"permission": "allow"}

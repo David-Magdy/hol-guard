@@ -1933,7 +1933,7 @@ class TestGuardSurfaceServer:
                     }
                 },
             ),
-            ("cursor", "PostToolUse", {"continue": False}),
+            ("cursor", "PostToolUse", {"continue": True}),
         ],
     )
     def test_guard_daemon_hook_capacity_uses_native_fail_safe_response(

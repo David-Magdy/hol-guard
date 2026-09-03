@@ -311,44 +311,64 @@ def _cursor_availability_response(
 _LAST_HOOK_EVENT_NAME = ""
 
 
+def _cursor_hook_event_from_argv() -> str:
+    args = sys.argv
+    try:
+        index = args.index("--cursor-hook-event")
+    except ValueError:
+        return ""
+    if index + 1 >= len(args):
+        return ""
+    value = str(args[index + 1]).strip()
+    return value
+
+
+def _exit_unparseable_cursor_input() -> int:
+    event_name = _cursor_hook_event_from_argv() or _LAST_HOOK_EVENT_NAME
+    try:
+        from codex_plugin_scanner.guard.daemon.hook_availability_policy import (
+            cursor_unparseable_input_permission,
+        )
+
+        response, code = cursor_unparseable_input_permission(
+            event_name,
+            recording_only=_recording_only_from_guard_home(),
+        )
+    except Exception:
+        compact = event_name.strip().lower().replace("_", "").replace("-", "")
+        if compact in {"aftershellexecution", "aftermcpexecution"}:
+            print("{}")
+            return 0
+        allow = _recording_only_from_guard_home() or compact in {"beforereadfile", ""}
+        print(json.dumps({"permission": "allow" if allow else "deny"}))
+        return 0 if allow else 2
+    print("{}" if not response else json.dumps(response))
+    return code
+
+
 def main() -> int:
     try:
         return _main_inner()
     except Exception:
-        if _recording_only_from_guard_home():
-            compact = _LAST_HOOK_EVENT_NAME.strip().lower().replace("_", "").replace("-", "")
-            if compact in {"aftershellexecution", "aftermcpexecution"}:
-                print("{}")
-            else:
-                print(json.dumps({"permission": "allow"}))
-            return 0
-        print(
-            json.dumps(
-                {
-                    "permission": "deny",
-                    "user_message": "HOL Guard could not complete this Cursor hook safely.",
-                }
-            )
-        )
-        return 2
+        return _exit_unparseable_cursor_input()
 
 
 def _main_inner() -> int:
+    global _LAST_HOOK_EVENT_NAME
+    argv_event = _cursor_hook_event_from_argv()
+    if argv_event:
+        _LAST_HOOK_EVENT_NAME = argv_event
     raw = sys.stdin.read()
     if not raw.strip():
-        print(json.dumps({"permission": "deny", "user_message": "HOL Guard received empty Cursor hook input."}))
-        return 2
+        return _exit_unparseable_cursor_input()
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        print(json.dumps({"permission": "deny", "user_message": "HOL Guard could not parse Cursor hook input."}))
-        return 2
+        return _exit_unparseable_cursor_input()
     if not isinstance(payload, dict):
-        print(json.dumps({"permission": "deny", "user_message": "HOL Guard received invalid Cursor hook input."}))
-        return 2
+        return _exit_unparseable_cursor_input()
     inferred = _infer_cursor_hook_event_name(payload)
     hook_event_name = str(inferred.get("hook_event_name") or inferred.get("hookEventName") or "preToolUse")
-    global _LAST_HOOK_EVENT_NAME
     _LAST_HOOK_EVENT_NAME = hook_event_name
     prepared = _prepare_cursor_hook_payload(inferred)
     workspace = _workspace_from_cursor_input(prepared)
@@ -383,20 +403,23 @@ def _main_inner() -> int:
             hook_event_name=hook_event_name,
             workspace=workspace,
         )
+        recover_kind = "overload" if daemon_failure_kind == "overload" else (
+            daemon_failure_kind or "transport-failure"
+        )
         if availability_code == 0 and availability.get("permission") == "allow":
-            if daemon_failure_kind not in {None, "overload"}:
+            if recover_kind != "overload":
                 threading.Thread(
                     target=_run_guard_recovery,
-                    args=(daemon_failure_kind,),
+                    args=(recover_kind,),
                     kwargs={"guard_env": guard_env, "deadline_monotonic": deadline_monotonic},
                     daemon=True,
                     name="hol-guard-cursor-recovery",
                 ).start()
             print(json.dumps(availability))
             return availability_code
-        if daemon_failure_kind not in {None, "overload"}:
+        if recover_kind != "overload":
             _run_guard_recovery(
-                daemon_failure_kind,
+                recover_kind,
                 guard_env=guard_env,
                 deadline_monotonic=deadline_monotonic,
             )
