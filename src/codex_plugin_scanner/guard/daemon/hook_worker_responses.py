@@ -20,6 +20,10 @@ def prepare_native_hook_policy(
 ) -> bool:
     """Apply the production native-policy barrier before hook admission."""
 
+    harness = _canonical_managed_harness(default_harness)
+    if _hook_harness_is_explicitly_inactive(daemon_server, harness):
+        _write_unmanaged_harness_passthrough(handler, payload, harness)
+        return False
     workspace_path = Path(workspace) if workspace is not None else None
     prepared_policy = daemon_server.hook_worker.prepare_workspace_policy(
         workspace_path,
@@ -41,6 +45,50 @@ def prepare_native_hook_policy(
         )
     )
     return False
+
+
+def _canonical_managed_harness(harness: str) -> str:
+    try:
+        from ..adapters import get_adapter
+
+        return get_adapter(harness).harness
+    except (ValueError, ImportError):
+        return _canonical_hook_harness(harness)
+
+
+def _hook_harness_is_explicitly_inactive(daemon_server: Any, harness: str) -> bool:
+    """True only when Guard recorded this app as disconnected."""
+
+    store = getattr(daemon_server, "store", None)
+    getter = getattr(store, "get_managed_install", None)
+    if not callable(getter):
+        return False
+    try:
+        managed = getter(_canonical_managed_harness(harness))
+    except Exception:
+        return False
+    return isinstance(managed, dict) and managed.get("active") is False
+
+
+def _write_unmanaged_harness_passthrough(
+    handler: Any,
+    payload: dict[str, object],
+    harness: str,
+) -> None:
+    from .hook_availability_policy import availability_harness_response
+    from .hook_request_parsing import runtime_hook_event_name
+
+    event_name = runtime_hook_event_name(payload)
+    handler._write_json(
+        availability_harness_response(
+            payload,
+            harness=harness,
+            event_name=event_name,
+            reason_code="harness_not_managed",
+            reason="HOL Guard is not protecting this app.",
+            recording_only=True,
+        )
+    )
 
 
 def _native_policy_not_ready_reason(daemon_server: Any) -> str:
