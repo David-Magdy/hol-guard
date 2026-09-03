@@ -52,7 +52,7 @@ def _canonical_managed_harness(harness: str) -> str:
         from ..adapters import get_adapter
 
         return get_adapter(harness).harness
-    except Exception:
+    except (ValueError, ImportError):
         return _canonical_hook_harness(harness)
 
 
