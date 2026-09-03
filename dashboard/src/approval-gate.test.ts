@@ -277,6 +277,36 @@ function testApprovalProofRecentTotpSkipsCode(): void {
   assert(!("approval_password" in credentials), "recent totp should omit password");
 }
 
+function testApprovalProofFreshTotpRequiredForDisconnect(): void {
+  const recentGate: GuardApprovalGatePublicConfig = {
+    enabled: true,
+    configured: true,
+    cooldown_seconds: 0,
+    cooldown_active: false,
+    cooldown_expires_at: null,
+    locked_until: null,
+    fail_closed: false,
+    strict_all_decisions: false,
+    totp_enabled: true,
+    totp_pending: false,
+    totp_recent_satisfied: true,
+  };
+  assert(
+    isApprovalProofSubmitDisabled(recentGate, { approvalPassword: "", approvalTotpCode: "" }, false, true) === true,
+    "disconnect must require a fresh authenticator code even after a recent proof",
+  );
+  assert(
+    isApprovalProofSubmitDisabled(recentGate, { approvalPassword: "", approvalTotpCode: "469550" }, false, true) === false,
+    "disconnect proof submits once a fresh authenticator code is entered",
+  );
+  const credentials = buildApprovalProofCredentials(
+    recentGate,
+    { approvalPassword: "", approvalTotpCode: "469550" },
+    true,
+  );
+  assert(credentials.approval_totp_code === "469550", "disconnect proof must send the fresh authenticator code");
+}
+
 const tests: Array<[string, () => void]> = [
   ["testApprovalGatePublicConfigEnabled", testApprovalGatePublicConfigEnabled],
   ["testApprovalGatePublicConfigDisabled", testApprovalGatePublicConfigDisabled],
@@ -288,6 +318,7 @@ const tests: Array<[string, () => void]> = [
   ["testBulkApproveGateCredentialsPayload", testBulkApproveGateCredentialsPayload],
   ["testApprovalProofTotpOverridesPassword", testApprovalProofTotpOverridesPassword],
   ["testApprovalProofRecentTotpSkipsCode", testApprovalProofRecentTotpSkipsCode],
+  ["testApprovalProofFreshTotpRequiredForDisconnect", testApprovalProofFreshTotpRequiredForDisconnect],
 ];
 
 let passed = 0;

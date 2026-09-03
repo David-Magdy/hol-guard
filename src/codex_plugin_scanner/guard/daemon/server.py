@@ -111,6 +111,7 @@ from ..desktop_notifications import (
     ensure_desktop_notification_setup,
     macos_notification_guidance,
 )
+from ..harness_disconnect_gate import require_harness_disconnect_gate
 from ..insights_share import publish_insights_share
 from ..local_dashboard_session import (
     DEFAULT_LOCAL_DASHBOARD_SESSION_TTL_SECONDS,
@@ -3254,6 +3255,8 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
                 )
             else:
                 result = self._run_headless_managed_action(adapter.harness, harness_action, payload, context)
+        except ApprovalGateError as error:
+            return error.status, error.to_payload()
         except ValueError as error:
             return _headless_action_error_payload(
                 operation=operation,
@@ -3318,6 +3321,11 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
             )
             if confirmation != expected_confirmation:
                 raise ValueError("confirmation_required")
+            require_harness_disconnect_gate(
+                self.server.store.guard_home,  # type: ignore[attr-defined]
+                payload,
+                harness=harness,
+            )
         install_command = "uninstall" if action == "uninstall" else "install"
         return apply_managed_install(
             install_command,
@@ -4555,6 +4563,16 @@ class _GuardDaemonHandler(BaseHTTPRequestHandler):
         if dry_run:
             self._write_json(build_harness_setup_plan(action, adapter.harness, context, dry_run=True))
             return
+        if action == "uninstall":
+            try:
+                require_harness_disconnect_gate(
+                    self.server.store.guard_home,  # type: ignore[attr-defined]
+                    payload,
+                    harness=adapter.harness,
+                )
+            except ApprovalGateError as error:
+                self._write_approval_gate_error(error)
+                return
         install_command = "uninstall" if action == "uninstall" else "install"
         try:
             result = apply_managed_install(

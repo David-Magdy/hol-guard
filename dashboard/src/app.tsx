@@ -867,9 +867,10 @@ export function App() {
         onClearAppPolicies={handleClearAppPolicies}
         onClearPolicy={handleClearPolicy}
         onManagedInstallChanged={refreshStateWithoutResult}
+        approvalGate={approvalGate}
       />
     );
-  }, [view, appDetailHarness, runtime, receipts, policies, inventory, requests, handleGoHome, handleOpenRequest, handleClearAppPolicies, handleClearPolicy, refreshStateWithoutResult]);
+  }, [view, appDetailHarness, runtime, receipts, policies, inventory, requests, handleGoHome, handleOpenRequest, handleClearAppPolicies, handleClearPolicy, refreshStateWithoutResult, approvalGate]);
 
   const policyContent = useMemo(() => {
     if (runtime.kind !== "ready") {

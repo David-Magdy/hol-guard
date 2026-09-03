@@ -28,6 +28,7 @@ import {
   GuardHero,
   ProofStrip,
 } from "../approval-center-primitives";
+import { ApprovalProofModal } from "../approval-proof-modal";
 import {
   fetchApprovalPage,
   fetchPolicy,
@@ -68,6 +69,7 @@ import type {
   GuardHarnessActionResult,
   GuardHarnessSetupStep,
   PackageManagerProtection,
+  GuardApprovalGatePublicConfig,
 } from "../guard-types";
 
 type TabKey = "overview" | "activity" | "settings";
@@ -92,6 +94,7 @@ type AppDetailWorkspaceProps = {
   onClearAppPolicies?: (harness: string) => Promise<void>;
   onClearPolicy?: (policy: GuardPolicyDecision) => Promise<void>;
   onManagedInstallChanged?: () => Promise<void>;
+  approvalGate?: GuardApprovalGatePublicConfig | null;
 };
 
 function readTabFromUrl(): TabKey {
@@ -462,6 +465,7 @@ export function AppDetailWorkspace(props: AppDetailWorkspaceProps) {
                 protection={runtime.supply_chain?.package_manager_protection}
                 onOpenRequest={props.onOpenRequest}
                 onManagedInstallChanged={props.onManagedInstallChanged}
+                approvalGate={props.approvalGate}
               />
             )}
             {activeTab === "activity" && (
@@ -485,6 +489,7 @@ export function AppDetailWorkspace(props: AppDetailWorkspaceProps) {
                 onManagedInstallChanged={props.onManagedInstallChanged}
                 policyError={policyError}
                 onRetry={loadTabData}
+                approvalGate={props.approvalGate}
               />
             )}
           </TabContent>
@@ -538,6 +543,7 @@ function AppOverviewTab(props: {
   protection: PackageManagerProtection | undefined;
   onOpenRequest: (requestId: string) => void;
   onManagedInstallChanged?: () => Promise<void>;
+  approvalGate?: GuardApprovalGatePublicConfig | null;
 }) {
   const showFirstRunGuide =
     appSetupTarget(props.harness) === "harness" &&
@@ -557,6 +563,7 @@ function AppOverviewTab(props: {
             install={props.install}
             status={props.status}
             onManagedInstallChanged={props.onManagedInstallChanged}
+            approvalGate={props.approvalGate}
           />
         )}
 
@@ -776,6 +783,7 @@ function FirstRunGuide(props: {
   install: GuardManagedInstall | undefined;
   status: "active" | "needs_setup" | "observed" | "unknown";
   onManagedInstallChanged?: () => Promise<void>;
+  approvalGate?: GuardApprovalGatePublicConfig | null;
 }) {
   const displayName = harnessDisplayName(props.harness);
   return (
@@ -803,6 +811,7 @@ function FirstRunGuide(props: {
             install={props.install}
             status={props.status}
             onManagedInstallChanged={props.onManagedInstallChanged}
+            approvalGate={props.approvalGate}
           />
         </div>
       </div>
@@ -1197,6 +1206,7 @@ function AppSettingsTab(props: {
   onManagedInstallChanged?: () => Promise<void>;
   policyError: string | null;
   onRetry: () => void;
+  approvalGate?: GuardApprovalGatePublicConfig | null;
 }) {
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -1250,6 +1260,7 @@ function AppSettingsTab(props: {
             install={props.install}
             status={props.status}
             onManagedInstallChanged={props.onManagedInstallChanged}
+            approvalGate={props.approvalGate}
           />
         ) : (
           <OperationalSourceSetupPanel harness={props.harness} />
@@ -1378,11 +1389,14 @@ function HarnessSetupPanel(props: {
   install: GuardManagedInstall | undefined;
   status: "active" | "needs_setup" | "observed" | "unknown";
   onManagedInstallChanged?: () => Promise<void>;
+  approvalGate?: GuardApprovalGatePublicConfig | null;
 }) {
   const [setupState, setSetupState] = useState<HarnessSetupState>({ kind: "idle" });
   const [disconnectArmed, setDisconnectArmed] = useState(false);
   const active = props.install?.active === true;
   const displayName = harnessDisplayName(props.harness);
+  const approvalGate = props.approvalGate ?? null;
+  const disconnectRequiresProof = approvalGate?.enabled === true;
 
   const refreshAfterMutation = useCallback(async () => {
     await props.onManagedInstallChanged?.();
@@ -1409,7 +1423,12 @@ function HarnessSetupPanel(props: {
   }, [loadPlan]);
 
   const runAction = useCallback(
-    async (action: GuardHarnessAction, options: { dryRun?: boolean; confirmationPhrase?: string } = {}) => {
+    async (action: GuardHarnessAction, options: {
+      dryRun?: boolean;
+      confirmationPhrase?: string;
+      approval_password?: string;
+      approval_totp_code?: string;
+    } = {}) => {
       setSetupState({ kind: "loading", action });
       try {
         const result = await runHarnessAction({
@@ -1417,6 +1436,8 @@ function HarnessSetupPanel(props: {
           action,
           dryRun: options.dryRun,
           confirmationPhrase: options.confirmationPhrase,
+          approval_password: options.approval_password,
+          approval_totp_code: options.approval_totp_code,
         });
         setDisconnectArmed(false);
         setSetupState({ kind: "success", action, result });
@@ -1461,15 +1482,26 @@ function HarnessSetupPanel(props: {
     void runAction("uninstall", { dryRun: true });
   }, [runAction]);
 
-  const handleConfirmDisconnect = useCallback(() => {
-    const phrase =
-      setupState.kind === "error" && setupState.confirmationPhrase
-        ? setupState.confirmationPhrase
-        : setupState.kind === "success" && setupState.result.confirmation_phrase
-        ? setupState.result.confirmation_phrase
-        : `disconnect-${props.harness}`;
-    void runAction("uninstall", { dryRun: false, confirmationPhrase: phrase });
-  }, [props.harness, runAction, setupState]);
+  const disconnectPhrase = useCallback(() => {
+    if (setupState.kind === "error" && setupState.confirmationPhrase) {
+      return setupState.confirmationPhrase;
+    }
+    if (setupState.kind === "success" && setupState.result.confirmation_phrase) {
+      return setupState.result.confirmation_phrase;
+    }
+    return `disconnect-${props.harness}`;
+  }, [props.harness, setupState]);
+
+  const handleConfirmDisconnect = useCallback((
+    credentials?: { approval_password?: string; approval_totp_code?: string },
+  ) => {
+    void runAction("uninstall", {
+      dryRun: false,
+      confirmationPhrase: disconnectPhrase(),
+      approval_password: credentials?.approval_password,
+      approval_totp_code: credentials?.approval_totp_code,
+    });
+  }, [disconnectPhrase, runAction]);
 
   const handleCancelDisconnect = useCallback(() => {
     setDisconnectArmed(false);
@@ -1600,10 +1632,10 @@ function HarnessSetupPanel(props: {
             Disconnect
           </button>
         )}
-        {active && disconnectArmed && (
+        {active && disconnectArmed && !disconnectRequiresProof && (
           <>
             <button
-              onClick={handleConfirmDisconnect}
+              onClick={() => handleConfirmDisconnect()}
               disabled={busy}
               className="inline-flex min-h-10 items-center rounded-lg bg-brand-attention px-3 text-sm font-semibold text-white transition-colors hover:bg-brand-attention/90 disabled:opacity-50"
             >
@@ -1618,7 +1650,34 @@ function HarnessSetupPanel(props: {
             </button>
           </>
         )}
+        {active && disconnectArmed && disconnectRequiresProof && (
+          <button
+            onClick={handleCancelDisconnect}
+            disabled={busy}
+            className="inline-flex min-h-10 items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-brand-dark transition-colors hover:bg-slate-50 disabled:opacity-50"
+          >
+            Keep connected
+          </button>
+        )}
       </div>
+      {active && disconnectArmed && disconnectRequiresProof ? (
+        <ApprovalProofModal
+          title={`Disconnect ${displayName}`}
+          detail={
+            approvalGate?.totp_enabled === true
+              ? "Enter a fresh authenticator code to remove Guard protection from this app."
+              : "Enter your approval password to remove Guard protection from this app."
+          }
+          confirmLabel="Disconnect app"
+          busyLabel="Disconnecting..."
+          approvalGate={approvalGate}
+          requireFreshTotp={approvalGate?.totp_enabled === true}
+          busy={busy && setupState.kind === "loading" && setupState.action === "uninstall"}
+          error={setupState.kind === "error" && setupState.action === "uninstall" ? setupState.message : null}
+          onCancel={handleCancelDisconnect}
+          onConfirm={handleConfirmDisconnect}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1735,7 +1794,16 @@ function setupActionErrorMessage(error: GuardHarnessActionError): string {
   if (error.payload?.error === "confirmation_required") {
     return "Disconnect requires confirmation so accidental clicks cannot remove local protection.";
   }
-  return error.payload?.error ?? error.message;
+  if (error.payload?.error === "approval_gate_totp_required") {
+    return "Enter a fresh authenticator code to disconnect this app.";
+  }
+  if (
+    error.payload?.error === "approval_gate_required"
+    || error.payload?.error === "approval_gate_password_required"
+  ) {
+    return "Enter your approval password to disconnect this app.";
+  }
+  return error.payload?.message ?? error.payload?.error ?? error.message;
 }
 
 function setupSuccessTitle(action: GuardHarnessAction, displayName: string): string {

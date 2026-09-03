@@ -2815,6 +2815,8 @@ export async function runHarnessAction(input: {
   action: GuardHarnessAction;
   dryRun?: boolean;
   confirmationPhrase?: string;
+  approval_password?: string;
+  approval_totp_code?: string;
 }): Promise<GuardHarnessActionResult> {
   if (isGuardDemoMode()) {
     return {
@@ -2845,7 +2847,9 @@ export async function runHarnessAction(input: {
       },
       body: JSON.stringify({
         dry_run: input.dryRun ?? input.action !== "verify",
-        confirmation_phrase: input.confirmationPhrase
+        confirmation_phrase: input.confirmationPhrase,
+        ...(input.approval_password !== undefined ? { approval_password: input.approval_password } : {}),
+        ...(input.approval_totp_code !== undefined ? { approval_totp_code: input.approval_totp_code } : {})
       })
     }
   );

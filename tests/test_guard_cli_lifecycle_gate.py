@@ -402,3 +402,53 @@ def test_desktop_child_env_is_cleared_when_the_gate_is_disabled(
     )
 
     assert "HOL_GUARD_APPROVAL_PASSWORD" not in os.environ
+
+
+def test_lifecycle_gate_uninstall_requires_fresh_totp_even_when_recent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(commands_lifecycle_gate, "canonical_lifecycle_home", lambda: tmp_path)
+    monkeypatch.setattr(
+        commands_lifecycle_gate,
+        "public_config",
+        lambda _home: SimpleNamespace(enabled=True, totp_enabled=True, cooldown_seconds=0),
+    )
+    monkeypatch.setattr(commands_lifecycle_gate, "recent_totp_satisfied", lambda _home: True)
+    monkeypatch.setattr(commands_lifecycle_gate, "consume_desktop_lifecycle_env", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        commands_lifecycle_gate,
+        "prompt_for_approval_gate",
+        lambda *_args, **_kwargs: ApprovalGateInput(),
+    )
+
+    with pytest.raises(ApprovalGateError, match="TOTP code is required"):
+        enforce_lifecycle_gate(
+            argparse.Namespace(guard_command="uninstall", harness="codex"),
+            guard_home=tmp_path,
+        )
+
+
+def test_lifecycle_gate_apps_disconnect_requires_fresh_totp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(commands_lifecycle_gate, "canonical_lifecycle_home", lambda: tmp_path)
+    monkeypatch.setattr(
+        commands_lifecycle_gate,
+        "public_config",
+        lambda _home: SimpleNamespace(enabled=True, totp_enabled=True, cooldown_seconds=0),
+    )
+    monkeypatch.setattr(commands_lifecycle_gate, "recent_totp_satisfied", lambda _home: True)
+    monkeypatch.setattr(commands_lifecycle_gate, "consume_desktop_lifecycle_env", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        commands_lifecycle_gate,
+        "prompt_for_approval_gate",
+        lambda *_args, **_kwargs: ApprovalGateInput(),
+    )
+
+    with pytest.raises(ApprovalGateError, match="TOTP code is required"):
+        enforce_lifecycle_gate(
+            argparse.Namespace(guard_command="apps", apps_command="disconnect", harness="codex"),
+            guard_home=tmp_path,
+        )
