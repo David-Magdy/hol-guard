@@ -449,6 +449,39 @@ def test_lifecycle_gate_apps_disconnect_requires_fresh_totp(
 
     with pytest.raises(ApprovalGateError, match="TOTP code is required"):
         enforce_lifecycle_gate(
-            argparse.Namespace(guard_command="apps", apps_command="disconnect", harness="codex"),
+            argparse.Namespace(
+                guard_command="apps",
+                apps_command="disconnect",
+                harness="codex",
+                confirm="disconnect-codex",
+            ),
             guard_home=tmp_path,
         )
+
+
+def test_lifecycle_gate_apps_disconnect_skips_totp_until_confirmation_phrase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompted = {"called": False}
+    monkeypatch.setattr(commands_lifecycle_gate, "canonical_lifecycle_home", lambda: tmp_path)
+    monkeypatch.setattr(
+        commands_lifecycle_gate,
+        "public_config",
+        lambda _home: SimpleNamespace(enabled=True, totp_enabled=True, cooldown_seconds=0),
+    )
+    monkeypatch.setattr(commands_lifecycle_gate, "recent_totp_satisfied", lambda _home: False)
+    monkeypatch.setattr(commands_lifecycle_gate, "consume_desktop_lifecycle_env", lambda **_kwargs: None)
+
+    def unexpected_prompt(*_args: object, **_kwargs: object) -> ApprovalGateInput:
+        prompted["called"] = True
+        return ApprovalGateInput()
+
+    monkeypatch.setattr(commands_lifecycle_gate, "prompt_for_approval_gate", unexpected_prompt)
+
+    enforce_lifecycle_gate(
+        argparse.Namespace(guard_command="apps", apps_command="disconnect", harness="codex"),
+        guard_home=tmp_path,
+    )
+
+    assert prompted["called"] is False

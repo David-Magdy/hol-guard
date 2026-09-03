@@ -20,8 +20,8 @@ def prepare_native_hook_policy(
 ) -> bool:
     """Apply the production native-policy barrier before hook admission."""
 
-    harness = _resolved_hook_harness(params, default_harness)
-    if not _hook_harness_is_actively_managed(daemon_server, harness):
+    harness = _canonical_managed_harness(default_harness)
+    if _hook_harness_is_explicitly_inactive(daemon_server, harness):
         _write_unmanaged_harness_passthrough(handler, payload, harness)
         return False
     workspace_path = Path(workspace) if workspace is not None else None
@@ -47,24 +47,27 @@ def prepare_native_hook_policy(
     return False
 
 
-def _resolved_hook_harness(params: Mapping[str, list[str]], default_harness: str) -> str:
-    runtime_values = params.get("runtime-harness", [None])
-    runtime_harness = runtime_values[-1] if runtime_values else None
-    if isinstance(runtime_harness, str) and runtime_harness.strip():
-        return _canonical_hook_harness(runtime_harness)
-    return _canonical_hook_harness(default_harness)
+def _canonical_managed_harness(harness: str) -> str:
+    try:
+        from ..adapters import get_adapter
+
+        return get_adapter(harness).harness
+    except ValueError:
+        return _canonical_hook_harness(harness)
 
 
-def _hook_harness_is_actively_managed(daemon_server: Any, harness: str) -> bool:
+def _hook_harness_is_explicitly_inactive(daemon_server: Any, harness: str) -> bool:
+    """True only when Guard recorded this app as disconnected."""
+
     store = getattr(daemon_server, "store", None)
     getter = getattr(store, "get_managed_install", None)
     if not callable(getter):
-        return True
+        return False
     try:
-        managed = getter(harness)
-    except (OSError, RuntimeError, TypeError, ValueError):
-        return True
-    return isinstance(managed, dict) and managed.get("active") is True
+        managed = getter(_canonical_managed_harness(harness))
+    except Exception:
+        return False
+    return isinstance(managed, dict) and managed.get("active") is False
 
 
 def _write_unmanaged_harness_passthrough(

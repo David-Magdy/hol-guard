@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { GuardApprovalGatePublicConfig, GuardSettings } from "./guard-types";
 import { approvalGateCooldownLabel, requiresApprovalPasswordPrompt } from "./approval-gate-utils";
 import { buildApprovalProofCredentials, isApprovalProofSubmitDisabled } from "./approval-proof-inline";
@@ -307,6 +308,22 @@ function testApprovalProofFreshTotpRequiredForDisconnect(): void {
   assert(credentials.approval_totp_code === "469550", "disconnect proof must send the fresh authenticator code");
 }
 
+function testDisconnectWaitsForApprovalSettingsBeforeConfirm(): void {
+  const harnessSetupPanel = readFileSync(new URL("./apps/harness-setup-panel.tsx", import.meta.url), "utf8");
+  assert(
+    harnessSetupPanel.includes("Checking approval requirements before disconnect"),
+    "disconnect must wait for approval settings before showing confirm",
+  );
+  assert(
+    harnessSetupPanel.includes("Keep the app connected and retry disconnect"),
+    "disconnect must fail closed when approval settings cannot be loaded",
+  );
+  assert(
+    harnessSetupPanel.includes("requireFreshTotp={approvalGate.totp_enabled === true}"),
+    "disconnect must require a fresh authenticator code when MFA is on",
+  );
+}
+
 const tests: Array<[string, () => void]> = [
   ["testApprovalGatePublicConfigEnabled", testApprovalGatePublicConfigEnabled],
   ["testApprovalGatePublicConfigDisabled", testApprovalGatePublicConfigDisabled],
@@ -319,6 +336,7 @@ const tests: Array<[string, () => void]> = [
   ["testApprovalProofTotpOverridesPassword", testApprovalProofTotpOverridesPassword],
   ["testApprovalProofRecentTotpSkipsCode", testApprovalProofRecentTotpSkipsCode],
   ["testApprovalProofFreshTotpRequiredForDisconnect", testApprovalProofFreshTotpRequiredForDisconnect],
+  ["testDisconnectWaitsForApprovalSettingsBeforeConfirm", testDisconnectWaitsForApprovalSettingsBeforeConfirm],
 ];
 
 let passed = 0;
