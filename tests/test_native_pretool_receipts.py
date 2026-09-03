@@ -18,8 +18,9 @@ def test_resident_entrypoint_returns_worker_receipt_to_daemon_owner(
     class FakeWorker:
         last_native_decision_receipt = receipt
 
-        def __init__(self, *, store: object) -> None:
+        def __init__(self, *, store: object, **_kwargs: object) -> None:
             del store
+            del _kwargs
 
         def review_http_payload(self, **_kwargs: object) -> dict[str, object]:
             return {"policy_action": "allow"}
