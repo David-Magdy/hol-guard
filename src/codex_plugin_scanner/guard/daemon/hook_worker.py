@@ -110,10 +110,6 @@ class HookWorker(HookWorkerNativeMixin):
         mode = native_mode()
         if mode in {"auto", "force", "shadow"}:
             self.policy_snapshot_publisher.start()
-        if mode in {"auto", "force"}:
-            wait_until_ready = getattr(self.policy_snapshot_publisher, "wait_until_ready", None)
-            if callable(wait_until_ready):
-                _ = wait_until_ready(time.monotonic() + _NATIVE_POLICY_READY_TIMEOUT_SECONDS)
 
     @property
     def test_oracle(self) -> PythonOracle | None:

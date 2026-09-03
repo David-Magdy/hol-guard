@@ -15,7 +15,7 @@ from .manager import (
     repair_approval_center_locator,
     retire_all_guard_daemons_for_home,
 )
-from .runtime_peer import daemon_desktop_core_source_available, daemon_source_is_desktop_core
+from .runtime_peer import daemon_state_matches_current_runtime
 from .start_lock import guard_daemon_start_lock as _guard_daemon_start_lock
 
 
@@ -48,14 +48,11 @@ def _keep_live_runtime_result(
     verified_runtime: tuple[Version, str, str] | None,
     current_version: Version,
 ) -> dict[str, object] | None:
-    if verified_runtime is None:
+    if verified_runtime is None or identity is None:
+        return None
+    if not daemon_state_matches_current_runtime(identity, current_version=str(current_version)):
         return None
     daemon_version, daemon_version_text, _ = verified_runtime
-    if daemon_version < current_version:
-        return None
-    source_root = None if identity is None else identity.get("source_root")
-    if daemon_source_is_desktop_core(source_root) and not daemon_desktop_core_source_available(source_root):
-        return None
     return {
         **result,
         "runtime_status": _retained_runtime_status(daemon_version, current_version),

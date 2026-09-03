@@ -95,7 +95,7 @@ def test_hook_worker_watch_native_block_records_without_stopping(
         native_block_edge,
     )
     worker = HookWorker(store=GuardStore(guard_home))
-    monkeypatch.setattr(worker, "_native_policy_snapshot", lambda _workspace: {"mode": "observe"})
+    monkeypatch.setattr(worker, "_native_policy_snapshot", lambda _workspace, **_kwargs: {"mode": "observe"})
     try:
         result = worker.review_http_payload(
             payload={"hook_event_name": "PreToolUse", "tool_input": {"command": "rm -rf /"}},
