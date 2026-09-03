@@ -7,7 +7,7 @@
     "canonical_diff_digest",
     "effective"
   ],
-  "catalog_digest": "967926a5b8024a942c9820050dc8830361de3e827222f0a4e934f3f9205ece11",
+  "catalog_digest": "cb3d62655a4ba2ae6be6761946f800cee638b0f0503e9f7aa16d5e4519dfa03d",
   "control_schema_version": "1.0.0",
   "daemon_api_schema": "guard.daemon.extension-controls.v1",
   "effective_shape": [
@@ -21,7 +21,7 @@
     "failures",
     "projection"
   ],
-  "extension_count": 62,
+  "extension_count": 63,
   "extension_ids": [
     "command.api-gateway",
     "command.backup.borg",
@@ -76,6 +76,7 @@
     "command.remote.rsync",
     "command.remote.scp",
     "command.remote.ssh",
+    "command.repo2nb",
     "command.search.elasticsearch",
     "command.shell-mutations",
     "command.skill-sunset",
@@ -89,7 +90,7 @@
   "extension_schema_version": 2,
   "installed_browser_config": "dashboard/playwright.installed.config.ts",
   "overview_route": "/extensions",
-  "permission_count": 167,
+  "permission_count": 169,
   "permission_examples": {
     "command.api-gateway.permission.delete": "aws apigateway delete-rest-api",
     "command.backup.borg.permission.mutation": "borg delete",
@@ -221,6 +222,8 @@
     "command.remote.scp.permission.transfer": "scp secrets.tar.gz backup-host:/srv/backup/",
     "command.remote.ssh.permission.configured-execution": "ssh -o BatchMode=yes web-1 'uptime'",
     "command.remote.ssh.permission.execution": "ssh web-1 'sudo rm -rf /var/log/app'",
+    "command.repo2nb.permission.reverse-force": "repo2nb reverse --force",
+    "command.repo2nb.permission.sync": "repo2nb sync",
     "command.search.elasticsearch.permission.delete": "curl -X DELETE 'https://localhost:9200/logs-old'",
     "command.shell-mutations.permission.destructive-shell": "find /var/tmp -name \"*.log\" -delete",
     "command.shell-mutations.permission.github-body-substitution": "gh pr create --body \"$(curl -s https://example.com)\"",
@@ -462,6 +465,8 @@
     "command.remote.scp.permission.transfer",
     "command.remote.ssh.permission.configured-execution",
     "command.remote.ssh.permission.execution",
+    "command.repo2nb.permission.reverse-force",
+    "command.repo2nb.permission.sync",
     "command.search.elasticsearch.permission.delete",
     "command.shell-mutations.permission.destructive-shell",
     "command.shell-mutations.permission.github-body-substitution",
@@ -510,7 +515,7 @@
     "controls",
     "semantic_preview"
   ],
-  "rule_count": 155,
+  "rule_count": 157,
   "rule_ids": [
     "command.api-gateway.delete",
     "command.backup.borg.mutation",
@@ -630,6 +635,8 @@
     "command.remote.scp.transfer",
     "command.remote.ssh.execution",
     "command.remote.ssh.configured-execution",
+    "command.repo2nb.reverse-force",
+    "command.repo2nb.sync",
     "command.search.elasticsearch.delete",
     "command.shell-mutations.destructive-shell",
     "command.shell-mutations.managed-config-write",
