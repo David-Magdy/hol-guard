@@ -16,8 +16,8 @@ from ..codex_hook_launch_runtime import (
     isolated_hook_environment,
     run_isolated_hook_process,
 )
-from ..daemon.hook_availability_policy import EMERGENCY_SAFE_REASON, hook_action_is_emergency_safe
 from ..private_file_io import read_private_regular_text
+from .bounded_cli_hook_failure import failure_payload as _failure_payload
 from .desktop_hook_proxy import (
     _DESKTOP_PROXY_LAUNCH_SCRIPT as _DESKTOP_PROXY_LAUNCH_SCRIPT,
 )
@@ -251,83 +251,6 @@ def _guard_home_is_recording_only(guard_home: Path) -> bool:
     return protection_is_off(posture=config.protection_posture, mode=config.mode)
 
 
-def _watch_continue_payload(harness: str, event_name: str) -> dict[str, object]:
-    if harness == "copilot":
-        return {"permissionDecision": "allow"}
-    if harness in {"grok", "hermes", "openclaw"}:
-        return {"decision": "allow"}
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": event_name,
-            "permissionDecision": "allow",
-        }
-    }
-
-
-def _failure_payload(
-    *,
-    harness: str,
-    event_name: str,
-    reason: str,
-    input_text: str = "",
-    guard_home: Path | None = None,
-) -> tuple[dict[str, object], int]:
-    if guard_home is not None and _guard_home_is_recording_only(guard_home):
-        return _watch_continue_payload(harness, event_name), 0
-    payload = _json_object(input_text or "{}")
-    if event_name == "PreToolUse" and isinstance(payload, dict) and hook_action_is_emergency_safe(payload):
-        if harness == "copilot":
-            return {
-                "permissionDecision": "allow",
-                "permissionDecisionReason": EMERGENCY_SAFE_REASON,
-            }, 0
-        if harness in {"grok", "hermes", "openclaw"}:
-            return {"decision": "allow", "reason": EMERGENCY_SAFE_REASON}, 0
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": event_name,
-                "permissionDecision": "allow",
-                "permissionDecisionReason": EMERGENCY_SAFE_REASON,
-            }
-        }, 0
-    if harness == "copilot":
-        if event_name == "PermissionRequest":
-            return {
-                "behavior": "deny",
-                "message": reason,
-                "interrupt": True,
-            }, 0
-        return {
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }, 0
-    if harness in {"grok", "hermes", "openclaw"}:
-        decision = "block" if harness == "hermes" else "deny"
-        return {"decision": decision, "reason": reason}, (2 if harness == "hermes" else 0)
-    if event_name == "UserPromptSubmit":
-        return {
-            "decision": "block",
-            "reason": reason,
-            "hookSpecificOutput": {
-                "hookEventName": event_name,
-                "additionalContext": reason,
-            },
-        }, 2
-    if event_name == "PreToolUse":
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": event_name,
-                "permissionDecision": "deny",
-                "permissionDecisionReason": reason,
-            }
-        }, 2
-    return {
-        "continue": False,
-        "stopReason": reason,
-        "systemMessage": reason,
-    }, 0
-
-
 def _emit_failure(
     *,
     harness: str,
@@ -339,8 +262,8 @@ def _emit_failure(
         harness=harness,
         event_name=_event_name(input_text),
         reason=reason,
-        input_text=input_text,
-        guard_home=guard_home,
+        payload=_json_object(input_text or "{}"),
+        recording_only=guard_home is not None and _guard_home_is_recording_only(guard_home),
     )
     _ = sys.stdout.write(json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n")
     return returncode

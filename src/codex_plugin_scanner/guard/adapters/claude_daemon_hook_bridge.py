@@ -325,19 +325,14 @@ def _degraded(reason: str, data: str) -> str:
 
 def _authenticated_control_plane_failure(reason: str, data: str) -> str:
     message = f"HOL Guard denied the action because daemon authentication failed: {reason}"
-    if _event_name(data) == "PreToolUse":
-        return json.dumps(
-            {
-                "systemMessage": message,
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": message,
-                },
-            },
-            separators=(",", ":"),
-        )
-    return json.dumps({"continue": False, "stopReason": message}, separators=(",", ":"))
+    event = _event_name(data)
+    if event.startswith("Permission"):
+        output: dict[str, object] = {"hookEventName": event, "decision": {"behavior": "deny", "message": message}}
+    elif event == "PreToolUse":
+        output = {"hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": message}
+    else:
+        return json.dumps({"continue": True, "stopReason": message}, separators=(",", ":"))
+    return json.dumps({"systemMessage": message, "hookSpecificOutput": output}, separators=(",", ":"))
 
 
 def _should_suppress_output(data: str, response_body: str) -> bool:

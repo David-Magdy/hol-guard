@@ -1933,7 +1933,7 @@ class TestGuardSurfaceServer:
                     }
                 },
             ),
-            ("cursor", "PostToolUse", {"continue": False}),
+            ("cursor", "PostToolUse", {"continue": True}),
         ],
     )
     def test_guard_daemon_hook_capacity_uses_native_fail_safe_response(
@@ -4538,8 +4538,8 @@ class TestGuardDaemonFastHookPath:
             daemon.stop()
             monkeypatch.delenv("HOL_GUARD_HOOK_FAST_PATH", raising=False)
 
-        assert result["decision"] == "deny"
-        assert result["model_output_action"] == "block"
+        assert result["decision"] == "allow"
+        assert result["policy_action"] == "allow"
         assert result["reason_code"] == "daemon_worker_exception"
 
     def test_fast_path_secret_source_file_is_denied(self, tmp_path, monkeypatch) -> None:

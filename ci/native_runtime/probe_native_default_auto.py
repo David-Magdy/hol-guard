@@ -245,7 +245,13 @@ def _exercise_mode_invariants(
             )
             if not isinstance(response, dict):
                 raise RuntimeError(f"native_default_auto_probe_failed: invalid mode response: {response}")
-            _require(response.get("decision") == "block", {"mode": mode, "response": response})
+            _require(
+                response.get("continue") is True
+                and response.get("policy_action") == "allow"
+                and response.get("reason_code")
+                in {"native_hook_disabled", "native_shadow_diagnostic_disabled"},
+                {"mode": mode, "response": response},
+            )
             mode_invariants[mode] = {
                 "decision": response.get("decision"),
                 "reason_code": response.get("reason_code"),

@@ -9,9 +9,10 @@ Security:
 - Never falls back to legacy CLI after a worker exception for a
   request that supplied only ``guard_source_ref`` without full output.
 - Never calls ``run_guard_command()``.
-- Native PostToolUse is decided by Rust for ``auto``/``force``. Native failure
-  fails closed instead of spilling into Python review. Explicit ``off`` is a
-  fail-safe disablement in production; only a test-injected oracle may run.
+- Native PostToolUse is decided by Rust for ``auto``/``force``. When review
+  cannot complete, PostToolUse continues; PreToolUse uses the emergency-safe
+  floor. Explicit ``off`` is a fail-safe disablement in production; only a
+  test-injected oracle may run.
 - Supported generic PreToolUse is decided by Rust. Native failure uses the
   mechanical emergency-safe action-class floor: local inspection may continue,
   while mutating, network, secret, destructive, and uncertain actions pause.
@@ -47,6 +48,7 @@ from ..runtime.hook_review_types import (
     HookReviewResponse,
     HookSourceFileRef,
 )
+from .hook_availability_policy import availability_harness_response
 from .hook_request_parsing import (
     build_hook_review_request,
     parse_output_summary,
@@ -57,8 +59,6 @@ from .hook_request_parsing import (
 from .hook_worker_native import HookWorkerNativeMixin, HookWorkerUnsupported, PythonOracle
 from .hook_worker_responses import (
     harness_json_from_review_response,
-    post_tool_fail_safe_response,
-    post_tool_native_block_response,
 )
 
 if TYPE_CHECKING:
@@ -77,6 +77,27 @@ class CommandActivityWriter(Protocol):
 
 
 _NATIVE_POLICY_READY_TIMEOUT_SECONDS = _PUBLISH_TIMEOUT_SECONDS
+
+
+def _post_tool_unavailable_response(
+    payload: dict[str, object],
+    *,
+    harness: str,
+    reason_code: str,
+    workspace: Path | None,
+    home_dir: Path,
+    guard_home: Path,
+) -> dict[str, object]:
+    return availability_harness_response(
+        payload,
+        harness=harness,
+        event_name="PostToolUse",
+        reason_code=reason_code,
+        reason="HOL Guard could not complete the native local hook review safely.",
+        workspace=workspace,
+        home_dir=home_dir,
+        guard_home=guard_home,
+    )
 
 
 @final
@@ -242,10 +263,11 @@ class HookWorker(HookWorkerNativeMixin):
         """Review a hook HTTP payload and return harness JSON.
 
         ``auto`` and ``force`` require the native runtime. When native is
-        unavailable or returns no result, PostToolUse and high-impact
-        PreToolUse fail closed. Emergency-safe local inspection continues
-        with an explicit degraded reason code. ``off`` and ``shadow`` can use
-        only an explicit test oracle; production requests remain fail-safe.
+        unavailable or returns no result, high-impact PreToolUse pauses.
+        PostToolUse continues so the turn does not freeze. Emergency-safe
+        local inspection continues with an explicit degraded reason code.
+        ``off`` and ``shadow`` can use only an explicit test oracle;
+        production requests remain fail-safe.
         """
         self._last_native_decision_receipt = None
         harness = self._runtime_harness(params) or default_harness
@@ -265,7 +287,15 @@ class HookWorker(HookWorkerNativeMixin):
                 workspace=workspace,
                 deadline=deadline,
             )
-        mode_response = self._mode_surface_response(harness, event_name, mode)
+        mode_response = self._mode_surface_response(
+            harness,
+            event_name,
+            mode,
+            payload=payload,
+            workspace=workspace,
+            home_dir=home_dir,
+            guard_home=guard_home,
+        )
         if mode_response is not None:
             return mode_response
         if event_name == "PreToolUse":
@@ -323,10 +353,13 @@ class HookWorker(HookWorkerNativeMixin):
                     payload=payload,
                     succeeded=hook_post_succeeded(event_name, payload),
                 )
-                return post_tool_fail_safe_response(
-                    harness,
-                    reason="HOL Guard could not complete the native local hook review safely.",
+                return _post_tool_unavailable_response(
+                    payload,
+                    harness=harness,
                     reason_code="native_post_tool_unavailable",
+                    workspace=workspace,
+                    home_dir=home_dir,
+                    guard_home=guard_home,
                 )
         elif self._python_oracle is not None and python_oracle_surface_enabled(mode):
             record_python_semantic_hook_route()
@@ -338,10 +371,13 @@ class HookWorker(HookWorkerNativeMixin):
                     payload=payload,
                     succeeded=hook_post_succeeded(event_name, payload),
                 )
-                return post_tool_fail_safe_response(
-                    harness,
-                    reason="HOL Guard could not complete the explicit differential oracle safely.",
+                return _post_tool_unavailable_response(
+                    payload,
+                    harness=harness,
                     reason_code="python_oracle_exception",
+                    workspace=workspace,
+                    home_dir=home_dir,
+                    guard_home=guard_home,
                 )
             if mode == "shadow":
                 with suppress(Exception):
@@ -359,10 +395,13 @@ class HookWorker(HookWorkerNativeMixin):
                 succeeded=hook_post_succeeded(event_name, payload),
             )
             reason_code = "native_hook_disabled" if mode == "off" else "native_shadow_diagnostic_disabled"
-            return post_tool_fail_safe_response(
-                harness,
-                reason="HOL Guard could not complete the native local hook review safely.",
+            return _post_tool_unavailable_response(
+                payload,
+                harness=harness,
                 reason_code=reason_code,
+                workspace=workspace,
+                home_dir=home_dir,
+                guard_home=guard_home,
             )
 
         self._record_post_tool_activity(
@@ -439,6 +478,4 @@ class HookWorker(HookWorkerNativeMixin):
 __all__ = [
     "HookWorker",
     "HookWorkerUnsupported",
-    "post_tool_fail_safe_response",
-    "post_tool_native_block_response",
 ]

@@ -30,9 +30,25 @@ class _Handler:
         }
 
 
-def _daemon(*, managed: dict[str, object] | None, prepared: object = None) -> SimpleNamespace:
+def _daemon(
+    *,
+    managed: dict[str, object] | None,
+    prepared: object = None,
+    other_active: str | None = None,
+) -> SimpleNamespace:
+    def getter(_harness: str) -> dict[str, object] | None:
+        return managed
+
+    def lister() -> list[dict[str, object]]:
+        installs: list[dict[str, object]] = []
+        if isinstance(managed, dict):
+            installs.append(managed)
+        if other_active:
+            installs.append({"harness": other_active, "active": True})
+        return installs
+
     return SimpleNamespace(
-        store=SimpleNamespace(get_managed_install=lambda _harness: managed),
+        store=SimpleNamespace(get_managed_install=getter, list_managed_installs=lister),
         hook_worker=SimpleNamespace(
             prepare_workspace_policy=lambda *_args, **_kwargs: prepared,
             metrics=SimpleNamespace(record_route=lambda *_args, **_kwargs: None),
@@ -89,6 +105,23 @@ def test_never_installed_codex_hook_still_fail_closes_when_native_policy_is_not_
     assert admitted is False
     assert handler.payload is not None
     assert handler.payload.get("reason_code") == "native_policy_not_ready"
+
+
+def test_never_installed_codex_hook_passthrough_when_another_app_is_active() -> None:
+    handler = _Handler()
+    admitted = prepare_native_hook_policy(
+        handler,
+        _daemon(managed=None, other_active="cursor"),
+        dict(_PRE_TOOL_PAYLOAD),
+        {},
+        "codex",
+        None,
+        0.0,
+    )
+
+    assert admitted is False
+    assert handler.payload is not None
+    assert handler.payload.get("reason_code") == "harness_not_managed"
 
 
 def test_runtime_harness_query_cannot_bypass_active_cursor_native_barrier() -> None:

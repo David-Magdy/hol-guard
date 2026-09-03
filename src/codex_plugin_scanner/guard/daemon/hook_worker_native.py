@@ -21,7 +21,6 @@ from .hook_request_parsing import pre_tool_command
 from .hook_worker_responses import (
     harness_json_from_native_post_tool,
     harness_json_from_native_pre_tool,
-    post_tool_fail_safe_response,
 )
 
 
@@ -124,17 +123,25 @@ class HookWorkerNativeMixin:
         harness: str,
         event_name: str,
         mode: str,
+        *,
+        payload: dict[str, object],
+        workspace: Path | None,
+        home_dir: Path,
+        guard_home: Path,
     ) -> dict[str, object] | None:
         oracle_surface = python_oracle_surface_enabled(mode)
         if event_name not in {"PreToolUse", "PostToolUse"}:
             if oracle_surface:
                 raise HookWorkerUnsupported(f"fast path supports PreToolUse and PostToolUse, got event={event_name}")
             return availability_harness_response(
-                {},
+                payload,
                 harness=harness,
                 event_name=event_name,
                 reason_code="native_hook_event_unavailable",
                 reason="HOL Guard could not classify this hook event safely.",
+                workspace=workspace,
+                home_dir=home_dir,
+                guard_home=guard_home,
             )
         reason_code = {"off": "native_hook_disabled", "shadow": "native_shadow_diagnostic_disabled"}.get(mode)
         if reason_code is None or oracle_surface:
@@ -143,7 +150,16 @@ class HookWorkerNativeMixin:
             "off": "HOL Guard native hook review is explicitly disabled; the action is blocked safely.",
             "shadow": "HOL Guard shadow comparison is unavailable outside its diagnostic surface.",
         }[mode]
-        return post_tool_fail_safe_response(harness, reason=reason, reason_code=reason_code)
+        return availability_harness_response(
+            payload,
+            harness=harness,
+            event_name=event_name,
+            reason_code=reason_code,
+            reason=reason,
+            workspace=workspace,
+            home_dir=home_dir,
+            guard_home=guard_home,
+        )
 
     def _review_pre_tool_http(
         self: _HookWorkerNativeHost,
@@ -192,10 +208,15 @@ class HookWorkerNativeMixin:
             raise HookWorkerUnsupported("native PreToolUse runtime is off")
         if status.mode == "shadow":
             raise HookWorkerUnsupported("native PreToolUse runtime is unavailable")
-        return post_tool_fail_safe_response(
-            harness,
-            reason="HOL Guard could not complete the native PreToolUse decision safely.",
+        return availability_harness_response(
+            payload,
+            harness=harness,
+            event_name="PreToolUse",
             reason_code="native_pre_tool_unavailable",
+            reason="HOL Guard could not complete the native PreToolUse decision safely.",
+            workspace=workspace,
+            home_dir=home_dir,
+            guard_home=guard_home,
         )
 
     def _review_native_edge(

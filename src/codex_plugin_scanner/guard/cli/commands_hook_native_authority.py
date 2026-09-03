@@ -11,7 +11,6 @@ from ..config import GuardConfig
 from ..daemon.hook_availability_policy import availability_harness_response
 from ..daemon.hook_request_parsing import runtime_hook_event_name
 from ..daemon.hook_worker import HookWorker, HookWorkerUnsupported
-from ..daemon.hook_worker_responses import post_tool_fail_safe_response
 from ..daemon.runtime_hook_evidence_writer import RuntimeHookEvidenceWriter
 from ..native_mode import (
     native_mode_is_fail_safe_disabled,
@@ -148,10 +147,15 @@ def try_native_or_source_ref_hook(
         )
         _emit(
             "hook",
-            post_tool_fail_safe_response(
-                args.harness,
+            availability_harness_response(
+                payload,
+                harness=args.harness,
+                event_name=runtime_hook_event_name(payload),
                 reason="HOL Guard could not complete the native hook decision safely.",
                 reason_code=reason_code,
+                workspace=runtime_workspace,
+                home_dir=context.home_dir,
+                guard_home=context.guard_home,
             ),
             getattr(args, "json", False),
         )

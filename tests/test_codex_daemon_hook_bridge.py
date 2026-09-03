@@ -121,8 +121,8 @@ def test_fail_closed_uses_supported_codex_deny_shapes() -> None:
 
     assert pretool["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert permission["hookSpecificOutput"]["decision"]["behavior"] == "deny"
-    assert posttool["continue"] is False
-    assert prompt["continue"] is False
+    assert posttool["continue"] is True
+    assert prompt["continue"] is True
 
 
 def test_bridge_keeps_inline_browser_wait_within_consumer_limit(
@@ -564,7 +564,7 @@ def test_bridge_real_daemon_emits_schema_exact_post_tool_response(
     if "hookSpecificOutput" in response:
         assert response == {"hookSpecificOutput": {"hookEventName": "PostToolUse"}}
     else:
-        assert response["continue"] is False
+        assert response["continue"] is True
 
 
 def test_bridge_real_daemon_prefers_payload_cwd_for_verified_git_fetch(

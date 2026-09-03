@@ -33,18 +33,27 @@ def test_frozen_cursor_hook_command_uses_supported_launcher(monkeypatch, tmp_pat
         "/Applications/HOL Guard.app/Contents/MacOS/hol-guard",
     )
     script = tmp_path / ".cursor" / "hooks" / HOOK_SCRIPT_NAME
-    command = _managed_hook_command(python_executable=None, script_path=script)
+    command = _managed_hook_command(
+        python_executable=None,
+        script_path=script,
+        event_name="beforeReadFile",
+    )
     tokens = shlex.split(command)
     assert tokens[0] == "/Applications/HOL Guard.app/Contents/MacOS/hol-guard"
     assert tokens[1] == FROZEN_CURSOR_HOOK_COMMAND
     assert tokens[2].endswith(HOOK_SCRIPT_NAME)
+    assert tokens[-2:] == ["--cursor-hook-event", "beforeReadFile"]
 
 
 def test_unfrozen_cursor_hook_command_uses_current_interpreter(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("codex_plugin_scanner.guard.adapters.cursor_hook_config.sys.frozen", False, raising=False)
     monkeypatch.setattr("codex_plugin_scanner.guard.adapters.cursor_hook_config.sys.executable", "/usr/bin/python3")
     script = tmp_path / ".cursor" / "hooks" / HOOK_SCRIPT_NAME
-    command = _managed_hook_command(python_executable=None, script_path=script)
+    command = _managed_hook_command(
+        python_executable=None,
+        script_path=script,
+        event_name="beforeReadFile",
+    )
     assert FROZEN_CURSOR_HOOK_COMMAND not in command
     assert command.startswith("/usr/bin/python3")
 
@@ -58,6 +67,7 @@ def test_run_frozen_cursor_hook_executes_managed_script(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert run_frozen_cursor_hook([str(script)]) == 0
+    assert run_frozen_cursor_hook([str(script), "--cursor-hook-event", "beforeReadFile"]) == 0
     assert marker.read_text(encoding="utf-8") == "ok"
 
 
@@ -80,9 +90,8 @@ def test_run_frozen_cursor_hook_rejects_symlink(tmp_path: Path) -> None:
     assert run_frozen_cursor_hook([str(script)]) == 3
 
 
-def test_run_frozen_cursor_hook_rejects_wrong_argc() -> None:
+def test_run_frozen_cursor_hook_rejects_empty_argv() -> None:
     assert run_frozen_cursor_hook([]) == 2
-    assert run_frozen_cursor_hook(["a", "b"]) == 2
 
 
 def test_live_cursor_hook_script_path_rejects_symlink(tmp_path: Path) -> None:

@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..daemon.hook_worker_responses import post_tool_fail_safe_response
+from ..daemon.hook_availability_policy import availability_harness_response
+from ..daemon.hook_request_parsing import runtime_hook_event_name
 from ..runtime.command_extensions import BUILT_IN_COMMAND_EXTENSION_REGISTRY
 from ..runtime.extension_control_runtime import (
     ExtensionControlRuntimeSnapshot,
@@ -97,10 +98,7 @@ def _run_guard_hook_command(
         harness=args.harness,
         normalize=False,
     )
-    # Auto/force sends the bounded, authenticated raw payload to Rust before
-    # any harness adapter or generic semantic normalization can project it.
-    # Explicit off/shadow returns here and continues through the compatibility
-    # normalizers below.
+    # Raw payload goes to native first. Off/shadow continues into compatibility.
     raw_routed = try_native_or_source_ref_hook(
         args,
         config=config,
@@ -112,15 +110,14 @@ def _run_guard_hook_command(
     )
     if raw_routed is not None:
         return raw_routed
-    # Explicit off/shadow compatibility reaches this point after native has
-    # declined authority.  Auto/force already returned a typed fail-safe
-    # result above, so no hook request loads config here.
     compatibility_surface = load_hook_compatibility_surface()
     if compatibility_surface is None:
         _emit(
             "hook",
-            post_tool_fail_safe_response(
-                args.harness,
+            availability_harness_response(
+                payload,
+                harness=args.harness,
+                event_name=runtime_hook_event_name(payload),
                 reason="HOL Guard could not enter the explicit Python hook oracle safely.",
                 reason_code="python_hook_oracle_unavailable",
             ),

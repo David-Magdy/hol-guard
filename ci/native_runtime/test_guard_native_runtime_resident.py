@@ -339,7 +339,7 @@ def test_hook_worker_auto_fails_closed_when_native_unavailable(tmp_path: Path, m
         workspace=tmp_path,
     )
     assert python_calls == 0
-    assert result["decision"] == "block"
+    assert result["continue"] is True
     assert result["reason_code"] == "native_post_tool_unavailable"
 
 

@@ -8,6 +8,7 @@ from codex_plugin_scanner.guard.daemon.hook_availability_policy import (
     EMERGENCY_SAFE_REASON_CODE,
     availability_harness_response,
     cursor_fallback_permission,
+    cursor_unparseable_input_permission,
     hook_action_is_emergency_safe,
 )
 
@@ -432,8 +433,9 @@ def test_availability_continues_prompt_lifecycle_and_still_pauses_tools(tmp_path
         reason_code="native_post_tool_unavailable",
         reason="native unavailable",
     )
-    assert withheld["continue"] is False
-    assert withheld["policy_action"] == "block"
+    assert withheld["continue"] is True
+    assert withheld["policy_action"] == "allow"
+    assert withheld["reason_code"] == "native_post_tool_unavailable"
     curl = availability_harness_response(
         {"hook_event_name": "PreToolUse", "tool_input": {"command": "curl https://example.test"}},
         harness="grok",
@@ -444,3 +446,50 @@ def test_availability_continues_prompt_lifecycle_and_still_pauses_tools(tmp_path
         home_dir=tmp_path / "home",
     )
     assert curl["policy_action"] == "block"
+    permission = availability_harness_response(
+        {"hook_event_name": "PermissionRequest", "tool_input": {"command": "pwd"}},
+        harness="claude-code",
+        event_name="PermissionRequest",
+        reason_code="native_hook_event_unavailable",
+        reason="native unavailable",
+    )
+    assert permission["continue"] is False
+    permission_v2 = availability_harness_response(
+        {"hook_event_name": "PermissionRequestV2", "tool_input": {"command": "pwd"}},
+        harness="claude-code",
+        event_name="PermissionRequestV2",
+        reason_code="native_hook_event_unavailable",
+        reason="native unavailable",
+    )
+    assert permission_v2["continue"] is False
+    alias = availability_harness_response(
+        {"hook_event_name": "beforeShellExecution", "command": "curl https://example.test"},
+        harness="cursor",
+        event_name="beforeShellExecution",
+        reason_code="native_pre_tool_unavailable",
+        reason="native unavailable",
+        workspace=tmp_path,
+        home_dir=tmp_path / "home",
+    )
+    assert alias["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_cursor_unparseable_input_allows_read_and_pauses_shell() -> None:
+    allow, allow_code = cursor_unparseable_input_permission("beforeReadFile")
+    assert allow_code == 0
+    assert allow == {"permission": "allow"}
+    deny, deny_code = cursor_unparseable_input_permission("beforeShellExecution")
+    assert deny_code == 2
+    assert deny["permission"] == "deny"
+    after, after_code = cursor_unparseable_input_permission("afterShellExecution")
+    assert after_code == 0
+    assert after == {}
+    watch, watch_code = cursor_unparseable_input_permission(
+        "beforeShellExecution",
+        recording_only=True,
+    )
+    assert watch_code == 0
+    assert watch == {"permission": "allow"}
+    empty, empty_code = cursor_unparseable_input_permission("")
+    assert empty_code == 2
+    assert empty["permission"] == "deny"
