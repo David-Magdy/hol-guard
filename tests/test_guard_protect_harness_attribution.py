@@ -14,6 +14,8 @@ from codex_plugin_scanner.guard.store import GuardStore
 from tests.harness_attribution_env import strip_harness_env_markers
 from tests.test_guard_local_supply_chain_phase15 import _package, _seed_supply_chain_bundle
 
+pytest_plugins = ["tests.bundle_first_cloud"]
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -88,6 +90,12 @@ def test_guard_protect_attributes_package_requests_to_invoking_harness(
     assert all(str(item["artifact_id"]).startswith("guard-cli:") for item in queued)
     assert any("ZCode" in str(item.get("trigger_summary") or "") for item in queued)
     assert rc == 2
+
+    install_events = [
+        event for event in store.list_events(limit=20) if str(event["event_name"]).startswith("install_time_")
+    ]
+    assert install_events
+    assert all(event["payload"].get("harness") == "zcode" for event in install_events)
 
 
 def test_guard_protect_keeps_guard_cli_attribution_outside_harness_env(

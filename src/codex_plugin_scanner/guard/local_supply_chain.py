@@ -1820,6 +1820,26 @@ def _apply_package_protect_projection(
     )
 
 
+def _install_time_event_payload(
+    *,
+    authority: _PackageProtectAuthority,
+    command: Sequence[str],
+    action: GuardAction,
+    risk_signals: tuple[str, ...] | list[str],
+    **extra: object,
+) -> dict[str, object]:
+    return {
+        "artifact_id": authority.artifact.artifact_id,
+        "artifact_name": authority.artifact.name,
+        "executor": str(command[0]) if command else _LOCAL_SUPPLY_CHAIN_HARNESS,
+        "harness": authority.invoking_harness,
+        "install_kind": authority.intent.intent_kind,
+        "action": action,
+        "risk_signals": list(risk_signals),
+        **extra,
+    }
+
+
 def _package_protect_denied_after_final_boundary(
     *,
     payload: dict[str, object],
@@ -1844,14 +1864,12 @@ def _package_protect_denied_after_final_boundary(
     )
     store.add_event(
         f"install_time_{projection.verdict_action}",
-        {
-            "artifact_id": authority.artifact.artifact_id,
-            "artifact_name": authority.artifact.name,
-            "executor": str(command[0]) if command else _LOCAL_SUPPLY_CHAIN_HARNESS,
-            "install_kind": authority.intent.intent_kind,
-            "action": projection.verdict_action,
-            "risk_signals": list(projection.risk_signals),
-        },
+        _install_time_event_payload(
+            authority=authority,
+            command=command,
+            action=projection.verdict_action,
+            risk_signals=projection.risk_signals,
+        ),
         now,
     )
     return payload, _package_execution_exit_code(evaluation.policy_action)
@@ -1884,7 +1902,6 @@ def build_package_protect_payload(
     )
     if authority is None:
         return None
-    sanitized_intent = authority.intent
     artifact = authority.artifact
     evaluation = authority.evaluation
     current_action = authority.current_action
@@ -1931,14 +1948,12 @@ def build_package_protect_payload(
         )
         store.add_event(
             f"install_time_{projection.verdict_action}",
-            {
-                "artifact_id": artifact.artifact_id,
-                "artifact_name": artifact.name,
-                "executor": str(command[0]) if command else _LOCAL_SUPPLY_CHAIN_HARNESS,
-                "install_kind": sanitized_intent.intent_kind,
-                "action": projection.verdict_action,
-                "risk_signals": list(projection.risk_signals),
-            },
+            _install_time_event_payload(
+                authority=authority,
+                command=command,
+                action=projection.verdict_action,
+                risk_signals=projection.risk_signals,
+            ),
             now,
         )
         return (payload, _package_execution_exit_code(execution_policy_action))
@@ -2014,7 +2029,6 @@ def build_package_protect_payload(
         _cleanup_external_archive_downloads(final_evaluation)
         return denied
     authority = final_authority
-    sanitized_intent = authority.intent
     artifact = authority.artifact
     evaluation = final_evaluation
     final_projection = _apply_package_protect_projection(
@@ -2047,15 +2061,13 @@ def build_package_protect_payload(
         )
         store.add_event(
             "install_time_execution_failed",
-            {
-                "artifact_id": artifact.artifact_id,
-                "artifact_name": artifact.name,
-                "executor": str(command[0]) if command else _LOCAL_SUPPLY_CHAIN_HARNESS,
-                "install_kind": sanitized_intent.intent_kind,
-                "action": verdict_action,
-                "error": type(error).__name__,
-                "risk_signals": list(risk_signals),
-            },
+            _install_time_event_payload(
+                authority=authority,
+                command=command,
+                action=verdict_action,
+                risk_signals=risk_signals,
+                error=type(error).__name__,
+            ),
             now,
         )
         _cleanup_external_archive_downloads(final_evaluation)
@@ -2074,28 +2086,24 @@ def build_package_protect_payload(
         )
         store.add_event(
             f"install_time_{verdict_action}",
-            {
-                "artifact_id": artifact.artifact_id,
-                "artifact_name": artifact.name,
-                "executor": str(command[0]) if command else _LOCAL_SUPPLY_CHAIN_HARNESS,
-                "install_kind": sanitized_intent.intent_kind,
-                "action": verdict_action,
-                "risk_signals": list(risk_signals),
-            },
+            _install_time_event_payload(
+                authority=authority,
+                command=command,
+                action=verdict_action,
+                risk_signals=risk_signals,
+            ),
             now,
         )
     else:
         store.add_event(
             "install_time_execution_failed",
-            {
-                "artifact_id": artifact.artifact_id,
-                "artifact_name": artifact.name,
-                "executor": str(command[0]) if command else _LOCAL_SUPPLY_CHAIN_HARNESS,
-                "install_kind": sanitized_intent.intent_kind,
-                "action": verdict_action,
-                "returncode": execution.returncode,
-                "risk_signals": list(risk_signals),
-            },
+            _install_time_event_payload(
+                authority=authority,
+                command=command,
+                action=verdict_action,
+                risk_signals=risk_signals,
+                returncode=execution.returncode,
+            ),
             now,
         )
     _cleanup_external_archive_downloads(final_evaluation)
